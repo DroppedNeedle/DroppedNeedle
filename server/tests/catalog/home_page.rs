@@ -1,21 +1,22 @@
 //! Home and the genre page over a real database: the first visit answers
 //! with the library shelves at once and builds the rest in the background,
 //! the built page carries the listening shelves with ownership marked and
-//! genre tiles drawn from the collection, the genre page joins owned and
-//! popular rows, and a collage whose art file is gone falls back to a
-//! gradient.
+//! genre tiles drawn from the collection, a restart serves the built
+//! shelves at once, the genre page joins owned and popular rows, and a
+//! collage whose art file is gone falls back to a gradient.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use droppedneedle_catalog::reads::discover::genre::GenrePages;
 use droppedneedle_catalog::reads::discover::genre::artwork::GenreArt;
-use droppedneedle_catalog::reads::discover::home::LiveHome;
 use droppedneedle_catalog::reads::discover::home::library::HomeLibrary;
+use droppedneedle_catalog::reads::discover::home::{HomeInputs, LiveHome};
 use droppedneedle_catalog::reads::discover::listening::{
     ArtistRow, ListenedAlbum, ListeningData, LovedTrack, TagAlbum, UserMusic,
 };
 use droppedneedle_catalog::reads::discover::models::SectionItem;
+use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_kernel::db::{DbError, Lane};
 
 use crate::discover_queue::Script;
@@ -124,19 +125,24 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
         droppedneedle_providers::Providers::closed().cache,
     );
     let art = Arc::new(GenreArt::new(HomeLibrary::new(pool.clone())));
-    let home = LiveHome::new(
-        listening.clone(),
-        pool.clone(),
-        droppedneedle_catalog::reads::discover::content::IntegrationSettings::new(
-            &crate::common::config_store(&dir),
-            Arc::new(crate::common::bundles::NoDownloadSource),
-        ),
-        art.clone(),
-        None,
-    );
+    let home_over = || {
+        LiveHome::new(HomeInputs {
+            listening: listening.clone(),
+            db: runtime.db().clone(),
+            clock: Arc::new(ManualClock::at(1_790_000_000_000)),
+            integrations: droppedneedle_catalog::reads::discover::content::IntegrationSettings::new(
+                &crate::common::config_store(&dir),
+                Arc::new(crate::common::bundles::NoDownloadSource),
+            ),
+            art: art.clone(),
+            warm: None,
+            discover: None,
+        })
+    };
+    let home = home_over();
 
     // First visit: library shelves at once, the rest building.
-    let first = home.page("user-1", None).await;
+    let first = home.page("user-1").await;
     assert!(first.refreshing);
     let Some(SectionItem::Album(recent)) = first
         .recently_added
@@ -153,14 +159,13 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     assert!(first.recently_played.is_some());
     assert!(first.trending_artists.is_none());
 
-    // Home keeps its built page in memory only, so the wait is on the page
-    // itself: each check hands the runtime to the build until it is kept.
+    // Each check hands the runtime to the build until it is kept.
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut page = first;
     while page.refreshing {
         assert!(Instant::now() < deadline, "the build never finished");
         tokio::task::yield_now().await;
-        page = home.page("user-1", None).await;
+        page = home.page("user-1").await;
     }
     assert!(page.trending_artists.is_some());
     assert!(page.favorite_artists.is_some());
@@ -182,6 +187,12 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
             .iter()
             .any(|p| p.service == "download-client")
     );
+
+    // A restart serves the built shelves at once, without a build.
+    let restarted = home_over().page("user-1").await;
+    assert!(!restarted.refreshing, "the saved shelves are fresh");
+    assert!(restarted.trending_artists.is_some());
+    assert!(restarted.recently_played.is_some());
 
     // The genre page: owned and popular rows side by side.
     let genre = GenrePages::new(pool.clone(), listening, art.clone(), None)

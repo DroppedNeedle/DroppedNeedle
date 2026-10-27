@@ -68,7 +68,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 171);
+    assert_eq!(table_names(&pool).await.len(), 172);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -6988,4 +6988,91 @@ async fn tracks_gain_a_search_key_on_upgrade() {
     .execute(&pool)
     .await
     .expect("the index matches the table");
+}
+
+/// Migration 0095 rebuilds discover's tables to the conventions. Each
+/// user's hidden releases carry over with their time in milliseconds and
+/// go with their user; a hidden release of a user who no longer exists
+/// does not. Remembered release-group answers carry over. Saved pages and
+/// activity are caches and start empty.
+#[tokio::test]
+async fn discover_tables_rebuild_and_hidden_releases_carry() {
+    let pool = scratch_pool().await;
+    migrator_through(94).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'T', 'user', 'now'); \
+         INSERT INTO ignored_releases (user_id, release_group_mbid_lower, release_group_mbid, \
+         artist_mbid, release_name, artist_name, ignored_at) VALUES \
+         ('u1', 'rg-1', 'RG-1', 'a-1', 'Hidden', 'Someone', 1700000800.25), \
+         ('gone', 'rg-2', 'RG-2', 'a-2', 'Orphan', 'Nobody', 1700000900.0); \
+         INSERT INTO mbid_resolution_map (source_mbid_lower, source_mbid, release_group_mbid) \
+         VALUES ('rel-1', 'REL-1', 'rg-1'), ('rel-2', 'REL-2', NULL); \
+         INSERT INTO discovery_snapshots (snapshot_key, user_id, payload, saved_at) \
+         VALUES ('discover_response:u1:True:False', 'u1', x'7b7d', 1700000000.5); \
+         INSERT INTO discovery_activity (user_id, feature, source, last_used) \
+         VALUES ('u1', 'home', '[\"official\",\"mb\",1]', 1700000000.5);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    migrator_through(95).run(&pool).await.unwrap();
+
+    let ignores: Vec<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT user_id, release_group_mbid, release_name, ignored_at \
+         FROM catalog_ignored_releases ORDER BY user_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        ignores,
+        vec![(
+            "u1".to_owned(),
+            "RG-1".to_owned(),
+            "Hidden".to_owned(),
+            1_700_000_800_250
+        )]
+    );
+    let resolutions: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT source_mbid_lower, release_group_mbid FROM catalog_mbid_resolutions \
+         ORDER BY source_mbid_lower",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        resolutions,
+        vec![
+            ("rel-1".to_owned(), Some("rg-1".to_owned())),
+            ("rel-2".to_owned(), None)
+        ]
+    );
+    let tables = table_names(&pool).await;
+    for gone in [
+        "discovery_snapshots",
+        "discovery_activity",
+        "ignored_releases",
+        "mbid_resolution_map",
+    ] {
+        assert!(!tables.contains(&gone.to_owned()), "{gone} must be gone");
+    }
+    for empty in ["catalog_cached_pages", "catalog_discover_activity"] {
+        let rows: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {empty}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, 0, "{empty}");
+    }
+
+    sqlx::query("DELETE FROM auth_users WHERE id = 'u1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_ignored_releases")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "hidden releases go with their user");
 }

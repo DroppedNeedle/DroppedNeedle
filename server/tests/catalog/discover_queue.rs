@@ -26,7 +26,7 @@ use droppedneedle_catalog::reads::discover::listening::{
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_catalog::reads::discover::wiring::{DiscoverInputs, deps_over, live_network};
-use droppedneedle_kernel::db::Db;
+use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_media::playback::listening::MemoryListenBrainzLinkStore;
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
@@ -615,6 +615,16 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     let dir = crate::common::ScratchDir::new("discover-queue");
     let rig = AuthRig::new("discover-queue").await;
     let db = rig.platform.db.clone();
+    db.write(Lane::Foreground, "test.seed", |tx| {
+        tx.execute(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+                 VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z')",
+            [],
+        )?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .expect("user row");
     let app = queue_app(&rig, &dir);
 
     let (_, idle) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;

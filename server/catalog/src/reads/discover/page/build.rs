@@ -7,8 +7,9 @@
 //! second builds the shelves that need more reads of their own (Top
 //! Picks, Daily Mixes, radio, the weekly playlist, ...) in parallel under
 //! the same bound. The rest is shaping: artist shelves share a "seen"
-//! set so an artist appears once on the page, ownership is marked from
-//! the library, and album shelves are deduplicated.
+//! set so an artist appears once on the page, and album shelves are
+//! deduplicated. Ownership is marked when the page is served
+//! ([`mark_ownership`]), so a library change never makes a page wrong.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -18,9 +19,10 @@ use std::time::Duration;
 use futures_util::future::join_all;
 
 use super::library::{LibraryReads, fold};
-use super::memo::BuildMemo;
+use super::memo::{BuildMemo, MemoKey};
 use super::picks::{self, Candidate};
 use super::shelves::{self, SHELF_SIZE, album, artist, genre, shelf};
+use crate::reads::discover::cache::Variant;
 use crate::reads::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenedAlbum, ListeningData, MusicSource,
     PlayedArtist, ScoredArtist, StatsRange, UserMusic,
@@ -91,6 +93,10 @@ pub struct Builder<'a> {
     pub library: &'a LibraryReads,
     /// Daily Mix and Top Picks memos.
     pub memo: &'a BuildMemo,
+    /// What the page is built for, which the memos are kept under.
+    pub variant: &'a Variant,
+    /// The clear generation the build was claimed in.
+    pub generation: i64,
     /// Settings for this build.
     pub settings: PageSettings,
     /// Today's date (`YYYY-MM-DD`, UTC).
@@ -384,7 +390,6 @@ impl Builder<'_> {
             self.settings.download_client,
             user.lastfm,
         );
-        mark_ownership(self.library_pool(), &mut page).await;
         shelves::dedupe_albums(&mut page);
         Built {
             page,
@@ -394,6 +399,16 @@ impl Builder<'_> {
 
     fn library_pool(&self) -> &sqlx::SqlitePool {
         self.library.pool()
+    }
+
+    fn memo_key<'k>(&'k self, user_id: &'k str, primary: MusicSource) -> MemoKey<'k> {
+        MemoKey {
+            user_id,
+            variant: self.variant,
+            generation: self.generation,
+            listening: source_label(primary),
+            today: &self.today,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -713,14 +728,14 @@ impl Builder<'_> {
         shared: &Shared,
         library_groups: &HashSet<String>,
     ) -> Vec<ChartSection> {
-        let memo_key = format!("{user_id}:{}:{}", source_label(primary), self.today);
-        if let Some(mixes) = self.memo.mixes(&memo_key, self.now) {
+        let key = self.memo_key(user_id, primary);
+        if let Some(mixes) = self.memo.mixes(&key).await {
             return mixes;
         }
         let mixes = self
             .build_daily_mixes(user_id, user, primary, seeds, shared, library_groups)
             .await;
-        self.memo.store_mixes(memo_key, mixes.clone(), self.now);
+        self.memo.store_mixes(&key, mixes.clone()).await;
         mixes
     }
 
@@ -981,15 +996,14 @@ impl Builder<'_> {
         seeds: &[ArtistRow],
         shared: &Shared,
     ) -> Option<TopPicksSection> {
-        let memo_key = format!("{user_id}:{}", source_label(primary));
-        if let Some(picks) = self.memo.picks(&memo_key, self.now) {
+        let key = self.memo_key(user_id, primary);
+        if let Some(picks) = self.memo.picks(&key).await {
             return picks;
         }
         let (picks, degraded) = self
             .build_top_picks(user_id, user, primary, seeds, shared)
             .await;
-        self.memo
-            .store_picks(memo_key, picks.clone(), degraded, self.now);
+        self.memo.store_picks(&key, picks.clone(), degraded).await;
         picks
     }
 
@@ -1137,7 +1151,9 @@ impl Builder<'_> {
             .iter()
             .map(|c| c.release_group_mbid.clone())
             .collect();
-        let owned = owned_album_ids(self.library_pool(), &ids).await;
+        let owned = owned_album_ids(self.library_pool(), &ids)
+            .await
+            .unwrap_or_default();
         candidates.retain(|candidate| !owned.contains_key(&candidate.release_group_mbid));
         let personal = candidates.iter().filter(|c| !c.from_trending).count();
         let degraded = lastfm_route && personal == 0;
@@ -1882,20 +1898,70 @@ pub fn genre_list(genres: Option<&[(String, i64)]>) -> Option<ChartSection> {
 }
 
 /// Owned release groups among `ids`, lowercased, mapped to local ids.
-async fn owned_album_ids(pool: &sqlx::SqlitePool, ids: &[String]) -> HashMap<String, String> {
+/// `None` when the library could not be read.
+async fn owned_album_ids(
+    pool: &sqlx::SqlitePool,
+    ids: &[String],
+) -> Option<HashMap<String, String>> {
     let mut owned = HashMap::new();
     for chunk in ids.chunks(200) {
         let refs: Vec<&str> = chunk.iter().map(String::as_str).collect();
         match ownership::owned_albums(pool, &refs).await {
             Ok(found) => owned.extend(found),
-            Err(error) => tracing::warn!(%error, "album ownership unreadable; marking none owned"),
+            Err(error) => {
+                tracing::warn!(%error, "album ownership unreadable; marks left as built");
+                return None;
+            }
         }
     }
-    owned
+    Some(owned)
 }
 
-/// Mark which albums and artists on the page the library holds, and drop
-/// owned albums from Missing Essentials.
+/// Owned artists among `ids`, lowercased, mapped to local ids. `None`
+/// when the library could not be read.
+async fn owned_artist_ids(
+    pool: &sqlx::SqlitePool,
+    ids: &[String],
+) -> Option<HashMap<String, String>> {
+    let mut owned = HashMap::new();
+    for chunk in ids.chunks(200) {
+        let refs: Vec<&str> = chunk.iter().map(String::as_str).collect();
+        match ownership::owned_artists(pool, &refs).await {
+            Ok(found) => owned.extend(found),
+            Err(error) => {
+                tracing::warn!(%error, "artist ownership unreadable; marks left as built");
+                return None;
+            }
+        }
+    }
+    Some(owned)
+}
+
+/// Mark a row with an MBID as the library has it now: owned with its
+/// local id, or not owned. A row without an MBID keeps its marks.
+fn mark(
+    owned: Option<&HashMap<String, String>>,
+    mbid: Option<&str>,
+    in_library: &mut bool,
+    local_id: &mut Option<String>,
+) {
+    let (Some(owned), Some(mbid)) = (owned, mbid) else {
+        return;
+    };
+    match owned.get(&mbid.to_lowercase()) {
+        Some(local) => {
+            *in_library = true;
+            local_id.get_or_insert_with(|| local.clone());
+        }
+        None => {
+            *in_library = false;
+            *local_id = None;
+        }
+    }
+}
+
+/// Mark which albums and artists on the page the library holds now, and
+/// drop owned albums from Missing Essentials. Run on every serve.
 pub async fn mark_ownership(pool: &sqlx::SqlitePool, page: &mut DiscoverResponse) {
     let mut sections: Vec<&mut ChartSection> = Vec::new();
     for entry in &mut page.because_you_listen_to {
@@ -1942,38 +2008,25 @@ pub async fn mark_ownership(pool: &sqlx::SqlitePool, page: &mut DiscoverResponse
         );
     }
     let owned_albums = owned_album_ids(pool, &album_ids).await;
-    let mut owned_artists = HashMap::new();
-    for chunk in artist_ids.chunks(200) {
-        let refs: Vec<&str> = chunk.iter().map(String::as_str).collect();
-        match ownership::owned_artists(pool, &refs).await {
-            Ok(found) => owned_artists.extend(found),
-            Err(error) => tracing::warn!(%error, "artist ownership unreadable; marking none owned"),
-        }
-    }
+    let owned_artists = owned_artist_ids(pool, &artist_ids).await;
     let mark_album = |row: &mut ChartAlbum| {
-        if let Some(local) = row
-            .mbid
-            .as_deref()
-            .and_then(|m| owned_albums.get(&m.to_lowercase()))
-        {
-            row.in_library = true;
-            row.local_id.get_or_insert_with(|| local.clone());
-        }
+        mark(
+            owned_albums.as_ref(),
+            row.mbid.as_deref(),
+            &mut row.in_library,
+            &mut row.local_id,
+        );
     };
     for section in sections {
         for item in &mut section.items {
             match item {
                 SectionItem::Album(row) => mark_album(row),
-                SectionItem::Artist(row) => {
-                    if let Some(local) = row
-                        .mbid
-                        .as_deref()
-                        .and_then(|m| owned_artists.get(&m.to_lowercase()))
-                    {
-                        row.in_library = true;
-                        row.local_id.get_or_insert_with(|| local.clone());
-                    }
-                }
+                SectionItem::Artist(row) => mark(
+                    owned_artists.as_ref(),
+                    row.mbid.as_deref(),
+                    &mut row.in_library,
+                    &mut row.local_id,
+                ),
                 _ => {}
             }
         }

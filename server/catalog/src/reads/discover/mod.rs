@@ -9,6 +9,7 @@
 //! the API document. The now-playing route is served by `playback`.
 
 pub mod batches;
+pub mod cache;
 pub mod charts;
 pub mod content;
 pub mod demand;
@@ -24,6 +25,7 @@ pub mod ports;
 pub mod previews;
 pub mod queue;
 pub mod radio;
+pub mod scheduler;
 pub mod services;
 pub mod wiring;
 pub mod youtube;

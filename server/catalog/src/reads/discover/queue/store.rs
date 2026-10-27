@@ -1,12 +1,8 @@
-//! The queue's durable state, in tables the baseline schema already has:
-//! the per-user ignore ledger (`ignored_releases`), the last built deck
-//! per user (`discovery_snapshots`, key `discover_queue:<user>`), and the
-//! Last.fm release to release-group map (`mbid_resolution_map`).
+//! The queue's durable state: the per-user ignore ledger
+//! (`catalog_ignored_releases`) and the Last.fm release to release-group
+//! map (`catalog_mbid_resolutions`). The decks are rows of the page cache.
 //!
 //! Reads use the reader pool; every write goes through the writer lane.
-//! A saved deck is tied to the library catalog revision it was built
-//! against, so a library change makes it read as missing (v2
-//! `get_with_stale`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,8 +10,6 @@ use crate::reads::discover::models::{IgnoredRelease, QueueIgnoreRequest};
 use crate::reads::discover::ownership;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 
-/// Snapshot key prefix the decks share with v2.
-const DECK_KEY_PREFIX: &str = "discover_queue:";
 /// Most ids one resolution read binds.
 const MAX_BIND: usize = 500;
 
@@ -23,10 +17,6 @@ const MAX_BIND: usize = 500;
 #[derive(Clone, Debug)]
 pub struct QueueDb {
     db: Db,
-}
-
-fn deck_key(user_id: &str) -> String {
-    format!("{DECK_KEY_PREFIX}{user_id}")
 }
 
 impl QueueDb {
@@ -38,7 +28,7 @@ impl QueueDb {
     /// Lowercased release-group ids the user ignored.
     pub async fn ignored_mbids(&self, user_id: &str) -> Result<HashSet<String>, String> {
         let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT release_group_mbid_lower FROM ignored_releases WHERE user_id = ?1",
+            "SELECT release_group_mbid_lower FROM catalog_ignored_releases WHERE user_id = ?1",
         )
         .bind(user_id)
         .fetch_all(self.db.sqlx())
@@ -53,9 +43,9 @@ impl QueueDb {
 
     /// The user's ignore ledger, newest first.
     pub async fn ignored(&self, user_id: &str) -> Result<Vec<IgnoredRelease>, String> {
-        let rows: Vec<(String, String, String, String, f64)> = sqlx::query_as(
+        let rows: Vec<(String, String, String, String, i64)> = sqlx::query_as(
             "SELECT release_group_mbid, artist_mbid, release_name, artist_name, ignored_at \
-             FROM ignored_releases WHERE user_id = ?1 ORDER BY ignored_at DESC",
+             FROM catalog_ignored_releases WHERE user_id = ?1 ORDER BY ignored_at DESC",
         )
         .bind(user_id)
         .fetch_all(self.db.sqlx())
@@ -70,29 +60,31 @@ impl QueueDb {
                         artist_mbid,
                         release_name,
                         artist_name,
-                        ignored_at: ignored_at as i64,
+                        ignored_at: ignored_at / 1000,
                     }
                 },
             )
             .collect())
     }
 
-    /// Record one ignore. Ignoring the same release again refreshes its
-    /// names and time.
+    /// Record one ignore at `at` (unix ms). Ignoring the same release
+    /// again refreshes its names and time. Nothing is recorded for a user
+    /// who no longer exists.
     pub async fn ignore(
         &self,
         user_id: &str,
         release: &QueueIgnoreRequest,
-        at: f64,
+        at: i64,
     ) -> Result<(), String> {
         let user_id = user_id.to_owned();
         let release = release.clone();
         self.db
             .write(Lane::Foreground, "discover.queue.ignore", move |tx| {
                 tx.execute(
-                    "INSERT INTO ignored_releases (user_id, release_group_mbid_lower, \
+                    "INSERT INTO catalog_ignored_releases (user_id, release_group_mbid_lower, \
                          release_group_mbid, artist_mbid, release_name, artist_name, ignored_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
+                     WHERE EXISTS (SELECT 1 FROM auth_users WHERE id = ?1) \
                      ON CONFLICT(user_id, release_group_mbid_lower) DO UPDATE SET \
                          release_group_mbid = excluded.release_group_mbid, \
                          artist_mbid = excluded.artist_mbid, \
@@ -115,69 +107,21 @@ impl QueueDb {
             .map_err(|error: DbError| format!("ignore write: {error}"))
     }
 
-    /// Drop ignores older than `before` (unix seconds). Returns how many
-    /// went.
-    pub async fn prune_ignored(&self, before: f64) -> Result<usize, String> {
+    /// Drop ignores older than `before` (unix ms). Returns how many went.
+    pub async fn prune_ignored(&self, before: i64) -> Result<usize, String> {
         self.db
             .write(
                 Lane::Background,
                 "discover.queue.prune_ignored",
                 move |tx| {
                     Ok(tx.execute(
-                        "DELETE FROM ignored_releases WHERE ignored_at < ?1",
+                        "DELETE FROM catalog_ignored_releases WHERE ignored_at < ?1",
                         rusqlite::params![before],
                     )?)
                 },
             )
             .await
             .map_err(|error: DbError| format!("ignore prune: {error}"))
-    }
-
-    /// The user's saved deck as stored JSON, when it was built against the
-    /// current library catalog revision.
-    pub async fn load_deck(&self, user_id: &str) -> Result<Option<Vec<u8>>, String> {
-        let row: Option<(Vec<u8>,)> = sqlx::query_as(
-            "SELECT snapshot.payload FROM discovery_snapshots snapshot \
-             JOIN library_catalog_revision revision ON revision.singleton = 1 \
-             WHERE snapshot.snapshot_key = ?1 AND snapshot.catalog_revision = revision.value",
-        )
-        .bind(deck_key(user_id))
-        .fetch_optional(self.db.sqlx())
-        .await
-        .map_err(|error| format!("queue snapshot read: {error}"))?;
-        Ok(row.map(|(payload,)| payload))
-    }
-
-    /// Save the user's deck against the current catalog revision.
-    pub async fn save_deck(
-        &self,
-        user_id: &str,
-        payload: Vec<u8>,
-        saved_at: f64,
-    ) -> Result<(), String> {
-        let user_id = user_id.to_owned();
-        self.db
-            .write(Lane::Background, "discover.queue.save_deck", move |tx| {
-                let revision: i64 = tx.query_row(
-                    "SELECT COALESCE((SELECT value FROM library_catalog_revision \
-                     WHERE singleton = 1), 0)",
-                    [],
-                    |row| row.get(0),
-                )?;
-                tx.execute(
-                    "INSERT INTO discovery_snapshots \
-                         (snapshot_key, user_id, payload, saved_at, stale, catalog_revision) \
-                     VALUES (?1, ?2, ?3, ?4, 0, ?5) \
-                     ON CONFLICT(snapshot_key) DO UPDATE SET \
-                         user_id = excluded.user_id, payload = excluded.payload, \
-                         saved_at = excluded.saved_at, stale = 0, \
-                         catalog_revision = excluded.catalog_revision",
-                    rusqlite::params![deck_key(&user_id), user_id, payload, saved_at, revision],
-                )?;
-                Ok(())
-            })
-            .await
-            .map_err(|error: DbError| format!("queue snapshot write: {error}"))
     }
 
     /// Known release to release-group answers for the given lowercased
@@ -189,7 +133,7 @@ impl QueueDb {
         let mut found = HashMap::new();
         for chunk in release_mbids.chunks(MAX_BIND) {
             let sql = format!(
-                "SELECT source_mbid_lower, release_group_mbid FROM mbid_resolution_map \
+                "SELECT source_mbid_lower, release_group_mbid FROM catalog_mbid_resolutions \
                  WHERE source_mbid_lower IN ({})",
                 vec!["?"; chunk.len()].join(",")
             );
@@ -218,7 +162,7 @@ impl QueueDb {
             .write(Lane::Background, "discover.queue.resolutions", move |tx| {
                 for (release, group) in &answers {
                     tx.execute(
-                        "INSERT INTO mbid_resolution_map \
+                        "INSERT INTO catalog_mbid_resolutions \
                              (source_mbid_lower, source_mbid, release_group_mbid) \
                          VALUES (?1, ?1, ?2) \
                          ON CONFLICT(source_mbid_lower) DO UPDATE SET \

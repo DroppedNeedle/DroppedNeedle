@@ -124,10 +124,15 @@ pub async fn clear_cache(
     _caller: Admin,
     ValidJson(body): ValidJson<CacheClearBody>,
 ) -> Result<Json<CacheClearResponse>, ApiError> {
-    super::cache::clear_cache(&admin.cache, admin.covers.as_ref(), &body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
+    super::cache::clear_cache(
+        &admin.cache,
+        admin.db.as_ref(),
+        admin.covers.as_ref(),
+        &body,
+    )
+    .await
+    .map(Json)
+    .map_err(ApiError::from)
 }
 
 /// Queue demand, the job registry and the latest checkpoint pass.

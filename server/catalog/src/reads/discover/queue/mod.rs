@@ -2,11 +2,11 @@
 //! `services/discover` queue services).
 //!
 //! Each user has at most one background build at a time. A finished deck
-//! is kept in memory and saved to `discovery_snapshots`, so it survives a
-//! restart; it reads as stale once older than the queue TTL or after a
-//! library change. The warm cycle may build decks too, but any request
-//! from the user replaces a warm-cycle build that is still running.
-//! Ignores are durable and every later deck skips them.
+//! is a row of the page cache, its only copy, so it survives a restart;
+//! it reads as stale once older than a day, and a library change leaves
+//! it alone. The warm scheduler may build decks too, but any request from
+//! the user replaces a warm build that is still running. Ignores are
+//! durable and every later deck skips them.
 //!
 //! The pieces: [`build`] assembles a deck from the listening reads,
 //! [`select`] holds the pure picking logic, [`cards`] the per-card
@@ -24,13 +24,17 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::reads::discover::cache::{PageKind, Saved, Timing, UserPageCache, Variant};
 use crate::reads::discover::listening::{Ask, ListeningData};
 use crate::reads::discover::models::{
     DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueBuildStatus,
     QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItemLight,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueDeck, QueueTrigger};
+use crate::reads::discover::scheduler::{Feature, Warm};
 use crate::reads::discover::youtube::LiveYouTube;
+use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};
@@ -45,8 +49,8 @@ use store::QueueDb;
 pub struct QueueSettings {
     /// Cards per deck.
     pub queue_size: usize,
-    /// Seconds before a deck reads as stale.
-    pub ttl_secs: f64,
+    /// How long before a deck reads as stale, ms.
+    pub ttl_ms: i64,
     /// Seed artists per deck.
     pub seed_artists: usize,
     /// Trending wildcards per deck.
@@ -63,13 +67,19 @@ pub struct QueueSettings {
     pub warm_cycle_build: bool,
     /// Days an ignore is kept.
     pub ignored_retention_days: i64,
-    /// Seconds between ignore-ledger prunes.
-    pub prune_interval_secs: f64,
+    /// How long between ignore-ledger prunes, ms.
+    pub prune_interval_ms: i64,
 }
 
-/// How long a built queue deck is served, seconds: a day. Fixed, not a
+/// How long a built queue deck is served, ms: a day. Fixed, not a
 /// setting, like every cache lifetime.
-const QUEUE_TTL_SECS: f64 = 86400.0;
+const QUEUE_TTL_MS: i64 = 86_400_000;
+/// The deck's cache rows: the queue runs its own builds, so the cache's
+/// timing is not used.
+const DECK_TIMING: Timing = Timing {
+    fresh_ms: QUEUE_TTL_MS,
+    retry_ms: 0,
+};
 /// How long a queue card's details are reused: a day.
 const QUEUE_ENRICH_TTL: Duration = Duration::from_secs(86400);
 
@@ -83,7 +93,7 @@ impl QueueSettings {
     pub fn from_advanced(advanced: &AdvancedSettings) -> Self {
         Self {
             queue_size: bounded(advanced.discover_queue_size, 1, 20),
-            ttl_secs: QUEUE_TTL_SECS,
+            ttl_ms: QUEUE_TTL_MS,
             seed_artists: bounded(advanced.discover_queue_seed_artists, 1, 10),
             wildcard_slots: bounded(advanced.discover_queue_wildcard_slots, 0, 10),
             similar_artists_limit: bounded(advanced.discover_queue_similar_artists_limit, 5, 50),
@@ -96,7 +106,7 @@ impl QueueSettings {
             ),
             warm_cycle_build: advanced.discover_queue_warm_cycle_build,
             ignored_retention_days: advanced.ignored_releases_retention_days.max(1),
-            prune_interval_secs: (advanced.store_prune_interval_hours.max(1) * 3600) as f64,
+            prune_interval_ms: advanced.store_prune_interval_hours.max(1) * 3_600_000,
         }
     }
 }
@@ -121,48 +131,49 @@ impl QueueSettings {
     }
 }
 
-/// The deck as saved, in v2's snapshot shape so migrated decks load.
+/// One deck as saved.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SavedQueue {
-    queue: SavedCards,
-    built_at: f64,
-    /// The MusicBrainz source the deck was built against. v2 decks carry
-    /// none and are accepted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    source: Option<String>,
+pub struct Deck {
+    /// Build id.
+    queue_id: String,
+    /// Deck cards in order.
+    items: Vec<QueueItemLight>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SavedCards {
-    #[serde(default)]
-    items: Vec<QueueItemLight>,
-    #[serde(default)]
-    queue_id: String,
+/// Where one user's build stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// No build running; the saved deck, if any, is the answer.
+    Settled,
+    /// A build is running.
+    Building,
+    /// The last build failed.
+    Failed,
 }
 
 /// One user's queue state.
 struct UserState {
     source: String,
-    phase: QueueBuildStatus,
-    deck: Option<SavedQueue>,
+    phase: Phase,
     error: Option<String>,
     scheduled: bool,
     run: u64,
     task: Option<tokio::task::AbortHandle>,
-    loaded: bool,
+    /// A finished deck until its row is written, so the build reads as
+    /// done the moment it is.
+    unsaved: Option<Saved<Deck>>,
 }
 
 impl UserState {
     fn new(source: &str) -> Self {
         Self {
             source: source.to_owned(),
-            phase: QueueBuildStatus::Idle,
-            deck: None,
+            phase: Phase::Settled,
             error: None,
             scheduled: false,
             run: 0,
             task: None,
-            loaded: false,
+            unsaved: None,
         }
     }
 
@@ -172,46 +183,52 @@ impl UserState {
         }
     }
 
-    fn is_stale(&self, settings: &QueueSettings, now: f64) -> bool {
-        match &self.deck {
-            None => true,
-            Some(deck) => now - deck.built_at > settings.ttl_secs,
-        }
-    }
-
-    fn status(&self, settings: &QueueSettings, now: f64) -> DiscoverQueueStatusResponse {
-        let mut status = DiscoverQueueStatusResponse {
-            status: self.phase,
-            queue_id: None,
-            item_count: None,
-            built_at: None,
-            stale: None,
-            error: None,
-        };
-        match (self.phase, &self.deck) {
-            (QueueBuildStatus::Ready, Some(deck)) => {
-                status.queue_id = Some(deck.queue.queue_id.clone());
-                status.item_count = Some(deck.queue.items.len() as i64);
-                status.built_at = Some(deck.built_at as i64);
-                status.stale = Some(self.is_stale(settings, now));
-            }
-            (QueueBuildStatus::Error, _) => status.error = self.error.clone(),
-            _ => {}
-        }
-        status
+    fn settled(&mut self) {
+        self.phase = Phase::Settled;
     }
 }
 
-fn now_secs() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |elapsed| elapsed.as_secs_f64())
+fn is_stale(deck: Option<&Saved<Deck>>, settings: &QueueSettings, now: i64) -> bool {
+    deck.is_none_or(|deck| now - deck.built_at > settings.ttl_ms)
 }
 
-fn to_deck(saved: &SavedQueue) -> QueueDeck {
+fn status_of(
+    phase: Phase,
+    error: Option<String>,
+    deck: Option<&Saved<Deck>>,
+    settings: &QueueSettings,
+    now: i64,
+) -> DiscoverQueueStatusResponse {
+    let mut status = DiscoverQueueStatusResponse {
+        status: QueueBuildStatus::Idle,
+        queue_id: None,
+        item_count: None,
+        built_at: None,
+        stale: None,
+        error: None,
+    };
+    match (phase, deck) {
+        (Phase::Building, _) => status.status = QueueBuildStatus::Building,
+        (Phase::Failed, _) => {
+            status.status = QueueBuildStatus::Error;
+            status.error = error;
+        }
+        (Phase::Settled, Some(deck)) => {
+            status.status = QueueBuildStatus::Ready;
+            status.queue_id = Some(deck.value.queue_id.clone());
+            status.item_count = Some(deck.value.items.len() as i64);
+            status.built_at = Some(deck.built_at / 1000);
+            status.stale = Some(is_stale(Some(deck), settings, now));
+        }
+        (Phase::Settled, None) => {}
+    }
+    status
+}
+
+fn to_deck(saved: &Saved<Deck>) -> QueueDeck {
     QueueDeck {
-        queue_id: saved.queue.queue_id.clone(),
-        items: saved.queue.items.clone(),
+        queue_id: saved.value.queue_id.clone(),
+        items: saved.value.items.clone(),
     }
 }
 
@@ -230,11 +247,12 @@ fn generate_response(action: &str, status: DiscoverQueueStatusResponse) -> Queue
 struct Inner {
     listening: ListeningData,
     db: QueueDb,
+    decks: UserPageCache<Deck>,
     youtube: Arc<LiveYouTube>,
     cache: ProviderCacheStore,
     settings: Live<AdvancedSettings>,
     states: Mutex<HashMap<String, UserState>>,
-    last_prune: Mutex<f64>,
+    last_prune: Mutex<i64>,
 }
 
 /// The live queue deck.
@@ -243,26 +261,40 @@ pub struct LiveQueue {
     inner: Arc<Inner>,
 }
 
+/// What the queue is built over.
+pub struct QueueInputs {
+    /// Provider reads.
+    pub listening: ListeningData,
+    /// The database: the queue tables and the deck rows.
+    pub db: Db,
+    /// The kernel clock decks and ignores are dated by.
+    pub clock: Arc<dyn Clock>,
+    /// Previews behind the cards.
+    pub youtube: Arc<LiveYouTube>,
+    /// Where card details are cached.
+    pub cache: ProviderCacheStore,
+    /// The advanced settings, read on every call.
+    pub settings: Live<AdvancedSettings>,
+}
+
 impl LiveQueue {
-    /// A queue over `listening`, storing in `db`, previewing through
-    /// `youtube`, caching card details in `cache`, and reading its
-    /// settings through `settings` on every call.
-    pub fn new(
-        listening: ListeningData,
-        db: QueueDb,
-        youtube: Arc<LiveYouTube>,
-        cache: ProviderCacheStore,
-        settings: Live<AdvancedSettings>,
-    ) -> Self {
+    /// A queue over its inputs.
+    pub fn new(inputs: QueueInputs) -> Self {
         Self {
             inner: Arc::new(Inner {
-                listening,
-                db,
-                youtube,
-                cache,
-                settings,
+                decks: UserPageCache::new(
+                    inputs.db.clone(),
+                    inputs.clock,
+                    PageKind::Queue,
+                    DECK_TIMING,
+                ),
+                db: QueueDb::new(inputs.db),
+                listening: inputs.listening,
+                youtube: inputs.youtube,
+                cache: inputs.cache,
+                settings: inputs.settings,
                 states: Mutex::new(HashMap::new()),
-                last_prune: Mutex::new(0.0),
+                last_prune: Mutex::new(0),
             }),
         }
     }
@@ -294,114 +326,105 @@ impl Inner {
         state
     }
 
-    /// Load the user's saved deck once per source.
-    async fn ensure_loaded(&self, user_id: &str) {
-        let source = self.listening.namespace();
+    /// The user's deck: one just built and not yet written, else the
+    /// saved row.
+    async fn deck(&self, user_id: &str, variant: &Variant) -> Option<Saved<Deck>> {
         {
             let mut states = self.states();
-            if Self::state(&mut states, user_id, &source).loaded {
-                return;
+            let state = Self::state(&mut states, user_id, &variant.source);
+            if let Some(unsaved) = &state.unsaved {
+                return Some(unsaved.clone());
             }
         }
-        let saved = self.db.load_deck(user_id).await;
-        let mut states = self.states();
-        let state = Self::state(&mut states, user_id, &source);
-        if state.loaded {
-            return;
-        }
-        state.loaded = true;
-        let saved = match saved {
-            Ok(Some(saved)) => saved,
-            Ok(None) => return,
-            Err(cause) => {
-                tracing::warn!(%cause, "saved queue deck unreadable; building a new one");
-                return;
-            }
-        };
-        let deck: SavedQueue = match serde_json::from_slice(&saved) {
-            Ok(deck) => deck,
-            Err(error) => {
-                tracing::warn!(%error, "ignoring a saved queue deck that does not decode");
-                return;
-            }
-        };
-        if deck.source.as_deref().is_some_and(|built| built != source) {
-            return;
-        }
-        if state.deck.is_none() && state.phase != QueueBuildStatus::Building {
-            state.deck = Some(deck);
-            state.phase = QueueBuildStatus::Ready;
-        }
+        self.decks.load(user_id, variant).await
     }
 
     async fn status(&self, user_id: &str) -> DiscoverQueueStatusResponse {
-        self.ensure_loaded(user_id).await;
+        let variant = Variant::for_user(&self.listening, user_id).await;
+        let deck = self.deck(user_id, &variant).await;
         let settings = QueueSettings::read(&self.settings);
-        let source = self.listening.namespace();
         let mut states = self.states();
-        Self::state(&mut states, user_id, &source).status(&settings, now_secs())
+        let state = Self::state(&mut states, user_id, &variant.source);
+        status_of(
+            state.phase,
+            state.error.clone(),
+            deck.as_ref(),
+            &settings,
+            self.decks.now_ms(),
+        )
     }
 
     async fn current(&self, user_id: &str) -> Option<QueueDeck> {
-        self.ensure_loaded(user_id).await;
-        let source = self.listening.namespace();
-        let mut states = self.states();
-        Self::state(&mut states, user_id, &source)
-            .deck
-            .as_ref()
-            .map(to_deck)
+        let variant = Variant::for_user(&self.listening, user_id).await;
+        self.deck(user_id, &variant).await.as_ref().map(to_deck)
     }
 
+    /// Start a build, or say why none started. The handle is the build's
+    /// task, for a caller that waits on it.
     async fn start_build(
         self: &Arc<Self>,
         user_id: &str,
         trigger: QueueTrigger,
-    ) -> QueueGenerateResponse {
-        self.ensure_loaded(user_id).await;
+    ) -> (QueueGenerateResponse, Option<tokio::task::JoinHandle<()>>) {
+        let variant = Variant::for_user(&self.listening, user_id).await;
+        let deck = self.deck(user_id, &variant).await;
+        // The deck is saved under the clear generation of its start, so a
+        // clear while it builds keeps nothing.
+        let generation = self.decks.generation().await;
         let settings = QueueSettings::read(&self.settings);
-        let source = self.listening.namespace();
         let scheduled = trigger == QueueTrigger::Scheduled;
         let force = trigger == QueueTrigger::Request { force: true };
-        let now = now_secs();
+        let now = self.decks.now_ms();
         let mut states = self.states();
-        let state = Self::state(&mut states, user_id, &source);
+        let state = Self::state(&mut states, user_id, &variant.source);
+        let answer = |action: &str, state: &UserState| {
+            generate_response(
+                action,
+                status_of(
+                    state.phase,
+                    state.error.clone(),
+                    deck.as_ref(),
+                    &settings,
+                    now,
+                ),
+            )
+        };
         if scheduled && !settings.warm_cycle_build {
-            return generate_response("disabled", state.status(&settings, now));
+            return (answer("disabled", state), None);
         }
-        if state.phase == QueueBuildStatus::Building && state.scheduled && !scheduled {
+        if state.phase == Phase::Building && state.scheduled && !scheduled {
             // The person asking wins over the warm cycle.
             state.stop_task();
-            state.phase = if state.deck.is_some() {
-                QueueBuildStatus::Ready
-            } else {
-                QueueBuildStatus::Idle
-            };
+            state.settled();
         }
-        if state.phase == QueueBuildStatus::Building {
-            return generate_response("already_building", state.status(&settings, now));
+        if state.phase == Phase::Building {
+            return (answer("already_building", state), None);
         }
-        if !force && state.phase == QueueBuildStatus::Ready && !state.is_stale(&settings, now) {
-            return generate_response("already_ready", state.status(&settings, now));
+        if !force && state.phase == Phase::Settled && !is_stale(deck.as_ref(), &settings, now) {
+            return (answer("already_ready", state), None);
         }
         state.stop_task();
-        state.phase = QueueBuildStatus::Building;
+        state.phase = Phase::Building;
         state.error = None;
         state.scheduled = scheduled;
         state.run += 1;
         let run = state.run;
         let inner = Arc::clone(self);
         let user = user_id.to_owned();
-        let built_for = source.clone();
+        let built_for = variant.clone();
         // Someone who asked waits for the deck; the warm cycle does not.
         let priority = if scheduled {
             RequestPriority::BackgroundSync
         } else {
             RequestPriority::UserInitiated
         };
-        let task =
-            tokio::spawn(async move { inner.run_build(user, built_for, run, priority).await });
+        let task = tokio::spawn(async move {
+            inner
+                .run_build(user, built_for, generation, run, priority)
+                .await
+        });
         state.task = Some(task.abort_handle());
-        generate_response("started", state.status(&settings, now))
+        (answer("started", state), Some(task))
     }
 
     /// One background build. Its result lands only if no newer build or
@@ -409,7 +432,8 @@ impl Inner {
     async fn run_build(
         self: Arc<Self>,
         user_id: String,
-        source: String,
+        variant: Variant,
+        generation: Option<i64>,
         run: u64,
         priority: RequestPriority,
     ) {
@@ -423,59 +447,66 @@ impl Inner {
             ask: ask.clone(),
         };
         let outcome = build_deck(&ctx, &user_id, settings.queue_size).await;
-        let saved = {
+        let built = {
             let mut states = self.states();
             let Some(state) = states.get_mut(&user_id) else {
                 return;
             };
-            if state.run != run || state.source != source {
+            if state.run != run || state.source != variant.source {
                 return;
             }
             state.task = None;
             if state.scheduled && !QueueSettings::read(&self.settings).warm_cycle_build {
                 // The warm cycle was switched off while this ran.
-                state.phase = if state.deck.is_some() {
-                    QueueBuildStatus::Ready
-                } else {
-                    QueueBuildStatus::Idle
-                };
+                state.settled();
                 return;
             }
             match outcome {
                 Ok(items) => {
-                    let deck = SavedQueue {
-                        queue: SavedCards {
+                    let deck = Saved {
+                        value: Deck {
                             items,
                             queue_id: uuid::Uuid::new_v4().to_string(),
                         },
-                        built_at: now_secs(),
-                        source: Some(source),
+                        built_at: self.decks.now_ms(),
                     };
-                    state.deck = Some(deck.clone());
-                    state.phase = QueueBuildStatus::Ready;
+                    state.unsaved = Some(deck.clone());
+                    state.settled();
                     deck
                 }
                 Err(cause) => {
                     tracing::error!(%cause, "discover queue build failed");
-                    state.phase = QueueBuildStatus::Error;
+                    state.phase = Phase::Failed;
                     state.error =
                         Some("The queue could not be built. Try again in a moment.".to_owned());
                     return;
                 }
             }
         };
-        match serde_json::to_vec(&saved) {
-            Ok(payload) => {
-                if let Err(cause) = self.db.save_deck(&user_id, payload, saved.built_at).await {
-                    tracing::warn!(%cause, "queue deck not saved; it lasts until restart");
-                }
+        let saved = match generation {
+            Some(generation) => {
+                self.decks
+                    .save(&user_id, &variant, &built.value, generation)
+                    .await
             }
-            Err(error) => tracing::warn!(%error, "queue deck not encodable; not saved"),
+            None => false,
+        };
+        {
+            let mut states = self.states();
+            if let Some(state) = states.get_mut(&user_id)
+                && saved
+                && state
+                    .unsaved
+                    .as_ref()
+                    .is_some_and(|unsaved| unsaved.value.queue_id == built.value.queue_id)
+            {
+                state.unsaved = None;
+            }
         }
         // Fetch every card's listen count in one call now, so opening the
         // cards does not pay one paced ListenBrainz call each.
-        let ids: Vec<String> = saved
-            .queue
+        let ids: Vec<String> = built
+            .value
             .items
             .iter()
             .map(|item| item.release_group_mbid.clone())
@@ -487,13 +518,13 @@ impl Inner {
 
     /// Drop ignores past their retention, at most once per prune interval.
     async fn prune_if_due(&self, settings: &QueueSettings) {
-        let now = now_secs();
+        let now = self.decks.now_ms();
         let due = {
             let mut last = self
                 .last_prune
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if now - *last < settings.prune_interval_secs {
+            if now - *last < settings.prune_interval_ms {
                 false
             } else {
                 *last = now;
@@ -503,12 +534,33 @@ impl Inner {
         if !due {
             return;
         }
-        let cutoff = now - (settings.ignored_retention_days as f64) * 86_400.0;
+        let cutoff = now - settings.ignored_retention_days * 86_400_000;
         match self.db.prune_ignored(cutoff).await {
             Ok(0) => {}
             Ok(dropped) => tracing::info!(dropped, "expired queue ignores removed"),
             Err(cause) => tracing::warn!(%cause, "queue ignores not pruned; trying next build"),
         }
+    }
+
+    /// A scheduled build, waited for; true when it left a deck.
+    async fn warm(self: &Arc<Self>, user_id: &str) -> bool {
+        let (started, task) = self.start_build(user_id, QueueTrigger::Scheduled).await;
+        match started.action.as_str() {
+            "already_ready" => return true,
+            "started" => {}
+            _ => return false,
+        }
+        let Some(task) = task else {
+            return false;
+        };
+        if task.await.is_err() {
+            // Replaced by a request, or the build panicked.
+            return false;
+        }
+        let source = self.listening.namespace();
+        let mut states = self.states();
+        let state = Self::state(&mut states, user_id, &source);
+        state.phase == Phase::Settled
     }
 
     async fn build_now(
@@ -602,7 +654,7 @@ impl LiveQueue {
         user_id: &'a str,
         trigger: QueueTrigger,
     ) -> BoxFuture<'a, QueueGenerateResponse> {
-        Box::pin(self.inner.start_build(user_id, trigger))
+        Box::pin(async move { self.inner.start_build(user_id, trigger).await.0 })
     }
 
     /// Record one ignored release for the user. Later decks skip it.
@@ -614,7 +666,7 @@ impl LiveQueue {
         Box::pin(async move {
             self.inner
                 .db
-                .ignore(user_id, release, now_secs())
+                .ignore(user_id, release, self.inner.decks.now_ms())
                 .await
                 .map_err(ProviderFailure::failed)
         })
@@ -676,5 +728,15 @@ impl LiveQueue {
                 .cloned()
                 .collect())
         })
+    }
+}
+
+impl Warm for LiveQueue {
+    fn feature(&self) -> Feature {
+        Feature::Queue
+    }
+
+    fn warm<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool> {
+        Box::pin(self.inner.warm(user_id))
     }
 }

@@ -14,7 +14,7 @@ use crate::reads::catalog::upstream::{LiveCatalogSettings, Upstream};
 use crate::reads::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::reads::discover::services::ReadsDeps;
 use crate::reads::discover::{
-    batches, charts, content, home, page, previews, queue, radio, youtube,
+    batches, charts, content, home, page, previews, queue, radio, scheduler, youtube,
 };
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::Db;
@@ -29,7 +29,7 @@ use droppedneedle_providers::{
 /// What production discover needs from the composition root.
 pub struct DiscoverInputs {
     /// The database: catalog reads (ownership, local files), queue
-    /// ignores and saved decks.
+    /// ignores and the page cache.
     pub db: Db,
     /// The factory's shared client.
     pub http: reqwest::Client,
@@ -43,7 +43,8 @@ pub struct DiscoverInputs {
     pub users: UsersDeps,
     /// Whether the discover warm cycle runs (the deployment kill switch).
     pub discover_warmer: bool,
-    /// The kernel clock, which dates the YouTube daily budget.
+    /// The kernel clock, which dates the YouTube daily budget and ages
+    /// the page cache.
     pub clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     /// Where built pages queue the warm of their covers and artist images.
     pub warm: Option<crate::reads::platform::artwork::warm::CoverWarm>,
@@ -112,13 +113,14 @@ pub fn deps_over(
         Arc::clone(&inputs.clock),
     ));
     let settings = config.live();
-    let queues = Arc::new(queue::LiveQueue::new(
-        listening.clone(),
-        queue::store::QueueDb::new(inputs.db.clone()),
-        youtube.clone(),
-        inputs.providers.cache.clone(),
-        settings.clone(),
-    ));
+    let queues = Arc::new(queue::LiveQueue::new(queue::QueueInputs {
+        listening: listening.clone(),
+        db: inputs.db.clone(),
+        clock: Arc::clone(&inputs.clock),
+        youtube: youtube.clone(),
+        cache: inputs.providers.cache.clone(),
+        settings: settings.clone(),
+    }));
     let radio = radio::LiveRadio::new(radio::RadioInputs {
         listening: listening.clone(),
         queue_db: queue::store::QueueDb::new(inputs.db.clone()),
@@ -136,25 +138,36 @@ pub fn deps_over(
         Arc::clone(&inputs.clock),
         Some(inputs.batch_requests.clone()),
     );
-    let (home, page, genre_art, charts) = home::wire(home::HomeWiring {
-        pool: inputs.db.sqlx().clone(),
+    let pages = page::DiscoverPages::new(page::PageInputs {
+        listening: listening.clone(),
+        queue_db: queue::store::QueueDb::new(inputs.db.clone()),
+        db: inputs.db.clone(),
+        clock: Arc::clone(&inputs.clock),
+        advanced: config.live(),
+        integrations: content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
+        warm: inputs.warm.clone(),
+    });
+    let (home, genre_art, charts) = home::wire(home::HomeWiring {
+        db: inputs.db.clone(),
+        clock: Arc::clone(&inputs.clock),
         integrations: content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
         listening: listening.clone(),
-        discover: page::PageInputs {
-            listening,
-            queue_db: queue::store::QueueDb::new(inputs.db.clone()),
-            db: page::store::PageDb::new(inputs.db.clone()),
-            advanced: config.live(),
-            integrations: content::IntegrationSettings::new(
-                config,
-                inputs.download_readiness.clone(),
-            ),
-            queues: queues.clone(),
-            warmer_enabled: inputs.discover_warmer,
-            warm: inputs.warm.clone(),
-        },
+        discover: pages.clone(),
+        warm: inputs.warm.clone(),
         charts,
     });
+    let warm_scheduler = Arc::new(scheduler::WarmScheduler::new(
+        scheduler::activity::ActivityDb::new(inputs.db.clone()),
+        listening,
+        Arc::clone(&inputs.clock),
+        inputs.discover_warmer,
+        vec![
+            Arc::new(pages.clone()),
+            Arc::new(home.clone()),
+            Arc::clone(&queues) as Arc<dyn scheduler::Warm>,
+        ],
+    ));
+    let page = page::LiveDiscover::new(pages, warm_scheduler);
     ReadsDeps {
         content: Arc::new(
             content::LiveContent::new(

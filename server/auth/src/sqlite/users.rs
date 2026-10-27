@@ -63,15 +63,13 @@ const RESTRICTING_HISTORY: [(Statement, &str); 3] = [
     ),
 ];
 
-/// Per-user discovery rows with no foreign key (the tables predate it),
+/// Discovery batches, which have no foreign key (the tables predate it),
 /// deleted with the account as in v2. The batch items go first; v2 left
-/// the batches behind.
-const DISCOVERY_ROWS: [Statement; 5] = [
+/// the batches behind. Discover's other per-user rows go with the account
+/// by their foreign keys.
+const DISCOVERY_ROWS: [Statement; 2] = [
     sql::DELETE_DISCOVERY_BATCH_ITEMS,
     sql::DELETE_DISCOVERY_BATCHES,
-    sql::DELETE_IGNORED_RELEASES,
-    sql::DELETE_DISCOVERY_SNAPSHOTS,
-    sql::DELETE_DISCOVERY_ACTIVITY,
 ];
 
 /// A constraint conflict is the caller's `Conflict`; the rest as

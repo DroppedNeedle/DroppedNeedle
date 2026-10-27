@@ -62,12 +62,6 @@ droppedneedle_kernel::sql! {
         (SELECT id FROM discovery_batches WHERE user_id = ?1)";
     /// The account's discovery batches.
     pub(super) DELETE_DISCOVERY_BATCHES = "DELETE FROM discovery_batches WHERE user_id = ?1";
-    /// The account's ignored releases.
-    pub(super) DELETE_IGNORED_RELEASES = "DELETE FROM ignored_releases WHERE user_id = ?1";
-    /// The account's discovery snapshots.
-    pub(super) DELETE_DISCOVERY_SNAPSHOTS = "DELETE FROM discovery_snapshots WHERE user_id = ?1";
-    /// The account's discovery activity.
-    pub(super) DELETE_DISCOVERY_ACTIVITY = "DELETE FROM discovery_activity WHERE user_id = ?1";
 
     /// Insert one provider row: a local credential or a sign-in binding.
     pub(super) INSERT_PROVIDER = "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \

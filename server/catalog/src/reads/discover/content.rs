@@ -1,10 +1,10 @@
 //! Discover and home content.
 //!
 //! Discover is served by the live page ([`LiveDiscover`]): built in the
-//! background, kept as a snapshot, refreshed on demand and by the warm
-//! cycle. Home is served by [`LiveHome`] the same way, kept in memory.
-//! Both carry the integration status read from the settings the way v2
-//! read it, and genre tiles on both get artwork from the collection.
+//! background, kept in the page cache, refreshed on demand and by the
+//! warm scheduler. Home is served by [`LiveHome`] the same way. Both carry
+//! the integration status read from the settings the way v2 read it, and
+//! genre tiles on both get artwork from the collection.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use sqlx::SqlitePool;
 use crate::reads::discover::genre::artwork::GenreArt;
 use crate::reads::discover::home::{LiveHome, genre_names};
 use crate::reads::discover::page::{GENRE_ARTWORK_SCHEMA, LiveDiscover};
+use crate::reads::discover::scheduler::{ArtistDetail, Feature};
 use crate::reads::discover::{
     models::{DiscoverActivityResponse, DiscoverResponse, HomeResponse, IntegrationStatus},
     ports::{BoxFuture, ProviderFailure},
@@ -193,16 +194,19 @@ impl LiveContent {
         let status = self.status();
         Box::pin(async move {
             if let Some((home, _)) = &self.home {
-                // A visit keeps home in the warm cycle while it is used.
-                let page = self.page.clone();
+                // A visit keeps home in the warm cycle while it is used. A
+                // repeat within five minutes is noted in memory only.
+                let scheduler = Arc::clone(self.page.scheduler());
                 let user = user_id.to_owned();
                 tokio::spawn(async move {
-                    if let Err(error) = page.record_activity(&user, "home", None, None, None).await
+                    if let Err(error) = scheduler
+                        .record(&user, Feature::Home, ArtistDetail::default())
+                        .await
                     {
                         tracing::warn!(%error, "could not record home activity");
                     }
                 });
-                return Ok(home.page(user_id, Some(&self.page)).await);
+                return Ok(home.page(user_id).await);
             }
             Ok(HomeResponse {
                 recently_added: None,
@@ -247,16 +251,10 @@ impl LiveContent {
     pub fn record_activity<'a>(
         &'a self,
         user_id: &'a str,
-        feature: &'a str,
-        artist_mbid: Option<&'a str>,
-        section: Option<&'a str>,
-        provider: Option<&'a str>,
+        feature: Feature,
+        detail: ArtistDetail<'a>,
     ) -> BoxFuture<'a, Result<DiscoverActivityResponse, ProviderFailure>> {
-        Box::pin(async move {
-            self.page
-                .record_activity(user_id, feature, artist_mbid, section, provider)
-                .await
-        })
+        Box::pin(async move { self.page.record_activity(user_id, feature, detail).await })
     }
 
     /// Trigger a background discover rebuild for the user.
@@ -270,9 +268,9 @@ impl LiveContent {
         })
     }
 
-    /// One pass of the warm cycle: rebuild what recent activity says is
-    /// due.
+    /// One pass of the warm cycle: prune old activity and rebuild what
+    /// recent activity says is due.
     pub fn run_due_tick(&self) -> BoxFuture<'_, ()> {
-        Box::pin(async move { self.page.run_due(None).await })
+        Box::pin(async move { self.page.scheduler().tick().await })
     }
 }

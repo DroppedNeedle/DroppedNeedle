@@ -4,7 +4,7 @@
 //! release as the baseline and miss anything that came out between v2's
 //! last poll and the upgrade.
 
-use super::{Source, TableSection, Target, col};
+use super::{Column, Source, TableSection, Target, col};
 
 /// Releases each followed artist already had.
 pub const KNOWN_RELEASES: TableSection = TableSection {
@@ -54,8 +54,9 @@ pub const NEW_RELEASE_FEED: TableSection = TableSection {
     left_behind: "",
 };
 
-/// Releases each user hid from the discover queue. v3's queue reads the
-/// same table, so a hidden release stays hidden after the upgrade.
+/// Releases each user hid from the discover queue, so a hidden release
+/// stays hidden after the upgrade. v2 kept the time in seconds; v3 keeps
+/// milliseconds.
 pub const IGNORED_RELEASES: TableSection = TableSection {
     name: "ignored_release",
     source: Source::Table {
@@ -63,7 +64,7 @@ pub const IGNORED_RELEASES: TableSection = TableSection {
         filter: "",
         requires: &[],
     },
-    target: Target::Table("ignored_releases"),
+    target: Target::Table("catalog_ignored_releases"),
     columns: &[
         col("user_id"),
         col("release_group_mbid_lower"),
@@ -71,7 +72,7 @@ pub const IGNORED_RELEASES: TableSection = TableSection {
         col("artist_mbid"),
         col("release_name"),
         col("artist_name"),
-        col("ignored_at"),
+        Column::new("ignored_at").from_sql("CAST(ignored_at * 1000 AS INTEGER)"),
     ],
     key: &["user_id", "release_group_mbid_lower"],
     unique: &[],

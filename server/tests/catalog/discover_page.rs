@@ -11,6 +11,9 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use droppedneedle_catalog::reads::discover::cache::{
+    PageKind, Timing, UserPageCache, Variant, clear_all,
+};
 use droppedneedle_catalog::reads::discover::listening::{
     AlbumRow, ArtistRow, ListenedAlbum, RankedAlbum, ScoredArtist, SourceContext, UserMusic,
 };
@@ -156,8 +159,8 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
 
     let saved = || async {
         sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM discovery_snapshots \
-             WHERE snapshot_key = 'discover_response:user-1:True:False'",
+            "SELECT COUNT(*) FROM catalog_cached_pages \
+             WHERE user_id = 'user-1' AND page = 'discover' AND listenbrainz = 1 AND lastfm = 0",
         )
         .fetch_one(db.sqlx())
         .await
@@ -206,7 +209,8 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     assert_eq!(cursor["source_id"], "source-1");
     assert_eq!(cursor["generation"], 3);
     let recorded: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM discovery_activity WHERE user_id = 'user-1' AND feature = 'discover'",
+        "SELECT COUNT(*) FROM catalog_discover_activity \
+         WHERE user_id = 'user-1' AND feature = 'discover'",
     )
     .fetch_one(db.sqlx())
     .await
@@ -227,4 +231,102 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
 
     let (status, _) = call(&restarted, "POST", "/api/v3/discover/refresh", None).await;
     assert_eq!(status, StatusCode::ACCEPTED);
+}
+
+async fn seed_user(db: &droppedneedle_kernel::db::Db) {
+    db.write(Lane::Foreground, "test.seed", |tx| {
+        tx.execute(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+                 VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z')",
+            [],
+        )?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .expect("user row");
+}
+
+fn page_cache(rig: &AuthRig) -> UserPageCache<String> {
+    UserPageCache::new(
+        rig.platform.db.clone(),
+        rig.platform.clock.clone(),
+        PageKind::Discover,
+        Timing {
+            fresh_ms: 300_000,
+            retry_ms: 300_000,
+        },
+    )
+}
+
+fn built_for() -> Variant {
+    Variant {
+        source: "source-1:g3".to_owned(),
+        listenbrainz: true,
+        lastfm: false,
+    }
+}
+
+/// A build whose save hears a busy database is not a failed build: its
+/// page is served at once and written on a later visit.
+#[tokio::test]
+async fn a_busy_save_keeps_the_built_page() {
+    let rig = AuthRig::new("discover-busy-save").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let cache = page_cache(&rig);
+    let held = rusqlite::Connection::open(rig.runtime().path()).expect("side connection");
+    held.execute_batch("BEGIN IMMEDIATE")
+        .expect("write lock held");
+
+    let claim = cache.claim("user-1").await.expect("first build");
+    cache
+        .run(claim, &built_for(), async { Some("page".to_owned()) })
+        .await;
+    let served = cache.load("user-1", &built_for()).await;
+    assert_eq!(
+        served.as_ref().map(|page| page.value.as_str()),
+        Some("page")
+    );
+    assert!(!cache.due("user-1", served.as_ref()), "no rebuild, no wait");
+
+    held.execute_batch("ROLLBACK").expect("lock released");
+    drop(held);
+    assert!(cache.load("user-1", &built_for()).await.is_some());
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_cached_pages")
+        .fetch_one(db.sqlx())
+        .await
+        .expect("rows counted");
+    assert_eq!(rows, 1, "the next visit writes the page");
+}
+
+/// Clearing the cache wins over a build already running: what it built
+/// is not kept, and a failed build's wait is dropped.
+#[tokio::test]
+async fn a_clear_wins_over_a_running_build() {
+    let rig = AuthRig::new("discover-clear-build").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let cache = page_cache(&rig);
+
+    let claim = cache.claim("user-1").await.expect("first build");
+    assert!(
+        !cache
+            .run(claim, &built_for(), async { None::<String> })
+            .await
+    );
+    assert!(!cache.due("user-1", None), "a failed build waits");
+    let claim = {
+        clear_all(&db).await.expect("cleared");
+        assert!(cache.load("user-1", &built_for()).await.is_none());
+        assert!(cache.due("user-1", None), "the clear drops the wait");
+        cache.claim("user-1").await.expect("a build")
+    };
+    clear_all(&db).await.expect("cleared again");
+    cache
+        .run(claim, &built_for(), async { Some("stale".to_owned()) })
+        .await;
+    assert!(
+        cache.load("user-1", &built_for()).await.is_none(),
+        "a build claimed before the clear keeps nothing"
+    );
 }

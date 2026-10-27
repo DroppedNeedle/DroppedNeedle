@@ -166,7 +166,7 @@ async fn failures_answer_the_fixed_body_and_an_outage_names_its_service() {
     // with the fixed body naming the request id and nothing of the cause.
     // They go first: the outage below rests ListenBrainz for a while.
     app.db()
-        .execute_batch("DROP TABLE ignored_releases")
+        .execute_batch("DROP TABLE catalog_ignored_releases")
         .expect("ignore ledger dropped");
     for (n, uri) in [
         "/api/v3/home/popular/albums?source=listenbrainz",
@@ -198,7 +198,7 @@ async fn failures_answer_the_fixed_body_and_an_outage_names_its_service() {
             }}),
             "{uri}"
         );
-        for marker in LEAK_MARKERS.iter().chain(&["ignored_releases"]) {
+        for marker in LEAK_MARKERS.iter().chain(&["catalog_ignored_releases"]) {
             assert!(!text.contains(marker), "leaked {marker} on {uri}");
         }
     }

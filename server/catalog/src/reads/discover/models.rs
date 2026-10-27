@@ -119,7 +119,7 @@ pub struct ChartGenre {
 
 /// One row inside a section. The `type` field on the section names which
 /// variant the rows hold; untagged so the wire keeps flat v2-style items.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(untagged)]
 pub enum SectionItem {
     /// An artist row.
@@ -130,6 +130,36 @@ pub enum SectionItem {
     Track(ChartTrack),
     /// A genre row.
     Genre(ChartGenre),
+}
+
+/// Reads a row back by the fields only its kind writes: an album always
+/// writes `requested`, an artist `in_library`; a genre is told from a
+/// track by `artist_count` or by having none of a track's own fields.
+/// Trying each kind in turn would read every album as an artist, since an
+/// artist's fields are all optional.
+impl<'de> Deserialize<'de> for SectionItem {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let has = |key: &str| value.get(key).is_some();
+        const TRACK_ONLY: [&str; 5] = [
+            "mbid",
+            "artist_name",
+            "album_name",
+            "listened_at",
+            "image_url",
+        ];
+        let item = if has("requested") {
+            serde_json::from_value(value).map(Self::Album)
+        } else if has("in_library") {
+            serde_json::from_value(value).map(Self::Artist)
+        } else if !has("artist_count") && TRACK_ONLY.iter().any(|key| has(key)) {
+            serde_json::from_value(value).map(Self::Track)
+        } else {
+            serde_json::from_value(value).map(Self::Genre)
+        };
+        item.map_err(D::Error::custom)
+    }
 }
 
 /// A titled shelf of rows: the unit both home and discover render.

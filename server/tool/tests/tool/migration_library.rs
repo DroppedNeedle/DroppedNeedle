@@ -332,6 +332,16 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     assert_eq!(count("youtube_link"), 1);
     assert_eq!(count("youtube_track_link"), 1);
     assert_eq!(count("ignored_release"), 1);
+    let ignored_at: i64 = sqlx::query_scalar(
+        "SELECT ignored_at FROM catalog_ignored_releases WHERE release_group_mbid = 'RG-HIDDEN'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("hidden release carried");
+    assert_eq!(
+        ignored_at, 1_700_000_800_000,
+        "v2 seconds arrive as milliseconds"
+    );
     pool.close().await;
 
     // v3 starts on the imported state and scans the carried root.

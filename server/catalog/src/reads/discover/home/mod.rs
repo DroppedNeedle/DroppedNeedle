@@ -1,51 +1,59 @@
-//! The home page: library shelves at once, everything else built in the
-//! background and kept fresh while people use it (v2 `HomeService`).
+//! The home page: library shelves read on every visit, the shelves the
+//! user's listening services fill built in the background and kept fresh
+//! while people use it (v2 `HomeService`).
 //!
-//! A visit never waits on a provider. With a built page in memory it gets
-//! that page, and when the page is more than five minutes old a rebuild
-//! starts behind it (`refreshing`, which the page polls). Without one it
-//! gets the local shelves straight from SQLite (recently added, your
-//! albums and artists, recently played, the genre tiles and the discover
-//! teaser) while the full build runs. A build that fails is not retried
+//! A visit never waits on a provider. The local shelves (recently added,
+//! your albums and artists, recently played, the discover teaser) come
+//! straight from SQLite on every visit. The provider shelves come from
+//! the user's row in the page cache, however old, which survives a
+//! restart; when it is missing or more than five minutes old a rebuild
+//! starts behind the visit (`refreshing`, which the page polls). A build
+//! that fails or finds nothing keeps the old shelves and is not retried
 //! for five minutes, so a dead provider does not cost every poll a build.
 //!
-//! The full build adds what the user's listening services know: trending
-//! artists and popular albums (ListenBrainz, or Last.fm when that is the
-//! user's primary source), the user's top albums and loved tracks, their
-//! genres and the weekly exploration playlist. Genre tiles get artwork
-//! from the user's own collection on every answer, so new art shows
-//! without a rebuild. Each kept page queues a background warm of its
-//! covers and artist images.
+//! The provider shelves are what the user's listening services know:
+//! trending artists and popular albums (ListenBrainz, or Last.fm when
+//! that is the user's primary source), the user's top albums and loved
+//! tracks, their genres and the weekly exploration playlist. Ownership is
+//! marked and genre tiles get artwork from the collection on every
+//! answer, so a library change shows at once. Each kept build queues a
+//! background warm of its covers and artist images.
 
 pub mod library;
 pub mod shelves;
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
+use super::cache::{PageKind, Timing, UserPageCache, Variant};
 use super::content::IntegrationSettings;
 use super::listening::{Ask, ListenedAlbum, ListeningData, MusicSource, StatsRange, UserMusic};
 use super::ownership;
 use super::page::build::{genre_list, weekly_exploration};
 use super::page::shelves::SHELF_SIZE;
-use super::page::{FeatureWarmer, GENRE_ARTWORK_SCHEMA, LiveDiscover, add_section};
+use super::page::{DiscoverPages, GENRE_ARTWORK_SCHEMA, add_section};
+use super::scheduler::{Feature, Warm};
 use crate::reads::discover::genre::{self, artwork::GenreArt};
 use crate::reads::discover::models::{
     ChartAlbum, ChartArtist, ChartSection, DiscoverPreview, HomeResponse, IntegrationStatus,
-    SectionItem,
+    SectionItem, WeeklyExploration,
 };
 use crate::reads::discover::ports::BoxFuture;
 use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
+use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::db::Db;
 use library::HomeLibrary;
 
-/// How long a built page is kept.
-const KEEP_SECS: f64 = 3600.0;
-/// A page older than this is rebuilt behind the next visit, and a failed
-/// build is not retried sooner.
-const STALE_SECS: f64 = 300.0;
+/// Shelves older than this are rebuilt behind the next visit, and a
+/// failed build is not retried sooner.
+const TIMING: Timing = Timing {
+    fresh_ms: 300_000,
+    retry_ms: 300_000,
+};
 /// Rows a library read fetches.
 const LIBRARY_ROWS: i64 = 15;
 /// Rows a provider read asks for (v2).
@@ -54,13 +62,6 @@ const PROVIDER_ROWS: u32 = 20;
 const READ_TIMEOUT: Duration = Duration::from_secs(25);
 /// Genres whose tiles get artwork.
 const ART_GENRES: usize = 20;
-
-fn now_secs() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs_f64())
-        .unwrap_or(0.0)
-}
 
 /// Run one read under the bound; a failure empties its shelf with a log
 /// line.
@@ -164,22 +165,23 @@ async fn mark_page(pool: &SqlitePool, page: &mut HomeResponse) {
     mark_owned(pool, albums, artists).await;
 }
 
-/// The covers and artist images a home page shows, top to bottom.
-fn warm_targets(page: &HomeResponse) -> WarmTargets {
+/// The covers and artist images a home page shows, top to bottom: the
+/// local shelves of `page` and a build's `shelves`.
+fn warm_targets(page: &HomeResponse, shelves: &ProviderShelves) -> WarmTargets {
     let mut targets = WarmTargets::default();
-    let shelves = [
+    let sections = [
         &page.recently_added,
         &page.library_albums,
         &page.library_artists,
-        &page.trending_artists,
-        &page.popular_albums,
-        &page.favorite_artists,
-        &page.your_top_albums,
+        &shelves.trending_artists,
+        &shelves.popular_albums,
+        &shelves.favorite_artists,
+        &shelves.your_top_albums,
     ];
-    for section in shelves.into_iter().flatten() {
+    for section in sections.into_iter().flatten() {
         add_section(&mut targets, section);
     }
-    if let Some(weekly) = &page.weekly_exploration {
+    if let Some(weekly) = &shelves.weekly_exploration {
         for track in &weekly.tracks {
             targets.cover(track.release_group_mbid.as_deref());
         }
@@ -214,20 +216,37 @@ fn empty_page(status: IntegrationStatus, refreshing: bool) -> HomeResponse {
     }
 }
 
-/// One built page in memory.
-struct Kept {
-    page: HomeResponse,
-    expires: f64,
+/// The shelves the user's listening services fill: what a home build
+/// makes and the page cache keeps.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderShelves {
+    trending_artists: Option<ChartSection>,
+    popular_albums: Option<ChartSection>,
+    your_top_albums: Option<ChartSection>,
+    favorite_artists: Option<ChartSection>,
+    weekly_exploration: Option<WeeklyExploration>,
+    genre_list: Option<ChartSection>,
 }
 
-/// What home keeps between requests.
-#[derive(Default)]
-struct State {
-    pages: HashMap<String, Kept>,
-    /// When each key's last build finished, and whether it worked.
-    attempts: HashMap<String, (f64, bool)>,
-    /// Users with a build running.
-    building: HashSet<String>,
+impl ProviderShelves {
+    fn has_content(&self) -> bool {
+        self.trending_artists.is_some()
+            || self.popular_albums.is_some()
+            || self.your_top_albums.is_some()
+            || self.favorite_artists.is_some()
+            || self.weekly_exploration.is_some()
+    }
+
+    fn apply(self, page: &mut HomeResponse) {
+        page.trending_artists = self.trending_artists;
+        page.popular_albums = self.popular_albums;
+        page.your_top_albums = self.your_top_albums;
+        page.favorite_artists = self.favorite_artists;
+        page.weekly_exploration = self.weekly_exploration;
+        if self.genre_list.is_some() {
+            page.genre_list = self.genre_list;
+        }
+    }
 }
 
 struct Inner {
@@ -237,7 +256,8 @@ struct Inner {
     art: Arc<GenreArt>,
     integrations: IntegrationSettings,
     warm: Option<CoverWarm>,
-    state: Mutex<State>,
+    cache: UserPageCache<ProviderShelves>,
+    discover: Option<DiscoverPages>,
 }
 
 /// The live home page.
@@ -246,18 +266,22 @@ pub struct LiveHome {
     inner: Arc<Inner>,
 }
 
-/// Clears a user's "building" mark however the build ends.
-struct BuildGuard {
-    inner: Arc<Inner>,
-    user_id: String,
-}
-
-impl Drop for BuildGuard {
-    fn drop(&mut self) {
-        if let Ok(mut state) = self.inner.state.lock() {
-            state.building.remove(&self.user_id);
-        }
-    }
+/// What home is built over.
+pub struct HomeInputs {
+    /// Provider reads.
+    pub listening: ListeningData,
+    /// The database: library reads and the page cache.
+    pub db: Db,
+    /// The kernel clock the shelves age by.
+    pub clock: Arc<dyn Clock>,
+    /// The integration flags, read per visit.
+    pub integrations: IntegrationSettings,
+    /// Genre tile artwork.
+    pub art: Arc<GenreArt>,
+    /// Where a kept build queues its image warm, when anywhere.
+    pub warm: Option<CoverWarm>,
+    /// The discover pages, for the teaser, when there are any.
+    pub discover: Option<DiscoverPages>,
 }
 
 /// Sitewide or user album rows that map to a release group.
@@ -265,152 +289,99 @@ fn ranked(rows: Vec<ListenedAlbum>) -> Vec<super::listening::RankedAlbum> {
     rows.into_iter().filter_map(ListenedAlbum::ranked).collect()
 }
 
-/// The cache key: the user plus which services are linked, so linking or
-/// unlinking one starts a fresh page.
-fn key_for(user_id: &str, music: &UserMusic) -> String {
-    format!(
-        "{user_id}:{}:{}",
-        music.listenbrainz.is_some(),
-        music.lastfm
-    )
-}
-
 impl LiveHome {
-    /// Home over the provider reads in `listening`, the library in `pool`
-    /// and the integration flags in `integrations`, with genre art from
-    /// `art`; a kept page queues its image warm on `warm`, when given.
-    pub fn new(
-        listening: ListeningData,
-        pool: SqlitePool,
-        integrations: IntegrationSettings,
-        art: Arc<GenreArt>,
-        warm: Option<CoverWarm>,
-    ) -> Self {
+    /// Home over its inputs.
+    pub fn new(inputs: HomeInputs) -> Self {
+        let pool = inputs.db.sqlx().clone();
         Self {
             inner: Arc::new(Inner {
-                listening,
+                cache: UserPageCache::new(inputs.db, inputs.clock, PageKind::Home, TIMING),
+                listening: inputs.listening,
                 library: HomeLibrary::new(pool.clone()),
                 pool,
-                art,
-                integrations,
-                warm,
-                state: Mutex::new(State::default()),
+                art: inputs.art,
+                integrations: inputs.integrations,
+                warm: inputs.warm,
+                discover: inputs.discover,
             }),
         }
     }
 
-    fn lock(&self) -> Option<std::sync::MutexGuard<'_, State>> {
-        match self.inner.state.lock() {
-            Ok(state) => Some(state),
-            Err(_) => {
-                tracing::error!("home state lock poisoned");
-                None
-            }
-        }
-    }
-
-    /// The user's home page. `discover`, when given, supplies the discover
-    /// teaser from its last built page.
-    pub async fn page(&self, user_id: &str, discover: Option<&LiveDiscover>) -> HomeResponse {
+    /// The user's home page: the local shelves now, the provider shelves
+    /// from their last build.
+    pub async fn page(&self, user_id: &str) -> HomeResponse {
         let music = self.inner.listening.accounts(user_id).await;
-        let key = key_for(user_id, &music);
-        let now = now_secs();
-        let (kept, attempt, mut building) = match self.lock() {
-            Some(mut state) => {
-                state.pages.retain(|_, kept| kept.expires > now);
-                state.attempts.retain(|_, (at, _)| now - *at <= KEEP_SECS);
-                (
-                    state.pages.get(&key).map(|kept| kept.page.clone()),
-                    state.attempts.get(&key).copied(),
-                    state.building.contains(user_id),
-                )
-            }
-            None => (None, None, false),
-        };
-        let mut page = match kept {
-            Some(page) => {
-                let built_at = attempt.map_or(0.0, |(at, _)| at);
-                if !building && now - built_at > STALE_SECS {
-                    self.trigger_build(user_id, discover);
-                    building = true;
-                }
-                page
-            }
-            None => {
-                let failed_recently = attempt.is_some_and(|(at, ok)| !ok && now - at <= STALE_SECS);
-                if !building && !failed_recently {
-                    self.trigger_build(user_id, discover);
-                    building = true;
-                }
-                let status = self.inner.integrations.status();
-                self.build_local(user_id, &music, status, discover).await
-            }
-        };
-        page.refreshing = building;
+        let variant = Variant::of(&self.inner.listening, &music);
+        let saved = self.inner.cache.load(user_id, &variant).await;
+        let started =
+            self.inner.cache.due(user_id, saved.as_ref()) && self.start(user_id, variant).await;
+        let refreshing = started || self.inner.cache.building(user_id).is_some();
+        let status = self.inner.integrations.status();
+        let mut page = self.local(user_id, &music, status).await;
+        if let Some(saved) = saved {
+            saved.value.apply(&mut page);
+        }
+        mark_page(&self.inner.pool, &mut page).await;
+        page.refreshing = refreshing;
         self.apply_artwork(&mut page).await;
         page
     }
 
     /// Start a background build for the user unless one is running.
-    fn trigger_build(&self, user_id: &str, discover: Option<&LiveDiscover>) {
+    /// True when one started.
+    async fn start(&self, user_id: &str, variant: Variant) -> bool {
+        let Some(claim) = self.inner.cache.claim(user_id).await else {
+            return false;
+        };
         let home = self.clone();
         let user_id = user_id.to_owned();
-        let discover = discover.cloned();
         tokio::spawn(async move {
-            home.build(&user_id, discover.as_ref()).await;
+            let build = home.build(&user_id);
+            home.inner.cache.run(claim, &variant, build).await;
         });
+        true
     }
 
-    /// Build the user's full page now and keep it. Returns whether a page
-    /// was kept.
-    pub async fn build(&self, user_id: &str, discover: Option<&LiveDiscover>) -> bool {
-        {
-            let Some(mut state) = self.lock() else {
-                return false;
-            };
-            if !state.building.insert(user_id.to_owned()) {
-                return false;
-            }
-        }
-        let _guard = BuildGuard {
-            inner: self.inner.clone(),
-            user_id: user_id.to_owned(),
+    /// Build the user's provider shelves now and keep them. Returns
+    /// whether they were kept.
+    pub async fn warm(&self, user_id: &str) -> bool {
+        let variant = Variant::for_user(&self.inner.listening, user_id).await;
+        let Some(claim) = self.inner.cache.claim(user_id).await else {
+            return false;
         };
+        let build = self.build(user_id);
+        self.inner.cache.run(claim, &variant, build).await
+    }
+
+    /// One build. `None` when it found nothing or the MusicBrainz source
+    /// changed while it ran.
+    async fn build(&self, user_id: &str) -> Option<ProviderShelves> {
         let source = self.inner.listening.namespace();
         let music = self.inner.listening.accounts(user_id).await;
-        let key = key_for(user_id, &music);
-        let status = self.inner.integrations.status();
-        let page = self.build_full(user_id, &music, status, discover).await;
-        let ok = self.inner.listening.namespace() == source;
-        if !ok {
+        let shelves = self.build_shelves(user_id, &music).await;
+        if self.inner.listening.namespace() != source {
             tracing::info!("MusicBrainz source changed during a home build; dropping it");
+            return None;
         }
-        if ok && let Some(warm) = &self.inner.warm {
-            warm.queue("home", warm_targets(&page));
+        if !shelves.has_content() {
+            tracing::warn!(user = %user_id, "home build found nothing to show; keeping the previous shelves");
+            return None;
         }
-        let now = now_secs();
-        if let Some(mut state) = self.lock() {
-            if ok {
-                state.pages.insert(
-                    key.clone(),
-                    Kept {
-                        page,
-                        expires: now + KEEP_SECS,
-                    },
-                );
-            }
-            state.attempts.insert(key, (now, ok));
+        if let Some(warm) = &self.inner.warm {
+            let local = self
+                .local(user_id, &music, self.inner.integrations.status())
+                .await;
+            warm.queue("home", warm_targets(&local, &shelves));
         }
-        ok
+        Some(shelves)
     }
 
-    /// The local first paint: shelves from SQLite only.
-    async fn build_local(
+    /// The local shelves: SQLite only.
+    async fn local(
         &self,
         user_id: &str,
         music: &UserMusic,
         status: IntegrationStatus,
-        discover: Option<&LiveDiscover>,
     ) -> HomeResponse {
         let status = user_status(status, music);
         let library = &self.inner.library;
@@ -427,20 +398,12 @@ impl LiveHome {
         page.genre_list = genre_list(None);
         page.service_prompts =
             shelves::service_prompts(status.listenbrainz, status.download_client, status.lastfm);
-        page.discover_preview = Self::discover_preview(user_id, discover).await;
-        mark_page(&self.inner.pool, &mut page).await;
+        page.discover_preview = self.discover_preview(user_id).await;
         page
     }
 
-    /// The full page: the local shelves plus what the user's listening
-    /// services know.
-    async fn build_full(
-        &self,
-        user_id: &str,
-        music: &UserMusic,
-        status: IntegrationStatus,
-        discover: Option<&LiveDiscover>,
-    ) -> HomeResponse {
+    /// The shelves what the user's listening services know fill.
+    async fn build_shelves(&self, user_id: &str, music: &UserMusic) -> ProviderShelves {
         let listening = &self.inner.listening;
         let ask = Ask::build(droppedneedle_providers::RequestPriority::BackgroundSync);
         let ask = &ask;
@@ -541,30 +504,24 @@ impl LiveHome {
                 None => (Vec::new(), None),
             }
         };
-        let (local, (trending, popular), (top, favorites), (genres, weekly)) = tokio::join!(
-            self.build_local(user_id, music, status, discover),
-            charts,
-            personal,
-            listenbrainz_extras,
-        );
-        let mut page = local;
-        page.trending_artists = trending;
-        page.popular_albums = popular;
-        page.your_top_albums = top;
-        page.favorite_artists = favorites;
-        page.weekly_exploration = weekly;
-        page.genre_list = genre_list(Some(&genres));
-        mark_page(&self.inner.pool, &mut page).await;
-        page
+        let ((trending, popular), (top, favorites), (genres, weekly)) =
+            tokio::join!(charts, personal, listenbrainz_extras);
+        ProviderShelves {
+            trending_artists: trending,
+            popular_albums: popular,
+            your_top_albums: top,
+            favorite_artists: favorites,
+            weekly_exploration: weekly,
+            genre_list: (!genres.is_empty())
+                .then(|| genre_list(Some(&genres)))
+                .flatten(),
+        }
     }
 
     /// The discover teaser: the first "because you listen to" shelf of the
     /// user's last discover page.
-    async fn discover_preview(
-        user_id: &str,
-        discover: Option<&LiveDiscover>,
-    ) -> Option<DiscoverPreview> {
-        let page = discover?.cached_page(user_id).await?;
+    async fn discover_preview(&self, user_id: &str) -> Option<DiscoverPreview> {
+        let page = self.inner.discover.as_ref()?.cached_page(user_id).await?;
         let first = page.because_you_listen_to.into_iter().next()?;
         Some(DiscoverPreview {
             seed_artist: first.seed_artist,
@@ -617,47 +574,54 @@ fn user_status(mut status: IntegrationStatus, music: &UserMusic) -> IntegrationS
     status
 }
 
-impl FeatureWarmer for LiveHome {
-    fn warm<'a>(&'a self, user_id: &'a str, discover: &'a LiveDiscover) -> BoxFuture<'a, bool> {
-        Box::pin(self.build(user_id, Some(discover)))
+impl Warm for LiveHome {
+    fn feature(&self) -> Feature {
+        Feature::Home
+    }
+
+    fn warm<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool> {
+        Box::pin(LiveHome::warm(self, user_id))
     }
 }
 
 /// What production home is built from.
 pub struct HomeWiring {
-    /// The reader pool.
-    pub pool: SqlitePool,
-    /// The integration flags, read per build.
+    /// The database.
+    pub db: Db,
+    /// The kernel clock.
+    pub clock: Arc<dyn Clock>,
+    /// The integration flags, read per visit.
     pub integrations: IntegrationSettings,
     /// The listening reads the discover page also uses.
     pub listening: ListeningData,
-    /// What the discover page is built from. Home shows its teaser, and
-    /// its warm cycle warms home.
-    pub discover: super::page::PageInputs,
+    /// The discover pages, for the teaser.
+    pub discover: DiscoverPages,
+    /// Where built pages queue their image warm.
+    pub warm: Option<CoverWarm>,
     /// The charts genre pages are added to.
     pub charts: super::charts::LiveCharts,
 }
 
-/// Production home: the page, the discover page whose warm cycle warms it,
-/// the genre artwork shared with discover, and the charts with genre
-/// pages.
-pub fn wire(wiring: HomeWiring) -> (LiveHome, LiveDiscover, Arc<GenreArt>, genre::WithGenrePages) {
-    let art = Arc::new(GenreArt::new(HomeLibrary::new(wiring.pool.clone())));
-    let warm = wiring.discover.warm.clone();
-    let home = LiveHome::new(
-        wiring.listening.clone(),
-        wiring.pool.clone(),
-        wiring.integrations,
-        art.clone(),
-        warm.clone(),
-    );
-    let discover = LiveDiscover::with_home(wiring.discover, Arc::new(home.clone()));
+/// Production home: the page, the genre artwork shared with discover, and
+/// the charts with genre pages.
+pub fn wire(wiring: HomeWiring) -> (LiveHome, Arc<GenreArt>, genre::WithGenrePages) {
+    let pool = wiring.db.sqlx().clone();
+    let art = Arc::new(GenreArt::new(HomeLibrary::new(pool.clone())));
+    let home = LiveHome::new(HomeInputs {
+        listening: wiring.listening.clone(),
+        db: wiring.db,
+        clock: wiring.clock,
+        integrations: wiring.integrations,
+        art: art.clone(),
+        warm: wiring.warm.clone(),
+        discover: Some(wiring.discover),
+    });
     let pages = Arc::new(genre::GenrePages::new(
-        wiring.pool,
+        pool,
         wiring.listening,
         art.clone(),
-        warm,
+        wiring.warm,
     ));
     let charts = genre::WithGenrePages::new(wiring.charts, pages);
-    (home, discover, art, charts)
+    (home, art, charts)
 }

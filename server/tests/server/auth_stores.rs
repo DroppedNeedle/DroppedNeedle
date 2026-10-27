@@ -517,6 +517,38 @@ async fn users_named_by_library_history_are_not_deleted() {
         UserDeletion::Referenced(vec!["artist reconciliation dismissals"])
     );
     assert!(fx.auth.users.get_by_id("user-2").await.unwrap().is_some());
+
+    // Once nothing names the account, it goes, and its discover rows with
+    // it.
+    let side = rusqlite::Connection::open(fx.runtime().path()).unwrap();
+    side.busy_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    side.execute_batch(
+        "DELETE FROM library_artist_reconciliation_dismissals; \
+         INSERT INTO catalog_ignored_releases (user_id, release_group_mbid_lower, \
+         release_group_mbid, artist_mbid, release_name, artist_name, ignored_at) \
+         VALUES ('user-2', 'rg', 'RG', 'a', 'R', 'A', 1); \
+         INSERT INTO catalog_cached_pages (user_id, page, source, listenbrainz, lastfm, \
+         payload, built_at) VALUES ('user-2', 'home', 's', 0, 0, x'7b7d', 1); \
+         INSERT INTO catalog_discover_activity (user_id, feature, source, used_at) \
+         VALUES ('user-2', 'home', 's', 1);",
+    )
+    .unwrap();
+    drop(side);
+    assert_eq!(
+        fx.auth.users.delete("user-2").await.unwrap(),
+        UserDeletion::Deleted
+    );
+    assert_eq!(
+        count(
+            &fx,
+            "SELECT (SELECT COUNT(*) FROM catalog_ignored_releases) \
+             + (SELECT COUNT(*) FROM catalog_cached_pages) \
+             + (SELECT COUNT(*) FROM catalog_discover_activity)"
+        )
+        .await,
+        0
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

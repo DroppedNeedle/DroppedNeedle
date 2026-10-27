@@ -4,18 +4,21 @@
 //! Last.fm, TheAudioDB and the rest) in their own cache file, and the cover
 //! image cache on disk (album covers and artist images). The stats give
 //! rows and bytes per provider and the images on disk; a clear drops
-//! provider data, images, or both. Anything cleared is fetched again on
-//! demand.
+//! provider data, images, or both. Clearing provider data also drops the
+//! discover, home and queue pages built from it. Anything cleared is
+//! fetched or built again on demand.
 
 use droppedneedle_kernel::db::cache::CacheError;
 
 use super::{
+    AdminDb,
     error::AdminError,
     models::{
         CacheClearBody, CacheClearResponse, CacheClearScope, CacheStatsResponse,
         ProviderSourceStats,
     },
 };
+use droppedneedle_catalog::reads::discover::cache as discover_pages;
 use droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache;
 use droppedneedle_providers::ProviderCacheStore;
 
@@ -48,13 +51,20 @@ pub async fn cache_stats(
     }
 }
 
-/// Clear provider data, the images, or both (the default).
+/// Clear provider data, the images, or both (the default). Provider data
+/// takes the built discover pages in `db` with it.
 pub async fn clear_cache(
     cache: &ProviderCacheStore,
+    db: Option<&AdminDb>,
     covers: Option<&ArtworkCache>,
     body: &CacheClearBody,
 ) -> Result<CacheClearResponse, AdminError> {
     let clear_rows = || async {
+        if let Some(db) = db {
+            discover_pages::clear_all(&db.db)
+                .await
+                .map_err(|error| AdminError::internal(&error))?;
+        }
         match cache.clear().await {
             Ok(cleared) => Ok(cleared),
             // An off cache holds nothing to clear.

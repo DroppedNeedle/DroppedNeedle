@@ -27,6 +27,7 @@ use crate::reads::discover::{
     previews::LivePreviews,
     queue::LiveQueue,
     radio::LiveRadio,
+    scheduler::{ArtistDetail, Feature},
     youtube::LiveYouTube,
 };
 
@@ -194,14 +195,12 @@ pub async fn record_activity(
     user_id: &str,
     body: &crate::reads::discover::models::DiscoverActivityRequest,
 ) -> Result<DiscoverActivityResponse, ServiceError> {
-    match body.feature.as_str() {
-        "home" | "discover" | "queue" | "artist" => {}
-        other => {
-            return Err(ServiceError::InvalidInput(format!(
-                "Unknown feature '{other}'; want home, discover, queue, or artist"
-            )));
-        }
-    }
+    let Some(feature) = Feature::parse(&body.feature) else {
+        return Err(ServiceError::InvalidInput(format!(
+            "Unknown feature '{}'; want home, discover, queue, or artist",
+            body.feature
+        )));
+    };
     if let Some(section) = body.section.as_deref()
         && !matches!(section, "similar" | "top_songs" | "top_albums")
     {
@@ -216,7 +215,7 @@ pub async fn record_activity(
             "Unknown provider '{provider}'; want lastfm or listenbrainz"
         )));
     }
-    if body.feature == "artist" {
+    if feature == Feature::Artist {
         let valid_artist = body
             .artist_mbid
             .as_deref()
@@ -235,10 +234,12 @@ pub async fn record_activity(
         .content
         .record_activity(
             user_id,
-            &body.feature,
-            body.artist_mbid.as_deref(),
-            body.section.as_deref(),
-            body.provider.as_deref(),
+            feature,
+            ArtistDetail {
+                artist_mbid: body.artist_mbid.as_deref(),
+                section: body.section.as_deref(),
+                provider: body.provider.as_deref(),
+            },
         )
         .await?)
 }
