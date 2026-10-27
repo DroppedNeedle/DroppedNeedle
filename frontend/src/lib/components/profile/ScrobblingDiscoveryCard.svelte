@@ -43,6 +43,10 @@
 	const connections = $derived(connectionsQuery.data?.connections ?? []);
 	const lb = $derived(connections.find((c) => c.service === 'listenbrainz'));
 	const lfm = $derived(connections.find((c) => c.service === 'lastfm'));
+	// A user's own API key pair is stored as the Last.fm connection before the
+	// sign-in finishes; the account name arrives only with the session, so a
+	// link without one is not linked yet and still needs Connect and Finish.
+	const lfmLinked = $derived(Boolean(lfm?.username));
 
 	const prefsQuery = getScrobblePreferencesQuery();
 	const prefs = $derived(prefsQuery.data);
@@ -351,10 +355,10 @@
 								'bg-lastfm/10 text-lastfm ring-lastfm/20',
 								'Last.fm',
 								lfm?.username,
-								Boolean(lfm)
+								lfmLinked
 							)}
 							<div class="shrink-0">
-								{#if lfm}
+								{#if lfmLinked}
 									<Button
 										variant="ghost"
 										size="xs"
@@ -393,7 +397,7 @@
 							</div>
 						</div>
 					</Card>
-					{#if !lfm && lfmCredentialsOpen}
+					{#if !lfmLinked && lfmCredentialsOpen}
 						<Card variant="bordered" padding="sm" class="mt-2 animate-fade-in-up">
 							<div class="space-y-2">
 								<p class="text-xs text-base-content/60">
@@ -445,7 +449,7 @@
 							</div>
 						</Card>
 					{/if}
-					{#if lfmPendingToken && !lfm}
+					{#if lfmPendingToken && !lfmLinked}
 						<p class="mt-2 px-1 text-xs text-base-content/60 animate-fade-in-up">
 							Approve DroppedNeedle in the Last.fm window that opened, then choose Finish.
 						</p>
@@ -460,8 +464,8 @@
 				<div class="space-y-3 px-1">
 					<ToggleRow
 						label="Scrobble to Last.fm"
-						description={lfm ? undefined : 'Link Last.fm above to scrobble.'}
-						disabled={!lfm || updatePrefsMutation.isPending}
+						description={lfmLinked ? undefined : 'Link Last.fm above to scrobble.'}
+						disabled={!lfmLinked || updatePrefsMutation.isPending}
 						bind:checked={
 							() => scrobbleLastfm,
 							(checked) => {

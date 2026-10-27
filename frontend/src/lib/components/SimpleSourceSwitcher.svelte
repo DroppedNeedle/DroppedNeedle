@@ -16,7 +16,9 @@
 	let switching = $state(false);
 
 	let lbEnabled = $derived(connections.some((c) => c.service === 'listenbrainz'));
-	let lfmEnabled = $derived(connections.some((c) => c.service === 'lastfm'));
+	// A Last.fm connection without an account name holds only the user's own
+	// API key pair: the sign-in has not finished.
+	let lfmEnabled = $derived(connections.some((c) => c.service === 'lastfm' && Boolean(c.username)));
 	let showSwitcher = $derived(lbEnabled && lfmEnabled);
 
 	async function handleSwitch(source: MusicSource) {
