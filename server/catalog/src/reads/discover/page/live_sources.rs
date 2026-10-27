@@ -15,13 +15,13 @@ use super::sources::{
     SourceContext, WeeklyPlaylist,
 };
 use crate::reads::catalog::upstream::UNREADABLE_NAMESPACE;
-use crate::reads::discover::adapters::queue::live_sources::{
+use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
+use crate::reads::discover::queue::live_sources::{
     ARTIST_TTL, LiveSources, USER_STATS_TTL, lastfm_result,
 };
-use crate::reads::discover::adapters::queue::sources::{
+use crate::reads::discover::queue::sources::{
     AlbumRow, ArtistRow, QueueSources, SourceResult, StatsRange,
 };
-use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 use droppedneedle_providers::musicbrainz::Criticality;
 use droppedneedle_providers::{CacheKey, RequestPriority, Source};
 
@@ -29,8 +29,7 @@ use droppedneedle_providers::{CacheKey, RequestPriority, Source};
 const WEEKLY_EXPLORATION_PATCH: &str = "weekly-exploration";
 
 /// The priority of every ListenBrainz read the page and home builds make.
-pub(in crate::reads::discover::adapters) const BUILD: RequestPriority =
-    RequestPriority::BackgroundSync;
+pub(in crate::reads::discover) const BUILD: RequestPriority = RequestPriority::BackgroundSync;
 
 fn ranked(
     row: droppedneedle_providers::listenbrainz::stats::ReleaseGroupStat,

@@ -1,20 +1,9 @@
-//! The discover services and the builder that wires them.
+//! The builder that wires the discover services.
 //!
 //! ListenBrainz and Last.fm charts, Deezer/iTunes previews, YouTube search
 //! when a key is set, the queue deck, radio and discovery batches. A part
 //! that cannot run answers empty or with a typed "not available", never
 //! with invented rows.
-
-pub mod batches;
-pub mod charts;
-pub mod content;
-pub mod home;
-pub mod ownership;
-pub mod page;
-pub mod previews;
-pub mod queue;
-pub mod radio;
-pub mod youtube;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,6 +12,9 @@ use crate::reads::catalog::Catalog;
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::catalog::upstream::{LiveCatalogSettings, Upstream};
 use crate::reads::discover::services::ReadsDeps;
+use crate::reads::discover::{
+    batches, charts, content, home, page, previews, queue, radio, youtube,
+};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::ConfigStore;

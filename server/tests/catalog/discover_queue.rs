@@ -16,16 +16,14 @@ use axum::{
 };
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Admin, Principal, Role};
-use droppedneedle_catalog::reads::discover::adapters::batches::{BatchAlbum, BatchRequests};
-use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
+use droppedneedle_catalog::reads::discover::batches::{BatchAlbum, BatchRequests};
+use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
+use droppedneedle_catalog::reads::discover::queue::sources::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
     QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
 };
-use droppedneedle_catalog::reads::discover::adapters::{
-    DiscoverInputs, DiscoverSources, deps_over,
-};
-use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
+use droppedneedle_catalog::reads::discover::wiring::{DiscoverInputs, DiscoverSources, deps_over};
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_media::playback::listening::MemoryListenBrainzLinkStore;

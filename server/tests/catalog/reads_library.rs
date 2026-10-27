@@ -806,7 +806,7 @@ fn sorted_ids(items: &Value, key: &str) -> Vec<String> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn one_album_set_everywhere() {
     use crate::common::compat::{CompatApp, PLAYER, named, rest};
-    use droppedneedle_catalog::reads::discover::adapters::page::library::LibraryReads;
+    use droppedneedle_catalog::reads::discover::page::library::LibraryReads;
 
     let rig = CompatApp::unscanned("reads-library-album-set").await;
     rig.app

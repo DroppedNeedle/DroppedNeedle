@@ -18,9 +18,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use super::library::{ArtCandidate, GenreCandidates, HomeLibrary};
-use crate::reads::discover::adapters::page::library::fold;
+use crate::reads::discover::home::library::{ArtCandidate, GenreCandidates, HomeLibrary};
 use crate::reads::discover::models::{GenreArtwork, GenreArtworkAlbum};
+use crate::reads::discover::page::library::fold;
 use crate::reads::platform::artwork::cache::sha256_hex;
 use crate::reads::platform::artwork::local::{LocalArt, local_art_stamp, read_local_art};
 

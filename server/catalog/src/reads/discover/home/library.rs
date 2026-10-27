@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use sqlx::SqlitePool;
 
-use crate::reads::discover::adapters::page::library::fold;
+use crate::reads::discover::page::library::fold;
 use crate::reads::platform::artwork::local::{art_tracks_column, library_folder};
 
 /// One library album on a shelf.

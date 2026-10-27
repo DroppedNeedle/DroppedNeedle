@@ -1,20 +1,31 @@
 //! Discover: discover + queue + radio + batches, and home
 //! shelves with the range-pair redesign.
 //!
-//! The handlers call [`services`], which hold the concrete [`adapters`]:
-//! the live providers, the database, and honest "not configured" answers
-//! where a feature needs setup first.
+//! The handlers call [`services`], which hold each feature's concrete
+//! service: the live providers, the database, and honest "not configured"
+//! answers where a feature needs setup first. [`wiring`] builds them.
 //!
 //! Wiring: the app mounts [`routes`], which also registers the paths in
 //! the API document. The now-playing route is served by `playback`.
 
-pub mod adapters;
+pub mod batches;
+pub mod charts;
+pub mod content;
 pub mod demand;
 pub mod error;
+pub mod genre;
 pub mod handlers;
+pub mod home;
 pub mod models;
+pub mod ownership;
+pub mod page;
 pub mod ports;
+pub mod previews;
+pub mod queue;
+pub mod radio;
 pub mod services;
+pub mod wiring;
+pub mod youtube;
 
 pub use handlers::routes;
 pub use services::ReadsDeps;

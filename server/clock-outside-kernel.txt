@@ -6,9 +6,9 @@
 # the file is still listed. Inline #[cfg(test)] modules are skipped; a test
 # file of its own is checked like any other. Instant::now() is never listed.
 
-catalog/src/reads/discover/adapters/home/mod.rs  to move: take time from the kernel clock, with the discover cache rework
-catalog/src/reads/discover/adapters/page/mod.rs  to move: take time from the kernel clock, with the discover cache rework
-catalog/src/reads/discover/adapters/queue/mod.rs  to move: take time from the kernel clock, with the discover cache rework
+catalog/src/reads/discover/home/mod.rs  to move: take time from the kernel clock, with the discover cache rework
+catalog/src/reads/discover/page/mod.rs  to move: take time from the kernel clock, with the discover cache rework
+catalog/src/reads/discover/queue/mod.rs  to move: take time from the kernel clock, with the discover cache rework
 
 kernel/src/db/scratch.rs  unique temp folder name from the system time, not app time
 kernel/src/jobs/schedule.rs  seed for timer jitter, not a time anyone reads

@@ -93,9 +93,7 @@ fn reached(tag: &SourceTag, probes: Option<&CachedProbes>) -> bool {
     }
 }
 
-impl droppedneedle_catalog::reads::discover::adapters::content::DownloadReadiness
-    for SourceReadiness
-{
+impl droppedneedle_catalog::reads::discover::content::DownloadReadiness for SourceReadiness {
     fn can_acquire(&self) -> bool {
         SourceReadiness::can_acquire(self)
     }

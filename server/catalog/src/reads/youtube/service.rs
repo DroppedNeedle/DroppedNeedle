@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use crate::reads::collections::db::StoreError;
-use crate::reads::discover::adapters::youtube::LiveYouTube;
 use crate::reads::discover::ports::ProviderFailure;
+use crate::reads::discover::youtube::LiveYouTube;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_providers::ProviderError;

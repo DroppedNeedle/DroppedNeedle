@@ -11,15 +11,15 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle_catalog::reads::discover::adapters::page::sources::{
+use droppedneedle_catalog::reads::discover::page::sources::{
     LastFmChartAlbum, PageSources, PlayedArtist, RankedAlbum, ScoredArtist, SourceContext,
     WeeklyPlaylist,
 };
-use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
+use droppedneedle_catalog::reads::discover::ports::BoxFuture;
+use droppedneedle_catalog::reads::discover::queue::sources::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
     QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
 };
-use droppedneedle_catalog::reads::discover::ports::BoxFuture;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_providers::Providers;
 use serde_json::{Value, json};

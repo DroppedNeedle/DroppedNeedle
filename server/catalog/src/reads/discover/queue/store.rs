@@ -10,8 +10,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::reads::discover::adapters::ownership;
 use crate::reads::discover::models::{IgnoredRelease, QueueIgnoreRequest};
+use crate::reads::discover::ownership;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 
 /// Snapshot key prefix the decks share with v2.

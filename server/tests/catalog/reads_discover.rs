@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::{Json, Router, extract::Query, http::StatusCode, routing::get};
-use droppedneedle_catalog::reads::discover::adapters::charts::{LastFmCharts, LiveCharts};
+use droppedneedle_catalog::reads::discover::charts::{LastFmCharts, LiveCharts};
 use droppedneedle_catalog::reads::discover::models::{ChartRange, ChartSource};
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_media::playback::listening::{

@@ -8,21 +8,17 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use droppedneedle_catalog::reads::discover::adapters::home::LiveHome;
-use droppedneedle_catalog::reads::discover::adapters::home::artwork::GenreArt;
-use droppedneedle_catalog::reads::discover::adapters::home::genre::GenrePages;
-use droppedneedle_catalog::reads::discover::adapters::home::library::HomeLibrary;
-use droppedneedle_catalog::reads::discover::adapters::home::sources::{
-    HomeSources, LovedTrack, TagAlbum,
-};
-use droppedneedle_catalog::reads::discover::adapters::page::sources::{
-    LastFmChartAlbum, RankedAlbum,
-};
-use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
+use droppedneedle_catalog::reads::discover::genre::GenrePages;
+use droppedneedle_catalog::reads::discover::genre::artwork::GenreArt;
+use droppedneedle_catalog::reads::discover::home::LiveHome;
+use droppedneedle_catalog::reads::discover::home::library::HomeLibrary;
+use droppedneedle_catalog::reads::discover::home::sources::{HomeSources, LovedTrack, TagAlbum};
+use droppedneedle_catalog::reads::discover::models::{SectionItem, WeeklyExploration};
+use droppedneedle_catalog::reads::discover::page::sources::{LastFmChartAlbum, RankedAlbum};
+use droppedneedle_catalog::reads::discover::ports::BoxFuture;
+use droppedneedle_catalog::reads::discover::queue::sources::{
     AlbumRow, ArtistRow, SourceResult, UserMusic,
 };
-use droppedneedle_catalog::reads::discover::models::{SectionItem, WeeklyExploration};
-use droppedneedle_catalog::reads::discover::ports::BoxFuture;
 use droppedneedle_kernel::db::{DbError, Lane};
 
 const OWNED_RG: &str = "0a1b2c3d-0000-4000-8000-000000000001";
@@ -212,7 +208,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     let home = LiveHome::new(
         sources.clone(),
         pool.clone(),
-        droppedneedle_catalog::reads::discover::adapters::content::IntegrationSettings::new(
+        droppedneedle_catalog::reads::discover::content::IntegrationSettings::new(
             &crate::common::config_store(&dir),
             Arc::new(crate::common::bundles::NoDownloadSource),
         ),

@@ -37,18 +37,17 @@ use droppedneedle_providers::{CacheKey, ProviderError, Providers, RequestPriorit
 /// How long a popularity refusal keeps Last.fm standing in.
 const POPULARITY_DOWN_FOR: Duration = Duration::from_secs(10 * 60);
 /// Cache lifetime of per-user listening statistics.
-pub(in crate::reads::discover::adapters) const USER_STATS_TTL: Duration =
-    Duration::from_secs(5 * 60);
+pub(in crate::reads::discover) const USER_STATS_TTL: Duration = Duration::from_secs(5 * 60);
 /// Cache lifetime of artist-level and chart reads.
-pub(in crate::reads::discover::adapters) const ARTIST_TTL: Duration = Duration::from_secs(60 * 60);
+pub(in crate::reads::discover) const ARTIST_TTL: Duration = Duration::from_secs(60 * 60);
 
 /// The live provider reads.
 pub struct LiveSources {
-    pub(in crate::reads::discover::adapters) upstream: Upstream,
+    pub(in crate::reads::discover) upstream: Upstream,
     listenbrainz: ListenBrainzClient,
     links: Arc<dyn ListenBrainzLinkStore>,
-    pub(in crate::reads::discover::adapters) jellyfin: Arc<ConnectionResolver>,
-    pub(in crate::reads::discover::adapters) http: reqwest::Client,
+    pub(in crate::reads::discover) jellyfin: Arc<ConnectionResolver>,
+    pub(in crate::reads::discover) http: reqwest::Client,
     listening: ListeningStore,
     popularity_down_until: Mutex<Option<Instant>>,
 }
@@ -77,7 +76,7 @@ impl LiveSources {
     /// The user's Jellyfin client, `None` when Jellyfin is not set up for
     /// them. Discover reads it in its background warm cycle as well as for
     /// a page, so its reads are not counted against the user read bound.
-    pub(in crate::reads::discover::adapters) async fn jellyfin_client(
+    pub(in crate::reads::discover) async fn jellyfin_client(
         &self,
         user_id: &str,
     ) -> SourceResult<Option<RemoteHandle>> {
@@ -92,11 +91,11 @@ impl LiveSources {
         }
     }
 
-    pub(in crate::reads::discover::adapters) fn lb(&self) -> &ListenBrainzClient {
+    pub(in crate::reads::discover) fn lb(&self) -> &ListenBrainzClient {
         &self.listenbrainz
     }
 
-    pub(in crate::reads::discover::adapters) async fn cached<T, Fut>(
+    pub(in crate::reads::discover) async fn cached<T, Fut>(
         &self,
         key: CacheKey,
         ttl: Duration,
@@ -121,7 +120,7 @@ impl LiveSources {
 
     /// The user's ListenBrainz identity, lending the token to reads that
     /// ListenBrainz gates for anonymous callers.
-    pub(in crate::reads::discover::adapters) async fn credentials(
+    pub(in crate::reads::discover) async fn credentials(
         &self,
         user_id: &str,
     ) -> ListenBrainzCredentials {
@@ -142,7 +141,7 @@ impl LiveSources {
         }
     }
 
-    pub(in crate::reads::discover::adapters) fn listenbrainz_result<T>(
+    pub(in crate::reads::discover) fn listenbrainz_result<T>(
         &self,
         result: Result<T, ProviderError>,
     ) -> SourceResult<T> {
@@ -151,7 +150,7 @@ impl LiveSources {
 
     /// [`listenbrainz_result`](Self::listenbrainz_result) for a popularity
     /// read: ListenBrainz switching it off marks popularity as down.
-    pub(in crate::reads::discover::adapters) fn popularity_result<T>(
+    pub(in crate::reads::discover) fn popularity_result<T>(
         &self,
         result: Result<T, ProviderError>,
     ) -> SourceResult<T> {
@@ -161,7 +160,7 @@ impl LiveSources {
         self.listenbrainz_result(result)
     }
 
-    pub(in crate::reads::discover::adapters) async fn lastfm(
+    pub(in crate::reads::discover) async fn lastfm(
         &self,
         user_id: &str,
     ) -> Option<(CatalogLastFm, LastFmCredentials)> {
@@ -183,7 +182,7 @@ impl LiveSources {
         }
     }
 
-    pub(in crate::reads::discover::adapters) fn musicbrainz(
+    pub(in crate::reads::discover) fn musicbrainz(
         &self,
         priority: RequestPriority,
     ) -> crate::reads::catalog::upstream::CatalogMusicBrainz {
@@ -192,7 +191,7 @@ impl LiveSources {
 }
 
 /// A Last.fm answer; an unknown entity is already an empty answer.
-pub(in crate::reads::discover::adapters) fn lastfm_result<T>(
+pub(in crate::reads::discover) fn lastfm_result<T>(
     result: Result<T, ProviderError>,
 ) -> SourceResult<T> {
     result.map_err(ProviderFailure::Provider)
@@ -220,7 +219,7 @@ fn first_youtube(relations: &[Relation]) -> Option<String> {
         .find(|url| url.contains("youtube.com") || url.contains("youtu.be"))
 }
 
-pub(in crate::reads::discover::adapters) fn credit_name(credit: &[ArtistCreditName]) -> String {
+pub(in crate::reads::discover) fn credit_name(credit: &[ArtistCreditName]) -> String {
     credit
         .iter()
         .map(|entry| {

@@ -11,17 +11,17 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::reads::catalog::mapping::should_include_release;
-use crate::reads::discover::adapters::page::build::weekly_exploration;
-use crate::reads::discover::adapters::page::live_sources::BUILD;
-use crate::reads::discover::adapters::page::sources::{LastFmChartAlbum, PageSources, RankedAlbum};
-use crate::reads::discover::adapters::queue::live_sources::{
+use crate::reads::discover::models::WeeklyExploration;
+use crate::reads::discover::page::build::weekly_exploration;
+use crate::reads::discover::page::live_sources::BUILD;
+use crate::reads::discover::page::sources::{LastFmChartAlbum, PageSources, RankedAlbum};
+use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
+use crate::reads::discover::queue::live_sources::{
     ARTIST_TTL, LiveSources, USER_STATS_TTL, credit_name, lastfm_result,
 };
-use crate::reads::discover::adapters::queue::sources::{
+use crate::reads::discover::queue::sources::{
     ArtistRow, QueueSources, SourceResult, StatsRange, UserMusic,
 };
-use crate::reads::discover::models::WeeklyExploration;
-use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 use droppedneedle_providers::musicbrainz::Criticality;
 use droppedneedle_providers::{CacheKey, RequestPriority, Source};
 

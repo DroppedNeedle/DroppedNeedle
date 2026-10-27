@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::adapters::content::LiveContent;
+use super::content::LiveContent;
 use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::discovery_demand::DemandTick;
 

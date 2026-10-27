@@ -10,9 +10,7 @@ use droppedneedle_acquire::requests::RequestsState;
 use droppedneedle_acquire::requests::discovery::DiscoveryBatchRequests;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Admin, Principal, Role};
-use droppedneedle_catalog::reads::discover::adapters::batches::{
-    BatchAlbum, BatchRequests, LiveBatches,
-};
+use droppedneedle_catalog::reads::discover::batches::{BatchAlbum, BatchRequests, LiveBatches};
 use droppedneedle_catalog::reads::discover::models::{DiscoveryBatchCreate, DiscoveryBatchItemIn};
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture};
 

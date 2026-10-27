@@ -4,10 +4,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::reads::discover::adapters::queue::build::cover_url;
 use crate::reads::discover::models::{
     ChartAlbum, ChartArtist, ChartGenre, ChartSection, DiscoverResponse, SectionItem, ServicePrompt,
 };
+use crate::reads::discover::queue::build::cover_url;
 
 /// Rows a shelf shows at most.
 pub const SHELF_SIZE: usize = 15;

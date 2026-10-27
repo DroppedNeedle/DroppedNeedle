@@ -30,8 +30,8 @@ use droppedneedle_catalog::reads::catalog::library::LocalCatalog;
 use droppedneedle_catalog::reads::collections::store::playlists::{
     NewEntry, PlaylistStore, Written,
 };
-use droppedneedle_catalog::reads::discover::adapters::queue::select::{self, Shuffler};
 use droppedneedle_catalog::reads::discover::models::QueueItemLight;
+use droppedneedle_catalog::reads::discover::queue::select::{self, Shuffler};
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::events::{

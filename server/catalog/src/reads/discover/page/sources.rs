@@ -11,10 +11,10 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::reads::discover::adapters::queue::sources::{
+use crate::reads::discover::ports::BoxFuture;
+use crate::reads::discover::queue::sources::{
     AlbumRow, ArtistRow, QueueSources, SourceResult, StatsRange,
 };
-use crate::reads::discover::ports::BoxFuture;
 use droppedneedle_providers::RequestPriority;
 
 /// An album row with the listens that rank it.

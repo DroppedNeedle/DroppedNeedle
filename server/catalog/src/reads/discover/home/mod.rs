@@ -17,8 +17,6 @@
 //! without a rebuild. Each kept page queues a background warm of its
 //! covers and artist images.
 
-pub mod artwork;
-pub mod genre;
 pub mod library;
 pub mod shelves;
 pub mod sources;
@@ -35,13 +33,13 @@ use super::page::build::genre_list;
 use super::page::shelves::SHELF_SIZE;
 use super::page::{FeatureWarmer, GENRE_ARTWORK_SCHEMA, LiveDiscover, add_section};
 use super::queue::sources::{MusicSource, UserMusic};
+use crate::reads::discover::genre::{self, artwork::GenreArt};
 use crate::reads::discover::models::{
     ChartAlbum, ChartArtist, ChartSection, DiscoverPreview, HomeResponse, IntegrationStatus,
     SectionItem,
 };
 use crate::reads::discover::ports::BoxFuture;
 use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
-use artwork::GenreArt;
 use library::HomeLibrary;
 use sources::HomeSources;
 

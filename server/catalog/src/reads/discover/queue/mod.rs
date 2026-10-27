@@ -27,12 +27,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::reads::discover::adapters::youtube::LiveYouTube;
 use crate::reads::discover::models::{
     DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueBuildStatus,
     QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItemLight,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueDeck, QueueTrigger};
+use crate::reads::discover::youtube::LiveYouTube;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};

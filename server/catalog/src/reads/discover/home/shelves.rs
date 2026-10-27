@@ -3,12 +3,12 @@
 
 use super::library::{HomeAlbum, HomeArtist, Play};
 use super::sources::LovedTrack;
-use crate::reads::discover::adapters::page::shelves::{SHELF_SIZE, album, shelf};
-use crate::reads::discover::adapters::page::sources::{LastFmChartAlbum, RankedAlbum};
-use crate::reads::discover::adapters::queue::sources::ArtistRow;
 use crate::reads::discover::models::{
     ChartAlbum, ChartArtist, ChartSection, ChartTrack, SectionItem, ServicePrompt,
 };
+use crate::reads::discover::page::shelves::{SHELF_SIZE, album, shelf};
+use crate::reads::discover::page::sources::{LastFmChartAlbum, RankedAlbum};
+use crate::reads::discover::queue::sources::ArtistRow;
 
 /// A library album row: its own art when it has some, else the release
 /// group's cover.

@@ -9,9 +9,9 @@
 
 use crate::reads::cache_hold::CacheHold;
 use crate::reads::catalog::mapping::clean_lastfm_bio;
-use crate::reads::discover::adapters::youtube::LiveYouTube;
 use crate::reads::discover::models::{DiscoverQueuePreview, QueueEnrichment};
 use crate::reads::discover::ports::ProviderFailure;
+use crate::reads::discover::youtube::LiveYouTube;
 use droppedneedle_providers::RequestPriority;
 
 use super::sources::{QueueSources, SourceResult};

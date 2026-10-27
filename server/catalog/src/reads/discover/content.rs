@@ -11,9 +11,9 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::reads::discover::adapters::home::artwork::GenreArt;
-use crate::reads::discover::adapters::home::{LiveHome, genre_names};
-use crate::reads::discover::adapters::page::{GENRE_ARTWORK_SCHEMA, LiveDiscover};
+use crate::reads::discover::genre::artwork::GenreArt;
+use crate::reads::discover::home::{LiveHome, genre_names};
+use crate::reads::discover::page::{GENRE_ARTWORK_SCHEMA, LiveDiscover};
 use crate::reads::discover::{
     models::{DiscoverActivityResponse, DiscoverResponse, HomeResponse, IntegrationStatus},
     ports::{BoxFuture, ProviderFailure},

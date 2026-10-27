@@ -19,8 +19,8 @@ use droppedneedle_catalog::reads::catalog::{
 use droppedneedle_catalog::reads::collections::{
     CollectionsState, db::CollectionsDb, store::Stores,
 };
-use droppedneedle_catalog::reads::discover::adapters::batches::{BatchAlbum, BatchRequests};
-use droppedneedle_catalog::reads::discover::adapters::content::DownloadReadiness;
+use droppedneedle_catalog::reads::discover::batches::{BatchAlbum, BatchRequests};
+use droppedneedle_catalog::reads::discover::content::DownloadReadiness;
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
 use droppedneedle_catalog::reads::{ReadsInputs, ReadsPorts, ReadsSetup};
 use droppedneedle_kernel::platform::Platform;

@@ -23,21 +23,21 @@ use super::memo::BuildMemo;
 use super::picks::{self, Candidate};
 use super::shelves::{self, SHELF_SIZE, album, artist, genre, shelf};
 use super::sources::{LastFmChartAlbum, PageSources, ScoredArtist};
-use crate::reads::discover::adapters::ownership;
-use crate::reads::discover::adapters::queue::QueueSettings;
-use crate::reads::discover::adapters::queue::build::{
-    BuildContext, VARIOUS_ARTISTS_MBID, lastfm_pools, listened_albums, normalize, or_empty,
-    resolve_release_groups, seed_artists, similar_artist_pools,
-};
-use crate::reads::discover::adapters::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
-use crate::reads::discover::adapters::queue::sources::{
-    AlbumRow, ArtistRow, MusicSource, StatsRange, UserMusic,
-};
-use crate::reads::discover::adapters::queue::store::QueueDb;
 use crate::reads::discover::models::{
     BecauseYouListenTo, ChartAlbum, ChartSection, DiscoverResponse, SectionItem, TopPickItem,
     TopPicksSection, WeeklyExploration, WeeklyTrack,
 };
+use crate::reads::discover::ownership;
+use crate::reads::discover::queue::QueueSettings;
+use crate::reads::discover::queue::build::{
+    BuildContext, VARIOUS_ARTISTS_MBID, lastfm_pools, listened_albums, normalize, or_empty,
+    resolve_release_groups, seed_artists, similar_artist_pools,
+};
+use crate::reads::discover::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
+use crate::reads::discover::queue::sources::{
+    AlbumRow, ArtistRow, MusicSource, StatsRange, UserMusic,
+};
+use crate::reads::discover::queue::store::QueueDb;
 
 /// Bound on any one upstream read in a build.
 const TASK_TIMEOUT: Duration = Duration::from_secs(25);
@@ -201,10 +201,7 @@ fn title_case(text: &str) -> String {
 
 /// A shuffler fixed for one day and one purpose, so a rebuild the same
 /// day reproduces the same shelves instead of reshuffling them.
-pub(in crate::reads::discover::adapters) fn daily_shuffler(
-    today: &str,
-    parts: &[&str],
-) -> Shuffler {
+pub(in crate::reads::discover) fn daily_shuffler(today: &str, parts: &[&str]) -> Shuffler {
     let digest = md5::compute(format!("{today}:{}", parts.join(":")));
     let mut seed = [0u8; 8];
     seed.copy_from_slice(&digest.0[..8]);

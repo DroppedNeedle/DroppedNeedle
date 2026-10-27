@@ -10,7 +10,7 @@ use super::models::{BatchIntake, BatchItem, RequestKind};
 use super::service::RequestsService;
 use super::{RequestsState, ledger::RequestStatus};
 use droppedneedle_auth::{Admin, Principal, Role};
-use droppedneedle_catalog::reads::discover::adapters::batches::{BatchAlbum, BatchRequests};
+use droppedneedle_catalog::reads::discover::batches::{BatchAlbum, BatchRequests};
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BatchRefusal, ProviderFailure};
 use droppedneedle_library::mutations::{MutationError, Mutations};
 

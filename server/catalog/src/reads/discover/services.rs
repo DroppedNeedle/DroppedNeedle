@@ -1,4 +1,4 @@
-//! Domain logic over the discover adapters: clamping, validation, and
+//! Domain logic over the discover features: clamping, validation, and
 //! assembly. Services return typed domain failures; handlers map them to
 //! HTTP. Provider failures stay typed; other causes are log-only strings.
 
@@ -8,10 +8,9 @@ use droppedneedle_auth::Principal;
 use droppedneedle_providers::ProviderError;
 
 use crate::reads::discover::{
-    adapters::{
-        batches::LiveBatches, content::LiveContent, home::genre::WithGenrePages,
-        previews::LivePreviews, queue::LiveQueue, radio::LiveRadio, youtube::LiveYouTube,
-    },
+    batches::LiveBatches,
+    content::LiveContent,
+    genre::WithGenrePages,
     models::{
         AlbumPreviewResponse, ChartRange, ChartSection, ChartSource, DiscoverActivityResponse,
         DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
@@ -25,6 +24,10 @@ use crate::reads::discover::{
         TrendingArtistsPage, YouTubeQuotaResponse, YouTubeSearchResponse,
     },
     ports::{BatchFailure, BatchRefusal, ProviderFailure, QueueTrigger, RadioFailure},
+    previews::LivePreviews,
+    queue::LiveQueue,
+    radio::LiveRadio,
+    youtube::LiveYouTube,
 };
 
 /// Max cards served from one queue read.

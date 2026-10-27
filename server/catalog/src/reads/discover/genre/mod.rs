@@ -5,23 +5,25 @@
 //! covers and artist images (v2 `GenreCoverPrewarmService`), so the page
 //! fills in quickly on the next visit.
 
+pub mod artwork;
+
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use super::artwork::GenreArt;
-use super::library::HomeLibrary;
-use super::mark_owned;
-use super::shelves::{library_album, library_artist};
-use super::sources::HomeSources;
-use crate::reads::discover::adapters::charts::LiveCharts;
-use crate::reads::discover::adapters::page::shelves::album;
+use crate::reads::discover::charts::LiveCharts;
+use crate::reads::discover::home::library::HomeLibrary;
+use crate::reads::discover::home::mark_owned;
+use crate::reads::discover::home::shelves::{library_album, library_artist};
+use crate::reads::discover::home::sources::HomeSources;
 use crate::reads::discover::models::{
     ChartAlbum, ChartArtist, ChartRange, ChartSource, GenreDetailResponse, GenreLibrarySection,
     GenrePopularSection, PopularAlbumsPage, TrendingArtistsPage,
 };
+use crate::reads::discover::page::shelves::album;
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
+use artwork::GenreArt;
 
 /// Popular rows per lane at most.
 const MAX_ROWS: i64 = 100;

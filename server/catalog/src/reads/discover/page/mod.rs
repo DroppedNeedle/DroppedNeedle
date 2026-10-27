@@ -30,15 +30,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::reads::discover::adapters::content::IntegrationSettings;
-use crate::reads::discover::adapters::queue::LiveQueue;
-use crate::reads::discover::adapters::queue::QueueSettings;
-use crate::reads::discover::adapters::queue::store::QueueDb;
+use crate::reads::discover::content::IntegrationSettings;
 use crate::reads::discover::models::{
     ChartSection, DiscoverActivityResponse, DiscoverResponse, IntegrationStatus, QueueBuildStatus,
     SectionItem,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueTrigger};
+use crate::reads::discover::queue::LiveQueue;
+use crate::reads::discover::queue::QueueSettings;
+use crate::reads::discover::queue::store::QueueDb;
 use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
 use build::{Builder, PageSettings};
 use droppedneedle_kernel::runtime_config::{Live, Plain, secret_sections::AdvancedSettings};

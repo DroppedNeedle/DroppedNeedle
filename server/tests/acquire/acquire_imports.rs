@@ -1674,7 +1674,7 @@ async fn readiness_answers(setup: SourceSetup) -> (Vec<bool>, Vec<String>) {
     use droppedneedle_acquire::search_jobs::store::JobStore;
     use droppedneedle_acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs};
     use droppedneedle_acquire::worker::DownloadWorker;
-    use droppedneedle_catalog::reads::discover::adapters::content::IntegrationSettings;
+    use droppedneedle_catalog::reads::discover::content::IntegrationSettings;
 
     let (auth, _, user_id) = seed_rig().await;
     let scratch = crate::common::ScratchDir::new("readiness-table");
