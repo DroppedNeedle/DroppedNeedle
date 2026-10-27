@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use super::ports::DiscoverContent;
+use super::adapters::content::LiveContent;
 use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::discovery_demand::DemandTick;
 
 /// The discover content's warm pass.
-pub struct ContentDemand(pub Arc<dyn DiscoverContent>);
+pub struct ContentDemand(pub Arc<LiveContent>);
 
 impl DemandTick for ContentDemand {
     fn tick(&self) -> BoxFuture<'_, ()> {

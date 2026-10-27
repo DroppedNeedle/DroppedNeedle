@@ -621,21 +621,14 @@ pub struct HomeWiring {
     /// What the discover page is built from. Home shows its teaser, and
     /// its warm cycle warms home.
     pub discover: super::page::PageInputs,
-    /// The chart source genre pages are added to.
-    pub charts: Arc<dyn crate::reads::discover::ports::ChartsSource>,
+    /// The charts genre pages are added to.
+    pub charts: super::charts::LiveCharts,
 }
 
 /// Production home: the page, the discover page whose warm cycle warms it,
-/// the genre artwork shared with discover, and the chart source with genre
+/// the genre artwork shared with discover, and the charts with genre
 /// pages.
-pub fn wire(
-    wiring: HomeWiring,
-) -> (
-    LiveHome,
-    LiveDiscover,
-    Arc<GenreArt>,
-    Arc<dyn crate::reads::discover::ports::ChartsSource>,
-) {
+pub fn wire(wiring: HomeWiring) -> (LiveHome, LiveDiscover, Arc<GenreArt>, genre::WithGenrePages) {
     let art = Arc::new(GenreArt::new(HomeLibrary::new(wiring.pool.clone())));
     let warm = wiring.discover.warm.clone();
     let home = LiveHome::new(
@@ -652,6 +645,6 @@ pub fn wire(
         art.clone(),
         warm,
     ));
-    let charts = Arc::new(genre::WithGenrePages::new(wiring.charts, pages));
+    let charts = genre::WithGenrePages::new(wiring.charts, pages);
     (home, discover, art, charts)
 }

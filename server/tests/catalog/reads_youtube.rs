@@ -1,24 +1,32 @@
-//! YouTube links over a scratch database and the fake YouTube search:
-//! generate an album and its tracks, reuse saved links without searching,
-//! edit and paste links by hand, and delete them again.
+//! YouTube links over a scratch database and the production YouTube search,
+//! talking to a stand-in YouTube Data API: generate an album and its
+//! tracks, reuse saved links without searching, edit and paste links by
+//! hand, and delete them again.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use axum::{
-    Router,
+    Json, Router,
     body::Body,
+    extract::Query,
     http::{Request, StatusCode},
+    routing::get,
 };
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
-use droppedneedle_catalog::reads::discover::fakes::FakeYouTube;
 use droppedneedle_catalog::reads::youtube::{self, YouTubeLinks, store::LinkStore};
+use droppedneedle_kernel::http_client::HttpClientFactory;
+use droppedneedle_kernel::runtime_config::Secret;
+use droppedneedle_kernel::runtime_config::secret_sections::YouTubeConnection;
+use droppedneedle_providers::{ProviderEndpoints, Providers, ReqwestWire};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use crate::common::auth::{test_principal, with_test_principal};
+use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use crate::common::{FixedIdGenerator, ScratchDir};
+use crate::discover_queue::discover_deps;
 
 async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     let mut builder = Request::builder().method(method).uri(uri);
@@ -42,16 +50,66 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
     (status, json)
 }
 
+/// A stand-in YouTube Data API search: a video for every query except
+/// those naming "no-video-here". Records each query it answers.
+async fn youtube_stub() -> (String, Arc<Mutex<Vec<String>>>) {
+    let queries: Arc<Mutex<Vec<String>>> = Arc::default();
+    let seen = queries.clone();
+    let stub = Router::new().route(
+        "/youtube/v3/search",
+        get(move |Query(query): Query<HashMap<String, String>>| {
+            let seen = seen.clone();
+            async move {
+                let q = query.get("q").cloned().unwrap_or_default();
+                seen.lock().unwrap().push(q.clone());
+                let video = match q.as_str() {
+                    "Portishead Dummy full album" => "dummyAlbum1",
+                    "Portishead Roads" => "roadsTrack1",
+                    "Portishead Machine Gun" => "machineGun1",
+                    _ => "",
+                };
+                if video.is_empty() {
+                    Json(json!({"items": []}))
+                } else {
+                    Json(json!({"items": [{"id": {"videoId": video}}]}))
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    (origin, queries)
+}
+
 #[tokio::test]
 async fn youtube_links_journey() {
     let dir = ScratchDir::new("youtube");
-    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+    let rig = AuthRig::new("youtube").await;
+    let (origin, queries) = youtube_stub().await;
+    rig.config
+        .save_secret_blocking(YouTubeConnection {
+            api_key: Secret::new("youtube-key"),
+            enabled: true,
+            api_enabled: true,
+            daily_quota_limit: 10_000,
+        })
+        .expect("youtube settings save");
+    let http = HttpClientFactory::new().unwrap();
+    let providers = Providers::unpaced_at(
+        Arc::new(ReqwestWire::new(&http)),
+        ProviderEndpoints {
+            youtube: origin,
+            ..ProviderEndpoints::closed()
+        },
+    );
+    let search = discover_deps(&rig, &dir, providers, |_| {}).youtube;
     let links = YouTubeLinks::new(
         LinkStore::new(CollectionsDb::new(
-            runtime.db().clone(),
-            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+            rig.platform.db.clone(),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
         )),
-        Arc::new(FakeYouTube::configured()),
+        search,
         Arc::new(FixedIdGenerator::new(
             "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
         )),
@@ -80,6 +138,7 @@ async fn youtube_links_journey() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let video = body["link"]["video_id"].as_str().unwrap().to_owned();
+    assert_eq!(video, "dummyAlbum1");
     assert_eq!(
         body["link"]["embed_url"],
         format!("https://www.youtube.com/embed/{video}")
@@ -87,12 +146,13 @@ async fn youtube_links_journey() {
     assert_eq!(body["link"]["is_manual"], false);
     assert_eq!(
         body["quota"],
-        json!({"used": 120, "limit": 10000, "remaining": 9880, "date": body["quota"]["date"]})
+        json!({"used": 1, "limit": 10000, "remaining": 9999, "date": body["quota"]["date"]})
     );
-    // Asking again answers the saved row unchanged.
+    // Asking again answers the saved row unchanged, without a search.
     let created = body["link"]["created_at"].clone();
     let (_, again) = call(&app, "POST", "/api/v3/youtube/generate", Some(generate)).await;
     assert_eq!(again["link"]["created_at"], created);
+    assert_eq!(*queries.lock().unwrap(), ["Portishead Dummy full album"]);
 
     // No video found is a 404 with a readable message.
     let (status, body) = call(

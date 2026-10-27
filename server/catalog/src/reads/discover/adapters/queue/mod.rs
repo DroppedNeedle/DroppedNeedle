@@ -27,13 +27,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::reads::discover::adapters::youtube::LiveYouTube;
 use crate::reads::discover::models::{
     DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueBuildStatus,
     QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItemLight,
 };
-use crate::reads::discover::ports::{
-    BoxFuture, ProviderFailure, QueueDeck, QueueStore, QueueTrigger, YouTubeSource,
-};
+use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueDeck, QueueTrigger};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};
@@ -234,7 +233,7 @@ fn generate_response(action: &str, status: DiscoverQueueStatusResponse) -> Queue
 struct Inner {
     sources: Arc<dyn QueueSources>,
     db: QueueDb,
-    youtube: Arc<dyn YouTubeSource>,
+    youtube: Arc<LiveYouTube>,
     cache: ProviderCacheStore,
     settings: Live<AdvancedSettings>,
     states: Mutex<HashMap<String, UserState>>,
@@ -254,7 +253,7 @@ impl LiveQueue {
     pub fn new(
         sources: Arc<dyn QueueSources>,
         db: QueueDb,
-        youtube: Arc<dyn YouTubeSource>,
+        youtube: Arc<LiveYouTube>,
         cache: ProviderCacheStore,
         settings: Live<AdvancedSettings>,
     ) -> Self {
@@ -586,12 +585,15 @@ impl Inner {
     }
 }
 
-impl QueueStore for LiveQueue {
-    fn current<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Option<QueueDeck>> {
+impl LiveQueue {
+    /// The user's last built deck, stale or not, when there is one.
+    pub fn current<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Option<QueueDeck>> {
         Box::pin(self.inner.current(user_id))
     }
 
-    fn build_now<'a>(
+    /// Build a deck now, in the request, without keeping it. `count`
+    /// overrides the configured queue size.
+    pub fn build_now<'a>(
         &'a self,
         user_id: &'a str,
         count: Option<usize>,
@@ -599,11 +601,13 @@ impl QueueStore for LiveQueue {
         Box::pin(self.inner.build_now(user_id, count))
     }
 
-    fn status<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, DiscoverQueueStatusResponse> {
+    /// Where the user's background build stands.
+    pub fn status<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, DiscoverQueueStatusResponse> {
         Box::pin(self.inner.status(user_id))
     }
 
-    fn start_build<'a>(
+    /// Start a background build, or report why none started.
+    pub fn start_build<'a>(
         &'a self,
         user_id: &'a str,
         trigger: QueueTrigger,
@@ -611,7 +615,8 @@ impl QueueStore for LiveQueue {
         Box::pin(self.inner.start_build(user_id, trigger))
     }
 
-    fn ignore_release<'a>(
+    /// Record one ignored release for the user. Later decks skip it.
+    pub fn ignore_release<'a>(
         &'a self,
         user_id: &'a str,
         release: &'a QueueIgnoreRequest,
@@ -625,7 +630,8 @@ impl QueueStore for LiveQueue {
         })
     }
 
-    fn ignored<'a>(
+    /// The user's ignore ledger, newest first.
+    pub fn ignored<'a>(
         &'a self,
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<Vec<IgnoredRelease>, ProviderFailure>> {
@@ -638,7 +644,8 @@ impl QueueStore for LiveQueue {
         })
     }
 
-    fn enrich<'a>(
+    /// Details behind one card: tags, date, country, bio, listens, video.
+    pub fn enrich<'a>(
         &'a self,
         user_id: &'a str,
         release_group_mbid: &'a str,
@@ -646,7 +653,8 @@ impl QueueStore for LiveQueue {
         Box::pin(self.inner.enrich(user_id, release_group_mbid))
     }
 
-    fn preview<'a>(
+    /// An on-demand video preview behind one card.
+    pub fn preview<'a>(
         &'a self,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<DiscoverQueuePreview, ProviderFailure>> {
@@ -660,7 +668,8 @@ impl QueueStore for LiveQueue {
         })
     }
 
-    fn validate<'a>(
+    /// The given release groups that the library already holds.
+    pub fn validate<'a>(
         &'a self,
         mbids: &'a [String],
     ) -> BoxFuture<'a, Result<Vec<String>, ProviderFailure>> {

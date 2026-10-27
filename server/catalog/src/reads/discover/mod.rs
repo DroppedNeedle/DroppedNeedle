@@ -1,8 +1,9 @@
 //! Discover: discover + queue + radio + batches, and home
 //! shelves with the range-pair redesign.
 //!
-//! Provider data arrives through the [`ports`] traits. Production runs the
-//! [`adapters`]; the fakes exist for tests only.
+//! The handlers call [`services`], which hold the concrete [`adapters`]:
+//! the live providers, the database, and honest "not configured" answers
+//! where a feature needs setup first.
 //!
 //! Wiring: the app mounts [`routes`], which also registers the paths in
 //! the API document. The now-playing route is served by `playback`.
@@ -10,8 +11,6 @@
 pub mod adapters;
 pub mod demand;
 pub mod error;
-#[cfg(any(test, feature = "test-support"))]
-pub mod fakes;
 pub mod handlers;
 pub mod models;
 pub mod ports;

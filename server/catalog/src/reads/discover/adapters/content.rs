@@ -1,4 +1,4 @@
-//! Discover and home content behind one port.
+//! Discover and home content.
 //!
 //! Discover is served by the live page ([`LiveDiscover`]): built in the
 //! background, kept as a snapshot, refreshed on demand and by the warm
@@ -16,7 +16,7 @@ use crate::reads::discover::adapters::home::{LiveHome, genre_names};
 use crate::reads::discover::adapters::page::{GENRE_ARTWORK_SCHEMA, LiveDiscover};
 use crate::reads::discover::{
     models::{DiscoverActivityResponse, DiscoverResponse, HomeResponse, IntegrationStatus},
-    ports::{BoxFuture, DiscoverContent, ProviderFailure},
+    ports::{BoxFuture, ProviderFailure},
 };
 use droppedneedle_kernel::runtime_config::{
     ConfigStore, Listed, Live, Plain,
@@ -162,8 +162,9 @@ impl LiveContent {
     }
 }
 
-impl DiscoverContent for LiveContent {
-    fn discover<'a>(
+impl LiveContent {
+    /// Cached discover shelves for the user, with section status attached.
+    pub fn discover<'a>(
         &'a self,
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<DiscoverResponse, ProviderFailure>> {
@@ -184,7 +185,8 @@ impl DiscoverContent for LiveContent {
         })
     }
 
-    fn home<'a>(
+    /// Cached home shelves for the user.
+    pub fn home<'a>(
         &'a self,
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<HomeResponse, ProviderFailure>> {
@@ -223,12 +225,14 @@ impl DiscoverContent for LiveContent {
         })
     }
 
-    fn integration_status(&self) -> BoxFuture<'_, Result<IntegrationStatus, ProviderFailure>> {
+    /// Integration availability behind the shelves.
+    pub fn integration_status(&self) -> BoxFuture<'_, Result<IntegrationStatus, ProviderFailure>> {
         let status = self.status();
         Box::pin(async move { Ok(status) })
     }
 
-    fn has_local_files(&self) -> BoxFuture<'_, Result<bool, ProviderFailure>> {
+    /// Whether local files back playback (refines the status row).
+    pub fn has_local_files(&self) -> BoxFuture<'_, Result<bool, ProviderFailure>> {
         Box::pin(async move {
             sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE availability = 'indexed')",
@@ -239,7 +243,8 @@ impl DiscoverContent for LiveContent {
         })
     }
 
-    fn record_activity<'a>(
+    /// Record one discover interaction; returns the personalization cursor.
+    pub fn record_activity<'a>(
         &'a self,
         user_id: &'a str,
         feature: &'a str,
@@ -254,7 +259,8 @@ impl DiscoverContent for LiveContent {
         })
     }
 
-    fn trigger_refresh<'a>(
+    /// Trigger a background discover rebuild for the user.
+    pub fn trigger_refresh<'a>(
         &'a self,
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<(), ProviderFailure>> {
@@ -264,7 +270,9 @@ impl DiscoverContent for LiveContent {
         })
     }
 
-    fn run_due_tick(&self) -> BoxFuture<'_, ()> {
+    /// One pass of the warm cycle: rebuild what recent activity says is
+    /// due.
+    pub fn run_due_tick(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move { self.page.run_due(None).await })
     }
 }

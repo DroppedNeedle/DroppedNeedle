@@ -53,7 +53,7 @@ use crate::reads::discover::models::{
     PlaylistSuggestionsResponse, QueueItemLight, RadioPlanRequest, RadioPlanResponse,
     RadioPlanTrack, RadioRequest, RadioSeedItem, SectionItem,
 };
-use crate::reads::discover::ports::{BoxFuture, ProviderFailure, RadioFailure, RadioPlanner};
+use crate::reads::discover::ports::{BoxFuture, ProviderFailure, RadioFailure};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
@@ -947,8 +947,9 @@ impl LiveRadio {
     }
 }
 
-impl RadioPlanner for LiveRadio {
-    fn plan<'a>(
+impl LiveRadio {
+    /// A complete, finite track plan for the user.
+    pub fn plan<'a>(
         &'a self,
         user_id: &'a str,
         request: &'a RadioPlanRequest,
@@ -956,7 +957,8 @@ impl RadioPlanner for LiveRadio {
         Box::pin(self.build_plan(user_id, request))
     }
 
-    fn shelf<'a>(
+    /// One album shelf seeded by an artist, album or genre.
+    pub fn shelf<'a>(
         &'a self,
         user_id: &'a str,
         request: &'a RadioRequest,
@@ -964,7 +966,8 @@ impl RadioPlanner for LiveRadio {
         Box::pin(self.shelf_for(user_id, request))
     }
 
-    fn playlist_suggestions<'a>(
+    /// Albums that extend one playlist.
+    pub fn playlist_suggestions<'a>(
         &'a self,
         user_id: &'a str,
         request: &'a PlaylistSuggestionsRequest,

@@ -7,7 +7,8 @@
 use std::sync::Arc;
 
 use crate::reads::collections::db::StoreError;
-use crate::reads::discover::ports::{ProviderFailure, YouTubeSource};
+use crate::reads::discover::adapters::youtube::LiveYouTube;
+use crate::reads::discover::ports::ProviderFailure;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_providers::ProviderError;
@@ -75,7 +76,7 @@ impl From<ProviderFailure> for LinkError {
 #[derive(Clone)]
 pub struct YouTubeLinks {
     store: LinkStore,
-    search: Arc<dyn YouTubeSource>,
+    search: Arc<LiveYouTube>,
     ids: Arc<dyn IdGenerator>,
     clock: Arc<dyn Clock>,
 }
@@ -85,7 +86,7 @@ impl YouTubeLinks {
     /// YouTube client, and dating the budget by `clock`.
     pub fn new(
         store: LinkStore,
-        search: Arc<dyn YouTubeSource>,
+        search: Arc<LiveYouTube>,
         ids: Arc<dyn IdGenerator>,
         clock: Arc<dyn Clock>,
     ) -> Self {

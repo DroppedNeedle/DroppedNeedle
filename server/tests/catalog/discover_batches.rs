@@ -14,7 +14,7 @@ use droppedneedle_catalog::reads::discover::adapters::batches::{
     BatchAlbum, BatchRequests, LiveBatches,
 };
 use droppedneedle_catalog::reads::discover::models::{DiscoveryBatchCreate, DiscoveryBatchItemIn};
-use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BatchStore, BoxFuture};
+use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture};
 
 use crate::common::auth::test_principal;
 

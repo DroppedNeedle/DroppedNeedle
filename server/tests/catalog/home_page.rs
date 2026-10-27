@@ -6,7 +6,7 @@
 //! gradient.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use droppedneedle_catalog::reads::discover::adapters::home::LiveHome;
 use droppedneedle_catalog::reads::discover::adapters::home::artwork::GenreArt;
@@ -238,15 +238,15 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     assert!(first.recently_played.is_some());
     assert!(first.trending_artists.is_none());
 
+    // Home keeps its built page in memory only, so the wait is on the page
+    // itself: each check hands the runtime to the build until it is kept.
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut page = first;
-    for _ in 0..250 {
-        if !page.refreshing {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+    while page.refreshing {
+        assert!(Instant::now() < deadline, "the build never finished");
+        tokio::task::yield_now().await;
         page = home.page("user-1", None).await;
     }
-    assert!(!page.refreshing, "the build finished");
     assert!(page.trending_artists.is_some());
     assert!(page.favorite_artists.is_some());
     let Some(SectionItem::Album(popular)) = page

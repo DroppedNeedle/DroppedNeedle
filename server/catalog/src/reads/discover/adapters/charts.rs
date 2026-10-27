@@ -30,10 +30,9 @@ use super::ownership::{owned_albums, owned_artists};
 use crate::reads::catalog::upstream::{instance_lastfm_key, user_lastfm};
 use crate::reads::discover::{
     models::{
-        ChartAlbum, ChartArtist, ChartRange, ChartSource, GenreDetailResponse, PopularAlbumsPage,
-        TrendingArtistsPage,
+        ChartAlbum, ChartArtist, ChartRange, ChartSource, PopularAlbumsPage, TrendingArtistsPage,
     },
-    ports::{BoxFuture, ChartsSource, ProviderFailure},
+    ports::{BoxFuture, ProviderFailure},
 };
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_media::playback::listening::ListenBrainzLinkStore;
@@ -315,8 +314,9 @@ fn lastfm_rows(
     Ok(rows(result)?.into_iter().skip(skip).collect())
 }
 
-impl ChartsSource for LiveCharts {
-    fn trending_artists(
+impl LiveCharts {
+    /// One trending-artists page.
+    pub fn trending_artists(
         &self,
         range: ChartRange,
         limit: i64,
@@ -351,7 +351,8 @@ impl ChartsSource for LiveCharts {
         })
     }
 
-    fn popular_albums(
+    /// One popular-albums page.
+    pub fn popular_albums(
         &self,
         range: ChartRange,
         limit: i64,
@@ -379,7 +380,8 @@ impl ChartsSource for LiveCharts {
         })
     }
 
-    fn your_top_albums<'a>(
+    /// One your-top-albums page for the user.
+    pub fn your_top_albums<'a>(
         &'a self,
         user_id: &'a str,
         range: ChartRange,
@@ -431,20 +433,6 @@ impl ChartsSource for LiveCharts {
                 _ => Vec::new(),
             };
             self.album_page(range, limit, offset, albums).await
-        })
-    }
-
-    fn genre_detail<'a>(
-        &'a self,
-        _genre: &'a str,
-        _limit: i64,
-        _artist_offset: i64,
-        _album_offset: i64,
-    ) -> BoxFuture<'a, Result<GenreDetailResponse, ProviderFailure>> {
-        Box::pin(async {
-            Err(ProviderFailure::not_built(
-                "Genre pages are not built in this version yet.",
-            ))
         })
     }
 }

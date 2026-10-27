@@ -4,7 +4,7 @@
 
 use crate::reads::discover::{
     models::{PreviewTrackItem, TrackPreviewResponse},
-    ports::{AlbumSamples, BoxFuture, PreviewSource, ProviderFailure},
+    ports::{AlbumSamples, BoxFuture, ProviderFailure},
 };
 use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::preview::{PreviewClient, PreviewTrack};
@@ -32,8 +32,9 @@ fn item(track: PreviewTrack) -> PreviewTrackItem {
     }
 }
 
-impl PreviewSource for LivePreviews {
-    fn track_preview<'a>(
+impl LivePreviews {
+    /// Preview behind one track. `None` fields mean no provider had one.
+    pub fn track_preview<'a>(
         &'a self,
         artist: &'a str,
         track: &'a str,
@@ -60,7 +61,8 @@ impl PreviewSource for LivePreviews {
         })
     }
 
-    fn album_preview<'a>(
+    /// Ordered album samples plus the serving provider.
+    pub fn album_preview<'a>(
         &'a self,
         artist: &'a str,
         album: &'a str,

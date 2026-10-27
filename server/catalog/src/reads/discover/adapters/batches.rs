@@ -23,7 +23,7 @@ use crate::reads::discover::models::{
     DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchItemStatus,
     DiscoveryBatchRemoveResult, DiscoveryBatchSummary,
 };
-use crate::reads::discover::ports::{BatchFailure, BatchStore, BoxFuture, ProviderFailure};
+use crate::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
 use droppedneedle_auth::{Admin, Principal};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
@@ -727,8 +727,9 @@ impl LiveBatches {
     }
 }
 
-impl BatchStore for LiveBatches {
-    fn create<'a>(
+impl LiveBatches {
+    /// File the batch's albums as requests and record the batch.
+    pub fn create<'a>(
         &'a self,
         caller: &'a Principal,
         body: &'a DiscoveryBatchCreate,
@@ -736,14 +737,16 @@ impl BatchStore for LiveBatches {
         Box::pin(self.create_batch(caller, body))
     }
 
-    fn list<'a>(
+    /// The caller's batches, newest first.
+    pub fn list<'a>(
         &'a self,
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<Vec<DiscoveryBatchSummary>, BatchFailure>> {
         Box::pin(self.list_batches(user_id))
     }
 
-    fn detail<'a>(
+    /// One batch with each album's current state.
+    pub fn detail<'a>(
         &'a self,
         caller: &'a Principal,
         batch_id: &'a str,
@@ -754,7 +757,9 @@ impl BatchStore for LiveBatches {
         })
     }
 
-    fn remove<'a>(
+    /// Remove one batch, and with `remove_albums` the albums it caused:
+    /// pending requests are cancelled, landed albums go to the recycle bin.
+    pub fn remove<'a>(
         &'a self,
         caller: &'a Principal,
         batch_id: &'a str,

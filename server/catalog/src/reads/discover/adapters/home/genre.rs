@@ -14,12 +14,13 @@ use super::library::HomeLibrary;
 use super::mark_owned;
 use super::shelves::{library_album, library_artist};
 use super::sources::HomeSources;
+use crate::reads::discover::adapters::charts::LiveCharts;
 use crate::reads::discover::adapters::page::shelves::album;
 use crate::reads::discover::models::{
     ChartAlbum, ChartArtist, ChartRange, ChartSource, GenreDetailResponse, GenreLibrarySection,
     GenrePopularSection, PopularAlbumsPage, TrendingArtistsPage,
 };
-use crate::reads::discover::ports::{BoxFuture, ChartsSource, ProviderFailure};
+use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
 
 /// Popular rows per lane at most.
@@ -155,22 +156,21 @@ impl GenrePages {
     }
 }
 
-/// The chart source with real genre pages: charts go to `inner`, genre
-/// pages to `pages`.
+/// The charts with real genre pages: charts go to `inner`, genre pages to
+/// `pages`.
 pub struct WithGenrePages {
-    inner: Arc<dyn ChartsSource>,
+    inner: LiveCharts,
     pages: Arc<GenrePages>,
 }
 
 impl WithGenrePages {
     /// Serve genre pages from `pages` and everything else from `inner`.
-    pub fn new(inner: Arc<dyn ChartsSource>, pages: Arc<GenrePages>) -> Self {
+    pub fn new(inner: LiveCharts, pages: Arc<GenrePages>) -> Self {
         Self { inner, pages }
     }
-}
 
-impl ChartsSource for WithGenrePages {
-    fn trending_artists(
+    /// One trending-artists page.
+    pub fn trending_artists(
         &self,
         range: ChartRange,
         limit: i64,
@@ -180,7 +180,8 @@ impl ChartsSource for WithGenrePages {
         self.inner.trending_artists(range, limit, offset, source)
     }
 
-    fn popular_albums(
+    /// One popular-albums page.
+    pub fn popular_albums(
         &self,
         range: ChartRange,
         limit: i64,
@@ -190,7 +191,8 @@ impl ChartsSource for WithGenrePages {
         self.inner.popular_albums(range, limit, offset, source)
     }
 
-    fn your_top_albums<'a>(
+    /// One your-top-albums page for the user.
+    pub fn your_top_albums<'a>(
         &'a self,
         user_id: &'a str,
         range: ChartRange,
@@ -202,7 +204,8 @@ impl ChartsSource for WithGenrePages {
             .your_top_albums(user_id, range, limit, offset, source)
     }
 
-    fn genre_detail<'a>(
+    /// Genre detail with owned and popular rows.
+    pub fn genre_detail<'a>(
         &'a self,
         genre: &'a str,
         limit: i64,

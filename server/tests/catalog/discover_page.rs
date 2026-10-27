@@ -5,38 +5,28 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle_auth::Role;
-use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_catalog::reads::discover::adapters::content::{IntegrationSettings, LiveContent};
 use droppedneedle_catalog::reads::discover::adapters::page::sources::{
     LastFmChartAlbum, PageSources, PlayedArtist, RankedAlbum, ScoredArtist, SourceContext,
     WeeklyPlaylist,
 };
-use droppedneedle_catalog::reads::discover::adapters::page::store::PageDb;
-use droppedneedle_catalog::reads::discover::adapters::page::{LiveDiscover, PageInputs};
 use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
     QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
 };
-use droppedneedle_catalog::reads::discover::adapters::queue::store::QueueDb;
-use droppedneedle_catalog::reads::discover::fakes::{
-    FakeBatches, FakeCharts, FakePreviews, FakeQueues, FakeRadio, FakeYouTube,
-};
 use droppedneedle_catalog::reads::discover::ports::BoxFuture;
-use droppedneedle_catalog::reads::discover::services::ReadsDeps;
-use droppedneedle_kernel::clock::{ManualClock, SystemClock};
-use droppedneedle_kernel::db::{DbRuntime, Lane};
+use droppedneedle_kernel::db::Lane;
+use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use crate::common::auth::{test_principal, with_test_principal};
+use crate::common::auth::AuthRig;
+use crate::discover_queue::{after_commits, discover_deps, discover_routes};
 
 const SEED: &str = "11111111-1111-4111-8111-111111111111";
 
@@ -420,44 +410,10 @@ impl PageSources for Scripted {
     }
 }
 
-fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
-    let config = crate::common::config_store(dir);
-    let pool = runtime.db().sqlx().clone();
-    let page = LiveDiscover::new(PageInputs {
-        sources: Arc::new(Scripted),
-        queue_db: QueueDb::new(runtime.db().clone()),
-        db: PageDb::new(runtime.db().clone()),
-        advanced: config.live(),
-        integrations: IntegrationSettings::new(
-            &config,
-            Arc::new(crate::common::bundles::NoDownloadSource),
-        ),
-        queues: Arc::new(FakeQueues),
-        warmer_enabled: false,
-        warm: None,
-    });
-    let clock = ManualClock::at(1_790_000_000_000);
-    let deps = ReadsDeps {
-        content: Arc::new(LiveContent::new(
-            IntegrationSettings::new(&config, Arc::new(crate::common::bundles::NoDownloadSource)),
-            pool,
-            page,
-        )),
-        queues: Arc::new(FakeQueues),
-        batches: Arc::new(FakeBatches::new(clock)),
-        charts: Arc::new(FakeCharts::new()),
-        previews: Arc::new(FakePreviews),
-        youtube: Arc::new(FakeYouTube::unconfigured()),
-        radio: Arc::new(FakeRadio),
-        clock: Arc::new(SystemClock),
-    };
-    let router = droppedneedle_catalog::reads::discover::routes()
-        .with_state(deps)
-        .into_router();
-    with_test_principal(
-        router,
-        test_principal("user-1", Role::User, "sess-test", SessionKind::Standard),
-    )
+fn page_app(rig: &AuthRig, dir: &std::path::Path) -> Router {
+    discover_routes(discover_deps(rig, dir, Providers::closed(), |sources| {
+        sources.page = Arc::new(Scripted);
+    }))
 }
 
 async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -487,35 +443,39 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 #[tokio::test]
 async fn page_builds_in_the_background_is_saved_and_records_activity() {
     let dir = crate::common::ScratchDir::new("discover-page");
-    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-    runtime
-        .db()
-        .write(Lane::Foreground, "test.seed", |tx| {
-            tx.execute(
-                "INSERT INTO auth_users (id, display_name, role, created_at) \
+    let rig = AuthRig::new("discover-page").await;
+    let db = rig.platform.db.clone();
+    db.write(Lane::Foreground, "test.seed", |tx| {
+        tx.execute(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
                  VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z')",
-                [],
-            )?;
-            Ok::<_, droppedneedle_kernel::db::DbError>(())
-        })
-        .await
-        .expect("user row");
-    let app = page_app(&runtime, &dir);
+            [],
+        )?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .expect("user row");
+    let app = page_app(&rig, &dir);
 
     let (status, first) = call(&app, "GET", "/api/v3/discover", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(first["refreshing"], true);
     assert_eq!(first["section_status"]["picks"], "loading");
 
-    let mut page = first;
-    for _ in 0..250 {
-        if page["refreshing"] == false {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        page = call(&app, "GET", "/api/v3/discover", None).await.1;
-    }
-    assert_eq!(page["refreshing"], false, "the build finished");
+    let saved = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM discovery_snapshots \
+             WHERE snapshot_key = 'discover_response:user-1:True:False'",
+        )
+        .fetch_one(db.sqlx())
+        .await
+        .expect("snapshot count")
+    };
+    after_commits(&db, "the built page was saved", || async {
+        (saved().await == 1).then_some(())
+    })
+    .await;
+    let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
     assert_eq!(
         page["because_you_listen_to"][0]["section"]["title"],
         "Because You Listen To Seed"
@@ -532,21 +492,12 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     assert!(!picks.is_empty());
     assert_eq!(picks[0]["reasons"][0], "Because you listen to Seed");
     assert_eq!(page["genre_list"]["items"][0]["name"], "shoegaze");
-    assert_eq!(page["section_status"]["picks"], "ready");
 
-    let saved: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM discovery_snapshots \
-         WHERE snapshot_key = 'discover_response:user-1:True:False'",
-    )
-    .fetch_one(runtime.db().sqlx())
-    .await
-    .expect("snapshot count");
-    assert_eq!(saved, 1);
-
-    // A restart serves the saved page straight away.
-    let restarted = page_app(&runtime, &dir);
+    // A restart serves the saved page straight away, built and ready.
+    let restarted = page_app(&rig, &dir);
     let (_, again) = call(&restarted, "GET", "/api/v3/discover", None).await;
-    assert_eq!(again["refreshing"], false);
+    assert_eq!(again["refreshing"], false, "the build finished");
+    assert_eq!(again["section_status"]["picks"], "ready");
     assert_eq!(
         again["because_you_listen_to"][0]["seed_artist"], "Seed",
         "served from the snapshot"
@@ -565,7 +516,7 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     let recorded: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM discovery_activity WHERE user_id = 'user-1' AND feature = 'discover'",
     )
-    .fetch_one(runtime.db().sqlx())
+    .fetch_one(db.sqlx())
     .await
     .expect("activity count");
     assert_eq!(recorded, 1);

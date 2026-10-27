@@ -9,8 +9,9 @@
 
 use crate::reads::cache_hold::CacheHold;
 use crate::reads::catalog::mapping::clean_lastfm_bio;
+use crate::reads::discover::adapters::youtube::LiveYouTube;
 use crate::reads::discover::models::{DiscoverQueuePreview, QueueEnrichment};
-use crate::reads::discover::ports::{ProviderFailure, YouTubeSource};
+use crate::reads::discover::ports::ProviderFailure;
 use droppedneedle_providers::RequestPriority;
 
 use super::sources::{QueueSources, SourceResult};
@@ -67,7 +68,7 @@ pub fn youtube_search_url(artist: &str, album: &str) -> String {
 /// cached given the reads that failed.
 pub async fn enrich(
     sources: &dyn QueueSources,
-    youtube: &dyn YouTubeSource,
+    youtube: &LiveYouTube,
     user_id: &str,
     release_group_mbid: &str,
 ) -> (QueueEnrichment, CacheHold) {
@@ -216,7 +217,7 @@ async fn artist_details(
 /// YouTube search when an API key is set (v2 `preview_queue_item`).
 pub async fn preview(
     sources: &dyn QueueSources,
-    youtube: &dyn YouTubeSource,
+    youtube: &LiveYouTube,
     release_group_mbid: &str,
 ) -> Result<DiscoverQueuePreview, ProviderFailure> {
     let facts = sources

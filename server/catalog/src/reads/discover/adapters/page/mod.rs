@@ -31,13 +31,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::reads::discover::adapters::content::IntegrationSettings;
+use crate::reads::discover::adapters::queue::LiveQueue;
 use crate::reads::discover::adapters::queue::QueueSettings;
 use crate::reads::discover::adapters::queue::store::QueueDb;
 use crate::reads::discover::models::{
     ChartSection, DiscoverActivityResponse, DiscoverResponse, IntegrationStatus, QueueBuildStatus,
     SectionItem,
 };
-use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueStore, QueueTrigger};
+use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueTrigger};
 use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
 use build::{Builder, PageSettings};
 use droppedneedle_kernel::runtime_config::{Live, Plain, secret_sections::AdvancedSettings};
@@ -163,7 +164,7 @@ struct Inner {
     memo: BuildMemo,
     advanced: Live<AdvancedSettings>,
     integrations: IntegrationSettings,
-    queues: Arc<dyn QueueStore>,
+    queues: Arc<LiveQueue>,
     warmer_enabled: bool,
     warm: Option<CoverWarm>,
     home: Option<Arc<dyn FeatureWarmer>>,
@@ -189,7 +190,7 @@ pub struct PageInputs {
     /// The integration flags, read per build.
     pub integrations: IntegrationSettings,
     /// The queue deck, which the warm cycle also rebuilds.
-    pub queues: Arc<dyn QueueStore>,
+    pub queues: Arc<LiveQueue>,
     /// The deployment kill switch for the warm cycle.
     pub warmer_enabled: bool,
     /// Where a published page queues its image warm, when anywhere.

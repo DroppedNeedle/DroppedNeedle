@@ -3,6 +3,8 @@
 //! honours, and both the ignore and the deck surviving a restart.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -12,27 +14,27 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_catalog::reads::discover::adapters::queue::LiveQueue;
+use droppedneedle_auth::{Admin, Principal, Role};
+use droppedneedle_catalog::reads::discover::adapters::batches::{BatchAlbum, BatchRequests};
 use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
     QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
 };
-use droppedneedle_catalog::reads::discover::adapters::queue::store::QueueDb;
-use droppedneedle_catalog::reads::discover::fakes::{
-    FakeBatches, FakeCharts, FakeContent, FakePreviews, FakeRadio, FakeYouTube,
+use droppedneedle_catalog::reads::discover::adapters::{
+    DiscoverInputs, DiscoverSources, deps_over,
 };
-use droppedneedle_catalog::reads::discover::ports::{BoxFuture, ProviderFailure, QueueStore};
+use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
-use droppedneedle_kernel::clock::{ManualClock, SystemClock};
-use droppedneedle_kernel::db::DbRuntime;
+use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_media::playback::listening::MemoryListenBrainzLinkStore;
 use droppedneedle_providers::{ProviderError, Providers};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use crate::common::auth::{test_principal, with_test_principal};
+use crate::common::auth::{AuthRig, test_principal, with_test_principal};
+use crate::common::bundles::{NoDownloadSource, remotes_resolver};
 
 const SEED: &str = "11111111-1111-4111-8111-111111111111";
 const SIMILAR: &str = "22222222-2222-4222-8222-222222222222";
@@ -305,33 +307,71 @@ impl QueueSources for Scripted {
     }
 }
 
-fn queue_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
-    let config = crate::common::config_store(dir);
-    config
-        .save_secret_blocking(AdvancedSettings {
-            discover_queue_size: 5,
-            discover_queue_wildcard_slots: 1,
-            ..AdvancedSettings::default()
+/// Discovery batches in a rig with no download system: nothing in these
+/// journeys files one.
+struct NoBatchRequests;
+
+impl BatchRequests for NoBatchRequests {
+    fn request_albums<'a>(
+        &'a self,
+        _caller: &'a Principal,
+        _albums: Vec<BatchAlbum>,
+    ) -> BoxFuture<'a, Result<(), BatchFailure>> {
+        Box::pin(async {
+            Err(BatchFailure::Provider(ProviderFailure::not_built(
+                "no download system in this rig",
+            )))
         })
-        .expect("queue settings save");
-    let queue = LiveQueue::new(
-        Arc::new(Scripted::default()),
-        QueueDb::new(runtime.db().clone()),
-        Arc::new(FakeYouTube::unconfigured()),
-        Providers::closed().cache.clone(),
-        config.live(),
-    );
-    let clock = ManualClock::at(1_790_000_000_000);
-    let deps = ReadsDeps {
-        content: Arc::new(FakeContent::new(clock.clone())),
-        queues: Arc::new(queue),
-        batches: Arc::new(FakeBatches::new(clock)),
-        charts: Arc::new(FakeCharts::new()),
-        previews: Arc::new(FakePreviews),
-        youtube: Arc::new(FakeYouTube::unconfigured()),
-        radio: Arc::new(FakeRadio),
-        clock: Arc::new(SystemClock),
+    }
+
+    fn withdraw_album<'a>(
+        &'a self,
+        _owner_id: &'a str,
+        _release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<bool, String>> {
+        Box::pin(async { Ok(false) })
+    }
+
+    fn remove_album<'a>(
+        &'a self,
+        _admin: &'a Admin,
+        _release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<bool, String>> {
+        Box::pin(async { Ok(false) })
+    }
+}
+
+/// Discover's services as the production builder wires them over `rig`'s
+/// platform and `providers`, with the provider reads `script` swaps in.
+/// Calling it again over the same rig is a restart.
+pub(crate) fn discover_deps(
+    rig: &AuthRig,
+    dir: &Path,
+    providers: Providers,
+    script: impl FnOnce(&mut DiscoverSources),
+) -> ReadsDeps {
+    let platform = &rig.platform;
+    let inputs = DiscoverInputs {
+        db: platform.db.clone(),
+        http: platform.http.shared().clone(),
+        providers: Arc::new(providers),
+        listenbrainz_links: Arc::new(MemoryListenBrainzLinkStore::new(platform.crypto.clone())),
+        youtube_quota_path: dir.join("youtube_quota.json"),
+        users: rig.deps.clone(),
+        discover_warmer: false,
+        clock: platform.clock.clone(),
+        warm: None,
+        batch_requests: Arc::new(NoBatchRequests),
+        download_readiness: Arc::new(NoDownloadSource),
+        remotes: Arc::new(remotes_resolver(platform)),
     };
+    let mut sources = DiscoverSources::live(&inputs, &rig.config);
+    script(&mut sources);
+    deps_over(inputs, &rig.config, sources)
+}
+
+/// Discover's routes over `deps`, signed in as `user-1`.
+pub(crate) fn discover_routes(deps: ReadsDeps) -> Router {
     let router = droppedneedle_catalog::reads::discover::routes()
         .with_state(deps)
         .into_router();
@@ -339,6 +379,39 @@ fn queue_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
         router,
         test_principal("user-1", Role::User, "sess-test", SessionKind::Standard),
     )
+}
+
+/// Ask `check` after every commit to `db` until it answers. The work it
+/// waits on ends in a commit, so no answer after the last one fails.
+pub(crate) async fn after_commits<T, F, Fut>(db: &Db, what: &str, mut check: F) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Option<T>>,
+{
+    let mut commits = db.commits();
+    loop {
+        commits.borrow_and_update();
+        if let Some(found) = check().await {
+            return found;
+        }
+        tokio::time::timeout(Duration::from_secs(30), commits.changed())
+            .await
+            .unwrap_or_else(|_| panic!("never happened: {what}"))
+            .expect("the database is open");
+    }
+}
+
+fn queue_app(rig: &AuthRig, dir: &Path) -> Router {
+    rig.config
+        .save_secret_blocking(AdvancedSettings {
+            discover_queue_size: 5,
+            discover_queue_wildcard_slots: 1,
+            ..AdvancedSettings::default()
+        })
+        .expect("queue settings save");
+    discover_routes(discover_deps(rig, dir, Providers::closed(), |sources| {
+        sources.queue = Arc::new(Scripted::default());
+    }))
 }
 
 async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -363,17 +436,16 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
     (status, json)
 }
 
-/// Poll the status route until the build is no longer running.
-async fn settled(app: &Router) -> Value {
-    for _ in 0..250 {
+/// The build's status once it is no longer running. A finished build is
+/// marked ready before its deck is saved, so the save's commit wakes the
+/// last check.
+async fn settled(app: &Router, db: &Db) -> Value {
+    after_commits(db, "the queue build finished", || async {
         let (status, body) = call(app, "GET", "/api/v3/discover/queue/status", None).await;
         assert_eq!(status, StatusCode::OK);
-        if body["status"] != "building" {
-            return body;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("queue build never finished");
+        (body["status"] != "building").then_some(body)
+    })
+    .await
 }
 
 fn deck_ids(body: &Value) -> Vec<String> {
@@ -388,8 +460,9 @@ fn deck_ids(body: &Value) -> Vec<String> {
 #[tokio::test]
 async fn queue_builds_honours_ignores_and_survives_restart() {
     let dir = crate::common::ScratchDir::new("discover-queue");
-    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-    let app = queue_app(&runtime, &dir);
+    let rig = AuthRig::new("discover-queue").await;
+    let db = rig.platform.db.clone();
+    let app = queue_app(&rig, &dir);
 
     let (_, idle) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
     assert_eq!(idle["status"], "idle");
@@ -402,7 +475,7 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(started["action"], "started");
-    let ready = settled(&app).await;
+    let ready = settled(&app, &db).await;
     assert_eq!(ready["status"], "ready");
     assert_eq!(ready["item_count"], 5);
     assert_eq!(ready["stale"], false);
@@ -452,7 +525,7 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let rebuilt = settled(&app).await;
+    let rebuilt = settled(&app, &db).await;
     assert_eq!(rebuilt["status"], "ready");
     assert_ne!(
         rebuilt["queue_id"], ready["queue_id"],
@@ -487,7 +560,7 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     );
 
     // A restart: a new queue over the same database.
-    let restarted = queue_app(&runtime, &dir);
+    let restarted = queue_app(&rig, &dir);
     let (_, ledger) = call(&restarted, "GET", "/api/v3/discover/queue/ignored", None).await;
     assert_eq!(ledger["items"][0]["release_group_mbid"], ignored.as_str());
     let (_, reloaded) = call(&restarted, "GET", "/api/v3/discover/queue/status", None).await;
@@ -503,16 +576,12 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
 #[tokio::test]
 async fn a_card_built_during_an_outage_is_not_kept() {
     let dir = crate::common::ScratchDir::new("discover-queue-outage");
-    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-    let config = crate::common::config_store(&dir);
+    let rig = AuthRig::new("discover-queue-outage").await;
     let sources = Arc::new(Scripted::default());
-    let queue = LiveQueue::new(
-        sources.clone(),
-        QueueDb::new(runtime.db().clone()),
-        Arc::new(FakeYouTube::unconfigured()),
-        Providers::closed().cache.clone(),
-        config.live(),
-    );
+    let queue = discover_deps(&rig, &dir, Providers::closed(), |live| {
+        live.queue = sources.clone();
+    })
+    .queues;
 
     sources.musicbrainz_down.store(true, Ordering::SeqCst);
     let card = queue.enrich("user-1", &group(1)).await.unwrap();

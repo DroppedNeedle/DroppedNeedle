@@ -1,14 +1,17 @@
-//! Domain logic over the discover ports: clamping, validation, and
+//! Domain logic over the discover adapters: clamping, validation, and
 //! assembly. Services return typed domain failures; handlers map them to
 //! HTTP. Provider failures stay typed; other causes are log-only strings.
 
 use std::sync::Arc;
 
 use droppedneedle_auth::Principal;
-use droppedneedle_kernel::clock::Clock;
 use droppedneedle_providers::ProviderError;
 
 use crate::reads::discover::{
+    adapters::{
+        batches::LiveBatches, content::LiveContent, home::genre::WithGenrePages,
+        previews::LivePreviews, queue::LiveQueue, radio::LiveRadio, youtube::LiveYouTube,
+    },
     models::{
         AlbumPreviewResponse, ChartRange, ChartSection, ChartSource, DiscoverActivityResponse,
         DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
@@ -21,10 +24,7 @@ use crate::reads::discover::{
         TrackCacheCheckResponse, TrackCacheCheckResponseItem, TrackPreviewResponse,
         TrendingArtistsPage, YouTubeQuotaResponse, YouTubeSearchResponse,
     },
-    ports::{
-        BatchFailure, BatchRefusal, BatchStore, ChartsSource, DiscoverContent, PreviewSource,
-        ProviderFailure, QueueStore, QueueTrigger, RadioFailure, RadioPlanner, YouTubeSource,
-    },
+    ports::{BatchFailure, BatchRefusal, ProviderFailure, QueueTrigger, RadioFailure},
 };
 
 /// Max cards served from one queue read.
@@ -104,21 +104,19 @@ fn owned_store_failure(failure: ProviderFailure) -> ServiceError {
 #[derive(Clone)]
 pub struct ReadsDeps {
     /// Shelf content.
-    pub content: Arc<dyn DiscoverContent>,
+    pub content: Arc<LiveContent>,
     /// Queue builds and ignore ledger.
-    pub queues: Arc<dyn QueueStore>,
+    pub queues: Arc<LiveQueue>,
     /// Discovery batches.
-    pub batches: Arc<dyn BatchStore>,
+    pub batches: Arc<LiveBatches>,
     /// Chart pages and genre detail.
-    pub charts: Arc<dyn ChartsSource>,
+    pub charts: Arc<WithGenrePages>,
     /// 30-second previews.
-    pub previews: Arc<dyn PreviewSource>,
+    pub previews: Arc<LivePreviews>,
     /// YouTube lookups.
-    pub youtube: Arc<dyn YouTubeSource>,
+    pub youtube: Arc<LiveYouTube>,
     /// Radio plans and suggestions.
-    pub radio: Arc<dyn RadioPlanner>,
-    /// Clock for TTL math.
-    pub clock: Arc<dyn Clock>,
+    pub radio: Arc<LiveRadio>,
 }
 
 /// Clamp a limit into `1..=max`, defaulting when missing.
@@ -441,11 +439,8 @@ pub async fn ignore_queue_item(
     deps.queues
         .start_build(user_id, QueueTrigger::Request { force: true })
         .await;
-    match deps.content.trigger_refresh(user_id).await {
-        // Content without a builder: the ignore still stands, nothing to rebuild.
-        Ok(()) | Err(ProviderFailure::NotBuilt(_)) => Ok(()),
-        Err(other) => Err(other.into()),
-    }
+    deps.content.trigger_refresh(user_id).await?;
+    Ok(())
 }
 
 /// The user's ignore ledger, newest first.
