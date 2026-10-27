@@ -6,6 +6,7 @@ use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
 use droppedneedle_auth::compat_auth::jellyfin::server_id;
+use droppedneedle_kernel::error::ApiError;
 
 use super::builders::{self, Builder, LIBRARY_INTERNAL_ID};
 use super::models::{BaseItemDto, BaseItemDtoQueryResult};
@@ -13,19 +14,23 @@ use super::params::{self, CiParams, SortKey};
 use super::query::{page, primary_type};
 use super::router::*;
 use super::seams::{
-    ALL, AlbumFilter, AlbumView, ArtistScope, ArtistView, ItemSort, TrackFilter, TrackView,
+    ALL, AlbumFilter, AlbumView, ArtistScope, ArtistView, ItemSort, ReadFailed, TrackFilter,
+    TrackView,
 };
 
 // ===== Library browsing =====
 
 /// The single "Music" view, both dialects (v2 `_views`).
-pub(super) async fn views(State(state): State<JellyfinState>, authed: Authed) -> Response {
+pub(super) async fn views(
+    State(state): State<JellyfinState>,
+    authed: Authed,
+) -> Result<Response, ApiError> {
     let library_id = state.ids.to_jf("library", LIBRARY_INTERNAL_ID).await;
     let (_, album_artists) = state
         .library
         .artist_page(&authed.principal.id, ArtistScope::Album, None, 0, 0)
-        .await;
-    json(
+        .await?;
+    Ok(json(
         StatusCode::OK,
         &BaseItemDtoQueryResult {
             items: vec![builders::music_view(
@@ -36,13 +41,18 @@ pub(super) async fn views(State(state): State<JellyfinState>, authed: Authed) ->
             total_record_count: 1,
             start_index: 0,
         },
-    )
+    ))
 }
-/// Decode a Jellyfin id to an artist mbid, `None` when undecodable or not an
-/// artist (v2 `_decode_artist`).
-pub(super) async fn decode_artist(state: &JellyfinState, jf_id: &str) -> Option<String> {
-    let (kind, internal) = state.ids.from_jf(jf_id).await?;
-    (kind == "artist").then_some(internal)
+/// Decode a Jellyfin id to an artist mbid, `Ok(None)` when undecodable or
+/// not an artist (v2 `_decode_artist`).
+pub(super) async fn decode_artist(
+    state: &JellyfinState,
+    jf_id: &str,
+) -> Result<Option<String>, ReadFailed> {
+    Ok(match state.ids.from_jf(jf_id).await? {
+        Some((kind, internal)) if kind == "artist" => Some(internal),
+        _ => None,
+    })
 }
 
 /// One item by decoded kind. Genre and library kinds have no branch in v2
@@ -53,32 +63,35 @@ pub(super) async fn fetch_item(
     user_id: &str,
     kind: &str,
     internal: &str,
-) -> Option<super::models::BaseItemDto> {
+) -> Result<Option<super::models::BaseItemDto>, ReadFailed> {
     let b = builder(state);
-    match kind {
-        "track" => {
-            let t = state.library.track(user_id, internal).await?;
-            Some(b.audio(&t).await)
-        }
-        "album" => {
-            let a = state.library.album(user_id, internal).await?;
-            Some(b.album(&a).await)
-        }
-        "artist" => {
-            let a = state.library.artist(user_id, internal).await?;
-            Some(b.artist(&a).await)
-        }
+    Ok(match kind {
+        "track" => match state.library.track(user_id, internal).await? {
+            Some(t) => Some(b.audio(&t).await),
+            None => None,
+        },
+        "album" => match state.library.album(user_id, internal).await? {
+            Some(a) => Some(b.album(&a).await),
+            None => None,
+        },
+        "artist" => match state.library.artist(user_id, internal).await? {
+            Some(a) => Some(b.artist(&a).await),
+            None => None,
+        },
         "playlist" => {
             let found = state
                 .library
                 .playlists(user_id)
-                .await
+                .await?
                 .into_iter()
-                .find(|p| p.id == internal)?;
-            Some(b.playlist(&found).await)
+                .find(|p| p.id == internal);
+            match found {
+                Some(found) => Some(b.playlist(&found).await),
+                None => None,
+            }
         }
         _ => None,
-    }
+    })
 }
 
 /// One query result over already-built DTOs.
@@ -99,36 +112,43 @@ async fn fetch_full_item(
     user: &super::seams::Principal,
     kind: &str,
     internal: &str,
-) -> Option<BaseItemDto> {
+) -> Result<Option<BaseItemDto>, ReadFailed> {
     let b = builder(state);
-    match kind {
-        "track" => {
-            let t = state.library.track(&user.id, internal).await?;
-            let settings = state.settings.jellyfin();
-            let can_download = settings.policy_facts(&user.role).content_downloading;
-            let can_transcode = settings.transcoding_enabled && settings.ffmpeg_available;
-            Some(b.audio_full(&t, can_download, can_transcode).await)
-        }
-        "album" => {
-            let a = state.library.album(&user.id, internal).await?;
-            Some(b.album_full(&a).await)
-        }
-        "artist" => {
-            let a = state.library.artist(&user.id, internal).await?;
-            let library_id = state.ids.to_jf("library", LIBRARY_INTERNAL_ID).await;
-            Some(b.artist_full(&a, &library_id).await)
-        }
+    Ok(match kind {
+        "track" => match state.library.track(&user.id, internal).await? {
+            Some(t) => {
+                let settings = state.settings.jellyfin();
+                let can_download = settings.policy_facts(&user.role).content_downloading;
+                let can_transcode = settings.transcoding_enabled && settings.ffmpeg_available;
+                Some(b.audio_full(&t, can_download, can_transcode).await)
+            }
+            None => None,
+        },
+        "album" => match state.library.album(&user.id, internal).await? {
+            Some(a) => Some(b.album_full(&a).await),
+            None => None,
+        },
+        "artist" => match state.library.artist(&user.id, internal).await? {
+            Some(a) => {
+                let library_id = state.ids.to_jf("library", LIBRARY_INTERNAL_ID).await;
+                Some(b.artist_full(&a, &library_id).await)
+            }
+            None => None,
+        },
         "playlist" => {
             let found = state
                 .library
                 .playlists(&user.id)
-                .await
+                .await?
                 .into_iter()
-                .find(|p| p.id == internal)?;
-            Some(b.playlist_full(&found).await)
+                .find(|p| p.id == internal);
+            match found {
+                Some(found) => Some(b.playlist_full(&found).await),
+                None => None,
+            }
         }
         _ => None,
-    }
+    })
 }
 
 /// The empty result (unknown parent, filter that resolved to nothing).
@@ -147,16 +167,19 @@ fn sort_or(sort_key: Option<SortKey>, desc: bool, fallback: ItemSort) -> ItemSor
 }
 
 /// Decode artist ids; undecodable ids drop out.
-async fn decode_artists(state: &JellyfinState, jf_ids: &[String]) -> Vec<String> {
+async fn decode_artists(
+    state: &JellyfinState,
+    jf_ids: &[String],
+) -> Result<Vec<String>, ReadFailed> {
     let mut mbids = Vec::new();
     for jf_id in jf_ids {
-        if let Some(mbid) = decode_artist(state, jf_id).await
+        if let Some(mbid) = decode_artist(state, jf_id).await?
             && !mbids.contains(&mbid)
         {
             mbids.push(mbid);
         }
     }
-    mbids
+    Ok(mbids)
 }
 
 async fn build_tracks(b: &Builder<'_>, tracks: &[TrackView]) -> Vec<BaseItemDto> {
@@ -188,7 +211,7 @@ pub(super) async fn browse(
     State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     let raw_query = request.uri().query().map(str::to_owned);
     let user_id = authed.principal.id.clone();
     let q = CiParams::parse(raw_query.as_deref());
@@ -206,24 +229,24 @@ pub(super) async fn browse(
 
     if !ids.is_empty() {
         let mut built = Vec::new();
-        for (kind, internal) in state.ids.from_jf_many(&ids).await.into_iter().flatten() {
-            if let Some(item) = fetch_item(&state, &user_id, &kind, &internal).await {
+        for (kind, internal) in state.ids.from_jf_many(&ids).await?.into_iter().flatten() {
+            if let Some(item) = fetch_item(&state, &user_id, &kind, &internal).await? {
                 built.push(item);
             }
         }
         let (items, total) = page(&built, start, limit);
-        return result(items, total, start);
+        return Ok(result(items, total, start));
     }
 
     let mut parent_kind: Option<String> = None;
     let mut parent_internal = String::new();
     if let Some(parent) = q.get("ParentId") {
-        match state.ids.from_jf(parent).await {
+        match state.ids.from_jf(parent).await? {
             Some((kind, internal)) => {
                 parent_kind = Some(kind);
                 parent_internal = internal;
             }
-            None => return nothing(start),
+            None => return Ok(nothing(start)),
         }
     }
 
@@ -240,8 +263,8 @@ pub(super) async fn browse(
         let (tracks, total) = state
             .library
             .track_page(&user_id, &filter, ItemSort::Disc, start, or_all(limit))
-            .await;
-        return result(build_tracks(&b, &tracks).await, total, start);
+            .await?;
+        return Ok(result(build_tracks(&b, &tracks).await, total, start));
     }
 
     match primary_type(&types) {
@@ -250,26 +273,26 @@ pub(super) async fn browse(
             let (artists, total) = state
                 .library
                 .artist_page(&user_id, ArtistScope::All, search.as_deref(), start, size)
-                .await;
-            result(build_artists(&b, &artists).await, total, start)
+                .await?;
+            Ok(result(build_artists(&b, &artists).await, total, start))
         }
         "MusicGenre" => {
-            let genres = state.library.genres().await;
+            let genres = state.library.genres().await?;
             let (genres, total) = page(&genres, start, limit);
             let mut built = Vec::with_capacity(genres.len());
             for g in &genres {
                 built.push(b.genre(g).await);
             }
-            result(built, total, start)
+            Ok(result(built, total, start))
         }
         "Playlist" => {
-            let views = state.library.playlists(&user_id).await;
+            let views = state.library.playlists(&user_id).await?;
             let (views, total) = page(&views, start, limit);
             let mut built = Vec::with_capacity(views.len());
             for v in &views {
                 built.push(b.playlist(v).await);
             }
-            result(built, total, start)
+            Ok(result(built, total, start))
         }
         "Audio" => {
             audio_browse(
@@ -315,17 +338,17 @@ pub(super) async fn favorites_browse(
     played: Option<bool>,
     start: usize,
     limit: usize,
-) -> Response {
+) -> Result<Response, ApiError> {
     let b = builder(state);
     let kind = match primary_type(types) {
         "MusicArtist" => "artist",
         "MusicAlbum" => "album",
         _ => "track",
     };
-    let ids = state.library.favorites(user_id, kind).await;
-    match kind {
+    let ids = state.library.favorites(user_id, kind).await?;
+    Ok(match kind {
         "track" => {
-            let mut tracks = state.library.tracks_by_ids(user_id, &ids).await;
+            let mut tracks = state.library.tracks_by_ids(user_id, &ids).await?;
             if let Some(played) = played {
                 tracks.retain(|track| track.played == played);
             }
@@ -333,7 +356,7 @@ pub(super) async fn favorites_browse(
             result(build_tracks(&b, &tracks).await, total, start)
         }
         "album" => {
-            let mut albums = state.library.albums_by_ids(user_id, &ids).await;
+            let mut albums = state.library.albums_by_ids(user_id, &ids).await?;
             if let Some(played) = played {
                 albums.retain(|album| album.played == played);
             }
@@ -343,14 +366,14 @@ pub(super) async fn favorites_browse(
         _ => {
             let mut artists = Vec::with_capacity(ids.len());
             for id in &ids {
-                if let Some(artist) = state.library.artist(user_id, id).await {
+                if let Some(artist) = state.library.artist(user_id, id).await? {
                     artists.push(artist);
                 }
             }
             let (artists, total) = page(&artists, start, limit);
             result(build_artists(&b, &artists).await, total, start)
         }
-    }
+    })
 }
 
 /// Track browse arm (v2 `_browse` `Audio` branch).
@@ -366,13 +389,13 @@ pub(super) async fn audio_browse(
     sort_desc: bool,
     start: usize,
     limit: usize,
-) -> Response {
+) -> Result<Response, ApiError> {
     let b = builder(state);
     let sort = sort_or(sort_key, sort_desc, ItemSort::Catalog);
     let (mut filter, size) = if !album_artist_ids.is_empty() {
-        let album_artists = decode_artists(state, album_artist_ids).await;
+        let album_artists = decode_artists(state, album_artist_ids).await?;
         if album_artists.is_empty() {
-            return nothing(start);
+            return Ok(nothing(start));
         }
         let filter = TrackFilter {
             album_artists,
@@ -380,9 +403,9 @@ pub(super) async fn audio_browse(
         };
         (filter, or_all(limit))
     } else if !artist_ids.is_empty() {
-        let artists = decode_artists(state, artist_ids).await;
+        let artists = decode_artists(state, artist_ids).await?;
         if artists.is_empty() {
-            return nothing(start);
+            return Ok(nothing(start));
         }
         let filter = TrackFilter {
             artists,
@@ -400,8 +423,8 @@ pub(super) async fn audio_browse(
     let (tracks, total) = state
         .library
         .track_page(user_id, &filter, sort, start, size)
-        .await;
-    result(build_tracks(&b, &tracks).await, total, start)
+        .await?;
+    Ok(result(build_tracks(&b, &tracks).await, total, start))
 }
 
 /// Album browse arm (v2 `_browse` fallthrough branch).
@@ -418,14 +441,14 @@ pub(super) async fn album_browse(
     sort_desc: bool,
     start: usize,
     limit: usize,
-) -> Response {
+) -> Result<Response, ApiError> {
     let b = builder(state);
     let size = if limit == 0 { 100 } else { limit };
     let (filter, sort, offset, size) = if !contributing_ids.is_empty() {
-        let appears_on = decode_artists(state, contributing_ids).await;
+        let appears_on = decode_artists(state, contributing_ids).await?;
         if appears_on.is_empty() {
             // A contributor filter must never fall through to the full catalog.
-            return nothing(start);
+            return Ok(nothing(start));
         }
         let filter = AlbumFilter {
             appears_on,
@@ -444,9 +467,9 @@ pub(super) async fn album_browse(
             .chain(artist_ids)
             .cloned()
             .collect::<Vec<_>>();
-        let artists = decode_artists(state, &ids).await;
+        let artists = decode_artists(state, &ids).await?;
         if artists.is_empty() {
-            return nothing(start);
+            return Ok(nothing(start));
         }
         let filter = AlbumFilter {
             artists,
@@ -480,8 +503,8 @@ pub(super) async fn album_browse(
     let (albums, total) = state
         .library
         .album_page(user_id, &filter, sort, offset, size)
-        .await;
-    result(build_albums(&b, &albums).await, total, start)
+        .await?;
+    Ok(result(build_albums(&b, &albums).await, total, start))
 }
 
 /// Jellify Recently Added: a bare JSON array of the newest albums (v2
@@ -490,13 +513,13 @@ pub(super) async fn latest(
     State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     let raw_query = request.uri().query().map(str::to_owned);
     let q = CiParams::parse(raw_query.as_deref());
     if let Some(parent) = q.get("ParentId") {
-        match state.ids.from_jf(parent).await {
+        match state.ids.from_jf(parent).await? {
             Some((kind, _)) if kind == "library" => {}
-            _ => return json(StatusCode::OK, &Vec::<BaseItemDto>::new()),
+            _ => return Ok(json(StatusCode::OK, &Vec::<BaseItemDto>::new())),
         }
     }
     let mut limit = params::qint(&q, "Limit", 10);
@@ -513,15 +536,15 @@ pub(super) async fn latest(
             0,
             limit as usize,
         )
-        .await;
-    json(StatusCode::OK, &build_albums(&b, &albums).await)
+        .await?;
+    Ok(json(StatusCode::OK, &build_albums(&b, &albums).await))
 }
 
 pub(super) async fn artists(
     State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     artists_scoped(State(state), authed, request, ArtistScope::All).await
 }
 
@@ -529,7 +552,7 @@ pub(super) async fn album_artists(
     State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     artists_scoped(State(state), authed, request, ArtistScope::Album).await
 }
 
@@ -538,7 +561,7 @@ pub(super) async fn artists_scoped(
     authed: Authed,
     request: Request<Body>,
     scope: ArtistScope,
-) -> Response {
+) -> Result<Response, ApiError> {
     let raw_query = request.uri().query().map(str::to_owned);
     let q = CiParams::parse(raw_query.as_deref());
     let start = params::qint(&q, "StartIndex", 0).max(0) as usize;
@@ -553,9 +576,9 @@ pub(super) async fn artists_scoped(
             start,
             size,
         )
-        .await;
+        .await?;
     let b = builder(&state);
-    result(build_artists(&b, &artists).await, total, start)
+    Ok(result(build_artists(&b, &artists).await, total, start))
 }
 
 /// Both genre dialects share one handler (v2 `_genres`).
@@ -563,28 +586,31 @@ pub(super) async fn genres(
     State(state): State<JellyfinState>,
     _caller: Authed,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     let raw_query = request.uri().query().map(str::to_owned);
     let q = CiParams::parse(raw_query.as_deref());
     let start = params::qint(&q, "StartIndex", 0).max(0) as usize;
     let limit = params::qint(&q, "Limit", 100).max(0) as usize;
-    let genres = state.library.genres().await;
+    let genres = state.library.genres().await?;
     let (genres, total) = page(&genres, start, limit);
     let b = builder(&state);
     let mut built = Vec::with_capacity(genres.len());
     for g in &genres {
         built.push(b.genre(g).await);
     }
-    result(built, total, start)
+    Ok(result(built, total, start))
 }
 
 /// Manet's boot call: a 404 here can leave the library empty (v2
 /// `_items_filters`). Genres and album years are the facets modelled; the
 /// key name `OfficialRatings` is v2-verbatim.
-pub(super) async fn filters(State(state): State<JellyfinState>, _caller: Authed) -> Response {
-    let genres = state.library.genres().await;
-    let years = state.library.years().await;
-    json(
+pub(super) async fn filters(
+    State(state): State<JellyfinState>,
+    _caller: Authed,
+) -> Result<Response, ApiError> {
+    let genres = state.library.genres().await?;
+    let years = state.library.years().await?;
+    Ok(json(
         StatusCode::OK,
         &serde_json::json!({
             "Genres": genres.iter().map(|g| &g.name).collect::<Vec<_>>(),
@@ -592,7 +618,7 @@ pub(super) async fn filters(State(state): State<JellyfinState>, _caller: Authed)
             "OfficialRatings": Vec::<String>::new(),
             "Years": years,
         }),
-    )
+    ))
 }
 
 pub(super) async fn single_item(
@@ -600,14 +626,16 @@ pub(super) async fn single_item(
     Path(item_id): Path<String>,
     authed: Authed,
     request: Request<Body>,
-) -> Response {
-    let Some((kind, internal)) = state.ids.from_jf(&item_id).await else {
-        return not_found_item(&request);
+) -> Result<Response, ApiError> {
+    let Some((kind, internal)) = state.ids.from_jf(&item_id).await? else {
+        return Ok(not_found_item(&request));
     };
-    match fetch_full_item(&state, &authed.principal, &kind, &internal).await {
-        Some(item) => json(StatusCode::OK, &item),
-        None => not_found_item(&request),
-    }
+    Ok(
+        match fetch_full_item(&state, &authed.principal, &kind, &internal).await? {
+            Some(item) => json(StatusCode::OK, &item),
+            None => not_found_item(&request),
+        },
+    )
 }
 
 /// The older address, with a user id in the path. The id is not read: the
@@ -618,7 +646,7 @@ pub(super) async fn single_item_legacy(
     Path((_user_id, item_id)): Path<(String, String)>,
     authed: Authed,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     single_item(state, Path(item_id), authed, request).await
 }
 
@@ -633,7 +661,7 @@ pub(super) async fn similar(
     Path(item_id): Path<String>,
     ctx: Authed,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     let raw_query = request.uri().query().map(str::to_owned);
     let q = CiParams::parse(raw_query.as_deref());
     let mut limit = params::qint(&q, "Limit", 50);
@@ -646,25 +674,25 @@ pub(super) async fn similar(
         total_record_count: 0,
         start_index: 0,
     };
-    let Some((kind, internal)) = state.ids.from_jf(&item_id).await else {
-        return json(StatusCode::OK, &empty);
+    let Some((kind, internal)) = state.ids.from_jf(&item_id).await? else {
+        return Ok(json(StatusCode::OK, &empty));
     };
     let artist_id = match kind.as_str() {
         "artist" => Some(internal),
         "track" => state
             .library
             .track(&ctx.principal.id, &internal)
-            .await
+            .await?
             .and_then(|t| t.artist_id),
         "album" => state
             .library
             .album(&ctx.principal.id, &internal)
-            .await
+            .await?
             .and_then(|a| a.artist_id),
         _ => None,
     };
     let Some(artist_id) = artist_id else {
-        return json(StatusCode::OK, &empty);
+        return Ok(json(StatusCode::OK, &empty));
     };
     let filter = TrackFilter {
         artists: vec![artist_id],
@@ -673,9 +701,9 @@ pub(super) async fn similar(
     let (tracks, _) = state
         .library
         .track_page(&ctx.principal.id, &filter, ItemSort::Catalog, 0, limit)
-        .await;
+        .await?;
     let b = builder(&state);
     let built = build_tracks(&b, &tracks).await;
     let total = built.len();
-    result(built, total, 0)
+    Ok(result(built, total, 0))
 }

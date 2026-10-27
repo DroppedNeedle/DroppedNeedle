@@ -7,7 +7,8 @@
 //! online lookup all get Jellyfin's own 404, never an empty list.
 
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{IntoResponse as _, Response};
+use droppedneedle_kernel::error::ApiError;
 
 use super::models::{LyricDto, LyricLine, LyricMetadata};
 use super::router::*;
@@ -19,8 +20,9 @@ const TICKS_PER_MILLISECOND: i64 = 10_000;
 /// has none.
 pub(super) async fn lyrics(state: &JellyfinState, item_id: &str, missing: Response) -> Response {
     let internal = match state.ids.from_jf(item_id).await {
-        Some((kind, internal)) if kind == "track" => internal,
-        _ => return missing,
+        Ok(Some((kind, internal))) if kind == "track" => internal,
+        Ok(_) => return missing,
+        Err(failed) => return ApiError::from(failed).into_response(),
     };
     match state.library.lyrics(&internal).await {
         Ok(Some(view)) if !view.lines.is_empty() => json(
@@ -40,6 +42,6 @@ pub(super) async fn lyrics(state: &JellyfinState, item_id: &str, missing: Respon
             },
         ),
         Ok(_) => missing,
-        Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(failed) => ApiError::from(failed).into_response(),
     }
 }

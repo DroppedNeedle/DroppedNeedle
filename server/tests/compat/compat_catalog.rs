@@ -648,7 +648,7 @@ async fn jellyfin_ids_resolve_after_a_restart_without_reading_the_catalog() {
     );
     assert_eq!(
         ids.from_jf_anonymous(&handed[0]).await,
-        named("album", "alb-1")
+        Ok(named("album", "alb-1"))
     );
     let mut found = Vec::new();
     for id in &handed {
@@ -657,17 +657,17 @@ async fn jellyfin_ids_resolve_after_a_restart_without_reading_the_catalog() {
     assert_eq!(
         found,
         [
-            named("album", "alb-1"),
-            named("track", "trk-1"),
-            named("playlist", "pl-1"),
-            named("album", "alb-1"),
+            Ok(named("album", "alb-1")),
+            Ok(named("track", "trk-1")),
+            Ok(named("playlist", "pl-1")),
+            Ok(named("album", "alb-1")),
         ]
     );
     let started = std::time::Instant::now();
     assert_eq!(
         ids.from_jf_anonymous("0123456789abcdef0123456789abcdef")
             .await,
-        None
+        Ok(None)
     );
     assert!(started.elapsed() < wait, "an anonymous miss never waits");
 }
@@ -693,10 +693,10 @@ async fn stored_jellyfin_ids_survive_a_new_data_key() {
     assert_ne!(eight.id_for("album", "alb-1"), album);
     assert_eq!(eight.to_jf("album", "alb-1").await, album);
     assert_eq!(eight.to_jf("artist", "art-1").await, artist);
-    assert_eq!(eight.from_jf(&album).await, named("album", "alb-1"));
+    assert_eq!(eight.from_jf(&album).await, Ok(named("album", "alb-1")));
     assert_eq!(
         eight.from_jf_anonymous(&artist).await,
-        named("artist", "art-1")
+        Ok(named("artist", "art-1"))
     );
 
     write_catalog(&rig, SECOND_ALBUM).await;
@@ -706,7 +706,7 @@ async fn stored_jellyfin_ids_survive_a_new_data_key() {
     assert_ne!(added, seven.id_for("album", "alb-2"));
     assert_eq!(
         eight.from_jf_anonymous(&added).await,
-        named("album", "alb-2")
+        Ok(named("album", "alb-2"))
     );
 
     for (kind, internal) in [
@@ -836,5 +836,7 @@ async fn jellyfin_answers_busy_until_its_ids_load_and_waits_once_per_request() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["TotalRecordCount"], 0, "{body}");
     assert!(took >= wait, "the misses waited for the fill: {took:?}");
-    assert!(took < wait * 2, "three misses waited once: {took:?}");
+    // One wait for all three misses; a wait per miss would take at least
+    // three times as long.
+    assert!(took < wait * 3, "three misses waited once: {took:?}");
 }

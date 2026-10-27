@@ -32,6 +32,7 @@ use droppedneedle_catalog::reads::library::stores::ArtistRecord;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::scan::Counter;
 use droppedneedle_library::scan::models::{ScanKind, ScanRequest, ScanTrigger};
+use droppedneedle_library::scan::store::ScanStoreError;
 use droppedneedle_library::scans::Scans;
 
 /// Unix seconds to the `YYYY-MM-DDTHH:MM:SSZ` form Subsonic shows.
@@ -1103,7 +1104,10 @@ impl SubsonicStore {
         let last = tokio::task::spawn_blocking(move || store.list_history(1, None))
             .await
             .map_err(|error| CompatError::Internal(format!("scan history task: {error}")))?
-            .map_err(|error| CompatError::Internal(format!("scan history: {error}")))?
+            .map_err(|error| match error {
+                ScanStoreError::Busy { .. } => CompatError::Busy(format!("scan history: {error}")),
+                error => CompatError::Internal(format!("scan history: {error}")),
+            })?
             .into_iter()
             .next()
             .and_then(|run| {

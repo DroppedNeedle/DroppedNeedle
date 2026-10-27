@@ -3,7 +3,8 @@
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Request, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse as _, Response};
+use droppedneedle_kernel::error::ApiError;
 use uuid::Uuid;
 
 use super::builders::{self};
@@ -47,8 +48,9 @@ pub(super) fn map_codec(codec: Option<&str>) -> Option<String> {
 /// Decode an audio item id to its file id (v2 `_decode_track`).
 pub(super) async fn decode_track(state: &JellyfinState, item_id: &str) -> Result<String, Response> {
     match state.ids.from_jf(item_id).await {
-        Some((kind, internal)) if kind == "track" => Ok(internal),
-        _ => Err(error(StatusCode::NOT_FOUND)),
+        Ok(Some((kind, internal))) if kind == "track" => Ok(internal),
+        Ok(_) => Err(error(StatusCode::NOT_FOUND)),
+        Err(failed) => Err(ApiError::from(failed).into_response()),
     }
 }
 
@@ -138,10 +140,11 @@ pub(super) async fn hls_playlist(
         Ok(internal) => internal,
         Err(denied) => return denied,
     };
-    let Some(duration) = state
-        .library
-        .track("", &internal)
-        .await
+    let track = match state.library.track("", &internal).await {
+        Ok(track) => track,
+        Err(failed) => return ApiError::from(failed).into_response(),
+    };
+    let Some(duration) = track
         .and_then(|track| track.duration_seconds)
         .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
     else {
@@ -320,10 +323,11 @@ async fn original_file(
         // A row deleted since the bytes were opened still downloads, under
         // a plain name.
         let name = match state.library.track(&caller.id, &internal).await {
-            Some(track) => {
+            Ok(Some(track)) => {
                 download_filename(&track.title, track.file_format.as_deref().unwrap_or(""))
             }
-            None => download_filename("track", served_format(&outcome)),
+            Ok(None) => download_filename("track", served_format(&outcome)),
+            Err(failed) => return ApiError::from(failed).into_response(),
         };
         outcome.headers.push((
             "Content-Disposition".to_owned(),
@@ -423,11 +427,10 @@ pub(super) async fn universal(
     };
     let q = CiParams::parse(query);
     let accepted = accepted_containers(q.get("Container"));
-    let track_format = state
-        .library
-        .track("", &internal)
-        .await
-        .and_then(|t| t.file_format);
+    let track_format = match state.library.track("", &internal).await {
+        Ok(track) => track.and_then(|t| t.file_format),
+        Err(failed) => return ApiError::from(failed).into_response(),
+    };
     let format = if track_format
         .as_deref()
         .is_some_and(|f| accepted.contains(&f.to_lowercase()))
@@ -492,8 +495,10 @@ pub(super) async fn playback_info(
         Ok(internal) => internal,
         Err(denied) => return denied,
     };
-    let Some(track) = state.library.track(&authed.principal.id, &internal).await else {
-        return error(StatusCode::NOT_FOUND);
+    let track = match state.library.track(&authed.principal.id, &internal).await {
+        Ok(Some(track)) => track,
+        Ok(None) => return error(StatusCode::NOT_FOUND),
+        Err(failed) => return ApiError::from(failed).into_response(),
     };
     let mut max_bps: Option<i64> = None;
     if is_post

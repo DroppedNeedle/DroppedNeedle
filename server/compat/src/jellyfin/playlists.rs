@@ -3,13 +3,15 @@
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse as _, Response};
+use droppedneedle_kernel::error::ApiError;
 
 use super::models::{BaseItemDtoQueryResult, CreatePlaylistDto};
 use super::params::{self, CiParams};
 use super::playstate::*;
 use super::query::page;
 use super::router::*;
+use super::seams::ReadFailed;
 
 // ===== Playlists =====
 
@@ -18,9 +20,28 @@ pub(super) async fn decode_playlist(
     jf_id: &str,
 ) -> Result<String, Response> {
     match state.ids.from_jf(jf_id).await {
-        Some((kind, internal)) if kind == "playlist" => Ok(internal),
-        _ => Err(error(StatusCode::NOT_FOUND)),
+        Ok(Some((kind, internal))) if kind == "playlist" => Ok(internal),
+        Ok(_) => Err(error(StatusCode::NOT_FOUND)),
+        Err(failed) => Err(ApiError::from(failed).into_response()),
     }
+}
+
+/// The track file ids of `jf_ids`, in order; unknown and non-track ids
+/// drop out. Every id is read before a playlist write, so a failed read
+/// writes nothing and asking again never repeats an entry.
+async fn track_file_ids(
+    state: &JellyfinState,
+    jf_ids: &[String],
+) -> Result<Vec<String>, ReadFailed> {
+    Ok(state
+        .ids
+        .from_jf_many(jf_ids)
+        .await?
+        .into_iter()
+        .flatten()
+        .filter(|(kind, _)| kind == "track")
+        .map(|(_, internal)| internal)
+        .collect())
 }
 
 /// Create from a JSON body or `?name=`/`?ids=` (v2 `_create_playlist`).
@@ -43,6 +64,10 @@ pub(super) async fn create_playlist(
     } else {
         params::ids_param(&q, &["ids"])
     };
+    let file_ids = match track_file_ids(&state, &track_ids).await {
+        Ok(file_ids) => file_ids,
+        Err(failed) => return ApiError::from(failed).into_response(),
+    };
     let internal = match state
         .library
         .create_playlist(&authed.principal.id, &name)
@@ -51,12 +76,11 @@ pub(super) async fn create_playlist(
         Ok(internal) => internal,
         Err(refusal) => return refused(refusal),
     };
-    for jf_id in &track_ids {
-        if let Some(file_id) = report_file_id(&state, jf_id).await
-            && let Err(refusal) = state
-                .library
-                .add_playlist_entry(&authed.principal.id, &internal, &file_id)
-                .await
+    for file_id in &file_ids {
+        if let Err(refusal) = state
+            .library
+            .add_playlist_entry(&authed.principal.id, &internal, file_id)
+            .await
         {
             return refused(refusal);
         }
@@ -77,8 +101,9 @@ pub(super) async fn get_playlist(
         Err(denied) => return denied,
     };
     let detail = match state.library.playlist(&ctx.principal.id, &internal).await {
-        Some(detail) => detail,
-        None => return error(StatusCode::NOT_FOUND),
+        Ok(Some(detail)) => detail,
+        Ok(None) => return error(StatusCode::NOT_FOUND),
+        Err(failed) => return ApiError::from(failed).into_response(),
     };
     let mut item_ids = Vec::new();
     for entry in &detail.entries {
@@ -123,8 +148,9 @@ pub(super) async fn playlist_items_inner(
         Err(denied) => return denied,
     };
     let detail = match state.library.playlist(user_id, &internal).await {
-        Some(detail) => detail,
-        None => return error(StatusCode::NOT_FOUND),
+        Ok(Some(detail)) => detail,
+        Ok(None) => return error(StatusCode::NOT_FOUND),
+        Err(failed) => return ApiError::from(failed).into_response(),
     };
     // v2 reads both `startIndex` and `StartIndex`, but params are
     // case-insensitive so both spellings are one key.
@@ -137,10 +163,11 @@ pub(super) async fn playlist_items_inner(
         .iter()
         .filter_map(|entry| entry.file_id.clone())
         .collect::<Vec<_>>();
-    let tracks = state
-        .library
-        .tracks_by_ids(user_id, &file_ids)
-        .await
+    let tracks = match state.library.tracks_by_ids(user_id, &file_ids).await {
+        Ok(tracks) => tracks,
+        Err(failed) => return ApiError::from(failed).into_response(),
+    };
+    let tracks = tracks
         .into_iter()
         .map(|track| (track.file_id.clone(), track))
         .collect::<std::collections::HashMap<_, _>>();
@@ -182,12 +209,15 @@ pub(super) async fn playlist_add(
         Err(denied) => return denied,
     };
     let q = CiParams::parse(raw_query.as_deref());
-    for jf_id in params::ids_param(&q, &["ids", "Ids"]) {
-        if let Some(file_id) = report_file_id(&state, &jf_id).await
-            && let Err(refusal) = state
-                .library
-                .add_playlist_entry(&authed.principal.id, &internal, &file_id)
-                .await
+    let file_ids = match track_file_ids(&state, &params::ids_param(&q, &["ids", "Ids"])).await {
+        Ok(file_ids) => file_ids,
+        Err(failed) => return ApiError::from(failed).into_response(),
+    };
+    for file_id in &file_ids {
+        if let Err(refusal) = state
+            .library
+            .add_playlist_entry(&authed.principal.id, &internal, file_id)
+            .await
         {
             return refused(refusal);
         }

@@ -3,7 +3,8 @@
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse as _, Response};
+use droppedneedle_kernel::error::ApiError;
 
 use super::builders::{self};
 use super::models::{PlaybackProgressInfo, PlaybackStartInfo, PlaybackStopInfo, UserItemDataDto};
@@ -32,9 +33,9 @@ async fn item_state(
 /// Change one item's state for the caller with `write`, then answer the
 /// item's state as its own read gives it. An unknown id, or one whose read
 /// finds nothing, is `missing` (Jellyfin's 404) and nothing is written; a
-/// playlist, genre or library is 400, and a failed read 500. The answer
-/// names the item's current id, also when the app sent an old album or
-/// artist id.
+/// playlist, genre or library is 400, and a failed read 503 when busy or
+/// 500. The answer names the item's current id, also when the app sent an
+/// old album or artist id.
 async fn change_item<W>(
     state: &JellyfinState,
     user_id: &str,
@@ -45,8 +46,10 @@ async fn change_item<W>(
 where
     W: Future<Output = Result<(), WriteRefusal>>,
 {
-    let Some((kind, internal)) = state.ids.from_jf(item_id).await else {
-        return missing;
+    let (kind, internal) = match state.ids.from_jf(item_id).await {
+        Ok(Some(found)) => found,
+        Ok(None) => return missing,
+        Err(failed) => return ApiError::from(failed).into_response(),
     };
     if kind != "artist" && kind != "album" && kind != "track" {
         return error(StatusCode::BAD_REQUEST);
@@ -54,7 +57,7 @@ where
     match item_state(state, user_id, &kind, &internal).await {
         Ok(Some(_)) => {}
         Ok(None) => return missing,
-        Err(ReadFailed) => return error(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(failed) => return ApiError::from(failed).into_response(),
     }
     if let Err(refusal) = write(kind.clone(), internal.clone()).await {
         return refused(refusal);
@@ -62,7 +65,7 @@ where
     match item_state(state, user_id, &kind, &internal).await {
         Ok(Some(answer)) => json(StatusCode::OK, &answer),
         Ok(None) => missing,
-        Err(ReadFailed) => error(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(failed) => ApiError::from(failed).into_response(),
     }
 }
 
@@ -195,11 +198,16 @@ pub(super) async fn played_remove_modern(
 
 // ===== Playback reporting / scrobbling (all 204, lenient bodies) =====
 
-/// Item id → file id for session reports (`None` for unknown/non-track,
+/// Item id → file id for session reports (`Ok(None)` for unknown/non-track,
 /// v2 `_track_from_item_id`).
-pub(super) async fn report_file_id(state: &JellyfinState, item_id: &str) -> Option<String> {
-    let (kind, internal) = state.ids.from_jf(item_id).await?;
-    (kind == "track").then_some(internal)
+pub(super) async fn report_file_id(
+    state: &JellyfinState,
+    item_id: &str,
+) -> Result<Option<String>, ReadFailed> {
+    Ok(match state.ids.from_jf(item_id).await? {
+        Some((kind, internal)) if kind == "track" => Some(internal),
+        _ => None,
+    })
 }
 
 pub(super) async fn read_body_lenient<T: serde::de::DeserializeOwned>(
@@ -220,19 +228,19 @@ pub(super) async fn playing(
     State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     let (_, body) = read_body_lenient::<PlaybackStartInfo>(request).await;
     let Some(body) = body else {
-        return no_content();
+        return Ok(no_content());
     };
     let Some(item_id) = body.item_id.as_deref() else {
-        return no_content();
+        return Ok(no_content());
     };
     let key = body.play_session_id.as_deref().or(Some(item_id));
     if let Some(key) = key {
         state.sessions.mark_started(&authed.principal.id, key);
     }
-    if let Some(file_id) = report_file_id(&state, item_id).await {
+    if let Some(file_id) = report_file_id(&state, item_id).await? {
         state.sessions.now_playing(
             &file_id,
             &authed.principal.id,
@@ -241,7 +249,7 @@ pub(super) async fn playing(
             false,
         );
     }
-    no_content()
+    Ok(no_content())
 }
 
 /// Progress → live scrubber + heartbeat, never a scrobble (v2
@@ -250,15 +258,15 @@ pub(super) async fn playing_progress(
     State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     let (_, body) = read_body_lenient::<PlaybackProgressInfo>(request).await;
     let Some(body) = body else {
-        return no_content();
+        return Ok(no_content());
     };
     let Some(item_id) = body.item_id.as_deref() else {
-        return no_content();
+        return Ok(no_content());
     };
-    if let Some(file_id) = report_file_id(&state, item_id).await {
+    if let Some(file_id) = report_file_id(&state, item_id).await? {
         let position_ms = body.position_ticks.map(|t| t / (TICKS_PER_SECOND / 1000));
         // Presence only: the stop report alone checks the play threshold.
         state.sessions.now_playing(
@@ -269,7 +277,7 @@ pub(super) async fn playing_progress(
             body.is_paused,
         );
     }
-    no_content()
+    Ok(no_content())
 }
 
 /// Stop → always drop presence, then scrobble only if past the threshold (v2
@@ -278,31 +286,33 @@ pub(super) async fn playing_stopped(
     State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     let (_, body) = read_body_lenient::<PlaybackStopInfo>(request).await;
     // Drop presence even when the play never reaches the threshold below,
     // or it lingers until TTL.
     state.sessions.clear_presence(&authed.principal.id);
     let Some(body) = body else {
-        return no_content();
+        return Ok(no_content());
     };
     if body.failed {
-        return no_content();
+        return Ok(no_content());
     }
     let Some(item_id) = body.item_id.as_deref() else {
-        return no_content();
+        return Ok(no_content());
     };
-    let Some(file_id) = report_file_id(&state, item_id).await else {
-        return no_content();
+    let Some(file_id) = report_file_id(&state, item_id).await? else {
+        return Ok(no_content());
     };
-    let track = state.library.track(&authed.principal.id, &file_id).await;
-    let runtime = body.run_time_ticks.or_else(|| {
-        track
-            .as_ref()
-            .and_then(|t| builders::ticks(t.duration_seconds))
-    });
+    let runtime = match body.run_time_ticks {
+        Some(ticks) => Some(ticks),
+        None => state
+            .library
+            .track(&authed.principal.id, &file_id)
+            .await?
+            .and_then(|t| builders::ticks(t.duration_seconds)),
+    };
     if !should_scrobble(body.position_ticks, runtime) {
-        return no_content();
+        return Ok(no_content());
     }
     let key = body
         .play_session_id
@@ -316,7 +326,7 @@ pub(super) async fn playing_stopped(
     {
         tracing::warn!("jellyfin scrobble was refused");
     }
-    no_content()
+    Ok(no_content())
 }
 
 pub(super) async fn sessions_ping(_caller: Authed) -> Response {

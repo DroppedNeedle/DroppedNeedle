@@ -4,12 +4,14 @@
 //! and it answers only to ids this server hands out: album and artist ids
 //! are made with the data key, so nobody without an account can work one
 //! out. A missing album or artist picture is a 404 that names the item;
-//! everything else is the same empty 404.
+//! everything else is the same empty 404, except a failed read, which is a
+//! server error.
 
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
+use droppedneedle_kernel::error::ApiError;
 
 use super::params::CiParams;
 use super::router::*;
@@ -63,7 +65,7 @@ pub(super) async fn image(
     State(state): State<JellyfinState>,
     Path((item_id, image_type)): Path<(String, String)>,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     let query = request.uri().query().map(str::to_owned);
     serve_image(&state, query.as_deref(), &item_id, &image_type).await
 }
@@ -74,7 +76,7 @@ pub(super) async fn image_indexed(
     State(state): State<JellyfinState>,
     Path((item_id, image_type, _index)): Path<(String, String, String)>,
     request: Request<Body>,
-) -> Response {
+) -> Result<Response, ApiError> {
     let query = request.uri().query().map(str::to_owned);
     serve_image(&state, query.as_deref(), &item_id, &image_type).await
 }
@@ -84,12 +86,12 @@ pub(super) async fn serve_image(
     query: Option<&str>,
     item_id: &str,
     image_type: &str,
-) -> Response {
+) -> Result<Response, ApiError> {
     if !image_type.eq_ignore_ascii_case("primary") {
-        return error(StatusCode::NOT_FOUND);
+        return Ok(error(StatusCode::NOT_FOUND));
     }
-    let Some((kind, internal)) = state.ids.from_jf_anonymous(item_id).await else {
-        return error(StatusCode::NOT_FOUND);
+    let Some((kind, internal)) = state.ids.from_jf_anonymous(item_id).await? else {
+        return Ok(error(StatusCode::NOT_FOUND));
     };
     let q = CiParams::parse(query);
     let size = image_size(&q);
@@ -98,11 +100,11 @@ pub(super) async fn serve_image(
             bytes: library_png(),
             content_type: "image/png".to_owned(),
         }),
-        "album" => state.library.cover(&internal, size).await,
-        "artist" => state.library.artist_image(&internal, size).await,
+        "album" => state.library.cover(&internal, size).await?,
+        "artist" => state.library.artist_image(&internal, size).await?,
         _ => None,
     };
-    match found {
+    Ok(match found {
         Some(cover) if IMAGE_TYPES.contains(&cover.content_type.as_str()) => Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", cover.content_type)
@@ -114,7 +116,7 @@ pub(super) async fn serve_image(
         // A missing picture on an album or an artist names it, as Jellyfin
         // does. Other kinds stay an empty 404.
         None if matches!(kind.as_str(), "album" | "artist") => {
-            match state.library.name_of(&kind, &internal).await {
+            match state.library.name_of(&kind, &internal).await? {
                 Some(name) => json(
                     StatusCode::NOT_FOUND,
                     &format!("{name} does not have an image of type Primary"),
@@ -123,5 +125,5 @@ pub(super) async fn serve_image(
             }
         }
         _ => error(StatusCode::NOT_FOUND),
-    }
+    })
 }

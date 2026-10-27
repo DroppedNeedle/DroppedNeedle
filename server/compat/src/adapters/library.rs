@@ -32,7 +32,8 @@ use droppedneedle_catalog::reads::platform::covers::{CoverArt, CoverLookup};
 /// A compat read or write failed. Client faults keep their kind so each
 /// protocol answers its own code (Subsonic 70/50/10/0, Jellyfin
 /// 404/403/400/409); server faults go to the log only and answer the
-/// fixed internal message.
+/// fixed internal message, a busy database as 503 with `Retry-After` and
+/// anything else as 500.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompatError {
     /// The item does not exist (or is another user's private playlist).
@@ -43,6 +44,9 @@ pub enum CompatError {
     Invalid(String),
     /// Valid input against the wrong state; the message is user-safe.
     Conflict(String),
+    /// The database was too busy to answer in time; the text is for the
+    /// log only.
+    Busy(String),
     /// Server fault; the text is for the log only.
     Internal(String),
 }
@@ -52,22 +56,30 @@ impl std::fmt::Display for CompatError {
         match self {
             Self::NotFound => f.write_str("not found"),
             Self::Forbidden => f.write_str("not allowed"),
-            Self::Invalid(message) | Self::Conflict(message) | Self::Internal(message) => {
-                f.write_str(message)
-            }
+            Self::Invalid(message)
+            | Self::Conflict(message)
+            | Self::Busy(message)
+            | Self::Internal(message) => f.write_str(message),
         }
     }
 }
 
 impl From<StoreError> for CompatError {
     fn from(error: StoreError) -> Self {
-        Self::Internal(error.to_string())
+        match error {
+            StoreError::Busy(_) => Self::Busy(error.to_string()),
+            StoreError::Internal(_) => Self::Internal(error.to_string()),
+        }
     }
 }
 
 impl From<droppedneedle_catalog::reads::collections::db::StoreError> for CompatError {
     fn from(error: droppedneedle_catalog::reads::collections::db::StoreError) -> Self {
-        Self::Internal(error.to_string())
+        use droppedneedle_catalog::reads::collections::db::StoreError as CollectionsStoreError;
+        match error {
+            CollectionsStoreError::Busy(_) => Self::Busy(error.to_string()),
+            CollectionsStoreError::Internal(_) => Self::Internal(error.to_string()),
+        }
     }
 }
 
@@ -79,7 +91,7 @@ impl From<CollectionsError> for CompatError {
             CollectionsError::InvalidInput { message } => Self::Invalid(message),
             CollectionsError::Conflict { message } => Self::Conflict(message),
             CollectionsError::Busy { operation } => {
-                Self::Internal(format!("collections database busy during {operation}"))
+                Self::Busy(format!("collections database busy during {operation}"))
             }
             CollectionsError::Internal { cause } => {
                 Self::Internal(format!("collections failed: {cause}"))
@@ -102,7 +114,7 @@ impl CompatError {
             )),
             Self::Invalid(message) => Some((PARAM_MISSING, message.clone())),
             Self::Conflict(message) => Some((GENERIC, message.clone())),
-            Self::Internal(_) => None,
+            Self::Busy(_) | Self::Internal(_) => None,
         }
     }
 }
@@ -115,10 +127,19 @@ impl From<CompatError> for crate::jellyfin::seams::WriteRefusal {
             CompatError::Forbidden => WriteRefusal::Forbidden,
             CompatError::Invalid(_) => WriteRefusal::Invalid,
             CompatError::Conflict(_) => WriteRefusal::Conflict,
-            CompatError::Internal(cause) => {
+            CompatError::Busy(cause) | CompatError::Internal(cause) => {
                 tracing::error!(%cause, "jellyfin library write failed");
                 WriteRefusal::Failed
             }
+        }
+    }
+}
+
+impl From<CompatError> for crate::jellyfin::seams::ReadFailed {
+    fn from(error: CompatError) -> Self {
+        match error {
+            CompatError::Busy(cause) => Self::Busy(cause),
+            other => Self::Failed(other.to_string()),
         }
     }
 }

@@ -222,9 +222,26 @@ pub enum ItemView {
     Artist(Box<ArtistView>),
 }
 
-/// A library read failed; the handler answers 500.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReadFailed;
+/// A library or id read failed, which is never absence. It answers through
+/// the compat boundary, status only: a busy database 503 with
+/// `Retry-After`, anything else 500. The text is the cause, for the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadFailed {
+    /// The database was too busy to answer in time.
+    Busy(String),
+    /// Any other failure.
+    Failed(String),
+}
+
+impl From<ReadFailed> for droppedneedle_kernel::error::ApiError {
+    fn from(failed: ReadFailed) -> Self {
+        use droppedneedle_kernel::error::Unavailable;
+        match failed {
+            ReadFailed::Busy(cause) => Self::unavailable(Unavailable::ServerBusy, cause),
+            ReadFailed::Failed(cause) => Self::internal(cause),
+        }
+    }
+}
 
 /// Album row (v2 `ViewAlbum` subset).
 #[derive(Debug, Clone, Default)]

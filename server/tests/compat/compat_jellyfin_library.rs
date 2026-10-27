@@ -777,6 +777,50 @@ async fn images_serve_anonymously_with_immutable_cache() {
     rig.stop().await;
 }
 
+/// A library or id read that fails is a server error with an empty body,
+/// never an empty list or a missing item: an app that reads an empty 200
+/// or a 404 drops what it holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_read_is_a_server_error_not_an_empty_answer() {
+    let rig = CompatApp::start("jf-failed-read").await;
+    let auth = finamp(&rig.secret);
+    let mezzanine = album_id(&rig, &auth, "Mezzanine").await;
+    let airbag = track_id(&rig, &auth, "Airbag").await;
+    let picture = format!("/jellyfin/Items/{mezzanine}/Images/Primary");
+    // The id fill has nothing left to write, so no pass races the renames.
+    rig.jellyfin_ids_caught_up().await;
+    assert_eq!(
+        get(&rig, &picture, None).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    rig.app
+        .db()
+        .execute_batch("ALTER TABLE local_albums RENAME TO local_albums_gone;")
+        .expect("albums table renames");
+    let items = get(&rig, "/jellyfin/Items", Some(&auth)).await;
+    assert_eq!(items.bare(), (500, 0));
+
+    rig.app
+        .db()
+        .execute_batch("ALTER TABLE compat_jellyfin_ids RENAME TO compat_jellyfin_ids_gone;")
+        .expect("ids table renames");
+    assert_eq!(get(&rig, &picture, None).await.bare(), (500, 0));
+
+    // A playlist write reads every id first, so a failed read writes
+    // nothing and asking again makes no second playlist.
+    let create = format!("/jellyfin/Playlists?name=Retry&ids={airbag}");
+    let created = send(&rig, "POST", &create, Some(&auth), None).await;
+    assert_eq!(created.bare(), (500, 0));
+    let playlists: i64 = rig
+        .app
+        .db()
+        .query_row("SELECT COUNT(*) FROM playlists", [], |row| row.get(0))
+        .expect("playlists count");
+    assert_eq!(playlists, 0);
+    rig.stop().await;
+}
+
 /// An artist with no MusicBrainz link advertises a picture when their
 /// albums have art, and it is the mosaic the web UI shows, at the bucket
 /// the size asks for. One with no art advertises none.

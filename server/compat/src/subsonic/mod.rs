@@ -383,19 +383,25 @@ impl Ctx<'_> {
     }
 
     /// Storage errors surface as code 0 (generic), never an auth code. The
-    /// cause is logged; the client sees only the fixed internal message.
+    /// cause is logged; the client sees only the fixed internal message,
+    /// under 503 with `Retry-After` when the database was busy and 500
+    /// otherwise.
     pub fn store_err(err: CompatError) -> SubsonicError {
-        match err.client_error() {
-            Some((code, message)) => SubsonicError::new(code, message),
-            None => store_failure(err),
+        if let Some((code, message)) = err.client_error() {
+            return SubsonicError::new(code, message);
         }
+        if let CompatError::Busy(cause) = &err {
+            tracing::warn!(%cause, "subsonic store call found the database busy");
+            return SubsonicError::server_fault(error::ServerFault::Busy);
+        }
+        store_failure(err)
     }
 }
 
 /// Log a storage failure and answer code 0 with the fixed message.
 fn store_failure(err: impl std::fmt::Display) -> SubsonicError {
     tracing::error!(cause = %err, "subsonic store call failed");
-    SubsonicError::new(GENERIC, droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE)
+    SubsonicError::server_fault(error::ServerFault::Internal)
 }
 
 /// Handler outcome: an envelope payload or a binary response.
@@ -552,7 +558,25 @@ pub async fn dispatch_with(
     .await;
     match outcome {
         Ok(rendered) => rendered,
-        Err(err) => failure(err.code, &err.message, format, callback.as_deref()),
+        Err(err) => {
+            let mut rendered = failure(err.code, &err.message, format, callback.as_deref());
+            // A server fault keeps its 5xx status; the compat boundary
+            // answers it with the failed envelope.
+            match err.fault {
+                Some(error::ServerFault::Busy) => {
+                    let busy = droppedneedle_kernel::error::Unavailable::ServerBusy.answer();
+                    rendered.status = busy.status.as_u16();
+                    if let Some(seconds) = busy.retry_after {
+                        rendered
+                            .headers
+                            .push(("Retry-After".to_owned(), seconds.to_string()));
+                    }
+                }
+                Some(error::ServerFault::Internal) => rendered.status = 500,
+                None => {}
+            }
+            rendered
+        }
     }
 }
 

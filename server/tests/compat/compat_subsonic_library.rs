@@ -1752,3 +1752,147 @@ fn request_limits_and_xml_escaping() {
     let stripped = obj(vec![("gone", Val::Null), ("empty", Val::List(vec![]))]).stripped();
     assert_eq!(stripped.to_json(), "{\"empty\":[]}");
 }
+
+/// A read that finds the database busy answers 503 with `Retry-After` in
+/// both protocols, so an app asks again instead of showing an empty
+/// library: Subsonic in its failed envelope with code 0, Jellyfin with an
+/// empty body. The compat routers run over a database with one pooled
+/// reader for the collections and a short wait for it; the test holds that
+/// reader, so the playlist read gives up as busy.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
+    use std::net::SocketAddr;
+    use std::time::Duration;
+
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use droppedneedle_auth::users::roles::Role;
+    use droppedneedle_catalog::reads::collections::CollectionsState;
+    use droppedneedle_catalog::reads::collections::db::CollectionsDb;
+    use droppedneedle_catalog::reads::library::store::LocalCatalog;
+    use droppedneedle_compat::CompatSetup;
+    use droppedneedle_compat::jellyfin::JellyfinSettings;
+    use droppedneedle_compat::settings::LiveSettings;
+    use droppedneedle_compat::setup::CompatDeps;
+    use droppedneedle_compat::subsonic::Settings;
+    use droppedneedle_kernel::db::{DbConfig, LaneLimits, open_runtime};
+    use tower::ServiceExt as _;
+
+    const SECRET: &str = "alice-app-secret";
+    let scope = crate::common::TestApp::start("busy-read-scope").await;
+    let dir = crate::common::ScratchDir::new("busy-read");
+    let path = dir.join("app.db");
+    crate::common::migrated_db(&path);
+    let mut config = DbConfig::new(&path)
+        .with_lane_limits(LaneLimits::patient())
+        .with_read_wait(Duration::from_millis(100));
+    config.readers = 1;
+    let runtime = open_runtime(&config).await.expect("runtime opens");
+    let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
+        .build()
+        .await;
+    let auth = crate::common::auth::AuthRig::on(&platform);
+    let user = auth.seed_user("alice", Role::User).await;
+    auth.seed_app_password(&user.id, SECRET).await;
+    let (library, _) = crate::common::library::library_at(&platform);
+    let reads = crate::common::bundles::reads_at(
+        &platform,
+        auth.deps.clone(),
+        crate::common::reads_inputs(&dir),
+        &library,
+        CollectionsState::new(
+            CollectionsDb::new(runtime.db().clone(), platform.clock.clone()),
+            LocalCatalog::new(runtime.db().clone()),
+        ),
+        None,
+    );
+    let collections = crate::common::bundles::collections_at(&platform);
+    let acquire = crate::common::bundles::acquire_at(
+        &platform,
+        auth.deps.clone(),
+        &library,
+        &collections.stores,
+    );
+    let media =
+        crate::common::bundles::media_at(&platform, auth.deps.clone(), &library, &reads, &acquire);
+    let mut deps = CompatDeps::over_reads(
+        &platform,
+        auth.deps.clone(),
+        media.playback.clone(),
+        media.stream.engine.clone(),
+        library.scans.clone(),
+        &reads,
+    );
+    deps.settings = LiveSettings::fixed(
+        Settings {
+            enabled: true,
+            ..Settings::default()
+        },
+        JellyfinSettings {
+            enabled: true,
+            ..JellyfinSettings::default()
+        },
+    );
+    let compat = CompatSetup::build(deps);
+    compat
+        .jellyfin_ids()
+        .fill()
+        .pass()
+        .await
+        .expect("jellyfin ids load");
+    let router = scope.request_scope(compat.router());
+    let ask = |uri: String, authorization: Option<String>| {
+        let router = router.clone();
+        async move {
+            let mut request = axum::http::Request::get(uri);
+            if let Some(authorization) = authorization {
+                request = request.header("authorization", authorization);
+            }
+            let mut request = request.body(Body::empty()).expect("request builds");
+            request
+                .extensions_mut()
+                .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 40_000))));
+            let response = router.oneshot(request).await.expect("router answers");
+            let status = response.status();
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
+            let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .expect("body reads");
+            (status, retry_after, body.to_vec())
+        }
+    };
+    let subsonic = uri(
+        "getPlaylists",
+        &[
+            ("u", "alice"),
+            ("p", SECRET),
+            ("v", "1.16.1"),
+            ("c", "test"),
+            ("f", "json"),
+        ],
+    );
+    let jellyfin = "/jellyfin/Items?IncludeItemTypes=Playlist".to_owned();
+    let token = Some(format!("MediaBrowser Client=\"Test\", Token=\"{SECRET}\""));
+
+    let held = runtime.db().sqlx().acquire().await.expect("reader held");
+    let (status, retry_after, body) = ask(subsonic.clone(), None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(retry_after.as_deref(), Some("1"));
+    let envelope: Value = serde_json::from_slice(&body).expect("envelope is json");
+    assert_eq!(envelope["subsonic-response"]["status"], "failed");
+    assert_eq!(envelope["subsonic-response"]["error"]["code"], 0);
+    let (status, retry_after, body) = ask(jellyfin.clone(), token.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(retry_after.as_deref(), Some("1"));
+    assert!(body.is_empty());
+
+    drop(held);
+    assert_eq!(ask(subsonic, None).await.0, StatusCode::OK);
+    assert_eq!(ask(jellyfin, token).await.0, StatusCode::OK);
+    drop(router);
+    scope.stop().await;
+}
