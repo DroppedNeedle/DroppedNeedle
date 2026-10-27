@@ -14,6 +14,7 @@ use droppedneedle_plugins::capabilities::acquisition::PluginEnqueue;
 use droppedneedle_plugins::capabilities::stream::PluginStream;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_plugins::manifest::{load_manifest, parse_manifest};
+use droppedneedle_plugins::models::{PluginHealthStatus, PluginSource, PluginSourceHealth};
 use droppedneedle_plugins::process::ProcessLauncher;
 use droppedneedle_plugins::runtime::{
     DownloadTaskEvent, EventKind, EventPayload, PluginEvent, RuntimeState, ScrobbleEvent,
@@ -360,10 +361,38 @@ async fn scheduler_ticks_and_reports_health() {
         .fire_tick("http-catalog", Duration::from_secs(10))
         .await
         .unwrap();
-    let plugin = rig.host.get("http-catalog").unwrap();
-    let health = rig.host.plugin_health(&plugin).await;
-    assert_eq!(health.status, "error");
-    assert!(!health.configured);
+
+    // The plugin is asked once it runs, and the source list shows its answer.
+    let source = wait_for_source(&rig, |source| source.health != PluginSourceHealth::Unknown).await;
+    assert_eq!(source.health, PluginSourceHealth::Error);
+    assert!(!source.configured);
+    assert_eq!(source.health_message, "catalog_url is not configured");
+
+    // A settings save asks again.
+    let (url, served) = capture_one_request().await;
+    rig.host
+        .update_settings(
+            "http-catalog",
+            true,
+            HashMap::from([("catalog_url".to_owned(), url)]),
+        )
+        .unwrap();
+    let source = wait_for_source(&rig, |source| source.configured).await;
+    assert_eq!(source.health, PluginSourceHealth::Ok);
+    assert!(served.await.unwrap().starts_with("HEAD /hook"));
+    let health = rig.host.get("http-catalog").unwrap().health().unwrap();
+    assert_eq!(health.status, PluginHealthStatus::Ok);
+}
+
+/// Wait until the one plugin source matches `done`.
+async fn wait_for_source(rig: &Rig, done: impl Fn(&PluginSource) -> bool) -> PluginSource {
+    for _ in 0..400 {
+        if let Some(source) = rig.host.plugin_sources().into_iter().find(|s| done(s)) {
+            return source;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("the source never matched: {:?}", rig.host.plugin_sources());
 }
 
 #[tokio::test]

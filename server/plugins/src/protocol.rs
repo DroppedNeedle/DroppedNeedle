@@ -89,8 +89,6 @@ pub mod codes {
     pub const INVALID_PARAMS: i64 = -32602;
     /// The receiver failed in an unexpected way.
     pub const INTERNAL_ERROR: i64 = -32603;
-    /// The plugin's own code raised or refused.
-    pub const PLUGIN_ERROR: i64 = -32000;
     /// The host refused a plugin request (for example a bad state key).
     pub const HOST_REFUSED: i64 = -32001;
 }

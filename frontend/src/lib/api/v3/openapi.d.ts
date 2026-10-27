@@ -18913,6 +18913,20 @@ export interface components {
             /** @description Cursor for the next page, when there is one. */
             next_cursor?: string | null;
         };
+        /** @description One plugin's answer to `plugin.health`. */
+        PluginHealth: {
+            /** @description Whether it has the settings it needs. */
+            configured: boolean;
+            /** @description Detail for the admin. */
+            message?: string;
+            /** @description Whether it works. */
+            status: components["schemas"]["PluginHealthStatus"];
+        };
+        /**
+         * @description What a plugin says about itself.
+         * @enum {string}
+         */
+        PluginHealthStatus: "ok" | "error";
         /** @description One plugin as the admin UI sees it. */
         PluginInfo: {
             /**
@@ -19044,6 +19058,7 @@ export interface components {
              * @description Events skipped because the plugin was still busy with the last one.
              */
             dropped_events?: number;
+            health?: null | components["schemas"]["PluginHealth"];
             /** @description Capabilities the plugin said it implements. */
             implemented_capabilities?: string[];
             /** @description Last start failure, crash or protocol problem. */
@@ -19074,7 +19089,7 @@ export interface components {
         };
         /** @description One enabled plugin acquisition source. */
         PluginSource: {
-            /** @description Whether the source is ready to use. */
+            /** @description Whether the plugin says it has the settings it needs. */
             configured?: boolean;
             /** @description Display name. */
             display_name?: string;
@@ -19082,11 +19097,10 @@ export interface components {
             has_client?: boolean;
             /** @description Whether the plugin serves searches for this source. */
             has_indexer?: boolean;
-            /**
-             * @description `ok` (running), `degraded` (restarting), `error` (cannot start) or
-             *     `unknown` (starting or stopped).
-             */
-            health?: string;
+            /** @description Health of the source. */
+            health: components["schemas"]["PluginSourceHealth"];
+            /** @description The plugin's own health message, when it gave one. */
+            health_message?: string;
             /** @description Source key (`plugin:<name>` or `usenet`). */
             key: string;
             /** @description Owning plugin name. */
@@ -19094,6 +19108,11 @@ export interface components {
             /** @description Indexer target source. */
             target_source?: string;
         };
+        /**
+         * @description Health of one plugin source.
+         * @enum {string}
+         */
+        PluginSourceHealth: "ok" | "degraded" | "error" | "unknown";
         /** @description Update an installed plugin from its GitHub source. */
         PluginSourceUpdateRequest: {
             /**

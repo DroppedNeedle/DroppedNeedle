@@ -10,17 +10,13 @@ import { PLUGIN_ENDPOINTS } from './endpoints';
 
 type PluginSource = components['schemas']['PluginSource'];
 
-// The server leaves a plugin's optional fields out; the screens read them
-// filled in, with an unknown health value read as unknown.
-export type PluginSourceHealth = 'ok' | 'degraded' | 'error' | 'unknown';
-export type PluginSourceInfo = Required<Omit<PluginSource, 'health'>> & {
-	health: PluginSourceHealth;
-};
+export type PluginSourceHealth = PluginSource['health'];
+// The server leaves a source's optional fields out; the screens read them
+// filled in.
+export type PluginSourceInfo = Required<PluginSource>;
 export interface PluginSourceList {
 	sources: PluginSourceInfo[];
 }
-
-const HEALTH: readonly PluginSourceHealth[] = ['ok', 'degraded', 'error', 'unknown'];
 
 function toSourceInfo(source: PluginSource): PluginSourceInfo {
 	return {
@@ -31,7 +27,8 @@ function toSourceInfo(source: PluginSource): PluginSourceInfo {
 		has_indexer: source.has_indexer ?? false,
 		target_source: source.target_source ?? '',
 		configured: source.configured ?? false,
-		health: HEALTH.find((health) => health === source.health) ?? 'unknown'
+		health: source.health,
+		health_message: source.health_message ?? ''
 	};
 }
 

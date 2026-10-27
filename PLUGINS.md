@@ -85,6 +85,10 @@ Plugins:
 cp -r examples/plugins/webhook-scrobbler /path/to/app/plugins/
 ```
 
+If you edit a running plugin's files in place, it starts again with the new
+code the next time plugins reload: a settings save, an install, an update or
+a server restart.
+
 Under Docker the plugins directory is `/app/plugins`. **Mount it as a
 volume**, or installed plugins disappear when the container is recreated.
 
@@ -211,8 +215,13 @@ server carries on as if the plugin had said nothing.
 | `indexer` | `search_album(...)`, `search_track(...)` | 35 s | no results from it |
 | `download_client` | `enqueue`, `get_status`, `inspect_materialization`, `discard_client_artifacts`, `abort` | 120 s enqueue, 30 s others | the download fails over |
 
-Every plugin may also have `is_configured()` and `health_check()`; they feed
-the plugin's health in Settings and the source list.
+Every plugin may also have `is_configured()` and `health_check()`. The server
+asks for them once the plugin is running, after every settings save, and
+again when Settings or a source list is opened and the last answer is over a
+minute old. The answer (status, message, and whether it is configured) shows
+on the plugin's card in Settings > Plugins and in the source lists. A plugin
+without them counts as healthy and configured; one that fails or does not
+answer within 10 seconds shows as an error.
 
 ### scrobbler
 
@@ -484,8 +493,11 @@ With `[plugin_ui] entry`, the admin's plugin card shows the plugin's own
 script in a locked-down frame: no access to the page or its cookies, and no
 requests of its own. It can talk to the page only through `postMessage`, with four
 read-only requests: `sources.list`, `search.preview`, `get_settings` (its own,
-secrets masked) and `health.get` (its own). `external_url` shows a link
-instead.
+secrets masked) and `health.get` (its own). `search.preview` with `{query}`
+calls the plugin's own `search` route
+(`GET /api/v3/plugins/ext/<plugin>/search?query=...`), so a panel that uses
+it needs the `publisher` capability and a `[[route]] path = "search"`.
+`external_url` shows a link instead.
 
 The server reads the script from inside the plugin folder and serves it to
 admins only, inlined into a small page of its own with an empty

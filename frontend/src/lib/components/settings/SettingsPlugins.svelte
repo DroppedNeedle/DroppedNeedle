@@ -16,6 +16,7 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
+	import PluginHealthBadge from './PluginHealthBadge.svelte';
 	import PluginInstall from './PluginInstall.svelte';
 	import PluginLibraryFiles from './PluginLibraryFiles.svelte';
 	import PluginPanel from './PluginPanel.svelte';
@@ -168,6 +169,18 @@
 										· {plugin.runtime.dropped_events} events skipped while busy
 									{/if}
 								</p>
+								{#if plugin.runtime.state === 'running'}
+									{@const health = plugin.runtime.health}
+									<div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+										<PluginHealthBadge health={health?.status ?? 'unknown'} />
+										{#if health && !health.configured}
+											<span class="badge badge-ghost badge-sm">Not configured</span>
+										{/if}
+										{#if health?.message}
+											<span class="min-w-0 break-words text-base-content/60">{health.message}</span>
+										{/if}
+									</div>
+								{/if}
 								{#if plugin.runtime.last_error && plugin.runtime.state !== 'running'}
 									<div
 										class="mt-1 flex items-center gap-2 rounded-lg bg-error/10 px-3 py-2 text-xs text-error"

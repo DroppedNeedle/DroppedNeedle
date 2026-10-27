@@ -135,10 +135,8 @@ impl PluginHost {
                     .settings
                     .iter()
                     .any(|field| field.key == "downloads_dir")
-                    && let Ok(stored) = self.config().get_plugin(&name)
-                    && let Some(dir) = stored
-                        .settings
-                        .get("downloads_dir")
+                    && let Some(dir) = self
+                        .running_setting(&name, "downloads_dir")
                         .filter(|dir| !dir.trim().is_empty())
                 {
                     roots.push(PathBuf::from(dir.trim()));

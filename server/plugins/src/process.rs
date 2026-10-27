@@ -19,6 +19,9 @@
 //!   privileges, its own process group.
 //! - A time budget on every call; three timeouts in a row restart it.
 //!
+//! Each run of the child asks `plugin.health` once it is running, again
+//! after every settings save, and when a list read finds the answer stale.
+//!
 //! This is not a sandbox. The child runs as the server's user, so a plugin
 //! that goes looking for the config directory on disk can still read it.
 //! The limits stop accidents and keep a crash or a hang from taking the
@@ -36,6 +39,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Notify, Semaphore, mpsc, oneshot, watch};
 
 use super::manifest::PluginManifest;
+use super::models::{PluginHealth, PluginHealthStatus};
 use super::protocol::{
     self, HostInfo, Incoming, InitializeParams, InitializeResult, PluginIdentity, RpcError, RpcId,
     codes, methods,
@@ -61,6 +65,10 @@ const HEALTHY_UPTIME: Duration = Duration::from_secs(300);
 const HANG_TIMEOUTS: u32 = 3;
 /// Messages queued for the plugin's stdin before calls fail fast.
 const INPUT_QUEUE: usize = 256;
+/// Budget for a health check.
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(10);
+/// Longest health message kept.
+const HEALTH_MESSAGE_MAX: usize = 500;
 /// Plugin-to-host requests one plugin may have in flight.
 const HOST_REQUESTS_IN_FLIGHT: usize = 32;
 /// Budget for answering one plugin-to-host request.
@@ -226,9 +234,8 @@ impl PluginLauncher for ProcessLauncher {
             session: Mutex::new(None),
             changed: state_tx,
             stop: self.supervisor.token().child_token(),
-            restart_now: Notify::new(),
-            timeouts_in_row: AtomicU32::new(0),
             settings: Mutex::new(spec.settings.clone()),
+            health: Mutex::new(None),
         });
         let child = ChildSpec {
             command,
@@ -283,10 +290,16 @@ struct Shared {
     /// Cancelled to stop the plugin for good: the host's stop, a dropped
     /// handle, a replacement or the server's shutdown.
     stop: CancellationToken,
-    restart_now: Notify,
-    timeouts_in_row: AtomicU32,
     /// Latest settings, sent again in `initialize` after a restart.
     settings: Mutex<HashMap<String, String>>,
+    /// The current run's last health answer.
+    health: Mutex<Option<CheckedHealth>>,
+}
+
+/// One health answer and when it came.
+struct CheckedHealth {
+    health: PluginHealth,
+    at: tokio::time::Instant,
 }
 
 impl Shared {
@@ -299,6 +312,11 @@ impl Shared {
             if state != RuntimeState::Running {
                 status.implemented.clear();
             }
+        }
+        if state != RuntimeState::Running
+            && let Ok(mut health) = self.health.lock()
+        {
+            *health = None;
         }
         self.changed.send_modify(|generation| *generation += 1);
     }
@@ -315,14 +333,86 @@ impl Shared {
     }
 }
 
-/// One live child: its input queue and the calls waiting on it.
+/// One live child: its input queue, the calls waiting on it, and its own
+/// hang count. Nothing here outlives the child, so a restart starts clean.
 struct Session {
     input: mpsc::Sender<String>,
     pending: Mutex<HashMap<i64, oneshot::Sender<Result<Value, RpcError>>>>,
     next_id: AtomicI64,
+    timeouts_in_row: AtomicU32,
+    /// Cancelled once this child counts as hung; its run then ends.
+    hung: CancellationToken,
+    /// Asks the run to check the plugin's health again.
+    health_wanted: Notify,
 }
 
 impl Session {
+    fn new(input: mpsc::Sender<String>) -> Self {
+        Self {
+            input,
+            pending: Mutex::new(HashMap::new()),
+            next_id: AtomicI64::new(1),
+            timeouts_in_row: AtomicU32::new(0),
+            hung: CancellationToken::new(),
+            health_wanted: Notify::new(),
+        }
+    }
+
+    /// Call one method on this child, waiting until `deadline`.
+    async fn call(
+        self: &Arc<Self>,
+        plugin: &str,
+        method: &str,
+        params: &Value,
+        deadline: tokio::time::Instant,
+    ) -> Result<Value, CallError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.insert(id, tx);
+        }
+        let mut guard = PendingGuard {
+            session: Arc::clone(self),
+            id,
+            done: false,
+        };
+        if !self.send(protocol::request_line(id, method, params)) {
+            return Err(CallError::NotRunning(
+                "plugin is not reading its input".to_owned(),
+            ));
+        }
+        match tokio::time::timeout_at(deadline, rx).await {
+            Ok(Ok(answer)) => {
+                guard.done = true;
+                self.timeouts_in_row.store(0, Ordering::Relaxed);
+                answer.map_err(|error| match error.code {
+                    codes::METHOD_NOT_FOUND => CallError::Unsupported(method.to_owned()),
+                    _ => CallError::Failed {
+                        fault: error.fault(),
+                        message: error.message,
+                    },
+                })
+            }
+            Ok(Err(_)) => {
+                guard.done = true;
+                Err(CallError::NotRunning("plugin exited".to_owned()))
+            }
+            Err(_) => {
+                // The guard cancels the call on drop.
+                let in_row = self.timeouts_in_row.fetch_add(1, Ordering::Relaxed) + 1;
+                if in_row == HANG_TIMEOUTS {
+                    tracing::warn!(
+                        plugin = %plugin,
+                        timeouts = in_row,
+                        "plugin stopped answering; restarting it"
+                    );
+                    self.hung.cancel();
+                }
+                Err(CallError::Timeout)
+            }
+        }
+    }
+
     /// Fail every waiting call at once (the child is gone).
     fn fail_pending(&self) {
         if let Ok(mut pending) = self.pending.lock() {
@@ -438,53 +528,9 @@ impl PluginConnection for ProcessConnection {
         Box::pin(async move {
             let deadline = tokio::time::Instant::now() + timeout;
             let session = self.running_session(deadline).await?;
-            let id = session.next_id.fetch_add(1, Ordering::Relaxed);
-            let (tx, rx) = oneshot::channel();
-            if let Ok(mut pending) = session.pending.lock() {
-                pending.insert(id, tx);
-            }
-            let mut guard = PendingGuard {
-                session: Arc::clone(&session),
-                id,
-                done: false,
-            };
-            if !session.send(protocol::request_line(id, method, &params)) {
-                return Err(CallError::NotRunning(
-                    "plugin is not reading its input".to_owned(),
-                ));
-            }
-            let outcome = tokio::time::timeout_at(deadline, rx).await;
-            match outcome {
-                Ok(Ok(answer)) => {
-                    guard.done = true;
-                    self.shared.timeouts_in_row.store(0, Ordering::Relaxed);
-                    answer.map_err(|error| match error.code {
-                        codes::METHOD_NOT_FOUND => CallError::Unsupported(method.to_owned()),
-                        _ => CallError::Failed {
-                            fault: error.fault(),
-                            message: error.message,
-                        },
-                    })
-                }
-                Ok(Err(_)) => {
-                    guard.done = true;
-                    Err(CallError::NotRunning("plugin exited".to_owned()))
-                }
-                Err(_) => {
-                    // The guard cancels the call on drop.
-                    let in_row = self.shared.timeouts_in_row.fetch_add(1, Ordering::Relaxed) + 1;
-                    if in_row >= HANG_TIMEOUTS {
-                        tracing::warn!(
-                            plugin = %self.shared.name,
-                            timeouts = in_row,
-                            "plugin stopped answering; restarting it"
-                        );
-                        self.shared.timeouts_in_row.store(0, Ordering::Relaxed);
-                        self.shared.restart_now.notify_one();
-                    }
-                    Err(CallError::Timeout)
-                }
-            }
+            session
+                .call(&self.shared.name, method, &params, deadline)
+                .await
         })
     }
 
@@ -498,6 +544,34 @@ impl PluginConnection for ProcessConnection {
         }
         if let Some(session) = self.shared.current_session() {
             session.send(protocol::notification_line(method, &params));
+            if method == methods::SETTINGS_UPDATE {
+                session.health_wanted.notify_one();
+            }
+        }
+    }
+
+    fn health(&self) -> Option<PluginHealth> {
+        self.shared
+            .health
+            .lock()
+            .ok()
+            .and_then(|health| health.as_ref().map(|checked| checked.health.clone()))
+    }
+
+    fn refresh_health(&self, max_age: Duration) {
+        let stale = self
+            .shared
+            .health
+            .lock()
+            .ok()
+            .and_then(|health| {
+                health
+                    .as_ref()
+                    .map(|checked| checked.at.elapsed() >= max_age)
+            })
+            .unwrap_or(false);
+        if stale && let Some(session) = self.shared.current_session() {
+            session.health_wanted.notify_one();
         }
     }
 
@@ -658,11 +732,7 @@ async fn run_child(shared: &Arc<Shared>, spec: &ChildSpec) -> RunEnd {
 
     let (input_tx, input_rx) = mpsc::channel::<String>(INPUT_QUEUE);
     tokio::spawn(write_input(stdin, input_rx));
-    let session = Arc::new(Session {
-        input: input_tx,
-        pending: Mutex::new(HashMap::new()),
-        next_id: AtomicI64::new(1),
-    });
+    let session = Arc::new(Session::new(input_tx));
     let mut reader = tokio::spawn(read_output(
         shared.name.clone(),
         stdout,
@@ -721,32 +791,106 @@ async fn run_child(shared: &Arc<Shared>, spec: &ChildSpec) -> RunEnd {
     shared.set_state(RuntimeState::Running, None);
     tracing::info!(plugin = %shared.name, pid = child.id(), "plugin running");
 
-    let end = tokio::select! {
-        ended = &mut reader => {
-            // The output is gone (exit, closed stdout, or a line over the
-            // cap): the child cannot be talked to any more, so it goes now.
-            // Never wait on it unbounded; a child that closed stdout but
-            // keeps running would wedge the supervisor.
-            let reason = ended.unwrap_or_else(|error| error.to_string());
-            let status = match tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await {
-                Ok(Ok(status)) => status.to_string(),
-                _ => {
-                    kill_group(&mut child, &mut group).await;
-                    "killed".to_owned()
-                }
-            };
-            RunEnd::Crashed(format!("{reason} ({status})"))
-        }
-        _ = shared.restart_now.notified() => RunEnd::Crashed("plugin stopped answering".to_owned()),
-        () = shared.stop.cancelled() => {
-            session.send(protocol::request_line(0, methods::SHUTDOWN, &Value::Null));
-            let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
-            RunEnd::Stopped
+    // Health is asked once now, then whenever a save or a stale read asks
+    // again. A request made while a check runs waits for the next one.
+    let mut check: BoxFuture<'_, ()> = Box::pin(ask_health(shared, &session));
+    let mut checking = true;
+    let end = loop {
+        tokio::select! {
+            ended = &mut reader => {
+                // The output is gone (exit, closed stdout, or a line over the
+                // cap): the child cannot be talked to any more, so it goes now.
+                // Never wait on it unbounded; a child that closed stdout but
+                // keeps running would wedge the supervisor.
+                let reason = ended.unwrap_or_else(|error| error.to_string());
+                let status = match tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await {
+                    Ok(Ok(status)) => status.to_string(),
+                    _ => {
+                        kill_group(&mut child, &mut group).await;
+                        "killed".to_owned()
+                    }
+                };
+                break RunEnd::Crashed(format!("{reason} ({status})"));
+            }
+            () = session.hung.cancelled() => {
+                break RunEnd::Crashed("plugin stopped answering".to_owned());
+            }
+            () = shared.stop.cancelled() => {
+                session.send(protocol::request_line(0, methods::SHUTDOWN, &Value::Null));
+                let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
+                break RunEnd::Stopped;
+            }
+            () = &mut check, if checking => checking = false,
+            () = session.health_wanted.notified(), if !checking => {
+                check = Box::pin(ask_health(shared, &session));
+                checking = true;
+            }
         }
     };
+    drop(check);
     reader.abort();
     kill_group(&mut child, &mut group).await;
     end
+}
+
+/// A plugin's `plugin.health` answer as it comes over the wire.
+#[derive(serde::Deserialize)]
+struct HealthAnswer {
+    status: String,
+    #[serde(default)]
+    message: String,
+    #[serde(default = "answer_configured")]
+    configured: bool,
+}
+
+fn answer_configured() -> bool {
+    true
+}
+
+/// Ask the running child for its health and keep the answer. A plugin
+/// without a health check reads as working; a failed check as an error.
+async fn ask_health(shared: &Shared, session: &Arc<Session>) {
+    let deadline = tokio::time::Instant::now() + HEALTH_TIMEOUT;
+    let failed = |message: String| PluginHealth {
+        status: PluginHealthStatus::Error,
+        message,
+        configured: false,
+    };
+    let health = match session
+        .call(&shared.name, methods::HEALTH, &Value::Null, deadline)
+        .await
+    {
+        Ok(value) => match serde_json::from_value::<HealthAnswer>(value) {
+            Ok(answer) => PluginHealth {
+                status: if answer.status == "ok" {
+                    PluginHealthStatus::Ok
+                } else {
+                    PluginHealthStatus::Error
+                },
+                message: truncate(&answer.message, HEALTH_MESSAGE_MAX).to_owned(),
+                configured: answer.configured,
+            },
+            Err(error) => {
+                tracing::warn!(plugin = %shared.name, %error, "plugin health answer has the wrong shape");
+                failed("health answer was malformed".to_owned())
+            }
+        },
+        Err(CallError::Unsupported(_)) => PluginHealth {
+            status: PluginHealthStatus::Ok,
+            message: String::new(),
+            configured: true,
+        },
+        Err(error) => {
+            tracing::warn!(plugin = %shared.name, %error, "plugin health check failed");
+            failed(error.to_string())
+        }
+    };
+    if let Ok(mut slot) = shared.health.lock() {
+        *slot = Some(CheckedHealth {
+            health,
+            at: tokio::time::Instant::now(),
+        });
+    }
 }
 
 /// Send `initialize` and check the answer. Returns the implemented

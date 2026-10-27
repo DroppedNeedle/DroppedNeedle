@@ -55691,6 +55691,36 @@
           }
         }
       },
+      "PluginHealth": {
+        "type": "object",
+        "description": "One plugin's answer to `plugin.health`.",
+        "required": [
+          "status",
+          "configured"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Whether it has the settings it needs."
+          },
+          "message": {
+            "type": "string",
+            "description": "Detail for the admin."
+          },
+          "status": {
+            "$ref": "#/components/schemas/PluginHealthStatus",
+            "description": "Whether it works."
+          }
+        }
+      },
+      "PluginHealthStatus": {
+        "type": "string",
+        "description": "What a plugin says about itself.",
+        "enum": [
+          "ok",
+          "error"
+        ]
+      },
       "PluginInfo": {
         "type": "object",
         "description": "One plugin as the admin UI sees it.",
@@ -56016,6 +56046,17 @@
             "description": "Events skipped because the plugin was still busy with the last one.",
             "minimum": 0
           },
+          "health": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginHealth",
+                "description": "The plugin's own answer to its health check in this run; absent\nuntil it has answered."
+              }
+            ]
+          },
           "implemented_capabilities": {
             "type": "array",
             "items": {
@@ -56083,12 +56124,13 @@
         "type": "object",
         "description": "One enabled plugin acquisition source.",
         "required": [
-          "key"
+          "key",
+          "health"
         ],
         "properties": {
           "configured": {
             "type": "boolean",
-            "description": "Whether the source is ready to use."
+            "description": "Whether the plugin says it has the settings it needs."
           },
           "display_name": {
             "type": "string",
@@ -56103,8 +56145,12 @@
             "description": "Whether the plugin serves searches for this source."
           },
           "health": {
+            "$ref": "#/components/schemas/PluginSourceHealth",
+            "description": "Health of the source."
+          },
+          "health_message": {
             "type": "string",
-            "description": "`ok` (running), `degraded` (restarting), `error` (cannot start) or\n`unknown` (starting or stopped)."
+            "description": "The plugin's own health message, when it gave one."
           },
           "key": {
             "type": "string",
@@ -56119,6 +56165,16 @@
             "description": "Indexer target source."
           }
         }
+      },
+      "PluginSourceHealth": {
+        "type": "string",
+        "description": "Health of one plugin source.",
+        "enum": [
+          "ok",
+          "degraded",
+          "error",
+          "unknown"
+        ]
       },
       "PluginSourceUpdateRequest": {
         "type": "object",

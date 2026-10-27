@@ -366,6 +366,16 @@ pub trait PluginConnection: Send + Sync {
     /// Current health.
     fn status(&self) -> RuntimeStatus;
 
+    /// The plugin's answer to `plugin.health` in its current run, once it
+    /// has given one. A connection that never asks has none.
+    fn health(&self) -> Option<super::models::PluginHealth> {
+        None
+    }
+
+    /// Ask `plugin.health` again, without waiting, when the last answer is
+    /// older than `max_age`.
+    fn refresh_health(&self, _max_age: Duration) {}
+
     /// Stop for good: ask the plugin to exit, then kill it.
     fn stop(&self) -> BoxFuture<'_, ()>;
 }

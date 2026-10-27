@@ -34,6 +34,7 @@
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 
+	import PluginHealthBadge from './PluginHealthBadge.svelte';
 	import SettingsProwlarr from './SettingsProwlarr.svelte';
 	import SettingsSectionCollapse from './SettingsSectionCollapse.svelte';
 
@@ -84,8 +85,9 @@
 			toastStore.show({ message: 'Could not switch search backend', type: 'error' });
 		}
 	}
+	const pluginSourcesQuery = getPluginSourcesQuery();
 	const pluginIndexers = $derived(
-		(getPluginSourcesQuery().data?.sources ?? []).filter((source) => source.has_indexer)
+		(pluginSourcesQuery.data?.sources ?? []).filter((source) => source.has_indexer)
 	);
 	let editingId = $state<string | null>(null);
 	let draft = $state<IndexerSettings | null>(null);
@@ -435,14 +437,15 @@
 									<span class="badge badge-ghost badge-sm" title="Indexer target">
 										targets {source.target_source || source.key}
 									</span>
-									<span
-										class="badge badge-sm"
-										class:badge-success={source.configured}
-										class:badge-ghost={!source.configured}
-									>
-										{source.configured ? 'Configured' : 'Not configured'}
-									</span>
-									<span class="badge badge-ghost badge-sm">{source.health}</span>
+									{#if !source.configured && source.health !== 'unknown'}
+										<span class="badge badge-ghost badge-sm">Not configured</span>
+									{/if}
+									<PluginHealthBadge health={source.health} />
+									{#if source.health_message}
+										<span class="basis-full text-xs text-base-content/60">
+											{source.health_message}
+										</span>
+									{/if}
 								</li>
 							{/each}
 						</ul>

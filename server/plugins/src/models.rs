@@ -104,6 +104,32 @@ pub struct PluginRuntimeInfo {
     /// Events skipped because the plugin was still busy with the last one.
     #[serde(default)]
     pub dropped_events: u64,
+    /// The plugin's own answer to its health check in this run; absent
+    /// until it has answered.
+    #[serde(default)]
+    pub health: Option<PluginHealth>,
+}
+
+/// What a plugin says about itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginHealthStatus {
+    /// Working.
+    Ok,
+    /// Not working: the message says why.
+    Error,
+}
+
+/// One plugin's answer to `plugin.health`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PluginHealth {
+    /// Whether it works.
+    pub status: PluginHealthStatus,
+    /// Detail for the admin.
+    #[serde(default)]
+    pub message: String,
+    /// Whether it has the settings it needs.
+    pub configured: bool,
 }
 
 /// What an install was asked to follow.
@@ -253,13 +279,28 @@ pub struct PluginSource {
     /// Indexer target source.
     #[serde(default)]
     pub target_source: String,
-    /// Whether the source is ready to use.
+    /// Whether the plugin says it has the settings it needs.
     #[serde(default)]
     pub configured: bool,
-    /// `ok` (running), `degraded` (restarting), `error` (cannot start) or
-    /// `unknown` (starting or stopped).
+    /// Health of the source.
+    pub health: PluginSourceHealth,
+    /// The plugin's own health message, when it gave one.
     #[serde(default)]
-    pub health: String,
+    pub health_message: String,
+}
+
+/// Health of one plugin source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginSourceHealth {
+    /// Running, and the plugin says it works.
+    Ok,
+    /// Restarting after a crash or a hang.
+    Degraded,
+    /// The plugin says it does not work, or it cannot start.
+    Error,
+    /// Starting, stopped, or not checked yet.
+    Unknown,
 }
 
 /// Plugin source listing.

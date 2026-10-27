@@ -5,6 +5,7 @@
 	import Card from '$lib/ui/Card.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
+	import PluginHealthBadge from './PluginHealthBadge.svelte';
 	import SettingsDownloadClient from './SettingsDownloadClient.svelte';
 	import SettingsDownloadPolicy from './SettingsDownloadPolicy.svelte';
 	import SettingsOnboardingChecklist from './SettingsOnboardingChecklist.svelte';
@@ -51,30 +52,31 @@
 				<ul class="space-y-2">
 					{#each pluginSources as source (source.key)}
 						<li
-							class="flex items-center gap-3 rounded-box border border-base-300 bg-base-100 p-2.5"
+							class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-box border border-base-300 bg-base-100 p-2.5"
 						>
 							<span
 								class="grid size-8 shrink-0 place-items-center rounded-lg bg-base-300/60 text-base-content/70"
 							>
 								<Puzzle class="size-4" aria-hidden="true" />
 							</span>
-							<span class="min-w-0 flex-1">
-								<span class="font-medium">{source.display_name || source.key}</span>
-								<span class="text-sm text-base-content/50"> · {source.key}</span>
+							<span class="min-w-0 flex-1 basis-40">
+								<span class="block truncate font-medium">{source.display_name || source.key}</span>
+								<span class="block truncate text-xs text-base-content/50">{source.key}</span>
+								{#if source.health_message}
+									<span class="block truncate text-xs text-base-content/60">
+										{source.health_message}
+									</span>
+								{/if}
 							</span>
-							<span
-								class="badge badge-sm"
-								class:badge-success={source.configured}
-								class:badge-ghost={!source.configured}
-							>
-								{source.configured ? 'Configured' : 'Not configured'}
-							</span>
-							<span class="badge badge-ghost badge-sm" title={`Health: ${source.health}`}>
-								{source.health}
+							<span class="flex flex-wrap items-center gap-1">
+								{#if !source.configured && source.health !== 'unknown'}
+									<span class="badge badge-ghost badge-sm">Not configured</span>
+								{/if}
+								<PluginHealthBadge health={source.health} />
 							</span>
 							<a
 								href={withBasePath('/settings?tab=plugins')}
-								class="link link-hover text-sm font-semibold text-primary"
+								class="link link-hover whitespace-nowrap text-sm font-semibold text-primary"
 							>
 								Configure in Plugins
 							</a>
