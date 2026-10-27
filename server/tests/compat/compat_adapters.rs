@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 
 use droppedneedle_compat::adapters::audio::GatewayAudio;
 use droppedneedle_compat::body::AudioBody;
-use droppedneedle_compat::jellyfin::seams::StreamEngine as JellyfinEngine;
 use droppedneedle_compat::subsonic::stream::{ServeError, serve};
 use droppedneedle_media::stream::routes::{
     MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamParams,
@@ -115,7 +114,9 @@ async fn adapters_map_faults_once_and_frame_by_the_plan_run() {
         .await
         .expect_err("pool full");
     assert!(matches!(busy, ServeError::CapacityFull));
-    let busy = audio.play("busy.mp3", &original, None, false).await;
+    let busy = audio
+        .play_jellyfin("busy.mp3", &original, None, false)
+        .await;
     assert_eq!(busy.status, 429);
     assert_eq!(header(&busy.headers, "Retry-After").as_deref(), Some("1"));
     for (key, jellyfin, subsonic) in [
@@ -123,7 +124,7 @@ async fn adapters_map_faults_once_and_frame_by_the_plan_run() {
         ("denied.mp3", 403, 50),
         ("broken.mp3", 500, 0),
     ] {
-        let answer = audio.play(key, &original, None, false).await;
+        let answer = audio.play_jellyfin(key, &original, None, false).await;
         assert_eq!(answer.status, jellyfin, "{key}");
         let Err(ServeError::Subsonic(error)) =
             serve(&audio, key, &original, None, false, None).await
@@ -136,13 +137,15 @@ async fn adapters_map_faults_once_and_frame_by_the_plan_run() {
 
     // The translated parameters reach the engine unchanged.
     let before = engine.recorded().len();
-    audio.play("landed.mp3", &opus(false), None, false).await;
+    audio
+        .play_jellyfin("landed.mp3", &opus(false), None, false)
+        .await;
     assert_eq!(engine.recorded()[before].params, opus(false));
 
     // A transcode landing is served whole and never honours a range; the
     // estimate rides only when asked for, and never on Jellyfin.
     let landed = audio
-        .play("landed.mp3", &opus(true), Some("bytes=0-1"), false)
+        .play_jellyfin("landed.mp3", &opus(true), Some("bytes=0-1"), false)
         .await;
     assert_eq!(landed.status, 200);
     assert_eq!(
@@ -165,7 +168,7 @@ async fn adapters_map_faults_once_and_frame_by_the_plan_run() {
 
     // A transcode request the engine served direct is framed as direct.
     let direct = audio
-        .play("song.mp3", &opus(false), Some("bytes=0-1"), false)
+        .play_jellyfin("song.mp3", &opus(false), Some("bytes=0-1"), false)
         .await;
     assert_eq!(direct.status, 206);
     assert_eq!(
@@ -229,10 +232,10 @@ async fn real_gateway_streams_the_asked_span_from_the_file() {
         TranscodeSettings::default(),
         false,
     ));
-    let audio = JellyfinEngine::for_caller(&GatewayAudio::new(gateway), "u1");
+    let audio = GatewayAudio::new(gateway).for_caller("u1");
 
     let got = audio
-        .play(
+        .play_jellyfin(
             "song.mp3",
             &StreamParams::original(),
             Some("bytes=10-19"),

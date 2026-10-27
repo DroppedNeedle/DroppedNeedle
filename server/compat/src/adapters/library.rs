@@ -88,8 +88,11 @@ impl From<CollectionsError> for CompatError {
     }
 }
 
-impl crate::subsonic::store::StoreFailure for CompatError {
-    fn client_error(&self) -> Option<(u8, String)> {
+impl CompatError {
+    /// The Subsonic code and user-safe message for a client fault (not
+    /// found, not allowed, bad input); `None` for a server fault, which is
+    /// logged and answered with code 0 and the fixed message.
+    pub fn client_error(&self) -> Option<(u8, String)> {
         use crate::subsonic::error::{GENERIC, NOT_AUTHORIZED, NOT_FOUND, PARAM_MISSING};
         match self {
             Self::NotFound => Some((NOT_FOUND, "The requested data was not found.".to_owned())),

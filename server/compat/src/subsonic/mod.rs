@@ -88,16 +88,16 @@
 //!   apiKeyAuthentication, formPost, transcodeOffset, songLyrics,
 //!   playbackReport, indexBasedQueue, transcoding.
 //!
-//! # Seams (implemented elsewhere, bound in `compat::setup`)
+//! # What the handlers call (in `compat::adapters`, built in `compat::setup`)
 //!
 //! - Auth: [`auth::Credentials`] classification here; secret verification
-//!   lives in `auth::compat_auth::subsonic::authenticate`, and [`Verifier`]
-//!   delegates to it.
-//! - Data: [`store::Store`] (library, playlists, favorites, scrobble,
+//!   lives in `auth::compat_auth::subsonic::authenticate`, and
+//!   [`SubsonicVerifier`] delegates to it.
+//! - Data: [`SubsonicStore`] (library, playlists, favorites, scrobble,
 //!   queues, bookmarks, lyrics, avatars, scan, cover art, advanced
 //!   transcode).
-//! - Audio bytes: [`stream::AudioBackend`] on the stream engine
-//!   (ranges, HEAD, leases per caller).
+//! - Audio bytes: [`GatewayAudio`](crate::adapters::audio::GatewayAudio)
+//!   on the stream gateway (ranges, HEAD, leases per caller).
 //! - Edge (`compat::shared`): enablement kill-switch default, rate limits,
 //!   CORS, case-insensitive paths, access-log redaction. The enablement
 //!   gate itself (`enabled` in [`Settings`]) runs here before lookup.
@@ -117,19 +117,18 @@ pub mod stream;
 pub mod value;
 pub mod views;
 
-#[cfg(any(test, feature = "test-support"))]
-pub mod fake;
-
 use std::collections::HashMap;
 
 use droppedneedle_kernel::runtime_config::sections::DownloadAccess;
 
-// Seam surface: public for the HTTP adapter.
-pub use auth::{Credentials, Principal, classify};
+use crate::adapters::library::CompatError;
+use crate::adapters::principal::{CompatPrincipal, SubsonicVerifier};
+use crate::adapters::subsonic_store::SubsonicStore;
+use crate::setup::CompatAudio;
+
+pub use auth::{Credentials, classify};
 pub use error::{GENERIC, PARAM_MISSING, SubsonicError};
 pub use params::SubsonicParameters;
-pub use store::Store;
-pub use stream::AudioBackend;
 pub use value::{
     Rendered, SubsonicFormat, parse_format, render_binary_error, render_error, render_ok,
 };
@@ -259,17 +258,17 @@ impl Request {
 }
 
 /// Handler context: everything one endpoint call needs.
-pub struct Ctx<'a, P, S, B> {
+pub struct Ctx<'a> {
     /// Normalized endpoint name.
     pub endpoint_name: String,
     /// Decoded params.
     pub params: SubsonicParameters,
     /// Authenticated principal (None only for the public endpoint).
-    pub principal: Option<P>,
-    /// Data store.
-    pub store: &'a S,
-    /// Audio backend.
-    pub audio: &'a B,
+    pub principal: Option<CompatPrincipal>,
+    /// Data store, scoped to the caller.
+    pub store: &'a SubsonicStore,
+    /// Audio over the stream gateway, scoped to the caller.
+    pub audio: &'a CompatAudio,
     /// Server settings.
     pub settings: &'a Settings,
     /// Requested format.
@@ -290,7 +289,7 @@ pub struct Ctx<'a, P, S, B> {
     pub picture_base: Option<String>,
 }
 
-impl<P: Principal, S: Store, B: AudioBackend> Ctx<'_, P, S, B> {
+impl Ctx<'_> {
     /// Single param.
     pub fn p(&self, key: &str) -> Result<Option<String>, SubsonicError> {
         self.params.string(key, None)
@@ -329,7 +328,7 @@ impl<P: Principal, S: Store, B: AudioBackend> Ctx<'_, P, S, B> {
     }
 
     /// Authenticated principal (handlers other than the public one).
-    pub fn user(&self) -> Result<&P, SubsonicError> {
+    pub fn user(&self) -> Result<&CompatPrincipal, SubsonicError> {
         self.principal
             .as_ref()
             .ok_or_else(|| SubsonicError::code_only(PARAM_MISSING))
@@ -385,7 +384,7 @@ impl<P: Principal, S: Store, B: AudioBackend> Ctx<'_, P, S, B> {
 
     /// Storage errors surface as code 0 (generic), never an auth code. The
     /// cause is logged; the client sees only the fixed internal message.
-    pub fn store_err<E: store::StoreFailure>(err: E) -> SubsonicError {
+    pub fn store_err(err: CompatError) -> SubsonicError {
         match err.client_error() {
             Some((code, message)) => SubsonicError::new(code, message),
             None => store_failure(err),
@@ -394,7 +393,7 @@ impl<P: Principal, S: Store, B: AudioBackend> Ctx<'_, P, S, B> {
 }
 
 /// Log a storage failure and answer code 0 with the fixed message.
-fn store_failure<E: std::fmt::Display>(err: E) -> SubsonicError {
+fn store_failure(err: impl std::fmt::Display) -> SubsonicError {
     tracing::error!(cause = %err, "subsonic store call failed");
     SubsonicError::new(GENERIC, droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE)
 }
@@ -451,45 +450,23 @@ impl Outcome {
     }
 }
 
-/// Secret verifier. Implemented by delegating to
-/// `auth::compat_auth::subsonic::authenticate` and adapting the result.
-pub trait Verifier: Clone + Send + Sync {
-    /// Principal type the handlers see.
-    type Principal: Principal;
-
-    /// Verify classified credentials against the app-password store.
-    fn verify(
-        &self,
-        credentials: &Credentials,
-    ) -> impl Future<Output = Result<Self::Principal, SubsonicError>> + Send;
-}
-
 /// Dispatch one request: normalize, parse `f`, gate enablement, resolve
 /// the handler, authenticate (except the public endpoint), run, and
 /// render. Failures map through the binary-vs-envelope split (v2
 /// `_dispatch` boundary: nothing escapes this function as a panic).
-pub async fn dispatch<V: Verifier, S: Store, B: AudioBackend>(
-    verifier: &V,
-    store: &S,
-    audio: &B,
+///
+/// The HTTP adapter verifies before dispatching so it can enforce the
+/// per-principal rate buckets and record auth failures without verifying
+/// twice; with `preverified` `None` the credentials are verified here. A
+/// pre-verified principal is used only for non-public endpoints and never
+/// skips the enablement gate.
+pub async fn dispatch_with(
+    verifier: &SubsonicVerifier,
+    store: &SubsonicStore,
+    audio: &CompatAudio,
     settings: &Settings,
     request: &Request,
-) -> Rendered {
-    dispatch_with(verifier, store, audio, settings, request, None).await
-}
-
-/// [`dispatch`] with a pre-verified principal. The HTTP adapter verifies
-/// before dispatching so it can enforce the per-principal rate buckets and
-/// record auth failures without verifying twice; `None` verifies inline
-/// exactly like [`dispatch`]. A pre-verified principal is used only for
-/// non-public endpoints and never skips the enablement gate.
-pub async fn dispatch_with<V: Verifier, S: Store, B: AudioBackend>(
-    verifier: &V,
-    store: &S,
-    audio: &B,
-    settings: &Settings,
-    request: &Request,
-    preverified: Option<V::Principal>,
+    preverified: Option<CompatPrincipal>,
 ) -> Rendered {
     let name = normalize_endpoint(&request.endpoint);
     // Early format sniffing preserves the requested envelope even when
@@ -580,10 +557,7 @@ pub async fn dispatch_with<V: Verifier, S: Store, B: AudioBackend>(
 }
 
 /// Render an outcome in the request's format.
-pub fn render_outcome(
-    outcome: Outcome,
-    ctx: &Ctx<impl Principal, impl Store, impl AudioBackend>,
-) -> Rendered {
+pub fn render_outcome(outcome: Outcome, ctx: &Ctx<'_>) -> Rendered {
     match outcome {
         Outcome::Envelope { key, payload } => render_ok(
             key,
@@ -683,9 +657,7 @@ pub fn is_known_endpoint(name: &str) -> bool {
 }
 
 /// Route to the endpoint handler (v2 `_HANDLERS`).
-async fn run_handler<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &Ctx<'_, P, S, B>,
-) -> Result<Rendered, SubsonicError> {
+async fn run_handler(ctx: &Ctx<'_>) -> Result<Rendered, SubsonicError> {
     let outcome = match ctx.endpoint_name.as_str() {
         "ping" => browse::ping(ctx).await?,
         "getlicense" => browse::license(ctx).await?,

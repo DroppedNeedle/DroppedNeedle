@@ -3,7 +3,6 @@
 
 use std::collections::BTreeMap;
 
-use super::auth::Principal;
 use super::error::{NOT_FOUND, SubsonicError};
 use super::ids::{IdKind, decode, decode_expect, encode};
 use super::library::current_id;
@@ -11,8 +10,7 @@ use super::models::{
     Render, SArtistID3, SArtistsID3, SChild, SIndex, SIndexID3, SIndexes, SLicense, SMusicFolder,
     SOpenSubsonicExtension,
 };
-use super::store::{AlbumSort, Store};
-use super::stream::AudioBackend;
+use super::store::AlbumSort;
 use super::value::{IntoVal, Val, obj};
 use super::{Ctx, Outcome};
 
@@ -79,25 +77,19 @@ pub fn normalize_search_query(raw: Option<&str>) -> Option<String> {
 }
 
 /// Auth probe: bare ok.
-pub async fn ping<P: Principal, S: Store, B: AudioBackend>(
-    _ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn ping(_ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     Ok(Outcome::ok())
 }
 
 /// Static license.
-pub async fn license<P: Principal, S: Store, B: AudioBackend>(
-    _ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn license(_ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     Ok(Outcome::keyed("license", SLicense { valid: true }.render()))
 }
 
 /// Advertised OpenSubsonic extensions, all v1. Public (no auth).
 /// The set is owned by `compat::shared::extensions`: every served
 /// extension.
-pub async fn extensions<P: Principal, S: Store, B: AudioBackend>(
-    _ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn extensions(_ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     Ok(Outcome::keyed(
         "openSubsonicExtensions",
         Val::List(
@@ -120,9 +112,7 @@ pub async fn extensions<P: Principal, S: Store, B: AudioBackend>(
 }
 
 /// Single music folder (id 1, named for the server).
-pub async fn music_folders<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn music_folders(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let folder = SMusicFolder {
         id: 1,
         name: ctx.settings.server_name.clone(),
@@ -134,20 +124,18 @@ pub async fn music_folders<P: Principal, S: Store, B: AudioBackend>(
 }
 
 /// ID3 artists in A-Z buckets.
-pub async fn artists<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn artists(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     validate_music_folder(&ctx.params)?;
     let revision = ctx
         .store
         .get_library_revision()
         .await
-        .map_err(Ctx::<P, S, B>::store_err)?;
+        .map_err(Ctx::store_err)?;
     let artists = ctx
         .store
         .get_artists(100_000, 0, None)
         .await
-        .map_err(Ctx::<P, S, B>::store_err)?;
+        .map_err(Ctx::store_err)?;
     let mut buckets: BTreeMap<char, Vec<SArtistID3>> = BTreeMap::new();
     for artist in &artists {
         buckets
@@ -174,15 +162,13 @@ pub async fn artists<P: Principal, S: Store, B: AudioBackend>(
 }
 
 /// File-structure artist indexes, with freshness short-circuit.
-pub async fn indexes<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn indexes(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     validate_music_folder(&ctx.params)?;
     let revision = ctx
         .store
         .get_library_revision()
         .await
-        .map_err(Ctx::<P, S, B>::store_err)?;
+        .map_err(Ctx::store_err)?;
     let since = ctx.pint("ifModifiedSince", None, Some(0), None)?;
     // lastModified is a change counter, not a time: only its echo means
     // unchanged. A client's clock time (milliseconds) gets the full index.
@@ -201,7 +187,7 @@ pub async fn indexes<P: Principal, S: Store, B: AudioBackend>(
         .store
         .get_artists(100_000, 0, None)
         .await
-        .map_err(Ctx::<P, S, B>::store_err)?;
+        .map_err(Ctx::store_err)?;
     let mut buckets: BTreeMap<char, Vec<super::models::SArtist>> = BTreeMap::new();
     for artist in &artists {
         buckets
@@ -228,16 +214,14 @@ pub async fn indexes<P: Principal, S: Store, B: AudioBackend>(
 }
 
 /// Artist detail (embeds albums).
-pub async fn artist<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn artist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let mbid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Artist)?;
     let mbid = current_id(ctx, IdKind::Artist, mbid).await?;
     let (artist, albums) = ctx
         .store
         .get_artist_with_albums(&mbid)
         .await
-        .map_err(Ctx::<P, S, B>::store_err)?
+        .map_err(Ctx::store_err)?
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Artist not found"))?;
     let mut rendered = ctx.artist_id3(&artist);
     rendered.album = Some(albums.iter().map(super::views::to_album_id3).collect());
@@ -245,45 +229,41 @@ pub async fn artist<P: Principal, S: Store, B: AudioBackend>(
 }
 
 /// Album detail (embeds songs).
-pub async fn album<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn album(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let rg = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Album)?;
     let rg = current_id(ctx, IdKind::Album, rg).await?;
     let album = ctx
         .store
         .get_album(&rg)
         .await
-        .map_err(Ctx::<P, S, B>::store_err)?
+        .map_err(Ctx::store_err)?
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Album not found"))?;
     let tracks = ctx
         .store
         .get_album_tracks(&rg)
         .await
-        .map_err(Ctx::<P, S, B>::store_err)?;
+        .map_err(Ctx::store_err)?;
     let mut rendered = super::views::to_album_id3(&album);
     rendered.song = Some(tracks.iter().map(|track| ctx.child(track)).collect());
     Ok(Outcome::keyed("album", rendered.render()))
 }
 
 /// Song detail.
-pub async fn song<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn song(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let fid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Track)?;
     let fid = current_id(ctx, IdKind::Track, fid).await?;
     let track = ctx
         .store
         .get_track(&fid)
         .await
-        .map_err(Ctx::<P, S, B>::store_err)?
+        .map_err(Ctx::store_err)?
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Song not found"))?;
     Ok(Outcome::keyed("song", ctx.child(&track).render()))
 }
 
 /// Shared album-list query (v2 `_album_list`).
-pub async fn album_list_query<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
+pub async fn album_list_query(
+    ctx: &Ctx<'_>,
 ) -> Result<Vec<super::views::ViewAlbum>, SubsonicError> {
     validate_music_folder(&ctx.params)?;
     let list_type = ctx.params.one_of("type", ALBUMLIST_TYPES, None)?;
@@ -302,14 +282,14 @@ pub async fn album_list_query<P: Principal, S: Store, B: AudioBackend>(
             .store
             .get_history_albums(&user_id, list_type == "frequent", size, offset)
             .await
-            .map_err(Ctx::<P, S, B>::store_err);
+            .map_err(Ctx::store_err);
     }
     if list_type == "starred" {
         return ctx
             .store
             .get_starred_albums(&user_id, size, offset)
             .await
-            .map_err(Ctx::<P, S, B>::store_err);
+            .map_err(Ctx::store_err);
     }
     // The albums the caller rated, as Navidrome 0.62.0 lists them
     // (recorded `getAlbumList2.highest`): an unrated album is left out.
@@ -318,7 +298,7 @@ pub async fn album_list_query<P: Principal, S: Store, B: AudioBackend>(
             .store
             .get_highest_albums(&user_id, size, offset)
             .await
-            .map_err(Ctx::<P, S, B>::store_err);
+            .map_err(Ctx::store_err);
     }
     let mut sort = match list_type.as_str() {
         "newest" => AlbumSort::Recent,
@@ -386,14 +366,12 @@ pub async fn album_list_query<P: Principal, S: Store, B: AudioBackend>(
             None,
         )
         .await
-        .map_err(Ctx::<P, S, B>::store_err)?;
+        .map_err(Ctx::store_err)?;
     Ok(albums)
 }
 
 /// ID3 album list.
-pub async fn album_list2<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn album_list2(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let albums = album_list_query(ctx).await?;
     Ok(Outcome::keyed(
         "albumList2",
@@ -410,9 +388,7 @@ pub async fn album_list2<P: Principal, S: Store, B: AudioBackend>(
 }
 
 /// File-structure album list.
-pub async fn album_list<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn album_list(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let albums = album_list_query(ctx).await?;
     Ok(Outcome::keyed(
         "albumList",
@@ -429,9 +405,7 @@ pub async fn album_list<P: Principal, S: Store, B: AudioBackend>(
 }
 
 /// Random songs with filters.
-pub async fn random_songs<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn random_songs(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     validate_music_folder(&ctx.params)?;
     let size = ctx
         .pint("size", Some(10), Some(1), Some(500))?
@@ -446,7 +420,7 @@ pub async fn random_songs<P: Principal, S: Store, B: AudioBackend>(
             ctx.pint("toYear", None, None, None)?,
         )
         .await
-        .map_err(Ctx::<P, S, B>::store_err)?;
+        .map_err(Ctx::store_err)?;
     Ok(Outcome::keyed(
         "randomSongs",
         obj(vec![(
@@ -463,16 +437,14 @@ pub async fn random_songs<P: Principal, S: Store, B: AudioBackend>(
 
 /// File-structure directory: id 1 -> artists, artist -> albums, album
 /// -> songs; anything else is 70 ("Not a directory").
-pub async fn music_directory<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn music_directory(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let sid = ctx.p("id")?.unwrap_or_default();
     if sid == "1" {
         let artists = ctx
             .store
             .get_artists(100_000, 0, None)
             .await
-            .map_err(Ctx::<P, S, B>::store_err)?;
+            .map_err(Ctx::store_err)?;
         let children = artists
             .iter()
             .map(|artist| {
@@ -506,7 +478,7 @@ pub async fn music_directory<P: Principal, S: Store, B: AudioBackend>(
                 .store
                 .get_artist_with_albums(&internal)
                 .await
-                .map_err(Ctx::<P, S, B>::store_err)?
+                .map_err(Ctx::store_err)?
                 .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Artist not found"))?;
             let children = albums
                 .iter()
@@ -527,13 +499,13 @@ pub async fn music_directory<P: Principal, S: Store, B: AudioBackend>(
                 .store
                 .get_album(&internal)
                 .await
-                .map_err(Ctx::<P, S, B>::store_err)?
+                .map_err(Ctx::store_err)?
                 .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Album not found"))?;
             let tracks = ctx
                 .store
                 .get_album_tracks(&internal)
                 .await
-                .map_err(Ctx::<P, S, B>::store_err)?;
+                .map_err(Ctx::store_err)?;
             let children = tracks
                 .iter()
                 .map(|track| ctx.child(track).render())
@@ -560,8 +532,8 @@ pub async fn music_directory<P: Principal, S: Store, B: AudioBackend>(
 }
 
 /// Shared search query with per-type count+offset (v2 `_search`).
-pub async fn search_query<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
+pub async fn search_query(
+    ctx: &Ctx<'_>,
 ) -> Result<
     (
         Vec<super::views::ViewArtist>,
@@ -602,7 +574,7 @@ pub async fn search_query<P: Principal, S: Store, B: AudioBackend>(
             .store
             .search_artists(artist_count, artist_offset, query.as_deref())
             .await
-            .map_err(Ctx::<P, S, B>::store_err)?;
+            .map_err(Ctx::store_err)?;
     }
     let mut albums = Vec::new();
     if album_count > 0 {
@@ -624,7 +596,7 @@ pub async fn search_query<P: Principal, S: Store, B: AudioBackend>(
                 query.as_deref(),
             )
             .await
-            .map_err(Ctx::<P, S, B>::store_err)?;
+            .map_err(Ctx::store_err)?;
     }
     let mut songs = Vec::new();
     if song_count > 0 {
@@ -632,15 +604,13 @@ pub async fn search_query<P: Principal, S: Store, B: AudioBackend>(
             .store
             .get_tracks_page(song_count, song_offset, query.as_deref())
             .await
-            .map_err(Ctx::<P, S, B>::store_err)?;
+            .map_err(Ctx::store_err)?;
     }
     Ok((artists, albums, songs))
 }
 
 /// ID3 search.
-pub async fn search3<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn search3(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let (artists, albums, songs) = search_query(ctx).await?;
     Ok(Outcome::keyed(
         "searchResult3",
@@ -677,9 +647,7 @@ pub async fn search3<P: Principal, S: Store, B: AudioBackend>(
 }
 
 /// File-structure search.
-pub async fn search2<P: Principal, S: Store, B: AudioBackend>(
-    ctx: &'_ Ctx<'_, P, S, B>,
-) -> Result<Outcome, SubsonicError> {
+pub async fn search2(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let (artists, albums, songs) = search_query(ctx).await?;
     Ok(Outcome::keyed(
         "searchResult2",

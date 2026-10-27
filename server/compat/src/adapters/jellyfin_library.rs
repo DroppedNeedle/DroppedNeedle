@@ -18,9 +18,9 @@ use super::jellyfin_ids::{IdKind, JellyfinIds};
 use super::library::{CompatError, CompatLibrary};
 use crate::jellyfin::params::SortKey;
 use crate::jellyfin::seams::{
-    AlbumFilter, AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, IdMap, ItemSort,
-    ItemView, LibraryRead, LyricsView, PlaylistDetail, PlaylistEntry, PlaylistView, ReadFailed,
-    TrackFilter, TrackView, WriteRefusal,
+    AlbumFilter, AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, ItemSort, ItemView,
+    LyricsView, PlaylistDetail, PlaylistEntry, PlaylistView, ReadFailed, TrackFilter, TrackView,
+    WriteRefusal,
 };
 use crate::subsonic::views::song_path;
 use droppedneedle_catalog::reads::collections::store::play_marks::MarkScope;
@@ -30,7 +30,7 @@ use droppedneedle_catalog::reads::library::player::{
 use droppedneedle_catalog::reads::library::store::LocalCatalog;
 use droppedneedle_catalog::reads::library::stores::{ArtistRecord, ArtistScope as CatalogScope};
 
-/// Log a failed read and fall back to the empty answer the seam allows.
+/// Log a failed read and fall back to the empty answer.
 fn logged<T: Default>(operation: &str, outcome: Result<T, CompatError>) -> T {
     outcome.unwrap_or_else(|error| {
         tracing::error!(operation, %error, "jellyfin library read failed");
@@ -376,8 +376,9 @@ fn in_order<T: Clone>(ids: &[String], found: Vec<T>, id_of: impl Fn(&T) -> &str)
     ids.iter().filter_map(|id| by_id.get(id).cloned()).collect()
 }
 
-impl LibraryRead for JellyfinLibrary {
-    async fn track_page(
+impl JellyfinLibrary {
+    /// One page of tracks; `limit` [`ALL`] means every match.
+    pub async fn track_page(
         &self,
         user_id: &str,
         filter: &TrackFilter,
@@ -416,17 +417,19 @@ impl LibraryRead for JellyfinLibrary {
         logged("track_page", outcome)
     }
 
-    async fn tracks_by_ids(&self, user_id: &str, ids: &[String]) -> Vec<TrackView> {
+    /// Tracks by id in the order asked; unknown ids drop out.
+    pub async fn tracks_by_ids(&self, user_id: &str, ids: &[String]) -> Vec<TrackView> {
         logged("tracks_by_ids", self.read_tracks(user_id, ids).await)
     }
 
-    async fn track(&self, user_id: &str, file_id: &str) -> Option<TrackView> {
+    pub async fn track(&self, user_id: &str, file_id: &str) -> Option<TrackView> {
         self.tracks_by_ids(user_id, &[file_id.to_owned()])
             .await
             .pop()
     }
 
-    async fn album_page(
+    /// One page of albums; `limit` [`ALL`] means every match.
+    pub async fn album_page(
         &self,
         user_id: &str,
         filter: &AlbumFilter,
@@ -464,17 +467,19 @@ impl LibraryRead for JellyfinLibrary {
         logged("album_page", outcome)
     }
 
-    async fn albums_by_ids(&self, user_id: &str, ids: &[String]) -> Vec<AlbumView> {
+    /// Albums by id in the order asked; unknown ids drop out.
+    pub async fn albums_by_ids(&self, user_id: &str, ids: &[String]) -> Vec<AlbumView> {
         logged("albums_by_ids", self.read_albums(user_id, ids).await)
     }
 
-    async fn album(&self, user_id: &str, rg_mbid: &str) -> Option<AlbumView> {
+    pub async fn album(&self, user_id: &str, rg_mbid: &str) -> Option<AlbumView> {
         self.albums_by_ids(user_id, &[rg_mbid.to_owned()])
             .await
             .pop()
     }
 
-    async fn artist_page(
+    /// One page of artists in name order, optionally name-filtered.
+    pub async fn artist_page(
         &self,
         user_id: &str,
         scope: ArtistScope,
@@ -498,11 +503,14 @@ impl LibraryRead for JellyfinLibrary {
         logged("artist_page", outcome)
     }
 
-    async fn artist(&self, user_id: &str, mbid: &str) -> Option<ArtistView> {
+    pub async fn artist(&self, user_id: &str, mbid: &str) -> Option<ArtistView> {
         logged("artist", self.read_artist(user_id, mbid).await)
     }
 
-    async fn item(
+    /// One track, album or artist (`kind`) as the reads above give it,
+    /// `Ok(None)` when there is none (any other kind has none), `Err` when
+    /// the read failed.
+    pub async fn item(
         &self,
         user_id: &str,
         kind: &str,
@@ -530,7 +538,7 @@ impl LibraryRead for JellyfinLibrary {
         })
     }
 
-    async fn genres(&self) -> Vec<GenreView> {
+    pub async fn genres(&self) -> Vec<GenreView> {
         let outcome = self.library.genres().await.map(|genres| {
             genres
                 .into_iter()
@@ -543,7 +551,8 @@ impl LibraryRead for JellyfinLibrary {
         logged("genres", outcome)
     }
 
-    async fn years(&self) -> Vec<i32> {
+    /// Every year a playable album has, ascending.
+    pub async fn years(&self) -> Vec<i32> {
         let outcome = async {
             let years = self.library.catalog.album_years().await?;
             Ok(years
@@ -555,7 +564,7 @@ impl LibraryRead for JellyfinLibrary {
         logged("years", outcome)
     }
 
-    async fn playlists(&self, user_id: &str) -> Vec<PlaylistView> {
+    pub async fn playlists(&self, user_id: &str) -> Vec<PlaylistView> {
         let outcome = self.library.playlists(user_id).await.map(|visible| {
             visible
                 .into_iter()
@@ -571,15 +580,15 @@ impl LibraryRead for JellyfinLibrary {
         logged("playlists", outcome)
     }
 
-    async fn playlist(&self, user_id: &str, id: &str) -> Option<PlaylistDetail> {
+    pub async fn playlist(&self, user_id: &str, id: &str) -> Option<PlaylistDetail> {
         logged("playlist", self.readable_entries(user_id, id).await)
     }
 
-    async fn create_playlist(&self, user_id: &str, name: &str) -> Result<String, WriteRefusal> {
+    pub async fn create_playlist(&self, user_id: &str, name: &str) -> Result<String, WriteRefusal> {
         Ok(self.library.create_playlist(user_id, name).await?)
     }
 
-    async fn add_playlist_entry(
+    pub async fn add_playlist_entry(
         &self,
         user_id: &str,
         playlist_id: &str,
@@ -591,7 +600,7 @@ impl LibraryRead for JellyfinLibrary {
             .await?)
     }
 
-    async fn remove_playlist_entries(
+    pub async fn remove_playlist_entries(
         &self,
         user_id: &str,
         playlist_id: &str,
@@ -603,7 +612,7 @@ impl LibraryRead for JellyfinLibrary {
             .await?)
     }
 
-    async fn move_playlist_entry(
+    pub async fn move_playlist_entry(
         &self,
         user_id: &str,
         playlist_id: &str,
@@ -616,7 +625,8 @@ impl LibraryRead for JellyfinLibrary {
             .await?)
     }
 
-    async fn favorites(&self, user_id: &str, kind: &str) -> Vec<String> {
+    /// Favorited internal ids of one kind for one caller.
+    pub async fn favorites(&self, user_id: &str, kind: &str) -> Vec<String> {
         let outcome = self
             .library
             .favorite_ids(user_id, kind)
@@ -625,7 +635,7 @@ impl LibraryRead for JellyfinLibrary {
         logged("favorites", outcome)
     }
 
-    async fn set_favorite(
+    pub async fn set_favorite(
         &self,
         user_id: &str,
         kind: &str,
@@ -638,7 +648,10 @@ impl LibraryRead for JellyfinLibrary {
             .await?)
     }
 
-    async fn set_played(
+    /// Mark a track played or unplayed for the caller; an album marks each
+    /// of its tracks, an artist the tracks on the albums it leads. The play
+    /// history is not touched.
+    pub async fn set_played(
         &self,
         user_id: &str,
         kind: &str,
@@ -656,7 +669,9 @@ impl LibraryRead for JellyfinLibrary {
         Ok(self.library.mark_played(user_id, scope, played).await?)
     }
 
-    async fn cover(&self, rg_mbid: &str, size: &str) -> Option<CoverBytes> {
+    /// Release art bytes (`size` is the 250/500/1200 bucket); `None` renders
+    /// 404 with no placeholder, unlike Subsonic (v2 `_image`).
+    pub async fn cover(&self, rg_mbid: &str, size: &str) -> Option<CoverBytes> {
         let outcome = self.library.album_cover(rg_mbid, Some(size)).await;
         logged("cover", outcome).map(|(bytes, content_type)| CoverBytes {
             bytes,
@@ -664,7 +679,10 @@ impl LibraryRead for JellyfinLibrary {
         })
     }
 
-    async fn artist_image(&self, mbid: &str, size: &str) -> Option<CoverBytes> {
+    /// An artist's picture. `size` (the 250/500/1200 bucket) sizes the
+    /// picture drawn for an artist with no MusicBrainz link; a linked
+    /// artist's own image is served as stored.
+    pub async fn artist_image(&self, mbid: &str, size: &str) -> Option<CoverBytes> {
         let outcome = self.library.artist_cover(mbid, None, size).await;
         logged("artist_image", outcome).map(|(bytes, content_type)| CoverBytes {
             bytes,
@@ -672,7 +690,9 @@ impl LibraryRead for JellyfinLibrary {
         })
     }
 
-    async fn lyrics(&self, file_id: &str) -> Result<Option<LyricsView>, ReadFailed> {
+    /// The lyrics of one track: its file's first, else the online lookup
+    /// while that is on. `Ok(None)` when it has none.
+    pub async fn lyrics(&self, file_id: &str) -> Result<Option<LyricsView>, ReadFailed> {
         match self.library.lyrics(file_id).await {
             Ok(doc) => Ok(doc.map(|doc| LyricsView {
                 lines: doc.lines,
@@ -685,7 +705,11 @@ impl LibraryRead for JellyfinLibrary {
         }
     }
 
-    async fn name_of(&self, kind: &str, catalog_id: &str) -> Option<String> {
+    /// The album title or artist name of a catalog id, read for a caller who
+    /// has not signed in (the picture address), so no user overlays. `kind`
+    /// is `album` or `artist`; any other kind has no name here, and so does
+    /// an album or artist that a merge retired or that is gone.
+    pub async fn name_of(&self, kind: &str, catalog_id: &str) -> Option<String> {
         let outcome = async {
             if !matches!(kind, "album" | "artist") {
                 return Ok(None);
@@ -761,20 +785,35 @@ impl CatalogIds {
     }
 }
 
-impl IdMap for CatalogIds {
-    fn ready(&self) -> bool {
+impl CatalogIds {
+    /// Whether ids can be handed out and resolved yet. Until the stored
+    /// ids are loaded at start, every route answers busy.
+    pub fn ready(&self) -> bool {
         self.ids.ready()
     }
 
-    async fn to_jf(&self, kind: &str, internal: &str) -> String {
+    /// Stable 32-hex id for a (kind, internal) pair. Reads nothing.
+    pub async fn to_jf(&self, kind: &str, internal: &str) -> String {
         self.ids.handed_out(kind, internal)
     }
 
-    async fn from_jf(&self, jf_id: &str) -> Option<(String, String)> {
+    /// Reverse lookup for a signed-in caller only: call it after `authed`.
+    /// Answers to current ids, to the old ids albums and artists had
+    /// before theirs were keyed, and to the ids of a merged album or
+    /// artist; an album or artist comes back as the one that holds it now.
+    /// Accepts dashed or undashed input, `None` when unknown or when
+    /// nothing live holds it. An id handed out since the last stored one
+    /// is waited for, briefly. (`from_*` takes `self` by v2-naming parity,
+    /// not by convention.)
+    #[allow(clippy::wrong_self_convention)]
+    pub async fn from_jf(&self, jf_id: &str) -> Option<(String, String)> {
         self.from_jf_many(&[jf_id.to_owned()]).await.pop().flatten()
     }
 
-    async fn from_jf_many(&self, jf_ids: &[String]) -> Vec<Option<(String, String)>> {
+    /// [`Self::from_jf`] for several ids, in order, waiting at most once
+    /// for all of them.
+    #[allow(clippy::wrong_self_convention)]
+    pub async fn from_jf_many(&self, jf_ids: &[String]) -> Vec<Option<(String, String)>> {
         let found = match self.ids.resolve(jf_ids, true).await {
             Ok(found) => found,
             Err(error) => {
@@ -792,7 +831,11 @@ impl IdMap for CatalogIds {
         out
     }
 
-    async fn from_jf_anonymous(&self, jf_id: &str) -> Option<(String, String)> {
+    /// Reverse lookup for a caller who has not signed in (the picture
+    /// address): current ids only, never an old one, and a miss answers at
+    /// once.
+    #[allow(clippy::wrong_self_convention)]
+    pub async fn from_jf_anonymous(&self, jf_id: &str) -> Option<(String, String)> {
         match self.ids.resolve(&[jf_id.to_owned()], false).await {
             Ok(mut found) => found
                 .pop()

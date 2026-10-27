@@ -4,7 +4,7 @@
 //!
 //! Catalog reads carry the caller's starred dates and play counts once the
 //! dispatcher scopes the store to the authenticated user
-//! ([`Store::for_caller`]).
+//! ([`SubsonicStore::for_caller`]).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use crate::subsonic::picture::PictureSigner;
 use crate::subsonic::store::{
     AlbumSort, BookmarkRecord, ClientInfo, LastScan, LyricLine, LyricsData, NowPlayingRow,
     PlaylistDetail, PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, ScanStatusData,
-    Store, TranscodeDecisionData,
+    TranscodeDecisionData,
 };
 use crate::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewRating, ViewTrack};
 use droppedneedle_auth::users::UsersDeps;
@@ -197,7 +197,7 @@ pub struct SubsonicStore {
 }
 
 impl SubsonicStore {
-    /// Bind the live deps; unscoped until [`Store::for_caller`].
+    /// Bind the live deps; unscoped until [`Self::for_caller`].
     pub fn new(
         library: CompatLibrary,
         queues: CompatQueues,
@@ -317,21 +317,24 @@ impl SubsonicStore {
     }
 }
 
-impl Store for SubsonicStore {
-    type Error = CompatError;
-
-    fn for_caller(&self, user_id: &str) -> Self {
+impl SubsonicStore {
+    /// The store scoped to one authenticated caller, so catalog reads can
+    /// carry the caller's starred dates and play counts.
+    pub fn for_caller(&self, user_id: &str) -> Self {
         Self {
             caller: Some(user_id.to_owned()),
             ..self.clone()
         }
     }
 
-    fn pictures(&self) -> &PictureSigner {
+    /// The signer of open picture links, over the data key.
+    pub fn pictures(&self) -> &PictureSigner {
         &self.pictures
     }
 
-    async fn get_artists(
+    /// Artists page in name order, optional match query (None = match-all).
+    /// No caller shows a total, so none is counted.
+    pub async fn get_artists(
         &self,
         limit: usize,
         offset: usize,
@@ -344,7 +347,9 @@ impl Store for SubsonicStore {
         self.artists_for_caller(artists).await
     }
 
-    async fn search_artists(
+    /// Artists page for search2/search3: like [`Self::get_artists`], but an
+    /// empty query pages in insertion order (the sync order).
+    pub async fn search_artists(
         &self,
         limit: usize,
         offset: usize,
@@ -359,7 +364,9 @@ impl Store for SubsonicStore {
         self.artists_for_caller(artists).await
     }
 
-    async fn get_tracks_by_title(&self, title: &str) -> Result<Vec<ViewTrack>, CompatError> {
+    /// Tracks whose title equals `title` (case-insensitive), for the legacy
+    /// getLyrics lookup.
+    pub async fn get_tracks_by_title(&self, title: &str) -> Result<Vec<ViewTrack>, CompatError> {
         let query = TrackQuery {
             title: Some(title.to_owned()),
             ..TrackQuery::default()
@@ -371,11 +378,13 @@ impl Store for SubsonicStore {
         self.tracks_for_caller(tracks).await
     }
 
-    async fn get_library_revision(&self) -> Result<i64, CompatError> {
+    /// Library revision for getIndexes freshness.
+    pub async fn get_library_revision(&self) -> Result<i64, CompatError> {
         self.library.revision().await
     }
 
-    async fn get_artist_with_albums(
+    /// Artist plus its albums, or None.
+    pub async fn get_artist_with_albums(
         &self,
         artist_mbid: &str,
     ) -> Result<Option<(ViewArtist, Vec<ViewAlbum>)>, CompatError> {
@@ -396,7 +405,8 @@ impl Store for SubsonicStore {
         Ok(Some((artist, self.albums_for_caller(albums).await?)))
     }
 
-    async fn get_album(&self, rg_mbid: &str) -> Result<Option<ViewAlbum>, CompatError> {
+    /// Album by release-group mbid, or None.
+    pub async fn get_album(&self, rg_mbid: &str) -> Result<Option<ViewAlbum>, CompatError> {
         let Some(album) = self.library.album(rg_mbid).await? else {
             return Ok(None);
         };
@@ -442,19 +452,22 @@ impl Store for SubsonicStore {
         }))
     }
 
-    async fn get_album_tracks(&self, rg_mbid: &str) -> Result<Vec<ViewTrack>, CompatError> {
+    /// Tracks of an album.
+    pub async fn get_album_tracks(&self, rg_mbid: &str) -> Result<Vec<ViewTrack>, CompatError> {
         let tracks = self.library.album_tracks(rg_mbid).await?;
         self.tracks_for_caller(tracks).await
     }
 
-    async fn get_track(&self, file_id: &str) -> Result<Option<ViewTrack>, CompatError> {
+    /// Track by file id, or None.
+    pub async fn get_track(&self, file_id: &str) -> Result<Option<ViewTrack>, CompatError> {
         let Some(track) = self.library.track(file_id).await? else {
             return Ok(None);
         };
         Ok(self.tracks_for_caller(vec![track]).await?.pop())
     }
 
-    async fn get_tracks_by_file_ids(
+    /// Tracks by file ids (missing ids absent from the map).
+    pub async fn get_tracks_by_file_ids(
         &self,
         file_ids: &[String],
     ) -> Result<HashMap<String, ViewTrack>, CompatError> {
@@ -467,7 +480,9 @@ impl Store for SubsonicStore {
             .collect())
     }
 
-    async fn get_tracks_page(
+    /// Tracks page, optional match query. None matches all, in insertion
+    /// order (the search3 sync order); a query pages in album order.
+    pub async fn get_tracks_page(
         &self,
         limit: usize,
         offset: usize,
@@ -489,7 +504,9 @@ impl Store for SubsonicStore {
         self.tracks_for_caller(tracks).await
     }
 
-    async fn get_albums_offset(
+    /// Albums page with sort, year bounds, genre, and match query.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_albums_offset(
         &self,
         limit: usize,
         offset: usize,
@@ -532,7 +549,8 @@ impl Store for SubsonicStore {
         self.albums_for_caller(albums).await
     }
 
-    async fn get_random_songs(
+    /// Random songs with optional filters.
+    pub async fn get_random_songs(
         &self,
         count: usize,
         genre: Option<&str>,
@@ -552,7 +570,8 @@ impl Store for SubsonicStore {
         self.tracks_for_caller(tracks).await
     }
 
-    async fn get_history_albums(
+    /// Recent (`frequent=false`) or frequent history albums.
+    pub async fn get_history_albums(
         &self,
         user_id: &str,
         frequent: bool,
@@ -567,7 +586,8 @@ impl Store for SubsonicStore {
         self.albums_for_caller(albums).await
     }
 
-    async fn get_starred_albums(
+    /// Starred albums page.
+    pub async fn get_starred_albums(
         &self,
         user_id: &str,
         limit: usize,
@@ -586,7 +606,8 @@ impl Store for SubsonicStore {
         self.albums_for_caller(albums).await
     }
 
-    async fn get_highest_albums(
+    /// Albums the user rated, highest first.
+    pub async fn get_highest_albums(
         &self,
         user_id: &str,
         limit: usize,
@@ -604,7 +625,8 @@ impl Store for SubsonicStore {
         self.albums_for_caller(albums).await
     }
 
-    async fn get_genres(&self) -> Result<Vec<ViewGenre>, CompatError> {
+    /// All genres.
+    pub async fn get_genres(&self) -> Result<Vec<ViewGenre>, CompatError> {
         Ok(self
             .library
             .genres()
@@ -618,7 +640,8 @@ impl Store for SubsonicStore {
             .collect())
     }
 
-    async fn get_songs_by_genre(
+    /// Songs of a genre page.
+    pub async fn get_songs_by_genre(
         &self,
         genre: &str,
         limit: usize,
@@ -635,7 +658,11 @@ impl Store for SubsonicStore {
         self.tracks_for_caller(tracks).await
     }
 
-    async fn current_id(&self, kind: IdKind, id: &str) -> Result<Option<String>, CompatError> {
+    /// The id an album, artist or track has now: `id` itself while it is
+    /// live, else the live one a merge or an alias points it at; `None`
+    /// when no live album or artist holds it. A track nothing holds
+    /// answers `id`, and other kinds answer `id` unchanged.
+    pub async fn current_id(&self, kind: IdKind, id: &str) -> Result<Option<String>, CompatError> {
         match kind {
             IdKind::Album | IdKind::Artist | IdKind::Track => {
                 Ok(self.library.catalog.current_id(kind_name(kind), id).await?)
@@ -644,7 +671,8 @@ impl Store for SubsonicStore {
         }
     }
 
-    async fn missing_targets(
+    /// Subset of (kind, internal id) targets missing from the library.
+    pub async fn missing_targets(
         &self,
         targets: &[(IdKind, String)],
     ) -> Result<Vec<(IdKind, String)>, CompatError> {
@@ -682,7 +710,8 @@ impl Store for SubsonicStore {
         Ok(missing)
     }
 
-    async fn get_top_songs(
+    /// Top songs for an exact artist name.
+    pub async fn get_top_songs(
         &self,
         artist: &str,
         user_id: &str,
@@ -711,7 +740,8 @@ impl Store for SubsonicStore {
         self.tracks_for_caller(ranked).await
     }
 
-    async fn get_similar_songs(
+    /// Similar songs for an artist mbid.
+    pub async fn get_similar_songs(
         &self,
         artist_mbid: &str,
         _user_id: &str,
@@ -728,7 +758,11 @@ impl Store for SubsonicStore {
         self.tracks_for_caller(tracks).await
     }
 
-    async fn get_all_playlists(&self, user_id: &str) -> Result<Vec<PlaylistSummary>, CompatError> {
+    /// Playlists visible to the user (redacted rows carry None).
+    pub async fn get_all_playlists(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<PlaylistSummary>, CompatError> {
         Ok(self
             .library
             .playlists(user_id)
@@ -742,7 +776,8 @@ impl Store for SubsonicStore {
             .collect())
     }
 
-    async fn get_streamable_counts(&self) -> Result<HashMap<String, (i64, i64)>, CompatError> {
+    /// Streamable (count, duration) per playlist id (#181).
+    pub async fn get_streamable_counts(&self) -> Result<HashMap<String, (i64, i64)>, CompatError> {
         Ok(self
             .library
             .collections
@@ -763,7 +798,8 @@ impl Store for SubsonicStore {
             .collect())
     }
 
-    async fn get_playlist_with_tracks(
+    /// Playlist detail, or None.
+    pub async fn get_playlist_with_tracks(
         &self,
         playlist_id: &str,
         user_id: &str,
@@ -780,7 +816,8 @@ impl Store for SubsonicStore {
         }))
     }
 
-    async fn get_playlist_tracks(
+    /// Playlist entries in order.
+    pub async fn get_playlist_tracks(
         &self,
         playlist_id: &str,
     ) -> Result<Vec<PlaylistEntry>, CompatError> {
@@ -796,7 +833,8 @@ impl Store for SubsonicStore {
             .collect())
     }
 
-    async fn create_playlist(
+    /// Create a playlist.
+    pub async fn create_playlist(
         &self,
         name: &str,
         user_id: &str,
@@ -810,7 +848,8 @@ impl Store for SubsonicStore {
         Ok(record(&visible))
     }
 
-    async fn update_playlist(
+    /// Rename a playlist.
+    pub async fn update_playlist(
         &self,
         playlist_id: &str,
         user_id: &str,
@@ -821,7 +860,8 @@ impl Store for SubsonicStore {
             .await
     }
 
-    async fn set_playlist_public(
+    /// Flip playlist visibility.
+    pub async fn set_playlist_public(
         &self,
         playlist_id: &str,
         user_id: &str,
@@ -832,7 +872,8 @@ impl Store for SubsonicStore {
             .await
     }
 
-    async fn remove_playlist_tracks(
+    /// Remove entries by entry id.
+    pub async fn remove_playlist_tracks(
         &self,
         playlist_id: &str,
         user_id: &str,
@@ -843,7 +884,8 @@ impl Store for SubsonicStore {
             .await
     }
 
-    async fn add_playlist_file(
+    /// Append a library file to a playlist.
+    pub async fn add_playlist_file(
         &self,
         playlist_id: &str,
         file_id: &str,
@@ -854,11 +896,19 @@ impl Store for SubsonicStore {
             .await
     }
 
-    async fn delete_playlist(&self, playlist_id: &str, user_id: &str) -> Result<(), CompatError> {
+    /// Delete a playlist.
+    pub async fn delete_playlist(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+    ) -> Result<(), CompatError> {
         self.library.delete_playlist(user_id, playlist_id).await
     }
 
-    async fn playlist_cover(
+    /// Cover bytes + content type of a playlist the user may read: the
+    /// uploaded one, else one made from its tracks. None when there is
+    /// neither or the playlist is not theirs to read.
+    pub async fn playlist_cover(
         &self,
         playlist_id: &str,
         user_id: &str,
@@ -866,7 +916,8 @@ impl Store for SubsonicStore {
         self.library.playlist_cover(user_id, playlist_id).await
     }
 
-    async fn apply_favorites(
+    /// Star or unstar targets.
+    pub async fn apply_favorites(
         &self,
         user_id: &str,
         targets: &[(IdKind, String)],
@@ -879,7 +930,8 @@ impl Store for SubsonicStore {
         self.library.set_favorites(user_id, &targets, add).await
     }
 
-    async fn list_favorites(
+    /// Starred (internal id, starred unix seconds) for a kind.
+    pub async fn list_favorites(
         &self,
         user_id: &str,
         kind: IdKind,
@@ -887,7 +939,9 @@ impl Store for SubsonicStore {
         self.library.favorite_ids(user_id, kind_name(kind)).await
     }
 
-    async fn set_rating(
+    /// Set the user's rating of an artist, album or track, 1 to 5, or
+    /// clear it with 0.
+    pub async fn set_rating(
         &self,
         user_id: &str,
         kind: IdKind,
@@ -898,7 +952,8 @@ impl Store for SubsonicStore {
         self.library.set_rating(user_id, kind, id, rating).await
     }
 
-    async fn scrobble(
+    /// Record a scrobble.
+    pub async fn scrobble(
         &self,
         file_id: &str,
         user_id: &str,
@@ -915,7 +970,8 @@ impl Store for SubsonicStore {
         Ok(())
     }
 
-    async fn now_playing(
+    /// Record now-playing presence.
+    pub async fn now_playing(
         &self,
         file_id: &str,
         user_id: &str,
@@ -927,11 +983,14 @@ impl Store for SubsonicStore {
         Ok(())
     }
 
-    async fn compat_now_playing(&self) -> Result<Vec<NowPlayingRow>, CompatError> {
+    /// Current presence rows.
+    pub async fn compat_now_playing(&self) -> Result<Vec<NowPlayingRow>, CompatError> {
         Ok(self.playback.compat_rows())
     }
 
-    async fn report_playback(
+    /// Record a playback report (extension playbackReport:1).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn report_playback(
         &self,
         file_id: &str,
         user_id: &str,
@@ -954,11 +1013,13 @@ impl Store for SubsonicStore {
         Ok(())
     }
 
-    async fn get_play_queue(&self, user_id: &str) -> Result<QueueState, CompatError> {
+    /// Saved play queue.
+    pub async fn get_play_queue(&self, user_id: &str) -> Result<QueueState, CompatError> {
         Ok(self.queues.get_queue(user_id).await?)
     }
 
-    async fn replace_play_queue(
+    /// Replace the saved play queue.
+    pub async fn replace_play_queue(
         &self,
         user_id: &str,
         file_ids: &[String],
@@ -979,11 +1040,13 @@ impl Store for SubsonicStore {
             .await?)
     }
 
-    async fn list_bookmarks(&self, user_id: &str) -> Result<Vec<BookmarkRecord>, CompatError> {
+    /// Bookmarks for the user.
+    pub async fn list_bookmarks(&self, user_id: &str) -> Result<Vec<BookmarkRecord>, CompatError> {
         Ok(self.queues.list_bookmarks(user_id).await?)
     }
 
-    async fn upsert_bookmark(
+    /// Create or update a bookmark.
+    pub async fn upsert_bookmark(
         &self,
         user_id: &str,
         file_id: &str,
@@ -996,11 +1059,13 @@ impl Store for SubsonicStore {
             .await?)
     }
 
-    async fn delete_bookmark(&self, user_id: &str, file_id: &str) -> Result<(), CompatError> {
+    /// Delete a bookmark.
+    pub async fn delete_bookmark(&self, user_id: &str, file_id: &str) -> Result<(), CompatError> {
         Ok(self.queues.delete_bookmark(user_id, file_id).await?)
     }
 
-    async fn get_lyrics(&self, file_id: &str) -> Result<Option<LyricsData>, CompatError> {
+    /// Lyrics for a track, or None.
+    pub async fn get_lyrics(&self, file_id: &str) -> Result<Option<LyricsData>, CompatError> {
         Ok(self.library.lyrics(file_id).await?.map(|doc| LyricsData {
             language: "und".to_owned(),
             synced: doc.synced,
@@ -1012,7 +1077,8 @@ impl Store for SubsonicStore {
         }))
     }
 
-    async fn resolve_avatar(&self, user_id: &str) -> Result<Option<ImageBytes>, CompatError> {
+    /// Avatar bytes + content type, or None.
+    pub async fn resolve_avatar(&self, user_id: &str) -> Result<Option<ImageBytes>, CompatError> {
         self.users
             .avatars
             .load(user_id)
@@ -1020,7 +1086,8 @@ impl Store for SubsonicStore {
             .map_err(|error| CompatError::Internal(format!("avatar load failed: {error:?}")))
     }
 
-    async fn scan_status(&self) -> Result<ScanStatusData, CompatError> {
+    /// Whether a scan runs, the library's size and the last finished scan.
+    pub async fn scan_status(&self) -> Result<ScanStatusData, CompatError> {
         let (tracks, folder_count) = self.library.playable_counts().await?;
         let current = self.scan.coordinator.current();
         let scanning = !current.is_empty();
@@ -1058,7 +1125,8 @@ impl Store for SubsonicStore {
         })
     }
 
-    async fn start_scan(&self) -> Result<(), CompatError> {
+    /// Start a scan (admin gate lives in the handler).
+    pub async fn start_scan(&self) -> Result<(), CompatError> {
         let registry = self.scan.core.live_registry();
         let outcome = self.scan.coordinator.request_run(&ScanRequest {
             kind: ScanKind::Incremental,
@@ -1073,7 +1141,8 @@ impl Store for SubsonicStore {
         Ok(())
     }
 
-    async fn release_group_cover(
+    /// Release-group cover bytes + content type for a size bucket, or None.
+    pub async fn release_group_cover(
         &self,
         rg_mbid: &str,
         bucket: &str,
@@ -1081,7 +1150,8 @@ impl Store for SubsonicStore {
         self.library.album_cover(rg_mbid, Some(bucket)).await
     }
 
-    async fn artist_image(
+    /// Artist image bytes + content type for a pixel size, or None.
+    pub async fn artist_image(
         &self,
         artist_mbid: &str,
         px: Option<i64>,
@@ -1091,7 +1161,8 @@ impl Store for SubsonicStore {
         self.library.artist_cover(artist_mbid, px, &bucket).await
     }
 
-    async fn advanced_decide(
+    /// Advanced transcode decision for a client description.
+    pub async fn advanced_decide(
         &self,
         track: &ViewTrack,
         client: &ClientInfo,
@@ -1117,7 +1188,8 @@ impl Store for SubsonicStore {
         Ok(answer)
     }
 
-    async fn decode_transcode_params(
+    /// Decode signed transcode params: (direct, out format, bitrate kbps).
+    pub async fn decode_transcode_params(
         &self,
         params: &str,
         user_id: &str,

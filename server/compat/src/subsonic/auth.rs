@@ -1,37 +1,16 @@
-//! Auth seam: principal shape plus credential classification.
+//! Credential classification.
 //!
 //! Secret verification (app passwords only, never account passwords) is
 //! owned by `auth::compat_auth::subsonic`. This module only classifies
 //! which scheme the caller attempted and enforces the mutual-exclusion
-//! rules, so the HTTP adapter can hand the
-//! extracted [`Credentials`] to the real verifier and adapt the result
-//! into a [`Principal`].
+//! rules, so the HTTP adapter can hand the extracted [`Credentials`] to
+//! the [`SubsonicVerifier`](crate::adapters::principal::SubsonicVerifier).
 //!
 //! v2: the Subsonic compat auth and the app password service's
 //! `verify_subsonic`.
 
 use super::error::{CONFLICTING_AUTH, PARAM_MISSING, SubsonicError};
 use super::params::SubsonicParameters;
-
-/// Authenticated caller facts the handlers need.
-pub trait Principal: Clone + Send + Sync {
-    /// Owning user id.
-    fn user_id(&self) -> &str;
-    /// Login username.
-    fn username(&self) -> &str;
-    /// Display username (for avatar self-match).
-    fn username_display(&self) -> &str {
-        self.username()
-    }
-    /// Display name (for now-playing attribution).
-    fn display_name(&self) -> &str;
-    /// `user`, `trusted` or `admin` (the download setting).
-    fn role(&self) -> &str;
-    /// Admin role (startScan gate, getUser roles).
-    fn is_admin(&self) -> bool {
-        self.role() == "admin"
-    }
-}
 
 /// Which auth scheme the request attempted (verified elsewhere).
 #[derive(Debug, Clone, PartialEq, Eq)]

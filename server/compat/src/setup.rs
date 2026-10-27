@@ -1,4 +1,5 @@
-//! Compat bundle: production seam bindings plus the mounted routers.
+//! Compat bundle: the adapters both protocols call plus the mounted
+//! routers.
 //!
 //! [`CompatSetup`] is the one `AppState` field compat adds. It binds auth
 //! to the app-password store ([`ProdCompatPasswords`]), the library to the
@@ -42,14 +43,6 @@ use droppedneedle_media::playback::PlaybackDeps;
 
 /// Subsonic audio over the stream engine.
 pub type CompatAudio = GatewayAudio<MediaEngine>;
-
-/// Wired Jellyfin router state.
-pub type CompatJellyfinState = crate::jellyfin::JellyfinState<
-    JellyfinLibrary,
-    GatewayAudio<MediaEngine>,
-    CompatPlayback,
-    CatalogIds,
->;
 
 /// What the compat bundle is built from.
 pub struct CompatDeps {
@@ -118,7 +111,7 @@ pub struct CompatSetup {
 }
 
 impl CompatSetup {
-    /// Bind the production seams.
+    /// Build the adapters and mount both routers.
     pub fn build(deps: CompatDeps) -> Self {
         let passwords = ProdCompatPasswords::new(deps.users.clone(), Arc::clone(&deps.crypto));
         let playback = CompatPlayback::new(deps.playback);
@@ -216,7 +209,7 @@ impl CompatSetup {
         store: &SubsonicStore,
         audio: &CompatAudio,
         settings: &LiveSettings,
-        jellyfin: &CompatJellyfinState,
+        jellyfin: &JellyfinState,
         limits: &CompatLimits,
         listener: &ListenerConfig,
     ) -> (Router, Arc<[&'static str]>) {

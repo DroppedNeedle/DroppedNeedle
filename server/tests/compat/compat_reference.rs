@@ -853,12 +853,25 @@ fn compat_reference_recordings_are_unchanged_and_hold_nothing_private() {
 
     let root = reference_dir();
     let mut problems = Vec::new();
-    for file in files_under(&root) {
-        let name = file
-            .strip_prefix(&root)
-            .expect("under the root")
-            .display()
-            .to_string();
+    // The hand-written known differences sit beside the recordings and
+    // quote them, so they are swept the same way.
+    let known = known_differences_dir();
+    let swept = files_under(&root)
+        .into_iter()
+        .map(|file| {
+            (
+                file.clone(),
+                file.strip_prefix(&root).map(Path::to_path_buf),
+            )
+        })
+        .chain(files_under(&known).into_iter().map(|file| {
+            let name = file
+                .strip_prefix(&known)
+                .map(|name| Path::new("known_differences").join(name));
+            (file, name)
+        }));
+    for (file, name) in swept {
+        let name = name.expect("under its root").display().to_string();
         let text = std::fs::read_to_string(&file).expect("recording reads as text");
         for what in private_values(&text) {
             problems.push(format!("{name}: holds {what}"));

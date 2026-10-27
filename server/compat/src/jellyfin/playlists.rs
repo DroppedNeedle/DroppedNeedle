@@ -10,20 +10,13 @@ use super::params::{self, CiParams};
 use super::playstate::*;
 use super::query::page;
 use super::router::*;
-use super::seams::{IdMap, LibraryRead, PlaybackSessions, StreamEngine};
 
 // ===== Playlists =====
 
-pub(super) async fn decode_playlist<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
+pub(super) async fn decode_playlist(
+    state: &JellyfinState,
     jf_id: &str,
-) -> Result<String, Response>
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Result<String, Response> {
     match state.ids.from_jf(jf_id).await {
         Some((kind, internal)) if kind == "playlist" => Ok(internal),
         _ => Err(error(StatusCode::NOT_FOUND)),
@@ -32,17 +25,11 @@ where
 
 /// Create from a JSON body or `?name=`/`?ids=` (v2 `_create_playlist`).
 /// Unknown track ids are skipped silently.
-pub(super) async fn create_playlist<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn create_playlist(
+    State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let (query, body) = read_body_lenient::<CreatePlaylistDto>(request).await;
     let q = CiParams::parse(query.as_deref());
     let body = body.unwrap_or_default();
@@ -80,17 +67,11 @@ where
     )
 }
 
-pub(super) async fn get_playlist<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn get_playlist(
+    State(state): State<JellyfinState>,
     Path(playlist_id): Path<String>,
     ctx: Authed,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let internal = match decode_playlist(&state, &playlist_id).await {
         Ok(internal) => internal,
         Err(denied) => return denied,
@@ -119,36 +100,24 @@ where
     )
 }
 
-pub(super) async fn playlist_items<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn playlist_items(
+    State(state): State<JellyfinState>,
     Path(playlist_id): Path<String>,
     ctx: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let raw_query = request.uri().query().map(str::to_owned);
     let q = CiParams::parse(raw_query.as_deref());
     playlist_items_inner(&state, &ctx.principal.id, &playlist_id, &q).await
 }
 
 /// Real playlist-items body, split out so the auth gate stays readable.
-pub(super) async fn playlist_items_inner<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
+pub(super) async fn playlist_items_inner(
+    state: &JellyfinState,
     user_id: &str,
     playlist_id: &str,
     q: &CiParams,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let internal = match decode_playlist(state, playlist_id).await {
         Ok(internal) => internal,
         Err(denied) => return denied,
@@ -201,18 +170,12 @@ where
     )
 }
 
-pub(super) async fn playlist_add<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn playlist_add(
+    State(state): State<JellyfinState>,
     Path(playlist_id): Path<String>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let raw_query = request.uri().query().map(str::to_owned);
     let internal = match decode_playlist(&state, &playlist_id).await {
         Ok(internal) => internal,
@@ -232,18 +195,12 @@ where
     no_content()
 }
 
-pub(super) async fn playlist_remove<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn playlist_remove(
+    State(state): State<JellyfinState>,
     Path(playlist_id): Path<String>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let raw_query = request.uri().query().map(str::to_owned);
     let internal = match decode_playlist(&state, &playlist_id).await {
         Ok(internal) => internal,
@@ -262,17 +219,11 @@ where
     no_content()
 }
 
-pub(super) async fn playlist_move<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn playlist_move(
+    State(state): State<JellyfinState>,
     Path((playlist_id, entry_id, new_index)): Path<(String, String, String)>,
     authed: Authed,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let Ok(index) = new_index.parse::<usize>() else {
         return error(StatusCode::BAD_REQUEST);
     };

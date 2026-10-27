@@ -11,7 +11,7 @@
 //!
 //! Modules: [`models`] (wire DTOs), [`params`] (case-insensitive query +
 //! `SortBy` allowlist), [`builders`] (view → DTO shaping), [`seams`]
-//! (boundary traits), `fake` (test doubles). The handlers live in `router`
+//! (the views and records the adapters answer). The handlers live in `router`
 //! (state, registration, shared helpers), `system`, `browse`, `images`,
 //! `audio`, `lyrics`, `playstate` and `playlists`; `query` holds the item-type and
 //! short-list paging helpers.
@@ -20,8 +20,8 @@
 //! [`compat`](crate) and mounts through
 //! [`CompatSetup`](crate::setup::CompatSetup), which serves [`routes`]
 //! outside the `/api/*` session gate (compat carries its own app-password
-//! auth) behind the shared CORS + limits layers. Production binds the
-//! seams to the app-password store, the catalog-backed
+//! auth) behind the shared CORS + limits layers. The routes call the
+//! app-password store, the catalog-backed
 //! [`JellyfinLibrary`](crate::adapters::jellyfin_library::JellyfinLibrary)
 //! and [`CatalogIds`](crate::adapters::jellyfin_library::CatalogIds),
 //! the [`GatewayAudio`](crate::adapters::audio::GatewayAudio) (which
@@ -33,8 +33,6 @@
 mod audio;
 mod browse;
 pub mod builders;
-#[cfg(any(test, feature = "test-support"))]
-pub mod fake;
 mod images;
 mod lyrics;
 pub mod models;

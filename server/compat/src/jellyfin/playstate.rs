@@ -8,27 +8,18 @@ use axum::response::Response;
 use super::builders::{self};
 use super::models::{PlaybackProgressInfo, PlaybackStartInfo, PlaybackStopInfo, UserItemDataDto};
 use super::router::*;
-use super::seams::{
-    IdMap, ItemView, LibraryRead, PlaybackSessions, ReadFailed, StreamEngine, TICKS_PER_SECOND,
-    WriteRefusal, should_scrobble,
-};
+use super::seams::{ItemView, ReadFailed, TICKS_PER_SECOND, WriteRefusal, should_scrobble};
 
 // ===== Favorites + played (both dialects, 200 UserItemDataDto) =====
 
 /// The caller's state of one item as the item's own read gives it, `None`
 /// when that read finds nothing (a missing track, say).
-async fn item_state<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
+async fn item_state(
+    state: &JellyfinState,
     user_id: &str,
     kind: &str,
     internal: &str,
-) -> Result<Option<UserItemDataDto>, ReadFailed>
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Result<Option<UserItemDataDto>, ReadFailed> {
     let b = builder(state);
     Ok(match state.library.item(user_id, kind, internal).await? {
         Some(ItemView::Track(track)) => b.audio(&track).await.user_data,
@@ -44,18 +35,14 @@ where
 /// playlist, genre or library is 400, and a failed read 500. The answer
 /// names the item's current id, also when the app sent an old album or
 /// artist id.
-async fn change_item<L, E, P, I, W>(
-    state: &JellyfinState<L, E, P, I>,
+async fn change_item<W>(
+    state: &JellyfinState,
     user_id: &str,
     item_id: &str,
     missing: Response,
     write: impl FnOnce(String, String) -> W,
 ) -> Response
 where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
     W: Future<Output = Result<(), WriteRefusal>>,
 {
     let Some((kind, internal)) = state.ids.from_jf(item_id).await else {
@@ -79,19 +66,13 @@ where
     }
 }
 
-pub(super) async fn set_favorite<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
+pub(super) async fn set_favorite(
+    state: &JellyfinState,
     user_id: &str,
     item_id: &str,
     add: bool,
     missing: Response,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     change_item(
         state,
         user_id,
@@ -110,19 +91,13 @@ where
 /// Mark an item played or unplayed for the caller, never anyone else: the
 /// user in the legacy path and a `userId` parameter are ignored. Nothing
 /// is played, scrobbled or shown as playing.
-pub(super) async fn set_played<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
+pub(super) async fn set_played(
+    state: &JellyfinState,
     user_id: &str,
     item_id: &str,
     played: bool,
     missing: Response,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     change_item(
         state,
         user_id,
@@ -138,130 +113,82 @@ where
     .await
 }
 
-pub(super) async fn favorite_add_legacy<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn favorite_add_legacy(
+    State(state): State<JellyfinState>,
     Path((_user_id, item_id)): Path<(String, String)>,
     ctx: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let missing = not_found_item(&request);
     set_favorite(&state, &ctx.principal.id, &item_id, true, missing).await
 }
 
-pub(super) async fn favorite_add_modern<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn favorite_add_modern(
+    State(state): State<JellyfinState>,
     Path(item_id): Path<String>,
     ctx: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let missing = not_found_item(&request);
     set_favorite(&state, &ctx.principal.id, &item_id, true, missing).await
 }
 
-pub(super) async fn favorite_remove_legacy<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn favorite_remove_legacy(
+    State(state): State<JellyfinState>,
     Path((_user_id, item_id)): Path<(String, String)>,
     ctx: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let missing = not_found_item(&request);
     set_favorite(&state, &ctx.principal.id, &item_id, false, missing).await
 }
 
-pub(super) async fn favorite_remove_modern<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn favorite_remove_modern(
+    State(state): State<JellyfinState>,
     Path(item_id): Path<String>,
     ctx: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let missing = not_found_item(&request);
     set_favorite(&state, &ctx.principal.id, &item_id, false, missing).await
 }
 
-pub(super) async fn played_add_legacy<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn played_add_legacy(
+    State(state): State<JellyfinState>,
     Path((_user_id, item_id)): Path<(String, String)>,
     ctx: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let missing = not_found_item(&request);
     set_played(&state, &ctx.principal.id, &item_id, true, missing).await
 }
 
-pub(super) async fn played_add_modern<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn played_add_modern(
+    State(state): State<JellyfinState>,
     Path(item_id): Path<String>,
     ctx: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let missing = not_found_item(&request);
     set_played(&state, &ctx.principal.id, &item_id, true, missing).await
 }
 
-pub(super) async fn played_remove_legacy<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn played_remove_legacy(
+    State(state): State<JellyfinState>,
     Path((_user_id, item_id)): Path<(String, String)>,
     ctx: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let missing = not_found_item(&request);
     set_played(&state, &ctx.principal.id, &item_id, false, missing).await
 }
 
-pub(super) async fn played_remove_modern<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn played_remove_modern(
+    State(state): State<JellyfinState>,
     Path(item_id): Path<String>,
     ctx: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let missing = not_found_item(&request);
     set_played(&state, &ctx.principal.id, &item_id, false, missing).await
 }
@@ -270,16 +197,7 @@ where
 
 /// Item id → file id for session reports (`None` for unknown/non-track,
 /// v2 `_track_from_item_id`).
-pub(super) async fn report_file_id<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
-    item_id: &str,
-) -> Option<String>
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+pub(super) async fn report_file_id(state: &JellyfinState, item_id: &str) -> Option<String> {
     let (kind, internal) = state.ids.from_jf(item_id).await?;
     (kind == "track").then_some(internal)
 }
@@ -298,17 +216,11 @@ pub(super) async fn read_body_lenient<T: serde::de::DeserializeOwned>(
 }
 
 /// Start → presence + now-playing (v2 `_playing_start`).
-pub(super) async fn playing<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn playing(
+    State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let (_, body) = read_body_lenient::<PlaybackStartInfo>(request).await;
     let Some(body) = body else {
         return no_content();
@@ -318,30 +230,27 @@ where
     };
     let key = body.play_session_id.as_deref().or(Some(item_id));
     if let Some(key) = key {
-        state.sessions.mark_started(&authed.principal.id, key).await;
+        state.sessions.mark_started(&authed.principal.id, key);
     }
     if let Some(file_id) = report_file_id(&state, item_id).await {
-        state
-            .sessions
-            .now_playing(&authed.principal.id, &file_id, authed.client.as_deref())
-            .await;
+        state.sessions.now_playing(
+            &file_id,
+            &authed.principal.id,
+            authed.client.as_deref(),
+            None,
+            false,
+        );
     }
     no_content()
 }
 
 /// Progress → live scrubber + heartbeat, never a scrobble (v2
 /// `_playing_progress`).
-pub(super) async fn playing_progress<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn playing_progress(
+    State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let (_, body) = read_body_lenient::<PlaybackProgressInfo>(request).await;
     let Some(body) = body else {
         return no_content();
@@ -351,34 +260,29 @@ where
     };
     if let Some(file_id) = report_file_id(&state, item_id).await {
         let position_ms = body.position_ticks.map(|t| t / (TICKS_PER_SECOND / 1000));
-        state
-            .sessions
-            .progress(&authed.principal.id, &file_id, position_ms, body.is_paused)
-            .await;
+        // Presence only: the stop report alone checks the play threshold.
+        state.sessions.now_playing(
+            &file_id,
+            &authed.principal.id,
+            None,
+            position_ms,
+            body.is_paused,
+        );
     }
     no_content()
 }
 
 /// Stop → always drop presence, then scrobble only if past the threshold (v2
 /// `_playing_stopped`). `Failed` stops skip the scrobble.
-pub(super) async fn playing_stopped<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn playing_stopped(
+    State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let (_, body) = read_body_lenient::<PlaybackStopInfo>(request).await;
     // Drop presence even when the play never reaches the threshold below,
     // or it lingers until TTL.
-    state
-        .sessions
-        .clear_presence(&authed.principal.id, authed.client.as_deref())
-        .await;
+    state.sessions.clear_presence(&authed.principal.id);
     let Some(body) = body else {
         return no_content();
     };
@@ -405,11 +309,13 @@ where
         .as_deref()
         .or(Some(item_id))
         .unwrap_or("");
-    state.sessions.pop_started(&authed.principal.id, key).await;
-    state
+    state.sessions.pop_started(&authed.principal.id, key);
+    if !state
         .sessions
-        .scrobble(&authed.principal.id, &file_id, authed.client.as_deref())
-        .await;
+        .scrobble(&file_id, &authed.principal.id, None)
+    {
+        tracing::warn!("jellyfin scrobble was refused");
+    }
     no_content()
 }
 

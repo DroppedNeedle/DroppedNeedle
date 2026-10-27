@@ -1,19 +1,20 @@
-//! Streaming seam: the audio backend trait, and serving what it opened
-//! over the stream routes' range framing.
+//! Serving what the stream gateway opened over the stream routes' range
+//! framing.
 //!
-//! The handlers translate Subsonic's parameters into [`StreamParams`]; the
-//! backend (the stream gateway in production) makes the one transcode
-//! decision and says which plan it ran. Everything else here (download
+//! The handlers translate Subsonic's parameters into [`StreamParams`];
+//! the gateway, through [`GatewayAudio`], makes the one transcode decision
+//! and says which plan it ran. Everything else here (download
 //! filenames, cover buckets) is ported from v2 and covered by goldens.
 //!
 //! v2: the local files service (ranges, HEAD, MIME) and the Subsonic
 //! router (`_serve_file`, `_stream`, `_download`, `_cover_size`).
 
 use axum::http::HeaderMap;
-use droppedneedle_media::stream::routes::DirectSpan;
 pub use droppedneedle_media::stream::routes::StreamParams;
+use droppedneedle_media::stream::routes::{DirectSpan, StreamEngine};
 
 use super::error::{GENERIC, NOT_AUTHORIZED, SubsonicError};
+use crate::adapters::audio::GatewayAudio;
 pub use crate::body::AudioBody;
 
 /// Max `timeOffset` / transcode `offset` seconds.
@@ -281,27 +282,6 @@ impl std::fmt::Display for BackendError {
 
 impl std::error::Error for BackendError {}
 
-/// Minimal audio backend, implemented over the stream gateway in
-/// `compat::adapters::audio`. The transcode decision, leases, concurrency
-/// pools and cancellation live behind this trait.
-pub trait AudioBackend: Clone + Send + Sync {
-    /// The backend scoped to one authenticated caller, so stream leases
-    /// count against that user. Backends without leases return themselves.
-    fn for_caller(&self, _user_id: &str) -> Self {
-        self.clone()
-    }
-
-    /// Open one file id as `params` ask: the backend decides whether the
-    /// original or a transcode plays. `head_only` needs the facts alone and
-    /// never starts a transcode. `None` when nothing can serve the track.
-    fn play(
-        &self,
-        file_id: &str,
-        params: &StreamParams,
-        head_only: bool,
-    ) -> impl Future<Output = Result<Option<PlayedAudio>, BackendError>> + Send;
-}
-
 /// Failure serving original bytes: a protocol error, a 416 range
 /// refusal carrying the file size for `Content-Range: bytes */N`, or a
 /// full pool (429 + `Retry-After: 1`).
@@ -336,7 +316,7 @@ impl From<BackendError> for ServeError {
 }
 
 /// Serve one file id as `params` ask (v2 `_serve_file` and the transcode
-/// pipe, minus the lease plumbing, which lives behind [`AudioBackend`]).
+/// pipe, minus the lease plumbing, which lives in [`GatewayAudio`]).
 ///
 /// An original takes its ranges, lengths and the 200/206/416 verdict from
 /// the stream routes' [`DirectSpan`], so they match the native and Jellyfin
@@ -345,8 +325,8 @@ impl From<BackendError> for ServeError {
 /// estimate the request asked for. HEAD answers the headers GET would,
 /// with an empty body and no transcode started. GET opens the backend
 /// exactly once.
-pub async fn serve<B: AudioBackend>(
-    backend: &B,
+pub async fn serve<E: StreamEngine + 'static>(
+    backend: &GatewayAudio<E>,
     file_id: &str,
     params: &StreamParams,
     range_header: Option<&str>,
@@ -354,7 +334,7 @@ pub async fn serve<B: AudioBackend>(
     content_disposition: Option<String>,
 ) -> Result<ServedAudio, ServeError> {
     let played = backend
-        .play(file_id, params, head_only)
+        .play_subsonic(file_id, params, head_only)
         .await?
         .ok_or_else(|| SubsonicError::code_only(super::error::NOT_FOUND))?;
     let mut headers = vec![("Content-Encoding".to_owned(), "identity".to_owned())];

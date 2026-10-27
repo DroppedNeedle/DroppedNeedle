@@ -11,9 +11,8 @@ use super::models::{
     BaseItemDto, EmptyList, ExternalUrl, ItemDetail, MediaSourceInfo, MediaStream, NameGuidPair,
     UserItemDataDto,
 };
-use super::seams::{
-    AlbumView, ArtistView, GenreView, IdMap, PlaylistView, TICKS_PER_SECOND, TrackView,
-};
+use super::seams::{AlbumView, ArtistView, GenreView, PlaylistView, TICKS_PER_SECOND, TrackView};
+use crate::adapters::jellyfin_library::CatalogIds;
 
 /// Internal id of the single music library (v2 `LIBRARY_INTERNAL_ID`).
 pub const LIBRARY_INTERNAL_ID: &str = "music";
@@ -281,14 +280,14 @@ pub fn music_view(library_id: &str, server_id: &str, child_count: usize) -> Base
 
 /// View → DTO builder (v2 `JellyfinBuilder`). Image tags ride the views,
 /// so shaping a page never reads the library again.
-pub struct Builder<'a, I> {
-    ids: &'a I,
+pub struct Builder<'a> {
+    ids: &'a CatalogIds,
     server_id: &'a str,
 }
 
-impl<'a, I: IdMap> Builder<'a, I> {
+impl<'a> Builder<'a> {
     /// Borrow the id map and server id.
-    pub fn new(ids: &'a I, server_id: &'a str) -> Self {
+    pub fn new(ids: &'a CatalogIds, server_id: &'a str) -> Self {
         Self { ids, server_id }
     }
 

@@ -6,13 +6,14 @@
 //! off, case-insensitive paths, rate limits plus auth backoff, log
 //! redaction).
 //!
-//! # Seams
+//! # What the handlers call
 //!
 //! - Auth: [`ProdCompatPasswords`](droppedneedle_auth::compat_auth::prod::ProdCompatPasswords)
 //!   over the real users tables (app passwords only, never native tokens
-//!   or account passwords). The Subsonic [`Verifier`](subsonic::Verifier)
-//!   maps classified credentials back onto `compat_auth`'s `authenticate`
-//!   so the contract runs exactly once; Jellyfin handlers call
+//!   or account passwords). The Subsonic
+//!   [`SubsonicVerifier`](adapters::principal::SubsonicVerifier) maps
+//!   classified credentials back onto `compat_auth`'s `authenticate` so
+//!   the contract runs exactly once; Jellyfin handlers call
 //!   `resolve_token`/`authenticate_by_name` directly.
 //! - Streaming: [`GatewayAudio`](adapters::audio::GatewayAudio), for both
 //!   protocols, over the

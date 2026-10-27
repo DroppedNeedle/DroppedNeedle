@@ -25,8 +25,11 @@ use droppedneedle_kernel::ids::RequestId;
 use droppedneedle_kernel::mount::CompatRoutes;
 use uuid::Uuid;
 
+use crate::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary};
+use crate::adapters::playback::CompatPlayback;
 use crate::body::AudioBody;
 use crate::settings::LiveSettings;
+use crate::setup::CompatAudio;
 use crate::shared::address::{ListenerConfig, base_address};
 
 use super::audio::*;
@@ -35,29 +38,24 @@ use super::builders::Builder;
 use super::images::*;
 use super::playlists::*;
 use super::playstate::*;
-use super::seams::{
-    ByteOutcome, IdMap, LibraryRead, PlaybackSessions, Principal, StreamEngine, WriteRefusal,
-};
+use super::seams::{ByteOutcome, Principal, WriteRefusal};
 use super::system::*;
 
 // ===== State + registration =====
 
-/// Router dependencies. Every seam but the app-password store is a generic
-/// so production binds the real adapters without touching the routes: `L`
-/// library reads, `E` stream engine, `P` scrobble adapter, `I` persisted id
-/// map.
+/// Router dependencies.
 #[derive(Clone)]
-pub struct JellyfinState<L, E, P, I> {
+pub struct JellyfinState {
     /// App-password store.
     pub passwords: ProdCompatPasswords,
     /// Library reads.
-    pub library: L,
-    /// Streaming engine.
-    pub engine: E,
-    /// Playback sessions (scrobble adapter binding).
-    pub sessions: P,
-    /// Opaque id map.
-    pub ids: I,
+    pub library: JellyfinLibrary,
+    /// Audio over the stream gateway.
+    pub engine: CompatAudio,
+    /// Presence and scrobbles.
+    pub sessions: CompatPlayback,
+    /// The stored Jellyfin ids.
+    pub ids: CatalogIds,
     /// Connect-apps settings subset, read per request.
     pub settings: LiveSettings,
     /// Restart-stable server id, computed once (`compat_auth` owns the value).
@@ -66,14 +64,14 @@ pub struct JellyfinState<L, E, P, I> {
     pub listener: ListenerConfig,
 }
 
-impl<L, E, P, I> JellyfinState<L, E, P, I> {
+impl JellyfinState {
     /// Assemble state; `server_id()` is restart-stable.
     pub fn new(
         passwords: ProdCompatPasswords,
-        library: L,
-        engine: E,
-        sessions: P,
-        ids: I,
+        library: JellyfinLibrary,
+        engine: CompatAudio,
+        sessions: CompatPlayback,
+        ids: CatalogIds,
         settings: impl Into<LiveSettings>,
         listener: ListenerConfig,
     ) -> Self {
@@ -166,27 +164,16 @@ pub fn is_public(method: &str, template: &str) -> bool {
 }
 
 /// The handlers of one or more rows.
-type Methods<L, E, P, I> = MethodRouter<JellyfinState<L, E, P, I>>;
+type Methods = MethodRouter<JellyfinState>;
 
 /// One template with the handlers of all its rows.
-type Template<L, E, P, I> = (&'static str, Methods<L, E, P, I>);
-
-/// A handler of the table: generic over the router's seams, or `plain`
-/// for one that reads none of them.
-macro_rules! handler {
-    ($handler:ident) => {
-        $handler::<L, E, P, I>
-    };
-    ($handler:ident plain) => {
-        $handler
-    };
-}
+type Template = (&'static str, Methods);
 
 /// Lists every route once, with its access and handler, and makes both
 /// [`ROUTES`] and the handlers, in the same order, from that one list.
 macro_rules! route_table {
     ($(
-        $access:ident $verb:ident $template:literal => $handler:ident $(as $plain:ident)?;
+        $access:ident $verb:ident $template:literal => $handler:ident;
     )*) => {
         /// Every Jellyfin route: who may call it, its method and template.
         pub const ROUTES: &[Route] = &[
@@ -194,14 +181,8 @@ macro_rules! route_table {
         ];
 
         /// The handler of each row of [`ROUTES`], in the same order.
-        fn handlers<L, E, P, I>() -> Vec<Methods<L, E, P, I>>
-        where
-            L: LibraryRead,
-            E: StreamEngine,
-            P: PlaybackSessions,
-            I: IdMap,
-        {
-            vec![$(on(Verb::$verb.filter(), handler!($handler $($plain)?)),)*]
+        fn handlers() -> Vec<Methods> {
+            vec![$(on(Verb::$verb.filter(), $handler),)*]
         }
     };
 }
@@ -225,10 +206,10 @@ macro_rules! route_table {
 route_table! {
     Public Get "/jellyfin/System/Info/Public" => system_info_public;
     SignedIn Get "/jellyfin/System/Info" => system_info;
-    Public Get "/jellyfin/QuickConnect/Enabled" => quick_connect as plain;
-    SignedIn Post "/jellyfin/Sessions/Logout" => sessions_logout as plain;
+    Public Get "/jellyfin/QuickConnect/Enabled" => quick_connect;
+    SignedIn Post "/jellyfin/Sessions/Logout" => sessions_logout;
     Public Post "/jellyfin/Users/AuthenticateByName" => authenticate;
-    Public Get "/jellyfin/Users/Public" => users_public as plain;
+    Public Get "/jellyfin/Users/Public" => users_public;
     SignedIn Get "/jellyfin/Users/Me" => users_me;
     SignedIn Get "/jellyfin/Users/{user_id}" => user_by_id;
     SignedIn Get "/jellyfin/Users/{user_id}/Views" => views;
@@ -269,8 +250,8 @@ route_table! {
     SignedIn Post "/jellyfin/Sessions/Playing" => playing;
     SignedIn Post "/jellyfin/Sessions/Playing/Progress" => playing_progress;
     SignedIn Post "/jellyfin/Sessions/Playing/Stopped" => playing_stopped;
-    SignedIn Post "/jellyfin/Sessions/Playing/Ping" => sessions_ping as plain;
-    SignedIn Post "/jellyfin/Sessions/Capabilities/Full" => sessions_capabilities as plain;
+    SignedIn Post "/jellyfin/Sessions/Playing/Ping" => sessions_ping;
+    SignedIn Post "/jellyfin/Sessions/Capabilities/Full" => sessions_capabilities;
     SignedIn Post "/jellyfin/Playlists" => create_playlist;
     SignedIn Get "/jellyfin/Playlists/{playlist_id}" => get_playlist;
     SignedIn Get "/jellyfin/Playlists/{playlist_id}/Items" => playlist_items;
@@ -286,17 +267,11 @@ route_table! {
 /// behind the sign-in layer, and every route, public or not, behind the
 /// gate outside it: with the API off nothing reads a token, so nothing
 /// answers 401 or counts toward a lockout.
-pub fn routes<L, E, P, I>(state: JellyfinState<L, E, P, I>) -> CompatRoutes
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+pub fn routes(state: JellyfinState) -> CompatRoutes {
     let signed_in = from_fn_with_state(state.passwords.clone(), sign_in);
-    let gate = from_fn_with_state(state.clone(), gate::<L, E, P, I>);
-    let mut grouped: Vec<Template<L, E, P, I>> = Vec::new();
-    for (row, handler) in ROUTES.iter().zip(handlers::<L, E, P, I>()) {
+    let gate = from_fn_with_state(state.clone(), gate);
+    let mut grouped: Vec<Template> = Vec::new();
+    for (row, handler) in ROUTES.iter().zip(handlers()) {
         let handler = match row.access {
             Access::Public => handler,
             Access::SignedIn => handler.route_layer(signed_in.clone()),
@@ -576,8 +551,8 @@ pub(super) async fn sign_in(
 /// process has loaded the stored ids, 503 server busy with `Retry-After`,
 /// so no answer is a 404 or an empty list for an id the store has not
 /// caught up with.
-pub(super) async fn gate<L, E, P, I: IdMap>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn gate(
+    State(state): State<JellyfinState>,
     request: Request<Body>,
     next: Next,
 ) -> Response {
@@ -594,18 +569,12 @@ pub(super) async fn gate<L, E, P, I: IdMap>(
 /// The address of this API as `request` reached it ([`base_address`]) plus
 /// `/jellyfin`. `LocalAddress` is required, so a request that names no host
 /// gets `http://localhost` and the base path.
-pub(super) fn local_address<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
-    request: &Request<Body>,
-) -> String {
+pub(super) fn local_address(state: &JellyfinState, request: &Request<Body>) -> String {
     let base = base_address(request, &state.listener, &state.settings)
         .unwrap_or_else(|| format!("http://localhost{}", state.listener.base_path));
     format!("{base}/jellyfin")
 }
 
-pub(super) fn builder<'a, L, E, P, I>(state: &'a JellyfinState<L, E, P, I>) -> Builder<'a, I>
-where
-    I: IdMap,
-{
+pub(super) fn builder<'a>(state: &'a JellyfinState) -> Builder<'a> {
     Builder::new(&state.ids, &state.server_id)
 }

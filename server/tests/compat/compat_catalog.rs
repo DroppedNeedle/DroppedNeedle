@@ -14,16 +14,20 @@ use droppedneedle_catalog::reads::collections::models::{
     AddTracksBody, CreatePlaylistBody, TrackInput,
 };
 use droppedneedle_catalog::reads::collections::service::CollectionsService;
+use droppedneedle_compat::adapters::audio::GatewayAudio;
 use droppedneedle_compat::adapters::jellyfin_ids::JellyfinIds;
-use droppedneedle_compat::adapters::jellyfin_library::CatalogIds;
+use droppedneedle_compat::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary};
+use droppedneedle_compat::adapters::library::CompatLibrary;
+use droppedneedle_compat::adapters::playback::CompatPlayback;
 use droppedneedle_compat::jellyfin::builders::LIBRARY_INTERNAL_ID;
-use droppedneedle_compat::jellyfin::fake::{FakeLibrary, MemoryEngine, MemorySessions};
-use droppedneedle_compat::jellyfin::seams::{IdMap as _, JellyfinSettings};
+use droppedneedle_compat::jellyfin::seams::JellyfinSettings;
 use droppedneedle_compat::jellyfin::{JellyfinState, routes};
 use droppedneedle_compat::shared::address::ListenerConfig;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::db::{DbRuntime, Lane};
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Crypto;
+use droppedneedle_library::wiring::LibrarySetup;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -437,6 +441,8 @@ const USER_ID: &str = "u1";
 struct Rig {
     _dir: ScratchDir,
     runtime: DbRuntime,
+    platform: Platform,
+    library: LibrarySetup,
     reads: ReadsSetup,
     auth: AuthRig,
 }
@@ -478,6 +484,8 @@ impl Rig {
         Self {
             _dir: dir,
             runtime,
+            platform,
+            library,
             reads,
             auth,
         }
@@ -715,14 +723,30 @@ async fn stored_jellyfin_ids_survive_a_new_data_key() {
     }
 }
 
-/// The Jellyfin router over the real id map and the in-memory library.
+/// The Jellyfin router over the production adapters and `ids`, which
+/// fill only when a test runs their passes.
 fn jellyfin_router(rig: &Rig, ids: &JellyfinIds) -> axum::Router {
+    let collections = crate::common::bundles::collections_at(&rig.platform);
+    let acquire = crate::common::bundles::acquire_at(
+        &rig.platform,
+        rig.auth.deps.clone(),
+        &rig.library,
+        &collections.stores,
+    );
+    let media = crate::common::bundles::media_at(
+        &rig.platform,
+        rig.auth.deps.clone(),
+        &rig.library,
+        &rig.reads,
+        &acquire,
+    );
+    let library = CompatLibrary::from_reads(&rig.reads);
     routes(JellyfinState::new(
         rig.auth.compat_passwords(),
-        FakeLibrary::new(),
-        MemoryEngine::new(),
-        MemorySessions::new(),
-        CatalogIds::new(ids.clone(), rig.reads.library.catalog.clone()),
+        JellyfinLibrary::new(library.clone()),
+        GatewayAudio::new(media.stream.engine.clone()),
+        CompatPlayback::new(media.playback.clone()),
+        CatalogIds::new(ids.clone(), library.catalog.clone()),
         JellyfinSettings {
             enabled: true,
             ..JellyfinSettings::default()
@@ -781,18 +805,19 @@ async fn jellyfin_answers_busy_until_its_ids_load_and_waits_once_per_request() {
     let album = ids.computed("album", "alb-1");
     let picture = format!("/jellyfin/Items/{album}/Images/Primary");
     let listed = format!("/jellyfin/Items?Ids={album}");
+    let router = jellyfin_router(&rig, &ids);
     for (uri, token) in [
         (picture.as_str(), None),
         (listed.as_str(), Some(SECRET)),
         ("/jellyfin/System/Info/Public", None),
     ] {
-        let (status, _, retry) = jellyfin_get(jellyfin_router(&rig, &ids), uri, token).await;
+        let (status, _, retry) = jellyfin_get(router.clone(), uri, token).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
         assert!(retry, "{uri} says when to try again");
     }
 
     ids.fill().pass().await.unwrap();
-    let (status, _, _) = jellyfin_get(jellyfin_router(&rig, &ids), &picture, None).await;
+    let (status, _, _) = jellyfin_get(router.clone(), &picture, None).await;
     assert_ne!(status, StatusCode::SERVICE_UNAVAILABLE);
 
     write_catalog(&rig, "").await;
@@ -802,7 +827,7 @@ async fn jellyfin_answers_busy_until_its_ids_load_and_waits_once_per_request() {
         .join(",");
     let started = std::time::Instant::now();
     let (status, body, _) = jellyfin_get(
-        jellyfin_router(&rig, &ids),
+        router,
         &format!("/jellyfin/Items?Ids={unseen}"),
         Some(SECRET),
     )

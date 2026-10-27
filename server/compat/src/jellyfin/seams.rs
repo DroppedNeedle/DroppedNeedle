@@ -1,25 +1,26 @@
-//! Boundary traits to code the Jellyfin routes do not own. The router is
-//! generic over every trait here; `compat::setup` binds the production
-//! adapters and `fake` holds the test doubles.
+//! The settings, views and records the Jellyfin routes exchange with the
+//! adapters they call.
 //!
-//! - Auth: not a seam. The routes name the app-password store,
+//! - Auth: the routes name the app-password store,
 //!   [`droppedneedle_auth::compat_auth::prod::ProdCompatPasswords`],
 //!   directly; this file only adds the thin [`Principal`] view over its
 //!   `JellyfinUser`. Login bodies reuse `compat_auth`'s
 //!   `login_echo_json`, so the Finamp/Manet login contract has one owner.
-//! - Library reads: [`LibraryRead`]. The routes describe one page
-//!   ([`TrackFilter`], [`AlbumFilter`], [`ItemSort`], start, limit) and the
-//!   library answers that page plus the match total, so production filters,
-//!   orders and pages in SQL and the routes shape only the page.
-//! - Streaming: [`StreamEngine`]. Production binds the stream gateway,
-//!   which makes the one transcode decision (byte contract, ffmpeg pipe,
-//!   concurrency leases); the `fake` engine replays the same range/status
-//!   contract over seeded bytes so the goldens pin it. The routes only
-//!   translate Jellyfin's parameters into [`StreamParams`].
-//! - Ids: [`IdMap`]. Production derives the ids from the catalog, album
-//!   and artist ids with the data key.
-//! - Playback sessions: [`PlaybackSessions`]. Production binds the
-//!   scrobble adapter (presence + scrobble forwarding).
+//! - Library reads:
+//!   [`JellyfinLibrary`](crate::adapters::jellyfin_library::JellyfinLibrary).
+//!   The routes describe one page ([`TrackFilter`], [`AlbumFilter`],
+//!   [`ItemSort`], start, limit) and the library answers that page plus the
+//!   match total, so it filters, orders and pages in SQL and the routes
+//!   shape only the page.
+//! - Streaming: [`GatewayAudio`](crate::adapters::audio::GatewayAudio)
+//!   over the stream gateway, which makes the one transcode decision (byte
+//!   contract, ffmpeg pipe, concurrency leases). The routes only translate
+//!   Jellyfin's parameters into [`StreamParams`].
+//! - Ids: [`CatalogIds`](crate::adapters::jellyfin_library::CatalogIds),
+//!   the stored ids, album and artist ids made with the data key.
+//! - Playback sessions:
+//!   [`CompatPlayback`](crate::adapters::playback::CompatPlayback)
+//!   (presence and scrobble forwarding).
 
 use droppedneedle_auth::compat_auth::jellyfin::{JellyfinUser, PolicyFacts, effective_name};
 
@@ -95,7 +96,7 @@ impl Default for JellyfinSettings {
     }
 }
 
-// ===== Auth seam =====
+// ===== Auth =====
 
 /// Authenticated caller: id, display name, role, and the presented token
 /// (needed to embed `api_key` in `DirectStreamUrl`).
@@ -146,49 +147,7 @@ impl Principal {
     }
 }
 
-// ===== Id map seam =====
-
-/// Opaque Jellyfin id <-> (kind, internal id). Kinds: `artist`, `album`,
-/// `track`, `playlist`, `genre`, `library` (v2 `VALID_KINDS`).
-///
-/// Every id handed out is stored, so one an app cached before a restart
-/// resolves without reading the catalog. A stored album or artist id
-/// survives a change of the data key; only items added afterwards get ids
-/// under the new key.
-pub trait IdMap: Clone + Send + Sync + 'static {
-    /// Whether ids can be handed out and resolved yet. Until the stored
-    /// ids are loaded at start, every route answers busy.
-    fn ready(&self) -> bool;
-    /// Stable 32-hex id for a (kind, internal) pair. Reads nothing.
-    fn to_jf(&self, kind: &str, internal: &str) -> impl Future<Output = String> + Send;
-    /// Reverse lookup for a signed-in caller only: call it after `authed`.
-    /// Answers to current ids, to the old ids albums and artists had
-    /// before theirs were keyed, and to the ids of a merged album or
-    /// artist; an album or artist comes back as the one that holds it now.
-    /// Accepts dashed or undashed input, `None` when unknown or when
-    /// nothing live holds it. An id handed out since the last stored one
-    /// is waited for, briefly. (`from_*` takes `self` by v2-naming parity,
-    /// not by convention.)
-    #[allow(clippy::wrong_self_convention)]
-    fn from_jf(&self, jf_id: &str) -> impl Future<Output = Option<(String, String)>> + Send;
-    /// [`IdMap::from_jf`] for several ids, in order, waiting at most once
-    /// for all of them.
-    #[allow(clippy::wrong_self_convention)]
-    fn from_jf_many(
-        &self,
-        jf_ids: &[String],
-    ) -> impl Future<Output = Vec<Option<(String, String)>>> + Send;
-    /// Reverse lookup for a caller who has not signed in (the picture
-    /// address): current ids only, never an old one, and a miss answers at
-    /// once.
-    #[allow(clippy::wrong_self_convention)]
-    fn from_jf_anonymous(
-        &self,
-        jf_id: &str,
-    ) -> impl Future<Output = Option<(String, String)>> + Send;
-}
-
-// ===== Library seam =====
+// ===== Library views =====
 
 /// Ticks per second (v2 `JELLYFIN_TICKS_PER_SECOND`).
 pub const TICKS_PER_SECOND: i64 = 10_000_000;
@@ -443,140 +402,7 @@ pub enum ItemSort {
 /// Everything from `start`; the page reads stop at the match total.
 pub const ALL: usize = usize::MAX;
 
-/// Library reads behind the browse routes. Reads take the caller so the
-/// adapter can fill caller-scoped `starred` flags and play counts (v2
-/// `user=user` parity). Page reads return the page plus the match total.
-pub trait LibraryRead: Clone + Send + Sync + 'static {
-    /// One page of tracks; `limit` [`ALL`] means every match.
-    fn track_page(
-        &self,
-        user_id: &str,
-        filter: &TrackFilter,
-        sort: ItemSort,
-        start: usize,
-        limit: usize,
-    ) -> impl Future<Output = (Vec<TrackView>, usize)> + Send;
-    /// Tracks by id in the order asked; unknown ids drop out.
-    fn tracks_by_ids(
-        &self,
-        user_id: &str,
-        ids: &[String],
-    ) -> impl Future<Output = Vec<TrackView>> + Send;
-    fn track(&self, user_id: &str, file_id: &str)
-    -> impl Future<Output = Option<TrackView>> + Send;
-    /// One page of albums; `limit` [`ALL`] means every match.
-    fn album_page(
-        &self,
-        user_id: &str,
-        filter: &AlbumFilter,
-        sort: ItemSort,
-        start: usize,
-        limit: usize,
-    ) -> impl Future<Output = (Vec<AlbumView>, usize)> + Send;
-    /// Albums by id in the order asked; unknown ids drop out.
-    fn albums_by_ids(
-        &self,
-        user_id: &str,
-        ids: &[String],
-    ) -> impl Future<Output = Vec<AlbumView>> + Send;
-    fn album(&self, user_id: &str, rg_mbid: &str)
-    -> impl Future<Output = Option<AlbumView>> + Send;
-    /// One page of artists in name order, optionally name-filtered.
-    fn artist_page(
-        &self,
-        user_id: &str,
-        scope: ArtistScope,
-        search: Option<&str>,
-        start: usize,
-        limit: usize,
-    ) -> impl Future<Output = (Vec<ArtistView>, usize)> + Send;
-    fn artist(&self, user_id: &str, mbid: &str) -> impl Future<Output = Option<ArtistView>> + Send;
-    /// One track, album or artist (`kind`) as the reads above give it,
-    /// `Ok(None)` when there is none (any other kind has none), `Err` when
-    /// the read failed.
-    fn item(
-        &self,
-        user_id: &str,
-        kind: &str,
-        internal: &str,
-    ) -> impl Future<Output = Result<Option<ItemView>, ReadFailed>> + Send;
-    fn genres(&self) -> impl Future<Output = Vec<GenreView>> + Send;
-    /// Every year a playable album has, ascending.
-    fn years(&self) -> impl Future<Output = Vec<i32>> + Send;
-    fn playlists(&self, user_id: &str) -> impl Future<Output = Vec<PlaylistView>> + Send;
-    fn playlist(
-        &self,
-        user_id: &str,
-        id: &str,
-    ) -> impl Future<Output = Option<PlaylistDetail>> + Send;
-    fn create_playlist(
-        &self,
-        user_id: &str,
-        name: &str,
-    ) -> impl Future<Output = Result<String, WriteRefusal>> + Send;
-    fn add_playlist_entry(
-        &self,
-        user_id: &str,
-        playlist_id: &str,
-        file_id: &str,
-    ) -> impl Future<Output = Result<(), WriteRefusal>> + Send;
-    fn remove_playlist_entries(
-        &self,
-        user_id: &str,
-        playlist_id: &str,
-        entry_ids: &[String],
-    ) -> impl Future<Output = Result<(), WriteRefusal>> + Send;
-    fn move_playlist_entry(
-        &self,
-        user_id: &str,
-        playlist_id: &str,
-        entry_id: &str,
-        index: usize,
-    ) -> impl Future<Output = Result<(), WriteRefusal>> + Send;
-    /// Favorited internal ids of one kind for one caller.
-    fn favorites(&self, user_id: &str, kind: &str) -> impl Future<Output = Vec<String>> + Send;
-    fn set_favorite(
-        &self,
-        user_id: &str,
-        kind: &str,
-        internal: &str,
-        add: bool,
-    ) -> impl Future<Output = Result<(), WriteRefusal>> + Send;
-    /// Mark a track played or unplayed for the caller; an album marks each
-    /// of its tracks, an artist the tracks on the albums it leads. The play
-    /// history is not touched.
-    fn set_played(
-        &self,
-        user_id: &str,
-        kind: &str,
-        internal: &str,
-        played: bool,
-    ) -> impl Future<Output = Result<(), WriteRefusal>> + Send;
-    /// Release art bytes (`size` is the 250/500/1200 bucket); `None` renders
-    /// 404 with no placeholder, unlike Subsonic (v2 `_image`).
-    fn cover(&self, rg_mbid: &str, size: &str) -> impl Future<Output = Option<CoverBytes>> + Send;
-    /// An artist's picture. `size` (the 250/500/1200 bucket) sizes the
-    /// picture drawn for an artist with no MusicBrainz link; a linked
-    /// artist's own image is served as stored.
-    fn artist_image(
-        &self,
-        mbid: &str,
-        size: &str,
-    ) -> impl Future<Output = Option<CoverBytes>> + Send;
-    /// The album title or artist name of a catalog id, read for a caller who
-    /// has not signed in (the picture address), so no user overlays. `kind`
-    /// is `album` or `artist`; any other kind has no name here, and so does
-    /// an album or artist that a merge retired or that is gone.
-    fn name_of(&self, kind: &str, catalog_id: &str) -> impl Future<Output = Option<String>> + Send;
-    /// The lyrics of one track: its file's first, else the online lookup
-    /// while that is on. `Ok(None)` when it has none.
-    fn lyrics(
-        &self,
-        file_id: &str,
-    ) -> impl Future<Output = Result<Option<LyricsView>, ReadFailed>> + Send;
-}
-
-// ===== Streaming seam =====
+// ===== Streaming =====
 
 /// Served audio: status, headers, body (in memory or streamed).
 #[derive(Debug, Clone)]
@@ -586,32 +412,6 @@ pub struct ByteOutcome {
     pub body: crate::body::AudioBody,
 }
 
-/// Audio bytes behind the `/Audio` routes. Production binds the stream
-/// engine (range-capable file streams, ffmpeg pipe, concurrency leases with
-/// 429 + `Retry-After: 1`); the router only maps outcomes to responses.
-pub trait StreamEngine: Clone + Send + Sync + 'static {
-    /// The engine scoped to one authenticated caller, so stream leases
-    /// count against that user. Engines without leases return themselves.
-    fn for_caller(&self, _user_id: &str) -> Self {
-        self.clone()
-    }
-
-    /// Play one file id as `params` ask: the engine decides whether the
-    /// original (with range support, the 200/206/416 contract) or a
-    /// transcode plays. A transcode never carries a Content-Length (estimate
-    /// off on Jellyfin) and streams unsized: axum stamps a `Content-Length`
-    /// on sized bodies. `head_only` answers the same status and headers with
-    /// an empty body and never starts a transcode. Unknown ids are 404,
-    /// refusals 403, a full pool 429 with `Retry-After`, and failures 500.
-    fn play(
-        &self,
-        file_id: &str,
-        params: &StreamParams,
-        range: Option<&str>,
-        head_only: bool,
-    ) -> impl Future<Output = ByteOutcome> + Send;
-}
-
 /// Content-Type per extension, from the stream routes' table (unknown ->
 /// octet-stream).
 pub fn content_type_for_format(format: Option<&str>) -> &'static str {
@@ -619,38 +419,7 @@ pub fn content_type_for_format(format: Option<&str>) -> &'static str {
         .unwrap_or("application/octet-stream")
 }
 
-// ===== Playback sessions seam =====
-
-/// Presence + scrobble calls behind the `/Sessions/Playing*` routes.
-/// Production binds the compat scrobble adapter.
-pub trait PlaybackSessions: Clone + Send + Sync + 'static {
-    fn mark_started(&self, user_id: &str, key: &str) -> impl Future<Output = ()> + Send;
-    fn pop_started(&self, user_id: &str, key: &str) -> impl Future<Output = Option<String>> + Send;
-    fn now_playing(
-        &self,
-        user_id: &str,
-        file_id: &str,
-        client: Option<&str>,
-    ) -> impl Future<Output = ()> + Send;
-    fn progress(
-        &self,
-        user_id: &str,
-        file_id: &str,
-        position_ms: Option<i64>,
-        paused: bool,
-    ) -> impl Future<Output = ()> + Send;
-    fn clear_presence(
-        &self,
-        user_id: &str,
-        client: Option<&str>,
-    ) -> impl Future<Output = ()> + Send;
-    fn scrobble(
-        &self,
-        user_id: &str,
-        file_id: &str,
-        client: Option<&str>,
-    ) -> impl Future<Output = ()> + Send;
-}
+// ===== Playback sessions =====
 
 /// Whether a stop report counts as a play (v2 `_should_scrobble`): an
 /// omitted position counts; otherwise past 90% or within a second of the

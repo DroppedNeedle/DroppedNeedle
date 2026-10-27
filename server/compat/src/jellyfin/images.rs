@@ -13,7 +13,6 @@ use axum::response::Response;
 
 use super::params::CiParams;
 use super::router::*;
-use super::seams::{IdMap, LibraryRead, PlaybackSessions, StreamEngine};
 
 // ===== Images (no sign-in) =====
 
@@ -60,50 +59,32 @@ pub(super) fn image_size(q: &CiParams) -> &'static str {
     "500"
 }
 
-pub(super) async fn image<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn image(
+    State(state): State<JellyfinState>,
     Path((item_id, image_type)): Path<(String, String)>,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let query = request.uri().query().map(str::to_owned);
     serve_image(&state, query.as_deref(), &item_id, &image_type).await
 }
 
 /// Indexed variant: the index is accepted and ignored (v2 takes an int and
 /// never reads it either).
-pub(super) async fn image_indexed<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn image_indexed(
+    State(state): State<JellyfinState>,
     Path((item_id, image_type, _index)): Path<(String, String, String)>,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let query = request.uri().query().map(str::to_owned);
     serve_image(&state, query.as_deref(), &item_id, &image_type).await
 }
 
-pub(super) async fn serve_image<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
+pub(super) async fn serve_image(
+    state: &JellyfinState,
     query: Option<&str>,
     item_id: &str,
     image_type: &str,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     if !image_type.eq_ignore_ascii_case("primary") {
         return error(StatusCode::NOT_FOUND);
     }

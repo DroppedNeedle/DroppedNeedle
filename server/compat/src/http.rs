@@ -24,18 +24,19 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
+use crate::adapters::principal::SubsonicVerifier;
+use crate::adapters::subsonic_store::SubsonicStore;
 use crate::jellyfin::QueryTokens;
 use crate::settings::LiveSettings;
+use crate::setup::CompatAudio;
 use crate::shared::address::{ListenerConfig, base_address};
 use crate::shared::{auth, cors, path_case, ratelimit, redact};
-use crate::subsonic::auth::Principal;
 use crate::subsonic::error::SubsonicError;
 use crate::subsonic::params::{MAX_REQUEST_PARAMETER_BYTES, SubsonicParameters};
 use crate::subsonic::picture;
 use crate::subsonic::value::{Rendered, SubsonicFormat, parse_format, render_error};
 use crate::subsonic::{
-    AudioBackend, Request as SubsonicRequest, Settings, Store, Verifier, classify, dispatch_with,
-    normalize_endpoint,
+    Request as SubsonicRequest, Settings, classify, dispatch_with, normalize_endpoint,
 };
 use droppedneedle_auth::compat_auth::jellyfin::extract_token;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
@@ -424,15 +425,16 @@ pub fn rendered_response(rendered: &Rendered, head_only: bool) -> Response {
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
-/// Subsonic router state: the dispatch seams plus the shared buckets.
+/// Subsonic router state: the verifier, store and audio plus the shared
+/// buckets.
 #[derive(Clone)]
-pub struct SubsonicState<V, S, B> {
+pub struct SubsonicState {
     /// App-password verifier.
-    pub verifier: V,
+    pub verifier: SubsonicVerifier,
     /// Library store.
-    pub store: S,
+    pub store: SubsonicStore,
     /// Audio over the stream engine.
-    pub audio: B,
+    pub audio: CompatAudio,
     /// Server settings (kill switch, names, transcode policy), read per
     /// request.
     pub settings: LiveSettings,
@@ -446,13 +448,14 @@ pub struct SubsonicState<V, S, B> {
     pub clock: Arc<dyn Clock>,
 }
 
-impl<V, S, B> SubsonicState<V, S, B> {
-    /// Wrap the seams, buckets, clock origin, listener and wall clock.
+impl SubsonicState {
+    /// Wrap the verifier, store, audio, buckets, clock origin, listener
+    /// and wall clock.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        verifier: V,
-        store: S,
-        audio: B,
+        verifier: SubsonicVerifier,
+        store: SubsonicStore,
+        audio: CompatAudio,
         settings: impl Into<LiveSettings>,
         limits: Arc<Mutex<ratelimit::CompatRateLimits>>,
         started: Arc<Instant>,
@@ -478,37 +481,24 @@ impl<V, S, B> SubsonicState<V, S, B> {
 
 /// The `/subsonic` routes. Unknown HTTP methods answer the code-0
 /// envelope (never the native 405).
-pub fn subsonic_routes<V, S, B>(state: SubsonicState<V, S, B>) -> CompatRoutes
-where
-    V: Verifier + 'static,
-    S: Store + 'static,
-    B: AudioBackend + 'static,
-{
+pub fn subsonic_routes(state: SubsonicState) -> CompatRoutes {
     CompatRoutes::new()
         .at(
             "/subsonic/rest/{endpoint}",
-            get(subsonic_dispatch::<V, S, B>)
-                .post(subsonic_dispatch::<V, S, B>)
-                .head(subsonic_dispatch::<V, S, B>),
+            get(subsonic_dispatch)
+                .post(subsonic_dispatch)
+                .head(subsonic_dispatch),
         )
-        .at(
-            picture::PATH,
-            get(subsonic_picture::<V, S, B>).head(subsonic_picture::<V, S, B>),
-        )
-        .method_not_allowed_fallback(subsonic_method_not_allowed::<V, S, B>)
+        .at(picture::PATH, get(subsonic_picture).head(subsonic_picture))
+        .method_not_allowed_fallback(subsonic_method_not_allowed)
         .with_state(state)
 }
 
 /// Unknown-method fallback: code 0, v2 message style.
-async fn subsonic_method_not_allowed<V, S, B>(
-    State(state): State<SubsonicState<V, S, B>>,
+async fn subsonic_method_not_allowed(
+    State(state): State<SubsonicState>,
     request: Request,
-) -> Response
-where
-    V: Verifier,
-    S: Store,
-    B: AudioBackend,
-{
+) -> Response {
     let (format, callback) = sniff_format(request.uri().query());
     let settings = state.settings.subsonic();
     rendered_response(
@@ -527,16 +517,11 @@ where
 /// The open picture address: no sign-in, only a signed album or artist
 /// link (see [`picture`]). Every refusal is the same empty 404, and none
 /// counts as a failed sign-in.
-async fn subsonic_picture<V, S, B>(
-    State(state): State<SubsonicState<V, S, B>>,
+async fn subsonic_picture(
+    State(state): State<SubsonicState>,
     RawQuery(raw_query): RawQuery,
     request: Request,
-) -> Response
-where
-    V: Verifier,
-    S: Store,
-    B: AudioBackend,
-{
+) -> Response {
     let head = request.method() == axum::http::Method::HEAD;
     match picture::open(
         &state.store,
@@ -576,17 +561,12 @@ fn flatten_json_object(body: &[u8]) -> Vec<(String, String)> {
 
 /// One Subsonic request: decode params, gate enablement, enforce limits,
 /// verify (recording failures), dispatch, and render.
-async fn subsonic_dispatch<V, S, B>(
-    State(state): State<SubsonicState<V, S, B>>,
+async fn subsonic_dispatch(
+    State(state): State<SubsonicState>,
     Path(endpoint): Path<String>,
     RawQuery(raw_query): RawQuery,
     request: Request,
-) -> Response
-where
-    V: Verifier,
-    S: Store,
-    B: AudioBackend,
-{
+) -> Response {
     let picture_base = base_address(&request, &state.listener, &state.settings);
     let (parts, body) = request.into_parts();
     let method = parts.method.to_string();

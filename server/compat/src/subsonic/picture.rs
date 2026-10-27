@@ -25,10 +25,10 @@ use std::sync::Arc;
 
 use super::ids::{IdKind, encode};
 use super::media::library_picture;
-use super::store::Store;
 use super::stream::cover_bucket;
 use super::value::Rendered;
 use super::{Outcome, Settings};
+use crate::adapters::subsonic_store::SubsonicStore;
 use droppedneedle_auth::session::tokens::constant_time_eq;
 use droppedneedle_kernel::runtime_config::Crypto;
 
@@ -166,7 +166,7 @@ fn only<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
 /// Answer one request for `raw_query`. The signature is checked before
 /// anything is read; the picture is then the one `getCoverArt` serves a
 /// signed-in user, cached for a day, with `nosniff` and a sandbox policy.
-pub async fn open<S: Store>(store: &S, settings: &Settings, raw_query: Option<&str>) -> Opened {
+pub async fn open(store: &SubsonicStore, settings: &Settings, raw_query: Option<&str>) -> Opened {
     if !settings.enabled {
         return Opened::Closed;
     }

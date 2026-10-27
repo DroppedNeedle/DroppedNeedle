@@ -13,23 +13,13 @@ use super::params::{self, CiParams, SortKey};
 use super::query::{page, primary_type};
 use super::router::*;
 use super::seams::{
-    ALL, AlbumFilter, AlbumView, ArtistScope, ArtistView, IdMap, ItemSort, LibraryRead,
-    PlaybackSessions, StreamEngine, TrackFilter, TrackView,
+    ALL, AlbumFilter, AlbumView, ArtistScope, ArtistView, ItemSort, TrackFilter, TrackView,
 };
 
 // ===== Library browsing =====
 
 /// The single "Music" view, both dialects (v2 `_views`).
-pub(super) async fn views<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
-    authed: Authed,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+pub(super) async fn views(State(state): State<JellyfinState>, authed: Authed) -> Response {
     let library_id = state.ids.to_jf("library", LIBRARY_INTERNAL_ID).await;
     let (_, album_artists) = state
         .library
@@ -50,16 +40,7 @@ where
 }
 /// Decode a Jellyfin id to an artist mbid, `None` when undecodable or not an
 /// artist (v2 `_decode_artist`).
-pub(super) async fn decode_artist<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
-    jf_id: &str,
-) -> Option<String>
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+pub(super) async fn decode_artist(state: &JellyfinState, jf_id: &str) -> Option<String> {
     let (kind, internal) = state.ids.from_jf(jf_id).await?;
     (kind == "artist").then_some(internal)
 }
@@ -67,18 +48,12 @@ where
 /// One item by decoded kind. Genre and library kinds have no branch in v2
 /// `_single_item` either, so they resolve to `None` (skipped in `Ids`
 /// lookups, 404 for direct fetch), as v2 does.
-pub(super) async fn fetch_item<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
+pub(super) async fn fetch_item(
+    state: &JellyfinState,
     user_id: &str,
     kind: &str,
     internal: &str,
-) -> Option<super::models::BaseItemDto>
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Option<super::models::BaseItemDto> {
     let b = builder(state);
     match kind {
         "track" => {
@@ -119,18 +94,12 @@ fn result(items: Vec<BaseItemDto>, total: usize, start: usize) -> Response {
 }
 
 /// One item in the long form Jellyfin sends for a fetch by id.
-async fn fetch_full_item<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
+async fn fetch_full_item(
+    state: &JellyfinState,
     user: &super::seams::Principal,
     kind: &str,
     internal: &str,
-) -> Option<BaseItemDto>
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Option<BaseItemDto> {
     let b = builder(state);
     match kind {
         "track" => {
@@ -178,16 +147,7 @@ fn sort_or(sort_key: Option<SortKey>, desc: bool, fallback: ItemSort) -> ItemSor
 }
 
 /// Decode artist ids; undecodable ids drop out.
-async fn decode_artists<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
-    jf_ids: &[String],
-) -> Vec<String>
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+async fn decode_artists(state: &JellyfinState, jf_ids: &[String]) -> Vec<String> {
     let mut mbids = Vec::new();
     for jf_id in jf_ids {
         if let Some(mbid) = decode_artist(state, jf_id).await
@@ -199,7 +159,7 @@ where
     mbids
 }
 
-async fn build_tracks<I: IdMap>(b: &Builder<'_, I>, tracks: &[TrackView]) -> Vec<BaseItemDto> {
+async fn build_tracks(b: &Builder<'_>, tracks: &[TrackView]) -> Vec<BaseItemDto> {
     let mut built = Vec::with_capacity(tracks.len());
     for track in tracks {
         built.push(b.audio(track).await);
@@ -207,7 +167,7 @@ async fn build_tracks<I: IdMap>(b: &Builder<'_, I>, tracks: &[TrackView]) -> Vec
     built
 }
 
-async fn build_albums<I: IdMap>(b: &Builder<'_, I>, albums: &[AlbumView]) -> Vec<BaseItemDto> {
+async fn build_albums(b: &Builder<'_>, albums: &[AlbumView]) -> Vec<BaseItemDto> {
     let mut built = Vec::with_capacity(albums.len());
     for album in albums {
         built.push(b.album(album).await);
@@ -215,7 +175,7 @@ async fn build_albums<I: IdMap>(b: &Builder<'_, I>, albums: &[AlbumView]) -> Vec
     built
 }
 
-async fn build_artists<I: IdMap>(b: &Builder<'_, I>, artists: &[ArtistView]) -> Vec<BaseItemDto> {
+async fn build_artists(b: &Builder<'_>, artists: &[ArtistView]) -> Vec<BaseItemDto> {
     let mut built = Vec::with_capacity(artists.len());
     for artist in artists {
         built.push(b.artist(artist).await);
@@ -224,17 +184,11 @@ async fn build_artists<I: IdMap>(b: &Builder<'_, I>, artists: &[ArtistView]) -> 
 }
 
 /// Main browse, both dialects (v2 `_browse`, same branch order).
-pub(super) async fn browse<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn browse(
+    State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let raw_query = request.uri().query().map(str::to_owned);
     let user_id = authed.principal.id.clone();
     let q = CiParams::parse(raw_query.as_deref());
@@ -354,20 +308,14 @@ where
 /// Favorite listing for browse (v2 `_favorite_items`): one batch read per
 /// kind, DTOs for the page only. `played` narrows favourite tracks and
 /// albums to the ones that are or are not played for the caller.
-pub(super) async fn favorites_browse<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
+pub(super) async fn favorites_browse(
+    state: &JellyfinState,
     user_id: &str,
     types: &[String],
     played: Option<bool>,
     start: usize,
     limit: usize,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let b = builder(state);
     let kind = match primary_type(types) {
         "MusicArtist" => "artist",
@@ -407,8 +355,8 @@ where
 
 /// Track browse arm (v2 `_browse` `Audio` branch).
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn audio_browse<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
+pub(super) async fn audio_browse(
+    state: &JellyfinState,
     user_id: &str,
     search: Option<&str>,
     album_artist_ids: &[String],
@@ -418,13 +366,7 @@ pub(super) async fn audio_browse<L, E, P, I>(
     sort_desc: bool,
     start: usize,
     limit: usize,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let b = builder(state);
     let sort = sort_or(sort_key, sort_desc, ItemSort::Catalog);
     let (mut filter, size) = if !album_artist_ids.is_empty() {
@@ -464,8 +406,8 @@ where
 
 /// Album browse arm (v2 `_browse` fallthrough branch).
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn album_browse<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
+pub(super) async fn album_browse(
+    state: &JellyfinState,
     user_id: &str,
     search: Option<&str>,
     album_artist_ids: &[String],
@@ -476,13 +418,7 @@ pub(super) async fn album_browse<L, E, P, I>(
     sort_desc: bool,
     start: usize,
     limit: usize,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let b = builder(state);
     let size = if limit == 0 { 100 } else { limit };
     let (filter, sort, offset, size) = if !contributing_ids.is_empty() {
@@ -550,17 +486,11 @@ where
 
 /// Jellify Recently Added: a bare JSON array of the newest albums (v2
 /// `_latest`). `ParentId`, when given, must be the music library.
-pub(super) async fn latest<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn latest(
+    State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let raw_query = request.uri().query().map(str::to_owned);
     let q = CiParams::parse(raw_query.as_deref());
     if let Some(parent) = q.get("ParentId") {
@@ -587,46 +517,28 @@ where
     json(StatusCode::OK, &build_albums(&b, &albums).await)
 }
 
-pub(super) async fn artists<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn artists(
+    State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     artists_scoped(State(state), authed, request, ArtistScope::All).await
 }
 
-pub(super) async fn album_artists<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn album_artists(
+    State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     artists_scoped(State(state), authed, request, ArtistScope::Album).await
 }
 
-pub(super) async fn artists_scoped<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn artists_scoped(
+    State(state): State<JellyfinState>,
     authed: Authed,
     request: Request<Body>,
     scope: ArtistScope,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let raw_query = request.uri().query().map(str::to_owned);
     let q = CiParams::parse(raw_query.as_deref());
     let start = params::qint(&q, "StartIndex", 0).max(0) as usize;
@@ -647,17 +559,11 @@ where
 }
 
 /// Both genre dialects share one handler (v2 `_genres`).
-pub(super) async fn genres<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn genres(
+    State(state): State<JellyfinState>,
     _caller: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let raw_query = request.uri().query().map(str::to_owned);
     let q = CiParams::parse(raw_query.as_deref());
     let start = params::qint(&q, "StartIndex", 0).max(0) as usize;
@@ -675,16 +581,7 @@ where
 /// Manet's boot call: a 404 here can leave the library empty (v2
 /// `_items_filters`). Genres and album years are the facets modelled; the
 /// key name `OfficialRatings` is v2-verbatim.
-pub(super) async fn filters<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
-    _caller: Authed,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+pub(super) async fn filters(State(state): State<JellyfinState>, _caller: Authed) -> Response {
     let genres = state.library.genres().await;
     let years = state.library.years().await;
     json(
@@ -698,18 +595,12 @@ where
     )
 }
 
-pub(super) async fn single_item<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn single_item(
+    State(state): State<JellyfinState>,
     Path(item_id): Path<String>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let Some((kind, internal)) = state.ids.from_jf(&item_id).await else {
         return not_found_item(&request);
     };
@@ -722,18 +613,12 @@ where
 /// The older address, with a user id in the path. The id is not read: the
 /// token decides whose library answers, as on the other `/Users/{id}/...`
 /// routes.
-pub(super) async fn single_item_legacy<L, E, P, I>(
-    state: State<JellyfinState<L, E, P, I>>,
+pub(super) async fn single_item_legacy(
+    state: State<JellyfinState>,
     Path((_user_id, item_id)): Path<(String, String)>,
     authed: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     single_item(state, Path(item_id), authed, request).await
 }
 
@@ -743,18 +628,12 @@ where
 /// resolves the artist from an artist/track/album id and serves same-artist
 /// tracks. Unknown ids and unresolvable kinds yield an empty result, not a
 /// 404. (No real similarity ranking is bound yet.)
-pub(super) async fn similar<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn similar(
+    State(state): State<JellyfinState>,
     Path(item_id): Path<String>,
     ctx: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let raw_query = request.uri().query().map(str::to_owned);
     let q = CiParams::parse(raw_query.as_deref());
     let mut limit = params::qint(&q, "Limit", 50);

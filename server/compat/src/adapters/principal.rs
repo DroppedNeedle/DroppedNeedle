@@ -4,7 +4,7 @@
 //! also need the username, display name, and admin flag, which
 //! [`SubsonicVerifier`] reads from the users table.
 
-use crate::subsonic::auth::{Credentials, Principal};
+use crate::subsonic::auth::Credentials;
 use crate::subsonic::error::SubsonicError;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::compat_auth::subsonic::{SubsonicDenied, SubsonicParams, authenticate};
@@ -48,25 +48,35 @@ pub struct CompatPrincipal {
     pub profile: CompatProfile,
 }
 
-impl Principal for CompatPrincipal {
-    fn user_id(&self) -> &str {
+impl CompatPrincipal {
+    /// Owning user id.
+    pub fn user_id(&self) -> &str {
         &self.profile.user_id
     }
 
-    fn username(&self) -> &str {
+    /// Login username.
+    pub fn username(&self) -> &str {
         &self.profile.username
     }
 
-    fn username_display(&self) -> &str {
+    /// Display username (for avatar self-match).
+    pub fn username_display(&self) -> &str {
         &self.profile.username_display
     }
 
-    fn display_name(&self) -> &str {
+    /// Display name (for now-playing attribution).
+    pub fn display_name(&self) -> &str {
         &self.profile.display_name
     }
 
-    fn role(&self) -> &str {
+    /// `user`, `trusted` or `admin` (the download setting).
+    pub fn role(&self) -> &str {
         &self.profile.role
+    }
+
+    /// Admin role (startScan gate, getUser roles).
+    pub fn is_admin(&self) -> bool {
+        self.role() == "admin"
     }
 }
 
@@ -86,12 +96,12 @@ impl SubsonicVerifier {
     pub fn new(passwords: ProdCompatPasswords, users: UsersDeps) -> Self {
         Self { passwords, users }
     }
-}
 
-impl crate::subsonic::Verifier for SubsonicVerifier {
-    type Principal = CompatPrincipal;
-
-    async fn verify(&self, credentials: &Credentials) -> Result<CompatPrincipal, SubsonicError> {
+    /// Verify classified credentials against the app-password store.
+    pub async fn verify(
+        &self,
+        credentials: &Credentials,
+    ) -> Result<CompatPrincipal, SubsonicError> {
         let params = match credentials {
             Credentials::Token {
                 username,

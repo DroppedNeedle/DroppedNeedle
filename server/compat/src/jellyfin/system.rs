@@ -14,20 +14,13 @@ use uuid::Uuid;
 use super::builders::{self};
 use super::models::{AuthenticateRequest, PublicSystemInfo, SystemInfo};
 use super::router::*;
-use super::seams::{IdMap, LibraryRead, PlaybackSessions, StreamEngine};
 
 // ===== System / identity =====
 
-pub(super) async fn system_info_public<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn system_info_public(
+    State(state): State<JellyfinState>,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let settings = state.settings.jellyfin();
     json(
         StatusCode::OK,
@@ -43,17 +36,11 @@ where
     )
 }
 
-pub(super) async fn system_info<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn system_info(
+    State(state): State<JellyfinState>,
     _caller: Authed,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let settings = state.settings.jellyfin();
     json(
         StatusCode::OK,
@@ -141,16 +128,10 @@ pub(super) async fn users_public() -> Response {
 /// `AuthenticateByName`: the app password echoes verbatim as `AccessToken`
 /// with a fresh `SessionInfo` and the full non-null user object
 /// (`compat_auth` renders it; bad credentials → 401, never 403).
-pub(super) async fn authenticate<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
+pub(super) async fn authenticate(
+    State(state): State<JellyfinState>,
     request: Request<Body>,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     let (parts, body) = request.into_parts();
     let bytes = match axum::body::to_bytes(body, 64 * 1024).await {
         Ok(bytes) => bytes,
@@ -213,20 +194,11 @@ where
 }
 
 /// Now, as unix seconds, by the platform clock.
-fn unix_now<L, E, P, I>(state: &JellyfinState<L, E, P, I>) -> f64 {
+fn unix_now(state: &JellyfinState) -> f64 {
     state.passwords.clock().now_ms() as f64 / 1000.0
 }
 
-pub(super) async fn users_me<L, E, P, I>(
-    State(state): State<JellyfinState<L, E, P, I>>,
-    authed: Authed,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+pub(super) async fn users_me(State(state): State<JellyfinState>, authed: Authed) -> Response {
     json(
         StatusCode::OK,
         &authed.principal.user_dto(
@@ -242,16 +214,10 @@ where
 
 /// The `{user_id}` path id is ignored; the caller is always returned (v2
 /// `_user_dto(u)` parity).
-pub(super) async fn user_by_id<L, E, P, I>(
-    state: State<JellyfinState<L, E, P, I>>,
+pub(super) async fn user_by_id(
+    state: State<JellyfinState>,
     Path(_user_id): Path<String>,
     authed: Authed,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+) -> Response {
     users_me(state, authed).await
 }

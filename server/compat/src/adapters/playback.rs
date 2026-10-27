@@ -16,7 +16,6 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use crate::jellyfin::seams::PlaybackSessions;
 use crate::subsonic::store::NowPlayingRow;
 use droppedneedle_media::playback::PlaybackDeps;
 use droppedneedle_media::playback::models::{
@@ -51,7 +50,7 @@ impl CompatPlayback {
     /// Record now-playing presence for a file, with the position and paused
     /// state its report carries (`None` and `false` on a start). Unknown
     /// files are skipped (no names to project); sink forwarding is
-    /// best-effort. The device is always `compat`: the Jellyfin progress seam
+    /// best-effort. The device is always `compat`: the Jellyfin progress report
     /// carries no client, so a per-client device would split one listener
     /// across two presence rows; the client rides `source` instead (v2
     /// parity).
@@ -165,45 +164,25 @@ impl CompatPlayback {
             .collect()
     }
 
-    fn mark_started(&self, user_id: &str, key: &str) {
+    /// Drop the caller's presence (a Jellyfin stop report).
+    pub fn clear_presence(&self, user_id: &str) {
+        clear_presence(&self.deps, user_id, "compat");
+    }
+
+    /// Note that the caller started the play keyed `key` (a Jellyfin
+    /// session or item id).
+    pub fn mark_started(&self, user_id: &str, key: &str) {
         if let Ok(mut started) = self.started.lock() {
             started.insert((user_id.to_owned(), key.to_owned()));
         }
     }
 
-    fn pop_started(&self, user_id: &str, key: &str) -> Option<String> {
+    /// Forget the play keyed `key`; `Some` when it was started.
+    pub fn pop_started(&self, user_id: &str, key: &str) -> Option<String> {
         self.started.lock().ok().and_then(|mut started| {
             started
                 .remove(&(user_id.to_owned(), key.to_owned()))
                 .then(|| "started".to_owned())
         })
-    }
-}
-
-impl PlaybackSessions for CompatPlayback {
-    async fn mark_started(&self, user_id: &str, key: &str) {
-        self.mark_started(user_id, key);
-    }
-
-    async fn pop_started(&self, user_id: &str, key: &str) -> Option<String> {
-        self.pop_started(user_id, key)
-    }
-
-    async fn now_playing(&self, user_id: &str, file_id: &str, client: Option<&str>) {
-        self.now_playing(file_id, user_id, client, None, false);
-    }
-
-    async fn progress(&self, user_id: &str, file_id: &str, position_ms: Option<i64>, paused: bool) {
-        // Presence only: a progress report never scrobbles, the stop report
-        // alone checks the play threshold.
-        self.now_playing(file_id, user_id, None, position_ms, paused);
-    }
-
-    async fn clear_presence(&self, user_id: &str, _client: Option<&str>) {
-        clear_presence(&self.deps, user_id, "compat");
-    }
-
-    async fn scrobble(&self, user_id: &str, file_id: &str, _client: Option<&str>) {
-        let _ = self.scrobble(file_id, user_id, None);
     }
 }

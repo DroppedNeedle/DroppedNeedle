@@ -11,24 +11,13 @@ use axum::response::Response;
 
 use super::models::{LyricDto, LyricLine, LyricMetadata};
 use super::router::*;
-use super::seams::{IdMap, LibraryRead, PlaybackSessions, StreamEngine};
 
 /// Ticks per millisecond: a line's `Start` is in ticks.
 const TICKS_PER_MILLISECOND: i64 = 10_000;
 
 /// Answer the lyrics of `item_id`, or `missing` (Jellyfin's 404) when it
 /// has none.
-pub(super) async fn lyrics<L, E, P, I>(
-    state: &JellyfinState<L, E, P, I>,
-    item_id: &str,
-    missing: Response,
-) -> Response
-where
-    L: LibraryRead,
-    E: StreamEngine,
-    P: PlaybackSessions,
-    I: IdMap,
-{
+pub(super) async fn lyrics(state: &JellyfinState, item_id: &str, missing: Response) -> Response {
     let internal = match state.ids.from_jf(item_id).await {
         Some((kind, internal)) if kind == "track" => internal,
         _ => return missing,

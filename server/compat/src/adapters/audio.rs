@@ -14,9 +14,9 @@ use std::sync::Arc;
 use futures_util::StreamExt as _;
 
 use crate::body::{AudioBody, LiveBody};
-use crate::jellyfin::seams::{ByteOutcome, StreamEngine as JellyfinStreamEngine};
+use crate::jellyfin::seams::ByteOutcome;
 use crate::subsonic::stream::{
-    AudioBackend, AudioFacts, BackendError, OpenedAudio, PlayedAudio, TranscodedAudio,
+    AudioFacts, BackendError, OpenedAudio, PlayedAudio, TranscodedAudio,
 };
 use droppedneedle_media::stream::leases::RETRY_AFTER_SECONDS;
 use droppedneedle_media::stream::routes::{
@@ -87,7 +87,9 @@ impl<E> Clone for GatewayAudio<E> {
 }
 
 impl<E> GatewayAudio<E> {
-    fn scoped(&self, user_id: &str) -> Self {
+    /// The adapter scoped to one authenticated caller, so stream leases
+    /// count against that user.
+    pub fn for_caller(&self, user_id: &str) -> Self {
         Self {
             engine: Arc::clone(&self.engine),
             lease_user: user_id.to_owned(),
@@ -126,12 +128,12 @@ fn backend_error(fault: StreamFault) -> BackendError {
     }
 }
 
-impl<E: StreamEngine + 'static> AudioBackend for GatewayAudio<E> {
-    fn for_caller(&self, user_id: &str) -> Self {
-        self.scoped(user_id)
-    }
-
-    async fn play(
+impl<E: StreamEngine + 'static> GatewayAudio<E> {
+    /// Open one file id for Subsonic as `params` ask: the gateway decides
+    /// whether the original or a transcode plays. `head_only` needs the
+    /// facts alone and never starts a transcode. `None` when nothing can
+    /// serve the track.
+    pub async fn play_subsonic(
         &self,
         file_id: &str,
         params: &StreamParams,
@@ -213,15 +215,16 @@ fn jellyfin_fault(fault: StreamFault) -> ByteOutcome {
     }
 }
 
-impl<E: StreamEngine + 'static> JellyfinStreamEngine for GatewayAudio<E> {
-    fn for_caller(&self, user_id: &str) -> Self {
-        self.scoped(user_id)
-    }
-
-    /// Open and frame one object by the plan the gateway ran. A 416
-    /// carries the file's type, `Content-Range: bytes */N` and
-    /// `Accept-Ranges`.
-    async fn play(
+impl<E: StreamEngine + 'static> GatewayAudio<E> {
+    /// Play one file id for Jellyfin as `params` ask, framed by the plan
+    /// the gateway ran: the original with the 200/206/416 contract, or a
+    /// transcode, which never carries a Content-Length and streams
+    /// unsized. A 416 carries the file's type, `Content-Range: bytes */N`
+    /// and `Accept-Ranges`. `head_only` answers the same status and headers
+    /// with an empty body and never starts a transcode. Unknown ids are
+    /// 404, refusals 403, a full pool 429 with `Retry-After`, and failures
+    /// 500.
+    pub async fn play_jellyfin(
         &self,
         file_id: &str,
         params: &StreamParams,

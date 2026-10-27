@@ -280,3 +280,46 @@ pub fn media_jobs(platform: &Platform) -> droppedneedle_media::remotes::presence
         droppedneedle_media::remotes::warmup::MbidIndex::default(),
     )
 }
+
+/// The production media bundle over `platform`, with no ffmpeg: files read
+/// through `library`, remote playlist imports landing in `reads`'
+/// collections and the personal mix granted through `acquire`. Its workers
+/// are not started.
+pub fn media_at(
+    platform: &Platform,
+    users: UsersDeps,
+    library: &LibrarySetup,
+    reads: &ReadsSetup,
+    acquire: &AcquireSetup,
+) -> droppedneedle_media::MediaSetup {
+    let outbound = super::closed_outbound();
+    let providers = Providers::build(
+        platform,
+        outbound.providers(),
+        droppedneedle_kernel::db::cache::CacheDb::scratch(),
+    );
+    let (media, _workers) = droppedneedle_media::MediaSetup::build(
+        platform,
+        users,
+        library.core.root_source(),
+        Arc::new(
+            droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink::new(
+                reads.collections.clone(),
+            ),
+        ),
+        idle_host(platform, library.core.clone()),
+        droppedneedle_media::MediaSetup::remotes(platform, outbound.plex_tv.clone()),
+        None,
+        &providers,
+        Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
+            acquire.requests.mixer.clone(),
+        )),
+        droppedneedle_kernel::jobs::queue::JobQueue::new(
+            platform.db.clone(),
+            platform.clock.clone(),
+        ),
+        platform.clock.clone(),
+    )
+    .expect("media bundle builds");
+    media
+}

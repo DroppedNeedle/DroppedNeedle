@@ -1,5 +1,5 @@
-//! Production seam bindings: the library both protocols read, durable
-//! queues, playback reports, streaming and app-password auth.
+//! What the compat handlers call: the library both protocols read,
+//! durable queues, playback reports, streaming and app-password auth.
 
 pub mod audio;
 pub mod jellyfin_ids;
