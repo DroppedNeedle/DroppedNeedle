@@ -27,6 +27,9 @@ allowed=(
   # The walk's unit test makes a link loop in a temp folder to prove the
   # walk never follows one.
   "scan/walk.rs|std::os::unix::fs::symlink(&root, &link).expect(\"symlink\");"
+  # The placement unit test removes its own scratch settings folder in
+  # the system temp folder, never a library file.
+  "management/placement.rs|std::fs::remove_dir_all(&dir).expect(\"scratch dir removed\");"
 )
 
 names='rename|copy|hard_link|symlink|soft_link|remove_file|remove_dir|remove_dir_all'

@@ -1829,12 +1829,14 @@ impl Publishing {
         &self,
         root_id: &str,
     ) -> Result<Option<PlacementCheck>, PublishError> {
-        let registry = self.core.live_registry();
+        // The roots are read under the lock, so a probe waiting out a
+        // write runs against the folders saved when it gets its turn.
         let mut cell = self
             .core
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let registry = self.core.live_registry();
         let session = cell.session(&registry);
         cell.refresh_to(session, &self.core.root_dirs)?;
         cell.recheck_placement(root_id)

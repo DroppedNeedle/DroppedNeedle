@@ -690,7 +690,7 @@ pub async fn get_management_placement(
     State(management): State<Management>,
     _caller: Admin,
 ) -> Result<Json<ManagementPlacementView>, ApiError> {
-    let roots = blocking(move || Ok(management.placement_modes()))
+    let roots = blocking(move || management.placement_modes())
         .await?
         .into_iter()
         .map(|(root_id, mode)| ManagementRootPlacementView {
