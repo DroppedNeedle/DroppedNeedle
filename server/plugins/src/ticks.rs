@@ -7,13 +7,11 @@
 //! resolving the plugin fresh on every tick, and [`PluginTickLoops`]
 //! rebuilds loops through the jobs [`sync_ticks`] choke point after every
 //! install, update, and uninstall. One loop per plugin, no overlap; a tick
-//! that runs past its interval is cancelled. The same
-//! [`TickStore`](jobs_tick_store) backs every plugin's `host.state.*`
-//! requests, which is what makes plugin state survive restarts and
-//! reinstalls.
+//! that runs past its interval is cancelled. The same [`SqliteTickStore`]
+//! backs every plugin's `host.state.*` requests, which is what makes plugin
+//! state survive restarts and reinstalls.
 //!
 //! [`jobs_tick_host`]: droppedneedle_kernel::jobs::plugin_ticks::TickHost
-//! [`jobs_tick_store`]: droppedneedle_kernel::jobs::plugin_ticks::TickStore
 //! [`sync_ticks`]: droppedneedle_kernel::jobs::plugin_ticks::sync_ticks
 
 use std::sync::Arc;
@@ -21,115 +19,15 @@ use std::time::Duration;
 
 use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_kernel::jobs::plugin_ticks::{
-    MemoryTickStore, SqliteTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin,
-    TickSpec, TickStore as JobsTickStore, TickStoreError, TickSyncState, clamp_interval_minutes,
-    sync_ticks,
+    SqliteTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin, TickSpec,
+    TickSyncState, clamp_interval_minutes, sync_ticks,
 };
 
-use super::host::{PluginHost, PluginStateStore};
+use super::host::PluginHost;
 use super::protocol::methods;
-use super::runtime::BoxFuture;
 
 /// Default cancel grace for tick loops.
 pub const TICK_CANCEL_GRACE: Duration = Duration::from_secs(5);
-
-/// Registration half of a tick store. The jobs store keys state by plugin
-/// and refuses unknown plugins; the install path registers each enabled
-/// plugin before its loop starts. Both stores implement this over their
-/// own `add_plugin`.
-pub trait TickStoreAdmin: Send + Sync {
-    /// Register one plugin, creating its empty key map when absent.
-    fn ensure_plugin(&self, name: &str);
-}
-
-impl TickStoreAdmin for MemoryTickStore {
-    fn ensure_plugin(&self, name: &str) {
-        self.add_plugin(name);
-    }
-}
-
-impl TickStoreAdmin for SqliteTickStore {
-    fn ensure_plugin(&self, name: &str) {
-        self.add_plugin(name);
-    }
-}
-
-/// Tick state behind one concrete type: memory in test states, SQLite in
-/// production. The enum keeps [`PluginTickLoops`] (and through it
-/// `PluginsSetup`) non-generic so `AppState` holds one field type.
-#[derive(Clone, Debug)]
-pub enum TickStoreKind {
-    /// In-memory state for states without a database.
-    Memory(MemoryTickStore),
-    /// Durable state over `plugin_tick_state`.
-    Sqlite(SqliteTickStore),
-}
-
-impl JobsTickStore for TickStoreKind {
-    fn read(
-        &self,
-        plugin: &str,
-        key: &str,
-    ) -> droppedneedle_kernel::jobs::BoxFuture<'_, Result<Option<Vec<u8>>, TickStoreError>> {
-        match self {
-            Self::Memory(store) => store.read(plugin, key),
-            Self::Sqlite(store) => store.read(plugin, key),
-        }
-    }
-
-    fn write(
-        &self,
-        plugin: &str,
-        key: &str,
-        bytes: Vec<u8>,
-    ) -> droppedneedle_kernel::jobs::BoxFuture<'_, Result<(), TickStoreError>> {
-        match self {
-            Self::Memory(store) => store.write(plugin, key, bytes),
-            Self::Sqlite(store) => store.write(plugin, key, bytes),
-        }
-    }
-}
-
-impl TickStoreAdmin for TickStoreKind {
-    fn ensure_plugin(&self, name: &str) {
-        match self {
-            Self::Memory(store) => store.ensure_plugin(name),
-            Self::Sqlite(store) => store.ensure_plugin(name),
-        }
-    }
-}
-
-impl PluginStateStore for TickStoreKind {
-    fn read<'a>(
-        &'a self,
-        plugin: &'a str,
-        key: &'a str,
-    ) -> BoxFuture<'a, Result<Option<Vec<u8>>, String>> {
-        Box::pin(async move {
-            match JobsTickStore::read(self, plugin, key).await {
-                Ok(found) => Ok(found),
-                Err(TickStoreError::NotFound(_)) | Err(TickStoreError::UnknownPlugin(_)) => {
-                    Ok(None)
-                }
-                Err(error) => Err(error.to_string()),
-            }
-        })
-    }
-
-    fn write<'a>(
-        &'a self,
-        plugin: &'a str,
-        key: &'a str,
-        value: Vec<u8>,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            self.ensure_plugin(plugin);
-            JobsTickStore::write(self, plugin, key, value)
-                .await
-                .map_err(|error| error.to_string())
-        })
-    }
-}
 
 impl PluginHost {
     /// Run one scheduler tick, waiting at most `budget`. Resolves the
@@ -221,26 +119,19 @@ pub fn desired_specs(host: &PluginHost) -> Vec<TickSpec> {
     specs
 }
 
-/// Tick-loop rebuilds behind an object-safe seam, so handlers never name
-/// the supervisor or the concrete tick stores.
-pub trait TickLoopSync: Send + Sync {
-    /// Rebuild loops to match the host's enabled scheduler plugins.
-    fn sync_host<'a>(&'a self, host: &'a Arc<PluginHost>) -> BoxFuture<'a, ()>;
-}
-
-/// Tick loops on the supervisor over one jobs tick store. Each sync
-/// registers the desired plugins with the store, then rebuilds through
-/// the jobs choke point.
-pub struct PluginTickLoops<T> {
+/// Tick loops on the supervisor over the tick store. Each sync registers
+/// the desired plugins with the store, then rebuilds through the jobs
+/// choke point.
+pub struct PluginTickLoops {
     supervisor: Supervisor,
     sync: TickSyncState,
-    store: T,
+    store: SqliteTickStore,
     grace: Duration,
 }
 
-impl<T> PluginTickLoops<T> {
+impl PluginTickLoops {
     /// Wire loops on the supervisor over one tick store.
-    pub fn new(supervisor: Supervisor, store: T, grace: Duration) -> Self {
+    pub fn new(supervisor: Supervisor, store: SqliteTickStore, grace: Duration) -> Self {
         Self {
             supervisor,
             sync: TickSyncState::new(),
@@ -248,29 +139,14 @@ impl<T> PluginTickLoops<T> {
             grace,
         }
     }
-}
 
-impl<T: JobsTickStore + TickStoreAdmin> TickLoopSync for PluginTickLoops<T> {
-    fn sync_host<'a>(&'a self, host: &'a Arc<PluginHost>) -> BoxFuture<'a, ()> {
-        Box::pin(async move {
-            let specs = desired_specs(host);
-            for spec in &specs {
-                self.store.ensure_plugin(&spec.name);
-            }
-            let adapter = HostTickAdapter::new(Arc::clone(host));
-            sync_ticks(&self.supervisor, &adapter, &self.sync, &specs, self.grace).await;
-        })
-    }
-}
-
-/// No-op sync for handlers under test that never assert loops.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct NoopTickSync;
-
-#[cfg(any(test, feature = "test-support"))]
-impl TickLoopSync for NoopTickSync {
-    fn sync_host<'a>(&'a self, _host: &'a Arc<PluginHost>) -> BoxFuture<'a, ()> {
-        Box::pin(async {})
+    /// Rebuild loops to match the host's enabled scheduler plugins.
+    pub async fn sync_host(&self, host: &Arc<PluginHost>) {
+        let specs = desired_specs(host);
+        for spec in &specs {
+            self.store.add_plugin(&spec.name);
+        }
+        let adapter = HostTickAdapter::new(Arc::clone(host));
+        sync_ticks(&self.supervisor, &adapter, &self.sync, &specs, self.grace).await;
     }
 }

@@ -13,8 +13,7 @@ use std::time::Duration;
 use droppedneedle_kernel::db::{DbConfig, open_runtime};
 use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::plugin_ticks::{
-    MemoryTickStore, SqliteTickStore, TickHost, TickPlugin, TickSpec, TickStore, TickStoreError,
-    TickSyncState, sync_ticks,
+    SqliteTickStore, TickHost, TickPlugin, TickSpec, TickStoreError, TickSyncState, sync_ticks,
 };
 
 /// Scripted plugin whose every tick hangs.
@@ -100,7 +99,13 @@ async fn tick_hung_tick_cancelled_at_interval() {
 
 #[tokio::test]
 async fn tick_state_rejects_unsafe_paths_unknown_plugins_and_over_cap() {
-    let store = MemoryTickStore::with_plugins(&["tick-toy"]);
+    let dir = ScratchDir::new("tick-refusals");
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+    let store = SqliteTickStore::new(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    store.add_plugin("tick-toy");
     for bad in ["../escape", "/absolute", "UPPER", "trailing/", "a//b"] {
         let error = store
             .write("tick-toy", bad, b"x".to_vec())
@@ -127,6 +132,7 @@ async fn tick_state_rejects_unsafe_paths_unknown_plugins_and_over_cap() {
         .await
         .expect_err("missing key is an error");
     assert!(matches!(error, TickStoreError::NotFound(_)));
+    runtime.shutdown().await;
 }
 
 #[tokio::test]
@@ -145,7 +151,7 @@ async fn sqlite_tick_state_survives_a_full_restart() {
         .write("tick-toy", "cache/seen", b"tick-1".to_vec())
         .await
         .expect("write wins");
-    // Validation matches the memory store exactly.
+    // Unknown plugins and unsafe keys are refused before the disk.
     assert!(matches!(
         store.write("ghost", "cache/seen", b"x".to_vec()).await,
         Err(TickStoreError::UnknownPlugin(_))

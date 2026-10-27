@@ -14,6 +14,7 @@ pub mod compat;
 pub mod library;
 pub mod logs;
 pub mod platform;
+pub mod plugin_fakes;
 pub mod sources;
 
 pub use app::{Login, TestApp};

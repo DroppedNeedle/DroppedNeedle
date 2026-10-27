@@ -2,7 +2,7 @@
 //!
 //! v2 kept tick state in files under each plugin's directory: unregistered
 //! durability that vanished with an uninstall and bypassed every backup.
-//! v3 moves that state onto [`TickStore`], keyed by plugin name, so it
+//! v3 moves that state onto [`SqliteTickStore`], keyed by plugin name, so it
 //! survives restarts and reinstalls and travels with the database. The loop
 //! contract itself is unchanged from `host.py`: one task per enabled
 //! scheduler plugin under [`TICK_PREFIX`], interval clamped to 5-1440 minutes
@@ -90,25 +90,6 @@ pub trait TickHost: Clone + Send + Sync + 'static {
     fn get(&self, name: &str) -> Option<Self::Plugin>;
 }
 
-/// Durable tick state. Keys are validated before any read or write; values
-/// are opaque bytes up to [`STATE_MAX_BYTES`].
-pub trait TickStore: Clone + Send + Sync + 'static {
-    /// Read one key. Missing keys and unknown plugins are errors, matching
-    /// the v2 read (callers treat `NotFound` as empty state).
-    fn read(
-        &self,
-        plugin: &str,
-        key: &str,
-    ) -> BoxFuture<'_, Result<Option<Vec<u8>>, TickStoreError>>;
-    /// Store one key, creating or overwriting.
-    fn write(
-        &self,
-        plugin: &str,
-        key: &str,
-        bytes: Vec<u8>,
-    ) -> BoxFuture<'_, Result<(), TickStoreError>>;
-}
-
 /// Every way a tick-state call can fail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TickStoreError {
@@ -172,129 +153,15 @@ pub fn validate_state_key(key: &str) -> Result<(), TickStoreError> {
     Ok(())
 }
 
-/// In-memory tick state: plugin names to their key maps. State outlives any
-/// one runner because the store is shared, not owned, which is what the
-/// durability test relies on (drop the loops, keep the store, read it back).
-/// Plugin names to their state keys to raw bytes.
-type TickStateMap = HashMap<String, HashMap<String, Vec<u8>>>;
-
-#[derive(Debug, Clone, Default)]
-pub struct MemoryTickStore {
-    plugins: Arc<Mutex<TickStateMap>>,
-}
-
-impl MemoryTickStore {
-    /// Empty store knowing no plugins yet.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Empty store with the named plugins registered.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_plugins(names: &[&str]) -> Self {
-        let store = Self::new();
-        {
-            let mut guard = store
-                .plugins
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            for name in names {
-                guard.entry((*name).to_owned()).or_default();
-            }
-        }
-        store
-    }
-
-    /// Register one more plugin (install path).
-    pub fn add_plugin(&self, name: &str) {
-        self.plugins
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .entry(name.to_owned())
-            .or_default();
-    }
-}
-
-impl TickStore for MemoryTickStore {
-    fn read(
-        &self,
-        plugin: &str,
-        key: &str,
-    ) -> BoxFuture<'_, Result<Option<Vec<u8>>, TickStoreError>> {
-        let plugins = Arc::clone(&self.plugins);
-        let plugin = plugin.to_owned();
-        let key = key.to_owned();
-        Box::pin(async move {
-            validate_state_key(&key)?;
-            let guard = plugins
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let Some(keys) = guard.get(&plugin) else {
-                return Err(TickStoreError::UnknownPlugin(plugin));
-            };
-            match keys.get(&key) {
-                Some(bytes) => {
-                    if bytes.len() > STATE_MAX_BYTES {
-                        return Err(TickStoreError::OverCap);
-                    }
-                    Ok(Some(bytes.clone()))
-                }
-                None => Err(TickStoreError::NotFound(key)),
-            }
-        })
-    }
-
-    fn write(
-        &self,
-        plugin: &str,
-        key: &str,
-        bytes: Vec<u8>,
-    ) -> BoxFuture<'_, Result<(), TickStoreError>> {
-        let plugins = Arc::clone(&self.plugins);
-        let plugin = plugin.to_owned();
-        let key = key.to_owned();
-        Box::pin(async move {
-            if bytes.len() > STATE_MAX_BYTES {
-                tracing::warn!(
-                    plugin = %plugin,
-                    path = %key,
-                    reason = "over-cap",
-                    "plugin tick state write rejected"
-                );
-                return Err(TickStoreError::OverCap);
-            }
-            validate_state_key(&key)?;
-            let mut guard = plugins
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let Some(keys) = guard.get_mut(&plugin) else {
-                return Err(TickStoreError::UnknownPlugin(plugin));
-            };
-            let (count, total) = keys
-                .iter()
-                .filter(|(name, _)| **name != key)
-                .fold((0usize, 0usize), |(count, total), (_, value)| {
-                    (count + 1, total + value.len())
-                });
-            if count + 1 > STATE_MAX_KEYS || total + bytes.len() > STATE_MAX_TOTAL_BYTES {
-                tracing::warn!(plugin = %plugin, "plugin state write rejected: plugin over its total cap");
-                return Err(TickStoreError::OverCap);
-            }
-            keys.insert(key, bytes);
-            Ok(())
-        })
-    }
-}
-
-/// SQLite-backed tick state over `plugin_tick_state`: the production
-/// [`TickStore`]. Reads travel the reader pool, writes travel the writer
-/// lane, so state survives process restarts with the database.
+/// Durable tick state over `plugin_tick_state`. Keys are validated before
+/// any read or write; values are opaque bytes up to [`STATE_MAX_BYTES`].
+/// Reads travel the reader pool, writes travel the writer lane, so state
+/// survives process restarts with the database.
 ///
 /// Plugin registration stays in memory: boot re-registers every desired
 /// plugin through `sync_ticks` before any loop reads, so only the key bytes
-/// need the disk. Unknown plugins still error like the memory store, and
-/// uninstalls leave rows behind, so a reinstall reads its old state back.
+/// need the disk. Unknown plugins are an error, and uninstalls leave rows
+/// behind, so a reinstall reads its old state back.
 #[derive(Clone)]
 pub struct SqliteTickStore {
     db: Db,
@@ -335,10 +202,10 @@ impl SqliteTickStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .contains(plugin)
     }
-}
 
-impl TickStore for SqliteTickStore {
-    fn read(
+    /// Read one key. Missing keys and unknown plugins are errors, matching
+    /// the v2 read (callers treat `NotFound` as empty state).
+    pub fn read(
         &self,
         plugin: &str,
         key: &str,
@@ -374,7 +241,8 @@ impl TickStore for SqliteTickStore {
         })
     }
 
-    fn write(
+    /// Store one key, creating or overwriting.
+    pub fn write(
         &self,
         plugin: &str,
         key: &str,

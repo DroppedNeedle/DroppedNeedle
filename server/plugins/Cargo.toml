@@ -28,14 +28,5 @@ utoipa.workspace = true
 uuid.workspace = true
 zip.workspace = true
 
-[features]
-# Fakes, memory stores and test constructors for the test suites above.
-test-support = [
-    "droppedneedle-kernel/test-support",
-    "droppedneedle-providers/test-support",
-    "droppedneedle-auth/test-support",
-    "droppedneedle-library/test-support",
-]
-
 [dev-dependencies]
 droppedneedle-kernel = { workspace = true, features = ["test-support"] }

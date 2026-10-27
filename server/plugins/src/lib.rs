@@ -25,8 +25,6 @@
 
 pub mod capabilities;
 pub mod error;
-#[cfg(any(test, feature = "test-support"))]
-pub mod fakes;
 pub mod handlers;
 pub mod host;
 pub mod install;

@@ -172,80 +172,69 @@ pub struct ArchiveEntry {
     pub data: Vec<u8>,
 }
 
-/// Unpack an install archive. Production reads zips ([`ZipUnpacker`]).
-pub trait ArchiveUnpacker: Send + Sync {
-    /// Every file in the archive.
-    fn unpack(&self, bytes: &[u8]) -> Result<Vec<ArchiveEntry>, String>;
-}
+/// Read every file of an install archive: a zip of stored and deflated
+/// entries (what GitHub serves). The caps apply while reading, so an
+/// archive at the download cap cannot balloon past the unpacked budget.
+pub fn unpack_zip(bytes: &[u8]) -> Result<Vec<ArchiveEntry>, String> {
+    use std::io::Read as _;
 
-/// Zip reader over stored and deflated entries (what GitHub serves). The
-/// caps apply while reading, so an archive at the download cap cannot
-/// balloon past the unpacked budget.
-#[derive(Debug, Default)]
-pub struct ZipUnpacker;
-
-impl ArchiveUnpacker for ZipUnpacker {
-    fn unpack(&self, bytes: &[u8]) -> Result<Vec<ArchiveEntry>, String> {
-        use std::io::Read as _;
-
-        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
-            .map_err(|error| format!("plugin archive is not a readable zip: {error}"))?;
-        if archive.len() > MAX_PLUGIN_ZIP_ENTRIES {
-            return Err(format!(
-                "plugin archive holds {} entries; the cap is {MAX_PLUGIN_ZIP_ENTRIES}",
-                archive.len(),
-            ));
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|error| format!("plugin archive is not a readable zip: {error}"))?;
+    if archive.len() > MAX_PLUGIN_ZIP_ENTRIES {
+        return Err(format!(
+            "plugin archive holds {} entries; the cap is {MAX_PLUGIN_ZIP_ENTRIES}",
+            archive.len(),
+        ));
+    }
+    let mut entries = Vec::new();
+    let mut total: u64 = 0;
+    for index in 0..archive.len() {
+        let file = archive
+            .by_index(index)
+            .map_err(|error| format!("plugin archive entry {index} is unreadable: {error}"))?;
+        if file.is_dir() {
+            continue;
         }
-        let mut entries = Vec::new();
-        let mut total: u64 = 0;
-        for index in 0..archive.len() {
-            let file = archive
-                .by_index(index)
-                .map_err(|error| format!("plugin archive entry {index} is unreadable: {error}"))?;
-            if file.is_dir() {
-                continue;
-            }
-            match file.compression() {
-                zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated => {}
-                method => {
-                    return Err(format!(
-                        "plugin archive uses {method:?} compression; only stored and deflated entries install"
-                    ));
-                }
-            }
-            let name = file
-                .name()
-                .map_err(|error| {
-                    format!("plugin archive entry {index} has an unreadable name: {error}")
-                })?
-                .into_owned();
-            if file.enclosed_name().is_none() {
-                return Err(format!("plugin archive entry {name:?} escapes its root"));
-            }
-            let is_symlink = file
-                .unix_mode()
-                .is_some_and(|mode| mode & 0o170_000 == 0o120_000);
-            let mut data = Vec::new();
-            file.take(MAX_PLUGIN_ZIP_FILE_BYTES as u64 + 1)
-                .read_to_end(&mut data)
-                .map_err(|error| format!("plugin archive entry is unreadable: {error}"))?;
-            if data.len() > MAX_PLUGIN_ZIP_FILE_BYTES {
+        match file.compression() {
+            zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated => {}
+            method => {
                 return Err(format!(
-                    "plugin archive entry {name:?} tops the per-file cap"
+                    "plugin archive uses {method:?} compression; only stored and deflated entries install"
                 ));
             }
-            total += data.len() as u64;
-            if total > MAX_PLUGIN_ZIP_DECOMPRESSED_BYTES as u64 {
-                return Err("plugin archive unpacks past the total cap".to_owned());
-            }
-            entries.push(ArchiveEntry {
-                path: name,
-                is_symlink,
-                data,
-            });
         }
-        Ok(entries)
+        let name = file
+            .name()
+            .map_err(|error| {
+                format!("plugin archive entry {index} has an unreadable name: {error}")
+            })?
+            .into_owned();
+        if file.enclosed_name().is_none() {
+            return Err(format!("plugin archive entry {name:?} escapes its root"));
+        }
+        let is_symlink = file
+            .unix_mode()
+            .is_some_and(|mode| mode & 0o170_000 == 0o120_000);
+        let mut data = Vec::new();
+        file.take(MAX_PLUGIN_ZIP_FILE_BYTES as u64 + 1)
+            .read_to_end(&mut data)
+            .map_err(|error| format!("plugin archive entry is unreadable: {error}"))?;
+        if data.len() > MAX_PLUGIN_ZIP_FILE_BYTES {
+            return Err(format!(
+                "plugin archive entry {name:?} tops the per-file cap"
+            ));
+        }
+        total += data.len() as u64;
+        if total > MAX_PLUGIN_ZIP_DECOMPRESSED_BYTES as u64 {
+            return Err("plugin archive unpacks past the total cap".to_owned());
+        }
+        entries.push(ArchiveEntry {
+            path: name,
+            is_symlink,
+            data,
+        });
     }
+    Ok(entries)
 }
 
 /// Every way an install can fail. `Denied`, `RateLimited` and `Download`
@@ -589,7 +578,6 @@ pub async fn resolve(
 /// Download and validate one resolved source without installing it.
 pub async fn stage(
     fetcher: &dyn ArchiveFetcher,
-    unpacker: &dyn ArchiveUnpacker,
     hosts: &GitHubHosts,
     resolved: ResolvedSource,
 ) -> Result<StagedPlugin, InstallError> {
@@ -602,9 +590,7 @@ pub async fn stage(
     if archive.len() > MAX_PLUGIN_ZIP_BYTES {
         return Err(InstallError::TooLarge);
     }
-    let entries = unpacker
-        .unpack(&archive)
-        .map_err(InstallError::ArchiveUnreadable)?;
+    let entries = unpack_zip(&archive).map_err(InstallError::ArchiveUnreadable)?;
     let root = check_entries(&entries)?;
     let manifest = manifest_from_entries(&entries, &root)?;
     Ok(StagedPlugin {
@@ -889,10 +875,10 @@ mod tests {
         writer.start_file("root/plugin.toml", deflated).unwrap();
         writer.write_all(b"[plugin]").unwrap();
         let bytes = writer.finish().unwrap().into_inner();
-        let entries = ZipUnpacker.unpack(&bytes).unwrap();
+        let entries = unpack_zip(&bytes).unwrap();
         assert_eq!(entries[0].path, "root/plugin.toml");
         assert_eq!(entries[0].data, b"[plugin]");
-        assert!(ZipUnpacker.unpack(b"not a zip").is_err());
+        assert!(unpack_zip(b"not a zip").is_err());
 
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         writer
@@ -900,6 +886,6 @@ mod tests {
             .unwrap();
         writer.write_all(b"[plugin]").unwrap();
         let bytes = writer.finish().unwrap().into_inner();
-        assert!(ZipUnpacker.unpack(&bytes).is_err());
+        assert!(unpack_zip(&bytes).is_err());
     }
 }

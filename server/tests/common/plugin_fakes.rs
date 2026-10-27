@@ -1,27 +1,22 @@
-//! Test doubles for plugins: scripted connections and launchers,
-//! fetchers and unpackers.
-//!
-//! The real plugin runtime is a subprocess; tests that need one launch the
-//! shipped examples (see `tests/server/plugins_examples.rs`). These fakes cover
-//! the host logic around it: fan-out, publish guards, route clamps.
-//! The memory tick store (`MemoryTickStore`) is a real implementation and
-//! doubles as its own fake.
+//! Fakes of what plugins reach outside the process: the plugin's own
+//! child process and GitHub. The real subprocess runtime is tested with
+//! the shipped examples in `plugins_examples`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use droppedneedle_plugins::install::{ArchiveFetcher, FetchError, Fetched};
+use droppedneedle_plugins::protocol::RpcError;
+use droppedneedle_plugins::runtime::{
+    BoxFuture, CallError, EventKind, EventPayload, HostServices, LaunchSpec, PluginConnection,
+    PluginEvent, PluginLauncher, RuntimeState, RuntimeStatus, ScrobbleEvent,
+};
 use serde_json::Value;
 
-use super::install::{ArchiveEntry, ArchiveFetcher, ArchiveUnpacker, FetchError, Fetched};
-use super::protocol::RpcError;
-use super::runtime::{
-    BoxFuture, CallError, EventKind, HostServices, LaunchSpec, PluginConnection, PluginEvent,
-    PluginLauncher, RuntimeState, RuntimeStatus, ScrobbleEvent,
-};
-
-/// Scripted plugin runtime. Answers each method from a script (default
-/// `null`), records every call, and can make host requests as the plugin.
+/// Stands in for a plugin's child process: answers each method from a
+/// script (default `null`), records every call, and can make host requests
+/// as the plugin.
 pub struct FakeConnection {
     answers: Mutex<HashMap<String, Result<Value, CallError>>>,
     /// Calls received, `(method, params)`, in order.
@@ -144,7 +139,8 @@ impl PluginConnection for FakeConnection {
     }
 }
 
-/// Scripted launcher: plugin names map to shared fake runtimes.
+/// Stands in for starting a plugin's child process: plugin names map to
+/// shared fake runtimes.
 #[derive(Default)]
 pub struct FakeLauncher {
     runtimes: Mutex<HashMap<String, Arc<FakeConnection>>>,
@@ -202,8 +198,8 @@ impl PluginLauncher for FakeLauncher {
     }
 }
 
-/// Scripted archive fetcher: each URL gives the answer set for it, and a
-/// URL with none is a 404.
+/// Stands in for GitHub: each URL gives the answer set for it, and a URL
+/// with none is a 404.
 pub struct FakeFetcher {
     answers: Mutex<HashMap<String, Fetched>>,
     /// Requested URLs, in order.
@@ -254,54 +250,11 @@ impl ArchiveFetcher for FakeFetcher {
     }
 }
 
-/// Scripted unpacker: every archive unpacks to the same entries.
-pub struct FakeUnpacker {
-    entries: Vec<ArchiveEntry>,
-    /// When set, every unpack fails with this reason.
-    pub failure: Mutex<Option<String>>,
-    /// Archives seen, in order.
-    pub seen: Mutex<Vec<Vec<u8>>>,
-}
-
-impl FakeUnpacker {
-    /// Unpacker serving fixed entries.
-    pub fn new(entries: Vec<ArchiveEntry>) -> Self {
-        Self {
-            entries,
-            failure: Mutex::new(None),
-            seen: Mutex::new(Vec::new()),
-        }
-    }
-
-    /// One file entry.
-    pub fn file(path: &str, data: &[u8]) -> ArchiveEntry {
-        ArchiveEntry {
-            path: path.to_owned(),
-            is_symlink: false,
-            data: data.to_vec(),
-        }
-    }
-}
-
-impl ArchiveUnpacker for FakeUnpacker {
-    fn unpack(&self, bytes: &[u8]) -> Result<Vec<ArchiveEntry>, String> {
-        if let Ok(mut guard) = self.seen.lock() {
-            guard.push(bytes.to_vec());
-        }
-        if let Ok(guard) = self.failure.lock()
-            && let Some(reason) = guard.clone()
-        {
-            return Err(reason);
-        }
-        Ok(self.entries.clone())
-    }
-}
-
 /// One scrobble-kind fan-out event with a fresh causation id.
 pub fn scrobble_plugin_event(event: ScrobbleEvent) -> PluginEvent {
     PluginEvent {
         kind: EventKind::Scrobble,
-        payload: super::runtime::EventPayload::Scrobble(event),
+        payload: EventPayload::Scrobble(event),
         causation_id: uuid::Uuid::new_v4().simple().to_string(),
     }
 }

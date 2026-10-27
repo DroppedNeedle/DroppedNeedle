@@ -1655,10 +1655,8 @@ fn plugin_host_with_download_client(auth: &AuthRig, dir: &std::path::Path) -> Ar
     let host = PluginHost::new(
         dir.join("plugins"),
         platform.settings.clone(),
-        Arc::new(droppedneedle_plugins::fakes::FakeLauncher::new()),
-        Arc::new(droppedneedle_plugins::ticks::TickStoreKind::Memory(
-            droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore::new(),
-        )),
+        Arc::new(crate::common::plugin_fakes::FakeLauncher::new()),
+        droppedneedle_plugins::wiring::tick_store(platform),
         library,
     );
     host.load_all();

@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use serde_json::Value;
 
+use droppedneedle_kernel::jobs::plugin_ticks::{SqliteTickStore, TickStoreError};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::sections::PluginConfig;
 
@@ -36,25 +37,6 @@ use super::runtime::{
 /// Folder under the plugins directory holding each plugin's data folder.
 /// Hidden, so discovery skips it.
 pub const DATA_FOLDER: &str = ".data";
-
-/// Durable per-plugin key/value state, reached by plugins through
-/// `host.state.get` and `host.state.set`. Production backs it with the
-/// jobs tick store (SQLite), so state survives restarts and reinstalls.
-pub trait PluginStateStore: Send + Sync {
-    /// Read one key; `None` when unset.
-    fn read<'a>(
-        &'a self,
-        plugin: &'a str,
-        key: &'a str,
-    ) -> BoxFuture<'a, Result<Option<Vec<u8>>, String>>;
-    /// Write one key.
-    fn write<'a>(
-        &'a self,
-        plugin: &'a str,
-        key: &'a str,
-        value: Vec<u8>,
-    ) -> BoxFuture<'a, Result<(), String>>;
-}
 
 /// One discovered plugin.
 #[derive(Clone)]
@@ -143,8 +125,10 @@ pub struct PluginHost {
     /// Bumped after every reload; acquisition wakes its download worker
     /// on it, so enabling a download client takes effect at once.
     generation: tokio::sync::watch::Sender<u64>,
-    /// Backs the `host.state.*` requests.
-    state: Arc<dyn PluginStateStore>,
+    /// Durable per-plugin key/value state behind the `host.state.*`
+    /// requests, shared with the tick loops, so state survives restarts
+    /// and reinstalls.
+    state: SqliteTickStore,
     /// Subscriber fan-out and publish bookkeeping.
     pub(super) events: EventState,
     /// Library writes per plugin (`host.library.write`).
@@ -162,7 +146,7 @@ impl PluginHost {
         plugins_dir: PathBuf,
         config: Arc<ConfigStore>,
         launcher: Arc<dyn PluginLauncher>,
-        state: Arc<dyn PluginStateStore>,
+        state: SqliteTickStore,
         library: droppedneedle_library::wiring::LibraryCore,
     ) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
@@ -610,8 +594,23 @@ impl PluginHost {
             .collect()
     }
 
-    fn state_store(&self) -> Arc<dyn PluginStateStore> {
-        self.state.clone()
+    /// One plugin's state key; an unset key or a plugin the store has not
+    /// met yet reads as empty.
+    async fn read_state(&self, plugin: &str, key: &str) -> Result<Option<Vec<u8>>, String> {
+        match self.state.read(plugin, key).await {
+            Ok(found) => Ok(found),
+            Err(TickStoreError::NotFound(_)) | Err(TickStoreError::UnknownPlugin(_)) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// Store one plugin's state key, registering the plugin first.
+    async fn write_state(&self, plugin: &str, key: &str, value: Vec<u8>) -> Result<(), String> {
+        self.state.add_plugin(plugin);
+        self.state
+            .write(plugin, key, value)
+            .await
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -724,9 +723,8 @@ impl HostServices for HostRequests {
                 }
                 methods::HOST_STATE_GET => {
                     let key = state_key(&params)?;
-                    let store = host.state_store();
-                    let value = store
-                        .read(plugin, &key)
+                    let value = host
+                        .read_state(plugin, &key)
                         .await
                         .map_err(|reason| RpcError::new(codes::INTERNAL_ERROR, reason))?;
                     let text = value.map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
@@ -743,9 +741,7 @@ impl HostServices for HostRequests {
                     if value.len() > STATE_VALUE_MAX {
                         return Err(RpcError::new(codes::INVALID_PARAMS, "value is over 1 MiB"));
                     }
-                    let store = host.state_store();
-                    store
-                        .write(plugin, &key, value.as_bytes().to_vec())
+                    host.write_state(plugin, &key, value.as_bytes().to_vec())
                         .await
                         .map_err(|reason| RpcError::new(codes::HOST_REFUSED, reason))?;
                     Ok(serde_json::json!({}))

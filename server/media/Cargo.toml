@@ -39,7 +39,6 @@ test-support = [
     "droppedneedle-providers/test-support",
     "droppedneedle-auth/test-support",
     "droppedneedle-library/test-support",
-    "droppedneedle-plugins/test-support",
 ]
 
 [dev-dependencies]

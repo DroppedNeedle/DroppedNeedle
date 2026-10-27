@@ -39,11 +39,9 @@ test-support = [
     "droppedneedle-providers/test-support",
     "droppedneedle-auth/test-support",
     "droppedneedle-library/test-support",
-    "droppedneedle-plugins/test-support",
     "droppedneedle-media/test-support",
 ]
 
 [dev-dependencies]
 droppedneedle-auth = { workspace = true, features = ["test-support"] }
 droppedneedle-kernel = { workspace = true, features = ["test-support"] }
-droppedneedle-plugins = { workspace = true, features = ["test-support"] }

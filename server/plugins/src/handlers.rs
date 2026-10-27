@@ -29,8 +29,7 @@ use super::capabilities::routes::ROUTE_BODY_MAX_BYTES;
 use super::error::{PluginError, SourceFault};
 use super::host::{PluginHost, UninstallError, UpdateError};
 use super::install::{
-    ArchiveFetcher, ArchiveUnpacker, InstallError, StagedPlugin, TRUST_WARNING, parse_source,
-    resolve, stage,
+    ArchiveFetcher, InstallError, StagedPlugin, TRUST_WARNING, parse_source, resolve, stage,
 };
 use super::models::{
     PluginInfo, PluginInstallInfo, PluginInstallPreview, PluginInstallRequest, PluginListResponse,
@@ -38,7 +37,7 @@ use super::models::{
     PluginSourceUpdateResponse, PluginSourcesResponse, PluginUpdateRequest, StatusMessage,
 };
 use super::runtime::PluginRouteBody;
-use super::ticks::TickLoopSync;
+use super::ticks::PluginTickLoops;
 
 /// Plugin-route dependencies.
 #[derive(Clone)]
@@ -51,10 +50,8 @@ pub struct PluginsDeps {
     pub github: super::install::GitHubHosts,
     /// Install archive fetcher.
     pub fetcher: Arc<dyn ArchiveFetcher>,
-    /// Install archive unpacker.
-    pub unpacker: Arc<dyn ArchiveUnpacker>,
     /// Tick-loop rebuilds, synced after every mutation.
-    pub tick_sync: Arc<dyn TickLoopSync>,
+    pub tick_sync: Arc<PluginTickLoops>,
     /// `/ext/` rate limiter.
     pub ext_limiter: Arc<ExtRateLimiter>,
     /// Wall time, stamped on install records.
@@ -195,14 +192,9 @@ async fn stage_request(
     let resolved = resolve(deps.fetcher.as_ref(), &deps.github, source)
         .await
         .map_err(map_install)?;
-    stage(
-        deps.fetcher.as_ref(),
-        deps.unpacker.as_ref(),
-        &deps.github,
-        resolved,
-    )
-    .await
-    .map_err(map_install)
+    stage(deps.fetcher.as_ref(), &deps.github, resolved)
+        .await
+        .map_err(map_install)
 }
 
 /// Write a staged plugin to disk off the async workers, then re-sync ticks.

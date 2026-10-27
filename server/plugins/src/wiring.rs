@@ -18,17 +18,16 @@ use std::sync::Arc;
 
 use axum::extract::FromRef;
 
-use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
 use droppedneedle_kernel::mount::Routes;
 use droppedneedle_kernel::platform::Platform;
 
 use super::handlers::{ExtRateLimiter, PluginsDeps, plugin_routes};
 use super::host::PluginHost;
-use super::install::{GitHubHosts, ReqwestFetcher, ZipUnpacker};
+use super::install::{GitHubHosts, ReqwestFetcher};
 use super::process::ProcessLauncher;
 use super::runtime::PluginLauncher;
-use super::ticks::{PluginTickLoops, TICK_CANCEL_GRACE, TickLoopSync, TickStoreKind};
+use super::ticks::{PluginTickLoops, TICK_CANCEL_GRACE};
 
 /// The Python helper module, shipped inside the binary.
 const PYTHON_SDK: &str = include_str!("../../../sdk/python/droppedneedle_plugin.py");
@@ -59,11 +58,8 @@ pub fn write_python_sdk(plugins_dir: &Path) {
 
 /// The tick and plugin state store over the platform's database. The host
 /// and the tick loops share this one value: a plugin is known to both.
-pub fn tick_store(platform: &Platform) -> TickStoreKind {
-    TickStoreKind::Sqlite(SqliteTickStore::new(
-        platform.db.clone(),
-        platform.clock.clone(),
-    ))
+pub fn tick_store(platform: &Platform) -> SqliteTickStore {
+    SqliteTickStore::new(platform.db.clone(), platform.clock.clone())
 }
 
 /// The production host: subprocess plugins over the deployment's plugins
@@ -73,7 +69,7 @@ pub fn tick_store(platform: &Platform) -> TickStoreKind {
 /// [`PluginsSetup::build`] loads it.
 pub fn new_host(
     platform: &Platform,
-    ticks: &TickStoreKind,
+    ticks: &SqliteTickStore,
     library: droppedneedle_library::wiring::LibraryCore,
 ) -> Arc<PluginHost> {
     let plugins_dir = platform.config.plugins_dir();
@@ -91,21 +87,9 @@ pub fn new_host(
         plugins_dir,
         platform.settings.clone(),
         launcher,
-        Arc::new(ticks.clone()),
+        ticks.clone(),
         library,
     )
-}
-
-/// Removes a test bundle's scratch folder once the last clone drops.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug)]
-struct ScratchGuard(PathBuf);
-
-#[cfg(any(test, feature = "test-support"))]
-impl Drop for ScratchGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
 }
 
 /// Everything `create_app` needs to mount the plugin routes, plus the
@@ -114,9 +98,7 @@ impl Drop for ScratchGuard {
 pub struct PluginsSetup {
     host: Arc<PluginHost>,
     plugins: PluginsDeps,
-    ticks: Arc<PluginTickLoops<TickStoreKind>>,
-    #[cfg(any(test, feature = "test-support"))]
-    _scratch: Option<Arc<ScratchGuard>>,
+    ticks: Arc<PluginTickLoops>,
 }
 
 impl PluginsSetup {
@@ -127,89 +109,22 @@ impl PluginsSetup {
     pub fn build(
         platform: &Platform,
         host: Arc<PluginHost>,
-        ticks: TickStoreKind,
+        ticks: SqliteTickStore,
         github: GitHubHosts,
-    ) -> Self {
-        Self::assemble(
-            host,
-            platform.http.shared().clone(),
-            github,
-            platform.supervisor.clone(),
-            ticks,
-        )
-    }
-
-    /// Test bundle: scratch config store and plugins directory, fake
-    /// plugin runtimes (no subprocesses), a memory tick store, and tick
-    /// loops on the caller's supervisor. Library writes go through the
-    /// test library's `library`.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(
-        supervisor: Supervisor,
-        library: droppedneedle_library::wiring::LibraryCore,
-    ) -> Result<Self, String> {
-        use std::sync::atomic::{AtomicU64, Ordering};
-
-        use super::fakes::FakeLauncher;
-        use droppedneedle_kernel::http_client::HttpClientFactory;
-        use droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore;
-        use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
-
-        /// Scratch-dir sequence so parallel test states never share a store.
-        static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
-        let http = HttpClientFactory::new().map_err(|error| error.to_string())?;
-        let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "droppedneedle-plugins-test-{}-{seq}",
-            std::process::id()
-        ));
-        let scratch = Arc::new(ScratchGuard(dir.clone()));
-        let config = Arc::new(ConfigStore::scratch(
-            &dir,
-            Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?,
-        )?);
-        let ticks = TickStoreKind::Memory(MemoryTickStore::new());
-        let host = PluginHost::new(
-            dir.join("plugins"),
-            config,
-            Arc::new(FakeLauncher::new()),
-            Arc::new(ticks.clone()),
-            library,
-        );
-        let mut setup = Self::assemble(
-            host,
-            http.shared().clone(),
-            GitHubHosts {
-                api: super::install::API_BASE.to_owned(),
-                codeload: super::install::CODELOAD_BASE.to_owned(),
-            },
-            supervisor,
-            ticks,
-        );
-        setup._scratch = Some(scratch);
-        Ok(setup)
-    }
-
-    /// Assemble the bundle from its parts, the same for production and
-    /// tests.
-    fn assemble(
-        host: Arc<PluginHost>,
-        http: reqwest::Client,
-        github: GitHubHosts,
-        supervisor: Supervisor,
-        ticks: TickStoreKind,
     ) -> Self {
         host.load_all();
+        let supervisor = platform.supervisor.clone();
         let clock = Arc::clone(supervisor.clock());
         let ticks = Arc::new(PluginTickLoops::new(supervisor, ticks, TICK_CANCEL_GRACE));
         let plugins = PluginsDeps {
             host: Arc::clone(&host),
             config: Arc::clone(host.config()),
             github,
-            fetcher: Arc::new(ReqwestFetcher::new(http.clone(), Arc::clone(&clock))),
-            unpacker: Arc::new(ZipUnpacker),
-            tick_sync: Arc::clone(&ticks) as Arc<dyn TickLoopSync>,
+            fetcher: Arc::new(ReqwestFetcher::new(
+                platform.http.shared().clone(),
+                Arc::clone(&clock),
+            )),
+            tick_sync: Arc::clone(&ticks),
             ext_limiter: Arc::new(ExtRateLimiter::new()),
             clock,
         };
@@ -217,8 +132,6 @@ impl PluginsSetup {
             host,
             plugins,
             ticks,
-            #[cfg(any(test, feature = "test-support"))]
-            _scratch: None,
         }
     }
 

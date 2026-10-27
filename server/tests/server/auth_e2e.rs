@@ -259,11 +259,22 @@ impl E2e {
         ))
         .with_checkpoint(self.runtime.checkpoint().clone())
         .with_precache(jobs.precache_trigger());
-        let plugins = droppedneedle_plugins::wiring::PluginsSetup::for_tests(
-            jobs.supervisor().clone(),
+        // The production plugins bundle over the scratch plugins folder,
+        // launching nothing, with GitHub's addresses closed.
+        let ticks = droppedneedle_plugins::wiring::tick_store(p);
+        let plugin_host = droppedneedle_plugins::host::PluginHost::new(
+            p.config.plugins_dir(),
+            p.settings.clone(),
+            Arc::new(crate::common::plugin_fakes::FakeLauncher::new()),
+            ticks.clone(),
             library.core.clone(),
-        )
-        .expect("test plugins bundle builds");
+        );
+        let plugins = droppedneedle_plugins::wiring::PluginsSetup::build(
+            p,
+            plugin_host,
+            ticks,
+            crate::common::closed_outbound().plugin_hosts(),
+        );
         let settings =
             droppedneedle::settings::wiring::SettingsSetup::for_tests(Arc::clone(&p.ids))
                 .expect("test settings bundle builds")

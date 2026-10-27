@@ -68,8 +68,8 @@ pub fn idle_host(platform: &Platform, library: LibraryCore) -> Arc<PluginHost> {
     PluginHost::new(
         platform.config.plugins_dir(),
         platform.settings.clone(),
-        Arc::new(droppedneedle_plugins::fakes::FakeLauncher::new()),
-        Arc::new(droppedneedle_plugins::wiring::tick_store(platform)),
+        Arc::new(super::plugin_fakes::FakeLauncher::new()),
+        droppedneedle_plugins::wiring::tick_store(platform),
         library,
     )
 }

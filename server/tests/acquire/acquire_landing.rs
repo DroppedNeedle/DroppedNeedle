@@ -2070,10 +2070,10 @@ async fn a_wait_after_an_import_does_not_hide_it() {
 /// the plugin itself names.
 #[tokio::test]
 async fn a_plugin_download_is_confined_to_the_plugins_folders() {
+    use crate::common::plugin_fakes::FakeLauncher;
     use droppedneedle_acquire::downloads::{DownloadSource, SourceHandle, SourceTag};
     use droppedneedle_acquire::plugin_source::{PluginDownloadSource, ReleasePolicy};
     use droppedneedle_acquire::usenet::policy::UsenetPolicy;
-    use droppedneedle_plugins::fakes::FakeLauncher;
     use droppedneedle_plugins::host::PluginHost;
     use droppedneedle_plugins::protocol::methods;
 
@@ -2119,9 +2119,7 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
         dir.join("plugins"),
         config,
         launcher.clone(),
-        Arc::new(droppedneedle_plugins::ticks::TickStoreKind::Memory(
-            droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore::new(),
-        )),
+        droppedneedle_plugins::wiring::tick_store(&platform),
         library,
     );
     host.load_all();

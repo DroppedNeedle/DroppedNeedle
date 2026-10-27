@@ -77,9 +77,7 @@ async fn rig(tag: &str, examples: &[&str]) -> Rig {
         dir.join("plugins"),
         config,
         Arc::new(launcher),
-        Arc::new(droppedneedle_plugins::ticks::TickStoreKind::Memory(
-            droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore::new(),
-        )),
+        droppedneedle_plugins::wiring::tick_store(&platform),
         library,
     );
     host.load_all();
