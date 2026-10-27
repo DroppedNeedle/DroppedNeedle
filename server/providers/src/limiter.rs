@@ -30,7 +30,7 @@ use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use crate::calls::{CallCount, CallOutcome, CallTally};
-use crate::rates::{RATES, Rate, RateRow};
+use crate::rates::{RATES, Rate, RateRow, SHARED_BUDGETS, shared_budget};
 
 /// Floating-point slack for token comparisons.
 const EPSILON: f64 = 1e-9;
@@ -317,6 +317,8 @@ impl Drop for InFlight<'_> {
 pub struct RateLimiter {
     state: Mutex<BucketState>,
     calls: Arc<CallTally>,
+    /// The shared budget this row also draws from (rates `SHARED_BUDGETS`).
+    door: Option<Arc<RateLimiter>>,
 }
 
 impl RateLimiter {
@@ -361,7 +363,21 @@ impl RateLimiter {
                 sequence: 0,
             }),
             calls: Arc::new(CallTally::new()),
+            door: None,
         }
+    }
+
+    /// This row, also drawing one token per request from `door`.
+    #[must_use]
+    pub fn behind(mut self, door: Arc<RateLimiter>) -> Self {
+        self.door = Some(door);
+        self
+    }
+
+    /// The shared budget this row also draws from, if any.
+    #[must_use]
+    pub fn door(&self) -> Option<&RateLimiter> {
+        self.door.as_deref()
     }
 
     /// The shape this limiter enforces now.
@@ -387,15 +403,30 @@ impl RateLimiter {
         &self,
         priority: RequestPriority,
     ) -> Result<InFlight<'_>, OverCapacity> {
-        match self.wait_for(1, priority, true, None).await {
-            Ok(()) => Ok(InFlight { limiter: self }),
-            Err(Refused::OverCapacity(error)) => Err(error),
+        let granted = match self.wait_for(1, priority, true, None).await {
+            Ok(()) => InFlight { limiter: self },
+            Err(Refused::OverCapacity(error)) => return Err(error),
             // An unbounded wait never gives up.
-            Err(Refused::TooLong { .. }) => Err(OverCapacity {
-                tokens: 1,
-                burst: self.policy().burst,
-            }),
+            Err(Refused::TooLong { .. }) => {
+                return Err(OverCapacity {
+                    tokens: 1,
+                    burst: self.policy().burst,
+                });
+            }
+        };
+        if let Some(door) = &self.door {
+            match door.wait_for(1, priority, false, None).await {
+                Ok(()) => {}
+                Err(Refused::OverCapacity(error)) => return Err(error),
+                Err(Refused::TooLong { .. }) => {
+                    return Err(OverCapacity {
+                        tokens: 1,
+                        burst: door.policy().burst,
+                    });
+                }
+            }
         }
+        Ok(granted)
     }
 
     /// Like [`acquire_slot`](Self::acquire_slot), for a caller that can wait
@@ -413,8 +444,16 @@ impl RateLimiter {
         priority: RequestPriority,
         within: Duration,
     ) -> Result<InFlight<'_>, Refused> {
+        let started = Instant::now();
         self.wait_for(1, priority, true, Some(within)).await?;
-        Ok(InFlight { limiter: self })
+        let granted = InFlight { limiter: self };
+        if let Some(door) = &self.door {
+            // The row's token is spent; the door gets what is left of the
+            // wait. Refused here, the slot goes back as `granted` drops.
+            let left = within.saturating_sub(started.elapsed());
+            door.wait_for(1, priority, false, Some(left)).await?;
+        }
+        Ok(granted)
     }
 
     async fn wait_for(
@@ -634,13 +673,35 @@ pub struct LimiterSet {
 }
 
 impl LimiterSet {
-    /// One limiter per row of [`RATES`].
+    /// One limiter per row of [`RATES`]; the members of a shared budget
+    /// ([`SHARED_BUDGETS`]) also draw from that budget's one bucket.
     #[must_use]
     pub fn new() -> Self {
+        let doors: Vec<(&'static str, Arc<RateLimiter>)> = SHARED_BUDGETS
+            .iter()
+            .map(|budget| {
+                let policy = RatePolicy::new(budget.per_second, budget.burst);
+                (budget.name, Arc::new(RateLimiter::new(policy)))
+            })
+            .collect();
+        let door_of = |source: &str| {
+            let name = shared_budget(source)?.name;
+            doors
+                .iter()
+                .find(|(door, _)| *door == name)
+                .map(|(_, limiter)| Arc::clone(limiter))
+        };
         Self {
             limiters: RATES
                 .iter()
-                .map(|row| (row.source, Arc::new(RateLimiter::from_row(row))))
+                .map(|row| {
+                    let limiter = RateLimiter::from_row(row);
+                    let limiter = match door_of(row.source) {
+                        Some(door) => limiter.behind(door),
+                        None => limiter,
+                    };
+                    (row.source, Arc::new(limiter))
+                })
                 .collect(),
         }
     }
@@ -755,6 +816,71 @@ mod tests {
         background.await.expect("background joins");
         user.await.expect("user joins");
         assert_eq!(*order.lock().await, ["user", "background"]);
+    }
+
+    /// MusicBrainz, the Cover Art Archive and ListenBrainz share one
+    /// MetaBrainz budget: one request each, from three rows, are spaced by
+    /// the budget, not by each row; a row outside it does not wait.
+    #[tokio::test(start_paused = true)]
+    async fn metabrainz_rows_share_one_budget() {
+        let set = LimiterSet::new();
+        let budget = crate::rates::shared_budget("musicbrainz").expect("metabrainz budget");
+        assert!(budget.per_second <= 1.0, "the whole server stays below 1/s");
+        let door = |source: &str| {
+            set.limiter(source)
+                .and_then(RateLimiter::door)
+                .map(|door| door as *const RateLimiter)
+        };
+        assert!(door("musicbrainz").is_some());
+        assert_eq!(door("musicbrainz"), door("coverartarchive"));
+        assert_eq!(door("musicbrainz"), door("listenbrainz"));
+        assert_eq!(door("brainzmash"), None, "BrainzMash is not MetaBrainz");
+
+        let spacing = Duration::from_secs_f64(1.0 / budget.per_second);
+        let started = Instant::now();
+        let mut granted = Vec::new();
+        for source in ["listenbrainz", "coverartarchive", "musicbrainz"] {
+            drop(
+                set.limiter(source)
+                    .expect("row")
+                    .acquire_slot(RequestPriority::BackgroundSync)
+                    .await
+                    .expect("granted"),
+            );
+            granted.push(started.elapsed());
+        }
+        for pair in granted.windows(2) {
+            assert!(pair[1] - pair[0] >= spacing, "{granted:?}");
+        }
+
+        let before = Instant::now();
+        drop(
+            set.limiter("lastfm")
+                .expect("row")
+                .acquire_slot(RequestPriority::BackgroundSync)
+                .await
+                .expect("granted"),
+        );
+        assert_eq!(before.elapsed(), Duration::ZERO, "Last.fm has its own pace");
+    }
+
+    /// A page's request that would wait past its bound for the shared
+    /// budget is refused, and gives its row's in-flight slot back.
+    #[tokio::test(start_paused = true)]
+    async fn a_bounded_wait_counts_the_shared_budget() {
+        let door = Arc::new(RateLimiter::new(RatePolicy::new(0.5, 1)));
+        let row = RateLimiter::new(RatePolicy::new(10.0, 1)).behind(Arc::clone(&door));
+        drop(
+            row.acquire_slot(RequestPriority::UserInitiated)
+                .await
+                .expect("first is free"),
+        );
+        tokio::time::advance(Duration::from_millis(200)).await;
+        let refused = row
+            .acquire_slot_within(RequestPriority::UserInitiated, Duration::from_millis(500))
+            .await
+            .expect_err("the budget's next token is 1.8 s away");
+        assert!(matches!(refused, Refused::TooLong { .. }), "{refused:?}");
     }
 
     #[tokio::test(start_paused = true)]
