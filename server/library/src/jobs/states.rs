@@ -111,7 +111,8 @@ impl OperationState {
 sql_text!(OperationState);
 
 /// A control the running worker has not acted on yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ControlRequest {
     None,
     Pause,
@@ -140,7 +141,8 @@ impl ControlRequest {
 sql_text!(ControlRequest);
 
 /// Where one work item is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum WorkState {
     Pending,
     Running,
@@ -177,7 +179,8 @@ sql_text!(WorkState);
 /// Where a management job is: planning its files, a preview waiting to be
 /// applied, writing (applying, undoing or restoring originals), or done.
 /// The worker takes a queued job in any phase but `ready` and `complete`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ManagementPhase {
     Planning,
     Ready,

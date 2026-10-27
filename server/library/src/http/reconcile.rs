@@ -1,7 +1,7 @@
 //! Artist reconciliation routes: progress, duplicate artist groups, one
 //! group's evidence, and marking a group as distinct people.
 //!
-//! Admin-only, as in v2. Store work runs on `spawn_blocking`.
+//! Admin-only, as in v2. Store work runs on a blocking thread.
 
 use std::collections::BTreeMap;
 
@@ -16,6 +16,7 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use super::blocking;
 use super::error::refused;
 use super::operations::ReasonView;
 use crate::reconcile::models::{
@@ -44,15 +45,6 @@ impl From<ReconcileError> for ApiError {
             ReconcileError::Busy(cause) => ApiError::unavailable(Unavailable::ServerBusy, cause),
         }
     }
-}
-
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, ReconcileError> + Send + 'static,
-) -> Result<T, ApiError> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(ApiError::internal)?
-        .map_err(ApiError::from)
 }
 
 // ---------------------------------------------------------------------------

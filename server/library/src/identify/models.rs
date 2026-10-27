@@ -9,7 +9,7 @@ use crate::matching::{PenaltyShare, Release};
 pub use crate::identity::DecisionSource;
 
 /// Per-track verdict against one candidate, ported from v2.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceClass {
     Supported,
@@ -184,7 +184,7 @@ pub struct IdentifyJob {
     pub lease_expires_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentifyKind {
     Automatic,

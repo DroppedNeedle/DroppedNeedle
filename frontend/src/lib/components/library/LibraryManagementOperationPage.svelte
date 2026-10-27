@@ -282,7 +282,7 @@
 	function resultTone(item: LibraryManagementResultItem): ManagementAuditTone {
 		if (item.failure_code || item.work_state === 'failed') return 'error';
 		if (item.work_state === 'skipped') return 'warning';
-		if (item.work_state === 'succeeded' || item.work_state === 'completed') return 'success';
+		if (item.work_state === 'succeeded') return 'success';
 		return 'neutral';
 	}
 
@@ -309,9 +309,7 @@
 			reason: item.failure_code ? managementReasonLabel(item.failure_code) : null,
 			reasonCode: item.failure_code,
 			changes: managementPlanChanges(item.plan),
-			exceptional: Boolean(
-				item.failure_code || !['succeeded', 'completed'].includes(item.work_state)
-			),
+			exceptional: Boolean(item.failure_code || item.work_state !== 'succeeded'),
 			sourceRoot: 'Source',
 			sourcePath: item.plan.source_relative_path,
 			destinationRoot: 'Destination',

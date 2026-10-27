@@ -19,7 +19,7 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use super::operations::blocking;
+use super::blocking;
 use crate::operations::history::{HistoryActor, HistoryEntry, HistoryKind};
 use crate::operations::models::OperationError;
 use crate::operations::service::Operations;

@@ -47,7 +47,9 @@ pub(crate) fn changed_outside_reason() -> ItemReason {
 }
 
 /// Why the app stepped back from an album.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = ManagementTakeoverCause)]
 pub enum Cause {
     /// A file the app wrote was changed outside it.
     FilesChanged,

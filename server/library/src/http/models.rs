@@ -1,7 +1,7 @@
 //! Library HTTP models: request and response DTOs.
 //!
-//! These are the API contract, decoupled from engine internals:
-//! handlers map engine types onto these views explicitly.
+//! An engine type that already is the wire shape goes on the wire as it
+//! is; these views are for the shapes that differ.
 
 use std::collections::HashMap;
 
@@ -9,17 +9,36 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 pub use super::operations::ReasonView;
-use crate::identify::models::{JobState as IdentifyJobState, ReviewState};
+use crate::identify::models::{
+    EvidenceClass, IdentifyKind, JobState as IdentifyJobState, ReviewState,
+};
+use crate::identity::DecisionSource;
 use crate::publish::publisher::PublishOutcome;
-use crate::scan::models::{Counters, FailureCode, ScanKind, ScanPhase, ScanState};
+use crate::scan::models::{
+    Counters, Disposition, EffectivePolicy, FailureCode, RequestedControl, ScanKind, ScanPhase,
+    ScanState, ScanTrigger, Verdict,
+};
 
-/// Snake-case label for a serializable engine enum. Falls back to
-/// `"unknown"` instead of failing the whole response.
-pub fn snake<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|json| json.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".to_owned())
+/// Which roots a scan run covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AggregateScope {
+    /// Every scheduled root.
+    All,
+    /// Chosen roots or path rules.
+    Selected,
+}
+
+impl AggregateScope {
+    /// The stored label: `all`, and anything else as `selected`, as the
+    /// activity feed reads it.
+    pub fn from_stored(label: &str) -> Self {
+        if label == "all" {
+            Self::All
+        } else {
+            Self::Selected
+        }
+    }
 }
 
 /// One library root.
@@ -29,8 +48,7 @@ pub struct RootView {
     pub id: String,
     /// Absolute root directory.
     pub path: String,
-    /// Effective policy: `automatic`, `local_metadata`, `excluded`.
-    pub policy: String,
+    pub policy: EffectivePolicy,
 }
 
 /// Root registry listing.
@@ -59,7 +77,7 @@ pub struct AddRootBody {
     /// Absolute root directory.
     pub path: String,
     /// Effective policy (default: `automatic`).
-    pub policy: Option<String>,
+    pub policy: Option<EffectivePolicy>,
 }
 
 /// Trigger a scan over one root or every scheduled root.
@@ -74,9 +92,7 @@ pub struct ScanBody {
 pub struct ScanResponse {
     /// Run id (fresh or coalesced).
     pub run_id: String,
-    /// Request disposition: `started`, `queued`, `coalesced`,
-    /// `expanded`, `conflict`.
-    pub disposition: String,
+    pub disposition: Disposition,
     /// Run state after the request.
     pub state: ScanState,
 }
@@ -89,13 +105,12 @@ pub struct ScanRunView {
     /// Run kind.
     pub kind: ScanKind,
     /// What triggered the run.
-    pub trigger: String,
+    pub trigger: ScanTrigger,
     /// Run state.
     pub state: ScanState,
     /// Current phase.
     pub phase: ScanPhase,
-    /// Scope label: `all` or `selected`.
-    pub aggregate_scope: String,
+    pub aggregate_scope: AggregateScope,
     /// Progress counters.
     pub counters: Counters,
     /// Queue time (unix seconds).
@@ -116,8 +131,8 @@ pub struct ScanRunView {
     pub requested_by_user_id: Option<String>,
     /// Phase a paused run picks up from.
     pub resume_phase: Option<ScanPhase>,
-    /// Pending control: `none`, `pause` or `stop`.
-    pub requested_control: String,
+    /// Pending control.
+    pub requested_control: RequestedControl,
     /// Requests folded into this run.
     pub coalesced_request_count: i64,
     /// Row revision; pause, resume and stop send it back.
@@ -145,7 +160,7 @@ pub struct ScanScopeView {
     /// Path relative to the root.
     pub relative_path: String,
     /// Effective policy for the scope.
-    pub effective_policy: String,
+    pub effective_policy: EffectivePolicy,
 }
 
 /// One discovered file inside a run, with its scan-assigned track id.
@@ -158,7 +173,7 @@ pub struct ScanFileView {
     /// Scan-assigned stable track id, once indexed.
     pub track_id: Option<String>,
     /// Classify verdict.
-    pub verdict: String,
+    pub verdict: Verdict,
 }
 
 /// Run detail: the run, its scopes, and its discovered files.
@@ -177,8 +192,8 @@ pub struct RunDetailResponse {
 pub struct IdentifyBody {
     /// Catalog album id, as `GET /library/albums` lists it.
     pub album_id: String,
-    /// Job kind: `automatic`, `manual`, `historical` (default: `manual`).
-    pub kind: Option<String>,
+    /// Job kind (default: `manual`).
+    pub kind: Option<IdentifyKind>,
 }
 
 /// Enqueue answer.
@@ -230,8 +245,7 @@ pub struct TrackEvidenceView {
     pub local_track_id: String,
     /// The file's title as the library shows it.
     pub title: String,
-    /// `supported`, `unknown` or `contradictory`.
-    pub classification: String,
+    pub classification: EvidenceClass,
     /// What the verdict rests on (`recording_id`, `title`, `length`, ...).
     pub evidence_kinds: Vec<String>,
 }
@@ -364,8 +378,8 @@ pub struct IdentityView {
     pub release_mbid: Option<String>,
     /// Release-group MBID, when sealed.
     pub release_group_mbid: Option<String>,
-    /// Who decided: `automatic`, `manual`, `legacy_import`.
-    pub decision_source: String,
+    /// Who decided.
+    pub decision_source: DecisionSource,
 }
 
 /// Review resolution answer.
@@ -400,13 +414,31 @@ pub struct ManageItemBody {
     pub managed_updates: HashMap<String, Vec<String>>,
 }
 
+/// What a management preview does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ManageKind {
+    /// Write the tags in place.
+    Retag,
+    /// Move the files.
+    Organize,
+}
+
+/// How one planned file is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ManageFileKind {
+    /// Written in place.
+    SamePath,
+    Move,
+}
+
 /// Build a sealed management preview. Identity always resolves from
 /// the accepted identify rows for `album_id`; tracks without an
 /// accepted exact mapping block the preview loudly.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct ManagePreviewBody {
-    /// `retag` (same-path write) or `organize` (move).
-    pub kind: String,
+    pub kind: ManageKind,
     /// Local album id carrying the accepted identity.
     pub album_id: String,
     /// Files in the bundle.
@@ -422,8 +454,7 @@ pub struct ManageFileView {
     pub source: String,
     /// Destination `root/rel`.
     pub dest: String,
-    /// `same_path` or `move`.
-    pub kind: String,
+    pub kind: ManageFileKind,
     /// For a retag, the tags the write changes, in display order: album,
     /// album artist, title, artist, track, disc, date, label, catalog
     /// number, barcode, then `musicbrainz_ids`. Unchanged tags are left

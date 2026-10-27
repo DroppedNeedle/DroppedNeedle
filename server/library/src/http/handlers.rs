@@ -1,7 +1,7 @@
 //! Library handlers: thin Axum handlers over the library services.
 //!
 //! Everything that reaches the library stores (synchronous SQLite) or the
-//! publisher runs on `spawn_blocking`; only the in-memory root registry
+//! publisher runs on a blocking thread; only the in-memory root registry
 //! answers inline.
 
 use crate::manage::Publishing;
@@ -16,14 +16,15 @@ use axum::{
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
+use super::blocking;
 use super::error::LibraryError;
 use super::models::{
-    AddRootBody, BaselineRestoreBody, BaselineRestoreResponse, IdentifyBody, IdentifyResponse,
-    ManageAppliedFile, ManageApplyBody, ManageApplyResponse, ManageFileView, ManageItemBody,
-    ManagePreviewBody, ManagePreviewResponse, ManageTagChange, ManageUndoBody, ManageUndoResponse,
-    PluginFileState, PluginFileView, PluginFilesPage, PluginFilesQuery, RootView, RootsResponse,
-    RunDetailResponse, ScanBody, ScanFileView, ScanResponse, ScanRunView, ScanRunsResponse,
-    ScanScopeView, snake,
+    AddRootBody, AggregateScope, BaselineRestoreBody, BaselineRestoreResponse, IdentifyBody,
+    IdentifyResponse, ManageAppliedFile, ManageApplyBody, ManageApplyResponse, ManageFileKind,
+    ManageFileView, ManageItemBody, ManageKind, ManagePreviewBody, ManagePreviewResponse,
+    ManageTagChange, ManageUndoBody, ManageUndoResponse, PluginFileState, PluginFileView,
+    PluginFilesPage, PluginFilesQuery, RootView, RootsResponse, RunDetailResponse, ScanBody,
+    ScanFileView, ScanResponse, ScanRunView, ScanRunsResponse, ScanScopeView,
 };
 use crate::identify::models::IdentifyKind;
 use crate::manage::{PreviewItemInput, plain_retag};
@@ -35,44 +36,15 @@ use droppedneedle_auth::{Admin, Curator, Principal, User};
 // Views.
 // ---------------------------------------------------------------------------
 
-/// Run store-backed service work on a blocking thread: the library stores
-/// are synchronous SQLite and must not stall the async workers.
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, LibraryError> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|cause| LibraryError::internal(&cause))
-}
-
-fn policy_label(policy: EffectivePolicy) -> String {
-    match policy {
-        EffectivePolicy::Automatic => "automatic".to_owned(),
-        EffectivePolicy::LocalMetadata => "local_metadata".to_owned(),
-        EffectivePolicy::Excluded => "excluded".to_owned(),
-    }
-}
-
-fn parse_policy(raw: Option<&str>) -> Result<EffectivePolicy, LibraryError> {
-    match raw.unwrap_or("automatic") {
-        "automatic" => Ok(EffectivePolicy::Automatic),
-        "local_metadata" => Ok(EffectivePolicy::LocalMetadata),
-        "excluded" => Ok(EffectivePolicy::Excluded),
-        other => Err(LibraryError::InvalidInput {
-            message: format!("Unknown policy '{other}'"),
-        }),
-    }
-}
-
 pub(super) fn run_view(run: &ScanRun) -> ScanRunView {
     let terminal = run.terminal_code.map(crate::scan::reasons::scan_reason);
     ScanRunView {
         id: run.id.clone(),
         kind: run.kind,
-        trigger: snake(&run.trigger),
+        trigger: run.trigger,
         state: run.state.scan_state(),
         phase: run.state.phase(),
-        aggregate_scope: run.aggregate_scope.clone(),
+        aggregate_scope: AggregateScope::from_stored(&run.aggregate_scope),
         counters: run.counters,
         queued_at: run.queued_at,
         started_at: run.started_at,
@@ -83,7 +55,7 @@ pub(super) fn run_view(run: &ScanRun) -> ScanRunView {
         terminal_action: terminal.as_ref().map(|reason| reason.action.to_owned()),
         requested_by_user_id: run.requested_by_user_id.clone(),
         resume_phase: run.state.resume_phase(),
-        requested_control: run.state.requested_control().as_str().to_owned(),
+        requested_control: run.state.requested_control(),
         coalesced_request_count: run.coalesced_request_count,
         row_revision: run.row_revision,
         event_revision: run.event_revision,
@@ -108,18 +80,7 @@ fn scope_view(scope: &ScanScope) -> ScanScopeView {
     ScanScopeView {
         root_id: scope.root_id.clone(),
         relative_path: scope.relative_path.clone(),
-        effective_policy: policy_label(scope.effective_policy),
-    }
-}
-
-fn parse_identify_kind(raw: Option<&str>) -> Result<IdentifyKind, LibraryError> {
-    match raw.unwrap_or("manual") {
-        "automatic" => Ok(IdentifyKind::Automatic),
-        "manual" => Ok(IdentifyKind::Manual),
-        "historical" => Ok(IdentifyKind::Historical),
-        other => Err(LibraryError::InvalidInput {
-            message: format!("Unknown identify kind '{other}'"),
-        }),
+        effective_policy: scope.effective_policy,
     }
 }
 
@@ -173,11 +134,11 @@ pub async fn list_roots(
 ) -> Result<Json<RootsResponse>, ApiError> {
     let held = {
         let state = state.clone();
-        blocking(move || state.held_publish_bundles()).await??
+        blocking(move || state.held_publish_bundles()).await?
     };
     let policy_revision = {
         let state = state.clone();
-        blocking(move || state.core.policy_revision()).await??
+        blocking(move || state.core.policy_revision()).await?
     };
     let registry = state.core.live_registry();
     Ok(Json(RootsResponse {
@@ -187,7 +148,7 @@ pub async fn list_roots(
             .map(|root| RootView {
                 id: root.id.clone(),
                 path: root.path.to_string_lossy().into_owned(),
-                policy: policy_label(root.policy),
+                policy: root.policy,
             })
             .collect(),
         enabled: registry.enabled(),
@@ -215,20 +176,18 @@ pub async fn add_root(
     _caller: Admin,
     ValidJson(body): ValidJson<AddRootBody>,
 ) -> Result<(StatusCode, Json<RootView>), ApiError> {
-    let policy = parse_policy(body.policy.as_deref())?;
+    let policy = body.policy.unwrap_or(EffectivePolicy::Automatic);
     if body.path.is_empty() {
         return Err(ApiError::invalid_input("Root path must not be empty"));
     }
     // Blocking stat plus publish-cell refresh: off the runtime.
-    let (root, _) = tokio::task::spawn_blocking(move || state.add_root(body.id, body.path, policy))
-        .await
-        .map_err(|cause| LibraryError::internal(&cause))??;
+    let (root, _) = blocking(move || state.add_root(body.id, body.path, policy)).await?;
     Ok((
         StatusCode::CREATED,
         Json(RootView {
             id: root.id,
             path: root.path.to_string_lossy().into_owned(),
-            policy: policy_label(root.policy),
+            policy: root.policy,
         }),
     ))
 }
@@ -254,10 +213,10 @@ pub async fn trigger_scan(
     ValidJson(body): ValidJson<ScanBody>,
 ) -> Result<Json<ScanResponse>, ApiError> {
     let user_id = caller.user_id().to_owned();
-    let result = blocking(move || state.request_scan(body.root_id.as_deref(), &user_id)).await??;
+    let result = blocking(move || state.request_scan(body.root_id.as_deref(), &user_id)).await?;
     Ok(Json(ScanResponse {
         run_id: result.run_id,
-        disposition: snake(&result.disposition),
+        disposition: result.disposition,
         state: result.state,
     }))
 }
@@ -276,9 +235,7 @@ pub async fn list_runs(
     State(state): State<Scans>,
     User(caller): User,
 ) -> Result<Json<ScanRunsResponse>, ApiError> {
-    let (current, history) = blocking(move || state.recent_scan_runs(20))
-        .await?
-        .map_err(LibraryError::from)?;
+    let (current, history) = blocking(move || state.recent_scan_runs(20)).await?;
     let view = |run: &ScanRun| caller_run_view(&caller, run);
     Ok(Json(ScanRunsResponse {
         current: current.iter().map(view).collect(),
@@ -303,7 +260,7 @@ pub async fn get_run(
     User(caller): User,
     Path(id): Path<String>,
 ) -> Result<Json<RunDetailResponse>, ApiError> {
-    let (run, scopes, files) = blocking(move || state.run_detail(&id)).await??;
+    let (run, scopes, files) = blocking(move || state.run_detail(&id)).await?;
     Ok(Json(RunDetailResponse {
         run: caller_run_view(&caller, &run),
         scopes: scopes.iter().map(scope_view).collect(),
@@ -313,7 +270,7 @@ pub async fn get_run(
                 root_id: file.root_id.clone(),
                 relative_path: file.relative_path.clone(),
                 track_id: file.local_track_id.clone(),
-                verdict: snake(&file.comparison_result),
+                verdict: file.comparison_result,
             })
             .collect(),
     }))
@@ -345,9 +302,9 @@ pub async fn enqueue_identify(
     if body.album_id.is_empty() {
         return Err(ApiError::invalid_input("Album id must not be empty"));
     }
-    let kind = parse_identify_kind(body.kind.as_deref())?;
+    let kind = body.kind.unwrap_or(IdentifyKind::Manual);
     let user_id = caller.user_id().to_owned();
-    let job = blocking(move || state.enqueue_identify(&body.album_id, kind, &user_id)).await??;
+    let job = blocking(move || state.enqueue_identify(&body.album_id, kind, &user_id)).await?;
     Ok(Json(IdentifyResponse {
         job_id: job.id,
         album_id: job.local_album_id,
@@ -378,14 +335,9 @@ pub async fn manage_preview(
     caller: Curator,
     ValidJson(body): ValidJson<ManagePreviewBody>,
 ) -> Result<Json<ManagePreviewResponse>, ApiError> {
-    let kind = match body.kind.as_str() {
-        "retag" => PlanKind::SamePath,
-        "organize" => PlanKind::Move,
-        other => {
-            return Err(ApiError::invalid_input(format!(
-                "Unknown management kind '{other}'"
-            )));
-        }
+    let kind = match body.kind {
+        ManageKind::Retag => PlanKind::SamePath,
+        ManageKind::Organize => PlanKind::Move,
     };
     if body.album_id.is_empty() {
         return Err(ApiError::invalid_input("Album id must not be empty"));
@@ -405,10 +357,7 @@ pub async fn manage_preview(
         })
         .collect();
     check_plain_retag(&caller, plain_retag(kind, &inputs))?;
-    let sealed =
-        tokio::task::spawn_blocking(move || state.plan_preview(kind, &body.album_id, inputs))
-            .await
-            .map_err(|cause| LibraryError::internal(&cause))??;
+    let sealed = blocking(move || state.plan_preview(kind, &body.album_id, inputs)).await?;
     Ok(Json(ManagePreviewResponse {
         preview_token: sealed.token,
         expires_day: sealed.expires_day,
@@ -420,7 +369,10 @@ pub async fn manage_preview(
                 track_id: file.track_id,
                 source: file.source,
                 dest: file.dest,
-                kind: file.kind,
+                kind: match file.kind {
+                    PlanKind::SamePath => ManageFileKind::SamePath,
+                    PlanKind::Move => ManageFileKind::Move,
+                },
                 changes: file
                     .changes
                     .into_iter()
@@ -466,7 +418,7 @@ pub async fn manage_apply(
         }
         Ok::<_, LibraryError>(state.apply_preview(&body.preview_token, Some(caller.user_id()))?)
     })
-    .await??;
+    .await?;
     Ok(Json(ManageApplyResponse {
         bundle_id: applied.bundle_id,
         outcome: applied.outcome,
@@ -507,10 +459,7 @@ pub async fn manage_undo(
     }
     // An admin undoes any bundle; a curator only one they applied.
     let only_by = (!caller.is_admin()).then_some(caller.user_id().to_owned());
-    let applied =
-        tokio::task::spawn_blocking(move || state.undo_bundle(&body.bundle_id, only_by.as_deref()))
-            .await
-            .map_err(|cause| LibraryError::internal(&cause))??;
+    let applied = blocking(move || state.undo_bundle(&body.bundle_id, only_by.as_deref())).await?;
     Ok(Json(ManageUndoResponse {
         bundle_id: applied.bundle_id,
         outcome: applied.outcome,
@@ -554,8 +503,7 @@ pub async fn list_plugin_files(
                 })?,
         ),
     };
-    let mut files =
-        blocking(move || state.plugin_files(&query.plugin, before, limit + 1)).await??;
+    let mut files = blocking(move || state.plugin_files(&query.plugin, before, limit + 1)).await?;
     let next_cursor = if files.len() > limit as usize {
         files.truncate(limit as usize);
         files
@@ -606,9 +554,7 @@ pub async fn baseline_restore(
     if body.track_ids.is_empty() {
         return Err(ApiError::invalid_input("Restore needs at least one track"));
     }
-    let applied = tokio::task::spawn_blocking(move || state.baseline_restore(&body.track_ids))
-        .await
-        .map_err(|cause| LibraryError::internal(&cause))??;
+    let applied = blocking(move || state.baseline_restore(&body.track_ids)).await?;
     Ok(Json(BaselineRestoreResponse {
         bundle_id: applied.bundle_id,
         outcome: applied.outcome,

@@ -62,6 +62,8 @@ macro_rules! named {
 named! {
     /// What a repair job checks, in `library_repair_snapshots.purpose`
     /// with v2's names.
+    #[derive(Serialize, Deserialize, utoipa::ToSchema)]
+    #[serde(rename_all = "snake_case")]
     Purpose {
         /// Identity repair: recheck existing automatic and imported
         /// matches against MusicBrainz and offer to detach the ones that
@@ -91,6 +93,8 @@ impl Purpose {
 
 named! {
     /// One album's verdict in a repair report.
+    #[derive(Serialize, utoipa::ToSchema)]
+    #[serde(rename_all = "snake_case")]
     FindingCode {
         /// The match holds.
         Valid => "valid",
@@ -116,6 +120,8 @@ named! {
 
 named! {
     /// Where a finding is.
+    #[derive(Serialize, utoipa::ToSchema)]
+    #[serde(rename_all = "snake_case")]
     FindingState {
         Open => "open",
         Applied => "applied",
@@ -126,6 +132,8 @@ named! {
 
 named! {
     /// What Apply did with a finding.
+    #[derive(Serialize, utoipa::ToSchema)]
+    #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
     ApplyResult {
         Detached => "DETACHED",
         MappingsAccepted => "MAPPINGS_ACCEPTED",
@@ -133,6 +141,17 @@ named! {
         EditionAutoAccepted => "EDITION_AUTO_ACCEPTED",
         /// The album changed since it was checked.
         StaleSubject => "STALE_SUBJECT",
+    }
+}
+
+named! {
+    /// How far a finding can be trusted, in the finding's `confidence`.
+    #[derive(Serialize, utoipa::ToSchema)]
+    #[serde(rename_all = "snake_case")]
+    Confidence {
+        /// Apply may act on it.
+        Complete => "complete",
+        Bounded => "bounded",
     }
 }
 
@@ -251,7 +270,7 @@ impl Verdict {
 }
 
 /// One stored finding with the album it is about.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct FindingRow {
     pub id: String,
     pub local_album_id: String,
@@ -262,13 +281,19 @@ pub struct FindingRow {
     pub review_id: Option<String>,
     pub finding_code: FindingCode,
     pub reason_code: String,
-    pub confidence: String,
+    pub confidence: Confidence,
     pub apply_eligible: bool,
     pub state: FindingState,
     pub apply_result: Option<ApplyResult>,
+    #[serde(skip)]
     pub suggested_release_mbid: Option<String>,
+    #[serde(skip)]
     pub suggested_release_group_mbid: Option<String>,
+    #[serde(skip)]
     pub payload: FindingPayload,
+    /// The album and identity revisions an undo of its automatic edition
+    /// echoes.
+    #[serde(skip)]
     pub automatic_undo: Option<(i64, i64)>,
     pub updated_at: f64,
     pub row_revision: i64,
@@ -284,27 +309,89 @@ pub struct FindingPage {
     pub refresh_required: bool,
 }
 
-/// What a finished check found, kept in the snapshot's `result_json`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+/// What a finished check found.
+// Kept in the snapshot's `result_json`. A count missing from an older
+// summary reads as zero; a summary without a known purpose does not read,
+// like any unreadable summary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = RepairSummaryView)]
 pub struct Summary {
+    /// Albums checked.
+    #[serde(default)]
+    #[schema(required = true)]
     pub total_identities: i64,
+    #[serde(default)]
+    #[schema(required = true)]
     pub remaining_identities: i64,
+    #[serde(default)]
+    #[schema(required = true)]
     pub input_track_count: i64,
+    #[serde(default)]
+    #[schema(required = true)]
     pub playable_after_detach_track_count: i64,
+    /// Albums Apply would change.
+    #[serde(default)]
+    #[schema(required = true)]
     pub estimated_apply_changes: i64,
+    #[serde(default)]
+    #[schema(required = true)]
     pub catalog_snapshot_revision: i64,
+    #[serde(default)]
+    #[schema(required = true)]
     pub target_matcher_version: String,
+    #[serde(default)]
+    #[schema(required = true)]
     pub counts_by_finding: BTreeMap<String, i64>,
+    #[serde(default)]
+    #[schema(required = true)]
     pub counts_by_reason: BTreeMap<String, i64>,
+    #[serde(default)]
+    #[schema(required = true)]
     pub album_counts_by_root: BTreeMap<String, i64>,
+    #[serde(default)]
+    #[schema(required = true)]
     pub provider_deferred_count: i64,
+    #[serde(default)]
+    #[schema(required = true)]
     pub failed_evidence_count: i64,
-    pub purpose: String,
+    pub purpose: Purpose,
+    #[serde(default)]
+    #[schema(required = true)]
     pub ready_album_count: i64,
+    #[serde(default)]
+    #[schema(required = true)]
     pub mapping_candidate_count: i64,
+    #[serde(default)]
+    #[schema(required = true)]
     pub exact_release_required_count: i64,
+    #[serde(default)]
+    #[schema(required = true)]
     pub needs_review_count: i64,
+}
+
+impl Summary {
+    /// An empty report for a job of `purpose`.
+    pub fn new(purpose: Purpose, target_matcher_version: String) -> Self {
+        Self {
+            total_identities: 0,
+            remaining_identities: 0,
+            input_track_count: 0,
+            playable_after_detach_track_count: 0,
+            estimated_apply_changes: 0,
+            catalog_snapshot_revision: 0,
+            target_matcher_version,
+            counts_by_finding: BTreeMap::new(),
+            counts_by_reason: BTreeMap::new(),
+            album_counts_by_root: BTreeMap::new(),
+            provider_deferred_count: 0,
+            failed_evidence_count: 0,
+            purpose,
+            ready_album_count: 0,
+            mapping_candidate_count: 0,
+            exact_release_required_count: 0,
+            needs_review_count: 0,
+        }
+    }
 }
 
 /// Start a repair or a preparation.

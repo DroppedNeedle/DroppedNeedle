@@ -6,10 +6,11 @@ import type { components } from '$lib/api/v3/openapi';
 // no v3 route yet and stay hand-written until they do.
 export type ManagementFieldMode = components['schemas']['FieldMode'];
 export type ManagementGenreMode = components['schemas']['GenreMode'];
-export type ManagementSelectionKind = 'roots' | 'artists' | 'albums' | 'tracks' | 'filter';
-export type ManagementEligibility = 'eligible' | 'warning' | 'blocked' | 'stale';
+export type ManagementSelectionKind = components['schemas']['ManagementSelectionKind'];
+export type ManagementEligibility = components['schemas']['Eligibility'];
 export type ManagementChangeKind = 'tags' | 'artwork' | 'path' | 'sidecars' | 'no_change';
-export type LibraryManagementTagEditMode = 'save_override' | 'write_once' | 'reset_canonical';
+export type LibraryManagementTagEditMode = components['schemas']['ManagementTagEditMode'];
+export type ManagementPhase = components['schemas']['ManagementPhase'];
 export type LibraryManagementTagEditValue = string | number | boolean | string[] | null;
 export type DuplicateCollisionKind =
 	| 'same_path_same_content'
@@ -172,7 +173,7 @@ export interface LibraryManagementPreviewSummary {
 export interface LibraryManagementPreviewDetailResponse {
 	job_id: string;
 	state: string;
-	phase: string;
+	phase: ManagementPhase;
 	mode: string;
 	origin: string;
 	profile_id: string;
@@ -208,7 +209,7 @@ export interface LibraryManagementPreviewDetailResponse {
 	succeeded_count: number;
 	failed_count: number;
 	skipped_count: number;
-	control_request: string;
+	control_request: components['schemas']['ControlRequest'];
 	undo_available_count: number;
 	undo_expired_count: number;
 	undo_expires_at: number | null;
@@ -397,7 +398,7 @@ export interface LibraryManagementBaselinePurgeResponse {
 
 export interface LibraryManagementResultItem {
 	plan: LibraryManagementPlanItem;
-	work_state: string;
+	work_state: components['schemas']['ResultState'];
 	failure_code: string | null;
 	failure_reason?: LibraryManagementReason | null;
 	result: Record<string, unknown>;
@@ -414,7 +415,7 @@ export interface LibraryManagementOperationHistoryItem {
 	operation: import('$lib/queries/library/LibraryOperationsTypes').OperationResponse;
 	mode: string;
 	origin: string;
-	phase: string;
+	phase: ManagementPhase;
 	profile_id: string;
 	profile_name: string;
 	profile_revision: string;

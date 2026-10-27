@@ -11,8 +11,9 @@ use rusqlite::{OptionalExtension as _, Transaction, params};
 use super::artists;
 use super::membership::{self, Run};
 use super::models::{
-    Applied, ApplyMeta, ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, MembershipKind,
-    MembershipOutcome, MembershipRequest, PairJoinRequest, Previewed, RetagPairList,
+    Applied, ApplyMeta, ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, CorrectionKind,
+    MembershipKind, MembershipOutcome, MembershipRequest, PairJoinRequest, Previewed,
+    RetagPairList,
 };
 use super::reset;
 use super::retag_pairs;
@@ -75,14 +76,13 @@ impl Corrections {
                 self.check_token(meta, &run.material, now)?;
                 let outcome = run.outcome;
                 let mut applied = Applied {
-                    kind: request.kind.as_str().to_owned(),
                     track_ids: outcome.track_ids.clone(),
                     source_album_ids: outcome.source_album_ids.clone(),
                     target_album_id: match request.kind {
                         MembershipKind::Reset => None,
                         _ => outcome.groups.first().map(|group| group.album_id.clone()),
                     },
-                    ..Applied::default()
+                    ..Applied::new(request.kind.into())
                 };
                 applied.catalog_revision = crate::catalog_revision::bump_catalog(tx)?;
                 let album = applied
@@ -154,10 +154,9 @@ impl Corrections {
                 let run = artists::merge(tx, admin, request, now)?;
                 self.check_token(meta, &run.material, now)?;
                 let mut applied = Applied {
-                    kind: "merge_artist".to_owned(),
                     surviving_artist_id: Some(run.outcome.surviving_artist_id.clone()),
                     retired_artist_ids: run.outcome.retired_artist_ids.clone(),
-                    ..Applied::default()
+                    ..Applied::new(CorrectionKind::MergeArtist)
                 };
                 applied.catalog_revision = crate::catalog_revision::bump_catalog(tx)?;
                 let mut all = vec![run.outcome.surviving_artist_id.clone()];

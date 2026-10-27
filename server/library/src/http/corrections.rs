@@ -4,8 +4,8 @@
 //! them, the album rows a scan would not join by itself, which a person
 //! joins or dismisses.
 //!
-//! Every route is admin-only, as in v2. Store work runs on
-//! `spawn_blocking`.
+//! Every route is admin-only, as in v2. Store work runs on a blocking
+//! thread.
 
 use std::collections::BTreeMap;
 
@@ -20,13 +20,14 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::blocking;
 use super::error::refused;
 use super::operations::ReasonView;
 use crate::corrections::Corrections;
 use crate::corrections::models::{
-    Applied, ApplyMeta, ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, IdentityChoice,
-    MembershipKind, MembershipOutcome, MembershipRequest, PairEdition, PairJoinRequest, PairReason,
-    PairSide, ProviderChoice, RetagPair,
+    Applied, ApplyMeta, ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, EditionChangeKind,
+    IdentityChoice, MembershipKind, MembershipOutcome, MembershipRequest, PairJoinRequest,
+    ProviderChoice, RetagPairList,
 };
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::Admin;
@@ -65,60 +66,9 @@ impl From<CorrectionError> for ApiError {
     }
 }
 
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, CorrectionError> + Send + 'static,
-) -> Result<T, ApiError> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(ApiError::internal)?
-        .map_err(ApiError::from)
-}
-
 // ---------------------------------------------------------------------------
 // DTOs.
 // ---------------------------------------------------------------------------
-
-/// What the receiving album keeps when the combined albums name different
-/// editions.
-#[derive(Debug, Clone, Copy, Default, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum IdentityChoiceBody {
-    /// Drop every competing edition; the album is identified again.
-    #[default]
-    Detach,
-    /// The receiving album keeps its own edition.
-    RetainManual,
-}
-
-impl From<IdentityChoiceBody> for IdentityChoice {
-    fn from(body: IdentityChoiceBody) -> Self {
-        match body {
-            IdentityChoiceBody::Detach => Self::Detach,
-            IdentityChoiceBody::RetainManual => Self::RetainManual,
-        }
-    }
-}
-
-/// What the surviving artist keeps when the merged artists name different
-/// MusicBrainz artists.
-#[derive(Debug, Clone, Copy, Default, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderChoiceBody {
-    /// The survivor loses its MusicBrainz link.
-    Detach,
-    /// The survivor keeps its link, or takes the only one on offer.
-    #[default]
-    RetainSurvivor,
-}
-
-impl From<ProviderChoiceBody> for ProviderChoice {
-    fn from(body: ProviderChoiceBody) -> Self {
-        match body {
-            ProviderChoiceBody::Detach => Self::Detach,
-            ProviderChoiceBody::RetainSurvivor => Self::RetainSurvivor,
-        }
-    }
-}
 
 /// A membership change to preview.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -142,23 +92,15 @@ pub struct MembershipPreviewBody {
     pub album_artist_name: Option<String>,
     /// How competing editions settle; shown in the preview.
     #[serde(default)]
-    pub identity_choice: IdentityChoiceBody,
+    pub identity_choice: IdentityChoice,
 }
 
-/// A previewed membership change to apply.
+/// A previewed membership change to apply: the previewed change and its
+/// token.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct MembershipApplyBody {
-    pub track_ids: Vec<String>,
-    #[serde(default)]
-    pub expected_album_revisions: BTreeMap<String, i64>,
-    #[serde(default)]
-    pub target_album_id: Option<String>,
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub album_artist_name: Option<String>,
-    #[serde(default)]
-    pub identity_choice: IdentityChoiceBody,
+    #[serde(flatten)]
+    pub change: MembershipPreviewBody,
     /// The token the preview returned.
     pub preview_token: String,
     /// Replaying a key returns the first result instead of applying twice.
@@ -180,7 +122,7 @@ pub struct ArtistMergePreviewBody {
     /// What the survivor keeps when the artists name different MusicBrainz
     /// artists; the apply must send the same choice.
     #[serde(default)]
-    pub provider_choice: ProviderChoiceBody,
+    pub provider_choice: ProviderChoice,
 }
 
 /// A previewed artist merge to apply.
@@ -195,7 +137,7 @@ pub struct ArtistMergeApplyBody {
     #[serde(default)]
     pub idempotency_key: Option<String>,
     #[serde(default)]
-    pub provider_choice: ProviderChoiceBody,
+    pub provider_choice: ProviderChoice,
 }
 
 /// Where a set of tracks ends up.
@@ -217,59 +159,45 @@ pub struct AutomaticGroupView {
 pub struct EditionChangeView {
     pub local_album_id: String,
     pub album_title: String,
-    /// `kept`, `moved`, `cleared` or `remap_queued`.
-    pub change: String,
+    pub change: EditionChangeKind,
     /// For a moved edition, the album it came from.
     pub from_album_id: Option<String>,
     pub release_mbid: Option<String>,
     pub reason: ReasonView,
 }
 
-/// A correction preview. Album and artist previews share this shape, as
-/// in v2.
+/// An album membership preview.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MembershipPreviewResponse {
     /// Send this back to apply exactly this change (valid 15 minutes).
     pub preview_token: String,
     pub source_album_ids: Vec<String>,
-    /// The receiving album (the surviving artist for an artist merge).
+    /// The receiving album.
     pub target_album_id: Option<String>,
     pub track_ids: Vec<String>,
-    /// Competing editions or MusicBrainz artists.
+    /// Competing editions.
     pub identity_conflicts: Vec<String>,
-    /// Ids that will point at the receiving album or artist.
+    /// Album ids that will point at the receiving album.
     pub aliases: Vec<String>,
     pub automatic_groups: Vec<AutomaticGroupView>,
-    /// Artist merge: references that move to the survivor, by kind.
+    /// Always empty for an album change.
     pub reference_counts: BTreeMap<String, i64>,
     pub edition_changes: Vec<EditionChangeView>,
 }
 
-/// An applied correction.
+/// An artist merge preview.
 #[derive(Debug, Serialize, ToSchema)]
-pub struct CatalogCorrectionResponse {
-    /// `split`, `merge`, `move`, `reset` or `merge_artist`.
-    pub kind: String,
-    pub track_ids: Vec<String>,
-    pub source_album_ids: Vec<String>,
-    pub target_album_id: Option<String>,
-    pub surviving_artist_id: Option<String>,
-    pub retired_artist_ids: Vec<String>,
-    pub catalog_revision: i64,
-}
-
-impl From<Applied> for CatalogCorrectionResponse {
-    fn from(applied: Applied) -> Self {
-        Self {
-            kind: applied.kind,
-            track_ids: applied.track_ids,
-            source_album_ids: applied.source_album_ids,
-            target_album_id: applied.target_album_id,
-            surviving_artist_id: applied.surviving_artist_id,
-            retired_artist_ids: applied.retired_artist_ids,
-            catalog_revision: applied.catalog_revision,
-        }
-    }
+pub struct ArtistMergePreviewResponse {
+    /// Send this back to apply exactly this merge (valid 15 minutes).
+    pub preview_token: String,
+    /// The artist everything moves to.
+    pub surviving_artist_id: String,
+    /// Competing MusicBrainz artists.
+    pub identity_conflicts: Vec<String>,
+    /// Artist ids that will point at the survivor.
+    pub aliases: Vec<String>,
+    /// References that move to the survivor, by kind.
+    pub reference_counts: BTreeMap<String, i64>,
 }
 
 fn membership_view(token: String, outcome: MembershipOutcome) -> MembershipPreviewResponse {
@@ -306,7 +234,7 @@ fn membership_view(token: String, outcome: MembershipOutcome) -> MembershipPrevi
             .map(|change| EditionChangeView {
                 local_album_id: hide(&change.album_id).unwrap_or_default(),
                 album_title: change.album_title,
-                change: change.change.as_str().to_owned(),
+                change: change.change,
                 from_album_id: change.from_album_id,
                 release_mbid: change.release_mbid,
                 reason: change.reason.into(),
@@ -315,17 +243,13 @@ fn membership_view(token: String, outcome: MembershipOutcome) -> MembershipPrevi
     }
 }
 
-fn artist_view(token: String, outcome: ArtistMergeOutcome) -> MembershipPreviewResponse {
-    MembershipPreviewResponse {
+fn artist_view(token: String, outcome: ArtistMergeOutcome) -> ArtistMergePreviewResponse {
+    ArtistMergePreviewResponse {
         preview_token: token,
-        source_album_ids: Vec::new(),
-        target_album_id: Some(outcome.surviving_artist_id),
-        track_ids: Vec::new(),
+        surviving_artist_id: outcome.surviving_artist_id,
         identity_conflicts: outcome.identity_conflicts,
         aliases: outcome.retired_artist_ids,
-        automatic_groups: Vec::new(),
         reference_counts: outcome.reference_counts,
-        edition_changes: Vec::new(),
     }
 }
 
@@ -342,7 +266,7 @@ fn preview_request(
         target_album_id: body.target_album_id,
         title: body.title,
         album_artist_name: body.album_artist_name,
-        identity_choice: body.identity_choice.into(),
+        identity_choice: body.identity_choice,
     }
 }
 
@@ -353,16 +277,7 @@ fn apply_request(
     actor: String,
 ) -> (MembershipRequest, ApplyMeta) {
     (
-        MembershipRequest {
-            kind,
-            album_id,
-            track_ids: body.track_ids,
-            expected_album_revisions: body.expected_album_revisions,
-            target_album_id: body.target_album_id,
-            title: body.title,
-            album_artist_name: body.album_artist_name,
-            identity_choice: body.identity_choice.into(),
-        },
+        preview_request(kind, album_id, body.change),
         ApplyMeta {
             preview_token: body.preview_token,
             idempotency_key: body.idempotency_key.filter(|key| !key.trim().is_empty()),
@@ -384,9 +299,10 @@ async fn apply_membership(
     corrections: Corrections,
     request: MembershipRequest,
     meta: ApplyMeta,
-) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
-    let applied = blocking(move || corrections.apply_membership(&request, &meta)).await?;
-    Ok(Json(applied.into()))
+) -> Result<Json<Applied>, ApiError> {
+    Ok(Json(
+        blocking(move || corrections.apply_membership(&request, &meta)).await?,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -427,7 +343,7 @@ pub async fn preview_album_split(
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = MembershipApplyBody,
     responses(
-        (status = 200, description = "Split applied", body = CatalogCorrectionResponse),
+        (status = 200, description = "Split applied", body = Applied),
         (status = 400, description = "Bad selection or token"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
@@ -440,7 +356,7 @@ pub async fn apply_album_split(
     caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipApplyBody>,
-) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
+) -> Result<Json<Applied>, ApiError> {
     let (request, meta) = apply_request(
         MembershipKind::Split,
         Some(album_id),
@@ -481,7 +397,7 @@ pub async fn preview_album_merge(
     path = "/api/v3/library/albums/merge",
     request_body = MembershipApplyBody,
     responses(
-        (status = 200, description = "Merge applied", body = CatalogCorrectionResponse),
+        (status = 200, description = "Merge applied", body = Applied),
         (status = 400, description = "Bad selection or token"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
@@ -493,7 +409,7 @@ pub async fn apply_album_merge(
     State(corrections): State<Corrections>,
     caller: Admin,
     ValidJson(body): ValidJson<MembershipApplyBody>,
-) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
+) -> Result<Json<Applied>, ApiError> {
     let (request, meta) = apply_request(
         MembershipKind::Merge,
         None,
@@ -534,7 +450,7 @@ pub async fn preview_track_move(
     path = "/api/v3/library/tracks/move",
     request_body = MembershipApplyBody,
     responses(
-        (status = 200, description = "Move applied", body = CatalogCorrectionResponse),
+        (status = 200, description = "Move applied", body = Applied),
         (status = 400, description = "Bad selection or token"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
@@ -546,7 +462,7 @@ pub async fn apply_track_move(
     State(corrections): State<Corrections>,
     caller: Admin,
     ValidJson(body): ValidJson<MembershipApplyBody>,
-) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
+) -> Result<Json<Applied>, ApiError> {
     let (request, meta) = apply_request(
         MembershipKind::Move,
         None,
@@ -590,7 +506,7 @@ pub async fn preview_grouping_reset(
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = MembershipApplyBody,
     responses(
-        (status = 200, description = "Reset applied", body = CatalogCorrectionResponse),
+        (status = 200, description = "Reset applied", body = Applied),
         (status = 400, description = "Bad selection or token"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
@@ -603,7 +519,7 @@ pub async fn apply_grouping_reset(
     caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipApplyBody>,
-) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
+) -> Result<Json<Applied>, ApiError> {
     let (request, meta) = apply_request(
         MembershipKind::Reset,
         Some(album_id),
@@ -617,13 +533,13 @@ fn artist_request(
     source_artist_ids: Vec<String>,
     surviving_artist_id: String,
     expected_revisions: BTreeMap<String, i64>,
-    provider_choice: ProviderChoiceBody,
+    provider_choice: ProviderChoice,
 ) -> ArtistMergeRequest {
     ArtistMergeRequest {
         source_artist_ids,
         surviving_artist_id,
         expected_revisions,
-        provider_choice: provider_choice.into(),
+        provider_choice,
     }
 }
 
@@ -634,7 +550,7 @@ fn artist_request(
     path = "/api/v3/library/artists/merge-preview",
     request_body = ArtistMergePreviewBody,
     responses(
-        (status = 200, description = "What the merge would move", body = MembershipPreviewResponse),
+        (status = 200, description = "What the merge would move", body = ArtistMergePreviewResponse),
         (status = 400, description = "No duplicate chosen, or a reserved artist would be merged away"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
@@ -646,7 +562,7 @@ pub async fn preview_artist_merge(
     State(corrections): State<Corrections>,
     caller: Admin,
     ValidJson(body): ValidJson<ArtistMergePreviewBody>,
-) -> Result<Json<MembershipPreviewResponse>, ApiError> {
+) -> Result<Json<ArtistMergePreviewResponse>, ApiError> {
     let request = artist_request(
         body.source_artist_ids,
         body.surviving_artist_id,
@@ -664,7 +580,7 @@ pub async fn preview_artist_merge(
     path = "/api/v3/library/artists/merge",
     request_body = ArtistMergeApplyBody,
     responses(
-        (status = 200, description = "Artists merged", body = CatalogCorrectionResponse),
+        (status = 200, description = "Artists merged", body = Applied),
         (status = 400, description = "Bad selection or token"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
@@ -676,7 +592,7 @@ pub async fn apply_artist_merge(
     State(corrections): State<Corrections>,
     caller: Admin,
     ValidJson(body): ValidJson<ArtistMergeApplyBody>,
-) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
+) -> Result<Json<Applied>, ApiError> {
     let request = artist_request(
         body.source_artist_ids,
         body.surviving_artist_id,
@@ -688,81 +604,14 @@ pub async fn apply_artist_merge(
         idempotency_key: body.idempotency_key.filter(|key| !key.trim().is_empty()),
         actor: caller.user_id().to_owned(),
     };
-    let applied =
-        blocking(move || corrections.apply_artist_merge(&request, &meta, &caller)).await?;
-    Ok(Json(applied.into()))
+    Ok(Json(
+        blocking(move || corrections.apply_artist_merge(&request, &meta, &caller)).await?,
+    ))
 }
 
 // ---------------------------------------------------------------------------
 // Retag pairs.
 // ---------------------------------------------------------------------------
-
-/// An album's edition on a retag pair.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RetagPairEditionView {
-    pub release_group_mbid: String,
-    pub release_mbid: Option<String>,
-    /// Chosen by a person or carried over from v2.
-    pub chosen: bool,
-    /// A custom edition is active. It does not carry over a join.
-    pub custom: bool,
-}
-
-/// Why the scan left a retag pair for a person.
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RetagPairReasonView {
-    /// Each album holds a different edition a person chose.
-    ChosenMatchesDiffer,
-    /// The album was split against a rename: the old album's edition
-    /// goes to the named album only.
-    TracksElsewhere,
-    /// The old album holds a custom edition, which does not carry over.
-    CustomEdition,
-    /// The old album was left unmanaged, kept as a custom edition or
-    /// stepped back from, and lost its files in the scan in which the new
-    /// album's files appeared beside it. Nothing shows they are one
-    /// album, so the new album is left alone until "Manage it again".
-    ReplacedHandsOff,
-}
-
-/// One album of a retag pair.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RetagPairAlbumView {
-    pub id: String,
-    pub title: String,
-    pub album_artist_name: String,
-    /// Indexed tracks.
-    pub track_count: i64,
-    pub edition: Option<RetagPairEditionView>,
-    /// The edition's revision, 0 for none. Send it back with a join.
-    pub identity_revision: i64,
-}
-
-/// Two album rows that look like one retagged album, which the scan would
-/// not join by itself.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RetagPairView {
-    /// The row the files left. It holds the favorites, plays and links.
-    pub old_album: RetagPairAlbumView,
-    /// The row the files sit on now, or the album it was merged into
-    /// since. A join keeps this one.
-    pub new_album: RetagPairAlbumView,
-    pub reason: RetagPairReasonView,
-    /// Two different chosen editions remain once a custom edition on the
-    /// old album is left out: the join must name the one to keep.
-    pub editions_differ: bool,
-    /// When the scan recorded the pair (Unix milliseconds).
-    pub recorded_at: i64,
-}
-
-/// The open retag pairs, newest first (at most 100), and how many there
-/// are.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RetagPairListResponse {
-    pub pairs: Vec<RetagPairView>,
-    pub total: i64,
-}
 
 /// Join a retag pair.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -790,39 +639,6 @@ pub struct RetagPairDismissResponse {
     pub dismissed: bool,
 }
 
-fn pair_album_view(side: PairSide) -> RetagPairAlbumView {
-    RetagPairAlbumView {
-        id: side.id,
-        title: side.title,
-        album_artist_name: side.album_artist_name,
-        track_count: side.track_count,
-        edition: side
-            .edition
-            .map(|edition: PairEdition| RetagPairEditionView {
-                release_group_mbid: edition.release_group_mbid,
-                release_mbid: edition.release_mbid,
-                chosen: edition.chosen,
-                custom: edition.custom,
-            }),
-        identity_revision: side.identity_revision,
-    }
-}
-
-fn pair_view(pair: RetagPair) -> RetagPairView {
-    RetagPairView {
-        old_album: pair_album_view(pair.old_album),
-        new_album: pair_album_view(pair.new_album),
-        reason: match pair.reason {
-            PairReason::ChosenMatchesDiffer => RetagPairReasonView::ChosenMatchesDiffer,
-            PairReason::TracksElsewhere => RetagPairReasonView::TracksElsewhere,
-            PairReason::CustomEdition => RetagPairReasonView::CustomEdition,
-            PairReason::ReplacedHandsOff => RetagPairReasonView::ReplacedHandsOff,
-        },
-        editions_differ: pair.editions_differ,
-        recorded_at: pair.recorded_at,
-    }
-}
-
 /// List album rows that look like one retagged album and wait for a
 /// person to join or dismiss them.
 #[utoipa::path(
@@ -830,7 +646,7 @@ fn pair_view(pair: RetagPair) -> RetagPairView {
     tag = "library management",
     path = "/api/v3/library/retag-pairs",
     responses(
-        (status = 200, description = "Open pairs, newest first", body = RetagPairListResponse),
+        (status = 200, description = "Open pairs, newest first", body = RetagPairList),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
     )
@@ -838,12 +654,8 @@ fn pair_view(pair: RetagPair) -> RetagPairView {
 pub async fn list_retag_pairs(
     State(corrections): State<Corrections>,
     _caller: Admin,
-) -> Result<Json<RetagPairListResponse>, ApiError> {
-    let list = blocking(move || corrections.retag_pairs()).await?;
-    Ok(Json(RetagPairListResponse {
-        pairs: list.pairs.into_iter().map(pair_view).collect(),
-        total: list.total,
-    }))
+) -> Result<Json<RetagPairList>, ApiError> {
+    Ok(Json(blocking(move || corrections.retag_pairs()).await?))
 }
 
 /// Join a retag pair: the old album is merged into the new one. A custom

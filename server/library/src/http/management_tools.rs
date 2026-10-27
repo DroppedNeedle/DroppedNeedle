@@ -2,7 +2,7 @@
 //! the originals (restore previews and the purge), settling a duplicate,
 //! the publish journal's writes that need an administrator, and the dry
 //! run that turns automatic management on. Every route is admin-only, as
-//! in v2. Store and file work runs on `spawn_blocking`.
+//! in v2. Store and file work runs on a blocking thread.
 
 use std::collections::BTreeMap;
 
@@ -16,16 +16,16 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::management::{
-    ManagementJobView, ManagementPreviewCreatedResponse, ManagementSelectionBody,
-};
+use super::blocking;
+use super::management::{ManagementJobView, ManagementPreviewCreatedResponse};
 use crate::management::activation::{ActivationConfirm, ActivationProof, ActivationRequest};
 use crate::management::duplicates::DuplicateRequest;
-use crate::management::models::{DuplicateAction, DuplicateIntent, ManagementError, TagEditMode};
+use crate::management::models::{DuplicateAction, DuplicateIntent, Selection, TagEditMode};
 use crate::management::recovery::{AttentionBundle, Diagnostics, Resolved};
 use crate::management::restore::{PurgeImpact, PurgeOutcome, PurgeRequest, RestoreRequest};
 use crate::management::service::Management;
 use crate::management::tag_edit::{EditorContext, TagEditRequest};
+use crate::management::takeover::Cause;
 use crate::publish::PlacementMode;
 use crate::settings_models::LibraryManagementSettingsResponse;
 use crate::wiring::LibraryServices;
@@ -50,15 +50,6 @@ pub fn routes() -> Routes<LibraryServices> {
         .admin(routes!(create_management_activation_preview))
         .admin(routes!(get_management_activation_preview))
         .admin(routes!(confirm_management_activation))
-}
-
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, ManagementError> + Send + 'static,
-) -> Result<T, ApiError> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(ApiError::internal)?
-        .map_err(ApiError::from)
 }
 
 fn key(raw: Option<String>) -> Option<String> {
@@ -136,18 +127,6 @@ impl From<EditorContext> for ManagementTagEditorView {
     }
 }
 
-/// How a tag edit is kept.
-#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ManagementTagEditMode {
-    /// Write the value and keep it, so later runs keep it too.
-    SaveOverride,
-    /// Write the value once.
-    WriteOnce,
-    /// Drop the kept value; the edition's value comes back.
-    ResetCanonical,
-}
-
 /// One edited tag.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct ManagementTagEditFieldBody {
@@ -162,7 +141,7 @@ pub struct ManagementTagEditFieldBody {
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct ManagementTagEditPreviewBody {
     pub local_track_id: String,
-    pub mode: ManagementTagEditMode,
+    pub mode: TagEditMode,
     pub expected_settings_revision: String,
     pub expected_policy_revision: String,
     pub fields: Vec<ManagementTagEditFieldBody>,
@@ -215,11 +194,7 @@ pub async fn create_management_tag_edit_preview(
 ) -> Result<Json<ManagementPreviewCreatedResponse>, ApiError> {
     let request = TagEditRequest {
         local_track_id: body.local_track_id,
-        mode: match body.mode {
-            ManagementTagEditMode::SaveOverride => TagEditMode::SaveOverride,
-            ManagementTagEditMode::WriteOnce => TagEditMode::WriteOnce,
-            ManagementTagEditMode::ResetCanonical => TagEditMode::ResetCanonical,
-        },
+        mode: body.mode,
         expected_settings_revision: body.expected_settings_revision,
         expected_policy_revision: body.expected_policy_revision,
         fields: body
@@ -240,7 +215,7 @@ pub async fn create_management_tag_edit_preview(
 /// Preview putting files back the way they were before management.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct ManagementRestorePreviewBody {
-    pub selection: ManagementSelectionBody,
+    pub selection: Selection,
     pub expected_settings_revision: String,
     pub expected_policy_revision: String,
     pub idempotency_key: String,
@@ -321,7 +296,7 @@ pub async fn create_management_restore_preview(
     ValidJson(body): ValidJson<ManagementRestorePreviewBody>,
 ) -> Result<Json<ManagementPreviewCreatedResponse>, ApiError> {
     let request = RestoreRequest {
-        selection: body.selection.into(),
+        selection: body.selection,
         expected_settings_revision: body.expected_settings_revision,
         expected_policy_revision: body.expected_policy_revision,
         idempotency_key: body.idempotency_key,
@@ -382,16 +357,6 @@ pub async fn purge_management_baselines(
 // Duplicates.
 // ---------------------------------------------------------------------------
 
-/// What to do with a file whose place is taken.
-#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ManagementDuplicateAction {
-    KeepExisting,
-    KeepIncomingAlternate,
-    RecycleExistingKeepIncoming,
-    RecycleIncomingKeepExisting,
-}
-
 /// Settle one file a preview could not place.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct ManagementDuplicateBody {
@@ -401,7 +366,7 @@ pub struct ManagementDuplicateBody {
     pub collision_kind: String,
     pub existing_root_id: String,
     pub existing_relative_path: String,
-    pub action: ManagementDuplicateAction,
+    pub action: DuplicateAction,
     pub expected_settings_revision: String,
     pub expected_policy_revision: String,
     pub idempotency_key: String,
@@ -440,18 +405,7 @@ pub async fn create_management_duplicate_preview(
             existing_root_id: body.existing_root_id,
             existing_relative_path: body.existing_relative_path,
             existing_local_track_id: body.existing_local_track_id,
-            action: match body.action {
-                ManagementDuplicateAction::KeepExisting => DuplicateAction::KeepExisting,
-                ManagementDuplicateAction::KeepIncomingAlternate => {
-                    DuplicateAction::KeepIncomingAlternate
-                }
-                ManagementDuplicateAction::RecycleExistingKeepIncoming => {
-                    DuplicateAction::RecycleExistingKeepIncoming
-                }
-                ManagementDuplicateAction::RecycleIncomingKeepExisting => {
-                    DuplicateAction::RecycleIncomingKeepExisting
-                }
-            },
+            action: body.action,
             alternate_relative_path: body.alternate_relative_path,
         },
         expected_source_row_revision: body.expected_source_operation_row_revision,
@@ -790,9 +744,7 @@ pub struct ManagementTakeoverView {
     pub album_id: String,
     pub album_title: String,
     pub artist_name: Option<String>,
-    /// `files_changed`, `retag_followed`, `run_undone` or
-    /// `replaced_hands_off`.
-    pub cause: String,
+    pub cause: Cause,
     /// When it stepped back, unix milliseconds.
     pub noticed_at: i64,
 }
@@ -833,7 +785,7 @@ pub async fn list_management_takeovers(
                 album_id: album.album_id,
                 album_title: album.album_title,
                 artist_name: album.artist_name,
-                cause: album.cause.as_str().to_owned(),
+                cause: album.cause,
                 noticed_at: album.noticed_at,
             })
             .collect(),

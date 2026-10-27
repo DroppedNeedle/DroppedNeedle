@@ -856,8 +856,8 @@ pub struct PreviewFile {
     pub source: String,
     /// Destination `root/rel`.
     pub dest: String,
-    /// `same_path` or `move`.
-    pub kind: String,
+    /// Write in place or move.
+    pub kind: PlanKind,
     /// The tags a retag changes, in display order; empty for a move.
     pub changes: Vec<TagChange>,
 }
@@ -1528,10 +1528,7 @@ impl Publishing {
                 track_id,
                 source: format!("{}/{}", item.root_id, item.rel_path),
                 dest: format!("{dest_root}/{dest_rel}"),
-                kind: match item_kind {
-                    PlanKind::SamePath => "same_path".to_owned(),
-                    PlanKind::Move => "move".to_owned(),
-                },
+                kind: item_kind,
                 changes,
             });
         }

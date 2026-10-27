@@ -6,6 +6,7 @@ import { invalidateLibraryManagementSurfaces } from '$lib/queries/library-manage
 import { LibraryV3Api } from './LibraryV3Api';
 import { createUuid } from '$lib/utils/uuid';
 import type {
+	ArtistMergePreviewResponse,
 	CatalogCorrectionResponse,
 	MembershipPreviewResponse
 } from './LibraryOperationsTypes';
@@ -113,7 +114,7 @@ export function applyAlbumMembership(kind: MembershipKind) {
 
 export function previewArtistMerge() {
 	return createMutation(() => ({
-		mutationFn: (input: ArtistMergePreviewInput): Promise<MembershipPreviewResponse> =>
+		mutationFn: (input: ArtistMergePreviewInput): Promise<ArtistMergePreviewResponse> =>
 			api.global.v3.POST(LibraryV3Api.artistMergePreview(), input),
 		onError: (error) =>
 			toastStore.show({

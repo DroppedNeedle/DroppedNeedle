@@ -4,7 +4,7 @@
 //!
 //! Every route is admin-only, as in v2, except the release search, which
 //! curators use to choose an edition. Store work runs on
-//! `spawn_blocking`; the release search awaits MusicBrainz.
+//! a blocking thread; the release search awaits MusicBrainz.
 
 use axum::{
     Json,
@@ -17,15 +17,17 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use super::blocking;
 use super::error::refused;
 use super::models::PenaltyView;
 use crate::identify::models::EvidenceClass;
 use crate::operations::models::{
-    Control, OperationDetail, OperationError, OperationJob, OperationState,
-    ReidentificationCandidate,
+    AutomaticUndone, Control, ControlRequest, OperationDetail, OperationError, OperationJob,
+    OperationState, ReidentificationCandidate, WorkState,
 };
 use crate::operations::reasons::{self, Reason};
 use crate::operations::service::{Operations, RELEASE_PAGE_MAX};
+use crate::repairs::models::Summary;
 use crate::repairs::service::Repairs;
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator};
@@ -67,19 +69,6 @@ impl From<OperationError> for ApiError {
     }
 }
 
-/// Run blocking operation work off the async workers.
-pub(super) async fn blocking<T: Send + 'static, E: Send + 'static>(
-    work: impl FnOnce() -> Result<T, E> + Send + 'static,
-) -> Result<T, ApiError>
-where
-    ApiError: From<E>,
-{
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(ApiError::internal)?
-        .map_err(ApiError::from)
-}
-
 // ---------------------------------------------------------------------------
 // DTOs.
 // ---------------------------------------------------------------------------
@@ -112,8 +101,7 @@ fn ending(code: Option<&str>) -> Option<ReasonView> {
 pub struct OperationWorkResultView {
     pub ordinal: i64,
     pub action: String,
-    /// `pending`, `running`, `succeeded`, `failed`, or `skipped`.
-    pub state: String,
+    pub state: WorkState,
     pub local_album_id: Option<String>,
     pub local_track_id: Option<String>,
     pub failure_code: Option<String>,
@@ -129,8 +117,7 @@ pub struct OperationWorkResultView {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct OperationTrackEvidenceView {
     pub local_track_id: String,
-    /// `supported`, `unknown`, or `contradictory`.
-    pub classification: String,
+    pub classification: EvidenceClass,
     /// What ties the file to the release track (`embedded_id`, `acoustid`,
     /// `title_position_length`, or `track_id_elsewhere`: the recording ID,
     /// on a file whose track ID belongs to another edition), or why it does
@@ -155,10 +142,8 @@ pub struct OperationCandidateEvidenceView {
     pub release_date: Option<String>,
     pub local_album_title: String,
     pub local_album_artist_name: String,
-    /// `supported`, `unknown`, or `contradictory`.
-    pub album_title_classification: String,
-    /// `supported`, `unknown`, or `contradictory`.
-    pub album_artist_classification: String,
+    pub album_title_classification: EvidenceClass,
+    pub album_artist_classification: EvidenceClass,
     pub track_evidence: Vec<OperationTrackEvidenceView>,
     /// Release track titles no local file took.
     pub unmatched_expected_tracks: Vec<String>,
@@ -201,8 +186,8 @@ pub struct OperationView {
     pub succeeded_count: i64,
     pub failed_count: i64,
     pub skipped_count: i64,
-    /// A control the worker has not acted on yet: `none`, `pause`, `stop`.
-    pub control_request: String,
+    /// A control the worker has not acted on yet.
+    pub control_request: ControlRequest,
     pub terminal_code: Option<String>,
     /// What `terminal_code` means and what to do about it.
     pub terminal_reason: Option<ReasonView>,
@@ -218,7 +203,7 @@ pub struct OperationView {
     pub reidentification_candidates: Vec<ReidentificationCandidateView>,
     pub selected_reidentification_candidate_key: Option<String>,
     /// An identity repair or preparation's report, once its check is done.
-    pub repair_summary: Option<super::repairs::RepairSummaryView>,
+    pub repair_summary: Option<Summary>,
 }
 
 /// Pause, resume, or stop a job.
@@ -241,8 +226,7 @@ pub struct AutomaticEditionUndoBody {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AutomaticEditionUndoResponse {
     pub local_album_id: String,
-    /// `restored` (the earlier identity is back) or `cleared_to_review`.
-    pub outcome: String,
+    pub outcome: AutomaticUndone,
     /// The review the album went to, when there was no earlier identity.
     pub review_id: Option<String>,
 }
@@ -308,15 +292,6 @@ pub struct ReleaseEditionSearchResponse {
     pub limit: u32,
 }
 
-fn class_label(class: EvidenceClass) -> String {
-    match class {
-        EvidenceClass::Supported => "supported",
-        EvidenceClass::Unknown => "unknown",
-        EvidenceClass::Contradictory => "contradictory",
-    }
-    .to_owned()
-}
-
 fn candidate_view(
     job: &OperationJob,
     candidate: &ReidentificationCandidate,
@@ -333,7 +308,7 @@ fn candidate_view(
                 .find(|place| place.local_track_id == track.local_track_id);
             OperationTrackEvidenceView {
                 local_track_id: track.local_track_id.clone(),
-                classification: class_label(track.classification),
+                classification: track.classification,
                 evidence_kinds: track.evidence_kinds.clone(),
                 candidate_track_title: placed.and_then(|place| place.title.clone()),
                 candidate_disc_number: placed.and_then(|place| place.disc_number),
@@ -357,8 +332,8 @@ fn candidate_view(
             release_date: candidate.release_date.clone(),
             local_album_title: candidate.local_album_title.clone(),
             local_album_artist_name: candidate.local_album_artist_name.clone(),
-            album_title_classification: class_label(candidate.album_title_classification),
-            album_artist_classification: class_label(candidate.album_artist_classification),
+            album_title_classification: candidate.album_title_classification,
+            album_artist_classification: candidate.album_artist_classification,
             track_evidence,
             unmatched_expected_tracks: candidate.unmatched_expected_tracks.clone(),
             score: evidence.score,
@@ -388,7 +363,7 @@ pub(super) fn job_view(job: &OperationJob) -> OperationView {
         succeeded_count: job.succeeded_count,
         failed_count: job.failed_count,
         skipped_count: job.skipped_count,
-        control_request: job.control_request.as_str().to_owned(),
+        control_request: job.control_request,
         terminal_code: job.terminal_code.clone(),
         terminal_reason: ending(job.terminal_code.as_deref()),
         row_revision: job.row_revision,
@@ -412,7 +387,7 @@ pub(super) fn detail_view(detail: &OperationDetail) -> OperationView {
             .map(|result| OperationWorkResultView {
                 ordinal: result.ordinal,
                 action: result.action.clone(),
-                state: result.state.clone(),
+                state: result.state,
                 local_album_id: result.local_album_id.clone(),
                 local_track_id: result.local_track_id.clone(),
                 failure_code: result.failure_code.clone(),
@@ -464,7 +439,7 @@ pub async fn get_operation(
     })
     .await?;
     Ok(Json(OperationView {
-        repair_summary: summary.map(Into::into),
+        repair_summary: summary,
         ..detail_view(&detail)
     }))
 }

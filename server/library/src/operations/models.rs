@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::reasons::Reason;
 use crate::identify::models::{CandidateEvidence, EvidenceClass};
-pub use crate::jobs::{ControlRequest, OperationJob, OperationKind, OperationState};
+pub use crate::identity::AutomaticUndone;
+pub use crate::jobs::{ControlRequest, OperationJob, OperationKind, OperationState, WorkState};
 
 /// What an administrator asks of a job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +34,7 @@ pub struct WorkResult {
     pub local_album_id: Option<String>,
     pub local_track_id: Option<String>,
     pub action: String,
-    pub state: String,
+    pub state: WorkState,
     pub failure_code: Option<String>,
     pub result: serde_json::Value,
 }
@@ -94,8 +95,7 @@ pub struct Evaluation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UndoOutcome {
     pub local_album_id: String,
-    /// `restored` or `cleared_to_review`.
-    pub outcome: String,
+    pub outcome: AutomaticUndone,
     pub review_id: Option<String>,
 }
 

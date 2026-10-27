@@ -53,7 +53,7 @@
 			<span
 				class="badge badge-sm {item.failure_code
 					? 'badge-error'
-					: item.work_state === 'succeeded' || item.work_state === 'completed'
+					: item.work_state === 'succeeded'
 						? 'badge-success'
 						: 'badge-outline'}"
 			>

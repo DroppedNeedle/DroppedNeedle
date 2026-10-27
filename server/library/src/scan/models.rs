@@ -170,7 +170,7 @@ spelled!(ScanKind {
 });
 
 /// What triggered the run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanTrigger {
     Manual,
@@ -360,7 +360,8 @@ pub fn transition(state: RunState, event: Event) -> Result<RunState, Illegal> {
 
 /// Pending control on a run, as the runs table stores it and the API
 /// reports it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum RequestedControl {
     None,
     Pause,
@@ -510,7 +511,7 @@ impl ScanScope {
 }
 
 /// Effective policy for one scope or inventory row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectivePolicy {
     LocalMetadata,
@@ -556,13 +557,19 @@ pub struct ScanRequest {
 }
 
 /// How `request_run` disposed of a request (v2 `ScanRequestResult`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = ScanDisposition)]
 pub enum Disposition {
+    /// A new run started.
     Started,
+    /// A new run waits behind the active one.
     Queued,
+    /// An existing run already covers it.
     Coalesced,
+    /// A queued run grew to cover it.
     Expanded,
+    /// A run of another kind is in the way.
     Conflict,
 }
 
@@ -594,8 +601,9 @@ pub struct ScanInventoryItem {
 }
 
 /// Classify verdict. Spelling matches v2 `comparison_result` exactly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = ScanFileVerdict)]
 pub enum Verdict {
     New,
     Changed,

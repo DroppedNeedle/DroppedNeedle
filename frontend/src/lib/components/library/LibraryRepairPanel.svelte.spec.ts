@@ -1,9 +1,12 @@
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { OperationResponse } from '$lib/queries/library/LibraryOperationsTypes';
+import type {
+	OperationResponse,
+	RepairReportSummary
+} from '$lib/queries/library/LibraryOperationsTypes';
 
-const summary = {
+const summary: RepairReportSummary = {
 	total_identities: 12,
 	remaining_identities: 0,
 	input_track_count: 120,
@@ -73,7 +76,6 @@ const h = vi.hoisted(() => ({
 						{
 							id: 'finding-1',
 							local_album_id: 'album-1',
-							evidence_id: 'evidence-1',
 							review_id: 'review-1',
 							album_title: 'Low Tide',
 							album_artist_name: 'The Alphas',

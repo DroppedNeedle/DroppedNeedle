@@ -98,7 +98,7 @@ function localAlbum(): RouteData<'GET /api/v3/library/albums/{id}'> {
 }
 
 function removed(id: string): RouteData<'DELETE /api/v3/library/tracks/{id}'> {
-	return { id, removed_track_ids: [id], success: true };
+	return { id, removed_track_ids: [id] };
 }
 
 let status: (id: string) => Status;

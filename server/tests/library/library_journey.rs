@@ -28,6 +28,7 @@ use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
 use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_library::management::automatic::{SETTLE_SECONDS, Settle};
+use droppedneedle_library::management::models::ResultState;
 use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
 use droppedneedle_library::scan::SqliteScanStore;
 use droppedneedle_library::wiring::LibrarySetup;
@@ -7885,7 +7886,7 @@ async fn library_management_preview_apply_undo() {
         results
             .items
             .iter()
-            .all(|item| item.work_state == "succeeded")
+            .all(|item| item.work_state == ResultState::Succeeded)
     );
     assert!(applied.undo_available_count >= 1);
 
@@ -8325,7 +8326,7 @@ async fn management_apply(
                 results
                     .items
                     .iter()
-                    .map(|item| (item.work_state.clone(), item.failure.clone()))
+                    .map(|item| (item.work_state, item.failure.clone()))
                     .collect::<Vec<_>>()
             );
         }
@@ -20864,7 +20865,12 @@ async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
         .results(&handle.job_id, -1, 50)
         .expect("results");
     for item in &results.items {
-        assert_eq!(item.work_state, "succeeded", "{:?}", item.failure);
+        assert_eq!(
+            item.work_state,
+            ResultState::Succeeded,
+            "{:?}",
+            item.failure
+        );
         assert!(
             item.failure
                 .as_ref()

@@ -26,8 +26,11 @@ use crate::matching::model::{Release, credit_text};
 use crate::matching::score::{ConflictKind, Support};
 use crate::matching::strings::fold;
 
-/// What happens to one file when the album takes the edition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What happens to one file when the album takes the edition. Choosing
+/// never deletes a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = EditionFileFate)]
 pub enum FileFate {
     /// The file sits on its own track of the edition.
     Keep,

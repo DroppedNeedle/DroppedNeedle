@@ -12643,7 +12643,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MembershipPreviewResponse"
+                  "$ref": "#/components/schemas/ArtistMergePreviewResponse"
                 }
               }
             }
@@ -17586,10 +17586,9 @@
           {
             "name": "eligibility",
             "in": "query",
-            "description": "`eligible`, `warning`, `blocked`, or `stale`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Eligibility"
             }
           },
           {
@@ -17627,10 +17626,17 @@
           {
             "name": "change_kind",
             "in": "query",
-            "description": "`tags`, `path`, `sidecars`, or `no_change`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "What a planned file changes, to filter by.",
+              "enum": [
+                "tags",
+                "path",
+                "sidecars",
+                "artwork",
+                "no_change"
+              ]
             }
           }
         ],
@@ -22065,10 +22071,15 @@
           {
             "name": "state",
             "in": "query",
-            "description": "`unconfirmed` (default) or `unmatched`.",
+            "description": "Default: `unconfirmed`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Which albums the unconfirmed list shows.",
+              "enum": [
+                "unconfirmed",
+                "unmatched"
+              ]
             }
           },
           {
@@ -35502,11 +35513,15 @@
             "description": "Absolute root directory."
           },
           "policy": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Effective policy (default: `automatic`)."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EffectivePolicy",
+                "description": "Effective policy (default: `automatic`)."
+              }
+            ]
           }
         }
       },
@@ -35792,6 +35807,14 @@
             "default": 6
           }
         }
+      },
+      "AggregateScope": {
+        "type": "string",
+        "description": "Which roots a scan run covers.",
+        "enum": [
+          "all",
+          "selected"
+        ]
       },
       "AlbumBasicInfo": {
         "type": "object",
@@ -36534,8 +36557,7 @@
         ],
         "properties": {
           "disposition": {
-            "type": "string",
-            "description": "`started`, `queued`, `coalesced`, `expanded` or `conflict`."
+            "$ref": "#/components/schemas/ScanDisposition"
           },
           "queued_reason": {
             "type": [
@@ -37000,6 +37022,17 @@
             "description": "User-given name."
           }
         }
+      },
+      "ApplyResult": {
+        "type": "string",
+        "description": "What Apply did with a finding.",
+        "enum": [
+          "DETACHED",
+          "MAPPINGS_ACCEPTED",
+          "EDITION_ACCEPTED",
+          "EDITION_AUTO_ACCEPTED",
+          "STALE_SUBJECT"
+        ]
       },
       "ApprovalBatchItem": {
         "type": "object",
@@ -37859,6 +37892,52 @@
           }
         }
       },
+      "ArtistMergePreviewResponse": {
+        "type": "object",
+        "description": "An artist merge preview.",
+        "required": [
+          "preview_token",
+          "surviving_artist_id",
+          "identity_conflicts",
+          "aliases",
+          "reference_counts"
+        ],
+        "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Artist ids that will point at the survivor."
+          },
+          "identity_conflicts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Competing MusicBrainz artists."
+          },
+          "preview_token": {
+            "type": "string",
+            "description": "Send this back to apply exactly this merge (valid 15 minutes)."
+          },
+          "reference_counts": {
+            "type": "object",
+            "description": "References that move to the survivor, by kind.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "surviving_artist_id": {
+            "type": "string",
+            "description": "The artist everything moves to."
+          }
+        }
+      },
       "ArtistOwnedReference": {
         "type": "object",
         "description": "An album or track the group's records are credited on.",
@@ -38636,6 +38715,14 @@
           }
         }
       },
+      "AutomaticEditionUndoOutcome": {
+        "type": "string",
+        "description": "How undoing an automatic edition ended.",
+        "enum": [
+          "restored",
+          "cleared_to_review"
+        ]
+      },
       "AutomaticEditionUndoResponse": {
         "type": "object",
         "description": "What the undo did.",
@@ -38648,8 +38735,7 @@
             "type": "string"
           },
           "outcome": {
-            "type": "string",
-            "description": "`restored` (the earlier identity is back) or `cleared_to_review`."
+            "$ref": "#/components/schemas/AutomaticEditionUndoOutcome"
           },
           "review_id": {
             "type": [
@@ -39677,7 +39763,7 @@
       },
       "CatalogCorrectionResponse": {
         "type": "object",
-        "description": "An applied correction.",
+        "description": "An applied correction, as recorded in the audit row and returned.",
         "required": [
           "kind",
           "track_ids",
@@ -39691,8 +39777,7 @@
             "format": "int64"
           },
           "kind": {
-            "type": "string",
-            "description": "`split`, `merge`, `move`, `reset` or `merge_artist`."
+            "$ref": "#/components/schemas/CorrectionKind"
           },
           "retired_artist_ids": {
             "type": "array",
@@ -40398,6 +40483,14 @@
           }
         }
       },
+      "Confidence": {
+        "type": "string",
+        "description": "How far a finding can be trusted, in the finding's `confidence`.",
+        "enum": [
+          "complete",
+          "bounded"
+        ]
+      },
       "ConnectApps": {
         "type": "object",
         "description": "Inbound Connect Apps config. Both protocols default off.",
@@ -40788,6 +40881,26 @@
           }
         }
       },
+      "ControlRequest": {
+        "type": "string",
+        "description": "A control the running worker has not acted on yet.",
+        "enum": [
+          "none",
+          "pause",
+          "stop"
+        ]
+      },
+      "CorrectionKind": {
+        "type": "string",
+        "description": "Which correction was applied.",
+        "enum": [
+          "split",
+          "merge",
+          "move",
+          "reset",
+          "merge_artist"
+        ]
+      },
       "Counters": {
         "type": "object",
         "description": "A run's counters, one per column of the runs table.",
@@ -41045,6 +41158,16 @@
             "description": "Shelves, oldest decade first."
           }
         }
+      },
+      "DecisionSource": {
+        "type": "string",
+        "description": "Who last set an identity row.",
+        "enum": [
+          "automatic",
+          "manual",
+          "legacy_import",
+          "embedded"
+        ]
       },
       "DeferredJobView": {
         "type": "object",
@@ -43680,6 +43803,16 @@
           }
         }
       },
+      "EditionChangeKind": {
+        "type": "string",
+        "description": "What happens to one album's edition.",
+        "enum": [
+          "kept",
+          "moved",
+          "cleared",
+          "remap_queued"
+        ]
+      },
       "EditionChangeView": {
         "type": "object",
         "description": "What happens to one album's edition.",
@@ -43694,8 +43827,7 @@
             "type": "string"
           },
           "change": {
-            "type": "string",
-            "description": "`kept`, `moved`, `cleared` or `remap_queued`."
+            "$ref": "#/components/schemas/EditionChangeKind"
           },
           "from_album_id": {
             "type": [
@@ -43853,6 +43985,16 @@
           }
         }
       },
+      "EditionFileFate": {
+        "type": "string",
+        "description": "What happens to one file when the album takes the edition. Choosing\nnever deletes a file.",
+        "enum": [
+          "keep",
+          "duplicate",
+          "other_version",
+          "extra"
+        ]
+      },
       "EditionKind": {
         "type": "string",
         "description": "What kind of edition the album has.",
@@ -43914,8 +44056,8 @@
             "minimum": 0
           },
           "fate": {
-            "type": "string",
-            "description": "`keep` (sits on its own edition track), `duplicate` (another copy\nof a song the edition already has a file for), `other_version`\n(the same title and artist as an edition track no file holds, but\nnot placed on it; that track still counts as missing) or `extra`\n(the edition has no track for it). Choosing never deletes a file."
+            "$ref": "#/components/schemas/EditionFileFate",
+            "description": "An `other_version` file's edition track still counts as missing."
           },
           "length_ms": {
             "type": [
@@ -44538,6 +44680,25 @@
           "any"
         ]
       },
+      "EffectivePolicy": {
+        "type": "string",
+        "description": "Effective policy for one scope or inventory row.",
+        "enum": [
+          "local_metadata",
+          "automatic",
+          "excluded"
+        ]
+      },
+      "Eligibility": {
+        "type": "string",
+        "description": "Whether a planned file will be written.",
+        "enum": [
+          "eligible",
+          "warning",
+          "blocked",
+          "stale"
+        ]
+      },
       "EmailUpdate": {
         "type": "object",
         "description": "Change email. Null or blank clears it.",
@@ -44973,6 +45134,15 @@
           "library"
         ]
       },
+      "EvidenceClass": {
+        "type": "string",
+        "description": "Per-track verdict against one candidate, ported from v2.",
+        "enum": [
+          "supported",
+          "unknown",
+          "contradictory"
+        ]
+      },
       "ExtensionCase": {
         "type": "string",
         "description": "Extension case policy.",
@@ -45370,6 +45540,116 @@
             "description": "Release years, newest first."
           }
         }
+      },
+      "FindingCode": {
+        "type": "string",
+        "description": "One album's verdict in a repair report.",
+        "enum": [
+          "valid",
+          "safe_detach",
+          "manual_identity",
+          "needs_review",
+          "unverifiable",
+          "stale",
+          "ready",
+          "mapping_ready",
+          "exact_release_required",
+          "exact_release_suggested",
+          "exact_release_auto_accepted"
+        ]
+      },
+      "FindingRow": {
+        "type": "object",
+        "description": "One stored finding with the album it is about.",
+        "required": [
+          "id",
+          "local_album_id",
+          "album_title",
+          "cover_available",
+          "finding_code",
+          "reason_code",
+          "confidence",
+          "apply_eligible",
+          "state",
+          "updated_at",
+          "row_revision"
+        ],
+        "properties": {
+          "album_artist_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "album_title": {
+            "type": "string"
+          },
+          "album_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "apply_eligible": {
+            "type": "boolean"
+          },
+          "apply_result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApplyResult"
+              }
+            ]
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "cover_available": {
+            "type": "boolean"
+          },
+          "finding_code": {
+            "$ref": "#/components/schemas/FindingCode"
+          },
+          "id": {
+            "type": "string"
+          },
+          "local_album_id": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "review_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "row_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "state": {
+            "$ref": "#/components/schemas/FindingState"
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "FindingState": {
+        "type": "string",
+        "description": "Where a finding is.",
+        "enum": [
+          "open",
+          "applied",
+          "skipped",
+          "stale"
+        ]
       },
       "FolderResolutionView": {
         "type": "object",
@@ -46964,11 +47244,15 @@
             "description": "Catalog album id, as `GET /library/albums` lists it."
           },
           "kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Job kind: `automatic`, `manual`, `historical` (default: `manual`)."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IdentifyKind",
+                "description": "Job kind (default: `manual`)."
+              }
+            ]
           }
         }
       },
@@ -46981,6 +47265,14 @@
           "succeeded",
           "failed",
           "attention"
+        ]
+      },
+      "IdentifyKind": {
+        "type": "string",
+        "enum": [
+          "automatic",
+          "manual",
+          "historical"
         ]
       },
       "IdentifyResponse": {
@@ -47008,7 +47300,7 @@
       },
       "IdentityChoiceBody": {
         "type": "string",
-        "description": "What the receiving album keeps when the combined albums name different\neditions.",
+        "description": "What the receiving album keeps when the albums being combined name\ndifferent editions.",
         "enum": [
           "detach",
           "retain_manual"
@@ -47033,8 +47325,8 @@
         ],
         "properties": {
           "decision_source": {
-            "type": "string",
-            "description": "Who decided: `automatic`, `manual`, `legacy_import`."
+            "$ref": "#/components/schemas/DecisionSource",
+            "description": "Who decided."
           },
           "release_group_mbid": {
             "type": [
@@ -50451,6 +50743,14 @@
           }
         }
       },
+      "ManageFileKind": {
+        "type": "string",
+        "description": "How one planned file is written.",
+        "enum": [
+          "same_path",
+          "move"
+        ]
+      },
       "ManageFileView": {
         "type": "object",
         "description": "One planned file inside a preview.",
@@ -50474,8 +50774,7 @@
             "description": "Destination `root/rel`."
           },
           "kind": {
-            "type": "string",
-            "description": "`same_path` or `move`."
+            "$ref": "#/components/schemas/ManageFileKind"
           },
           "source": {
             "type": "string",
@@ -50526,6 +50825,14 @@
           }
         }
       },
+      "ManageKind": {
+        "type": "string",
+        "description": "What a management preview does.",
+        "enum": [
+          "retag",
+          "organize"
+        ]
+      },
       "ManagePreviewBody": {
         "type": "object",
         "description": "Build a sealed management preview. Identity always resolves from\nthe accepted identify rows for `album_id`; tracks without an\naccepted exact mapping block the preview loudly.",
@@ -50547,8 +50854,7 @@
             "description": "Files in the bundle."
           },
           "kind": {
-            "type": "string",
-            "description": "`retag` (same-path write) or `organize` (move)."
+            "$ref": "#/components/schemas/ManageKind"
           }
         }
       },
@@ -50845,7 +51151,7 @@
       },
       "ManagementCatalogFilterBody": {
         "type": "object",
-        "description": "Catalog filter for a `filter` selection.",
+        "description": "Catalog filter for a `filter` selection; empty matches everything.",
         "properties": {
           "album_artist_only": {
             "type": "boolean"
@@ -50899,7 +51205,7 @@
       },
       "ManagementDuplicateAction": {
         "type": "string",
-        "description": "What to do with a file whose place is taken.",
+        "description": "What to do with a file whose destination is taken.",
         "enum": [
           "keep_existing",
           "keep_incoming_alternate",
@@ -51016,7 +51322,7 @@
             "type": "string"
           },
           "phase": {
-            "type": "string"
+            "$ref": "#/components/schemas/ManagementPhase"
           },
           "profile_id": {
             "type": "string"
@@ -51149,7 +51455,7 @@
             "format": "int64"
           },
           "control_request": {
-            "type": "string"
+            "$ref": "#/components/schemas/ControlRequest"
           },
           "created_at": {
             "type": "number",
@@ -51206,8 +51512,7 @@
             "type": "string"
           },
           "phase": {
-            "type": "string",
-            "description": "`planning`, `ready`, `applying`, `undoing`, or `complete`."
+            "$ref": "#/components/schemas/ManagementPhase"
           },
           "policy_revision": {
             "type": "string"
@@ -51354,6 +51659,18 @@
           }
         }
       },
+      "ManagementPhase": {
+        "type": "string",
+        "description": "Where a management job is: planning its files, a preview waiting to be\napplied, writing (applying, undoing or restoring originals), or done.\nThe worker takes a queued job in any phase but `ready` and `complete`.",
+        "enum": [
+          "planning",
+          "ready",
+          "applying",
+          "undoing",
+          "restoring",
+          "complete"
+        ]
+      },
       "ManagementPlacementCheckView": {
         "type": "object",
         "description": "What checking one library folder found.",
@@ -51484,8 +51801,7 @@
             "description": "`field_mutations` (`{name, operation, before, after}`),\n`tags_changed`, `path_changed`, `sidecars`."
           },
           "eligibility": {
-            "type": "string",
-            "description": "`eligible`, `warning`, `blocked`, or `stale`."
+            "$ref": "#/components/schemas/Eligibility"
           },
           "estimated_temporary_bytes": {
             "type": "integer",
@@ -51925,8 +52241,7 @@
             "type": "object"
           },
           "work_state": {
-            "type": "string",
-            "description": "`pending`, `running`, `succeeded`, `failed`, or `not_scheduled`."
+            "$ref": "#/components/schemas/ResultState"
           }
         }
       },
@@ -52370,6 +52685,16 @@
           }
         }
       },
+      "ManagementTakeoverCause": {
+        "type": "string",
+        "description": "Why the app stepped back from an album.",
+        "enum": [
+          "files_changed",
+          "retag_followed",
+          "run_undone",
+          "replaced_hands_off"
+        ]
+      },
       "ManagementTakeoverPage": {
         "type": "object",
         "description": "Albums DroppedNeedle stepped back from.",
@@ -52421,8 +52746,7 @@
             ]
           },
           "cause": {
-            "type": "string",
-            "description": "`files_changed`, `retag_followed`, `run_undone` or\n`replaced_hands_off`."
+            "$ref": "#/components/schemas/ManagementTakeoverCause"
           },
           "noticed_at": {
             "type": "integer",
@@ -52511,62 +52835,31 @@
         ]
       },
       "MembershipApplyBody": {
-        "type": "object",
-        "description": "A previewed membership change to apply.",
-        "required": [
-          "track_ids",
-          "preview_token"
-        ],
-        "properties": {
-          "album_artist_name": {
-            "type": [
-              "string",
-              "null"
-            ]
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MembershipPreviewBody"
           },
-          "expected_album_revisions": {
+          {
             "type": "object",
-            "additionalProperties": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          },
-          "idempotency_key": {
-            "type": [
-              "string",
-              "null"
+            "required": [
+              "preview_token"
             ],
-            "description": "Replaying a key returns the first result instead of applying twice."
-          },
-          "identity_choice": {
-            "$ref": "#/components/schemas/IdentityChoiceBody"
-          },
-          "preview_token": {
-            "type": "string",
-            "description": "The token the preview returned."
-          },
-          "target_album_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "title": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "track_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
+            "properties": {
+              "idempotency_key": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Replaying a key returns the first result instead of applying twice."
+              },
+              "preview_token": {
+                "type": "string",
+                "description": "The token the preview returned."
+              }
             }
           }
-        }
+        ],
+        "description": "A previewed membership change to apply: the previewed change and its\ntoken."
       },
       "MembershipPreviewBody": {
         "type": "object",
@@ -52622,7 +52915,7 @@
       },
       "MembershipPreviewResponse": {
         "type": "object",
-        "description": "A correction preview. Album and artist previews share this shape, as\nin v2.",
+        "description": "An album membership preview.",
         "required": [
           "preview_token",
           "source_album_ids",
@@ -52639,7 +52932,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Ids that will point at the receiving album or artist."
+            "description": "Album ids that will point at the receiving album."
           },
           "automatic_groups": {
             "type": "array",
@@ -52658,7 +52951,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Competing editions or MusicBrainz artists."
+            "description": "Competing editions."
           },
           "preview_token": {
             "type": "string",
@@ -52666,7 +52959,7 @@
           },
           "reference_counts": {
             "type": "object",
-            "description": "Artist merge: references that move to the survivor, by kind.",
+            "description": "Always empty for an album change.",
             "additionalProperties": {
               "type": "integer",
               "format": "int64"
@@ -52686,7 +52979,7 @@
               "string",
               "null"
             ],
-            "description": "The receiving album (the surviving artist for an artist merge)."
+            "description": "The receiving album."
           },
           "track_ids": {
             "type": "array",
@@ -53577,8 +53870,7 @@
         ],
         "properties": {
           "album_artist_classification": {
-            "type": "string",
-            "description": "`supported`, `unknown`, or `contradictory`."
+            "$ref": "#/components/schemas/EvidenceClass"
           },
           "album_artist_name": {
             "type": "string"
@@ -53587,8 +53879,7 @@
             "type": "string"
           },
           "album_title_classification": {
-            "type": "string",
-            "description": "`supported`, `unknown`, or `contradictory`."
+            "$ref": "#/components/schemas/EvidenceClass"
           },
           "artist_mbid": {
             "type": [
@@ -53767,8 +54058,7 @@
             ]
           },
           "classification": {
-            "type": "string",
-            "description": "`supported`, `unknown`, or `contradictory`."
+            "$ref": "#/components/schemas/EvidenceClass"
           },
           "evidence_kinds": {
             "type": "array",
@@ -53821,8 +54111,8 @@
             "format": "int64"
           },
           "control_request": {
-            "type": "string",
-            "description": "A control the worker has not acted on yet: `none`, `pause`, `stop`."
+            "$ref": "#/components/schemas/ControlRequest",
+            "description": "A control the worker has not acted on yet."
           },
           "created_at": {
             "type": "number",
@@ -53972,8 +54262,7 @@
             "description": "What the work item recorded (for a re-identification: `outcome`,\n`reason_code`, `candidate_keys`)."
           },
           "state": {
-            "type": "string",
-            "description": "`pending`, `running`, `succeeded`, `failed`, or `skipped`."
+            "$ref": "#/components/schemas/WorkState"
           }
         }
       },
@@ -56449,6 +56738,16 @@
           }
         }
       },
+      "Purpose": {
+        "type": "string",
+        "description": "What a repair job checks, in `library_repair_snapshots.purpose`\nwith v2's names.",
+        "enum": [
+          "existing_matches",
+          "management_readiness",
+          "catalog_identity_hygiene",
+          "play_history_filing"
+        ]
+      },
       "PutBackView": {
         "type": "object",
         "description": "What a put-back did not bring back.",
@@ -58817,7 +59116,6 @@
         "type": "object",
         "description": "What a removal took out of the catalog.",
         "required": [
-          "success",
           "id",
           "removed_track_ids"
         ],
@@ -58832,10 +59130,6 @@
               "type": "string"
             },
             "description": "Track ids now gone from the catalog."
-          },
-          "success": {
-            "type": "boolean",
-            "description": "Always true on a 200."
           }
         }
       },
@@ -59068,118 +59362,44 @@
         }
       },
       "RepairFindingView": {
-        "type": "object",
-        "description": "One album's finding.",
-        "required": [
-          "id",
-          "local_album_id",
-          "album_title",
-          "cover_available",
-          "finding_code",
-          "reason_code",
-          "reason",
-          "confidence",
-          "apply_eligible",
-          "state",
-          "updated_at",
-          "row_revision"
-        ],
-        "properties": {
-          "album_artist_name": {
-            "type": [
-              "string",
-              "null"
-            ]
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/FindingRow"
           },
-          "album_title": {
-            "type": "string"
-          },
-          "album_year": {
-            "type": [
-              "integer",
-              "null"
+          {
+            "type": "object",
+            "required": [
+              "reason"
             ],
-            "format": "int64"
-          },
-          "apply_eligible": {
-            "type": "boolean"
-          },
-          "apply_result": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`DETACHED`, `MAPPINGS_ACCEPTED`, `EDITION_ACCEPTED`, or\n`STALE_SUBJECT`."
-          },
-          "automatic_undo": {
-            "oneOf": [
-              {
-                "type": "null"
+            "properties": {
+              "automatic_undo": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AutomaticEditionUndoInfoView"
+                  }
+                ]
               },
-              {
-                "$ref": "#/components/schemas/AutomaticEditionUndoInfoView"
-              }
-            ]
-          },
-          "confidence": {
-            "type": "string",
-            "description": "`complete` when Apply may act on it, `bounded` otherwise."
-          },
-          "cover_available": {
-            "type": "boolean"
-          },
-          "evidence_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Always empty: v3 keeps no separate evidence rows."
-          },
-          "finding_code": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "local_album_id": {
-            "type": "string"
-          },
-          "reason": {
-            "$ref": "#/components/schemas/ReasonView",
-            "description": "What the finding means and what to do about it."
-          },
-          "reason_code": {
-            "type": "string"
-          },
-          "review_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "row_revision": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "state": {
-            "type": "string",
-            "description": "`open`, `applied`, `skipped`, or `stale`."
-          },
-          "suggested_edition": {
-            "oneOf": [
-              {
-                "type": "null"
+              "reason": {
+                "$ref": "#/components/schemas/ReasonView",
+                "description": "What the finding means and what to do about it."
               },
-              {
-                "$ref": "#/components/schemas/SuggestedEditionView"
+              "suggested_edition": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SuggestedEditionView"
+                  }
+                ]
               }
-            ]
-          },
-          "updated_at": {
-            "type": "number",
-            "format": "double"
+            }
           }
-        }
+        ],
+        "description": "One album's finding."
       },
       "RepairSummaryView": {
         "type": "object",
@@ -59272,8 +59492,7 @@
             "format": "int64"
           },
           "purpose": {
-            "type": "string",
-            "description": "`existing_matches`, `management_readiness`, or\n`catalog_identity_hygiene`."
+            "$ref": "#/components/schemas/Purpose"
           },
           "ready_album_count": {
             "type": "integer",
@@ -59640,6 +59859,15 @@
           }
         }
       },
+      "RequestedControl": {
+        "type": "string",
+        "description": "Pending control on a run, as the runs table stores it and the API\nreports it.",
+        "enum": [
+          "none",
+          "pause",
+          "stop"
+        ]
+      },
       "RequestsRefreshResponse": {
         "type": "object",
         "description": "Personal-mix refresh outcome. The schema renames to avoid discover's\nunrelated `RefreshResponse` in the shared document.",
@@ -59852,6 +60080,18 @@
           }
         }
       },
+      "ResultState": {
+        "type": "string",
+        "description": "Where one planned file's write is after apply.",
+        "enum": [
+          "pending",
+          "running",
+          "succeeded",
+          "failed",
+          "skipped",
+          "not_scheduled"
+        ]
+      },
       "RetagFileView": {
         "type": "object",
         "description": "A file a retag would rewrite to the chosen edition's tags.",
@@ -59874,7 +60114,7 @@
       },
       "RetagPairAlbumView": {
         "type": "object",
-        "description": "One album of a retag pair.",
+        "description": "One album of a retag pair, as the card shows it.",
         "required": [
           "id",
           "title",
@@ -60578,8 +60818,7 @@
             "description": "Absolute root directory."
           },
           "policy": {
-            "type": "string",
-            "description": "Effective policy: `automatic`, `local_metadata`, `excluded`."
+            "$ref": "#/components/schemas/EffectivePolicy"
           }
         }
       },
@@ -60857,7 +61096,7 @@
       },
       "ScanDisposition": {
         "type": "string",
-        "description": "How the request was taken.",
+        "description": "How `request_run` disposed of a request (v2 `ScanRequestResult`).",
         "enum": [
           "started",
           "queued",
@@ -60897,6 +61136,17 @@
           }
         }
       },
+      "ScanFileVerdict": {
+        "type": "string",
+        "description": "Classify verdict. Spelling matches v2 `comparison_result` exactly.",
+        "enum": [
+          "new",
+          "changed",
+          "unchanged",
+          "excluded",
+          "candidate_missing"
+        ]
+      },
       "ScanFileView": {
         "type": "object",
         "description": "One discovered file inside a run, with its scan-assigned track id.",
@@ -60922,7 +61172,7 @@
             "description": "Scan-assigned stable track id, once indexed."
           },
           "verdict": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanFileVerdict",
             "description": "Classify verdict."
           }
         }
@@ -60982,8 +61232,7 @@
         ],
         "properties": {
           "disposition": {
-            "type": "string",
-            "description": "Request disposition: `started`, `queued`, `coalesced`,\n`expanded`, `conflict`."
+            "$ref": "#/components/schemas/ScanDisposition"
           },
           "run_id": {
             "type": "string",
@@ -61210,8 +61459,7 @@
         ],
         "properties": {
           "aggregate_scope": {
-            "type": "string",
-            "description": "Scope label: `all` or `selected`."
+            "$ref": "#/components/schemas/AggregateScope"
           },
           "coalesced_request_count": {
             "type": "integer",
@@ -61264,8 +61512,8 @@
             "description": "Who asked for the run, when someone did."
           },
           "requested_control": {
-            "type": "string",
-            "description": "Pending control: `none`, `pause` or `stop`."
+            "$ref": "#/components/schemas/RequestedControl",
+            "description": "Pending control."
           },
           "resume_phase": {
             "oneOf": [
@@ -61330,7 +61578,7 @@
             "description": "What the terminal code means, in plain words."
           },
           "trigger": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanTrigger",
             "description": "What triggered the run."
           },
           "updated_at": {
@@ -61374,7 +61622,7 @@
         ],
         "properties": {
           "effective_policy": {
-            "type": "string",
+            "$ref": "#/components/schemas/EffectivePolicy",
             "description": "Effective policy for the scope."
           },
           "relative_path": {
@@ -61402,6 +61650,17 @@
           "cancelled",
           "superseded_policy_changed",
           "failed"
+        ]
+      },
+      "ScanTrigger": {
+        "type": "string",
+        "description": "What triggered the run.",
+        "enum": [
+          "manual",
+          "automatic",
+          "subsonic",
+          "startup_resume",
+          "policy_apply"
         ]
       },
       "ScrobbleNowPlayingRequest": {
@@ -64422,8 +64681,7 @@
         ],
         "properties": {
           "classification": {
-            "type": "string",
-            "description": "`supported`, `unknown` or `contradictory`."
+            "$ref": "#/components/schemas/EvidenceClass"
           },
           "evidence_kinds": {
             "type": "array",
@@ -66365,6 +66623,17 @@
           "maintenance",
           "library_management",
           "recovery"
+        ]
+      },
+      "WorkState": {
+        "type": "string",
+        "description": "Where one work item is.",
+        "enum": [
+          "pending",
+          "running",
+          "succeeded",
+          "failed",
+          "skipped"
         ]
       },
       "WorkUnit": {

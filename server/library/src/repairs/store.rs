@@ -1293,11 +1293,7 @@ pub fn end(
 }
 
 fn summarize(conn: &Connection, job_id: &str, snap: &RepairSnapshot) -> rusqlite::Result<Summary> {
-    let mut summary = Summary {
-        purpose: snap.purpose.as_str().to_owned(),
-        target_matcher_version: snap.target_matcher_version.clone(),
-        ..Summary::default()
-    };
+    let mut summary = Summary::new(snap.purpose, snap.target_matcher_version.clone());
     let mut stmt = conn.prepare(
         "SELECT finding_code, reason_code, COUNT(*) FROM library_identity_repair_findings \
          WHERE job_id = ?1 GROUP BY finding_code, reason_code",

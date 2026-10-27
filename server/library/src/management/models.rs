@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::reasons::ItemReason;
+use crate::jobs::{ManagementPhase, WorkState};
 use crate::operations::models::OperationJob;
 use crate::publish::planner::PlanItem;
 use droppedneedle_kernel::runtime_config::sections::{
@@ -16,8 +17,9 @@ use droppedneedle_kernel::runtime_config::sections::{
 pub const MAX_SELECTION_IDS: usize = 5_000;
 
 /// What a preview covers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = ManagementSelectionKind)]
 pub enum SelectionKind {
     Roots,
     Artists,
@@ -27,19 +29,27 @@ pub enum SelectionKind {
 }
 
 /// Catalog filter for a `filter` selection; empty matches everything.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = ManagementCatalogFilterBody)]
 pub struct CatalogFilter {
+    #[serde(default)]
     pub search: Option<String>,
+    #[serde(default)]
     pub genre: Option<String>,
+    #[serde(default)]
     pub from_year: Option<i64>,
+    #[serde(default)]
     pub to_year: Option<i64>,
+    #[serde(default)]
     pub artist_ids: Vec<String>,
+    #[serde(default)]
     pub album_artist_only: bool,
 }
 
-/// A preview's scope.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A preview's scope: library folders, artists, albums, files, or a
+/// catalog filter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = ManagementSelectionBody)]
 pub struct Selection {
     pub kind: SelectionKind,
     #[serde(default)]
@@ -123,8 +133,9 @@ impl Origin {
 }
 
 /// How a tag edit is kept.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = ManagementTagEditMode)]
 pub enum TagEditMode {
     /// Write the value and keep it as an override, so later runs keep it.
     SaveOverride,
@@ -160,8 +171,9 @@ pub struct TagEditIntent {
 }
 
 /// What to do with a file whose destination is taken.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = ManagementDuplicateAction)]
 pub enum DuplicateAction {
     /// Leave both files where they are.
     KeepExisting,
@@ -213,7 +225,7 @@ pub struct EditionPin {
 }
 
 /// Whether a planned file will be written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Eligibility {
     Eligible,
@@ -443,27 +455,67 @@ impl PlannedItem {
 }
 
 /// What a preview counted.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = ManagementSummaryView)]
 pub struct Summary {
+    #[serde(default)]
     pub selected_item_count: Option<i64>,
+    #[schema(required = true)]
+    #[serde(default)]
     pub item_count: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub bundle_count: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub eligible_count: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub warning_count: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub blocked_count: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub stale_count: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub no_change_count: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub tag_change_count: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub artwork_change_count: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub path_change_count: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub sidecar_change_count: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub estimated_temporary_bytes: i64,
+    #[schema(required = true)]
+    #[serde(default)]
     pub expanded_track_count: i64,
+    /// Files per reason code.
+    #[schema(required = true)]
+    #[serde(default)]
     pub reasons: BTreeMap<String, i64>,
+    /// Files per library folder.
+    #[schema(required = true)]
+    #[serde(default)]
     pub roots: BTreeMap<String, i64>,
+    /// Files per audio format.
+    #[schema(required = true)]
+    #[serde(default)]
     pub formats: BTreeMap<String, i64>,
+    #[schema(required = true)]
+    #[serde(default)]
     pub deferred_sources: BTreeMap<String, i64>,
+    #[schema(required = true)]
+    #[serde(default)]
     pub metadata_snapshot_ids: Vec<String>,
 }
 
@@ -517,7 +569,7 @@ pub struct JobDetail {
     pub job: OperationJob,
     pub mode: String,
     pub origin: String,
-    pub phase: String,
+    pub phase: ManagementPhase,
     pub profile_id: String,
     pub profile_name: String,
     pub profile_revision: String,
@@ -569,13 +621,36 @@ pub struct ItemFilter {
     pub change_kind: Option<String>,
 }
 
+/// Where one planned file's write is after apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultState {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Skipped,
+    /// No write was planned for it.
+    NotScheduled,
+}
+
+impl From<WorkState> for ResultState {
+    fn from(state: WorkState) -> Self {
+        match state {
+            WorkState::Pending => Self::Pending,
+            WorkState::Running => Self::Running,
+            WorkState::Succeeded => Self::Succeeded,
+            WorkState::Failed => Self::Failed,
+            WorkState::Skipped => Self::Skipped,
+        }
+    }
+}
+
 /// One file's result after apply.
 #[derive(Debug, Clone)]
 pub struct ResultItem {
     pub plan: PlannedItem,
-    /// `pending`, `running`, `succeeded`, `failed`, `skipped`, or
-    /// `not_scheduled`.
-    pub work_state: String,
+    pub work_state: ResultState,
     pub failure: Option<ItemReason>,
     pub result: serde_json::Value,
 }
@@ -594,7 +669,7 @@ pub struct HistoryItem {
     pub job: OperationJob,
     pub mode: String,
     pub origin: String,
-    pub phase: String,
+    pub phase: ManagementPhase,
     pub profile_id: String,
     pub profile_name: String,
     pub profile_revision: String,

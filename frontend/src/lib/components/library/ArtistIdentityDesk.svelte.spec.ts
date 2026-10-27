@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-import type { MembershipPreviewResponse } from '$lib/queries/library/LibraryOperationsTypes';
+import type { ArtistMergePreviewResponse } from '$lib/queries/library/LibraryOperationsTypes';
 import type {
 	ArtistDuplicateGroupDetail,
 	ArtistDuplicateGroupSummary,
@@ -102,16 +102,12 @@ const progress: ArtistReconciliationProgress = {
 	same_name_only_count: 1
 };
 
-const previewResult: MembershipPreviewResponse = {
+const previewResult: ArtistMergePreviewResponse = {
 	preview_token: 'preview-1',
-	source_album_ids: [],
-	target_album_id: null,
-	track_ids: [],
+	surviving_artist_id: 'artist-1',
 	identity_conflicts: [],
 	aliases: ['artist-2'],
-	automatic_groups: [],
-	reference_counts: detail.reference_counts,
-	edition_changes: []
+	reference_counts: detail.reference_counts
 };
 
 const h = vi.hoisted(() => ({

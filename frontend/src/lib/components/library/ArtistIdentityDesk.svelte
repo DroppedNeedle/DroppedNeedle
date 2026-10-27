@@ -20,7 +20,7 @@
 		applyArtistMerge,
 		previewArtistMerge
 	} from '$lib/queries/library/LibraryCatalogMutations.svelte';
-	import type { MembershipPreviewResponse } from '$lib/queries/library/LibraryOperationsTypes';
+	import type { ArtistMergePreviewResponse } from '$lib/queries/library/LibraryOperationsTypes';
 	import { dismissArtistDuplicateGroup } from '$lib/queries/artist-reconciliation/ArtistReconciliationMutations.svelte';
 	import {
 		getArtistDuplicateGroupQuery,
@@ -69,7 +69,7 @@
 	let providerChoice = $state<'detach' | 'retain_survivor'>('retain_survivor');
 	let confirmed = $state(false);
 	let stalePreview = $state(false);
-	let previewResult = $state<MembershipPreviewResponse | null>(null);
+	let previewResult = $state<ArtistMergePreviewResponse | null>(null);
 	let previewRequest = $state<{
 		source_artist_ids: string[];
 		surviving_artist_id: string;

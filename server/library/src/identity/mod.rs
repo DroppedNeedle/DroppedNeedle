@@ -128,7 +128,7 @@ impl From<Refusal> for IdentityError {
 pub(crate) const PROVIDER: &str = "musicbrainz";
 
 /// Who last set an identity row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionSource {
     /// Identification chose it.

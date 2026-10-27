@@ -13,6 +13,7 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use super::blocking;
 use crate::publish::PublishError;
 use crate::publish::bin_contents::{self, BinGroup, BinKind};
 use crate::recycle_bin::{self, Emptied, EmptyingState};
@@ -170,8 +171,9 @@ pub async fn list_recycle_bin(
         .map(|policy| policy.recycle_retention_days.max(0));
     let (page, bins_known) = blocking(move || {
         let sandbox = state.expiry_sandbox();
-        let page = bin_contents::page(&state.db, sandbox.as_ref(), cursor, limit as usize)?;
-        Ok((page, sandbox.is_some()))
+        bin_contents::page(&state.db, sandbox.as_ref(), cursor, limit as usize)
+            .map(|page| (page, sandbox.is_some()))
+            .map_err(publish_error)
     })
     .await?;
     let next_cursor = page.next.map(|(at, id)| format!("{at}|{id}"));
@@ -232,7 +234,7 @@ pub async fn recycle_bin_summary(
     let as_of = state.core.clock.now_ms();
     let summary = blocking(move || {
         let sandbox = state.expiry_sandbox();
-        bin_contents::summary(&state.db, sandbox.as_ref(), as_of)
+        bin_contents::summary(&state.db, sandbox.as_ref(), as_of).map_err(publish_error)
     })
     .await?;
     Ok(Json(RecycleBinSummary {
@@ -261,10 +263,8 @@ pub async fn recycle_bin_status(
     _caller: Admin,
 ) -> Result<Json<RecycleBinStatus>, ApiError> {
     let emptying = recycle_bin::state(&state).await.map_err(db_error)?;
-    let last_emptied = tokio::task::spawn_blocking(move || recycle_bin::last_emptied(&state))
-        .await
-        .map_err(ApiError::internal)?
-        .map_err(db_error)?;
+    let last_emptied =
+        blocking(move || recycle_bin::last_emptied(&state).map_err(db_error)).await?;
     Ok(Json(RecycleBinStatus {
         state: emptying,
         last_emptied,
@@ -294,18 +294,16 @@ pub async fn empty_recycle_bin(
     ValidJson(body): ValidJson<EmptyRecycleBinBody>,
 ) -> Result<(StatusCode, Json<EmptyRecycleBinView>), ApiError> {
     let actor = caller.user_id().to_owned();
-    let enqueued = tokio::task::spawn_blocking(move || {
-        recycle_bin::request_empty(&state, body.before, &actor)
+    let enqueued = blocking(move || {
+        recycle_bin::request_empty(&state, body.before, &actor).map_err(|error| {
+            if error.is_busy() {
+                ApiError::unavailable(Unavailable::ServerBusy, error)
+            } else {
+                ApiError::internal(error)
+            }
+        })
     })
-    .await
-    .map_err(ApiError::internal)?
-    .map_err(|error| {
-        if error.is_busy() {
-            ApiError::unavailable(Unavailable::ServerBusy, error)
-        } else {
-            ApiError::internal(error)
-        }
-    })?;
+    .await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(EmptyRecycleBinView {
@@ -324,17 +322,10 @@ fn db_error(error: droppedneedle_kernel::db::DbError) -> ApiError {
     }
 }
 
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, PublishError> + Send + 'static,
-) -> Result<T, ApiError> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(ApiError::internal)?
-        .map_err(|error| {
-            if error.wrote_nothing() {
-                ApiError::unavailable(Unavailable::ServerBusy, error)
-            } else {
-                ApiError::internal(error)
-            }
-        })
+fn publish_error(error: PublishError) -> ApiError {
+    if error.wrote_nothing() {
+        ApiError::unavailable(Unavailable::ServerBusy, error)
+    } else {
+        ApiError::internal(error)
+    }
 }

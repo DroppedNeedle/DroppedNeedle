@@ -11,7 +11,7 @@ function run(overrides: Partial<ScanRun> = {}): ScanRun {
 		state: 'completed',
 		phase: 'reconciling',
 		requested_by_user_id: null,
-		aggregate_scope: 'root-1',
+		aggregate_scope: 'selected',
 		queued_at: 100,
 		started_at: 110,
 		updated_at: 145,

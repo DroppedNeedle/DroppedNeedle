@@ -362,11 +362,7 @@ pub fn step(tx: &Transaction<'_>, job_id: &str, limit: usize, now: f64) -> rusql
     )?;
     let mut summary: Summary = match summary.map(|raw| serde_json::from_str(&raw)).transpose() {
         Ok(Some(summary)) => summary,
-        Ok(None) => Summary {
-            purpose: Purpose::PlayHistoryFiling.as_str().to_owned(),
-            target_matcher_version: PLAYS_VERSION.to_owned(),
-            ..Summary::default()
-        },
+        Ok(None) => Summary::new(Purpose::PlayHistoryFiling, PLAYS_VERSION.to_owned()),
         Err(error) => return Err(Unreadable::new(job_id, "summary", error).into()),
     };
 

@@ -16,10 +16,10 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use super::blocking;
 use super::error::refused;
-use super::models::snake;
 use crate::mutations::{MutationError, Mutations, RemovalKind};
-use crate::scan::models::ScanState;
+use crate::scan::models::{Disposition, ScanState};
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator};
 
@@ -164,8 +164,6 @@ fn default_true() -> bool {
 /// What a removal took out of the catalog.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RemovalResponse {
-    /// Always true on a 200.
-    pub success: bool,
     /// The removed album (canonical local id) or track id.
     pub id: String,
     /// Track ids now gone from the catalog.
@@ -177,8 +175,7 @@ pub struct RemovalResponse {
 pub struct AlbumRescanResponse {
     /// Run id (fresh or merged into a waiting run).
     pub run_id: String,
-    /// `started`, `queued`, `coalesced`, `expanded` or `conflict`.
-    pub disposition: String,
+    pub disposition: Disposition,
     /// Run state after the request.
     pub state: ScanState,
     /// Why the run waits, when it does.
@@ -225,15 +222,6 @@ impl From<MutationError> for ApiError {
     }
 }
 
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, MutationError> + Send + 'static,
-) -> Result<T, ApiError> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(ApiError::internal)?
-        .map_err(ApiError::from)
-}
-
 /// Remove an album from the library. With `delete_files` its files move
 /// into the recycle bin; nothing is deleted outright. Its pending download
 /// retries, held files and blocklist entries go, and its wanted watch
@@ -267,7 +255,6 @@ pub async fn remove_album(
     })
     .await?;
     Ok(Json(RemovalResponse {
-        success: true,
         id: removed.id,
         removed_track_ids: removed.track_ids,
     }))
@@ -302,7 +289,6 @@ pub async fn remove_track(
     let removed =
         blocking(move || mutations.remove_track_now(&track_id, query.delete_file, &actor)).await?;
     Ok(Json(RemovalResponse {
-        success: true,
         id: removed.id,
         removed_track_ids: removed.track_ids,
     }))
@@ -333,7 +319,7 @@ pub async fn rescan_album(
         StatusCode::ACCEPTED,
         Json(AlbumRescanResponse {
             run_id: result.run_id,
-            disposition: snake(&result.disposition),
+            disposition: result.disposition,
             state: result.state,
             queued_reason: result.queued_reason,
         }),

@@ -409,7 +409,7 @@ impl Management {
             selection: serde_json::from_str(&snapshot.selection_json).unwrap_or_default(),
             mode: snapshot.mode,
             origin: snapshot.origin,
-            phase: snapshot.phase.as_str().to_owned(),
+            phase: snapshot.phase,
             profile_id,
             profile_name,
             profile_revision: snapshot.profile_revision,

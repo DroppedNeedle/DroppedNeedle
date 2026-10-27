@@ -20,7 +20,7 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::error::LibraryError;
+use super::blocking;
 use super::handlers::run_view;
 use super::models::ScanRunView;
 use crate::activity::feed::LibraryActivity;
@@ -44,15 +44,6 @@ pub fn routes() -> Routes<LibraryServices> {
         .user(routes!(library_activity))
         .admin(routes!(pause_identification))
         .admin(routes!(resume_identification))
-}
-
-/// Run store-backed work on a blocking thread.
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, LibraryError> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|cause| LibraryError::internal(&cause))
 }
 
 // ---------------------------------------------------------------------------
@@ -97,40 +88,12 @@ pub struct ScanRunRequestBody {
     pub expected_policy_revision: String,
 }
 
-/// How the request was taken.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ScanDisposition {
-    /// A new run started.
-    Started,
-    /// A new run waits behind the active one.
-    Queued,
-    /// An existing run already covers it.
-    Coalesced,
-    /// A queued run grew to cover it.
-    Expanded,
-    /// A run of another kind is in the way.
-    Conflict,
-}
-
-impl From<Disposition> for ScanDisposition {
-    fn from(disposition: Disposition) -> Self {
-        match disposition {
-            Disposition::Started => Self::Started,
-            Disposition::Queued => Self::Queued,
-            Disposition::Coalesced => Self::Coalesced,
-            Disposition::Expanded => Self::Expanded,
-            Disposition::Conflict => Self::Conflict,
-        }
-    }
-}
-
 /// Answer to a scan request.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ScanRunRequestedResponse {
     /// The run that will do the work.
     pub run_id: String,
-    pub disposition: ScanDisposition,
+    pub disposition: Disposition,
     /// That run's state.
     pub state: ScanState,
     /// That run's row revision.
@@ -293,12 +256,12 @@ pub async fn request_scan_run(
             &user_id,
         )
     })
-    .await??;
+    .await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(ScanRunRequestedResponse {
             run_id: result.run_id,
-            disposition: result.disposition.into(),
+            disposition: result.disposition,
             state: result.state,
             row_revision: result.row_revision,
             queued_reason: result.queued_reason,
@@ -322,7 +285,7 @@ pub async fn current_scan_runs(
     State(state): State<Scans>,
     _caller: Admin,
 ) -> Result<Json<ScanRunCurrentResponse>, ApiError> {
-    let (active, queued) = blocking(move || state.current_scan_runs()).await??;
+    let (active, queued) = blocking(move || state.current_scan_runs()).await?;
     Ok(Json(ScanRunCurrentResponse {
         active: active.as_ref().map(run_view),
         queued: queued.as_ref().map(run_view),
@@ -352,7 +315,7 @@ pub async fn scan_run_history(
 ) -> Result<Json<ScanRunHistoryResponse>, ApiError> {
     let limit = query.limit.unwrap_or(MAX_PAGE);
     let (runs, next_cursor) =
-        blocking(move || state.scan_history_page(limit, query.cursor.as_deref())).await??;
+        blocking(move || state.scan_history_page(limit, query.cursor.as_deref())).await?;
     Ok(Json(ScanRunHistoryResponse {
         items: runs.iter().map(run_view).collect(),
         next_cursor,
@@ -384,7 +347,7 @@ pub async fn estimate_scan_run(
         .filter(|(key, _)| key == "scope_ids")
         .map(|(_, value)| value)
         .collect();
-    let (count, at) = blocking(move || state.estimate_scan(&scope_ids)).await??;
+    let (count, at) = blocking(move || state.estimate_scan(&scope_ids)).await?;
     Ok(Json(ScanEstimateResponse {
         approximate: true,
         estimated_file_count: Some(count),
@@ -417,7 +380,7 @@ pub async fn scan_run_failures(
 ) -> Result<Json<ScanRunFailuresResponse>, ApiError> {
     let limit = query.limit.unwrap_or(50).min(MAX_FAILURE_PAGE);
     let (failures, next_cursor) =
-        blocking(move || state.scan_run_failures(&id, limit, query.cursor)).await??;
+        blocking(move || state.scan_run_failures(&id, limit, query.cursor)).await?;
     Ok(Json(ScanRunFailuresResponse {
         items: failures
             .into_iter()
@@ -446,7 +409,7 @@ async fn control(
     body: ScanControlBody,
 ) -> Result<Json<ScanControlResponse>, ApiError> {
     let controlled =
-        blocking(move || state.control_scan_run(&id, control, body.expected_revision)).await??;
+        blocking(move || state.control_scan_run(&id, control, body.expected_revision)).await?;
     let run = controlled.run;
     Ok(Json(ScanControlResponse {
         state: run.state.scan_state(),
@@ -549,9 +512,7 @@ pub async fn library_activity(
     User(caller): User,
 ) -> Result<Json<LibraryActivity>, ApiError> {
     let admin = caller.is_admin();
-    Ok(Json(
-        blocking(move || state.library_activity(admin)).await??,
-    ))
+    Ok(Json(blocking(move || state.library_activity(admin)).await?))
 }
 
 async fn identification_control(
@@ -563,7 +524,7 @@ async fn identification_control(
     let answer = blocking(move || {
         state.set_identification_paused(paused, &user_id, Some(body.expected_revision))
     })
-    .await??;
+    .await?;
     Ok(Json(IdentificationControlResponse {
         state: match answer.state {
             "pausing" => IdentificationState::Pausing,

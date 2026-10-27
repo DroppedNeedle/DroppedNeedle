@@ -9864,8 +9864,7 @@ export interface components {
             id?: string | null;
             /** @description Absolute root directory. */
             path: string;
-            /** @description Effective policy (default: `automatic`). */
-            policy?: string | null;
+            policy?: null | components["schemas"]["EffectivePolicy"];
         };
         /** @description Add-tracks body. */
         AddTracksBody: {
@@ -10037,6 +10036,11 @@ export interface components {
              */
             store_prune_interval_hours: number;
         };
+        /**
+         * @description Which roots a scan run covers.
+         * @enum {string}
+         */
+        AggregateScope: "all" | "selected";
         /** @description `GET /albums/{album_id}/basic`: the album header. */
         AlbumBasicInfo: {
             /** @description Album thumbnail already cached from TheAudioDB. */
@@ -10330,8 +10334,7 @@ export interface components {
         };
         /** @description The rescan request's answer. */
         AlbumRescanResponse: {
-            /** @description `started`, `queued`, `coalesced`, `expanded` or `conflict`. */
-            disposition: string;
+            disposition: components["schemas"]["ScanDisposition"];
             /** @description Why the run waits, when it does. */
             queued_reason?: string | null;
             /** @description Run id (fresh or merged into a waiting run). */
@@ -10552,6 +10555,11 @@ export interface components {
             /** @description User-given name. */
             name: string;
         };
+        /**
+         * @description What Apply did with a finding.
+         * @enum {string}
+         */
+        ApplyResult: "DETACHED" | "MAPPINGS_ACCEPTED" | "EDITION_ACCEPTED" | "EDITION_AUTO_ACCEPTED" | "STALE_SUBJECT";
         /** @description One grouped approval card: a user's pending requests as a batch. */
         ApprovalBatchItem: {
             /** @description Pending artist count. */
@@ -10847,6 +10855,21 @@ export interface components {
             provider_choice?: components["schemas"]["ProviderChoiceBody"];
             /** @description The duplicates (the survivor may be listed too). */
             source_artist_ids: string[];
+            /** @description The artist everything moves to. */
+            surviving_artist_id: string;
+        };
+        /** @description An artist merge preview. */
+        ArtistMergePreviewResponse: {
+            /** @description Artist ids that will point at the survivor. */
+            aliases: string[];
+            /** @description Competing MusicBrainz artists. */
+            identity_conflicts: string[];
+            /** @description Send this back to apply exactly this merge (valid 15 minutes). */
+            preview_token: string;
+            /** @description References that move to the survivor, by kind. */
+            reference_counts: {
+                [key: string]: number;
+            };
             /** @description The artist everything moves to. */
             surviving_artist_id: string;
         };
@@ -11241,11 +11264,15 @@ export interface components {
             /** Format: int64 */
             expected_identity_revision: number;
         };
+        /**
+         * @description How undoing an automatic edition ended.
+         * @enum {string}
+         */
+        AutomaticEditionUndoOutcome: "restored" | "cleared_to_review";
         /** @description What the undo did. */
         AutomaticEditionUndoResponse: {
             local_album_id: string;
-            /** @description `restored` (the earlier identity is back) or `cleared_to_review`. */
-            outcome: string;
+            outcome: components["schemas"]["AutomaticEditionUndoOutcome"];
             /** @description The review the album went to, when there was no earlier identity. */
             review_id?: string | null;
         };
@@ -11788,12 +11815,11 @@ export interface components {
             /** @description How each of the album's files fits this release. */
             track_evidence: components["schemas"]["TrackEvidenceView"][];
         };
-        /** @description An applied correction. */
+        /** @description An applied correction, as recorded in the audit row and returned. */
         CatalogCorrectionResponse: {
             /** Format: int64 */
             catalog_revision: number;
-            /** @description `split`, `merge`, `move`, `reset` or `merge_artist`. */
-            kind: string;
+            kind: components["schemas"]["CorrectionKind"];
             retired_artist_ids: string[];
             source_album_ids: string[];
             surviving_artist_id?: string | null;
@@ -12077,6 +12103,11 @@ export interface components {
             /** @description Item count. */
             total: number;
         };
+        /**
+         * @description How far a finding can be trusted, in the finding's `confidence`.
+         * @enum {string}
+         */
+        Confidence: "complete" | "bounded";
         /** @description Inbound Connect Apps config. Both protocols default off. */
         ConnectApps: {
             /**
@@ -12229,6 +12260,16 @@ export interface components {
             field: string;
             message: string;
         };
+        /**
+         * @description A control the running worker has not acted on yet.
+         * @enum {string}
+         */
+        ControlRequest: "none" | "pause" | "stop";
+        /**
+         * @description Which correction was applied.
+         * @enum {string}
+         */
+        CorrectionKind: "split" | "merge" | "move" | "reset" | "merge_artist";
         /** @description A run's counters, one per column of the runs table. */
         Counters: {
             /**
@@ -12363,6 +12404,11 @@ export interface components {
             /** @description Shelves, oldest decade first. */
             items: components["schemas"]["DecadeShelf"][];
         };
+        /**
+         * @description Who last set an identity row.
+         * @enum {string}
+         */
+        DecisionSource: "automatic" | "manual" | "legacy_import" | "embedded";
         /** @description One deferred identification job, named. */
         DeferredJobView: {
             album_title: string | null;
@@ -13467,11 +13513,15 @@ export interface components {
              */
             score: number;
         };
+        /**
+         * @description What happens to one album's edition.
+         * @enum {string}
+         */
+        EditionChangeKind: "kept" | "moved" | "cleared" | "remap_queued";
         /** @description What happens to one album's edition. */
         EditionChangeView: {
             album_title: string;
-            /** @description `kept`, `moved`, `cleared` or `remap_queued`. */
-            change: string;
+            change: components["schemas"]["EditionChangeKind"];
             /** @description For a moved edition, the album it came from. */
             from_album_id?: string | null;
             local_album_id: string;
@@ -13524,6 +13574,12 @@ export interface components {
             track_count: number;
         };
         /**
+         * @description What happens to one file when the album takes the edition. Choosing
+         *     never deletes a file.
+         * @enum {string}
+         */
+        EditionFileFate: "keep" | "duplicate" | "other_version" | "extra";
+        /**
          * @description What kind of edition the album has.
          * @enum {string}
          */
@@ -13548,14 +13604,8 @@ export interface components {
             edition_disc_number?: number | null;
             /** Format: int32 */
             edition_position?: number | null;
-            /**
-             * @description `keep` (sits on its own edition track), `duplicate` (another copy
-             *     of a song the edition already has a file for), `other_version`
-             *     (the same title and artist as an edition track no file holds, but
-             *     not placed on it; that track still counts as missing) or `extra`
-             *     (the edition has no track for it). Choosing never deletes a file.
-             */
-            fate: string;
+            /** @description An `other_version` file's edition track still counts as missing. */
+            fate: components["schemas"]["EditionFileFate"];
             /**
              * Format: int64
              * @description The file's length, when the scan read it.
@@ -13844,6 +13894,16 @@ export interface components {
          * @enum {string}
          */
         EditionVersionPreference: "standard" | "deluxe" | "any";
+        /**
+         * @description Effective policy for one scope or inventory row.
+         * @enum {string}
+         */
+        EffectivePolicy: "local_metadata" | "automatic" | "excluded";
+        /**
+         * @description Whether a planned file will be written.
+         * @enum {string}
+         */
+        Eligibility: "eligible" | "warning" | "blocked" | "stale";
         /** @description Change email. Null or blank clears it. */
         EmailUpdate: {
             /** @description New email, or null to clear. */
@@ -14073,6 +14133,11 @@ export interface components {
          */
         EventsSweepScope: "followed" | "library";
         /**
+         * @description Per-track verdict against one candidate, ported from v2.
+         * @enum {string}
+         */
+        EvidenceClass: "supported" | "unknown" | "contradictory";
+        /**
          * @description Extension case policy.
          * @enum {string}
          */
@@ -14265,6 +14330,37 @@ export interface components {
             /** @description Release years, newest first. */
             years: number[];
         };
+        /**
+         * @description One album's verdict in a repair report.
+         * @enum {string}
+         */
+        FindingCode: "valid" | "safe_detach" | "manual_identity" | "needs_review" | "unverifiable" | "stale" | "ready" | "mapping_ready" | "exact_release_required" | "exact_release_suggested" | "exact_release_auto_accepted";
+        /** @description One stored finding with the album it is about. */
+        FindingRow: {
+            album_artist_name?: string | null;
+            album_title: string;
+            /** Format: int64 */
+            album_year?: number | null;
+            apply_eligible: boolean;
+            apply_result?: null | components["schemas"]["ApplyResult"];
+            confidence: components["schemas"]["Confidence"];
+            cover_available: boolean;
+            finding_code: components["schemas"]["FindingCode"];
+            id: string;
+            local_album_id: string;
+            reason_code: string;
+            review_id?: string | null;
+            /** Format: int64 */
+            row_revision: number;
+            state: components["schemas"]["FindingState"];
+            /** Format: double */
+            updated_at: number;
+        };
+        /**
+         * @description Where a finding is.
+         * @enum {string}
+         */
+        FindingState: "open" | "applied" | "skipped" | "stale";
         /** @description Navidrome folder preference resolution for the caller. */
         FolderResolutionView: {
             /** @description Folders the server currently exposes. */
@@ -14905,11 +15001,12 @@ export interface components {
         IdentifyBody: {
             /** @description Catalog album id, as `GET /library/albums` lists it. */
             album_id: string;
-            /** @description Job kind: `automatic`, `manual`, `historical` (default: `manual`). */
-            kind?: string | null;
+            kind?: null | components["schemas"]["IdentifyKind"];
         };
         /** @enum {string} */
         IdentifyJobState: "queued" | "running" | "deferred" | "succeeded" | "failed" | "attention";
+        /** @enum {string} */
+        IdentifyKind: "automatic" | "manual" | "historical";
         /** @description Enqueue answer. */
         IdentifyResponse: {
             /** @description Local album id. */
@@ -14920,8 +15017,8 @@ export interface components {
             state: components["schemas"]["IdentifyJobState"];
         };
         /**
-         * @description What the receiving album keeps when the combined albums name different
-         *     editions.
+         * @description What the receiving album keeps when the albums being combined name
+         *     different editions.
          * @enum {string}
          */
         IdentityChoiceBody: "detach" | "retain_manual";
@@ -14935,8 +15032,8 @@ export interface components {
         };
         /** @description Sealed identity after a review resolves. */
         IdentityView: {
-            /** @description Who decided: `automatic`, `manual`, `legacy_import`. */
-            decision_source: string;
+            /** @description Who decided. */
+            decision_source: components["schemas"]["DecisionSource"];
             /** @description Release-group MBID, when sealed. */
             release_group_mbid?: string | null;
             /** @description Release MBID, when an exact edition is sealed. */
@@ -16654,6 +16751,11 @@ export interface components {
             /** @description Whether cleanup finished. */
             outcome: components["schemas"]["PublishOutcome"];
         };
+        /**
+         * @description How one planned file is written.
+         * @enum {string}
+         */
+        ManageFileKind: "same_path" | "move";
         /** @description One planned file inside a preview. */
         ManageFileView: {
             /**
@@ -16665,8 +16767,7 @@ export interface components {
             changes: components["schemas"]["ManageTagChange"][];
             /** @description Destination `root/rel`. */
             dest: string;
-            /** @description `same_path` or `move`. */
-            kind: string;
+            kind: components["schemas"]["ManageFileKind"];
             /** @description Source `root/rel`. */
             source: string;
             /** @description Stable local track id. */
@@ -16700,6 +16801,11 @@ export interface components {
             root_id: string;
         };
         /**
+         * @description What a management preview does.
+         * @enum {string}
+         */
+        ManageKind: "retag" | "organize";
+        /**
          * @description Build a sealed management preview. Identity always resolves from
          *     the accepted identify rows for `album_id`; tracks without an
          *     accepted exact mapping block the preview loudly.
@@ -16709,8 +16815,7 @@ export interface components {
             album_id: string;
             /** @description Files in the bundle. */
             items: components["schemas"]["ManageItemBody"][];
-            /** @description `retag` (same-path write) or `organize` (move). */
-            kind: string;
+            kind: components["schemas"]["ManageKind"];
         };
         /** @description Sealed preview answer. The token is single-use and short-lived. */
         ManagePreviewResponse: {
@@ -16830,7 +16935,7 @@ export interface components {
             file_count: number;
             sample_paths: string[];
         };
-        /** @description Catalog filter for a `filter` selection. */
+        /** @description Catalog filter for a `filter` selection; empty matches everything. */
         ManagementCatalogFilterBody: {
             album_artist_only?: boolean;
             artist_ids?: string[];
@@ -16847,7 +16952,7 @@ export interface components {
             expected_operation_row_revision: number;
         };
         /**
-         * @description What to do with a file whose place is taken.
+         * @description What to do with a file whose destination is taken.
          * @enum {string}
          */
         ManagementDuplicateAction: "keep_existing" | "keep_incoming_alternate" | "recycle_existing_keep_incoming" | "recycle_incoming_keep_existing";
@@ -16881,7 +16986,7 @@ export interface components {
             mode: string;
             operation: components["schemas"]["OperationView"];
             origin: string;
-            phase: string;
+            phase: components["schemas"]["ManagementPhase"];
             profile_id: string;
             profile_name: string;
             profile_revision: string;
@@ -16933,7 +17038,7 @@ export interface components {
             catalog_revision: number;
             /** Format: int64 */
             completed_count: number;
-            control_request: string;
+            control_request: components["schemas"]["ControlRequest"];
             /** Format: double */
             created_at: number;
             /** Format: int64 */
@@ -16957,8 +17062,7 @@ export interface components {
              */
             operation_row_revision: number;
             origin: string;
-            /** @description `planning`, `ready`, `applying`, `undoing`, or `complete`. */
-            phase: string;
+            phase: components["schemas"]["ManagementPhase"];
             policy_revision: string;
             profile_id: string;
             profile_name: string;
@@ -17008,6 +17112,13 @@ export interface components {
             /** @description The library folder it is in. */
             root_path: string;
         };
+        /**
+         * @description Where a management job is: planning its files, a preview waiting to be
+         *     applied, writing (applying, undoing or restoring originals), or done.
+         *     The worker takes a queued job in any phase but `ready` and `complete`.
+         * @enum {string}
+         */
+        ManagementPhase: "planning" | "ready" | "applying" | "undoing" | "restoring" | "complete";
         /** @description What checking one library folder found. */
         ManagementPlacementCheckView: {
             /**
@@ -17058,8 +17169,7 @@ export interface components {
              *     `tags_changed`, `path_changed`, `sidecars`.
              */
             diff: Record<string, never>;
-            /** @description `eligible`, `warning`, `blocked`, or `stale`. */
-            eligibility: string;
+            eligibility: components["schemas"]["Eligibility"];
             /** Format: int64 */
             estimated_temporary_bytes: number;
             local_album_id?: string | null;
@@ -17212,8 +17322,7 @@ export interface components {
             journal_states: string[];
             plan: components["schemas"]["ManagementPlanItemView"];
             result: Record<string, never>;
-            /** @description `pending`, `running`, `succeeded`, `failed`, or `not_scheduled`. */
-            work_state: string;
+            work_state: components["schemas"]["ResultState"];
         };
         /** @description One page of results. */
         ManagementResultPage: {
@@ -17362,6 +17471,11 @@ export interface components {
             /** Format: int64 */
             track_revision: number;
         };
+        /**
+         * @description Why the app stepped back from an album.
+         * @enum {string}
+         */
+        ManagementTakeoverCause: "files_changed" | "retag_followed" | "run_undone" | "replaced_hands_off";
         /** @description Albums DroppedNeedle stepped back from. */
         ManagementTakeoverPage: {
             /**
@@ -17382,11 +17496,7 @@ export interface components {
             album_id: string;
             album_title: string;
             artist_name?: string | null;
-            /**
-             * @description `files_changed`, `retag_followed`, `run_undone` or
-             *     `replaced_hands_off`.
-             */
-            cause: string;
+            cause: components["schemas"]["ManagementTakeoverCause"];
             /**
              * Format: int64
              * @description When it stepped back, unix milliseconds.
@@ -17425,20 +17535,15 @@ export interface components {
          * @enum {string}
          */
         MbSourceMode: "official" | "mirror" | "community" | "brainzmash";
-        /** @description A previewed membership change to apply. */
-        MembershipApplyBody: {
-            album_artist_name?: string | null;
-            expected_album_revisions?: {
-                [key: string]: number;
-            };
+        /**
+         * @description A previewed membership change to apply: the previewed change and its
+         *     token.
+         */
+        MembershipApplyBody: components["schemas"]["MembershipPreviewBody"] & {
             /** @description Replaying a key returns the first result instead of applying twice. */
             idempotency_key?: string | null;
-            identity_choice?: components["schemas"]["IdentityChoiceBody"];
             /** @description The token the preview returned. */
             preview_token: string;
-            target_album_id?: string | null;
-            title?: string | null;
-            track_ids: string[];
         };
         /** @description A membership change to preview. */
         MembershipPreviewBody: {
@@ -17466,25 +17571,22 @@ export interface components {
              */
             track_ids: string[];
         };
-        /**
-         * @description A correction preview. Album and artist previews share this shape, as
-         *     in v2.
-         */
+        /** @description An album membership preview. */
         MembershipPreviewResponse: {
-            /** @description Ids that will point at the receiving album or artist. */
+            /** @description Album ids that will point at the receiving album. */
             aliases: string[];
             automatic_groups: components["schemas"]["AutomaticGroupView"][];
             edition_changes: components["schemas"]["EditionChangeView"][];
-            /** @description Competing editions or MusicBrainz artists. */
+            /** @description Competing editions. */
             identity_conflicts: string[];
             /** @description Send this back to apply exactly this change (valid 15 minutes). */
             preview_token: string;
-            /** @description Artist merge: references that move to the survivor, by kind. */
+            /** @description Always empty for an album change. */
             reference_counts: {
                 [key: string]: number;
             };
             source_album_ids: string[];
-            /** @description The receiving album (the surviving artist for an artist merge). */
+            /** @description The receiving album. */
             target_album_id?: string | null;
             track_ids: string[];
         };
@@ -17981,12 +18083,10 @@ export interface components {
         };
         /** @description The evidence behind one candidate release. */
         OperationCandidateEvidenceView: {
-            /** @description `supported`, `unknown`, or `contradictory`. */
-            album_artist_classification: string;
+            album_artist_classification: components["schemas"]["EvidenceClass"];
             album_artist_name: string;
             album_title: string;
-            /** @description `supported`, `unknown`, or `contradictory`. */
-            album_title_classification: string;
+            album_title_classification: components["schemas"]["EvidenceClass"];
             artist_mbid?: string | null;
             /**
              * Format: double
@@ -18049,8 +18149,7 @@ export interface components {
             /** Format: int32 */
             candidate_track_position?: number | null;
             candidate_track_title?: string | null;
-            /** @description `supported`, `unknown`, or `contradictory`. */
-            classification: string;
+            classification: components["schemas"]["EvidenceClass"];
             /**
              * @description What ties the file to the release track (`embedded_id`, `acoustid`,
              *     `title_position_length`, or `track_id_elsewhere`: the recording ID,
@@ -18066,8 +18165,8 @@ export interface components {
         OperationView: {
             /** Format: int64 */
             completed_count: number;
-            /** @description A control the worker has not acted on yet: `none`, `pause`, `stop`. */
-            control_request: string;
+            /** @description A control the worker has not acted on yet. */
+            control_request: components["schemas"]["ControlRequest"];
             /** Format: double */
             created_at: number;
             /** Format: int64 */
@@ -18119,8 +18218,7 @@ export interface components {
              *     `reason_code`, `candidate_keys`).
              */
             result: Record<string, never>;
-            /** @description `pending`, `running`, `succeeded`, `failed`, or `skipped`. */
-            state: string;
+            state: components["schemas"]["WorkState"];
         };
         Option: null | {
             [key: string]: "degraded" | "error";
@@ -19315,6 +19413,12 @@ export interface components {
             /** @description Mail-order stores. */
             physical: components["schemas"]["PurchaseLink"][];
         };
+        /**
+         * @description What a repair job checks, in `library_repair_snapshots.purpose`
+         *     with v2's names.
+         * @enum {string}
+         */
+        Purpose: "existing_matches" | "management_readiness" | "catalog_identity_hygiene" | "play_history_filing";
         /** @description What a put-back did not bring back. */
         PutBackView: {
             /**
@@ -20306,8 +20410,6 @@ export interface components {
             id: string;
             /** @description Track ids now gone from the catalog. */
             removed_track_ids: string[];
-            /** @description Always true on a 200. */
-            success: boolean;
         };
         /** @description Extra files to move to the recycle bin. */
         RemoveExtrasBody: {
@@ -20389,37 +20491,11 @@ export interface components {
             refresh_required: boolean;
         };
         /** @description One album's finding. */
-        RepairFindingView: {
-            album_artist_name?: string | null;
-            album_title: string;
-            /** Format: int64 */
-            album_year?: number | null;
-            apply_eligible: boolean;
-            /**
-             * @description `DETACHED`, `MAPPINGS_ACCEPTED`, `EDITION_ACCEPTED`, or
-             *     `STALE_SUBJECT`.
-             */
-            apply_result?: string | null;
+        RepairFindingView: components["schemas"]["FindingRow"] & {
             automatic_undo?: null | components["schemas"]["AutomaticEditionUndoInfoView"];
-            /** @description `complete` when Apply may act on it, `bounded` otherwise. */
-            confidence: string;
-            cover_available: boolean;
-            /** @description Always empty: v3 keeps no separate evidence rows. */
-            evidence_id?: string | null;
-            finding_code: string;
-            id: string;
-            local_album_id: string;
             /** @description What the finding means and what to do about it. */
             reason: components["schemas"]["ReasonView"];
-            reason_code: string;
-            review_id?: string | null;
-            /** Format: int64 */
-            row_revision: number;
-            /** @description `open`, `applied`, `skipped`, or `stale`. */
-            state: string;
             suggested_edition?: null | components["schemas"]["SuggestedEditionView"];
-            /** Format: double */
-            updated_at: number;
         };
         /** @description What a finished check found. */
         RepairSummaryView: {
@@ -20453,11 +20529,7 @@ export interface components {
             playable_after_detach_track_count: number;
             /** Format: int64 */
             provider_deferred_count: number;
-            /**
-             * @description `existing_matches`, `management_readiness`, or
-             *     `catalog_identity_hygiene`.
-             */
-            purpose: string;
+            purpose: components["schemas"]["Purpose"];
             /** Format: int64 */
             ready_album_count: number;
             /** Format: int64 */
@@ -20648,6 +20720,12 @@ export interface components {
             title?: string | null;
         };
         /**
+         * @description Pending control on a run, as the runs table stores it and the API
+         *     reports it.
+         * @enum {string}
+         */
+        RequestedControl: "none" | "pause" | "stop";
+        /**
          * @description Personal-mix refresh outcome. The schema renames to avoid discover's
          *     unrelated `RefreshResponse` in the shared document.
          */
@@ -20747,13 +20825,18 @@ export interface components {
             /** @description True when an offline restore of this backup should succeed. */
             restorable: boolean;
         };
+        /**
+         * @description Where one planned file's write is after apply.
+         * @enum {string}
+         */
+        ResultState: "pending" | "running" | "succeeded" | "failed" | "skipped" | "not_scheduled";
         /** @description A file a retag would rewrite to the chosen edition's tags. */
         RetagFileView: {
             rel_path: string;
             root_id: string;
             track_id: string;
         };
-        /** @description One album of a retag pair. */
+        /** @description One album of a retag pair, as the card shows it. */
         RetagPairAlbumView: {
             album_artist_name: string;
             edition?: null | components["schemas"]["RetagPairEditionView"];
@@ -21072,8 +21155,7 @@ export interface components {
             id: string;
             /** @description Absolute root directory. */
             path: string;
-            /** @description Effective policy: `automatic`, `local_metadata`, `excluded`. */
-            policy: string;
+            policy: components["schemas"]["EffectivePolicy"];
         };
         /** @description Root registry listing. */
         RootsResponse: {
@@ -21212,7 +21294,7 @@ export interface components {
             stream_revision: number;
         };
         /**
-         * @description How the request was taken.
+         * @description How `request_run` disposed of a request (v2 `ScanRequestResult`).
          * @enum {string}
          */
         ScanDisposition: "started" | "queued" | "coalesced" | "expanded" | "conflict";
@@ -21228,6 +21310,11 @@ export interface components {
             /** Format: int64 */
             estimated_file_count: number | null;
         };
+        /**
+         * @description Classify verdict. Spelling matches v2 `comparison_result` exactly.
+         * @enum {string}
+         */
+        ScanFileVerdict: "new" | "changed" | "unchanged" | "excluded" | "candidate_missing";
         /** @description One discovered file inside a run, with its scan-assigned track id. */
         ScanFileView: {
             /** @description Path relative to the root. */
@@ -21237,7 +21324,7 @@ export interface components {
             /** @description Scan-assigned stable track id, once indexed. */
             track_id?: string | null;
             /** @description Classify verdict. */
-            verdict: string;
+            verdict: components["schemas"]["ScanFileVerdict"];
         };
         /**
          * @description Automatic-scan cadence values.
@@ -21263,11 +21350,7 @@ export interface components {
         ScanPhase: "queued" | "discovering" | "indexing" | "reconciling";
         /** @description Scan request answer. */
         ScanResponse: {
-            /**
-             * @description Request disposition: `started`, `queued`, `coalesced`,
-             *     `expanded`, `conflict`.
-             */
-            disposition: string;
+            disposition: components["schemas"]["ScanDisposition"];
             /** @description Run id (fresh or coalesced). */
             run_id: string;
             /** @description Run state after the request. */
@@ -21343,8 +21426,7 @@ export interface components {
         };
         /** @description One scan run. */
         ScanRunView: {
-            /** @description Scope label: `all` or `selected`. */
-            aggregate_scope: string;
+            aggregate_scope: components["schemas"]["AggregateScope"];
             /**
              * Format: int64
              * @description Requests folded into this run.
@@ -21374,8 +21456,8 @@ export interface components {
             queued_at: number;
             /** @description Who asked for the run, when someone did. */
             requested_by_user_id?: string | null;
-            /** @description Pending control: `none`, `pause` or `stop`. */
-            requested_control: string;
+            /** @description Pending control. */
+            requested_control: components["schemas"]["RequestedControl"];
             resume_phase?: null | components["schemas"]["ScanPhase"];
             /**
              * Format: int64
@@ -21400,7 +21482,7 @@ export interface components {
             /** @description What the terminal code means, in plain words. */
             terminal_message?: string | null;
             /** @description What triggered the run. */
-            trigger: string;
+            trigger: components["schemas"]["ScanTrigger"];
             /**
              * Format: double
              * @description Last update time.
@@ -21417,7 +21499,7 @@ export interface components {
         /** @description One scope inside a run. */
         ScanScopeView: {
             /** @description Effective policy for the scope. */
-            effective_policy: string;
+            effective_policy: components["schemas"]["EffectivePolicy"];
             /** @description Path relative to the root. */
             relative_path: string;
             /** @description Root id. */
@@ -21428,6 +21510,11 @@ export interface components {
          * @enum {string}
          */
         ScanState: "queued" | "discovering" | "indexing" | "reconciling" | "pausing" | "paused" | "stopping" | "completed" | "cancelled" | "superseded_policy_changed" | "failed";
+        /**
+         * @description What triggered the run.
+         * @enum {string}
+         */
+        ScanTrigger: "manual" | "automatic" | "subsonic" | "startup_resume" | "policy_apply";
         /** @description One native now-playing forward, by name (v2 `NowPlayingRequest` fields). */
         ScrobbleNowPlayingRequest: {
             /** @description Album title. */
@@ -22720,8 +22807,7 @@ export interface components {
         };
         /** @description How one file fits a candidate release. */
         TrackEvidenceView: {
-            /** @description `supported`, `unknown` or `contradictory`. */
-            classification: string;
+            classification: components["schemas"]["EvidenceClass"];
             /** @description What the verdict rests on (`recording_id`, `title`, `length`, ...). */
             evidence_kinds: string[];
             local_track_id: string;
@@ -23511,6 +23597,11 @@ export interface components {
          * @enum {string}
          */
         WorkKind: "scan" | "identification" | "identity_preparation" | "reidentification" | "identity_review" | "maintenance" | "library_management" | "recovery";
+        /**
+         * @description Where one work item is.
+         * @enum {string}
+         */
+        WorkState: "pending" | "running" | "succeeded" | "failed" | "skipped";
         /**
          * @description What a work entry counts.
          * @enum {string}
@@ -32557,7 +32648,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MembershipPreviewResponse"];
+                    "application/json": components["schemas"]["ArtistMergePreviewResponse"];
                 };
             };
             /** @description No duplicate chosen, or a reserved artist would be merged away */
@@ -36070,14 +36161,12 @@ export interface operations {
                 after_ordinal?: number;
                 /** @description Files per page, 1 to 200 (default 100). */
                 limit?: number;
-                /** @description `eligible`, `warning`, `blocked`, or `stale`. */
-                eligibility?: string;
+                eligibility?: components["schemas"]["Eligibility"];
                 reason_code?: string;
                 root_id?: string;
                 album_id?: string;
                 audio_format?: string;
-                /** @description `tags`, `path`, `sidecars`, or `no_change`. */
-                change_kind?: string;
+                change_kind?: "tags" | "path" | "sidecars" | "artwork" | "no_change";
             };
             header?: never;
             path: {
@@ -39237,8 +39326,8 @@ export interface operations {
     list_unconfirmed: {
         parameters: {
             query?: {
-                /** @description `unconfirmed` (default) or `unmatched`. */
-                state?: string;
+                /** @description Default: `unconfirmed`. */
+                state?: "unconfirmed" | "unmatched";
                 limit?: number;
                 offset?: number;
             };

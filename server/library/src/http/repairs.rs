@@ -1,6 +1,6 @@
 //! Identity repair, identity preparation and scan diagnostics routes, at
 //! v2's paths under `/api/v3/library`. Every route is admin-only, as in
-//! v2. Store work runs on `spawn_blocking`.
+//! v2. Store work runs on a blocking thread.
 
 use std::collections::BTreeMap;
 
@@ -17,12 +17,11 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use super::operations::{
-    OperationControlBody, OperationView, ReasonView, blocking, detail_view, job_view,
-};
+use super::blocking;
+use super::operations::{OperationControlBody, OperationView, ReasonView, detail_view, job_view};
 use crate::operations::models::{Control, OperationJob};
 use crate::repairs::models::{
-    FindingRow, FindingState, MANAGEMENT_MAPPING_VERSION, Purpose, REPAIR_TARGET_VERSION, Summary,
+    FindingRow, FindingState, MANAGEMENT_MAPPING_VERSION, Purpose, REPAIR_TARGET_VERSION,
 };
 use crate::repairs::reasons;
 use crate::repairs::service::{RepairDetail, Repairs};
@@ -51,56 +50,6 @@ pub fn routes() -> Routes<LibraryServices> {
 // ---------------------------------------------------------------------------
 // DTOs.
 // ---------------------------------------------------------------------------
-
-/// What a finished check found.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct RepairSummaryView {
-    /// Albums checked.
-    pub total_identities: i64,
-    pub remaining_identities: i64,
-    pub input_track_count: i64,
-    pub playable_after_detach_track_count: i64,
-    /// Albums Apply would change.
-    pub estimated_apply_changes: i64,
-    pub catalog_snapshot_revision: i64,
-    pub target_matcher_version: String,
-    pub counts_by_finding: BTreeMap<String, i64>,
-    pub counts_by_reason: BTreeMap<String, i64>,
-    pub album_counts_by_root: BTreeMap<String, i64>,
-    pub provider_deferred_count: i64,
-    pub failed_evidence_count: i64,
-    /// `existing_matches`, `management_readiness`, or
-    /// `catalog_identity_hygiene`.
-    pub purpose: String,
-    pub ready_album_count: i64,
-    pub mapping_candidate_count: i64,
-    pub exact_release_required_count: i64,
-    pub needs_review_count: i64,
-}
-
-impl From<Summary> for RepairSummaryView {
-    fn from(s: Summary) -> Self {
-        Self {
-            total_identities: s.total_identities,
-            remaining_identities: s.remaining_identities,
-            input_track_count: s.input_track_count,
-            playable_after_detach_track_count: s.playable_after_detach_track_count,
-            estimated_apply_changes: s.estimated_apply_changes,
-            catalog_snapshot_revision: s.catalog_snapshot_revision,
-            target_matcher_version: s.target_matcher_version,
-            counts_by_finding: s.counts_by_finding,
-            counts_by_reason: s.counts_by_reason,
-            album_counts_by_root: s.album_counts_by_root,
-            provider_deferred_count: s.provider_deferred_count,
-            failed_evidence_count: s.failed_evidence_count,
-            purpose: s.purpose,
-            ready_album_count: s.ready_album_count,
-            mapping_candidate_count: s.mapping_candidate_count,
-            exact_release_required_count: s.exact_release_required_count,
-            needs_review_count: s.needs_review_count,
-        }
-    }
-}
 
 /// One page of repair or preparation jobs, newest first.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -213,31 +162,12 @@ pub struct AutomaticEditionUndoInfoView {
 /// One album's finding.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RepairFindingView {
-    pub id: String,
-    pub local_album_id: String,
-    pub album_title: String,
-    pub album_artist_name: Option<String>,
-    pub album_year: Option<i64>,
-    pub cover_available: bool,
-    /// Always empty: v3 keeps no separate evidence rows.
-    pub evidence_id: Option<String>,
-    pub review_id: Option<String>,
-    pub finding_code: String,
-    pub reason_code: String,
+    #[serde(flatten)]
+    pub finding: FindingRow,
     /// What the finding means and what to do about it.
     pub reason: ReasonView,
-    /// `complete` when Apply may act on it, `bounded` otherwise.
-    pub confidence: String,
-    pub apply_eligible: bool,
-    /// `open`, `applied`, `skipped`, or `stale`.
-    pub state: String,
-    /// `DETACHED`, `MAPPINGS_ACCEPTED`, `EDITION_ACCEPTED`, or
-    /// `STALE_SUBJECT`.
-    pub apply_result: Option<String>,
     pub suggested_edition: Option<SuggestedEditionView>,
     pub automatic_undo: Option<AutomaticEditionUndoInfoView>,
-    pub updated_at: f64,
-    pub row_revision: i64,
 }
 
 /// One page of findings.
@@ -276,37 +206,23 @@ fn finding_view(row: FindingRow) -> RepairFindingView {
                 auto_gate: summary.auto_gate,
             }
         });
+    let automatic_undo = row
+        .automatic_undo
+        .map(|(album, identity)| AutomaticEditionUndoInfoView {
+            expected_album_revision: album,
+            expected_identity_revision: identity,
+        });
     RepairFindingView {
-        id: row.id,
-        local_album_id: row.local_album_id,
-        album_title: row.album_title,
-        album_artist_name: row.album_artist_name,
-        album_year: row.album_year,
-        cover_available: row.cover_available,
-        evidence_id: None,
-        review_id: row.review_id,
-        finding_code: row.finding_code.as_str().to_owned(),
-        reason_code: row.reason_code,
         reason: reason.into(),
-        confidence: row.confidence,
-        apply_eligible: row.apply_eligible,
-        state: row.state.as_str().to_owned(),
-        apply_result: row.apply_result.map(|result| result.as_str().to_owned()),
         suggested_edition,
-        automatic_undo: row
-            .automatic_undo
-            .map(|(album, identity)| AutomaticEditionUndoInfoView {
-                expected_album_revision: album,
-                expected_identity_revision: identity,
-            }),
-        updated_at: row.updated_at,
-        row_revision: row.row_revision,
+        automatic_undo,
+        finding: row,
     }
 }
 
 fn repair_view(detail: &RepairDetail) -> OperationView {
     OperationView {
-        repair_summary: detail.summary.clone().map(Into::into),
+        repair_summary: detail.summary.clone(),
         ..detail_view(&detail.detail)
     }
 }
@@ -836,16 +752,14 @@ pub async fn scan_diagnostics(
 ) -> Result<Response, ApiError> {
     // One pooled read; a database too busy to hand out a connection
     // answers the server-busy 503.
-    let exported = tokio::task::spawn_blocking(move || repairs.scan_diagnostics(&run_id))
-        .await
-        .map_err(ApiError::internal)?;
-    let (filename, bytes) = match exported {
-        Ok(report) => report.map_err(ApiError::from)?,
+    let (filename, bytes) = blocking(move || match repairs.scan_diagnostics(&run_id) {
+        Ok(report) => report.map_err(ApiError::from),
         Err(error @ (DbError::Busy { .. } | DbError::LaneClosed)) => {
-            return Err(ApiError::unavailable(Unavailable::ServerBusy, error));
+            Err(ApiError::unavailable(Unavailable::ServerBusy, error))
         }
-        Err(error) => return Err(ApiError::internal(error)),
-    };
+        Err(error) => Err(ApiError::internal(error)),
+    })
+    .await?;
     let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
         .unwrap_or_else(|_| HeaderValue::from_static("attachment"));
     Ok((

@@ -146,11 +146,7 @@ pub fn undo_automatic_edition(
     };
     Ok(UndoOutcome {
         local_album_id: album_id.to_owned(),
-        outcome: match outcome {
-            AutomaticUndone::Restored => "restored",
-            AutomaticUndone::ClearedToReview => "cleared_to_review",
-        }
-        .to_owned(),
+        outcome,
         review_id,
     })
 }

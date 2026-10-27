@@ -19,13 +19,13 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
-use super::error::LibraryError;
+use super::blocking;
 use super::models::{
     ApproveBody, CandidateView, IdentityView, PenaltyView, ReasonCount, ReviewBulkPreviewResponse,
     ReviewBulkResponse, ReviewResolveResponse, ReviewRetryAllResponse, ReviewRetryBody, ReviewView,
-    ReviewsResponse, SkippedReviews, TrackEvidenceView, snake,
+    ReviewsResponse, SkippedReviews, TrackEvidenceView,
 };
-use super::operations::{OperationView, blocking, job_view};
+use super::operations::{OperationView, job_view};
 use crate::identify::models::{AlbumIdentity, CandidateEvidence};
 use crate::operations::models::OperationError;
 use crate::operations::reasons::{self, review_reason};
@@ -133,7 +133,7 @@ fn evidence_view(row: &ReviewRow, candidate: &CandidateEvidence) -> Vec<TrackEvi
                 .find(|(id, _)| *id == evidence.local_track_id)
                 .map(|(_, title)| title.clone())
                 .unwrap_or_default(),
-            classification: snake(&evidence.classification),
+            classification: evidence.classification,
             evidence_kinds: evidence.evidence_kinds.clone(),
         })
         .collect()
@@ -171,7 +171,7 @@ fn identity_view(identity: &AlbumIdentity) -> IdentityView {
     IdentityView {
         release_mbid: identity.release_mbid.clone(),
         release_group_mbid: identity.release_group_mbid.clone(),
-        decision_source: snake(&identity.decision_source),
+        decision_source: identity.decision_source,
     }
 }
 
@@ -325,12 +325,8 @@ pub async fn approve_review(
     }
     let user_id = caller.user_id().to_owned();
     let review_id = id.clone();
-    let (_, identity) = tokio::task::spawn_blocking(move || {
-        service.approve_review(&review_id, &user_id, &body.candidate_key)
-    })
-    .await
-    .map_err(|cause| LibraryError::internal(&cause))?
-    .map_err(LibraryError::from)?;
+    let (_, identity) =
+        blocking(move || service.approve_review(&review_id, &user_id, &body.candidate_key)).await?;
     Ok(Json(ReviewResolveResponse {
         review: settled(ops, id).await?,
         identity: identity.as_ref().map(identity_view),
@@ -359,10 +355,7 @@ pub async fn reject_review(
 ) -> Result<Json<ReviewResolveResponse>, ApiError> {
     let user_id = caller.user_id().to_owned();
     let review_id = id.clone();
-    tokio::task::spawn_blocking(move || service.reject_review(&review_id, &user_id))
-        .await
-        .map_err(|cause| LibraryError::internal(&cause))?
-        .map_err(LibraryError::from)?;
+    blocking(move || service.reject_review(&review_id, &user_id)).await?;
     Ok(Json(ReviewResolveResponse {
         review: settled(ops, id).await?,
         identity: None,

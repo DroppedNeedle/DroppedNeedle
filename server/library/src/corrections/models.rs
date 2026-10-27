@@ -34,8 +34,9 @@ impl MembershipKind {
 
 /// What the receiving album keeps when the albums being combined name
 /// different editions.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = IdentityChoiceBody)]
 pub enum IdentityChoice {
     /// Drop every competing edition; the album is identified again.
     #[default]
@@ -46,8 +47,9 @@ pub enum IdentityChoice {
 
 /// What the surviving artist keeps when the merged artists name different
 /// MusicBrainz artists.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = ProviderChoiceBody)]
 pub enum ProviderChoice {
     /// The survivor loses its MusicBrainz link.
     Detach,
@@ -96,7 +98,7 @@ pub struct AlbumGroup {
 }
 
 /// What happens to one album's edition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EditionChangeKind {
     Kept,
@@ -181,26 +183,71 @@ pub struct ApplyMeta {
     pub actor: String,
 }
 
+/// Which correction was applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrectionKind {
+    Split,
+    Merge,
+    Move,
+    Reset,
+    MergeArtist,
+}
+
+impl From<MembershipKind> for CorrectionKind {
+    fn from(kind: MembershipKind) -> Self {
+        match kind {
+            MembershipKind::Split => Self::Split,
+            MembershipKind::Merge => Self::Merge,
+            MembershipKind::Move => Self::Move,
+            MembershipKind::Reset => Self::Reset,
+        }
+    }
+}
+
 /// An applied correction, as recorded in the audit row and returned.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+// A recorded `kind` outside `CorrectionKind` does not read: its replay
+// fails as an unreadable row.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = CatalogCorrectionResponse)]
 pub struct Applied {
-    pub kind: String,
+    pub kind: CorrectionKind,
     #[serde(default)]
+    #[schema(required = true)]
     pub track_ids: Vec<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub source_album_ids: Vec<String>,
     #[serde(default)]
     pub target_album_id: Option<String>,
     #[serde(default)]
     pub surviving_artist_id: Option<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub retired_artist_ids: Vec<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub catalog_revision: i64,
 }
 
+impl Applied {
+    /// A correction of `kind` with nothing recorded yet.
+    pub fn new(kind: CorrectionKind) -> Self {
+        Self {
+            kind,
+            track_ids: Vec::new(),
+            source_album_ids: Vec::new(),
+            target_album_id: None,
+            surviving_artist_id: None,
+            retired_artist_ids: Vec::new(),
+            catalog_revision: 0,
+        }
+    }
+}
+
 /// One album of a retag pair, as the card shows it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = RetagPairAlbumView)]
 pub struct PairSide {
     pub id: String,
     pub title: String,
@@ -208,52 +255,63 @@ pub struct PairSide {
     /// Indexed tracks.
     pub track_count: i64,
     pub edition: Option<PairEdition>,
-    /// The edition's revision, 0 for none. A join sends it back.
+    /// The edition's revision, 0 for none. Send it back with a join.
     pub identity_revision: i64,
 }
 
 /// An album's edition on a retag pair.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = RetagPairEditionView)]
 pub struct PairEdition {
     pub release_group_mbid: String,
     pub release_mbid: Option<String>,
     /// Chosen by a person or carried over from v2.
     pub chosen: bool,
-    /// A custom edition is active on it.
+    /// A custom edition is active. It does not carry over a join.
     pub custom: bool,
 }
 
-/// Why the scan left a pair for a person.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why the scan left a retag pair for a person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = RetagPairReasonView)]
 pub enum PairReason {
     /// Each album holds a different edition a person chose.
     ChosenMatchesDiffer,
-    /// The album was split against a rename.
+    /// The album was split against a rename: the old album's edition
+    /// goes to the named album only.
     TracksElsewhere,
-    /// The old album holds a custom edition.
+    /// The old album holds a custom edition, which does not carry over.
     CustomEdition,
-    /// New files appeared beside a hands-off album in the scan that saw
-    /// its files go.
+    /// The old album was left unmanaged, kept as a custom edition or
+    /// stepped back from, and lost its files in the scan in which the new
+    /// album's files appeared beside it. Nothing shows they are one
+    /// album, so the new album is left alone until "Manage it again".
     ReplacedHandsOff,
 }
 
-/// Two album rows the scan would not join, waiting for a person.
-#[derive(Debug, Clone)]
+/// Two album rows that look like one retagged album, which the scan would
+/// not join by itself.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = RetagPairView)]
 pub struct RetagPair {
+    /// The row the files left. It holds the favorites, plays and links.
     pub old_album: PairSide,
-    /// The album the files sit on now, or the album it was merged into
-    /// since.
+    /// The row the files sit on now, or the album it was merged into
+    /// since. A join keeps this one.
     pub new_album: PairSide,
     pub reason: PairReason,
     /// Two different chosen editions remain once a custom edition on the
-    /// old album is left out: a join must say which one to keep.
+    /// old album is left out: the join must name the one to keep.
     pub editions_differ: bool,
-    /// Milliseconds.
+    /// When the scan recorded the pair (Unix milliseconds).
     pub recorded_at: i64,
 }
 
-/// The open pairs, newest first, and how many there are.
-#[derive(Debug, Clone, Default)]
+/// The open retag pairs, newest first (at most 100), and how many there
+/// are.
+#[derive(Debug, Clone, Default, Serialize, utoipa::ToSchema)]
+#[schema(as = RetagPairListResponse)]
 pub struct RetagPairList {
     pub pairs: Vec<RetagPair>,
     pub total: i64,

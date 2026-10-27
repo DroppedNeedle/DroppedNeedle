@@ -38,9 +38,10 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use super::blocking;
 use super::error::refused;
 use super::models::PenaltyView;
-use super::operations::{ReasonView, blocking};
+use super::operations::ReasonView;
 use crate::identify::models::CandidateEvidence;
 use crate::jobs::{ManagementPhase, OperationState};
 use crate::management::automatic::AutomaticWrites;
@@ -253,12 +254,8 @@ pub struct EditionPlanFileView {
     pub track_number: u32,
     /// The file's length, when the scan read it.
     pub length_ms: Option<u64>,
-    /// `keep` (sits on its own edition track), `duplicate` (another copy
-    /// of a song the edition already has a file for), `other_version`
-    /// (the same title and artist as an edition track no file holds, but
-    /// not placed on it; that track still counts as missing) or `extra`
-    /// (the edition has no track for it). Choosing never deletes a file.
-    pub fate: String,
+    /// An `other_version` file's edition track still counts as missing.
+    pub fate: FileFate,
     /// The edition track the file keeps, duplicates or is another version
     /// of.
     pub edition_disc_number: Option<u32>,
@@ -397,7 +394,7 @@ impl From<PlanReading> for EditionPlanView {
                     disc_number: file.disc,
                     track_number: file.track,
                     length_ms: file.length_ms,
-                    fate: file.fate.as_str().to_owned(),
+                    fate: file.fate,
                     edition_disc_number: file.edition_track.map(|(disc, _)| disc),
                     edition_position: file.edition_track.map(|(_, position)| position),
                     note: file.note.map(ReasonView::from),
@@ -407,12 +404,23 @@ impl From<PlanReading> for EditionPlanView {
     }
 }
 
+/// Which albums the unconfirmed list shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WaitingState {
+    /// Matched by a guess nobody confirmed.
+    Unconfirmed,
+    /// Not matched at all.
+    Unmatched,
+}
+
 /// Paging for the unconfirmed list.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct UnconfirmedQuery {
-    /// `unconfirmed` (default) or `unmatched`.
-    pub state: Option<String>,
+    /// Default: `unconfirmed`.
+    #[param(inline)]
+    pub state: Option<WaitingState>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
@@ -896,15 +904,7 @@ pub async fn list_unconfirmed(
     _caller: User,
     ValidQuery(query): ValidQuery<UnconfirmedQuery>,
 ) -> Result<Json<WaitingAlbumsResponse>, ApiError> {
-    let unmatched = match query.state.as_deref() {
-        None | Some("unconfirmed") => false,
-        Some("unmatched") => true,
-        Some(_) => {
-            return Err(ApiError::invalid_input(
-                "state must be unconfirmed or unmatched",
-            ));
-        }
-    };
+    let unmatched = query.state == Some(WaitingState::Unmatched);
     let limit = query.limit.unwrap_or(50).clamp(1, PAGE_MAX);
     let offset = query.offset.unwrap_or(0);
     let (items, total) = blocking(move || ops.waiting_albums(unmatched, limit, offset)).await?;
@@ -1119,7 +1119,7 @@ impl From<EditionTagsJob> for EditionTagsJobView {
     fn from(found: EditionTagsJob) -> Self {
         let detail = found.detail;
         let job = &detail.job;
-        let step = match (job.state, ManagementPhase::parse(&detail.phase)) {
+        let step = match (job.state, Some(detail.phase)) {
             (OperationState::Succeeded, _) => EditionTagsStep::Done,
             (OperationState::Failed | OperationState::Cancelled | OperationState::Stopped, _) => {
                 EditionTagsStep::Failed
