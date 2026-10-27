@@ -3,8 +3,8 @@
 //! honours, and both the ignore and the deck surviving a restart.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::{
@@ -14,12 +14,15 @@ use axum::{
 };
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_catalog::reads::discover::adapters::queue::LiveQueue;
+use droppedneedle_catalog::reads::discover::adapters::queue::build::{
+    BuildContext, resolve_release_groups,
+};
 use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
     QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
 };
 use droppedneedle_catalog::reads::discover::adapters::queue::store::QueueDb;
+use droppedneedle_catalog::reads::discover::adapters::queue::{LiveQueue, QueueSettings};
 use droppedneedle_catalog::reads::discover::fakes::{
     FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeRadio, FakeYouTube,
 };
@@ -28,7 +31,7 @@ use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_kernel::clock::{ManualClock, SystemClock};
 use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
-use droppedneedle_providers::{ProviderError, Providers};
+use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -44,10 +47,12 @@ fn group(n: u8) -> String {
 /// ListenBrainz answers for one linked user: one seed artist, one similar
 /// artist with five albums, and five trending albums. Everything else is
 /// empty. MusicBrainz release group reads fail while `musicbrainz_down`
-/// is set.
+/// is set. While `release_lookups_stall_at` names a release, release
+/// lookups answer `group(9)` and never answer for that release.
 #[derive(Default)]
 struct Scripted {
     musicbrainz_down: AtomicBool,
+    release_lookups_stall_at: Mutex<Option<String>>,
 }
 
 fn ok<T: Send + 'static>(value: T) -> BoxFuture<'static, SourceResult<T>> {
@@ -246,10 +251,15 @@ impl QueueSources for Scripted {
     }
     fn musicbrainz_release_group_of<'a>(
         &'a self,
-        _r: &'a str,
+        release: &'a str,
         _p: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<String>>> {
-        ok(None)
+        let stall_at = self.release_lookups_stall_at.lock().unwrap().clone();
+        match stall_at {
+            Some(at) if at == release => Box::pin(std::future::pending()),
+            Some(_) => ok(Some(group(9))),
+            None => ok(None),
+        }
     }
     fn musicbrainz_release_group<'a>(
         &'a self,
@@ -522,4 +532,38 @@ async fn a_card_built_during_an_outage_is_not_kept() {
     sources.musicbrainz_down.store(false, Ordering::SeqCst);
     let card = queue.enrich("user-1", &group(1)).await.unwrap();
     assert_eq!(card.tags, ["shoegaze"], "the card fills in once it answers");
+}
+
+/// Release-group answers are remembered one by one: a lookup that never
+/// returns gets the resolution cut off by its caller's bound, and the
+/// answer made before it is kept for the next build.
+#[tokio::test]
+async fn release_group_answers_made_before_a_stalled_lookup_are_kept() {
+    let dir = crate::common::ScratchDir::new("discover-queue-resolve");
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+    let db = QueueDb::new(runtime.db().clone());
+    let sources = Scripted::default();
+    *sources.release_lookups_stall_at.lock().unwrap() = Some(group(2));
+    let settings = QueueSettings::from_advanced(&AdvancedSettings::default());
+    let ctx = BuildContext {
+        sources: &sources,
+        db: &db,
+        settings: &settings,
+        priority: RequestPriority::BackgroundSync,
+    };
+
+    let cut = tokio::time::timeout(
+        Duration::from_millis(500),
+        resolve_release_groups(&ctx, &[group(1), group(2)]),
+    )
+    .await;
+    assert!(cut.is_err(), "the stalled lookup holds the resolution up");
+
+    let known = db.resolutions(&[group(1), group(2)]).await.unwrap();
+    assert_eq!(
+        known.get(&group(1)),
+        Some(&Some(group(9))),
+        "made before the stall"
+    );
+    assert!(!known.contains_key(&group(2)), "never answered");
 }

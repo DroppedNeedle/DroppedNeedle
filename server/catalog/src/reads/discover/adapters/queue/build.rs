@@ -769,8 +769,9 @@ async fn lastfm_cards(
 
 /// Match Last.fm album ids to release groups: remembered answers first,
 /// then at most `lastfm_mbid_max_lookups` MusicBrainz lookups, whose
-/// answers (misses included) are remembered. An id that is not a release
-/// is tried as a release group itself.
+/// answers (misses included) are remembered one by one as they come, so
+/// a caller's time bound cutting the lookups off keeps the ones made. An
+/// id that is not a release is tried as a release group itself.
 pub async fn resolve_release_groups(
     ctx: &BuildContext<'_>,
     release_mbids: &[String],
@@ -799,7 +800,6 @@ pub async fn resolve_release_groups(
             None => pending.push(release),
         }
     }
-    let mut answers = Vec::new();
     for release in pending
         .into_iter()
         .take(ctx.settings.lastfm_mbid_max_lookups)
@@ -833,9 +833,8 @@ pub async fn resolve_release_groups(
         if let Some(group) = &group {
             resolved.insert(release.clone(), group.clone());
         }
-        answers.push((release, group));
+        ctx.db.save_resolutions(vec![(release, group)]).await;
     }
-    ctx.db.save_resolutions(answers).await;
     resolved
 }
 
