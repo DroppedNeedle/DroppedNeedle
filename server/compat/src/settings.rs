@@ -5,10 +5,7 @@
 //! `security_settings` and the stated public addresses in
 //! `public_address`. [`LiveSettings`] resolves them on every
 //! request, so a change in Settings takes effect at once instead of at the
-//! next restart. Tests pin fixed values with `From<Settings>` and
-//! `From<JellyfinSettings>`.
-
-use std::sync::Arc;
+//! next restart.
 
 use crate::jellyfin::seams::JellyfinSettings;
 use crate::subsonic::Settings;
@@ -18,108 +15,28 @@ use droppedneedle_kernel::runtime_config::sections::{
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 
-/// Where the compat settings come from.
-pub trait SettingsSource: Send + Sync {
-    /// Subsonic settings for one request.
-    fn subsonic(&self) -> Settings;
-    /// Jellyfin settings for one request.
-    fn jellyfin(&self) -> JellyfinSettings;
-    /// The addresses the admin stated under Settings > Security.
-    fn public_addresses(&self) -> Vec<Origin>;
-}
-
-/// Shared handle to the settings source.
+/// Live handles on the sections compat reads.
 #[derive(Clone)]
-pub struct LiveSettings(Arc<dyn SettingsSource>);
-
-impl LiveSettings {
-    /// Settings read through live handles on `config` on every call.
-    /// `can_transcode` is whether the stream engine was built with an
-    /// ffmpeg.
-    pub fn from_config(config: &ConfigStore, can_transcode: bool) -> Self {
-        Self(Arc::new(ConfigSettings {
-            connect_apps: config.live(),
-            security: config.live(),
-            public_address: config.live(),
-            ffmpeg_available: can_transcode,
-        }))
-    }
-
-    /// Fixed settings for both protocols.
-    pub fn fixed(subsonic: Settings, jellyfin: JellyfinSettings) -> Self {
-        Self(Arc::new(Fixed {
-            subsonic,
-            jellyfin,
-            public_addresses: Vec::new(),
-        }))
-    }
-
-    /// These settings, fixed as they are now, with `addresses` as the
-    /// stated public addresses.
-    pub fn with_public_addresses(&self, addresses: Vec<Origin>) -> Self {
-        Self(Arc::new(Fixed {
-            subsonic: self.subsonic(),
-            jellyfin: self.jellyfin(),
-            public_addresses: addresses,
-        }))
-    }
-
-    /// Subsonic settings now.
-    pub fn subsonic(&self) -> Settings {
-        self.0.subsonic()
-    }
-
-    /// Jellyfin settings now.
-    pub fn jellyfin(&self) -> JellyfinSettings {
-        self.0.jellyfin()
-    }
-
-    /// The stated public addresses now.
-    pub fn public_addresses(&self) -> Vec<Origin> {
-        self.0.public_addresses()
-    }
-}
-
-impl From<Settings> for LiveSettings {
-    fn from(subsonic: Settings) -> Self {
-        Self::fixed(subsonic, JellyfinSettings::default())
-    }
-}
-
-impl From<JellyfinSettings> for LiveSettings {
-    fn from(jellyfin: JellyfinSettings) -> Self {
-        Self::fixed(Settings::default(), jellyfin)
-    }
-}
-
-struct Fixed {
-    subsonic: Settings,
-    jellyfin: JellyfinSettings,
-    public_addresses: Vec<Origin>,
-}
-
-impl SettingsSource for Fixed {
-    fn subsonic(&self) -> Settings {
-        self.subsonic.clone()
-    }
-
-    fn jellyfin(&self) -> JellyfinSettings {
-        self.jellyfin.clone()
-    }
-
-    fn public_addresses(&self) -> Vec<Origin> {
-        self.public_addresses.clone()
-    }
-}
-
-struct ConfigSettings {
+pub struct LiveSettings {
     connect_apps: Live<ConnectApps>,
     security: Live<SecuritySettings>,
     public_address: Live<PublicAddress>,
     ffmpeg_available: bool,
 }
 
-impl ConfigSettings {
+impl LiveSettings {
+    /// Settings read through live handles on `config` on every call.
+    /// `can_transcode` is whether the stream engine was built with an
+    /// ffmpeg.
+    pub fn from_config(config: &ConfigStore, can_transcode: bool) -> Self {
+        Self {
+            connect_apps: config.live(),
+            security: config.live(),
+            public_address: config.live(),
+            ffmpeg_available: can_transcode,
+        }
+    }
+
     /// The section, or the defaults (both protocols off) when it cannot
     /// be read: a broken config must never open the compat APIs.
     fn section(&self) -> ConnectApps {
@@ -131,9 +48,7 @@ impl ConfigSettings {
             |section| ConnectApps::clone(&section),
         )
     }
-}
 
-impl ConfigSettings {
     /// Who may download library files. Admins only when the setting cannot
     /// be read: a broken config must never widen a permission.
     fn download_access(&self) -> DownloadAccess {
@@ -145,17 +60,9 @@ impl ConfigSettings {
             }
         }
     }
-}
 
-fn output_format(format: AudioFormat) -> String {
-    match format {
-        AudioFormat::Opus => "opus".to_owned(),
-        AudioFormat::Mp3 | AudioFormat::Flac => "mp3".to_owned(),
-    }
-}
-
-impl SettingsSource for ConfigSettings {
-    fn subsonic(&self) -> Settings {
+    /// Subsonic settings now.
+    pub fn subsonic(&self) -> Settings {
         let apps = self.section();
         Settings {
             enabled: apps.subsonic_enabled,
@@ -169,7 +76,8 @@ impl SettingsSource for ConfigSettings {
         }
     }
 
-    fn jellyfin(&self) -> JellyfinSettings {
+    /// Jellyfin settings now.
+    pub fn jellyfin(&self) -> JellyfinSettings {
         let apps = self.section();
         JellyfinSettings {
             enabled: apps.jellyfin_enabled,
@@ -183,9 +91,9 @@ impl SettingsSource for ConfigSettings {
         }
     }
 
-    /// Empty when the list cannot be read: then every app gets the address
-    /// it used, as with no list.
-    fn public_addresses(&self) -> Vec<Origin> {
+    /// The stated public addresses now. Empty when the list cannot be
+    /// read: then every app gets the address it used, as with no list.
+    pub fn public_addresses(&self) -> Vec<Origin> {
         match self.public_address.get() {
             Ok(section) => section.stated(),
             Err(error) => {
@@ -193,6 +101,13 @@ impl SettingsSource for ConfigSettings {
                 Vec::new()
             }
         }
+    }
+}
+
+fn output_format(format: AudioFormat) -> String {
+    match format {
+        AudioFormat::Opus => "opus".to_owned(),
+        AudioFormat::Mp3 | AudioFormat::Flac => "mp3".to_owned(),
     }
 }
 

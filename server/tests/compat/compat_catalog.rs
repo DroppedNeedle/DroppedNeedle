@@ -20,13 +20,14 @@ use droppedneedle_compat::adapters::jellyfin_library::{CatalogIds, JellyfinLibra
 use droppedneedle_compat::adapters::library::CompatLibrary;
 use droppedneedle_compat::adapters::playback::CompatPlayback;
 use droppedneedle_compat::jellyfin::builders::LIBRARY_INTERNAL_ID;
-use droppedneedle_compat::jellyfin::seams::JellyfinSettings;
 use droppedneedle_compat::jellyfin::{JellyfinState, routes};
+use droppedneedle_compat::settings::LiveSettings;
 use droppedneedle_compat::shared::address::ListenerConfig;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::db::{DbRuntime, Lane};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::sections::ConnectApps;
 use droppedneedle_library::wiring::LibrarySetup;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -741,16 +742,22 @@ fn jellyfin_router(rig: &Rig, ids: &JellyfinIds) -> axum::Router {
         &acquire,
     );
     let library = CompatLibrary::from_reads(&rig.reads);
+    rig.platform
+        .settings
+        .save_blocking(ConnectApps {
+            jellyfin_enabled: true,
+            ..ConnectApps::default()
+        })
+        .expect("connect apps save");
+    let engine = media.stream.engine.clone();
+    let settings = LiveSettings::from_config(&rig.platform.settings, engine.can_transcode());
     routes(JellyfinState::new(
         rig.auth.compat_passwords(),
         JellyfinLibrary::new(library.clone()),
-        GatewayAudio::new(media.stream.engine.clone()),
+        GatewayAudio::new(engine),
         CompatPlayback::new(media.playback.clone()),
         CatalogIds::new(ids.clone(), library.catalog.clone()),
-        JellyfinSettings {
-            enabled: true,
-            ..JellyfinSettings::default()
-        },
+        settings,
         ListenerConfig {
             port: 8096,
             trusted_proxies: TrustedProxies::default(),

@@ -72,7 +72,7 @@ impl JellyfinState {
         engine: CompatAudio,
         sessions: CompatPlayback,
         ids: CatalogIds,
-        settings: impl Into<LiveSettings>,
+        settings: LiveSettings,
         listener: ListenerConfig,
     ) -> Self {
         Self {
@@ -81,7 +81,7 @@ impl JellyfinState {
             engine,
             sessions,
             ids,
-            settings: settings.into(),
+            settings,
             server_id: server_id(),
             listener,
         }

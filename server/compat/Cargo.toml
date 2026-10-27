@@ -30,7 +30,8 @@ tracing.workspace = true
 uuid.workspace = true
 
 [features]
-# Fakes, memory stores and test constructors for the test suites above.
+# The schema test's statement list, and the lower crates' test helpers,
+# for the test suites above.
 test-support = [
     "droppedneedle-kernel/test-support",
     "droppedneedle-providers/test-support",

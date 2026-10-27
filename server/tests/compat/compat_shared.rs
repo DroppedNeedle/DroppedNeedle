@@ -6,14 +6,13 @@
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::Request;
-use droppedneedle_compat::jellyfin::JellyfinSettings;
 use droppedneedle_compat::settings::LiveSettings;
 use droppedneedle_compat::shared::address::{ListenerConfig, base_address};
 use droppedneedle_compat::shared::{auth, ratelimit, redact};
 use droppedneedle_compat::subsonic::picture::{PURPOSE, PictureKind, PictureSigner};
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::runtime_config::Crypto;
-use droppedneedle_kernel::runtime_config::origin::Origin;
+use droppedneedle_kernel::runtime_config::sections::PublicAddress;
 
 /// One Subsonic endpoint skips auth, in any case and with `.view`. The
 /// Jellyfin public routes are walked through the app in
@@ -166,6 +165,9 @@ fn base_address_for_player_apps() {
         base_path: "",
         expected: "http://music.lan:8688",
     };
+    let dir = crate::common::ScratchDir::new("base-address");
+    let store = crate::common::config_store(&dir);
+    let settings = LiveSettings::from_config(&store, false);
     let cases = [
         Case {
             name: "trusted proxy",
@@ -221,13 +223,11 @@ fn base_address_for_player_apps() {
             trusted_proxies: TrustedProxies::default(),
             base_path: case.base_path.to_owned(),
         };
-        let stated = case
-            .stated
-            .iter()
-            .map(|entry| Origin::from_stated(entry).expect("stated address"))
-            .collect();
-        let settings =
-            LiveSettings::from(JellyfinSettings::default()).with_public_addresses(stated);
+        store
+            .save_blocking(PublicAddress {
+                origins: case.stated.iter().map(|&entry| entry.to_owned()).collect(),
+            })
+            .expect("stated addresses save");
         assert_eq!(
             base_address(&request, &listener, &settings).as_deref(),
             Some(case.expected),

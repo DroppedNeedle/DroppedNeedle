@@ -101,16 +101,7 @@ pub async fn cors_layer(request: Request, next: Next) -> Response {
     response
 }
 
-/// Token → user lookup for limit labeling.
-pub trait LabelLookup: Send + Sync {
-    /// User id for a token, or `None` when unknown or the store fails.
-    fn user_for_token<'a>(
-        &'a self,
-        token: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, Option<String>>;
-}
-
-/// [`LabelLookup`] over the app-password store.
+/// Token → user lookup over the app-password store, for limit labeling.
 #[derive(Clone)]
 pub struct StoreLabels {
     passwords: ProdCompatPasswords,
@@ -121,21 +112,15 @@ impl StoreLabels {
     pub fn new(passwords: ProdCompatPasswords) -> Self {
         Self { passwords }
     }
-}
 
-impl LabelLookup for StoreLabels {
-    fn user_for_token<'a>(
-        &'a self,
-        token: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, Option<String>> {
-        Box::pin(async move {
-            self.passwords
-                .user_for_token(token)
-                .await
-                .ok()
-                .flatten()
-                .map(|user| user.id)
-        })
+    /// User id for a token, or `None` when unknown or the store fails.
+    pub async fn user_for_token(&self, token: &str) -> Option<String> {
+        self.passwords
+            .user_for_token(token)
+            .await
+            .ok()
+            .flatten()
+            .map(|user| user.id)
     }
 }
 
@@ -149,7 +134,7 @@ pub struct CompatLimits {
     /// Clock origin for bucket timestamps.
     pub started: Arc<Instant>,
     /// Token → user lookup for Jellyfin principal buckets.
-    pub labels: Arc<dyn LabelLookup>,
+    pub labels: StoreLabels,
     /// Server name/version for Subsonic limit envelopes, read per request.
     pub settings: LiveSettings,
     /// Peers whose `X-Forwarded-For` names the client; loopback by default.
@@ -158,12 +143,12 @@ pub struct CompatLimits {
 
 impl CompatLimits {
     /// Wrap the buckets, the label lookup, and the settings.
-    pub fn new(labels: Arc<dyn LabelLookup>, settings: impl Into<LiveSettings>) -> Self {
+    pub fn new(labels: StoreLabels, settings: LiveSettings) -> Self {
         Self {
             limits: Arc::new(Mutex::new(ratelimit::CompatRateLimits::new())),
             started: Arc::new(Instant::now()),
             labels,
-            settings: settings.into(),
+            settings,
             trusted_proxies: TrustedProxies::default(),
         }
     }
@@ -456,7 +441,7 @@ impl SubsonicState {
         verifier: SubsonicVerifier,
         store: SubsonicStore,
         audio: CompatAudio,
-        settings: impl Into<LiveSettings>,
+        settings: LiveSettings,
         limits: Arc<Mutex<ratelimit::CompatRateLimits>>,
         started: Arc<Instant>,
         listener: ListenerConfig,
@@ -466,7 +451,7 @@ impl SubsonicState {
             verifier,
             store,
             audio,
-            settings: settings.into(),
+            settings,
             limits,
             started,
             listener,

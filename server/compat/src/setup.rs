@@ -137,7 +137,7 @@ impl CompatSetup {
         let verifier = SubsonicVerifier::new(passwords.clone(), deps.users);
         // Rate limits key the client behind these proxies (`TRUSTED_PROXY_IPS`).
         let limits = CompatLimits::new(
-            Arc::new(crate::http::StoreLabels::new(passwords)),
+            crate::http::StoreLabels::new(passwords),
             deps.settings.clone(),
         )
         .with_trusted_proxies(deps.listener.trusted_proxies.clone());

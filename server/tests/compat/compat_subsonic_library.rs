@@ -1771,11 +1771,9 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     use droppedneedle_catalog::reads::collections::db::CollectionsDb;
     use droppedneedle_catalog::reads::library::store::LocalCatalog;
     use droppedneedle_compat::CompatSetup;
-    use droppedneedle_compat::jellyfin::JellyfinSettings;
-    use droppedneedle_compat::settings::LiveSettings;
     use droppedneedle_compat::setup::CompatDeps;
-    use droppedneedle_compat::subsonic::Settings;
     use droppedneedle_kernel::db::{DbConfig, LaneLimits, open_runtime};
+    use droppedneedle_kernel::runtime_config::sections::ConnectApps;
     use tower::ServiceExt as _;
 
     const SECRET: &str = "alice-app-secret";
@@ -1815,23 +1813,21 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     );
     let media =
         crate::common::bundles::media_at(&platform, auth.deps.clone(), &library, &reads, &acquire);
-    let mut deps = CompatDeps::over_reads(
+    platform
+        .settings
+        .save_blocking(ConnectApps {
+            subsonic_enabled: true,
+            jellyfin_enabled: true,
+            ..ConnectApps::default()
+        })
+        .expect("connect apps save");
+    let deps = CompatDeps::over_reads(
         &platform,
         auth.deps.clone(),
         media.playback.clone(),
         media.stream.engine.clone(),
         library.scans.clone(),
         &reads,
-    );
-    deps.settings = LiveSettings::fixed(
-        Settings {
-            enabled: true,
-            ..Settings::default()
-        },
-        JellyfinSettings {
-            enabled: true,
-            ..JellyfinSettings::default()
-        },
     );
     let compat = CompatSetup::build(deps);
     compat
