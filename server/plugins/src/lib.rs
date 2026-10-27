@@ -17,6 +17,8 @@
 //! - [`capabilities`]: typed calls per capability, with their budgets and
 //!   fallbacks.
 //! - [`ticks`]: `scheduler` loops and plugin state on the jobs store.
+//! - [`ext`]: the gateway to a plugin's own HTTP routes.
+//! - [`panel`]: a plugin's settings panel page.
 //! - [`handlers`], [`models`], [`error`]: the HTTP routes.
 //! - [`wiring`]: the `AppState` bundle.
 
@@ -25,11 +27,13 @@
 
 pub mod capabilities;
 pub mod error;
+pub mod ext;
 pub mod handlers;
 pub mod host;
 pub mod install;
 pub mod manifest;
 pub mod models;
+pub mod panel;
 pub mod process;
 pub mod protocol;
 pub mod runtime;

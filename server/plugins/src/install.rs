@@ -342,6 +342,21 @@ impl InstallRecord {
             })
             .ok()
     }
+
+    /// The reference an update fetches. A reference the admin asked for
+    /// wins; otherwise releases move to the newest release, branches to
+    /// their tip, and tags and commits stay on the installed commit. `None`
+    /// means the repository's default (latest release or default branch).
+    pub fn update_reference(&self, asked: Option<&str>) -> Option<String> {
+        let asked = asked.map(str::trim).filter(|reference| !reference.is_empty());
+        match (asked, self.ref_kind) {
+            (Some(reference), _) => Some(reference.to_owned()),
+            (None, PluginRefKind::Release) => None,
+            (None, PluginRefKind::Branch) if self.reference == "HEAD" => None,
+            (None, PluginRefKind::Branch) => Some(self.reference.clone()),
+            (None, PluginRefKind::Tag | PluginRefKind::Commit) => Some(self.commit.clone()),
+        }
+    }
 }
 
 /// A repository plus the version to install, before resolving to a commit.

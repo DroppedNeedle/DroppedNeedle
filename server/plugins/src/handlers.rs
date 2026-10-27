@@ -8,37 +8,34 @@
 //! blocking pool; dispatches and ticks stay on the async runtime.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
 
 use axum::{
     Json,
-    body::Body,
     extract::{FromRef, Path, Request, State},
-    http::{StatusCode, header},
-    response::{IntoResponse, Response},
+    http::{HeaderMap, StatusCode, header},
+    response::Response,
 };
 
-use droppedneedle_auth::{Admin, Principal, User};
+use droppedneedle_auth::{Admin, User};
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 
-use super::capabilities::routes::ROUTE_BODY_MAX_BYTES;
 use super::error::{PluginError, SourceFault};
+pub use super::ext::ExtRateLimiter;
 use super::host::{PluginHost, UninstallError, UpdateError};
 use super::install::{
     ArchiveFetcher, InstallError, StagedPlugin, TRUST_WARNING, parse_source, resolve, stage,
 };
-use super::manifest::{Capability, RouteAuth};
 use super::models::{
     PluginInfo, PluginInstallInfo, PluginInstallPreview, PluginInstallRequest, PluginListResponse,
-    PluginRefKind, PluginRuntimeInfo, PluginSettingFieldInfo, PluginSourceUpdateRequest,
+    PluginRuntimeInfo, PluginSettingFieldInfo, PluginSourceUpdateRequest,
     PluginSourceUpdateResponse, PluginSourcesResponse, PluginUpdateRequest, StatusMessage,
 };
-use super::runtime::PluginRouteBody;
 use super::ticks::PluginTickLoops;
+use super::{ext, panel};
 
 /// Plugin-route dependencies.
 #[derive(Clone)]
@@ -333,21 +330,7 @@ pub async fn update_plugin_from_source(
         .host
         .install_record(&name)
         .ok_or_else(|| map_install(InstallError::NoSource))?;
-    let asked = body
-        .reference
-        .as_deref()
-        .map(str::trim)
-        .filter(|reference| !reference.is_empty());
-    let reference = match (asked, record.ref_kind) {
-        (Some(reference), _) => Some(reference.to_owned()),
-        // Releases move to the newest release.
-        (None, PluginRefKind::Release) => None,
-        // Branches move to their tip.
-        (None, PluginRefKind::Branch) if record.reference == "HEAD" => None,
-        (None, PluginRefKind::Branch) => Some(record.reference.clone()),
-        // Tags and commits stay pinned.
-        (None, PluginRefKind::Tag | PluginRefKind::Commit) => Some(record.commit.clone()),
-    };
+    let reference = record.update_reference(body.reference.as_deref());
     let url = format!("https://github.com/{}", record.repository);
     let staged = stage_request(&deps, &url, reference.as_deref()).await?;
     if staged.manifest.name != name {
@@ -481,192 +464,6 @@ pub async fn list_plugin_sources(
 // Guarded plugin HTTP under /ext/
 // ---------------------------------------------------------------------------
 
-/// One pacing bucket: (plugin, caller, method, subpath).
-type ExtRateKey = (String, String, String, String);
-
-/// Per-route request pacing: one sliding minute window per key, capped so
-/// the map cannot grow without bound.
-#[derive(Debug, Default)]
-pub struct ExtRateLimiter {
-    hits: Mutex<HashMap<ExtRateKey, Vec<Instant>>>,
-}
-
-impl ExtRateLimiter {
-    /// Empty limiter.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Record a call; `None` when allowed, else Retry-After seconds.
-    pub fn check(
-        &self,
-        plugin: &str,
-        principal: &str,
-        method: &str,
-        subpath: &str,
-        limit_per_minute: i64,
-    ) -> Option<u64> {
-        const WINDOW: Duration = Duration::from_secs(60);
-        const CAP: usize = 10_000;
-        let now = Instant::now();
-        let mut guard = self.hits.lock().ok()?;
-        let key = (
-            plugin.to_owned(),
-            principal.to_owned(),
-            method.to_owned(),
-            subpath.to_owned(),
-        );
-        if !guard.contains_key(&key) && guard.len() >= CAP {
-            guard.retain(|_, hits| hits.iter().any(|hit| now.duration_since(*hit) < WINDOW));
-            while guard.len() >= CAP {
-                if let Some(first) = guard.keys().next().cloned() {
-                    guard.remove(&first);
-                } else {
-                    break;
-                }
-            }
-        }
-        let hits = guard.entry(key).or_default();
-        hits.retain(|hit| now.duration_since(*hit) < WINDOW);
-        let limit = limit_per_minute.max(1) as usize;
-        if hits.len() >= limit {
-            let retry_after = hits
-                .first()
-                .and_then(|oldest| oldest.checked_add(WINDOW))
-                .and_then(|reset| reset.checked_duration_since(now))
-                .map(|wait| wait.as_secs() + 1)
-                .unwrap_or(1)
-                .max(1);
-            return Some(retry_after);
-        }
-        hits.push(now);
-        None
-    }
-}
-
-async fn serve_ext(
-    deps: &PluginsDeps,
-    caller: &Principal,
-    plugin_name: &str,
-    subpath: &str,
-    method: &str,
-    request: Request,
-) -> Result<Response, PluginError> {
-    if plugin_name.is_empty()
-        || subpath.is_empty()
-        || subpath.starts_with('/')
-        || subpath.split('/').any(|part| part == "..")
-    {
-        return Err(PluginError::InvalidInput {
-            message: "Invalid plugin route".to_owned(),
-        });
-    }
-    let plugin = match deps.host.get(plugin_name) {
-        Some(plugin) if plugin.serves(Capability::Publisher) => plugin,
-        _ => return Err(PluginError::NotFound),
-    };
-    let spec = plugin
-        .manifest
-        .routes
-        .iter()
-        .find(|route| route.path == subpath && route.method.as_str() == method);
-    let Some(spec) = spec else {
-        return Err(PluginError::NotFound);
-    };
-    if spec.auth == RouteAuth::Admin {
-        Admin::try_from(caller.clone()).map_err(|refused| PluginError::Forbidden {
-            message: refused.to_string(),
-        })?;
-    }
-    if let Some(retry_after) = deps.ext_limiter.check(
-        plugin_name,
-        caller.user_id(),
-        method,
-        subpath,
-        spec.rate_limit_per_minute,
-    ) {
-        return Err(PluginError::RateLimited { retry_after });
-    }
-    let (parts, body) = request.into_parts();
-    if let Some(declared) = parts
-        .headers
-        .get(header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|text| text.trim().parse::<usize>().ok())
-        && declared > ROUTE_BODY_MAX_BYTES
-    {
-        return Err(PluginError::PayloadTooLarge);
-    }
-    let raw = axum::body::to_bytes(body, ROUTE_BODY_MAX_BYTES + 1)
-        .await
-        .map_err(|_| PluginError::PayloadTooLarge)?;
-    let route_body = if raw.is_empty() {
-        PluginRouteBody::Empty
-    } else if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&raw) {
-        PluginRouteBody::Json(json)
-    } else if let Ok(text) = std::str::from_utf8(&raw) {
-        PluginRouteBody::Text(text.to_owned())
-    } else {
-        PluginRouteBody::Empty
-    };
-    let mut query = HashMap::new();
-    if let Some(raw_query) = parts.uri.query() {
-        for pair in raw_query.split('&') {
-            if pair.is_empty() {
-                continue;
-            }
-            let (key, value) = match pair.split_once('=') {
-                Some((key, value)) => (key, value),
-                None => (pair, ""),
-            };
-            query.insert(
-                percent_decode(key).unwrap_or_else(|| key.to_owned()),
-                percent_decode(value).unwrap_or_else(|| value.to_owned()),
-            );
-        }
-    }
-    let result = deps
-        .host
-        .handle_plugin_route(plugin_name, method, subpath, &query, &route_body)
-        .await;
-    let status =
-        StatusCode::from_u16(result.status.max(100) as u16).unwrap_or(StatusCode::BAD_GATEWAY);
-    if status == StatusCode::BAD_GATEWAY {
-        return Err(PluginError::RouteFailed);
-    }
-    if status == StatusCode::NOT_FOUND {
-        return Err(PluginError::NotFound);
-    }
-    Ok((status, Json(result.body)).into_response())
-}
-
-/// Decode one percent-encoded query part. Malformed escapes fail the part
-/// (the caller keeps the raw text) instead of failing the request.
-fn percent_decode(part: &str) -> Option<String> {
-    let bytes = part.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            if index + 2 >= bytes.len() {
-                return None;
-            }
-            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).ok()?;
-            let byte = u8::from_str_radix(hex, 16).ok()?;
-            out.push(byte);
-            index += 3;
-            continue;
-        }
-        if bytes[index] == b'+' {
-            out.push(b' ');
-        } else {
-            out.push(bytes[index]);
-        }
-        index += 1;
-    }
-    String::from_utf8(out).ok()
-}
-
 /// Serve one declared plugin GET route.
 #[utoipa::path(
     get,
@@ -690,7 +487,16 @@ pub async fn plugin_ext_get(
     Path((name, subpath)): Path<(String, String)>,
     request: Request,
 ) -> Result<Response, ApiError> {
-    Ok(serve_ext(&deps, &caller, &name, &subpath, "GET", request).await?)
+    Ok(ext::serve(
+        &deps.host,
+        &deps.ext_limiter,
+        &caller,
+        &name,
+        &subpath,
+        "GET",
+        request,
+    )
+    .await?)
 }
 
 /// Serve one declared plugin POST route.
@@ -717,7 +523,16 @@ pub async fn plugin_ext_post(
     Path((name, subpath)): Path<(String, String)>,
     request: Request,
 ) -> Result<Response, ApiError> {
-    Ok(serve_ext(&deps, &caller, &name, &subpath, "POST", request).await?)
+    Ok(ext::serve(
+        &deps.host,
+        &deps.ext_limiter,
+        &caller,
+        &name,
+        &subpath,
+        "POST",
+        request,
+    )
+    .await?)
 }
 
 /// Serve one declared plugin DELETE route.
@@ -743,99 +558,21 @@ pub async fn plugin_ext_delete(
     Path((name, subpath)): Path<(String, String)>,
     request: Request,
 ) -> Result<Response, ApiError> {
-    Ok(serve_ext(&deps, &caller, &name, &subpath, "DELETE", request).await?)
+    Ok(ext::serve(
+        &deps.host,
+        &deps.ext_limiter,
+        &caller,
+        &name,
+        &subpath,
+        "DELETE",
+        request,
+    )
+    .await?)
 }
 
 // ---------------------------------------------------------------------------
 // Plugin panel page
 // ---------------------------------------------------------------------------
-
-/// The fixed document around a plugin's panel script.
-const PANEL_PAGE_HEAD: &[u8] = b"<!doctype html><html><head><meta charset=\"utf-8\">\
-<style>body{font:13px/1.5 system-ui,sans-serif;margin:0;padding:12px;color:#111;background:#fff}\
-#panel-root{min-height:40px}</style></head><body><div id=\"panel-root\"></div><script>";
-const PANEL_PAGE_TAIL: &[u8] = b"</script></body></html>";
-
-/// What the panel page may do. It is plugin code shown inside the admin UI,
-/// so the page is sealed: `sandbox allow-scripts` gives it an origin of its
-/// own with no cookies or storage, even when the address is opened in its
-/// own tab, and only the app may frame it, along with whatever an admin
-/// allowed to frame the app. Inline script and style run, pictures come from
-/// `data:` and `blob:` only, and nothing else loads or connects. Never add
-/// `allow-same-origin`: the script would then run as the app, with the
-/// admin's session.
-fn panel_page_policy(config: &ConfigStore) -> String {
-    format!(
-        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
-         img-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; \
-         base-uri 'none'; form-action 'none'; frame-ancestors {}; sandbox allow-scripts",
-        droppedneedle_kernel::runtime_config::sections::framed_page_ancestors(&config.live())
-    )
-}
-
-/// The panel script with every `</script` (any case) broken up, so its text
-/// cannot close the element it is inlined into. `<\/script` reads the same
-/// inside a JavaScript string or regular expression. Not covered: a script
-/// holding `<!--` and then `<script` makes the parser run past the closing
-/// tag, which only breaks that plugin's own panel. Every other byte passes
-/// through unchanged.
-fn inline_panel_script(script: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(script.len() + 16);
-    let mut rest = script;
-    while let Some((&byte, tail)) = rest.split_first() {
-        out.push(byte);
-        if byte == b'<'
-            && tail.first() == Some(&b'/')
-            && tail
-                .get(1..7)
-                .is_some_and(|name| name.eq_ignore_ascii_case(b"script"))
-        {
-            out.push(b'\\');
-        }
-        rest = tail;
-    }
-    out
-}
-
-/// Format one timestamp as an HTTP date (`Sun, 06 Nov 1994 08:49:37 GMT`).
-fn http_date(when: SystemTime) -> String {
-    const DAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let secs = when
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0);
-    let days = (secs / 86_400) as i64;
-    let time = secs % 86_400;
-    // Civil date from days since the epoch (Howard Hinnant's algorithm).
-    let era_days = days + 719_468;
-    let era = era_days.div_euclid(146_097);
-    let day_of_era = era_days.rem_euclid(146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = (day_of_year - (153 * month_prime + 2) / 5 + 1) as u64;
-    let month = (if month_prime < 10 {
-        month_prime + 3
-    } else {
-        month_prime - 9
-    }) as usize;
-    let full_year = if month <= 2 { year + 1 } else { year };
-    format!(
-        "{}, {:02} {} {} {:02}:{:02}:{:02} GMT",
-        DAYS[(days.rem_euclid(7)) as usize],
-        day,
-        MONTHS[month - 1],
-        full_year,
-        time / 3_600,
-        (time % 3_600) / 60,
-        time % 60
-    )
-}
 
 /// Serve one enabled plugin's settings panel as a page for the admin UI to
 /// frame: a fixed wrapper with the plugin's panel script inlined. Admin-only.
@@ -858,138 +595,13 @@ pub async fn plugin_panel_page(
     State(deps): State<PluginsDeps>,
     _admin: Admin,
     Path(name): Path<String>,
-    request: Request,
+    headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    if name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains("..")
-        || name.starts_with('.')
-        || name.contains('\0')
-    {
-        return Err(ApiError::not_found());
-    }
-    let plugin = match deps.host.get(&name) {
-        Some(plugin) if plugin.enabled && plugin.runtime.is_some() => plugin,
-        _ => return Err(ApiError::not_found()),
-    };
-    let entry = plugin.manifest.ui_entry.clone();
-    if entry.is_empty() {
-        return Err(ApiError::not_found());
-    }
-    let normalized = entry.replace('\\', "/");
-    if normalized.is_empty()
-        || normalized.starts_with('/')
-        || normalized.starts_with("http://")
-        || normalized.starts_with("https://")
-        || normalized.split('/').any(|part| part == "..")
-        || normalized.contains('\0')
-    {
-        return Err(ApiError::not_found());
-    }
-    if plugin.directory.is_empty() {
-        return Err(ApiError::not_found());
-    }
-    let if_none_match = request
-        .headers()
+    let if_none_match = headers
         .get(header::IF_NONE_MATCH)
         .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_owned();
-    serve_panel_file(
-        &plugin.directory,
-        &normalized,
-        &name,
-        &if_none_match,
-        &panel_page_policy(&deps.config),
-    )
-    .await
-    .map_err(ApiError::from)
-}
-
-async fn serve_panel_file(
-    directory: &str,
-    entry: &str,
-    plugin_name: &str,
-    if_none_match: &str,
-    policy: &str,
-) -> Result<Response, PluginError> {
-    let base = tokio::fs::canonicalize(directory)
-        .await
-        .map_err(|_| PluginError::NotFound)?;
-    let mut joined = base.clone();
-    for part in entry.split('/') {
-        if part.is_empty() || part == "." || part == ".." {
-            return Err(PluginError::NotFound);
-        }
-        joined.push(part);
-    }
-    let target = tokio::fs::canonicalize(&joined)
-        .await
-        .map_err(|_| PluginError::NotFound)?;
-    if target != base && !target.starts_with(&base) {
-        return Err(PluginError::NotFound);
-    }
-    let metadata = tokio::fs::metadata(&target)
-        .await
-        .map_err(|_| PluginError::NotFound)?;
-    if !metadata.is_file() {
-        return Err(PluginError::NotFound);
-    }
-    // The manifest entry is static and the plugin dir is admin-managed, so
-    // the check-then-read below races with nothing untrusted.
-    let mtime = metadata
-        .modified()
-        .unwrap_or(UNIX_EPOCH)
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or(0);
-    // The build's version is part of the tag: a release that changes the
-    // wrapper must not answer 304 for a page cached from the old one.
-    let etag = format!(
-        "\"{plugin_name}-{}-{:x}-{:x}\"",
-        env!("CARGO_PKG_VERSION"),
-        metadata.len(),
-        mtime
-    );
-    // The policy is on the 304 too: a cached page takes its headers from
-    // whichever answer the browser saw last.
-    let builder = Response::builder()
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .header("x-content-type-options", "nosniff")
-        .header("content-security-policy", policy)
-        .header("cache-control", "private, max-age=60, must-revalidate")
-        .header("etag", etag.clone())
-        .header(
-            "last-modified",
-            http_date(metadata.modified().unwrap_or(UNIX_EPOCH)),
-        );
-    let candidates: Vec<&str> = if_none_match
-        .split(',')
-        .map(str::trim)
-        .filter(|token| !token.is_empty())
-        .collect();
-    if candidates.iter().any(|token| {
-        *token == "*" || *token == etag || token.strip_prefix("W/") == Some(etag.as_str())
-    }) {
-        return builder
-            .status(StatusCode::NOT_MODIFIED)
-            .body(Body::empty())
-            .map_err(|error| PluginError::internal(&error));
-    }
-    let bytes = tokio::fs::read(&target)
-        .await
-        .map_err(|_| PluginError::NotFound)?;
-    if bytes.iter().all(u8::is_ascii_whitespace) {
-        return Err(PluginError::NotFound);
-    }
-    let mut page = PANEL_PAGE_HEAD.to_vec();
-    page.extend(inline_panel_script(&bytes));
-    page.extend_from_slice(PANEL_PAGE_TAIL);
-    builder
-        .status(StatusCode::OK)
-        .body(Body::from(page))
-        .map_err(|error| PluginError::internal(&error))
+        .unwrap_or("");
+    Ok(panel::serve(&deps.host, &deps.config, &name, if_none_match).await?)
 }
 
 // ---------------------------------------------------------------------------
@@ -1013,33 +625,4 @@ where
         .admin(routes!(update_plugin, uninstall_plugin))
         .admin(routes!(plugin_panel_page))
         .user_at(routes!(plugin_ext_get, plugin_ext_post, plugin_ext_delete))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn query_decoding_tolerates_bad_escapes() {
-        assert_eq!(percent_decode("a+b"), Some("a b".to_owned()));
-        assert_eq!(percent_decode("a%20b"), Some("a b".to_owned()));
-        assert_eq!(percent_decode("a%zz"), None);
-        assert_eq!(percent_decode("a%2"), None);
-    }
-
-    #[test]
-    fn limiter_opens_after_the_first_call_over_budget() {
-        let limiter = ExtRateLimiter::new();
-        assert_eq!(limiter.check("p", "u", "GET", "s", 1), None);
-        assert!(limiter.check("p", "u", "GET", "s", 1).is_some());
-        assert_eq!(limiter.check("p", "u", "GET", "other", 1), None);
-    }
-
-    #[test]
-    fn http_date_matches_the_reference_point() {
-        // 2024-01-01T00:00:00Z is a Monday.
-        let when = UNIX_EPOCH + Duration::from_secs(1_704_067_200);
-        assert_eq!(http_date(when), "Mon, 01 Jan 2024 00:00:00 GMT");
-        assert_eq!(http_date(UNIX_EPOCH), "Thu, 01 Jan 1970 00:00:00 GMT");
-    }
 }
