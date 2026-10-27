@@ -22,7 +22,7 @@ use super::operations::{
 };
 use crate::operations::models::{Control, OperationJob};
 use crate::repairs::models::{
-    FindingRow, MANAGEMENT_MAPPING_VERSION, Purpose, REPAIR_TARGET_VERSION, Summary,
+    FindingRow, FindingState, MANAGEMENT_MAPPING_VERSION, Purpose, REPAIR_TARGET_VERSION, Summary,
 };
 use crate::repairs::reasons;
 use crate::repairs::service::{RepairDetail, Repairs};
@@ -253,7 +253,7 @@ pub struct RepairFindingListView {
 }
 
 fn finding_view(row: FindingRow) -> RepairFindingView {
-    let reason = if row.state == "stale" {
+    let reason = if row.state == FindingState::Stale {
         reasons::finding("STALE_SUBJECT")
     } else {
         reasons::finding(&row.reason_code)
@@ -285,13 +285,13 @@ fn finding_view(row: FindingRow) -> RepairFindingView {
         cover_available: row.cover_available,
         evidence_id: None,
         review_id: row.review_id,
-        finding_code: row.finding_code,
+        finding_code: row.finding_code.as_str().to_owned(),
         reason_code: row.reason_code,
         reason: reason.into(),
         confidence: row.confidence,
         apply_eligible: row.apply_eligible,
-        state: row.state,
-        apply_result: row.apply_result,
+        state: row.state.as_str().to_owned(),
+        apply_result: row.apply_result.map(|result| result.as_str().to_owned()),
         suggested_edition,
         automatic_undo: row
             .automatic_undo

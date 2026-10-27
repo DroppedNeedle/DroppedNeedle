@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::models::{EditionSummary, FindingPayload, Mapping, Verdict};
+use super::models::{EditionSummary, FindingCode, FindingPayload, Mapping, Verdict};
 use crate::identify::models::EvidenceClass;
 use crate::operations::models::ReidentificationCandidate;
 
@@ -49,10 +49,10 @@ pub fn existing_match(
     local_count: usize,
 ) -> Verdict {
     if identity.manual {
-        return Verdict::new("manual_identity", "MANUAL_IDENTITY_REPORT_ONLY");
+        return Verdict::new(FindingCode::ManualIdentity, "MANUAL_IDENTITY_REPORT_ONLY");
     }
     let Some(candidate) = candidate else {
-        return Verdict::new("unverifiable", "EVIDENCE_UNAVAILABLE");
+        return Verdict::new(FindingCode::Unverifiable, "EVIDENCE_UNAVAILABLE");
     };
     let evidence = &candidate.evidence;
     let supported = evidence.supported_count();
@@ -68,15 +68,15 @@ pub fn existing_match(
         } else {
             "HARD_CONTRADICTION"
         };
-        return Verdict::new("safe_detach", reason).eligible();
+        return Verdict::new(FindingCode::SafeDetach, reason).eligible();
     }
     if !same_group(identity, candidate) {
-        return Verdict::new("needs_review", "SELECTED_RELEASE_CONFLICT");
+        return Verdict::new(FindingCode::NeedsReview, "SELECTED_RELEASE_CONFLICT");
     }
     if candidate.automatic_safe {
-        Verdict::new("valid", "CURRENT_IDENTITY_PASSES")
+        Verdict::new(FindingCode::Valid, "CURRENT_IDENTITY_PASSES")
     } else {
-        Verdict::new("needs_review", "NON_TERMINAL_SAFETY_CONCERN")
+        Verdict::new(FindingCode::NeedsReview, "NON_TERMINAL_SAFETY_CONCERN")
     }
 }
 
@@ -132,21 +132,21 @@ pub fn readiness_exact(
     aliases: &HashMap<String, String>,
 ) -> Verdict {
     let Some(candidate) = candidate else {
-        return Verdict::new("needs_review", "SELECTED_RELEASE_UNAVAILABLE");
+        return Verdict::new(FindingCode::NeedsReview, "SELECTED_RELEASE_UNAVAILABLE");
     };
     if !same_group(identity, candidate) {
-        return Verdict::new("needs_review", "SELECTED_RELEASE_CONFLICT");
+        return Verdict::new(FindingCode::NeedsReview, "SELECTED_RELEASE_CONFLICT");
     }
     let Some(mapping) = full_mapping(candidate) else {
-        return Verdict::new("needs_review", "EXACT_RELEASE_MAPPING_INCOMPLETE");
+        return Verdict::new(FindingCode::NeedsReview, "EXACT_RELEASE_MAPPING_INCOMPLETE");
     };
     if mapping.len() != tracks.len() {
-        return Verdict::new("needs_review", "EXACT_RELEASE_MAPPING_INCOMPLETE");
+        return Verdict::new(FindingCode::NeedsReview, "EXACT_RELEASE_MAPPING_INCOMPLETE");
     }
     // The matcher must accept the release on its own, unless a person
     // chose it: then every file fitting is enough.
     if !candidate.automatic_safe && !identity.manual {
-        return Verdict::new("needs_review", "NON_TERMINAL_SAFETY_CONCERN");
+        return Verdict::new(FindingCode::NeedsReview, "NON_TERMINAL_SAFETY_CONCERN");
     }
     let release = identity.release_mbid.clone().unwrap_or_default();
     let mut unchanged = true;
@@ -155,7 +155,7 @@ pub fn readiness_exact(
             .iter()
             .find(|placed| placed.local_track_id == row.local_track_id)
         else {
-            return Verdict::new("needs_review", "EXACT_RELEASE_MAPPING_INCOMPLETE");
+            return Verdict::new(FindingCode::NeedsReview, "EXACT_RELEASE_MAPPING_INCOMPLETE");
         };
         let conflict = row
             .release_mbid
@@ -170,7 +170,7 @@ pub fn readiness_exact(
                 .as_deref()
                 .is_some_and(|value| !same_recording(value, &placed.recording_mbid, aliases));
         if conflict {
-            return Verdict::new("needs_review", "CONFLICTING_TRACK_EVIDENCE");
+            return Verdict::new(FindingCode::NeedsReview, "CONFLICTING_TRACK_EVIDENCE");
         }
         unchanged &= row.recording_mbid.is_some()
             && row.release_mbid.is_some()
@@ -179,9 +179,9 @@ pub fn readiness_exact(
             && row.release_track_position == Some(i64::from(placed.release_track_position));
     }
     if unchanged {
-        return Verdict::new("ready", "EXACT_RELEASE_MAPPINGS_VERIFIED");
+        return Verdict::new(FindingCode::Ready, "EXACT_RELEASE_MAPPINGS_VERIFIED");
     }
-    Verdict::new("mapping_ready", "EXACT_RELEASE_MAPPING_SUPPORTED")
+    Verdict::new(FindingCode::MappingReady, "EXACT_RELEASE_MAPPING_SUPPORTED")
         .eligible()
         .with(FindingPayload {
             release_mbid: Some(release),
@@ -264,20 +264,26 @@ pub fn readiness_suggest(
         .map(|candidate| (candidate, summary_for(candidate)))
         .collect();
     let Some((winner, summary)) = ranked.first() else {
-        return Verdict::new("exact_release_required", "EXACT_EDITION_NOT_ACCEPTED");
+        return Verdict::new(
+            FindingCode::ExactReleaseRequired,
+            "EXACT_EDITION_NOT_ACCEPTED",
+        );
     };
     let mut summary = summary.clone();
     summary.competing_count = ranked.len() as u32;
     let gate = (auto_accept_enabled && !identity.manual).then(|| auto_gate(&ranked));
     summary.auto_gate = gate.map(str::to_owned);
-    Verdict::new("exact_release_suggested", "EXACT_EDITION_SUGGESTED")
-        .eligible()
-        .with(FindingPayload {
-            summary: Some(summary),
-            candidate: Some((*winner).clone()),
-            auto_accept: gate == Some("AUTO_ACCEPT"),
-            ..FindingPayload::default()
-        })
+    Verdict::new(
+        FindingCode::ExactReleaseSuggested,
+        "EXACT_EDITION_SUGGESTED",
+    )
+    .eligible()
+    .with(FindingPayload {
+        summary: Some(summary),
+        candidate: Some((*winner).clone()),
+        auto_accept: gate == Some("AUTO_ACCEPT"),
+        ..FindingPayload::default()
+    })
 }
 
 #[cfg(test)]
@@ -349,11 +355,11 @@ mod tests {
         let none = candidate(&[Unknown, Unknown], false);
         assert_eq!(
             existing_match(&id, Some(&none), 2, 2).finding_code,
-            "safe_detach"
+            FindingCode::SafeDetach
         );
         assert_eq!(
             existing_match(&id, Some(&none), 3, 2).finding_code,
-            "needs_review"
+            FindingCode::NeedsReview
         );
         let veto = candidate(&[Supported, Contradictory], false);
         assert_eq!(
@@ -361,14 +367,17 @@ mod tests {
             "HARD_CONTRADICTION"
         );
         let good = candidate(&[Supported, Supported], true);
-        assert_eq!(existing_match(&id, Some(&good), 2, 2).finding_code, "valid");
+        assert_eq!(
+            existing_match(&id, Some(&good), 2, 2).finding_code,
+            FindingCode::Valid
+        );
         let chosen = IdentityState {
             manual: true,
             ..id.clone()
         };
         assert_eq!(
             existing_match(&chosen, Some(&none), 2, 2).finding_code,
-            "manual_identity"
+            FindingCode::ManualIdentity
         );
 
         // Readiness: unplaced files get placed; placed files verify; a file
@@ -381,7 +390,7 @@ mod tests {
             .collect();
         let aliases = HashMap::new();
         let verdict = readiness_exact(&id, Some(&good), &blank, &aliases);
-        assert_eq!(verdict.finding_code, "mapping_ready");
+        assert_eq!(verdict.finding_code, FindingCode::MappingReady);
         assert_eq!(verdict.payload.mapping.len(), 2);
         let placed: Vec<TrackState> = verdict
             .payload
@@ -398,7 +407,7 @@ mod tests {
             .collect();
         assert_eq!(
             readiness_exact(&id, Some(&good), &placed, &aliases).finding_code,
-            "ready"
+            FindingCode::Ready
         );
         let mut moved = placed.clone();
         moved[0].release_track_mbid = Some("elsewhere".to_owned());
@@ -455,11 +464,14 @@ mod tests {
             |_| blank(),
         );
         assert!(open.payload.auto_accept);
-        assert_eq!(suggest(&other_group).finding_code, "exact_release_required");
+        assert_eq!(
+            suggest(&other_group).finding_code,
+            FindingCode::ExactReleaseRequired
+        );
         let no_identity = IdentityState::default();
         assert_eq!(
             suggest(&no_identity).finding_code,
-            "exact_release_suggested"
+            FindingCode::ExactReleaseSuggested
         );
     }
 }

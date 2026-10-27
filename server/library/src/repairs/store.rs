@@ -11,13 +11,14 @@
 use std::collections::BTreeMap;
 
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
-use rusqlite::types::Value;
+use rusqlite::types::{Type, Value};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_from_iter};
 
 use super::classify::{IdentityState, TrackState};
 use super::models::{
-    EditionSummary, FindingPage, FindingPayload, FindingRow, Guard, NewRepair, PreparationEstimate,
-    Purpose, RepairEstimate, Scope, Summary, Verdict,
+    ApplyResult, EditionSummary, FindingCode, FindingPage, FindingPayload, FindingRow,
+    FindingState, Guard, NewRepair, Phase, PreparationEstimate, Purpose, RepairEstimate, Scope,
+    Summary, Verdict,
 };
 use super::reasons;
 use crate::identify::artist_links::RELEASE_DOCUMENT_MISSING;
@@ -33,44 +34,112 @@ use crate::operations::store::{album_revisions, job_after};
 
 const PROVIDER: &str = "musicbrainz";
 
-/// Phase a repair job is in: checking (`dry_run`) or applying (`apply`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Phase {
-    DryRun,
-    Apply,
-}
-
 /// What `library_repair_snapshots` keeps for one job.
 #[derive(Debug, Clone)]
 pub struct RepairSnapshot {
     pub purpose: Purpose,
     pub phase: Phase,
+    pub scope: Scope,
     pub target_matcher_version: String,
     pub summary: Option<Summary>,
 }
 
-pub fn snapshot(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<RepairSnapshot>> {
-    let row: Option<(String, String, String, Option<String>)> = conn
+/// Stored repair state that does not decode. Made through
+/// [`Unreadable::new`], which logs it: such a row is never read as a
+/// default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unreadable(pub String);
+
+impl Unreadable {
+    pub fn new(job_id: &str, what: &'static str, cause: impl std::fmt::Display) -> Self {
+        tracing::error!(job_id, what, %cause, "stored repair state is unreadable");
+        Self(format!("repair job {job_id}: {what} is unreadable"))
+    }
+}
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Unreadable {}
+
+impl From<Unreadable> for OperationError {
+    fn from(unreadable: Unreadable) -> Self {
+        Self::Store(unreadable.0)
+    }
+}
+
+impl From<Unreadable> for rusqlite::Error {
+    fn from(unreadable: Unreadable) -> Self {
+        Self::FromSqlConversionFailure(0, Type::Text, Box::new(unreadable))
+    }
+}
+
+impl Unreadable {
+    /// Whether `error` is stored repair state that did not decode.
+    pub fn is(error: &rusqlite::Error) -> bool {
+        matches!(error, rusqlite::Error::FromSqlConversionFailure(_, _, cause)
+            if cause.downcast_ref::<Self>().is_some())
+    }
+}
+
+/// One job's snapshot, `Err` when a part of it does not decode: its
+/// purpose (a row whose scope was unreadable when the column was added
+/// has none), phase, scope or report summary.
+pub fn snapshot(
+    conn: &Connection,
+    job_id: &str,
+) -> rusqlite::Result<Option<Result<RepairSnapshot, Unreadable>>> {
+    type Row = (Option<String>, String, String, String, Option<String>);
+    let row: Option<Row> = conn
         .query_row(
-            "SELECT scope_json, phase, target_matcher_version, result_json \
+            "SELECT purpose, phase, scope_json, target_matcher_version, result_json \
              FROM library_repair_snapshots WHERE job_id = ?1",
             params![job_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()?;
-    Ok(row.and_then(|(scope, phase, target, result)| {
-        let scope: Scope = serde_json::from_str(&scope).unwrap_or_default();
-        Some(RepairSnapshot {
-            purpose: Purpose::parse(scope.purpose.as_deref())?,
-            phase: if phase == "apply" {
-                Phase::Apply
-            } else {
-                Phase::DryRun
-            },
-            target_matcher_version: target,
-            summary: result.and_then(|raw| serde_json::from_str(&raw).ok()),
-        })
+    Ok(row.map(|(purpose, phase, scope, target, result)| {
+        decode_snapshot(job_id, purpose, &phase, &scope, target, result)
     }))
+}
+
+fn decode_snapshot(
+    job_id: &str,
+    purpose: Option<String>,
+    phase: &str,
+    scope: &str,
+    target_matcher_version: String,
+    result: Option<String>,
+) -> Result<RepairSnapshot, Unreadable> {
+    let purpose = match purpose.as_deref() {
+        Some(raw) => Purpose::parse(raw).ok_or_else(|| Unreadable::new(job_id, "purpose", raw))?,
+        None => return Err(Unreadable::new(job_id, "purpose", "none stored")),
+    };
+    let phase = Phase::parse(phase).ok_or_else(|| Unreadable::new(job_id, "phase", phase))?;
+    let scope: Scope =
+        serde_json::from_str(scope).map_err(|error| Unreadable::new(job_id, "scope", error))?;
+    let summary = result
+        .map(|raw| serde_json::from_str(&raw))
+        .transpose()
+        .map_err(|error| Unreadable::new(job_id, "summary", error))?;
+    Ok(RepairSnapshot {
+        purpose,
+        phase,
+        scope,
+        target_matcher_version,
+        summary,
+    })
 }
 
 /// The job and its snapshot when the job is a repair of `purpose`.
@@ -80,7 +149,7 @@ pub fn repair_job(
     purpose: Purpose,
 ) -> Result<(OperationJob, RepairSnapshot), OperationError> {
     let job = jobs::job(conn, job_id)?.filter(|job| job.kind == OperationKind::Repair.as_str());
-    let snap = snapshot(conn, job_id)?;
+    let snap = snapshot(conn, job_id)?.transpose()?;
     match (job, snap) {
         (Some(job), Some(snap)) if snap.purpose == purpose => Ok((job, snap)),
         _ => Err(OperationError::NotFound(reasons::REPAIR_NOT_FOUND)),
@@ -261,15 +330,16 @@ pub fn create(
     let scope = Scope {
         root_ids: new.root_ids.clone(),
         album_ids: new.album_ids.clone(),
-        purpose: Some(new.purpose.as_str().to_owned()),
         legacy_only: false,
         scan_run_id: new.scan_run_id.clone(),
     };
     tx.execute(
-        "INSERT INTO library_repair_snapshots (job_id, scope_json, source_matcher_version, \
-         target_matcher_version, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO library_repair_snapshots (job_id, purpose, scope_json, \
+         source_matcher_version, target_matcher_version, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             new.job_id,
+            new.purpose,
             serde_json::to_string(&scope)
                 .map_err(|error| OperationError::Store(error.to_string()))?,
             new.source_matcher_version,
@@ -341,31 +411,132 @@ pub fn queued(conn: &Connection, idempotency_key: &str) -> rusqlite::Result<bool
     )
 }
 
-/// Albums identification finished with after `after_ms` that the cleanup
-/// could apply to (at most 200), and the newest finish time seen.
-pub fn identified_since(
-    conn: &Connection,
-    after_ms: i64,
-) -> rusqlite::Result<(Vec<String>, Option<i64>)> {
-    let newest: Option<i64> = conn.query_row(
-        "SELECT MAX(updated_ms) FROM library_identify_jobs \
-         WHERE state IN ('succeeded','failed','attention') AND updated_ms > ?1",
-        params![after_ms],
-        |row| row.get(0),
+/// Where the cleanup after identification has looked up to: the
+/// finished identification job last seen, by `(updated_ms, id)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Watermark {
+    pub at_ms: i64,
+    pub job_id: String,
+}
+
+/// Identification states that end a job.
+const IDENTIFY_FINISHED: &str = "('succeeded','failed','attention')";
+
+/// Most finished identification jobs one cleanup covers.
+pub const IDENTIFIED_PAGE: usize = 200;
+
+/// The newest finished identification job, or the start of time when
+/// there is none.
+fn newest_identified(conn: &Connection) -> rusqlite::Result<Watermark> {
+    Ok(conn
+        .query_row(
+            &format!(
+                "SELECT updated_ms, id FROM library_identify_jobs \
+                 WHERE state IN {IDENTIFY_FINISHED} ORDER BY updated_ms DESC, id DESC LIMIT 1"
+            ),
+            [],
+            |row| {
+                Ok(Watermark {
+                    at_ms: row.get(0)?,
+                    job_id: row.get(1)?,
+                })
+            },
+        )
+        .optional()?
+        .unwrap_or(Watermark {
+            at_ms: 0,
+            job_id: String::new(),
+        }))
+}
+
+/// The stored watermark. The migration that made it seeded it, so a
+/// missing row is an error: it is logged and `Err` carries the newest
+/// finished job to store, so nothing identified before is looked at again.
+pub fn identified_watermark(conn: &Connection) -> rusqlite::Result<Result<Watermark, Watermark>> {
+    let stored = conn
+        .query_row(
+            "SELECT identified_at, identified_job_id FROM library_repair_watermarks \
+             WHERE singleton = 1",
+            [],
+            |row| {
+                Ok(Watermark {
+                    at_ms: row.get(0)?,
+                    job_id: row.get(1)?,
+                })
+            },
+        )
+        .optional()?;
+    match stored {
+        Some(mark) => Ok(Ok(mark)),
+        None => {
+            tracing::error!(
+                "the identification cleanup watermark is missing; it starts again from the newest finished identification"
+            );
+            Ok(Err(newest_identified(conn)?))
+        }
+    }
+}
+
+pub fn set_identified_watermark(tx: &Transaction<'_>, mark: &Watermark) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO library_repair_watermarks (singleton, identified_at, identified_job_id) \
+         VALUES (1, ?1, ?2) ON CONFLICT (singleton) DO UPDATE SET \
+         identified_at = excluded.identified_at, identified_job_id = excluded.identified_job_id",
+        params![mark.at_ms, mark.job_id],
     )?;
-    let Some(newest) = newest else {
-        return Ok((Vec::new(), None));
-    };
+    Ok(())
+}
+
+/// One page of finished identification jobs after a watermark.
+#[derive(Debug, Clone, Default)]
+pub struct IdentifiedPage {
+    /// Albums of the page the cleanup could apply to, each once.
+    pub albums: Vec<String>,
+    /// The page's last job: the watermark once the page is covered.
+    pub last: Option<Watermark>,
+    /// The page was full, so more may follow.
+    pub full: bool,
+}
+
+/// The next [`IDENTIFIED_PAGE`] finished identification jobs after
+/// `after`, oldest first.
+pub fn identified_after(conn: &Connection, after: &Watermark) -> rusqlite::Result<IdentifiedPage> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT DISTINCT a.id FROM library_identify_jobs j JOIN local_albums a \
-         ON a.id = j.local_album_id WHERE j.state IN ('succeeded','failed','attention') \
-         AND j.updated_ms > ?1 AND j.updated_ms <= ?2 AND a.retired_into_album_id IS NULL \
-         AND {HYGIENE_CANDIDATE} ORDER BY a.id LIMIT 200"
+        "SELECT j.updated_ms, j.id, a.id, \
+         a.retired_into_album_id IS NULL AND {HYGIENE_CANDIDATE} \
+         FROM library_identify_jobs j JOIN local_albums a ON a.id = j.local_album_id \
+         WHERE j.state IN {IDENTIFY_FINISHED} \
+         AND (j.updated_ms > ?1 OR (j.updated_ms = ?1 AND j.id > ?2)) \
+         ORDER BY j.updated_ms, j.id LIMIT ?3"
     ))?;
-    let albums = stmt
-        .query_map(params![after_ms, newest], |row| row.get(0))?
-        .collect::<rusqlite::Result<Vec<String>>>()?;
-    Ok((albums, Some(newest)))
+    let rows = stmt
+        .query_map(
+            params![after.at_ms, after.job_id, IDENTIFIED_PAGE as i64],
+            |row| {
+                Ok((
+                    Watermark {
+                        at_ms: row.get(0)?,
+                        job_id: row.get(1)?,
+                    },
+                    row.get::<_, String>(2)?,
+                    row.get::<_, bool>(3)?,
+                ))
+            },
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let full = rows.len() == IDENTIFIED_PAGE;
+    let mut seen = std::collections::HashSet::new();
+    let mut page = IdentifiedPage {
+        full,
+        ..IdentifiedPage::default()
+    };
+    for (mark, album, candidate) in rows {
+        if candidate && seen.insert(album.clone()) {
+            page.albums.push(album);
+        }
+        page.last = Some(mark);
+    }
+    Ok(page)
 }
 
 /// The latest scan run that ended, however it ended (finished, stopped,
@@ -676,9 +847,9 @@ fn active_count(conn: &Connection, purpose: Purpose) -> rusqlite::Result<i64> {
         "SELECT COUNT(*) FROM library_operation_jobs j \
          JOIN library_repair_snapshots s ON s.job_id = j.id \
          WHERE j.kind = ?2 AND j.state IN (?3, ?4, ?5, ?6) \
-         AND COALESCE(json_extract(s.scope_json, '$.purpose'), 'existing_matches') = ?1",
+         AND s.purpose = ?1",
         params![
-            purpose.as_str(),
+            purpose,
             OperationKind::Repair,
             OperationState::Queued,
             OperationState::Running,
@@ -769,32 +940,39 @@ const CUSTOM_CURRENT: &str = "COALESCE((SELECT m.source_album_revision = a.row_r
    FROM library_custom_edition_active ac JOIN library_custom_edition_manifests m \
    ON m.id = ac.manifest_id WHERE ac.local_album_id = a.id), 0)";
 
-/// One page of a purpose's jobs, newest first. `before` is the last
-/// page's `(created_at, id)`.
+/// One page of a purpose's jobs with their snapshots, newest first.
+/// `before` is the last page's `(created_at, id)`.
 pub fn history(
     conn: &Connection,
     purpose: Purpose,
     limit: usize,
     before: Option<(f64, String)>,
-) -> rusqlite::Result<Vec<String>> {
+) -> rusqlite::Result<Vec<(String, Result<RepairSnapshot, Unreadable>)>> {
     let (created, id) = before.unzip();
     let mut stmt = conn.prepare(
-        "SELECT j.id FROM library_operation_jobs j \
+        "SELECT j.id, s.purpose, s.phase, s.scope_json, s.target_matcher_version, \
+         s.result_json FROM library_operation_jobs j \
          JOIN library_repair_snapshots s ON s.job_id = j.id \
-         WHERE j.kind = ?5 \
-         AND COALESCE(json_extract(s.scope_json, '$.purpose'), 'existing_matches') = ?1 \
+         WHERE j.kind = ?5 AND s.purpose = ?1 \
          AND (?2 IS NULL OR j.created_at < ?2 OR (j.created_at = ?2 AND j.id < ?3)) \
          ORDER BY j.created_at DESC, j.id DESC LIMIT ?4",
     )?;
     stmt.query_map(
-        params![
-            purpose.as_str(),
-            created,
-            id,
-            limit as i64,
-            OperationKind::Repair
-        ],
-        |row| row.get(0),
+        params![purpose, created, id, limit as i64, OperationKind::Repair],
+        |row| {
+            let job_id: String = row.get(0)?;
+            let phase: String = row.get(2)?;
+            let scope: String = row.get(3)?;
+            let snap = decode_snapshot(
+                &job_id,
+                row.get(1)?,
+                &phase,
+                &scope,
+                row.get(4)?,
+                row.get(5)?,
+            );
+            Ok((job_id, snap))
+        },
     )?
     .collect()
 }
@@ -927,21 +1105,18 @@ pub fn claim_album(
 }
 
 /// Close one work item and count it on the job, while `worker` holds
-/// the job. `state` is a work state's stored text.
+/// the job.
 #[allow(clippy::too_many_arguments)]
 pub fn finish_work(
     tx: &Transaction<'_>,
     job_id: &str,
     worker: &str,
     ordinal: i64,
-    state: &str,
+    state: WorkState,
     failure_code: Option<&str>,
     result: Option<&serde_json::Value>,
     now: f64,
 ) -> rusqlite::Result<()> {
-    let state = WorkState::parse(state).ok_or_else(|| {
-        rusqlite::Error::ToSqlConversionFailure(format!("not a work state: {state}").into())
-    })?;
     if !jobs::holds(tx, job_id, worker)? {
         return Ok(());
     }
@@ -982,7 +1157,7 @@ pub fn save_finding(
          expected_album_revision, expected_identity_revision, finding_code, confidence, \
          reason_code, apply_eligible, suggested_release_mbid, suggested_release_group_mbid, \
          suggested_edition_json, state, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'open', ?13, ?13) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?14, ?13, ?13) \
          ON CONFLICT (job_id, local_album_id, finding_code) DO UPDATE SET \
          expected_album_revision = excluded.expected_album_revision, \
          expected_identity_revision = excluded.expected_identity_revision, \
@@ -990,7 +1165,7 @@ pub fn save_finding(
          apply_eligible = excluded.apply_eligible, \
          suggested_release_mbid = excluded.suggested_release_mbid, \
          suggested_release_group_mbid = excluded.suggested_release_group_mbid, \
-         suggested_edition_json = excluded.suggested_edition_json, state = 'open', \
+         suggested_edition_json = excluded.suggested_edition_json, state = excluded.state, \
          apply_result = NULL, updated_at = excluded.updated_at, row_revision = row_revision + 1",
         params![
             uuid::Uuid::new_v4().to_string(),
@@ -1009,7 +1184,8 @@ pub fn save_finding(
             candidate.and_then(|candidate| candidate.evidence.release_mbid.clone()),
             candidate.map(|candidate| candidate.evidence.release_group_mbid.clone()),
             payload,
-            now
+            now,
+            FindingState::Open
         ],
     )?;
     finish_work(
@@ -1017,10 +1193,10 @@ pub fn save_finding(
         job_id,
         worker,
         ordinal,
-        WorkState::Succeeded.as_str(),
+        WorkState::Succeeded,
         None,
         Some(&serde_json::json!({
-            "finding_code": verdict.finding_code,
+            "finding_code": verdict.finding_code.as_str(),
             "reason_code": verdict.reason_code,
         })),
         now,
@@ -1066,11 +1242,19 @@ pub fn auto_accept(
         return Ok(false);
     }
     tx.execute(
-        "UPDATE library_identity_repair_findings SET finding_code = 'exact_release_auto_accepted', \
-         reason_code = 'EXACT_EDITION_AUTO_ACCEPTED', apply_eligible = 0, state = 'applied', \
-         apply_result = 'EDITION_AUTO_ACCEPTED', updated_at = ?3, row_revision = row_revision + 1 \
-         WHERE job_id = ?1 AND local_album_id = ?2 AND finding_code = 'exact_release_suggested'",
-        params![job_id, album_id, now],
+        "UPDATE library_identity_repair_findings SET finding_code = ?4, \
+         reason_code = 'EXACT_EDITION_AUTO_ACCEPTED', apply_eligible = 0, state = ?5, \
+         apply_result = ?6, updated_at = ?3, row_revision = row_revision + 1 \
+         WHERE job_id = ?1 AND local_album_id = ?2 AND finding_code = ?7",
+        params![
+            job_id,
+            album_id,
+            now,
+            FindingCode::ExactReleaseAutoAccepted,
+            FindingState::Applied,
+            ApplyResult::EditionAutoAccepted,
+            FindingCode::ExactReleaseSuggested
+        ],
     )?;
     Ok(true)
 }
@@ -1084,9 +1268,11 @@ pub fn mark_ready(
     now: f64,
 ) -> rusqlite::Result<Option<OperationJob>> {
     let summary = summarize(tx, job_id, snap)?;
+    let summary = serde_json::to_string(&summary)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
     tx.execute(
         "UPDATE library_repair_snapshots SET result_json = ?2 WHERE job_id = ?1",
-        params![job_id, serde_json::to_string(&summary).unwrap_or_default()],
+        params![job_id, summary],
     )?;
     jobs::report_ready(tx, job_id, worker, "DRY_RUN_READY", now)?;
     jobs::job(tx, job_id)
@@ -1118,9 +1304,12 @@ fn summarize(conn: &Connection, job_id: &str, snap: &RepairSnapshot) -> rusqlite
     )?;
     let mut rows = stmt.query(params![job_id])?;
     while let Some(row) = rows.next()? {
-        let (finding, reason, count): (String, String, i64) =
+        let (finding, reason, count): (FindingCode, String, i64) =
             (row.get(0)?, row.get(1)?, row.get(2)?);
-        *summary.counts_by_finding.entry(finding).or_default() += count;
+        *summary
+            .counts_by_finding
+            .entry(finding.as_str().to_owned())
+            .or_default() += count;
         *summary.counts_by_reason.entry(reason).or_default() += count;
         summary.total_identities += count;
     }
@@ -1144,16 +1333,24 @@ fn summarize(conn: &Connection, job_id: &str, snap: &RepairSnapshot) -> rusqlite
         params![job_id],
         |row| row.get(0),
     )?;
-    let count = |code: &str| summary.counts_by_finding.get(code).copied().unwrap_or(0);
-    summary.estimated_apply_changes = match snap.purpose {
-        Purpose::ManagementReadiness => count("mapping_ready") + count("exact_release_suggested"),
-        _ => count("safe_detach"),
+    let count = |code: FindingCode| {
+        summary
+            .counts_by_finding
+            .get(code.as_str())
+            .copied()
+            .unwrap_or(0)
     };
-    summary.ready_album_count = count("ready");
-    summary.mapping_candidate_count = count("mapping_ready");
+    summary.estimated_apply_changes = match snap.purpose {
+        Purpose::ManagementReadiness => {
+            count(FindingCode::MappingReady) + count(FindingCode::ExactReleaseSuggested)
+        }
+        _ => count(FindingCode::SafeDetach),
+    };
+    summary.ready_album_count = count(FindingCode::Ready);
+    summary.mapping_candidate_count = count(FindingCode::MappingReady);
     summary.exact_release_required_count =
-        count("exact_release_required") + count("exact_release_suggested");
-    summary.needs_review_count = count("needs_review");
+        count(FindingCode::ExactReleaseRequired) + count(FindingCode::ExactReleaseSuggested);
+    summary.needs_review_count = count(FindingCode::NeedsReview);
     summary.provider_deferred_count = summary
         .counts_by_reason
         .get("PROVIDER_DEFERRED")
@@ -1203,13 +1400,13 @@ pub fn begin_apply(
          f.expected_album_revision, COALESCE(f.expected_identity_revision, '') || ':', \
          'repair_apply', ?1 || ':' || f.id || ':apply', ?2 \
          FROM library_identity_repair_findings f \
-         WHERE f.job_id = ?1 AND f.apply_eligible = 1 AND f.state = 'open'",
-        params![job_id, now],
+         WHERE f.job_id = ?1 AND f.apply_eligible = 1 AND f.state = ?3",
+        params![job_id, now, FindingState::Open],
     )?;
     jobs::queue_work(tx, job_id, staged as i64, now)?;
     tx.execute(
-        "UPDATE library_repair_snapshots SET phase = 'apply' WHERE job_id = ?1",
-        params![job_id],
+        "UPDATE library_repair_snapshots SET phase = ?2 WHERE job_id = ?1",
+        params![job_id, Phase::Apply],
     )?;
     job_after(tx, job_id)
 }
@@ -1242,37 +1439,43 @@ pub fn discard(
 #[derive(Debug, Clone)]
 pub struct OpenFinding {
     pub id: String,
-    pub finding_code: String,
+    pub finding_code: FindingCode,
     pub payload: FindingPayload,
 }
 
+/// `Err` inside when the finding's payload does not decode.
 pub fn open_finding(
     conn: &Connection,
     job_id: &str,
     album_id: &str,
-) -> rusqlite::Result<Option<OpenFinding>> {
-    conn.query_row(
-        "SELECT id, finding_code, suggested_edition_json FROM library_identity_repair_findings \
-         WHERE job_id = ?1 AND local_album_id = ?2 AND apply_eligible = 1 AND state = 'open' \
-         ORDER BY id LIMIT 1",
-        params![job_id, album_id],
-        |row| {
-            Ok(OpenFinding {
-                id: row.get(0)?,
-                finding_code: row.get(1)?,
-                payload: serde_json::from_str(&row.get::<_, String>(2)?).unwrap_or_default(),
-            })
-        },
-    )
-    .optional()
+) -> rusqlite::Result<Option<Result<OpenFinding, Unreadable>>> {
+    let row: Option<(String, FindingCode, String)> = conn
+        .query_row(
+            "SELECT id, finding_code, suggested_edition_json \
+             FROM library_identity_repair_findings \
+             WHERE job_id = ?1 AND local_album_id = ?2 AND apply_eligible = 1 AND state = ?3 \
+             ORDER BY id LIMIT 1",
+            params![job_id, album_id, FindingState::Open],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    Ok(row.map(|(id, finding_code, raw)| {
+        let payload = serde_json::from_str(&raw)
+            .map_err(|error| Unreadable::new(job_id, "finding payload", error))?;
+        Ok(OpenFinding {
+            id,
+            finding_code,
+            payload,
+        })
+    }))
 }
 
 /// Record what Apply did with a finding.
 pub fn settle_finding(
     tx: &Transaction<'_>,
     finding_id: &str,
-    state: &str,
-    apply_result: &str,
+    state: FindingState,
+    apply_result: ApplyResult,
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.execute(
@@ -1288,21 +1491,22 @@ pub fn settle_finding(
 // ---------------------------------------------------------------------------
 
 /// The finding codes a category lists, per purpose (v2's groups).
-pub fn category_codes(purpose: Purpose, category: &str) -> Option<&'static [&'static str]> {
-    let codes: &[&str] = match (purpose, category) {
-        (Purpose::ManagementReadiness, "ready") => &["ready"],
-        (Purpose::ManagementReadiness, "mapping_ready") => &["mapping_ready"],
+pub fn category_codes(purpose: Purpose, category: &str) -> Option<&'static [FindingCode]> {
+    use FindingCode as F;
+    let codes: &[FindingCode] = match (purpose, category) {
+        (Purpose::ManagementReadiness, "ready") => &[F::Ready],
+        (Purpose::ManagementReadiness, "mapping_ready") => &[F::MappingReady],
         (Purpose::ManagementReadiness, "exact_release_required") => {
-            &["exact_release_required", "exact_release_suggested"]
+            &[F::ExactReleaseRequired, F::ExactReleaseSuggested]
         }
         (Purpose::ManagementReadiness, "exact_release_auto_accepted") => {
-            &["exact_release_auto_accepted"]
+            &[F::ExactReleaseAutoAccepted]
         }
-        (_, "needs_review") => &["needs_review"],
-        (_, "unverifiable") => &["unverifiable", "stale"],
-        (Purpose::ExistingMatches, "valid") => &["valid"],
-        (Purpose::ExistingMatches, "safe_detach") => &["safe_detach"],
-        (Purpose::ExistingMatches, "manual_identity") => &["manual_identity"],
+        (_, "needs_review") => &[F::NeedsReview],
+        (_, "unverifiable") => &[F::Unverifiable, F::Stale],
+        (Purpose::ExistingMatches, "valid") => &[F::Valid],
+        (Purpose::ExistingMatches, "safe_detach") => &[F::SafeDetach],
+        (Purpose::ExistingMatches, "manual_identity") => &[F::ManualIdentity],
         _ => return None,
     };
     Some(codes)
@@ -1314,19 +1518,24 @@ pub fn findings_page(
     conn: &Connection,
     job_id: &str,
     purpose: Purpose,
-    codes: Option<&[&str]>,
+    codes: Option<&[FindingCode]>,
     cursor: Option<(f64, String)>,
     limit: usize,
 ) -> rusqlite::Result<FindingPage> {
     let current = if purpose == Purpose::ManagementReadiness {
-        "AND ((f.state = 'open' AND a.row_revision = f.expected_album_revision \
-         AND ((f.expected_identity_revision IS NULL AND i.row_revision IS NULL) \
-         OR i.row_revision = f.expected_identity_revision)) \
-         OR (f.finding_code = 'exact_release_auto_accepted' AND f.state = 'applied' \
-         AND EXISTS (SELECT 1 FROM library_automatic_edition_undo u \
-         WHERE u.local_album_id = f.local_album_id AND u.consumed_at IS NULL)))"
+        format!(
+            "AND ((f.state = '{open}' AND a.row_revision = f.expected_album_revision \
+             AND ((f.expected_identity_revision IS NULL AND i.row_revision IS NULL) \
+             OR i.row_revision = f.expected_identity_revision)) \
+             OR (f.finding_code = '{accepted}' AND f.state = '{applied}' \
+             AND EXISTS (SELECT 1 FROM library_automatic_edition_undo u \
+             WHERE u.local_album_id = f.local_album_id AND u.consumed_at IS NULL)))",
+            open = FindingState::Open.as_str(),
+            accepted = FindingCode::ExactReleaseAutoAccepted.as_str(),
+            applied = FindingState::Applied.as_str(),
+        )
     } else {
-        ""
+        String::new()
     };
     let from = format!(
         "FROM library_identity_repair_findings f JOIN local_albums a ON a.id = f.local_album_id \
@@ -1340,7 +1549,11 @@ pub fn findings_page(
             " AND f.finding_code IN ({})",
             vec!["?"; codes.len()].join(",")
         ));
-        values.extend(codes.iter().map(|code| Value::Text((*code).to_owned())));
+        values.extend(
+            codes
+                .iter()
+                .map(|code| Value::Text(code.as_str().to_owned())),
+        );
     }
     if let Some((updated, id)) = cursor {
         filter.push_str(" AND (f.updated_at < ? OR (f.updated_at = ? AND f.id < ?))");
@@ -1361,8 +1574,10 @@ pub fn findings_page(
     let mut stmt = conn.prepare(&sql)?;
     let mut items = stmt
         .query_map(params_from_iter(values), |row| {
+            let id: String = row.get(0)?;
             let raw: String = row.get(15)?;
-            let mut payload: FindingPayload = serde_json::from_str(&raw).unwrap_or_default();
+            let mut payload: FindingPayload = serde_json::from_str(&raw)
+                .map_err(|error| Unreadable::new(job_id, "finding payload", error))?;
             if payload.summary.is_none() {
                 // v2 kept the suggestion's summary at the top level.
                 payload.summary = serde_json::from_str::<EditionSummary>(&raw)
@@ -1370,7 +1585,7 @@ pub fn findings_page(
                     .filter(|summary| !summary.title.is_empty());
             }
             Ok(FindingRow {
-                id: row.get(0)?,
+                id,
                 local_album_id: row.get(1)?,
                 album_title: row.get(2)?,
                 album_artist_name: row.get(3)?,
@@ -1401,7 +1616,12 @@ pub fn findings_page(
         "SELECT f.finding_code, COUNT(*) {from} GROUP BY f.finding_code"
     ))?;
     let current_counts_by_finding = stmt
-        .query_map(params![job_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map(params![job_id], |row| {
+            Ok((
+                row.get::<_, FindingCode>(0)?.as_str().to_owned(),
+                row.get(1)?,
+            ))
+        })?
         .collect::<rusqlite::Result<BTreeMap<String, i64>>>()?;
     let next_cursor = has_more
         .then(|| {

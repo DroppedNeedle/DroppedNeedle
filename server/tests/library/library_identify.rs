@@ -2999,7 +2999,10 @@ fn the_existing_matches_repair_reports_a_v2_choice_as_a_persons() {
         unmatched_expected_tracks: Vec::new(),
     };
     let verdict = classify::existing_match(&identity, Some(&contradicted), 1, 1);
-    assert_eq!(verdict.finding_code, "manual_identity");
+    assert_eq!(
+        verdict.finding_code,
+        droppedneedle_library::repairs::models::FindingCode::ManualIdentity
+    );
 }
 
 /// A rescan changes the album's files while identification is recalling

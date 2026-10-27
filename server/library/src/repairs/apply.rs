@@ -11,9 +11,11 @@
 
 use rusqlite::Transaction;
 
+use super::models::{ApplyResult, FindingCode, FindingState};
 use super::store::{self, OpenFinding};
 use crate::catalog_revision::bump_catalog;
 use crate::identify::queue::queue_retry;
+use crate::jobs::WorkState;
 use crate::operations::choice;
 use crate::operations::decisions::{CatalogAction, record_action};
 use crate::operations::models::OperationError;
@@ -21,8 +23,8 @@ use crate::operations::models::OperationError;
 /// Reason an album's match state carries after a recheck detached it.
 pub const DETACH_REASON: &str = "IDENTITY_FAILED_RECHECK";
 
-/// What an applied finding that accepted an edition settles as.
-const EDITION_ACCEPTED: &str = "EDITION_ACCEPTED";
+/// Why Apply left an album whose finding does not decode.
+const FINDING_UNREADABLE: &str = "FINDING_UNREADABLE";
 
 /// Apply the finding for one claimed album and close its work item. True
 /// when that accepted an edition for the album.
@@ -36,30 +38,57 @@ pub fn apply_album(
     actor: Option<&str>,
     now: f64,
 ) -> Result<bool, OperationError> {
-    let finding = store::open_finding(tx, job_id, album_id)?;
+    let finding = match store::open_finding(tx, job_id, album_id)? {
+        Some(Ok(finding)) => Some(finding),
+        // Logged where it was read; the finding stays open.
+        Some(Err(_)) => {
+            store::finish_work(
+                tx,
+                job_id,
+                worker,
+                ordinal,
+                WorkState::Failed,
+                Some(FINDING_UNREADABLE),
+                None,
+                now,
+            )?;
+            return Ok(false);
+        }
+        None => None,
+    };
     let outcome = match &finding {
         Some(finding) if store::guard_holds(tx, album_id, finding.payload.guard.as_ref())? => {
             apply_finding(tx, job_id, album_id, finding, actor, now)?
         }
         _ => None,
     };
-    let accepted = outcome == Some(EDITION_ACCEPTED);
+    let accepted = outcome == Some(ApplyResult::EditionAccepted);
     match (finding, outcome) {
         (Some(finding), Some(result)) => {
-            store::settle_finding(tx, &finding.id, "applied", result, now)?;
-            store::finish_work(tx, job_id, worker, ordinal, "succeeded", None, None, now)?;
+            store::settle_finding(tx, &finding.id, FindingState::Applied, result, now)?;
+            store::finish_work(
+                tx,
+                job_id,
+                worker,
+                ordinal,
+                WorkState::Succeeded,
+                None,
+                None,
+                now,
+            )?;
         }
         (finding, _) => {
+            let stale = ApplyResult::StaleSubject;
             if let Some(finding) = finding {
-                store::settle_finding(tx, &finding.id, "stale", "STALE_SUBJECT", now)?;
+                store::settle_finding(tx, &finding.id, FindingState::Stale, stale, now)?;
             }
             store::finish_work(
                 tx,
                 job_id,
                 worker,
                 ordinal,
-                "skipped",
-                Some("STALE_SUBJECT"),
+                WorkState::Skipped,
+                Some(stale.as_str()),
                 None,
                 now,
             )?;
@@ -68,7 +97,8 @@ pub fn apply_album(
     Ok(accepted)
 }
 
-/// The change itself. `None` when the album no longer takes it.
+/// The change itself. `None` when the album no longer takes it, or the
+/// finding is not one Apply acts on.
 fn apply_finding(
     tx: &Transaction<'_>,
     job_id: &str,
@@ -76,9 +106,9 @@ fn apply_finding(
     finding: &OpenFinding,
     actor: Option<&str>,
     now: f64,
-) -> Result<Option<&'static str>, OperationError> {
-    match finding.finding_code.as_str() {
-        "safe_detach" => {
+) -> Result<Option<ApplyResult>, OperationError> {
+    match finding.finding_code {
+        FindingCode::SafeDetach => {
             let detached = crate::identity::remove(
                 tx,
                 album_id,
@@ -94,21 +124,29 @@ fn apply_finding(
             if detached.is_some() {
                 queue_retry(tx, album_id, actor, crate::clock::ms(now))?;
             }
-            Ok(detached.map(|_| "DETACHED"))
+            Ok(detached.map(|_| ApplyResult::Detached))
         }
-        "mapping_ready" => place(tx, job_id, album_id, finding, actor, now),
-        "exact_release_suggested" => {
+        FindingCode::MappingReady => place(tx, job_id, album_id, finding, actor, now),
+        FindingCode::ExactReleaseSuggested => {
             let Some(candidate) = finding.payload.candidate.as_ref() else {
                 return Ok(None);
             };
             match choice::choose(tx, album_id, candidate, actor, now) {
-                Ok(_) => Ok(Some(EDITION_ACCEPTED)),
+                Ok(_) => Ok(Some(ApplyResult::EditionAccepted)),
                 // The edition no longer fits the files: leave the album.
                 Err(OperationError::Invalid(_) | OperationError::NotFound(_)) => Ok(None),
                 Err(other) => Err(other),
             }
         }
-        _ => Ok(None),
+        // Only the three above are ever marked eligible.
+        FindingCode::Valid
+        | FindingCode::ManualIdentity
+        | FindingCode::NeedsReview
+        | FindingCode::Unverifiable
+        | FindingCode::Stale
+        | FindingCode::Ready
+        | FindingCode::ExactReleaseRequired
+        | FindingCode::ExactReleaseAutoAccepted => Ok(None),
     }
 }
 
@@ -122,7 +160,7 @@ fn place(
     finding: &OpenFinding,
     actor: Option<&str>,
     now: f64,
-) -> Result<Option<&'static str>, OperationError> {
+) -> Result<Option<ApplyResult>, OperationError> {
     let payload = &finding.payload;
     let (Some(release), false) = (payload.release_mbid.as_deref(), payload.mapping.is_empty())
     else {
@@ -156,5 +194,5 @@ fn place(
         now,
     )?;
     bump_catalog(tx)?;
-    Ok(Some("MAPPINGS_ACCEPTED"))
+    Ok(Some(ApplyResult::MappingsAccepted))
 }

@@ -207,6 +207,7 @@ library_reference_tombstones
 library_reidentification_snapshots
 library_repair_materialization
 library_repair_snapshots
+library_repair_watermarks
 library_retag_pairs
 library_review_exclusions
 library_scan_album_moves

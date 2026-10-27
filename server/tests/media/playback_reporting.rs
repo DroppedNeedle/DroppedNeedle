@@ -1731,7 +1731,7 @@ async fn older_plays_are_filed_and_count_in_player_apps() {
                 .query_row(
                     "SELECT j.id FROM library_operation_jobs j \
                      JOIN library_repair_snapshots s ON s.job_id = j.id \
-                     WHERE json_extract(s.scope_json, '$.purpose') = 'play_history_filing' \
+                     WHERE s.purpose = 'play_history_filing' \
                      AND j.state = 'succeeded'",
                     [],
                     |row| row.get(0),

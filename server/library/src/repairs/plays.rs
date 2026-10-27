@@ -42,6 +42,7 @@ use std::collections::BTreeMap;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::models::{Purpose, Scope, Summary};
+use super::store::Unreadable;
 use droppedneedle_kernel::db::fold::fold_text;
 
 /// Version of the filing rules, kept on the job.
@@ -267,8 +268,8 @@ pub fn queue(
         "SELECT EXISTS(SELECT 1 FROM library_operation_jobs j \
          JOIN library_repair_snapshots s ON s.job_id = j.id \
          WHERE j.kind = 'repair' AND j.state IN ('queued','running','paused') \
-         AND json_extract(s.scope_json, '$.purpose') = ?1)",
-        params![Purpose::PlayHistoryFiling.as_str()],
+         AND s.purpose = ?1)",
+        params![Purpose::PlayHistoryFiling],
         |row| row.get(0),
     )?;
     if scan_run.is_none() && at_work {
@@ -296,20 +297,13 @@ pub fn queue(
     if queued == 0 {
         return Ok(false);
     }
-    let purpose = Purpose::PlayHistoryFiling.as_str();
-    let scope = Scope {
-        purpose: Some(purpose.to_owned()),
-        ..Scope::default()
-    };
+    let purpose = Purpose::PlayHistoryFiling;
+    let scope = serde_json::to_string(&Scope::default())
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
     tx.execute(
-        "INSERT INTO library_repair_snapshots (job_id, scope_json, target_matcher_version, \
-         created_at) VALUES (?1, ?2, ?3, ?4)",
-        params![
-            job_id,
-            serde_json::to_string(&scope).unwrap_or_default(),
-            PLAYS_VERSION,
-            now
-        ],
+        "INSERT INTO library_repair_snapshots (job_id, purpose, scope_json, \
+         target_matcher_version, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![job_id, purpose, scope, PLAYS_VERSION, now],
     )?;
     tx.execute(
         "INSERT INTO library_repair_materialization (job_id, pinned_catalog_revision, \
@@ -343,32 +337,38 @@ fn file(tx: &Transaction<'_>, play_rowid: i64, track_id: &str) -> rusqlite::Resu
 /// One transaction of a filing job: look at the next `limit` unfiled rows
 /// after the job's cursor, file the ones that fit one track, and move the
 /// cursor, the job's counts and its summary with them. True when no row
-/// is left to look at.
+/// is left to look at. A cursor or summary that does not decode fails
+/// with [`Unreadable`], logged, and nothing written.
 ///
 /// The cursor is saved with the rows it passed, so a job that stops
 /// between two calls goes on where it was: no row is looked at twice, and
 /// the summary's numbers are the rows changed and left.
 pub fn step(tx: &Transaction<'_>, job_id: &str, limit: usize, now: f64) -> rusqlite::Result<bool> {
-    let cursor: i64 = tx
-        .query_row(
-            "SELECT staging_cursor FROM library_repair_materialization WHERE job_id = ?1",
-            params![job_id],
-            |row| row.get::<_, Option<String>>(0),
-        )?
-        .and_then(|raw| raw.parse().ok())
-        .unwrap_or(0);
-    let mut summary: Summary = tx
-        .query_row(
-            "SELECT result_json FROM library_repair_snapshots WHERE job_id = ?1",
-            params![job_id],
-            |row| row.get::<_, Option<String>>(0),
-        )?
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_else(|| Summary {
+    // No cursor yet: no row was looked at.
+    let cursor: Option<String> = tx.query_row(
+        "SELECT staging_cursor FROM library_repair_materialization WHERE job_id = ?1",
+        params![job_id],
+        |row| row.get(0),
+    )?;
+    let cursor: i64 = match cursor.map(|raw| raw.parse::<i64>()).transpose() {
+        Ok(cursor) => cursor.unwrap_or(0),
+        Err(error) => return Err(Unreadable::new(job_id, "play filing cursor", error).into()),
+    };
+    // No summary yet: the first batch starts it.
+    let summary: Option<String> = tx.query_row(
+        "SELECT result_json FROM library_repair_snapshots WHERE job_id = ?1",
+        params![job_id],
+        |row| row.get(0),
+    )?;
+    let mut summary: Summary = match summary.map(|raw| serde_json::from_str(&raw)).transpose() {
+        Ok(Some(summary)) => summary,
+        Ok(None) => Summary {
             purpose: Purpose::PlayHistoryFiling.as_str().to_owned(),
             target_matcher_version: PLAYS_VERSION.to_owned(),
             ..Summary::default()
-        });
+        },
+        Err(error) => return Err(Unreadable::new(job_id, "summary", error).into()),
+    };
 
     let rows = {
         let mut stmt = tx.prepare_cached(&format!(
@@ -433,9 +433,11 @@ pub fn step(tx: &Transaction<'_>, job_id: &str, limit: usize, now: f64) -> rusql
             params![job_id, last.to_string(), now],
         )?;
     }
+    let summary = serde_json::to_string(&summary)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
     tx.execute(
         "UPDATE library_repair_snapshots SET result_json = ?2 WHERE job_id = ?1",
-        params![job_id, serde_json::to_string(&summary).unwrap_or_default()],
+        params![job_id, summary],
     )?;
     tx.execute(
         "UPDATE library_operation_jobs SET completed_count = completed_count + ?2, \

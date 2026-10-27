@@ -15,12 +15,12 @@ use super::apply::apply_album;
 use super::classify;
 use super::hygiene;
 use super::models::{
-    EditionSummary, FindingPage, HYGIENE_VERSION, MANAGEMENT_MAPPING_VERSION, NewRepair,
-    PreparationEstimate, Purpose, RepairEstimate, Summary, Verdict,
+    EditionSummary, FindingCode, FindingPage, HYGIENE_VERSION, MANAGEMENT_MAPPING_VERSION,
+    NewRepair, Phase, PreparationEstimate, Purpose, RepairEstimate, Summary, Verdict,
 };
 use super::plays;
 use super::reasons;
-use super::store::{self, Phase, RepairSnapshot};
+use super::store::{self, RepairSnapshot, Unreadable, Watermark};
 use crate::clock::LibraryClock as _;
 use crate::identify::models::{IdentifyKind, LocalAlbumFacts, RecallResult};
 use crate::identify::service::IdentifyService;
@@ -101,7 +101,8 @@ impl Repairs {
             return Ok(None);
         }
         self.db.read_blocking("repairs.summary", |conn| {
-            Ok::<_, OperationError>(store::snapshot(conn, &job.id)?.and_then(|snap| snap.summary))
+            let snap = store::snapshot(conn, &job.id)?.transpose()?;
+            Ok::<_, OperationError>(snap.and_then(|snap| snap.summary))
         })
     }
 
@@ -195,14 +196,23 @@ impl Repairs {
             return Err(OperationError::Invalid(reasons::PAGE_SIZE_INVALID));
         }
         let before = cursor.map(parse_cursor).transpose()?;
-        let ids = self.db.read_blocking("repairs.history", |conn| {
-            Ok::<_, OperationError>(store::history(conn, purpose, limit + 1, before)?)
+        // One read: the page, its snapshots, then each job's detail.
+        let (items, more) = self.db.read_blocking("repairs.history", |conn| {
+            let page = store::history(conn, purpose, limit + 1, before)?;
+            let more = page.len() > limit;
+            let items = page
+                .into_iter()
+                .take(limit)
+                .map(|(id, snap)| {
+                    Ok(RepairDetail {
+                        detail: job_detail(conn, &id)?,
+                        summary: snap?.summary,
+                    })
+                })
+                .collect::<Result<Vec<_>, OperationError>>()?;
+            Ok::<_, OperationError>((items, more))
         })?;
-        let mut items = Vec::with_capacity(limit);
-        for id in ids.iter().take(limit) {
-            items.push(self.get(id, purpose)?);
-        }
-        let next = (ids.len() > limit)
+        let next = more
             .then(|| items.last())
             .flatten()
             .map(|last| format!("{}:{}", last.detail.job.created_at, last.detail.job.id));
@@ -306,10 +316,6 @@ pub struct RepairWorker {
     hygiene_checked: Arc<AtomicBool>,
     /// The scan run whose cleanup this worker already queued or skipped.
     hygiene_scan: Arc<Mutex<Option<String>>>,
-    /// Identification results up to this time (ms) have had their cleanup
-    /// queued. Starts at the worker's start: earlier ones are covered by
-    /// the one-time cleanup.
-    hygiene_identified: Arc<Mutex<i64>>,
     /// The latest ended scan when play filing was last queued or skipped.
     /// `None` until the first look after a server start.
     plays_scan: Arc<Mutex<Option<Option<String>>>>,
@@ -342,7 +348,6 @@ impl RepairWorker {
             coordinator,
             hygiene_checked: Arc::new(AtomicBool::new(false)),
             hygiene_scan: Arc::new(Mutex::new(None)),
-            hygiene_identified: Arc::new(Mutex::new(repairs.clock.now_ms())),
             plays_scan: Arc::new(Mutex::new(None)),
             backfill_scan: Arc::new(Mutex::new(None)),
             management,
@@ -381,48 +386,56 @@ impl RepairWorker {
                 .is_some_and(CancellationToken::is_cancelled)
     }
 
-    /// Queue a cleanup of albums identification just finished with (v2's
-    /// per-album hygiene after identification), at most 200 per job.
+    /// Queue a cleanup of albums identification finished with (v2's
+    /// per-album hygiene after identification), one job per page of
+    /// finished identifications after the stored watermark. Each job is
+    /// queued in the write that moves the watermark past its page, so a
+    /// restart neither repeats nor skips one, and a busy database leaves
+    /// both for the next turn. The watermark was seeded when it was
+    /// added: identifications finished before then were left to the
+    /// one-time cleanup.
     fn queue_hygiene_after_identification(&self) -> Result<(), OperationError> {
-        let mut seen = self
-            .hygiene_identified
-            .lock()
-            .map_err(|_| OperationError::Store("hygiene marker poisoned".to_owned()))?;
-        let after = *seen;
-        let (albums, newest) = self.db.read_blocking("repairs.identified_since", |conn| {
-            Ok::<_, OperationError>(store::identified_since(conn, after)?)
-        })?;
-        let Some(newest) = newest else {
-            return Ok(());
-        };
-        if albums.is_empty() {
-            *seen = newest;
-            return Ok(());
-        }
-        // A busy database leaves the marker where it was, so the next turn
-        // queues the cleanup again.
-        let queued =
+        loop {
+            let (after, page) = self.db.read_blocking("repairs.identified_after", |conn| {
+                let after = match store::identified_watermark(conn)? {
+                    Ok(after) => after,
+                    Err(seed) => return Ok::<_, OperationError>((seed, None)),
+                };
+                let page = store::identified_after(conn, &after)?;
+                Ok((after, Some(page)))
+            })?;
+            let Some(page) = page else {
+                return self.db.write_blocking(
+                    Lane::Background,
+                    "repairs.seed_identified_watermark",
+                    |tx| Ok(store::set_identified_watermark(tx, &after)?),
+                );
+            };
+            let Some(last) = page.last.clone() else {
+                return Ok(());
+            };
             self.db
                 .write_blocking(Lane::Background, "repairs.queue_hygiene_identified", |tx| {
-                    let new = NewRepair {
-                        job_id: self.ids.new_id(),
-                        purpose: Purpose::CatalogIdentityHygiene,
-                        requested_by_user_id: None,
-                        idempotency_key: format!(
-                            "catalog-identity-hygiene:v1:identified:{after}:{newest}"
-                        ),
-                        root_ids: Vec::new(),
-                        album_ids: albums,
-                        scan_run_id: None,
-                        source_matcher_version: None,
-                        target_matcher_version: HYGIENE_VERSION.to_owned(),
-                    };
-                    store::create(tx, &new, self.clock.now_secs()).map(|_| ())
-                });
-        if settled(&queued) {
-            *seen = newest;
+                    if !page.albums.is_empty() {
+                        let new = NewRepair {
+                            job_id: self.ids.new_id(),
+                            purpose: Purpose::CatalogIdentityHygiene,
+                            requested_by_user_id: None,
+                            idempotency_key: identified_key(&after, &last),
+                            root_ids: Vec::new(),
+                            album_ids: page.albums.clone(),
+                            scan_run_id: None,
+                            source_matcher_version: None,
+                            target_matcher_version: HYGIENE_VERSION.to_owned(),
+                        };
+                        store::create(tx, &new, self.clock.now_secs())?;
+                    }
+                    Ok::<_, OperationError>(store::set_identified_watermark(tx, &last)?)
+                })?;
+            if !page.full || self.must_yield() {
+                return Ok(());
+            }
         }
-        queued
     }
 
     /// Queue the one-time catalog cleanup when this database has albums
@@ -689,8 +702,21 @@ impl RepairWorker {
                     if let Some(left) = halt(tx, job_id, worker, yielding, now)? {
                         return Ok::<_, OperationError>(Some(left));
                     }
-                    if !plays::step(tx, job_id, plays::BATCH, now)? {
-                        return Ok(None);
+                    match plays::step(tx, job_id, plays::BATCH, now) {
+                        Ok(false) => return Ok(None),
+                        Ok(true) => {}
+                        // Logged where it was read.
+                        Err(error) if Unreadable::is(&error) => {
+                            return Ok(Some(store::end(
+                                tx,
+                                job_id,
+                                worker,
+                                OperationState::Failed,
+                                STATE_UNREADABLE,
+                                now,
+                            )?));
+                        }
+                        Err(error) => return Err(error.into()),
                     }
                     Ok(Some(store::end(
                         tx,
@@ -711,7 +737,7 @@ impl RepairWorker {
                 && let Some(summary) = self
                     .db
                     .read_blocking("repairs.play_filing_summary", |conn| {
-                        Ok::<_, OperationError>(store::snapshot(conn, job_id)?)
+                        Ok::<_, OperationError>(store::snapshot(conn, job_id)?.transpose()?)
                     })?
                     .and_then(|snap| snap.summary)
             {
@@ -827,24 +853,32 @@ impl RepairWorker {
         job: &OperationJob,
         worker: &str,
     ) -> Result<Option<OperationJob>, OperationError> {
-        let Some(snap) = self.db.read_blocking("repairs.job_snapshot", |conn| {
+        let snap = self.db.read_blocking("repairs.job_snapshot", |conn| {
             Ok::<_, OperationError>(store::snapshot(conn, &job.id)?)
-        })?
-        else {
-            return self.db.write_blocking(
-                Lane::Background,
-                "repairs.end_missing_snapshot",
-                |tx| {
-                    Ok(store::end(
-                        tx,
-                        &job.id,
-                        worker,
-                        OperationState::Failed,
-                        "MISSING_SNAPSHOT",
-                        self.clock.now_secs(),
-                    )?)
-                },
-            );
+        })?;
+        let snap = match snap {
+            Some(Ok(snap)) => snap,
+            // Logged where it was read.
+            unusable => {
+                let code = match unusable {
+                    None => "MISSING_SNAPSHOT",
+                    Some(_) => STATE_UNREADABLE,
+                };
+                return self.db.write_blocking(
+                    Lane::Background,
+                    "repairs.end_unusable_snapshot",
+                    |tx| {
+                        Ok(store::end(
+                            tx,
+                            &job.id,
+                            worker,
+                            OperationState::Failed,
+                            code,
+                            self.clock.now_secs(),
+                        )?)
+                    },
+                );
+            }
         };
         let actor = job.requested_by_user_id.clone();
         if snap.purpose == Purpose::PlayHistoryFiling {
@@ -887,7 +921,7 @@ impl RepairWorker {
                                 &job.id,
                                 worker,
                                 ordinal,
-                                state.as_str(),
+                                state,
                                 None,
                                 changed.as_ref(),
                                 now,
@@ -1010,7 +1044,7 @@ impl RepairWorker {
         })?;
         let Some(subject) = subject else {
             return Ok(Checked::Found(
-                Box::new(Verdict::new("stale", "IDENTITY_CHANGED")),
+                Box::new(Verdict::new(FindingCode::Stale, "IDENTITY_CHANGED")),
                 None,
             ));
         };
@@ -1020,33 +1054,39 @@ impl RepairWorker {
         };
         // Folders kept to their own tags are never looked up.
         if subject.policies.iter().any(|policy| policy != "automatic") {
-            return found(Verdict::new("unverifiable", "LOCAL_METADATA_POLICY"));
+            return found(Verdict::new(
+                FindingCode::Unverifiable,
+                "LOCAL_METADATA_POLICY",
+            ));
         }
         if purpose == Purpose::ManagementReadiness
             && let Some(current) = subject.custom_current
         {
             return found(if current {
-                Verdict::new("ready", "CUSTOM_EDITION_MANIFEST_VERIFIED")
+                Verdict::new(FindingCode::Ready, "CUSTOM_EDITION_MANIFEST_VERIFIED")
             } else {
-                Verdict::new("needs_review", "CUSTOM_MANIFEST_STALE")
+                Verdict::new(FindingCode::NeedsReview, "CUSTOM_MANIFEST_STALE")
             });
         }
         let identity = subject.identity.clone();
         if purpose == Purpose::ExistingMatches {
             match &identity {
-                None => return found(Verdict::new("stale", "IDENTITY_CHANGED")),
+                None => return found(Verdict::new(FindingCode::Stale, "IDENTITY_CHANGED")),
                 Some(identity) if identity.manual => {
                     return found(classify::existing_match(identity, None, 0, 0));
                 }
                 Some(identity) if identity.release_mbid.is_none() => {
-                    return found(Verdict::new("unverifiable", "EVIDENCE_UNAVAILABLE"));
+                    return found(Verdict::new(
+                        FindingCode::Unverifiable,
+                        "EVIDENCE_UNAVAILABLE",
+                    ));
                 }
                 Some(_) => {}
             }
         }
         let Some(facts) = self.facts(album_id)? else {
             return Ok(Checked::Found(
-                Box::new(Verdict::new("stale", "IDENTITY_CHANGED")),
+                Box::new(Verdict::new(FindingCode::Stale, "IDENTITY_CHANGED")),
                 None,
             ));
         };
@@ -1160,6 +1200,18 @@ fn halt(
     }
     Ok(None)
 }
+
+/// Idempotency key of the cleanup of identifications after `after` up
+/// to and including `last`.
+fn identified_key(after: &Watermark, last: &Watermark) -> String {
+    format!(
+        "catalog-identity-hygiene:v1:identified:{}:{}:{}:{}",
+        after.at_ms, after.job_id, last.at_ms, last.job_id
+    )
+}
+
+/// Why a job whose stored state does not decode ended.
+const STATE_UNREADABLE: &str = "REPAIR_STATE_UNREADABLE";
 
 /// Whether a queueing step is over for its marker: anything but a busy
 /// database, which the next turn tries again. Another error is returned

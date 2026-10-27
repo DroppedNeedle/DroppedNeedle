@@ -366,8 +366,7 @@ pub struct OperationWork {
 /// Operation jobs queued, running or paused, newest first (at most 20).
 pub fn operation_work(conn: &Connection) -> rusqlite::Result<Vec<OperationWork>> {
     let mut stmt = conn.prepare(
-        "SELECT j.id, j.kind, COALESCE(json_extract(s.scope_json, '$.purpose'), \
-         CASE WHEN s.job_id IS NULL THEN NULL ELSE 'existing_matches' END), s.phase, \
+        "SELECT j.id, j.kind, s.purpose, s.phase, \
          j.state, j.expected_work_count, j.completed_count, j.succeeded_count, \
          j.failed_count, j.skipped_count, j.started_at, j.updated_at \
          FROM library_operation_jobs j LEFT JOIN library_repair_snapshots s ON s.job_id = j.id \

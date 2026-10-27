@@ -3,55 +3,144 @@
 
 use std::collections::BTreeMap;
 
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
 
 use crate::operations::models::ReidentificationCandidate;
 
-/// What a repair job checks. Stored in `library_repair_snapshots.scope_json`
-/// under `purpose`, with v2's names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Purpose {
-    /// Identity repair: recheck existing automatic and imported matches
-    /// against MusicBrainz and offer to detach the ones that fail.
-    ExistingMatches,
-    /// Identity preparation: make sure every album Library Management may
-    /// touch has an exact release with each file placed on it.
-    ManagementReadiness,
-    /// Catalog cleanup after an upgrade: retire empty album shells and
-    /// fold albums an imported identity split off back together.
-    CatalogIdentityHygiene,
-    /// File plays that name no track under the track they were plays of.
-    PlayHistoryFiling,
+/// One SQL conversion for a closed set stored as text: the value is its
+/// `as_str`, and text outside the set fails decoding.
+macro_rules! sql_text {
+    ($type:ty) => {
+        impl ToSql for $type {
+            fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+                Ok(ToSqlOutput::from(self.as_str()))
+            }
+        }
+
+        impl FromSql for $type {
+            fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+                let text = value.as_str()?;
+                Self::parse(text).ok_or_else(|| {
+                    FromSqlError::Other(
+                        format!(concat!("not a ", stringify!($type), ": {}"), text).into(),
+                    )
+                })
+            }
+        }
+    };
+}
+
+/// A closed set of stored names: `as_str`, `parse` and the SQL conversion.
+macro_rules! named {
+    ($(#[$meta:meta])* $type:ident { $($(#[$vmeta:meta])* $variant:ident => $name:literal,)+ }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum $type {
+            $($(#[$vmeta])* $variant,)+
+        }
+
+        impl $type {
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+
+            pub fn parse(raw: &str) -> Option<Self> {
+                match raw {
+                    $($name => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+
+        sql_text!($type);
+    };
+}
+
+named! {
+    /// What a repair job checks, in `library_repair_snapshots.purpose`
+    /// with v2's names.
+    Purpose {
+        /// Identity repair: recheck existing automatic and imported
+        /// matches against MusicBrainz and offer to detach the ones that
+        /// fail.
+        ExistingMatches => "existing_matches",
+        /// Identity preparation: make sure every album Library Management
+        /// may touch has an exact release with each file placed on it.
+        ManagementReadiness => "management_readiness",
+        /// Catalog cleanup after an upgrade: retire empty album shells and
+        /// fold albums an imported identity split off back together.
+        CatalogIdentityHygiene => "catalog_identity_hygiene",
+        /// File plays that name no track under the track they were plays
+        /// of.
+        PlayHistoryFiling => "play_history_filing",
+    }
 }
 
 impl Purpose {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ExistingMatches => "existing_matches",
-            Self::ManagementReadiness => "management_readiness",
-            Self::CatalogIdentityHygiene => "catalog_identity_hygiene",
-            Self::PlayHistoryFiling => "play_history_filing",
-        }
-    }
-
-    /// v2 treated a snapshot without a purpose as an identity repair.
-    pub fn parse(raw: Option<&str>) -> Option<Self> {
-        match raw.unwrap_or("existing_matches") {
-            "existing_matches" => Some(Self::ExistingMatches),
-            "management_readiness" => Some(Self::ManagementReadiness),
-            "catalog_identity_hygiene" => Some(Self::CatalogIdentityHygiene),
-            "play_history_filing" => Some(Self::PlayHistoryFiling),
-            _ => None,
-        }
-    }
-
     /// The finding Apply acts on.
-    pub fn apply_finding(self) -> &'static str {
+    pub fn apply_finding(self) -> FindingCode {
         match self {
-            Self::ManagementReadiness => "mapping_ready",
-            _ => "safe_detach",
+            Self::ManagementReadiness => FindingCode::MappingReady,
+            _ => FindingCode::SafeDetach,
         }
+    }
+}
+
+named! {
+    /// One album's verdict in a repair report.
+    FindingCode {
+        /// The match holds.
+        Valid => "valid",
+        /// The match fails; Apply removes it.
+        SafeDetach => "safe_detach",
+        /// A person's match: reported, never removed.
+        ManualIdentity => "manual_identity",
+        NeedsReview => "needs_review",
+        Unverifiable => "unverifiable",
+        /// The album changed or went before it was checked.
+        Stale => "stale",
+        /// Every file is placed on its exact release.
+        Ready => "ready",
+        /// Apply can place every file on the release.
+        MappingReady => "mapping_ready",
+        ExactReleaseRequired => "exact_release_required",
+        /// Apply can choose the suggested edition.
+        ExactReleaseSuggested => "exact_release_suggested",
+        /// The check chose the suggested edition by itself.
+        ExactReleaseAutoAccepted => "exact_release_auto_accepted",
+    }
+}
+
+named! {
+    /// Where a finding is.
+    FindingState {
+        Open => "open",
+        Applied => "applied",
+        Skipped => "skipped",
+        Stale => "stale",
+    }
+}
+
+named! {
+    /// What Apply did with a finding.
+    ApplyResult {
+        Detached => "DETACHED",
+        MappingsAccepted => "MAPPINGS_ACCEPTED",
+        EditionAccepted => "EDITION_ACCEPTED",
+        EditionAutoAccepted => "EDITION_AUTO_ACCEPTED",
+        /// The album changed since it was checked.
+        StaleSubject => "STALE_SUBJECT",
+    }
+}
+
+named! {
+    /// Phase a repair job is in: checking or applying.
+    Phase {
+        DryRun => "dry_run",
+        Apply => "apply",
     }
 }
 
@@ -70,8 +159,6 @@ pub struct Scope {
     pub root_ids: Vec<String>,
     #[serde(default)]
     pub album_ids: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub purpose: Option<String>,
     #[serde(default)]
     pub legacy_only: bool,
     /// Cleanup after one scan: only albums that run changed, plus empty
@@ -136,14 +223,14 @@ pub struct FindingPayload {
 /// One album's verdict, before it is stored.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Verdict {
-    pub finding_code: &'static str,
+    pub finding_code: FindingCode,
     pub reason_code: &'static str,
     pub apply_eligible: bool,
     pub payload: FindingPayload,
 }
 
 impl Verdict {
-    pub fn new(finding_code: &'static str, reason_code: &'static str) -> Self {
+    pub fn new(finding_code: FindingCode, reason_code: &'static str) -> Self {
         Self {
             finding_code,
             reason_code,
@@ -173,12 +260,12 @@ pub struct FindingRow {
     pub album_year: Option<i64>,
     pub cover_available: bool,
     pub review_id: Option<String>,
-    pub finding_code: String,
+    pub finding_code: FindingCode,
     pub reason_code: String,
     pub confidence: String,
     pub apply_eligible: bool,
-    pub state: String,
-    pub apply_result: Option<String>,
+    pub state: FindingState,
+    pub apply_result: Option<ApplyResult>,
     pub suggested_release_mbid: Option<String>,
     pub suggested_release_group_mbid: Option<String>,
     pub payload: FindingPayload,

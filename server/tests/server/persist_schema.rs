@@ -68,7 +68,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 170);
+    assert_eq!(table_names(&pool).await.len(), 171);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -6736,4 +6736,81 @@ async fn queued_copies_can_give_way_on_upgrade() {
         before + 1,
         "the new reason is taken and the list moves"
     );
+}
+
+/// Migration 0092 gives repair snapshots a `purpose` column filled from
+/// `scope_json`: a named purpose is kept, a scope naming none is an
+/// identity repair (v2's rule), and a scope that does not decode or names
+/// no known purpose is left without one. Only the four purposes are
+/// taken. The cleanup watermark is seeded at the newest finished
+/// identification job, or the start of time when there is none.
+#[tokio::test]
+async fn repair_purpose_becomes_a_column_on_upgrade() {
+    let pool = scratch_pool().await;
+    migrator_through(91).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = OFF; \
+         INSERT INTO library_repair_snapshots (job_id, scope_json, target_matcher_version, \
+             created_at) VALUES \
+             ('named', '{\"root_ids\":[],\"purpose\":\"management_readiness\"}', 'v', 1), \
+             ('none', '{\"root_ids\":[\"r\"]}', 'v', 1), \
+             ('null', '{\"purpose\":null}', 'v', 1), \
+             ('broken', 'not json', 'v', 1), \
+             ('unknown', '{\"purpose\":\"artist_identity_reconciliation\"}', 'v', 1), \
+             ('list', '[]', 'v', 1); \
+         INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
+             input_revision, idempotency_key, created_ms, updated_ms) VALUES \
+             ('a', 'al', 'automatic', 0, 'succeeded', 'r', 'ka', 1, 5), \
+             ('b', 'al', 'automatic', 0, 'attention', 'r', 'kb', 1, 9), \
+             ('c', 'al', 'automatic', 0, 'queued', 'r', 'kc', 1, 20);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let purposes: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT job_id, purpose FROM library_repair_snapshots ORDER BY job_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let purpose = |purpose: Option<&str>| purpose.map(str::to_owned);
+    assert_eq!(
+        purposes,
+        vec![
+            ("broken".to_owned(), None),
+            ("list".to_owned(), None),
+            ("named".to_owned(), purpose(Some("management_readiness"))),
+            ("none".to_owned(), purpose(Some("existing_matches"))),
+            ("null".to_owned(), purpose(Some("existing_matches"))),
+            ("unknown".to_owned(), None),
+        ]
+    );
+    assert!(
+        sqlx::raw_sql(
+            "UPDATE library_repair_snapshots SET purpose = 'bogus' WHERE job_id = 'none'"
+        )
+        .execute(&pool)
+        .await
+        .is_err(),
+        "only the four purposes are taken"
+    );
+
+    let mark: (i64, String) =
+        sqlx::query_as("SELECT identified_at, identified_job_id FROM library_repair_watermarks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(mark, (9, "b".to_owned()), "the newest finished job");
+
+    let empty = scratch_pool().await;
+    apply_migrations(&empty).await.unwrap();
+    let mark: (i64, String) =
+        sqlx::query_as("SELECT identified_at, identified_job_id FROM library_repair_watermarks")
+            .fetch_one(&empty)
+            .await
+            .unwrap();
+    assert_eq!(mark, (0, String::new()), "no job: the start of time");
 }

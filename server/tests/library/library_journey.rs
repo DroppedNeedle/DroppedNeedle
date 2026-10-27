@@ -19215,6 +19215,82 @@ async fn an_album_moves_to_the_edition_its_barcode_names_once() {
     assert!(queued(&db).is_empty());
 }
 
+/// Every album identification finishes with gets its catalog cleanup
+/// look: the ones finished before the repairs worker started (a restart)
+/// and every one of a window holding more than a page of them. The place
+/// the cleanup reached is kept, so a restart looks at none of them again.
+#[tokio::test]
+async fn every_identified_album_gets_its_cleanup_across_restarts() {
+    let (scratch, library, music) = bare_library("lib-identified-cleanup").await;
+    plant(&music, "Artist/Album/01.flac", "flac_full_01.flac");
+    add_music_root(&library, &music).await;
+    let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens");
+    // The one-time cleanup already ran on this database.
+    db.execute(
+        "INSERT INTO library_operation_jobs (id, kind, state, idempotency_key, created_at, \
+         updated_at) VALUES ('backfill', 'repair', 'succeeded', ?1, 0, 0)",
+        [droppedneedle_library::repairs::store::HYGIENE_BACKFILL_KEY],
+    )
+    .expect("one-time cleanup marked");
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as i64;
+    // `count` empty album rows, each identified at `from_ms` plus its
+    // number.
+    let identified = |prefix: &str, count: i64, from_ms: i64| {
+        db.execute(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?2) \
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+             created_at, updated_at) SELECT printf('%s-%03d', ?1, n.i), a.root_id, \
+             printf('%s-%03d', ?1, n.i), a.title, a.title_folded, a.album_artist_name, \
+             a.album_artist_name_folded, a.album_artist_id, 'automatic', 0, 0 \
+             FROM n, (SELECT * FROM local_albums LIMIT 1) a",
+            rusqlite::params![prefix, count],
+        )
+        .expect("empty albums");
+        db.execute(
+            "INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
+             input_revision, idempotency_key, created_ms, updated_ms) \
+             SELECT 'job-' || id, id, 'automatic', 0, 'succeeded', 'r', 'key-' || id, ?2, \
+             ?2 + CAST(substr(id, length(?1) + 2) AS INTEGER) \
+             FROM local_albums WHERE id LIKE ?1 || '-%'",
+            rusqlite::params![prefix, from_ms],
+        )
+        .expect("identified");
+    };
+    let looked_at = || -> (i64, i64) {
+        db.query_row(
+            "SELECT COUNT(DISTINCT w.local_album_id), COUNT(*) FROM library_operation_work w \
+             JOIN library_operation_jobs j ON j.id = w.job_id \
+             WHERE j.idempotency_key LIKE 'catalog-identity-hygiene:v1:identified:%' \
+             AND (w.local_album_id LIKE 'before-%' OR w.local_album_id LIKE 'after-%')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("work reads")
+    };
+    let drain = |worker: droppedneedle_library::repairs::service::RepairWorker| async move {
+        for _ in 0..20 {
+            if !droppedneedle_library::repairs::tick(&worker, "worker").await {
+                return;
+            }
+        }
+        panic!("the repairs worker never ran out of work");
+    };
+
+    identified("before", 250, now_ms - 60_000);
+    let worker = crate::common::library::repair_worker(&library);
+    identified("after", 250, now_ms + 60_000);
+    drain(worker).await;
+    assert_eq!(looked_at(), (500, 500), "every identified album, once");
+
+    drain(crate::common::library::repair_worker(&library)).await;
+    assert_eq!(looked_at(), (500, 500), "a restart queues none again");
+}
+
 /// An album row an earlier version left on its own "Unknown Artist" row
 /// (not the catalog's sentinel) while every file names the artist keeps
 /// it through scans, because its files never change. After an upgrade it
