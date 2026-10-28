@@ -217,28 +217,29 @@ impl DropStore {
             .map_err(write_error)
     }
 
-    /// Add one processing item and answer its id.
-    pub async fn add_item(
+    /// Add a job's processing items, one per `(folder name, paths)`, in one
+    /// transaction, and answer their ids in order. A job either has every
+    /// item or none, so a cut-off job is grouped again whole.
+    pub async fn add_items(
         &self,
         job_id: &str,
-        folder_name: &str,
-        paths: &[String],
-    ) -> Result<i64, StoreError> {
-        let values = (
-            job_id.to_owned(),
-            folder_name.to_owned(),
-            serde_json::to_string(paths).unwrap_or_else(|_| "[]".to_owned()),
-            i64::try_from(paths.len()).unwrap_or(i64::MAX),
-            self.db.now_unix_f64(),
-        );
+        units: Vec<(String, Vec<String>)>,
+    ) -> Result<Vec<i64>, StoreError> {
+        let job_id = job_id.to_owned();
+        let at = ms(self.db.now_unix_f64());
         self.db
-            .write_background("drop_import.add_item", move |tx| {
-                let (job_id, folder_name, paths, total, at) = values;
-                tx.execute(
-                    sql::INSERT_ITEM.text(),
-                    params![job_id, folder_name, total, paths, ms(at)],
-                )?;
-                Ok(tx.last_insert_rowid())
+            .write_background("drop_import.add_items", move |tx| {
+                let mut ids = Vec::with_capacity(units.len());
+                for (folder_name, paths) in units {
+                    let total = i64::try_from(paths.len()).unwrap_or(i64::MAX);
+                    let paths = serde_json::to_string(&paths).unwrap_or_else(|_| "[]".to_owned());
+                    tx.execute(
+                        sql::INSERT_ITEM.text(),
+                        params![job_id, folder_name, total, paths, at],
+                    )?;
+                    ids.push(tx.last_insert_rowid());
+                }
+                Ok(ids)
             })
             .await
             .map_err(write_error)

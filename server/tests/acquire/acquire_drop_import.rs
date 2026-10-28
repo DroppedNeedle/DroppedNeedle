@@ -1104,6 +1104,68 @@ async fn a_cut_off_upload_survives_a_sweep_that_cannot_read_its_jobs() {
     runtime.shutdown().await;
 }
 
+/// A cut-off upload whose items cannot all be written keeps none of them,
+/// so the next start groups every folder: a job left with some items
+/// would never be grouped again and its other files would be swept.
+#[tokio::test]
+async fn a_cut_off_upload_is_grouped_whole_or_not_at_all() {
+    let (db, library, dir, _auth) = bundles().await;
+    let acquire = acquire_over(
+        &db,
+        Arc::new(LibraryLanding::new(
+            &library,
+            every_priority(Arc::new(OneRelease(release(&["Mysterons"], &[None])))),
+        )),
+    );
+    let staging = dir.join("cut-staging");
+    for folder in ["Album A", "Album B"] {
+        let track = staging.join(folder).join("01 Track.flac");
+        std::fs::create_dir_all(track.parent().expect("album folder")).expect("staging");
+        std::fs::write(&track, b"audio").expect("track");
+    }
+    let store = droppedneedle_acquire::drop_import::store::DropStore::new(acquire.db.clone());
+    store
+        .create_job(
+            "job-cut",
+            "u-curator",
+            "Cora",
+            "albums.zip",
+            &staging.to_string_lossy(),
+        )
+        .await
+        .expect("job");
+    // The second item of the job is refused, as a write cut off partway.
+    let refuse = |sql: &'static str| {
+        acquire.db.write("test.refuse", move |tx| {
+            tx.execute_batch(sql)?;
+            Ok(())
+        })
+    };
+    refuse(
+        "CREATE TRIGGER test_refuse_second_item BEFORE INSERT ON drop_import_items \
+         WHEN EXISTS (SELECT 1 FROM drop_import_items WHERE job_id = NEW.job_id) \
+         BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+    )
+    .await
+    .expect("trigger");
+    acquire.drops.sweep_stale().await.unwrap();
+    let job = store.get_job("job-cut").await.expect("read").expect("job");
+    assert!(job.items.is_empty(), "{:?}", job.items);
+
+    refuse("DROP TRIGGER test_refuse_second_item;")
+        .await
+        .expect("drop trigger");
+    acquire.drops.sweep_stale().await.unwrap();
+    let job = store.get_job("job-cut").await.expect("read").expect("job");
+    let mut folders: Vec<&str> = job
+        .items
+        .iter()
+        .map(|item| item.folder_name.as_str())
+        .collect();
+    folders.sort_unstable();
+    assert_eq!(folders, ["Album A", "Album B"]);
+}
+
 /// An upload whose declared length is over the 8 GB limit is refused with
 /// 413 before any of it is written, so a person learns the cap at once
 /// instead of after sending gigabytes.

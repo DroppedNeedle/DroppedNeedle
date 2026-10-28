@@ -97,6 +97,16 @@ fn sweep_stopped(error: StoreError) -> Result<(), StoreError> {
     }
 }
 
+/// One grouped folder as a stored item: its name and its files' paths.
+fn item_paths(unit: &extract::Unit) -> (String, Vec<String>) {
+    let paths = unit
+        .files
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    (unit.folder_name.clone(), paths)
+}
+
 /// What became of one file of an item.
 #[derive(Debug, Clone)]
 struct Fate {
@@ -437,20 +447,10 @@ impl DropImports {
                             continue;
                         }
                     };
-                    for unit in units {
-                        let paths: Vec<String> = unit
-                            .files
-                            .iter()
-                            .map(|path| path.to_string_lossy().into_owned())
-                            .collect();
-                        if let Err(error) = self
-                            .store
-                            .add_item(&job_id, &unit.folder_name, &paths)
-                            .await
-                        {
-                            tracing::warn!(%job_id, %error, "cut-off drop upload not kept; staging left as is");
-                            return sweep_stopped(error);
-                        }
+                    let units = units.iter().map(item_paths).collect();
+                    if let Err(error) = self.store.add_items(&job_id, units).await {
+                        tracing::warn!(%job_id, %error, "cut-off drop upload not kept; staging left as is");
+                        return sweep_stopped(error);
                     }
                 }
             }
@@ -562,20 +562,12 @@ impl DropImports {
             self.publish(&job.user_id, &job.id);
             return Ok((job_status::FAILED, 0));
         }
-        let mut items = Vec::with_capacity(units.len());
-        for unit in units {
-            let paths: Vec<String> = unit
-                .files
-                .iter()
-                .map(|path| path.to_string_lossy().into_owned())
-                .collect();
-            let id = self
-                .store
-                .add_item(&job.id, &unit.folder_name, &paths)
-                .await
-                .map_err(|error| error.to_string())?;
-            items.push((id, unit));
-        }
+        let ids = self
+            .store
+            .add_items(&job.id, units.iter().map(item_paths).collect())
+            .await
+            .map_err(|error| error.to_string())?;
+        let items: Vec<_> = ids.into_iter().zip(units).collect();
         self.publish(&job.user_id, &job.id);
         let count = items.len();
         for (id, unit) in items {
