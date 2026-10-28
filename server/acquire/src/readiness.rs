@@ -10,9 +10,14 @@
 
 use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
+use tokio::sync::watch;
+
 use super::downloads::source_tag::SourceTag;
 use super::probes::{CachedProbes, ProbeCache};
-use crate::downloads::worker::SourceList;
+use crate::downloads::worker::{DownloadWorker, SourceList, WorkerSettings};
+use droppedneedle_kernel::jobs::{AlreadyRunning, Supervisor};
+use droppedneedle_plugins::host::PluginHost;
 
 /// The download sources as they stand now.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -97,4 +102,64 @@ impl droppedneedle_catalog::reads::discover::content::DownloadReadiness for Sour
     fn can_acquire(&self) -> bool {
         SourceReadiness::can_acquire(self)
     }
+}
+
+/// Job name of the loop that follows the source settings and plugins.
+pub const SOURCE_WATCH_JOB: &str = "acquire-source-watch";
+
+/// What the source readiness reads, followed for changes.
+#[derive(Clone)]
+pub(crate) struct SourceNotices {
+    pub(crate) settings: Arc<WorkerSettings>,
+    pub(crate) plugins: Option<Arc<PluginHost>>,
+}
+
+/// Wait for any notice to change. False when one closed.
+async fn any_changed(
+    settings: &mut [watch::Receiver<i64>],
+    plugins: Option<&mut watch::Receiver<u64>>,
+) -> bool {
+    let mut waits: Vec<BoxFuture<'_, bool>> = settings
+        .iter_mut()
+        .map(|notice| {
+            Box::pin(async move { notice.changed().await.is_ok() }) as BoxFuture<'_, bool>
+        })
+        .collect();
+    if let Some(notice) = plugins {
+        waits.push(Box::pin(async move { notice.changed().await.is_ok() }));
+    }
+    if waits.is_empty() {
+        return std::future::pending().await;
+    }
+    futures_util::future::select_all(waits).await.0
+}
+
+/// Follow everything the readiness reads. On a change, wake the
+/// download worker, so a request held for want of a source starts at
+/// once, and refresh the probes, so the status routes show the saved
+/// client.
+pub(crate) fn spawn_source_watch(
+    supervisor: &Supervisor,
+    notices: &SourceNotices,
+    worker: Arc<DownloadWorker>,
+    probe_wake: Arc<watch::Sender<u64>>,
+) -> Result<(), AlreadyRunning> {
+    let mut settings = notices.settings.notices();
+    let mut plugins = notices.plugins.as_ref().map(|host| host.subscribe());
+    supervisor.one_shot(SOURCE_WATCH_JOB, move |ctx| async move {
+        loop {
+            tokio::select! {
+                () = ctx.token().cancelled() => return Ok(()),
+                open = any_changed(&mut settings, plugins.as_mut()) => {
+                    if !open {
+                        tracing::warn!("a source settings notice closed; source changes are no longer followed");
+                        ctx.token().cancelled().await;
+                        return Ok(());
+                    }
+                }
+            }
+            worker.wake();
+            probe_wake.send_modify(|count| *count = count.wrapping_add(1));
+        }
+    })
 }

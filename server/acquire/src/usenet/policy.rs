@@ -2,9 +2,13 @@
 //!
 //! Ported from v2's `DownloadPolicySettings` and quality tiers. This struct
 //! holds the subset the Usenet clients consume, with v2's defaults; the
-//! acquisition wiring fills it from the download policy settings.
+//! acquisition clients fill it from the download policy settings
+//! ([`UsenetPolicy::from_saved`]).
 
 use std::time::Duration;
+
+use crate::settings::{clamp_u32, clamp_u64};
+use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 
 /// Audio quality tiers, best first.
 ///
@@ -121,6 +125,28 @@ impl UsenetPolicy {
             quality_max: QualityTier::Lossless,
             ..UsenetPolicy::default()
         }
+    }
+
+    /// Usenet policy bound from the download-policy section.
+    pub(crate) fn from_saved(policy: &DownloadPolicy) -> Self {
+        let mut out = UsenetPolicy::v2_defaults();
+        if let Some(tier) = QualityTier::parse(&policy.quality_min) {
+            out.quality_min = tier;
+        }
+        if let Some(tier) = QualityTier::parse(&policy.quality_max) {
+            out.quality_max = tier;
+        }
+        if let Some(tier) = QualityTier::parse(&policy.quality_cutoff) {
+            out.quality_cutoff = tier;
+        }
+        out.flac_mp3_only = policy.flac_mp3_only;
+        out.retention_days = clamp_u32(policy.usenet_retention_days);
+        out.max_size_mb = clamp_u64(policy.max_size_mb);
+        out.stall_timeout =
+            Duration::from_secs(clamp_u64(policy.download_stall_timeout_minutes).max(1) * 60);
+        out.queued_timeout =
+            Duration::from_secs(clamp_u64(policy.download_queued_timeout_minutes).max(1) * 60);
+        out
     }
 
     /// Whether `tier` sits inside the accepted contiguous band.

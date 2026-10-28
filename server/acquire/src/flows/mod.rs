@@ -7,6 +7,7 @@
 //! the state the flows read and write. Drop import lives in its own
 //! module ([`super::drop_import`]).
 
+pub mod bundle;
 pub mod loops;
 pub mod seams;
 pub(crate) mod sql;

@@ -26,7 +26,7 @@
 //! - [`search_jobs`] runs manual album searches: every source's ranked
 //!   candidates for one album, and the pick that starts a download.
 //!
-//! The `db`, `dispatch`, `search`, `sources`, `settings`, `probes`,
+//! The `db`, `dispatch`, `search`, `sources`, `clients`, `settings`, `probes`,
 //! `readiness`, and `wiring` modules unify the per-area seams onto one
 //! production spelling each (one [`dispatch::DownloadDispatch`] starts
 //! every download, every source is one
@@ -37,6 +37,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod client_error;
+pub mod clients;
 pub mod db;
 pub mod dispatch;
 pub mod downloads;

@@ -17,15 +17,17 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use droppedneedle_acquire::clients::LiveClients;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::SourceTag;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::sources::{DownloadSource as _, SourceHandle};
 use droppedneedle_acquire::downloads::store::NewTask;
+use droppedneedle_acquire::downloads::worker::WorkerSettings;
 use droppedneedle_acquire::downloads::worker::{DownloadWorker, SourceList};
 use droppedneedle_acquire::readiness::SourceReadiness;
 use droppedneedle_acquire::target::{SearchTarget, Targets};
-use droppedneedle_acquire::wiring::{ClientLives, LiveClients, WorkerSettings};
+use droppedneedle_acquire::wiring::ClientLives;
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::runtime_config::secret_sections::SlskdConnection;
 use droppedneedle_kernel::runtime_config::sections::{

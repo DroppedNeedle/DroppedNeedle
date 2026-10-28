@@ -15,8 +15,10 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use droppedneedle_kernel::db::{DbError, Lane};
+use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor, TickCtx};
 use droppedneedle_providers::RequestPriority;
 
 use super::HeldFolders;
@@ -1651,4 +1653,34 @@ pub fn is_retry(reason: Reason) -> bool {
 /// for a library reason and paired with a track.
 pub fn retries_by_itself(file: &HeldFile) -> bool {
     is_retry(file.reason) && file.is_paired()
+}
+
+/// The held list's loop runs every five minutes, the first pass a minute
+/// after start: often enough for the first automatic retry, five minutes
+/// after a hold.
+const HELD_PRUNE_INTERVAL: Duration = Duration::from_secs(300);
+const HELD_PRUNE_DELAY: Duration = Duration::from_secs(60);
+
+/// The held list's loop: a minute after start, then every five
+/// minutes, it finishes actions a restart cut off, removes the held
+/// copies of entries past their expiry and retries the files our side
+/// could not take whose next try is due.
+pub(crate) fn spawn_held_prune(
+    supervisor: &Supervisor,
+    held: Arc<HeldService>,
+) -> Result<(), AlreadyRunning> {
+    supervisor.periodic(
+        PRUNE_JOB,
+        Schedule::new(HELD_PRUNE_INTERVAL).with_initial_delay(HELD_PRUNE_DELAY),
+        FnTick(move |ctx: TickCtx| {
+            let held = held.clone();
+            async move {
+                tokio::select! {
+                    () = ctx.token().cancelled() => {}
+                    _ = held.tend() => {}
+                }
+                Ok(Next::Continue)
+            }
+        }),
+    )
 }

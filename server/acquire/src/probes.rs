@@ -13,7 +13,11 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use tokio::sync::watch;
+
+use super::clients::LiveClients;
 use super::imports::health::{
     ClientProbe, HealthProbes, IndexerProbe, LidarrReadinessProbe, NewznabProbe, SabnzbdProbe,
     SlskdProbe,
@@ -25,7 +29,7 @@ use super::slskd::{ReqwestSlskdHttp, SlskdRepository};
 use super::usenet::newznab::NewznabIndexer;
 use super::usenet::prowlarr::ProwlarrIndexer;
 use super::usenet::sabnzbd::SabnzbdQueue;
-use super::wiring::LiveClients;
+use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor, TickCtx};
 use droppedneedle_kernel::runtime_config::secret_sections::{
     DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer, ProwlarrConnection,
 };
@@ -488,4 +492,40 @@ async fn refresh_lidarr(inputs: &ProbeInputs) -> ClientProbe {
             }
         }
     }
+}
+
+/// Health-probe refresh cadence.
+const PROBE_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Job name of the probe refresh loop.
+pub const PROBE_JOB: &str = "acquire-probe-refresh";
+
+/// Probe refresh: one pass now, then one on every wake and at least
+/// every five minutes, each over the clients the current settings
+/// build. A pass waiting on a slow client ends at the stop; it only
+/// reads, and the cache keeps the last pass.
+pub(crate) fn spawn_probe_loop(
+    supervisor: &Supervisor,
+    cache: Arc<ProbeCache>,
+    clients: Arc<LiveClients>,
+    wake: &watch::Sender<u64>,
+) -> Result<(), AlreadyRunning> {
+    let mut wake = wake.subscribe();
+    wake.mark_changed();
+    supervisor.on_wakeup(
+        PROBE_JOB,
+        wake,
+        Schedule::new(PROBE_INTERVAL),
+        FnTick(move |ctx: TickCtx| {
+            let cache = cache.clone();
+            let inputs = clients.current().probe_inputs.clone();
+            async move {
+                tokio::select! {
+                    () = ctx.token().cancelled() => {}
+                    () = refresh_probes(&cache, &inputs) => {}
+                }
+                Ok(Next::Continue)
+            }
+        }),
+    )
 }

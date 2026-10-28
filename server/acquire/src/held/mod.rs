@@ -22,6 +22,7 @@ pub mod store;
 
 use std::path::{Component, Path, PathBuf};
 
+pub(crate) use self::service::spawn_held_prune;
 pub use self::service::{HeldError, HeldService, PRUNE_JOB};
 use self::store::HeldRoot;
 

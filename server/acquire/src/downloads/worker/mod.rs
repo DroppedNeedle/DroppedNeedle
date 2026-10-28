@@ -58,6 +58,7 @@ mod recovery;
 mod retry;
 mod review;
 mod run;
+mod settings;
 
 pub use controls::{NextSourceError, RetryError};
 #[cfg(any(test, feature = "test-support"))]
@@ -65,6 +66,8 @@ pub use fixed_source::FixedSource;
 pub use landings::ReimportError;
 pub use recovery::{RecoveryReport, run_startup_recovery};
 pub use run::spawn_download_worker;
+pub use settings::WorkerSettings;
+pub(crate) use settings::sabnzbd_mount;
 
 use poll::{PollBackoff, PollMemory};
 
@@ -136,7 +139,7 @@ pub type SourceSet = Arc<Vec<Arc<dyn DownloadSource>>>;
 #[derive(Clone)]
 pub enum SourceList {
     /// The sources the saved settings turn on, plugin sources included.
-    Live(Arc<crate::wiring::WorkerSettings>),
+    Live(Arc<WorkerSettings>),
     /// A fixed set, for tests that script the sources.
     Fixed(SourceSet),
 }
@@ -155,7 +158,7 @@ impl SourceList {
 /// Where the worker's sources and tuning come from, read once per pass.
 enum Inputs {
     /// The saved settings.
-    Live(Arc<crate::wiring::WorkerSettings>),
+    Live(Arc<WorkerSettings>),
     /// A fixed set, for tests that script the sources.
     Fixed {
         sources: SourceSet,
@@ -332,7 +335,7 @@ impl DownloadWorker {
     /// `health`. `readiness` reads the same settings.
     pub fn new(
         journal: Arc<Journal>,
-        settings: Arc<crate::wiring::WorkerSettings>,
+        settings: Arc<WorkerSettings>,
         readiness: SourceReadiness,
         events: droppedneedle_kernel::events::EventHub,
         health: Arc<ServiceHealth>,
