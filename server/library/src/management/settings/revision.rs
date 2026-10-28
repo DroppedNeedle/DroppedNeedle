@@ -38,7 +38,11 @@ fn strip_legacy_shims(profile: &mut serde_json::Value) {
 /// Profile content revision: the full profile minus `revision` and the
 /// legacy shims, hashed.
 pub fn profile_revision(profile: &LibraryManagementProfile) -> String {
-    let mut payload = serde_json::to_value(profile).unwrap_or(serde_json::Value::Null);
+    profile_payload_revision(serde_json::to_value(profile).unwrap_or(serde_json::Value::Null))
+}
+
+/// [`profile_revision`] of a profile given as JSON.
+pub(super) fn profile_payload_revision(mut payload: serde_json::Value) -> String {
     if let Some(map) = payload.as_object_mut() {
         map.remove("revision");
     }

@@ -32,11 +32,9 @@
 		roots: ReadonlyArray<{ id: string; label: string }>;
 		settingsRevision: string | null;
 		policyRevision: string | null;
-		recycleAvailable: boolean;
 	}
 
-	let { jobId, preview, roots, settingsRevision, policyRevision, recycleAvailable }: Props =
-		$props();
+	let { jobId, preview, roots, settingsRevision, policyRevision }: Props = $props();
 
 	interface Selection {
 		item: LibraryManagementPlanItem;
@@ -90,7 +88,6 @@
 			selection.collision.existingRootId &&
 			selection.collision.existingRelativePath &&
 			action &&
-			(!action.startsWith('recycle_') || recycleAvailable) &&
 			(action !== 'keep_incoming_alternate' || alternateRelativePath.trim())
 		)
 	);
@@ -215,14 +212,7 @@
 						name="collision-action"
 						value={option.value}
 						bind:group={action}
-						disabled={option.recycles && !recycleAvailable}
-					/><span
-						><strong>{option.title}</strong><small
-							>{option.recycles && !recycleAvailable
-								? 'Unavailable until a recycle directory is configured.'
-								: option.detail}</small
-						></span
-					></label
+					/><span><strong>{option.title}</strong><small>{option.detail}</small></span></label
 				>
 			{/each}
 		</fieldset>

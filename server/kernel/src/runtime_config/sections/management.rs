@@ -88,46 +88,6 @@ pub enum GenreSource {
     ExistingLocal,
 }
 
-/// Artwork provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ArtworkProvider {
-    /// CAA release.
-    CoverArtArchiveRelease,
-    /// CAA release group.
-    CoverArtArchiveReleaseGroup,
-    /// Local files.
-    LocalFiles,
-    /// Embedded art.
-    Embedded,
-    /// AudioDB.
-    Audiodb,
-}
-
-/// Artwork image type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ArtworkImageType {
-    /// Front cover.
-    Front,
-    /// Back cover.
-    Back,
-    /// Booklet.
-    Booklet,
-    /// Medium.
-    Medium,
-    /// Tray.
-    Tray,
-    /// Obi.
-    Obi,
-    /// Spine.
-    Spine,
-    /// Track art.
-    Track,
-    /// Other.
-    Other,
-}
-
 /// Artwork output format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -143,33 +103,14 @@ pub enum ArtworkOutputFormat {
     Webp,
 }
 
-/// Artwork download size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ArtworkDownloadSize {
-    /// Full size.
-    #[default]
-    Full,
-    /// 1200px.
-    #[serde(rename = "1200")]
-    Size1200,
-    /// 500px.
-    #[serde(rename = "500")]
-    Size500,
-    /// 250px.
-    #[serde(rename = "250")]
-    Size250,
-}
-
 /// Artist credit standardization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtistStandardization {
-    /// As credited.
+    /// As credited. `variations`, no longer offered, reads as this.
     #[default]
+    #[serde(alias = "variations")]
     Credited,
-    /// Accepted variations.
-    Variations,
     /// Canonical name.
     Canonical,
 }
@@ -194,77 +135,6 @@ pub enum RelationshipType {
     Producer,
     /// Other.
     Other,
-}
-
-/// Source-tree cleanup after a confirmed move.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceCleanupMode {
-    /// Leave sources alone.
-    Keep,
-    /// Remove after a confirmed move.
-    #[default]
-    RemoveAfterConfirmedMove,
-}
-
-/// ID3 version for MP3 writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
-pub enum Id3Version {
-    /// ID3v2.4.
-    #[serde(rename = "2.4")]
-    #[default]
-    V24,
-    /// ID3v2.3.
-    #[serde(rename = "2.3")]
-    V23,
-}
-
-/// APEv2 policy for MP3 writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Mp3ApePolicy {
-    /// Preserve APEv2 tags.
-    #[default]
-    Preserve,
-    /// Remove APEv2 tags.
-    Remove,
-}
-
-/// Raw-AAC tag policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RawAacTagPolicy {
-    /// Write APEv2.
-    #[default]
-    SaveApev2,
-    /// Write nothing.
-    DoNotWrite,
-    /// Remove APEv2.
-    RemoveApev2,
-}
-
-/// WAV tag policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WavTagPolicy {
-    /// ID3 chunk.
-    #[default]
-    Id3,
-    /// RIFF INFO chunk.
-    RiffInfo,
-    /// Leave existing tags alone.
-    PreserveExisting,
-}
-
-/// ID3 text encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum Id3TextEncoding {
-    /// UTF-8.
-    #[default]
-    Utf8,
-    /// UTF-16.
-    Utf16,
 }
 
 /// Unicode normalization for paths.
@@ -387,43 +257,6 @@ impl Default for RelationshipCreditSettings {
     }
 }
 
-/// Format-compatibility handling.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(default)]
-pub struct FormatCompatibilitySettings {
-    /// ID3 version for MP3 writes.
-    pub id3_version: Id3Version,
-    /// ID3v2.3 multi-value join delimiter.
-    pub id3v23_join_delimiter: String,
-    /// ID3 text encoding.
-    pub id3_text_encoding: Id3TextEncoding,
-    /// Strip ID3 chunks from FLAC.
-    pub remove_id3_from_flac: bool,
-    /// APEv2 policy for MP3.
-    pub mp3_apev2_policy: Mp3ApePolicy,
-    /// Raw-AAC tag policy.
-    pub raw_aac_tag_policy: RawAacTagPolicy,
-    /// WAV tag policy.
-    pub wav_tag_policy: WavTagPolicy,
-    /// Primary genre only for constrained formats.
-    pub constrained_genres_primary_only: bool,
-}
-
-impl Default for FormatCompatibilitySettings {
-    fn default() -> Self {
-        Self {
-            id3_version: Id3Version::V24,
-            id3v23_join_delimiter: "; ".to_owned(),
-            id3_text_encoding: Id3TextEncoding::Utf8,
-            remove_id3_from_flac: false,
-            mp3_apev2_policy: Mp3ApePolicy::Preserve,
-            raw_aac_tag_policy: RawAacTagPolicy::SaveApev2,
-            wav_tag_policy: WavTagPolicy::Id3,
-            constrained_genres_primary_only: false,
-        }
-    }
-}
-
 /// Metadata management block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
@@ -444,8 +277,6 @@ pub struct MetadataManagementSettings {
     pub scrub_unmanaged_tags: bool,
     /// Keep embedded art during a scrub.
     pub preserve_embedded_art_during_scrub: bool,
-    /// Format compatibility.
-    pub format_compatibility: FormatCompatibilitySettings,
 }
 
 /// v2 defaults: metadata management is on and embedded art survives a
@@ -461,7 +292,6 @@ impl Default for MetadataManagementSettings {
             preserve_fields: Vec::new(),
             scrub_unmanaged_tags: false,
             preserve_embedded_art_during_scrub: true,
-            format_compatibility: FormatCompatibilitySettings::default(),
         }
     }
 }
@@ -500,8 +330,6 @@ pub struct GenreManagementSettings {
     pub lastfm_whitelist_only: bool,
     /// Canonicalize labels.
     pub canonicalize: bool,
-    /// Max genre-ancestry depth.
-    pub maximum_ancestry_depth: i64,
     /// Allowed labels.
     pub allowlist: Vec<String>,
     /// Blocked labels.
@@ -527,7 +355,6 @@ impl Default for GenreManagementSettings {
             listenbrainz_curated_only: true,
             lastfm_whitelist_only: true,
             canonicalize: true,
-            maximum_ancestry_depth: 4,
             allowlist: Vec::new(),
             denylist: Vec::new(),
             aliases: Vec::new(),
@@ -545,20 +372,8 @@ pub struct ArtworkManagementSettings {
     pub embedded_enabled: bool,
     /// Write external art files.
     pub external_enabled: bool,
-    /// Provider order.
-    pub providers: Vec<ArtworkProvider>,
-    /// Approved art only.
-    pub approved_only: bool,
-    /// Download size.
-    pub download_size: ArtworkDownloadSize,
     /// Local filename patterns.
     pub local_file_patterns: Vec<String>,
-    /// Image types to fetch.
-    pub image_types: Vec<ArtworkImageType>,
-    /// Minimum width (0 any).
-    pub minimum_width: i64,
-    /// Minimum height (0 any).
-    pub minimum_height: i64,
     /// Embedded size cap (0 uncapped).
     pub embedded_maximum_size: i64,
     /// Embedded output format.
@@ -567,18 +382,8 @@ pub struct ArtworkManagementSettings {
     pub external_maximum_size: i64,
     /// External output format.
     pub external_format: ArtworkOutputFormat,
-    /// Embedded front only.
-    pub embedded_front_only: bool,
-    /// External front only.
-    pub external_front_only: bool,
     /// Never replace art with smaller art.
     pub never_replace_with_smaller: bool,
-    /// Existing types never replaced.
-    pub preserve_existing_types: Vec<ArtworkImageType>,
-    /// External naming script id.
-    pub external_naming_script_id: Option<String>,
-    /// Overwrite external files.
-    pub overwrite_external_files: bool,
 }
 
 impl Default for ArtworkManagementSettings {
@@ -586,14 +391,6 @@ impl Default for ArtworkManagementSettings {
         Self {
             embedded_enabled: true,
             external_enabled: true,
-            providers: vec![
-                ArtworkProvider::CoverArtArchiveRelease,
-                ArtworkProvider::CoverArtArchiveReleaseGroup,
-                ArtworkProvider::LocalFiles,
-                ArtworkProvider::Embedded,
-            ],
-            approved_only: true,
-            download_size: ArtworkDownloadSize::Full,
             local_file_patterns: [
                 "cover.jpg",
                 "cover.jpeg",
@@ -607,19 +404,11 @@ impl Default for ArtworkManagementSettings {
             .iter()
             .map(ToString::to_string)
             .collect(),
-            image_types: vec![ArtworkImageType::Front],
-            minimum_width: 0,
-            minimum_height: 0,
             embedded_maximum_size: 1200,
             embedded_format: ArtworkOutputFormat::Jpeg,
             external_maximum_size: 0,
             external_format: ArtworkOutputFormat::Original,
-            embedded_front_only: true,
-            external_front_only: true,
             never_replace_with_smaller: true,
-            preserve_existing_types: Vec::new(),
-            external_naming_script_id: None,
-            overwrite_external_files: false,
         }
     }
 }
@@ -682,10 +471,6 @@ pub struct OrganizationManagementSettings {
     pub move_sidecars: bool,
     /// Sidecar filename patterns.
     pub sidecar_patterns: Vec<String>,
-    /// Source cleanup after a confirmed move.
-    pub source_cleanup: SourceCleanupMode,
-    /// Remove newly empty directories.
-    pub remove_empty_directories: bool,
 }
 
 impl Default for OrganizationManagementSettings {
@@ -701,39 +486,6 @@ impl Default for OrganizationManagementSettings {
                 .iter()
                 .map(ToString::to_string)
                 .collect(),
-            source_cleanup: SourceCleanupMode::RemoveAfterConfirmedMove,
-            remove_empty_directories: true,
-        }
-    }
-}
-
-/// File-behavior gates.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(default)]
-pub struct FileBehaviorSettings {
-    /// Preserve mtimes.
-    pub preserve_timestamps: bool,
-    /// Preserve permission bits.
-    pub preserve_permissions: bool,
-    /// Refuse writes the format cannot hold.
-    pub strict_capability_gate: bool,
-    /// Refuse symlinked media.
-    pub reject_symlinks: bool,
-    /// Re-read tags after writing.
-    pub validate_written_metadata: bool,
-    /// Re-probe audio after writing.
-    pub validate_technical_audio: bool,
-}
-
-impl Default for FileBehaviorSettings {
-    fn default() -> Self {
-        Self {
-            preserve_timestamps: true,
-            preserve_permissions: true,
-            strict_capability_gate: true,
-            reject_symlinks: true,
-            validate_written_metadata: true,
-            validate_technical_audio: true,
         }
     }
 }
@@ -744,8 +496,6 @@ impl Default for FileBehaviorSettings {
 pub struct LyricsManagementSettings {
     /// Master switch.
     pub enabled: bool,
-    /// Lyrics provider.
-    pub provider: String,
     /// Write plain lyrics.
     pub write_plain: bool,
     /// Write synced lyrics.
@@ -760,7 +510,6 @@ impl Default for LyricsManagementSettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            provider: "lrclib".to_owned(),
             write_plain: true,
             write_synced: true,
             preserve_existing: false,
@@ -813,22 +562,11 @@ pub struct IdentityManagementSettings {
 }
 
 /// Post-publish notifications.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct ProfileNotificationSettings {
-    /// Refresh DroppedNeedle views.
-    pub refresh_droppedneedle: bool,
     /// Refresh external servers.
     pub refresh_external_servers: bool,
-}
-
-impl Default for ProfileNotificationSettings {
-    fn default() -> Self {
-        Self {
-            refresh_droppedneedle: true,
-            refresh_external_servers: false,
-        }
-    }
 }
 
 /// One named management profile.
@@ -855,8 +593,6 @@ pub struct LibraryManagementProfile {
     pub artwork: ArtworkManagementSettings,
     /// Organization block.
     pub organization: OrganizationManagementSettings,
-    /// File-behavior gates.
-    pub file_behavior: FileBehaviorSettings,
     /// Enrichment block.
     pub enrichment: EnrichmentManagementSettings,
     /// Identity policy.
@@ -882,7 +618,6 @@ impl Default for LibraryManagementProfile {
             genres: GenreManagementSettings::default(),
             artwork: ArtworkManagementSettings::default(),
             organization: OrganizationManagementSettings::default(),
-            file_behavior: FileBehaviorSettings::default(),
             enrichment: EnrichmentManagementSettings::default(),
             identity: IdentityManagementSettings::default(),
             notification: ProfileNotificationSettings::default(),
@@ -944,18 +679,12 @@ pub struct LibraryManagementRootOverrides {
     pub move_enabled: Option<bool>,
     /// Sidecar-move switch.
     pub move_sidecars: Option<bool>,
-    /// Source cleanup.
-    pub source_cleanup: Option<SourceCleanupMode>,
-    /// Timestamp preservation.
-    pub preserve_timestamps: Option<bool>,
     /// Naming script id.
     pub naming_script_id: Option<String>,
     /// Multi-disc naming mode.
     pub multi_disc_naming_mode: MultiDiscNamingMode,
     /// Multi-disc naming script id.
     pub multi_disc_naming_script_id: Option<String>,
-    /// Automatic edition acceptance.
-    pub automatic_edition_acceptance_enabled: Option<bool>,
 }
 
 /// One root-to-profile assignment.
@@ -1031,7 +760,7 @@ impl Default for ExternalRefreshSettings {
 /// Library management settings (secret-free on purpose).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[schema(as = LibraryManagementSettings)]
-#[serde(default)]
+#[serde(default, remote = "Self")]
 pub struct LibraryManagement {
     /// Settings schema version.
     pub schema_version: i64,
@@ -1051,10 +780,45 @@ pub struct LibraryManagement {
     pub undo_retention_days: i64,
     /// Preview retention in hours.
     pub preview_retention_hours: i64,
-    /// Recycle-bin path ("" disables).
-    pub recycle_bin_path: String,
     /// External refresh.
     pub external_refresh: ExternalRefreshSettings,
+    /// The document these settings were decoded from, never written: an
+    /// activation pinned against options since removed hashed them too,
+    /// and a read needs their stored values to carry it.
+    #[serde(skip)]
+    pub as_read: AsRead,
+}
+
+/// A decoded document, kept beside the settings read from it. It takes no
+/// part in comparing settings: two reads of one value are equal.
+#[derive(Clone, Default)]
+pub struct AsRead(pub Option<std::sync::Arc<serde_json::Value>>);
+
+impl PartialEq for AsRead {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for AsRead {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AsRead")
+    }
+}
+
+impl Serialize for LibraryManagement {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        Self::serialize(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for LibraryManagement {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let document = serde_json::Value::deserialize(deserializer)?;
+        let mut settings = Self::deserialize(&document).map_err(serde::de::Error::custom)?;
+        settings.as_read = AsRead(Some(std::sync::Arc::new(document)));
+        Ok(settings)
+    }
 }
 
 impl Default for LibraryManagement {
@@ -1069,8 +833,8 @@ impl Default for LibraryManagement {
             tagging_scripts: Vec::new(),
             undo_retention_days: 90,
             preview_retention_hours: 24,
-            recycle_bin_path: String::new(),
             external_refresh: ExternalRefreshSettings::default(),
+            as_read: AsRead::default(),
         }
     }
 }

@@ -38,6 +38,7 @@ use super::normalize::{
     is_field_name, migration_carry, normalize_changes, normalize_stored, validate_preset_provenance,
 };
 use super::presets::{MANAGED_FIELDS, PresetDiff, initial_settings, migrate_presets, preset_diff};
+use super::retired::carry_removed_options;
 use super::revision::settings_revision;
 use crate::settings_models::{
     LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
@@ -567,6 +568,20 @@ fn migrated(
         initial_settings(naming_template)
     } else {
         let mut migrated = stored.clone();
+        let carried = carry_removed_options(&mut migrated);
+        for root_id in carried.repinned {
+            tracing::info!(
+                root_id = %root_id,
+                "kept a folder's Library Management activation across removed options"
+            );
+        }
+        for (root_id, reason) in carried.kept_stale {
+            tracing::warn!(
+                root_id = %root_id,
+                reason,
+                "a folder's Library Management activation needs a new dry run: {reason}"
+            );
+        }
         migrate_presets(&mut migrated);
         drop_unknown_fields(&mut migrated);
         migrated
@@ -673,7 +688,6 @@ fn prune_orphaned_scripts(settings: &mut LibraryManagement, deleted: &LibraryMan
         [
             Some(profile.organization.naming_script_id.clone()),
             profile.organization.multi_disc_naming_script_id.clone(),
-            profile.artwork.external_naming_script_id.clone(),
         ]
         .into_iter()
         .flatten()

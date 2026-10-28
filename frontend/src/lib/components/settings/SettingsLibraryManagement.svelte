@@ -46,7 +46,6 @@
 	} from '$lib/queries/library-management/types';
 	import Button from '$lib/ui/Button.svelte';
 	import NumberField from '$lib/ui/NumberField.svelte';
-	import TextField from '$lib/ui/TextField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	interface Props {
@@ -317,9 +316,7 @@
 			<details class="management-retention-panel">
 				<summary
 					><span class="management-editor-icon"><History class="h-4 w-4" /></span><span
-						><strong>Retention, recycle, and refresh</strong><small
-							>Advanced recovery settings</small
-						></span
+						><strong>Retention and refresh</strong><small>Advanced recovery settings</small></span
 					><ChevronRight class="ml-auto h-4 w-4 management-editor-chevron" /></summary
 				>
 				<div class="mt-4 grid gap-x-4 gap-y-2 sm:grid-cols-2">
@@ -335,15 +332,6 @@
 						max={168}
 						bind:value={draft.preview_retention_hours}
 					/>
-					<div class="sm:col-span-2">
-						<TextField
-							label="Recycle directory"
-							mono
-							placeholder="/srv/music-recycle"
-							help="A recovery destination, not a scanned library root. Recycle actions stay unavailable while empty or unsafe."
-							bind:value={draft.recycle_bin_path}
-						/>
-					</div>
 					<div class="py-2 sm:col-span-2">
 						<ToggleRow
 							label="Post-commit refresh"

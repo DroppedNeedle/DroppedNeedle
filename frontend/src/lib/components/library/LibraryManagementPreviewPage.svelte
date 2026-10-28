@@ -568,7 +568,6 @@
 		{roots}
 		settingsRevision={settingsQuery.data?.settings_revision ?? null}
 		policyRevision={policyQuery.data?.policy_revision ?? null}
-		recycleAvailable={Boolean(settingsQuery.data?.recycle_bin_path.trim())}
 	/>
 {/if}
 

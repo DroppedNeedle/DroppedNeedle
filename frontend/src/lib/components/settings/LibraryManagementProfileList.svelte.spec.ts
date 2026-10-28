@@ -54,10 +54,10 @@ describe('LibraryManagementProfileList', () => {
 			aspects: ['Metadata tags', 'Artwork', 'Move files'],
 			warnings: [
 				{
-					code: 'remove_sources',
+					code: 'scrub_unmanaged_tags',
 					severity: 'danger',
-					title: 'Removes verified move sources',
-					message: 'Source files are removed after their managed moves are confirmed.'
+					title: 'Removes unmanaged tags',
+					message: 'Tags outside the managed and preserved field lists will be removed.'
 				}
 			],
 			bundle_hash: 'b'.repeat(64),
@@ -104,7 +104,7 @@ describe('LibraryManagementProfileList', () => {
 			expected_settings_revision: 'settings-1'
 		});
 		await expect.element(dialog.getByText('Custom and inactive')).toBeVisible();
-		await expect.element(dialog.getByText('Removes verified move sources')).toBeVisible();
+		await expect.element(dialog.getByText('Removes unmanaged tags')).toBeVisible();
 		await dialog.getByText('Picard-style: single disc (imported)').click();
 		await expect.element(dialog.getByText(previewScript.source)).toBeVisible();
 		await dialog.getByRole('textbox', { name: 'Imported profile name' }).fill('Shared organizer');

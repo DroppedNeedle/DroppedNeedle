@@ -37,10 +37,7 @@ use crate::common::sources::workspace_sources;
 
 /// Fields with no reader yet: a path prefix (section key, then fields;
 /// `[]` steps into list items, `{}` into map values) and why.
-const PENDING: &[(&str, &str)] = &[(
-    "library_management.profiles[]",
-    "not every Library Management profile option is honoured yet",
-)];
+const PENDING: &[(&str, &str)] = &[];
 
 /// Fields read only through a method on their section, with the method.
 /// A row whose method nothing calls counts as unread.

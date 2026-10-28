@@ -35,7 +35,7 @@ describe('LibraryManagementProfileEditor', () => {
 
 		await editor.getByText('Artwork', { exact: true }).click();
 		await editor.getByText('Advanced artwork rules').click();
-		await editor.getByRole('spinbutton', { name: 'Minimum width' }).fill('600');
+		await editor.getByRole('spinbutton', { name: 'Embedded maximum size' }).fill('800');
 
 		await editor.getByRole('button', { name: 'Save profile' }).click();
 
@@ -43,6 +43,6 @@ describe('LibraryManagementProfileEditor', () => {
 		const [saved] = onsave.mock.calls[0];
 		expect(saved.enrichment.lyrics.enabled).toBe(true);
 		expect(saved.metadata.artist_credits.standardization).toBe('canonical');
-		expect(saved.artwork.minimum_width).toBe(600);
+		expect(saved.artwork.embedded_maximum_size).toBe(800);
 	});
 });

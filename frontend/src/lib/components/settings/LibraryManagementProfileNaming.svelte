@@ -35,7 +35,7 @@
 <LibraryManagementEditorSection
 	icon={FolderCog}
 	title="File naming and organization"
-	subtitle="Paths, sidecars, and source cleanup"
+	subtitle="Paths and sidecars"
 	active={enabled}
 	chips={[
 		{
@@ -175,38 +175,19 @@
 				</div>
 			</div>
 		</LibraryManagementEditorAdvanced>
-		<LibraryManagementEditorAdvanced
-			title="Sidecars and source cleanup"
-			subtitle="Matched files and verified post-move cleanup"
-		>
+		<LibraryManagementEditorAdvanced title="Sidecars" subtitle="Files that move with the album">
 			<div class="mt-3 grid gap-3 sm:grid-cols-2">
 				<div class="sm:col-span-2">
 					<Field label="Sidecar patterns (one per line)">
 						{#snippet children(control)}
 							<textarea
 								{...control}
-								class="textarea min-h-24 font-mono text-xs"
+								class="textarea min-h-24 w-full font-mono text-xs"
 								value={organization.sidecar_patterns.join('\n')}
 								oninput={(event) =>
 									(organization.sidecar_patterns = lines(event.currentTarget.value))}></textarea>
 						{/snippet}
 					</Field>
-				</div>
-				<SelectField
-					label="Source after confirmed move"
-					help="Removal happens only after publication and catalog commit are verified."
-					options={[
-						{ value: 'keep', label: 'Keep source' },
-						{ value: 'remove_after_confirmed_move', label: 'Remove verified source' }
-					]}
-					bind:value={organization.source_cleanup}
-				/>
-				<div class="sm:mt-6">
-					<ToggleRow
-						label="Remove empty directories"
-						description="Only after verified cleanup."
-						bind:checked={organization.remove_empty_directories}
-					/>
 				</div>
 			</div>
 		</LibraryManagementEditorAdvanced>

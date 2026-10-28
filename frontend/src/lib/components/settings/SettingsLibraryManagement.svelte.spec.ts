@@ -191,7 +191,7 @@ describe('SettingsLibraryManagement', () => {
 			.element(profileDialog.getByRole('checkbox', { name: /Preserve existing lyrics/ }))
 			.toBeChecked();
 
-		await profileDialog.getByText('Preservation and format safety').click();
+		await profileDialog.getByText('Preservation', { exact: true }).click();
 		await profileDialog.getByText('Post-write notifications').click();
 		await expect
 			.element(profileDialog.getByText('DroppedNeedle catalog updates immediately'))

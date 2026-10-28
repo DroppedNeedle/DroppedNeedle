@@ -215,11 +215,10 @@
 				bind:selectedIds={draft.metadata.tagging_script_ids}
 			/>
 			<LibraryManagementProfileCredits bind:metadata={draft.metadata} bind:genres={draft.genres} />
-			<LibraryManagementProfileArtwork bind:artwork={draft.artwork} namingScripts={scripts} />
+			<LibraryManagementProfileArtwork bind:artwork={draft.artwork} />
 			<LibraryManagementProfileNaming bind:organization={draft.organization} bind:scripts />
 			<LibraryManagementProfileSafety
 				bind:metadata={draft.metadata}
-				bind:fileBehavior={draft.file_behavior}
 				bind:identity={draft.identity}
 				bind:notification={draft.notification}
 			/>

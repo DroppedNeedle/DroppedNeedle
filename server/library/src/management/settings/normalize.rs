@@ -9,11 +9,11 @@ use super::presets::{
     LEGACY_DEFAULT_SIDECAR_PATTERNS, MANAGED_FIELDS, MANAGEMENT_SCHEMA_VERSION,
     PRESET_CATALOG_VERSION, managed_field,
 };
+use super::retired::carry_removed_options;
 use super::revision::{naming_script_revision, profile_revision, tagging_script_revision};
 use super::script::{validate_naming_language, validate_tagging_language};
 use droppedneedle_kernel::runtime_config::sections::{
-    ArtistStandardization, ArtworkProvider, FieldMode, Id3TextEncoding, Id3Version,
-    LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
+    FieldMode, LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
     LibraryManagementRootOverrides, ManagedField, MultiDiscNamingMode, NamingScript,
     OrganizationManagementSettings, TaggingScript,
 };
@@ -194,6 +194,7 @@ fn strength(mode: FieldMode) -> u8 {
 /// what it wrote before. A folder activation that matched its profile
 /// before still matches it after. Returns whether anything changed.
 pub fn complete_fields(settings: &mut LibraryManagement) -> bool {
+    let carried = !carry_removed_options(settings).repinned.is_empty();
     let matched_before: Vec<bool> = settings
         .root_assignments
         .iter()
@@ -215,7 +216,7 @@ pub fn complete_fields(settings: &mut LibraryManagement) -> bool {
         }
     }
     if !changed {
-        return false;
+        return carried;
     }
     let repinned: Vec<Option<String>> = settings
         .root_assignments
@@ -491,14 +492,6 @@ fn normalize_with(
             "Preview retention must be between 1 and 168 hours.",
         ));
     }
-    settings.recycle_bin_path = settings.recycle_bin_path.trim().to_owned();
-    if settings.recycle_bin_path.contains('\x00')
-        || settings.recycle_bin_path.len() > 4096
-        || (!settings.recycle_bin_path.is_empty()
-            && !std::path::Path::new(&settings.recycle_bin_path).is_absolute())
-    {
-        return Err(invalid("The recycle bin must be an absolute path."));
-    }
     if settings.external_refresh.retry_attempts < 0 || settings.external_refresh.retry_attempts > 20
     {
         return Err(invalid(
@@ -758,35 +751,6 @@ fn validate_profile_blocks(
         std::mem::take(&mut profile.metadata.artist_credits.preferred_locales),
         "Preferred locales",
     )?;
-    if profile.metadata.artist_credits.standardization == ArtistStandardization::Variations {
-        profile.metadata.artist_credits.standardization = ArtistStandardization::Credited;
-    }
-    if profile
-        .metadata
-        .format_compatibility
-        .constrained_genres_primary_only
-    {
-        profile.genres.write_primary_only_for_constrained_formats = true;
-        profile
-            .metadata
-            .format_compatibility
-            .constrained_genres_primary_only = false;
-    }
-    profile.notification.refresh_droppedneedle = true;
-    if profile
-        .metadata
-        .format_compatibility
-        .id3v23_join_delimiter
-        .len()
-        > 8
-    {
-        return Err(invalid("The ID3v2.3 join delimiter is too long."));
-    }
-    if profile.metadata.format_compatibility.id3_version == Id3Version::V23
-        && profile.metadata.format_compatibility.id3_text_encoding == Id3TextEncoding::Utf8
-    {
-        return Err(invalid("ID3v2.3 requires UTF-16 text encoding."));
-    }
     if profile
         .metadata
         .tagging_script_ids
@@ -819,9 +783,6 @@ fn validate_profile_blocks(
     if genres.lastfm_minimum_weight < 0 || genres.lastfm_minimum_weight > 100 {
         return Err(invalid("Last.fm genre weight must be between 0 and 100."));
     }
-    if genres.maximum_ancestry_depth < 0 || genres.maximum_ancestry_depth > 32 {
-        return Err(invalid("Genre ancestry depth must be between 0 and 32."));
-    }
     if genres.sources.iter().collect::<BTreeSet<_>>().len() != genres.sources.len() {
         return Err(invalid("Genre sources cannot contain duplicates."));
     }
@@ -853,15 +814,6 @@ fn validate_profile_blocks(
     }
 
     let artwork = &mut profile.artwork;
-    artwork
-        .providers
-        .retain(|provider| *provider != ArtworkProvider::Audiodb);
-    if artwork.providers.iter().collect::<BTreeSet<_>>().len() != artwork.providers.len() {
-        return Err(invalid("Artwork providers cannot contain duplicates."));
-    }
-    if artwork.image_types.iter().collect::<BTreeSet<_>>().len() != artwork.image_types.len() {
-        return Err(invalid("Artwork image types cannot contain duplicates."));
-    }
     if artwork.local_file_patterns.len() > 100 {
         return Err(invalid("A profile has too many local artwork patterns."));
     }
@@ -879,23 +831,13 @@ fn validate_profile_blocks(
     {
         return Err(invalid("Local artwork patterns cannot contain duplicates."));
     }
-    if [
-        artwork.minimum_width,
-        artwork.minimum_height,
-        artwork.embedded_maximum_size,
-        artwork.external_maximum_size,
-    ]
-    .iter()
-    .any(|value| *value < 0 || *value > 20_000)
+    if [artwork.embedded_maximum_size, artwork.external_maximum_size]
+        .iter()
+        .any(|value| *value < 0 || *value > 20_000)
     {
         return Err(invalid(
             "Artwork dimensions must be between 0 and 20000 pixels.",
         ));
-    }
-    if let Some(script_id) = &artwork.external_naming_script_id
-        && !script_ids.contains(script_id)
-    {
-        return Err(invalid("Artwork references an unknown naming script."));
     }
     let lyrics = &profile.enrichment.lyrics;
     if lyrics.enabled && !(lyrics.write_plain || lyrics.write_synced) {
@@ -947,9 +889,6 @@ fn validate_profile_blocks(
     }
     if compatibility.maximum_path_length < 64 || compatibility.maximum_path_length > 32_767 {
         return Err(invalid("Maximum path length must be between 64 and 32767."));
-    }
-    if !profile.file_behavior.reject_symlinks {
-        return Err(invalid("Library Management cannot follow symlinks."));
     }
     Ok(())
 }

@@ -58,14 +58,13 @@ pub fn scope_payload(
         .iter()
         .map(|script| (script.id.as_str(), script))
         .collect();
-    let (naming_id, multi_id, external_id, tagging_ids) = match pin_profile(settings, assignment) {
+    let (naming_id, multi_id, tagging_ids) = match pin_profile(settings, assignment) {
         Ok(effective) => (
             Some(effective.organization.naming_script_id.clone()),
             effective.organization.multi_disc_naming_script_id.clone(),
-            effective.artwork.external_naming_script_id.clone(),
             effective.metadata.tagging_script_ids.clone(),
         ),
-        Err(_) => (None, None, None, Vec::new()),
+        Err(_) => (None, None, Vec::new()),
     };
     if let Some(map) = payload.as_object_mut() {
         map.insert(
@@ -94,13 +93,6 @@ pub fn scope_payload(
                 )),
                 None => serde_json::Value::Null,
             },
-        );
-        map.insert(
-            "_external_artwork_script_revision".to_owned(),
-            external_id
-                .and_then(|id| naming.get(id.as_str()))
-                .map(|script| serde_json::Value::String(script.revision.clone()))
-                .unwrap_or(serde_json::Value::Null),
         );
         map.insert(
             "_tagging_script_revisions".to_owned(),
@@ -145,21 +137,6 @@ fn ordered_subset(candidate: &[serde_json::Value], original: &[serde_json::Value
         .filter(|value| candidate.contains(value))
         .collect();
     candidate.len() == kept.len() && candidate.iter().zip(kept.iter()).all(|(a, b)| a == *b)
-}
-
-/// Artwork `preserve_existing_types` as a string set (image-type ids).
-fn preserve_existing_types(profile: &serde_json::Value) -> BTreeSet<&str> {
-    profile
-        .get("artwork")
-        .and_then(|artwork| artwork.get("preserve_existing_types"))
-        .and_then(serde_json::Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn reset_safe_boolean(
@@ -210,7 +187,6 @@ pub fn is_restrictive_profile_change(
         &["organization", "rename_enabled"],
         &["organization", "move_enabled"],
         &["organization", "move_sidecars"],
-        &["organization", "remove_empty_directories"],
         &["enrichment", "lyrics", "enabled"],
         &["enrichment", "replaygain", "enabled"],
         &["identity", "automatic_edition_acceptance_enabled"],
@@ -222,15 +198,7 @@ pub fn is_restrictive_profile_change(
         &["genres", "listenbrainz_curated_only"],
         &["genres", "lastfm_whitelist_only"],
         &["genres", "write_primary_only_for_constrained_formats"],
-        &["artwork", "approved_only"],
-        &["artwork", "embedded_front_only"],
-        &["artwork", "external_front_only"],
         &["artwork", "never_replace_with_smaller"],
-        &["file_behavior", "preserve_timestamps"],
-        &["file_behavior", "preserve_permissions"],
-        &["file_behavior", "strict_capability_gate"],
-        &["file_behavior", "validate_written_metadata"],
-        &["file_behavior", "validate_technical_audio"],
     ] {
         reset_safe_boolean(&mut candidate, &old, path, false, true);
     }
@@ -238,13 +206,6 @@ pub fn is_restrictive_profile_change(
         &mut candidate,
         &old,
         &["metadata", "scrub_unmanaged_tags"],
-        true,
-        false,
-    );
-    reset_safe_boolean(
-        &mut candidate,
-        &old,
-        &["artwork", "overwrite_external_files"],
         true,
         false,
     );
@@ -457,60 +418,6 @@ pub fn is_restrictive_profile_change(
         }
     }
 
-    for field in ["providers", "image_types"] {
-        let old_list = old
-            .get("artwork")
-            .and_then(|artwork| artwork.get(field))
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let new_list = new
-            .get("artwork")
-            .and_then(|artwork| artwork.get(field))
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        if ordered_subset(&new_list, &old_list)
-            && let Some(node) = candidate
-                .get_mut("artwork")
-                .and_then(|artwork| artwork.get_mut(field))
-        {
-            *node = serde_json::Value::Array(old_list);
-        }
-    }
-    let old_preserve_types = preserve_existing_types(&old);
-    let new_preserve_types = preserve_existing_types(&new);
-    if new_preserve_types.is_superset(&old_preserve_types)
-        && let Some(node) = candidate
-            .get_mut("artwork")
-            .and_then(|artwork| artwork.get_mut("preserve_existing_types"))
-        && let Some(old_raw) = old
-            .get("artwork")
-            .and_then(|artwork| artwork.get("preserve_existing_types"))
-    {
-        *node = old_raw.clone();
-    }
-    for field in ["minimum_width", "minimum_height"] {
-        let raises = new
-            .get("artwork")
-            .and_then(|artwork| artwork.get(field))
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(i64::MIN)
-            >= old
-                .get("artwork")
-                .and_then(|artwork| artwork.get(field))
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(i64::MAX);
-        if raises
-            && let Some(node) = candidate
-                .get_mut("artwork")
-                .and_then(|artwork| artwork.get_mut(field))
-            && let Some(old_raw) = old.get("artwork").and_then(|artwork| artwork.get(field))
-        {
-            *node = old_raw.clone();
-        }
-    }
-
     let old_sidecars = old
         .get("organization")
         .and_then(|organization| organization.get("sidecar_patterns"))
@@ -530,27 +437,6 @@ pub fn is_restrictive_profile_change(
     {
         *node = serde_json::Value::Array(old_sidecars);
     }
-    let cleanup_narrows = old
-        .get("organization")
-        .and_then(|organization| organization.get("source_cleanup"))
-        .and_then(serde_json::Value::as_str)
-        == Some("remove_after_confirmed_move")
-        && new
-            .get("organization")
-            .and_then(|organization| organization.get("source_cleanup"))
-            .and_then(serde_json::Value::as_str)
-            == Some("keep");
-    if cleanup_narrows
-        && let Some(node) = candidate
-            .get_mut("organization")
-            .and_then(|organization| organization.get_mut("source_cleanup"))
-        && let Some(old_raw) = old
-            .get("organization")
-            .and_then(|organization| organization.get("source_cleanup"))
-    {
-        *node = old_raw.clone();
-    }
-
     candidate == old
 }
 

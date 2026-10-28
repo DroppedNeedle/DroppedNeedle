@@ -5,8 +5,8 @@
 //! `naming-N`/`tagging-N` keys; the share code is the same document
 //! zlib-compressed (level 9) and base64url-encoded behind the `DNLP1:`
 //! prefix. Both forms verify against the `sha256:` checksum over the
-//! canonical payload. Byte-compatible with v2: either side reads the
-//! other's exports.
+//! canonical payload. A bundle naming an option this version no longer
+//! has is refused.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,9 +20,8 @@ use uuid::Uuid;
 use super::invalid;
 use super::normalize::normalize;
 use droppedneedle_kernel::runtime_config::sections::{
-    ArtistStandardization, ArtworkProvider, FieldMode, LibraryManagement, LibraryManagementProfile,
-    Mp3ApePolicy, NamingScript, RawAacTagPolicy, ReplayGainMode, SourceCleanupMode, TaggingScript,
-    WavTagPolicy,
+    FieldMode, LibraryManagement, LibraryManagementProfile, NamingScript, ReplayGainMode,
+    TaggingScript,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
@@ -160,9 +159,8 @@ fn ordered_unique(values: Vec<Option<String>>) -> Vec<String> {
     ordered
 }
 
-/// Rewrite a profile into portable form: identity fields stripped,
-/// script ids rewritten to portable keys, compatibility-only fields
-/// dropped (they always take local defaults on import).
+/// Rewrite a profile into portable form: identity fields stripped and
+/// script ids rewritten to portable keys.
 fn portable_profile(
     profile: &LibraryManagementProfile,
     naming_keys: &BTreeMap<String, String>,
@@ -198,12 +196,6 @@ fn portable_profile(
         "tagging_script_ids".to_owned(),
         Value::Array(portable_tagging),
     );
-    if let Some(compatibility) = metadata
-        .get_mut("format_compatibility")
-        .and_then(Value::as_object_mut)
-    {
-        compatibility.remove("constrained_genres_primary_only");
-    }
     let organization = map
         .get_mut("organization")
         .and_then(Value::as_object_mut)
@@ -227,25 +219,6 @@ fn portable_profile(
             .clone();
         organization.insert("multi_disc_naming_script_id".to_owned(), Value::String(key));
     }
-    let artwork = map
-        .get_mut("artwork")
-        .and_then(Value::as_object_mut)
-        .ok_or_else(|| invalid("The profile could not be prepared for sharing."))?;
-    if artwork
-        .get("external_naming_script_id")
-        .is_some_and(|id| !id.is_null())
-    {
-        let key = artwork
-            .get("external_naming_script_id")
-            .and_then(Value::as_str)
-            .and_then(|id| naming_keys.get(id))
-            .ok_or_else(|| invalid("The profile references a script that is no longer available."))?
-            .clone();
-        artwork.insert("external_naming_script_id".to_owned(), Value::String(key));
-    }
-    if let Some(notification) = map.get_mut("notification").and_then(Value::as_object_mut) {
-        notification.remove("refresh_droppedneedle");
-    }
     Ok(value)
 }
 
@@ -268,7 +241,6 @@ pub fn export_profile_bundle(
     let naming_ids = ordered_unique(vec![
         Some(profile.organization.naming_script_id.clone()),
         profile.organization.multi_disc_naming_script_id.clone(),
-        profile.artwork.external_naming_script_id.clone(),
     ]);
     let tagging_ids = ordered_unique(
         profile
@@ -466,9 +438,7 @@ pub fn parse_profile_bundle(content: &str) -> Result<ParsedProfileBundle, Settin
 }
 
 /// Allowed object keys at a profile path. Mirrors the v2 schema walk:
-/// identity fields are refused at the root (export strips them) and
-/// the compatibility-only fields are refused where they would sit
-/// (import always takes local defaults for those).
+/// identity fields are refused at the root (export strips them).
 fn allowed_profile_keys(path: &[&str]) -> Option<&'static [&'static str]> {
     let keys: &'static [&'static str] = match path {
         [] => &[
@@ -478,7 +448,6 @@ fn allowed_profile_keys(path: &[&str]) -> Option<&'static [&'static str]> {
             "genres",
             "artwork",
             "organization",
-            "file_behavior",
             "enrichment",
             "identity",
             "notification",
@@ -492,22 +461,12 @@ fn allowed_profile_keys(path: &[&str]) -> Option<&'static [&'static str]> {
             "preserve_fields",
             "scrub_unmanaged_tags",
             "preserve_embedded_art_during_scrub",
-            "format_compatibility",
         ],
         ["metadata", "fields"] => &["field", "mode", "clear_when_canonical_missing"],
         ["metadata", "artist_credits"] => {
             &["standardization", "translate_names", "preferred_locales"]
         }
         ["metadata", "relationships"] => &["enabled", "types"],
-        ["metadata", "format_compatibility"] => &[
-            "id3_version",
-            "id3v23_join_delimiter",
-            "id3_text_encoding",
-            "remove_id3_from_flac",
-            "mp3_apev2_policy",
-            "raw_aac_tag_policy",
-            "wav_tag_policy",
-        ],
         ["genres"] => &[
             "enabled",
             "mode",
@@ -519,7 +478,6 @@ fn allowed_profile_keys(path: &[&str]) -> Option<&'static [&'static str]> {
             "listenbrainz_curated_only",
             "lastfm_whitelist_only",
             "canonicalize",
-            "maximum_ancestry_depth",
             "allowlist",
             "denylist",
             "aliases",
@@ -530,23 +488,12 @@ fn allowed_profile_keys(path: &[&str]) -> Option<&'static [&'static str]> {
         ["artwork"] => &[
             "embedded_enabled",
             "external_enabled",
-            "providers",
-            "approved_only",
-            "download_size",
             "local_file_patterns",
-            "image_types",
-            "minimum_width",
-            "minimum_height",
             "embedded_maximum_size",
             "embedded_format",
             "external_maximum_size",
             "external_format",
-            "embedded_front_only",
-            "external_front_only",
             "never_replace_with_smaller",
-            "preserve_existing_types",
-            "external_naming_script_id",
-            "overwrite_external_files",
         ],
         ["organization"] => &[
             "rename_enabled",
@@ -556,8 +503,6 @@ fn allowed_profile_keys(path: &[&str]) -> Option<&'static [&'static str]> {
             "compatibility",
             "move_sidecars",
             "sidecar_patterns",
-            "source_cleanup",
-            "remove_empty_directories",
         ],
         ["organization", "compatibility"] => &[
             "windows_compatible",
@@ -570,18 +515,9 @@ fn allowed_profile_keys(path: &[&str]) -> Option<&'static [&'static str]> {
             "extension_case",
             "windows_legacy_path_limit",
         ],
-        ["file_behavior"] => &[
-            "preserve_timestamps",
-            "preserve_permissions",
-            "strict_capability_gate",
-            "reject_symlinks",
-            "validate_written_metadata",
-            "validate_technical_audio",
-        ],
         ["enrichment"] => &["lyrics", "replaygain"],
         ["enrichment", "lyrics"] => &[
             "enabled",
-            "provider",
             "write_plain",
             "write_synced",
             "preserve_existing",
@@ -649,13 +585,11 @@ fn reject_unknown_profile_fields_owned(
         | ["metadata", "fields"]
         | ["metadata", "artist_credits"]
         | ["metadata", "relationships"]
-        | ["metadata", "format_compatibility"]
         | ["genres"]
         | ["genres", "aliases"]
         | ["artwork"]
         | ["organization"]
         | ["organization", "compatibility"]
-        | ["file_behavior"]
         | ["enrichment"]
         | ["enrichment", "lyrics"]
         | ["enrichment", "replaygain"]
@@ -740,7 +674,6 @@ fn materialized_profile_value(
         }
     };
     let multi_disc_key = optional_key("organization", "multi_disc_naming_script_id")?;
-    let external_key = optional_key("artwork", "external_naming_script_id")?;
     if map
         .get("metadata")
         .is_none_or(|metadata| !metadata.is_object())
@@ -752,7 +685,6 @@ fn materialized_profile_value(
     }
     let mut referenced_naming = vec![naming_key.clone()];
     referenced_naming.extend(multi_disc_key.clone());
-    referenced_naming.extend(external_key.clone());
     validate_dependency_collection(
         &parsed.payload.naming_scripts,
         &ordered_unique(referenced_naming.into_iter().map(Some).collect()),
@@ -783,14 +715,6 @@ fn materialized_profile_value(
                 .ok_or_else(|| invalid("The shared profile references a missing script."))
         })
         .transpose()?;
-    let assigned_external = external_key
-        .map(|key| {
-            naming_ids
-                .get(&key)
-                .cloned()
-                .ok_or_else(|| invalid("The shared profile references a missing script."))
-        })
-        .transpose()?;
     if let Some(metadata) = map.get_mut("metadata").and_then(Value::as_object_mut) {
         metadata.insert(
             "tagging_script_ids".to_owned(),
@@ -809,18 +733,6 @@ fn materialized_profile_value(
                 .unwrap_or(Value::Null),
         );
     }
-    if map
-        .get("artwork")
-        .is_none_or(|artwork| !artwork.is_object())
-    {
-        map.insert("artwork".to_owned(), Value::Object(Default::default()));
-    }
-    if let Some(artwork) = map.get_mut("artwork").and_then(Value::as_object_mut) {
-        artwork.insert(
-            "external_naming_script_id".to_owned(),
-            assigned_external.map(Value::String).unwrap_or(Value::Null),
-        );
-    }
     map.insert("id".to_owned(), Value::String(profile_id.to_owned()));
     map.insert("preset_origin".to_owned(), Value::Null);
     map.insert("preset_version".to_owned(), Value::Null);
@@ -830,8 +742,7 @@ fn materialized_profile_value(
 
 /// Materialize a parsed bundle into a live profile and scripts with
 /// the given ids, then normalize the detached set. Refuses legacy
-/// settings that no longer import (Preserve field modes, artist
-/// variations, TheAudioDB artwork).
+/// Preserve field modes.
 pub fn materialize_profile_bundle(
     parsed: &ParsedProfileBundle,
     profile_id: &str,
@@ -850,18 +761,6 @@ pub fn materialize_profile_bundle(
         return Err(invalid(
             "Legacy Preserve metadata modes cannot be imported.",
         ));
-    }
-    if profile.metadata.artist_credits.standardization == ArtistStandardization::Variations {
-        return Err(invalid(
-            "Legacy artist-variation settings cannot be imported.",
-        ));
-    }
-    if profile
-        .artwork
-        .providers
-        .contains(&ArtworkProvider::Audiodb)
-    {
-        return Err(invalid("TheAudioDB artwork settings cannot be imported."));
     }
     let scripts = |portable: &[PortableScript], assigned: &BTreeMap<String, String>| {
         portable
@@ -1111,9 +1010,8 @@ fn import_warning(
     }
 }
 
-/// Warnings for a profile under review: destructive tag, container,
-/// source, artwork, enrichment, and server-refresh behavior, each
-/// with a stable code and severity.
+/// Warnings for a profile under review: destructive tag, enrichment, and
+/// server-refresh behavior, each with a stable code and severity.
 pub fn profile_import_warnings(profile: &LibraryManagementProfile) -> Vec<ProfileImportWarning> {
     let mut warnings = Vec::new();
     if profile.metadata.enabled && profile.metadata.scrub_unmanaged_tags {
@@ -1136,74 +1034,6 @@ pub fn profile_import_warnings(profile: &LibraryManagementProfile) -> Vec<Profil
             "danger",
             "Clears missing canonical values",
             "Selected Replace fields may be cleared when MusicBrainz has no value.".to_owned(),
-        ));
-    }
-    let compatibility = &profile.metadata.format_compatibility;
-    if profile.metadata.enabled && compatibility.remove_id3_from_flac {
-        warnings.push(import_warning(
-            "remove_flac_id3",
-            "danger",
-            "Removes ID3 tags from FLAC files",
-            "Any stray ID3 tag container is deleted when a FLAC file is written.".to_owned(),
-        ));
-    }
-    if profile.metadata.enabled && compatibility.mp3_apev2_policy == Mp3ApePolicy::Remove {
-        warnings.push(import_warning(
-            "remove_mp3_apev2",
-            "danger",
-            "Removes APEv2 tags from MP3 files",
-            "The complete MP3 APEv2 tag container is deleted.".to_owned(),
-        ));
-    }
-    if profile.metadata.enabled && compatibility.raw_aac_tag_policy == RawAacTagPolicy::RemoveApev2
-    {
-        warnings.push(import_warning(
-            "remove_raw_aac_apev2",
-            "danger",
-            "Removes APEv2 tags from raw AAC files",
-            "The APEv2 tag container and any artwork stored there are deleted.".to_owned(),
-        ));
-    } else if profile.metadata.enabled
-        && compatibility.raw_aac_tag_policy == RawAacTagPolicy::DoNotWrite
-    {
-        warnings.push(import_warning(
-            "skip_raw_aac_tags",
-            "warning",
-            "Does not write tags to raw AAC files",
-            "Managed metadata changes are skipped for raw AAC files.".to_owned(),
-        ));
-    }
-    if profile.metadata.enabled && compatibility.wav_tag_policy != WavTagPolicy::PreserveExisting {
-        let wav_format = if compatibility.wav_tag_policy == WavTagPolicy::Id3 {
-            "ID3"
-        } else {
-            "RIFF INFO"
-        };
-        warnings.push(import_warning(
-            "convert_wav_tags",
-            "warning",
-            "May convert WAV tags",
-            format!(
-                "WAV metadata is written as {wav_format}, which may replace the current tag representation."
-            ),
-        ));
-    }
-    if profile.organization.move_enabled
-        && profile.organization.source_cleanup == SourceCleanupMode::RemoveAfterConfirmedMove
-    {
-        warnings.push(import_warning(
-            "remove_sources",
-            "danger",
-            "Removes verified move sources",
-            "Source files are removed after their managed moves are confirmed.".to_owned(),
-        ));
-    }
-    if profile.artwork.external_enabled && profile.artwork.overwrite_external_files {
-        warnings.push(import_warning(
-            "overwrite_external_artwork",
-            "danger",
-            "Overwrites external artwork",
-            "Existing external artwork files may be replaced.".to_owned(),
         ));
     }
     let mut replacement_enrichment = Vec::new();

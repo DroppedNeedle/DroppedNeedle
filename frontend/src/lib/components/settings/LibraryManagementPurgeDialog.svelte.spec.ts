@@ -40,7 +40,7 @@ describe('LibraryManagementPurgeDialog', () => {
 		});
 
 		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
-		await page.getByText('Retention, recycle, and refresh').click();
+		await page.getByText('Retention and refresh').click();
 		await page.getByRole('button', { name: 'Purge baselines...' }).click();
 		await expect
 			.element(page.getByRole('heading', { name: 'Purge original baselines?' }))

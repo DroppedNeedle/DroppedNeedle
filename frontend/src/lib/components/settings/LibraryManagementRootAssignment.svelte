@@ -31,8 +31,7 @@
 		| 'external_artwork_enabled'
 		| 'rename_enabled'
 		| 'move_enabled'
-		| 'move_sidecars'
-		| 'preserve_timestamps';
+		| 'move_sidecars';
 	const booleanOverrides: Array<{ key: BooleanOverrideKey; label: string }> = [
 		{ key: 'metadata_enabled', label: 'Metadata tags' },
 		{ key: 'genres_enabled', label: 'Genres' },
@@ -40,8 +39,7 @@
 		{ key: 'external_artwork_enabled', label: 'External artwork' },
 		{ key: 'rename_enabled', label: 'Rename files' },
 		{ key: 'move_enabled', label: 'Organize within this root' },
-		{ key: 'move_sidecars', label: 'Move sidecars' },
-		{ key: 'preserve_timestamps', label: 'Preserve timestamps' }
+		{ key: 'move_sidecars', label: 'Move sidecars' }
 	];
 	const booleanChoices: Array<{ value: '' | 'true' | 'false'; label: string }> = [
 		{ value: '', label: 'Inherit profile' },
@@ -55,14 +53,6 @@
 		{ value: 'inherit', label: 'Inherit profile' },
 		{ value: 'standard', label: 'Use effective single-disc script' },
 		{ value: 'script', label: 'Use selected script' }
-	];
-	const sourceCleanupChoices: Array<{
-		value: '' | 'keep' | 'remove_after_confirmed_move';
-		label: string;
-	}> = [
-		{ value: '', label: 'Inherit profile' },
-		{ value: 'keep', label: 'Keep source' },
-		{ value: 'remove_after_confirmed_move', label: 'Remove after verified move' }
 	];
 
 	const assignment = $derived(settings.assignmentFor(root.id));
@@ -255,14 +245,6 @@
 						}
 					/>
 				{/if}
-				<SelectField
-					label="Source cleanup"
-					options={sourceCleanupChoices}
-					bind:value={
-						() => overrides.source_cleanup ?? '',
-						(choice) => updateOverrides({ source_cleanup: choice || null })
-					}
-				/>
 			</div>
 		{/if}
 	</details>

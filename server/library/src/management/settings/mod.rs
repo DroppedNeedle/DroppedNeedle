@@ -22,6 +22,7 @@ mod bundle;
 mod impact;
 mod normalize;
 mod presets;
+mod retired;
 mod revision;
 mod script;
 pub mod service;

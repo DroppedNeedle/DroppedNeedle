@@ -58,12 +58,6 @@ pub fn pin_profile(
     if let Some(move_sidecars) = overrides.move_sidecars {
         profile.organization.move_sidecars = move_sidecars;
     }
-    if let Some(cleanup) = overrides.source_cleanup {
-        profile.organization.source_cleanup = cleanup;
-    }
-    if let Some(preserve) = overrides.preserve_timestamps {
-        profile.file_behavior.preserve_timestamps = preserve;
-    }
     if let Some(script_id) = &overrides.naming_script_id {
         if !settings
             .naming_scripts
@@ -98,9 +92,6 @@ pub fn pin_profile(
             }
             profile.organization.multi_disc_naming_script_id = Some(script_id.clone());
         }
-    }
-    if let Some(enabled) = overrides.automatic_edition_acceptance_enabled {
-        profile.identity.automatic_edition_acceptance_enabled = enabled;
     }
     Ok(profile)
 }
@@ -272,28 +263,14 @@ pub struct ActivationHealth {
 }
 
 /// Validate every root assignment against the library policy: the
-/// policy resolves, the recycle bin overlaps no root, every assignment
-/// names a known root, and every active root is an available writable
-/// directory. Returns the resolved policy revision.
+/// policy resolves, every assignment names a known root, and every
+/// active root is an available writable directory. Returns the resolved
+/// policy revision.
 pub fn validate_root_assignments(
     settings: &LibraryManagement,
     library: &TypedLibrary,
 ) -> Result<String, SettingsError> {
     let resolved = crate::policy::resolve(library)?;
-    if !settings.recycle_bin_path.trim().is_empty() {
-        let recycle = std::path::PathBuf::from(settings.recycle_bin_path.trim());
-        for root in &resolved.settings.library_roots {
-            let library_root = std::path::PathBuf::from(&root.path);
-            if recycle == library_root
-                || recycle.starts_with(&library_root)
-                || library_root.starts_with(&recycle)
-            {
-                return Err(invalid(
-                    "The Library Management recycle bin cannot overlap a library root.",
-                ));
-            }
-        }
-    }
     let roots: BTreeMap<&str, &LibraryRoot> = resolved
         .settings
         .library_roots

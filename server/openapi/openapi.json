@@ -37932,7 +37932,6 @@
         "description": "Artist credit standardization.",
         "enum": [
           "credited",
-          "variations",
           "canonical"
         ]
       },
@@ -38007,31 +38006,6 @@
           }
         }
       },
-      "ArtworkDownloadSize": {
-        "type": "string",
-        "description": "Artwork download size.",
-        "enum": [
-          "full",
-          "1200",
-          "500",
-          "250"
-        ]
-      },
-      "ArtworkImageType": {
-        "type": "string",
-        "description": "Artwork image type.",
-        "enum": [
-          "front",
-          "back",
-          "booklet",
-          "medium",
-          "tray",
-          "obi",
-          "spine",
-          "track",
-          "other"
-        ]
-      },
       "ArtworkKind": {
         "type": "string",
         "description": "How a genre's mosaic art is drawn.",
@@ -38044,20 +38018,6 @@
         "type": "object",
         "description": "Artwork management block.",
         "properties": {
-          "approved_only": {
-            "type": "boolean",
-            "description": "Approved art only.",
-            "default": true
-          },
-          "download_size": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ArtworkDownloadSize",
-                "description": "Download size."
-              }
-            ],
-            "default": "full"
-          },
           "embedded_enabled": {
             "type": "boolean",
             "description": "Embed art in files.",
@@ -38071,11 +38031,6 @@
               }
             ],
             "default": "jpeg"
-          },
-          "embedded_front_only": {
-            "type": "boolean",
-            "description": "Embedded front only.",
-            "default": true
           },
           "embedded_maximum_size": {
             "type": "integer",
@@ -38097,34 +38052,11 @@
             ],
             "default": "original"
           },
-          "external_front_only": {
-            "type": "boolean",
-            "description": "External front only.",
-            "default": true
-          },
           "external_maximum_size": {
             "type": "integer",
             "format": "int64",
             "description": "External size cap (0 uncapped).",
             "default": 0
-          },
-          "external_naming_script_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "External naming script id.",
-            "default": null
-          },
-          "image_types": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ArtworkImageType"
-            },
-            "description": "Image types to fetch.",
-            "default": [
-              "front"
-            ]
           },
           "local_file_patterns": {
             "type": "array",
@@ -38143,48 +38075,10 @@
               "front.png"
             ]
           },
-          "minimum_height": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Minimum height (0 any).",
-            "default": 0
-          },
-          "minimum_width": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Minimum width (0 any).",
-            "default": 0
-          },
           "never_replace_with_smaller": {
             "type": "boolean",
             "description": "Never replace art with smaller art.",
             "default": true
-          },
-          "overwrite_external_files": {
-            "type": "boolean",
-            "description": "Overwrite external files.",
-            "default": false
-          },
-          "preserve_existing_types": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ArtworkImageType"
-            },
-            "description": "Existing types never replaced.",
-            "default": []
-          },
-          "providers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ArtworkProvider"
-            },
-            "description": "Provider order.",
-            "default": [
-              "cover_art_archive_release",
-              "cover_art_archive_release_group",
-              "local_files",
-              "embedded"
-            ]
           }
         }
       },
@@ -38196,17 +38090,6 @@
           "jpeg",
           "png",
           "webp"
-        ]
-      },
-      "ArtworkProvider": {
-        "type": "string",
-        "description": "Artwork provider.",
-        "enum": [
-          "cover_art_archive_release",
-          "cover_art_archive_release_group",
-          "local_files",
-          "embedded",
-          "audiodb"
         ]
       },
       "AttachExistingBody": {
@@ -44307,7 +44190,6 @@
             "default": {
               "enabled": false,
               "preserve_existing": false,
-              "provider": "lrclib",
               "required": false,
               "write_plain": true,
               "write_synced": true
@@ -44908,42 +44790,6 @@
           "preserve"
         ]
       },
-      "FileBehaviorSettings": {
-        "type": "object",
-        "description": "File-behavior gates.",
-        "properties": {
-          "preserve_permissions": {
-            "type": "boolean",
-            "description": "Preserve permission bits.",
-            "default": true
-          },
-          "preserve_timestamps": {
-            "type": "boolean",
-            "description": "Preserve mtimes.",
-            "default": true
-          },
-          "reject_symlinks": {
-            "type": "boolean",
-            "description": "Refuse symlinked media.",
-            "default": true
-          },
-          "strict_capability_gate": {
-            "type": "boolean",
-            "description": "Refuse writes the format cannot hold.",
-            "default": true
-          },
-          "validate_technical_audio": {
-            "type": "boolean",
-            "description": "Re-probe audio after writing.",
-            "default": true
-          },
-          "validate_written_metadata": {
-            "type": "boolean",
-            "description": "Re-read tags after writing.",
-            "default": true
-          }
-        }
-      },
       "FilesystemWatcher": {
         "type": "object",
         "description": "Zero-dependency filesystem poller knobs.",
@@ -45272,72 +45118,6 @@
           }
         }
       },
-      "FormatCompatibilitySettings": {
-        "type": "object",
-        "description": "Format-compatibility handling.",
-        "properties": {
-          "constrained_genres_primary_only": {
-            "type": "boolean",
-            "description": "Primary genre only for constrained formats.",
-            "default": false
-          },
-          "id3_text_encoding": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Id3TextEncoding",
-                "description": "ID3 text encoding."
-              }
-            ],
-            "default": "utf8"
-          },
-          "id3_version": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Id3Version",
-                "description": "ID3 version for MP3 writes."
-              }
-            ],
-            "default": "2.4"
-          },
-          "id3v23_join_delimiter": {
-            "type": "string",
-            "description": "ID3v2.3 multi-value join delimiter.",
-            "default": "; "
-          },
-          "mp3_apev2_policy": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Mp3ApePolicy",
-                "description": "APEv2 policy for MP3."
-              }
-            ],
-            "default": "preserve"
-          },
-          "raw_aac_tag_policy": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/RawAacTagPolicy",
-                "description": "Raw-AAC tag policy."
-              }
-            ],
-            "default": "save_apev2"
-          },
-          "remove_id3_from_flac": {
-            "type": "boolean",
-            "description": "Strip ID3 chunks from FLAC.",
-            "default": false
-          },
-          "wav_tag_policy": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/WavTagPolicy",
-                "description": "WAV tag policy."
-              }
-            ],
-            "default": "id3"
-          }
-        }
-      },
       "FrontendCacheTTLs": {
         "type": "object",
         "description": "The advanced settings the web app reads at start. The browser's cache\nlifetimes and the queue's polling interval are fixed in the web app.",
@@ -45581,12 +45361,6 @@
             "format": "int64",
             "description": "ListenBrainz vote floor.",
             "default": 1
-          },
-          "maximum_ancestry_depth": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Max genre-ancestry depth.",
-            "default": 4
           },
           "maximum_count": {
             "type": "integer",
@@ -46512,22 +46286,6 @@
             ]
           }
         }
-      },
-      "Id3TextEncoding": {
-        "type": "string",
-        "description": "ID3 text encoding.",
-        "enum": [
-          "utf8",
-          "utf16"
-        ]
-      },
-      "Id3Version": {
-        "type": "string",
-        "description": "ID3 version for MP3 writes.",
-        "enum": [
-          "2.4",
-          "2.3"
-        ]
       },
       "IdentificationControlBody": {
         "type": "object",
@@ -47788,20 +47546,12 @@
               }
             ],
             "default": {
-              "approved_only": true,
-              "download_size": "full",
               "embedded_enabled": true,
               "embedded_format": "jpeg",
-              "embedded_front_only": true,
               "embedded_maximum_size": 1200,
               "external_enabled": true,
               "external_format": "original",
-              "external_front_only": true,
               "external_maximum_size": 0,
-              "external_naming_script_id": null,
-              "image_types": [
-                "front"
-              ],
               "local_file_patterns": [
                 "cover.jpg",
                 "cover.jpeg",
@@ -47812,17 +47562,7 @@
                 "front.jpg",
                 "front.png"
               ],
-              "minimum_height": 0,
-              "minimum_width": 0,
-              "never_replace_with_smaller": true,
-              "overwrite_external_files": false,
-              "preserve_existing_types": [],
-              "providers": [
-                "cover_art_archive_release",
-                "cover_art_archive_release_group",
-                "local_files",
-                "embedded"
-              ]
+              "never_replace_with_smaller": true
             }
           },
           "description": {
@@ -47841,7 +47581,6 @@
               "lyrics": {
                 "enabled": false,
                 "preserve_existing": false,
-                "provider": "lrclib",
                 "required": false,
                 "write_plain": true,
                 "write_synced": true
@@ -47852,22 +47591,6 @@
                 "mode": "preserve",
                 "required": false
               }
-            }
-          },
-          "file_behavior": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/FileBehaviorSettings",
-                "description": "File-behavior gates."
-              }
-            ],
-            "default": {
-              "preserve_permissions": true,
-              "preserve_timestamps": true,
-              "reject_symlinks": true,
-              "strict_capability_gate": true,
-              "validate_technical_audio": true,
-              "validate_written_metadata": true
             }
           },
           "genres": {
@@ -47887,7 +47610,6 @@
               "lastfm_whitelist_only": true,
               "listenbrainz_curated_only": true,
               "listenbrainz_minimum_count": 1,
-              "maximum_ancestry_depth": 4,
               "maximum_count": 5,
               "mode": "replace",
               "musicbrainz_minimum_count": 1,
@@ -47930,16 +47652,6 @@
               },
               "enabled": true,
               "fields": [],
-              "format_compatibility": {
-                "constrained_genres_primary_only": false,
-                "id3_text_encoding": "utf8",
-                "id3_version": "2.4",
-                "id3v23_join_delimiter": "; ",
-                "mp3_apev2_policy": "preserve",
-                "raw_aac_tag_policy": "save_apev2",
-                "remove_id3_from_flac": false,
-                "wav_tag_policy": "id3"
-              },
               "preserve_embedded_art_during_scrub": true,
               "preserve_fields": [],
               "relationships": {
@@ -47971,7 +47683,6 @@
               }
             ],
             "default": {
-              "refresh_droppedneedle": true,
               "refresh_external_servers": false
             }
           },
@@ -47998,7 +47709,6 @@
               "move_sidecars": true,
               "multi_disc_naming_script_id": null,
               "naming_script_id": "69202666-cb88-52b0-bac2-0afc62b1e909",
-              "remove_empty_directories": true,
               "rename_enabled": true,
               "sidecar_patterns": [
                 "cover.jpg",
@@ -48028,8 +47738,7 @@
                 "*.m3u",
                 "*.m3u8",
                 "*.pls"
-              ],
-              "source_cleanup": "remove_after_confirmed_move"
+              ]
             }
           },
           "preset_origin": {
@@ -48484,14 +48193,6 @@
         "type": "object",
         "description": "Per-root profile overrides (`None` inherits the profile).",
         "properties": {
-          "automatic_edition_acceptance_enabled": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Automatic edition acceptance.",
-            "default": null
-          },
           "embedded_artwork_enabled": {
             "type": [
               "boolean",
@@ -48565,32 +48266,12 @@
             "description": "Naming script id.",
             "default": null
           },
-          "preserve_timestamps": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Timestamp preservation.",
-            "default": null
-          },
           "rename_enabled": {
             "type": [
               "boolean",
               "null"
             ],
             "description": "Rename switch.",
-            "default": null
-          },
-          "source_cleanup": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/SourceCleanupMode",
-                "description": "Source cleanup."
-              }
-            ],
             "default": null
           }
         }
@@ -48665,11 +48346,6 @@
             },
             "description": "Named profiles.",
             "default": []
-          },
-          "recycle_bin_path": {
-            "type": "string",
-            "description": "Recycle-bin path (\"\" disables).",
-            "default": ""
           },
           "root_assignments": {
             "type": "array",
@@ -49916,11 +49592,6 @@
             "type": "boolean",
             "description": "Keep existing lyrics.",
             "default": false
-          },
-          "provider": {
-            "type": "string",
-            "description": "Lyrics provider.",
-            "default": "lrclib"
           },
           "required": {
             "type": "boolean",
@@ -52004,24 +51675,6 @@
             "description": "Managed fields.",
             "default": []
           },
-          "format_compatibility": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/FormatCompatibilitySettings",
-                "description": "Format compatibility."
-              }
-            ],
-            "default": {
-              "constrained_genres_primary_only": false,
-              "id3_text_encoding": "utf8",
-              "id3_version": "2.4",
-              "id3v23_join_delimiter": "; ",
-              "mp3_apev2_policy": "preserve",
-              "raw_aac_tag_policy": "save_apev2",
-              "remove_id3_from_flac": false,
-              "wav_tag_policy": "id3"
-            }
-          },
           "preserve_embedded_art_during_scrub": {
             "type": "boolean",
             "description": "Keep embedded art during a scrub.",
@@ -52090,14 +51743,6 @@
             "description": "The artist's name, empty when MusicBrainz had nothing."
           }
         }
-      },
-      "Mp3ApePolicy": {
-        "type": "string",
-        "description": "APEv2 policy for MP3 writes.",
-        "enum": [
-          "preserve",
-          "remove"
-        ]
       },
       "MultiDiscNamingMode": {
         "type": "string",
@@ -53289,11 +52934,6 @@
             "description": "Naming script id.",
             "default": "69202666-cb88-52b0-bac2-0afc62b1e909"
           },
-          "remove_empty_directories": {
-            "type": "boolean",
-            "description": "Remove newly empty directories.",
-            "default": true
-          },
           "rename_enabled": {
             "type": "boolean",
             "description": "Rename files.",
@@ -53334,15 +52974,6 @@
               "*.m3u8",
               "*.pls"
             ]
-          },
-          "source_cleanup": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/SourceCleanupMode",
-                "description": "Source cleanup after a confirmed move."
-              }
-            ],
-            "default": "remove_after_confirmed_move"
           }
         }
       },
@@ -56846,11 +56477,6 @@
         "type": "object",
         "description": "Post-publish notifications.",
         "properties": {
-          "refresh_droppedneedle": {
-            "type": "boolean",
-            "description": "Refresh DroppedNeedle views.",
-            "default": true
-          },
           "refresh_external_servers": {
             "type": "boolean",
             "description": "Refresh external servers.",
@@ -58113,15 +57739,6 @@
             "minimum": 0
           }
         }
-      },
-      "RawAacTagPolicy": {
-        "type": "string",
-        "description": "Raw-AAC tag policy.",
-        "enum": [
-          "save_apev2",
-          "do_not_write",
-          "remove_apev2"
-        ]
       },
       "Reason": {
         "type": "string",
@@ -63647,14 +63264,6 @@
           }
         }
       },
-      "SourceCleanupMode": {
-        "type": "string",
-        "description": "Source-tree cleanup after a confirmed move.",
-        "enum": [
-          "keep",
-          "remove_after_confirmed_move"
-        ]
-      },
       "SourceGate": {
         "type": "object",
         "description": "Per-source release gate verdict. Each source gates independently: one\nred gate never flips another.",
@@ -66652,15 +66261,6 @@
           "watching",
           "stopped",
           "fulfilled"
-        ]
-      },
-      "WavTagPolicy": {
-        "type": "string",
-        "description": "WAV tag policy.",
-        "enum": [
-          "id3",
-          "riff_info",
-          "preserve_existing"
         ]
       },
       "WeeklyExploration": {

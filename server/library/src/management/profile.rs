@@ -436,13 +436,7 @@ pub fn plan_tags(
             .collect();
         let mut genres = projection.genres;
         let constrained = matches!(format, "m4a" | "aac" | "wav");
-        if constrained
-            && (profile.genres.write_primary_only_for_constrained_formats
-                || profile
-                    .metadata
-                    .format_compatibility
-                    .constrained_genres_primary_only)
-        {
+        if constrained && profile.genres.write_primary_only_for_constrained_formats {
             genres.truncate(1);
         }
         if !genres.is_empty() {

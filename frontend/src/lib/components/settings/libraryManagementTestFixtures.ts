@@ -151,17 +151,7 @@ export function baseSettings(): LibraryManagementSettingsResponse {
 					tagging_script_ids: [],
 					preserve_fields: [],
 					scrub_unmanaged_tags: false,
-					preserve_embedded_art_during_scrub: true,
-					format_compatibility: {
-						constrained_genres_primary_only: true,
-						id3_version: '2.4',
-						id3v23_join_delimiter: '; ',
-						id3_text_encoding: 'utf8',
-						remove_id3_from_flac: false,
-						mp3_apev2_policy: 'preserve',
-						raw_aac_tag_policy: 'save_apev2',
-						wav_tag_policy: 'id3'
-					}
+					preserve_embedded_art_during_scrub: true
 				},
 				genres: {
 					enabled: true,
@@ -174,7 +164,6 @@ export function baseSettings(): LibraryManagementSettingsResponse {
 					listenbrainz_curated_only: true,
 					lastfm_whitelist_only: true,
 					canonicalize: true,
-					maximum_ancestry_depth: 4,
 					allowlist: [],
 					denylist: [],
 					aliases: [],
@@ -184,23 +173,12 @@ export function baseSettings(): LibraryManagementSettingsResponse {
 				artwork: {
 					embedded_enabled: true,
 					external_enabled: true,
-					providers: ['cover_art_archive_release', 'local_files'],
-					approved_only: true,
-					download_size: 'full',
 					local_file_patterns: ['cover.jpg'],
-					image_types: ['front'],
-					minimum_width: 0,
-					minimum_height: 0,
 					embedded_maximum_size: 1200,
 					embedded_format: 'jpeg',
 					external_maximum_size: 0,
 					external_format: 'original',
-					embedded_front_only: true,
-					external_front_only: true,
-					never_replace_with_smaller: true,
-					preserve_existing_types: [],
-					external_naming_script_id: null,
-					overwrite_external_files: false
+					never_replace_with_smaller: true
 				},
 				organization: {
 					rename_enabled: true,
@@ -219,22 +197,11 @@ export function baseSettings(): LibraryManagementSettingsResponse {
 						windows_legacy_path_limit: false
 					},
 					move_sidecars: true,
-					sidecar_patterns: ['*.cue'],
-					source_cleanup: 'remove_after_confirmed_move',
-					remove_empty_directories: true
-				},
-				file_behavior: {
-					preserve_timestamps: true,
-					preserve_permissions: true,
-					strict_capability_gate: true,
-					reject_symlinks: true,
-					validate_written_metadata: true,
-					validate_technical_audio: true
+					sidecar_patterns: ['*.cue']
 				},
 				enrichment: {
 					lyrics: {
 						enabled: false,
-						provider: 'lrclib',
 						write_plain: true,
 						write_synced: true,
 						preserve_existing: false,
@@ -242,7 +209,7 @@ export function baseSettings(): LibraryManagementSettingsResponse {
 					},
 					replaygain: { enabled: false, mode: 'preserve', album_aware: true, required: false }
 				},
-				notification: { refresh_droppedneedle: true, refresh_external_servers: false },
+				notification: { refresh_external_servers: false },
 				identity: { automatic_edition_acceptance_enabled: false }
 			}
 		],
@@ -271,7 +238,6 @@ export function baseSettings(): LibraryManagementSettingsResponse {
 		tagging_scripts: [],
 		undo_retention_days: 90,
 		preview_retention_hours: 24,
-		recycle_bin_path: '',
 		external_refresh: {
 			enabled: false,
 			plex_enabled: false,

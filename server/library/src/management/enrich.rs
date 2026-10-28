@@ -449,14 +449,7 @@ pub fn gather(
         return extras;
     };
     let artwork = &profile.artwork;
-    let archive = artwork.providers.iter().any(|provider| {
-        matches!(
-            provider,
-            droppedneedle_kernel::runtime_config::sections::ArtworkProvider::CoverArtArchiveRelease
-                | droppedneedle_kernel::runtime_config::sections::ArtworkProvider::CoverArtArchiveReleaseGroup
-        )
-    });
-    if (artwork.embedded_enabled || artwork.external_enabled) && archive {
+    if artwork.embedded_enabled || artwork.external_enabled {
         let release_id = if super::custom::is_custom(release) {
             ""
         } else {

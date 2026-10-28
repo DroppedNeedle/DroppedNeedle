@@ -10913,7 +10913,7 @@ export interface components {
          * @description Artist credit standardization.
          * @enum {string}
          */
-        ArtistStandardization: "credited" | "variations" | "canonical";
+        ArtistStandardization: "credited" | "canonical";
         /** @description One catalog artist. */
         ArtistView: {
             /**
@@ -10954,16 +10954,6 @@ export interface components {
             track_count: number;
         };
         /**
-         * @description Artwork download size.
-         * @enum {string}
-         */
-        ArtworkDownloadSize: "full" | "1200" | "500" | "250";
-        /**
-         * @description Artwork image type.
-         * @enum {string}
-         */
-        ArtworkImageType: "front" | "back" | "booklet" | "medium" | "tray" | "obi" | "spine" | "track" | "other";
-        /**
          * @description How a genre's mosaic art is drawn.
          * @enum {string}
          */
@@ -10971,24 +10961,12 @@ export interface components {
         /** @description Artwork management block. */
         ArtworkManagementSettings: {
             /**
-             * @description Approved art only.
-             * @default true
-             */
-            approved_only: boolean;
-            /** @default full */
-            download_size: components["schemas"]["ArtworkDownloadSize"];
-            /**
              * @description Embed art in files.
              * @default true
              */
             embedded_enabled: boolean;
             /** @default jpeg */
             embedded_format: components["schemas"]["ArtworkOutputFormat"];
-            /**
-             * @description Embedded front only.
-             * @default true
-             */
-            embedded_front_only: boolean;
             /**
              * Format: int64
              * @description Embedded size cap (0 uncapped).
@@ -11003,28 +10981,11 @@ export interface components {
             /** @default original */
             external_format: components["schemas"]["ArtworkOutputFormat"];
             /**
-             * @description External front only.
-             * @default true
-             */
-            external_front_only: boolean;
-            /**
              * Format: int64
              * @description External size cap (0 uncapped).
              * @default 0
              */
             external_maximum_size: number;
-            /**
-             * @description External naming script id.
-             * @default null
-             */
-            external_naming_script_id: string | null;
-            /**
-             * @description Image types to fetch.
-             * @default [
-             *       "front"
-             *     ]
-             */
-            image_types: components["schemas"]["ArtworkImageType"][];
             /**
              * @description Local filename patterns.
              * @default [
@@ -11040,53 +11001,16 @@ export interface components {
              */
             local_file_patterns: string[];
             /**
-             * Format: int64
-             * @description Minimum height (0 any).
-             * @default 0
-             */
-            minimum_height: number;
-            /**
-             * Format: int64
-             * @description Minimum width (0 any).
-             * @default 0
-             */
-            minimum_width: number;
-            /**
              * @description Never replace art with smaller art.
              * @default true
              */
             never_replace_with_smaller: boolean;
-            /**
-             * @description Overwrite external files.
-             * @default false
-             */
-            overwrite_external_files: boolean;
-            /**
-             * @description Existing types never replaced.
-             * @default []
-             */
-            preserve_existing_types: components["schemas"]["ArtworkImageType"][];
-            /**
-             * @description Provider order.
-             * @default [
-             *       "cover_art_archive_release",
-             *       "cover_art_archive_release_group",
-             *       "local_files",
-             *       "embedded"
-             *     ]
-             */
-            providers: components["schemas"]["ArtworkProvider"][];
         };
         /**
          * @description Artwork output format.
          * @enum {string}
          */
         ArtworkOutputFormat: "original" | "jpeg" | "png" | "webp";
-        /**
-         * @description Artwork provider.
-         * @enum {string}
-         */
-        ArtworkProvider: "cover_art_archive_release" | "cover_art_archive_release_group" | "local_files" | "embedded" | "audiodb";
         /** @description Link the album to a release already on MusicBrainz. */
         AttachExistingBody: {
             /**
@@ -13825,7 +13749,6 @@ export interface components {
              * @default {
              *       "enabled": false,
              *       "preserve_existing": false,
-             *       "provider": "lrclib",
              *       "required": false,
              *       "write_plain": true,
              *       "write_synced": true
@@ -14115,39 +14038,6 @@ export interface components {
          * @enum {string}
          */
         FieldMode: "disabled" | "replace" | "fill_missing" | "merge" | "preserve";
-        /** @description File-behavior gates. */
-        FileBehaviorSettings: {
-            /**
-             * @description Preserve permission bits.
-             * @default true
-             */
-            preserve_permissions: boolean;
-            /**
-             * @description Preserve mtimes.
-             * @default true
-             */
-            preserve_timestamps: boolean;
-            /**
-             * @description Refuse symlinked media.
-             * @default true
-             */
-            reject_symlinks: boolean;
-            /**
-             * @description Refuse writes the format cannot hold.
-             * @default true
-             */
-            strict_capability_gate: boolean;
-            /**
-             * @description Re-probe audio after writing.
-             * @default true
-             */
-            validate_technical_audio: boolean;
-            /**
-             * @description Re-read tags after writing.
-             * @default true
-             */
-            validate_written_metadata: boolean;
-        };
         /** @description Zero-dependency filesystem poller knobs. */
         FilesystemWatcher: {
             /**
@@ -14266,34 +14156,6 @@ export interface components {
         FollowedArtistListResponse: {
             /** @description Followed artists. */
             artists: components["schemas"]["FollowedArtist"][];
-        };
-        /** @description Format-compatibility handling. */
-        FormatCompatibilitySettings: {
-            /**
-             * @description Primary genre only for constrained formats.
-             * @default false
-             */
-            constrained_genres_primary_only: boolean;
-            /** @default utf8 */
-            id3_text_encoding: components["schemas"]["Id3TextEncoding"];
-            /** @default 2.4 */
-            id3_version: components["schemas"]["Id3Version"];
-            /**
-             * @description ID3v2.3 multi-value join delimiter.
-             * @default ;
-             */
-            id3v23_join_delimiter: string;
-            /** @default preserve */
-            mp3_apev2_policy: components["schemas"]["Mp3ApePolicy"];
-            /** @default save_apev2 */
-            raw_aac_tag_policy: components["schemas"]["RawAacTagPolicy"];
-            /**
-             * @description Strip ID3 chunks from FLAC.
-             * @default false
-             */
-            remove_id3_from_flac: boolean;
-            /** @default id3 */
-            wav_tag_policy: components["schemas"]["WavTagPolicy"];
         };
         /**
          * @description The advanced settings the web app reads at start. The browser's cache
@@ -14427,12 +14289,6 @@ export interface components {
              * @default 1
              */
             listenbrainz_minimum_count: number;
-            /**
-             * Format: int64
-             * @description Max genre-ancestry depth.
-             * @default 4
-             */
-            maximum_ancestry_depth: number;
             /**
              * Format: int64
              * @description Max genres written.
@@ -14806,16 +14662,6 @@ export interface components {
             source: components["schemas"]["SourceName"];
             stats?: null | components["schemas"]["RemotesStatsView"];
         };
-        /**
-         * @description ID3 text encoding.
-         * @enum {string}
-         */
-        Id3TextEncoding: "utf8" | "utf16";
-        /**
-         * @description ID3 version for MP3 writes.
-         * @enum {string}
-         */
-        Id3Version: "2.4" | "2.3";
         /** @description A pause or resume of identification. */
         IdentificationControlBody: {
             /**
@@ -15375,20 +15221,12 @@ export interface components {
         LibraryManagementProfile: {
             /**
              * @default {
-             *       "approved_only": true,
-             *       "download_size": "full",
              *       "embedded_enabled": true,
              *       "embedded_format": "jpeg",
-             *       "embedded_front_only": true,
              *       "embedded_maximum_size": 1200,
              *       "external_enabled": true,
              *       "external_format": "original",
-             *       "external_front_only": true,
              *       "external_maximum_size": 0,
-             *       "external_naming_script_id": null,
-             *       "image_types": [
-             *         "front"
-             *       ],
              *       "local_file_patterns": [
              *         "cover.jpg",
              *         "cover.jpeg",
@@ -15399,17 +15237,7 @@ export interface components {
              *         "front.jpg",
              *         "front.png"
              *       ],
-             *       "minimum_height": 0,
-             *       "minimum_width": 0,
-             *       "never_replace_with_smaller": true,
-             *       "overwrite_external_files": false,
-             *       "preserve_existing_types": [],
-             *       "providers": [
-             *         "cover_art_archive_release",
-             *         "cover_art_archive_release_group",
-             *         "local_files",
-             *         "embedded"
-             *       ]
+             *       "never_replace_with_smaller": true
              *     }
              */
             artwork: components["schemas"]["ArtworkManagementSettings"];
@@ -15423,7 +15251,6 @@ export interface components {
              *       "lyrics": {
              *         "enabled": false,
              *         "preserve_existing": false,
-             *         "provider": "lrclib",
              *         "required": false,
              *         "write_plain": true,
              *         "write_synced": true
@@ -15439,17 +15266,6 @@ export interface components {
             enrichment: components["schemas"]["EnrichmentManagementSettings"];
             /**
              * @default {
-             *       "preserve_permissions": true,
-             *       "preserve_timestamps": true,
-             *       "reject_symlinks": true,
-             *       "strict_capability_gate": true,
-             *       "validate_technical_audio": true,
-             *       "validate_written_metadata": true
-             *     }
-             */
-            file_behavior: components["schemas"]["FileBehaviorSettings"];
-            /**
-             * @default {
              *       "aliases": [],
              *       "allowlist": [],
              *       "canonicalize": true,
@@ -15459,7 +15275,6 @@ export interface components {
              *       "lastfm_whitelist_only": true,
              *       "listenbrainz_curated_only": true,
              *       "listenbrainz_minimum_count": 1,
-             *       "maximum_ancestry_depth": 4,
              *       "maximum_count": 5,
              *       "mode": "replace",
              *       "musicbrainz_minimum_count": 1,
@@ -15492,16 +15307,6 @@ export interface components {
              *       },
              *       "enabled": true,
              *       "fields": [],
-             *       "format_compatibility": {
-             *         "constrained_genres_primary_only": false,
-             *         "id3_text_encoding": "utf8",
-             *         "id3_version": "2.4",
-             *         "id3v23_join_delimiter": "; ",
-             *         "mp3_apev2_policy": "preserve",
-             *         "raw_aac_tag_policy": "save_apev2",
-             *         "remove_id3_from_flac": false,
-             *         "wav_tag_policy": "id3"
-             *       },
              *       "preserve_embedded_art_during_scrub": true,
              *       "preserve_fields": [],
              *       "relationships": {
@@ -15528,7 +15333,6 @@ export interface components {
             name: string;
             /**
              * @default {
-             *       "refresh_droppedneedle": true,
              *       "refresh_external_servers": false
              *     }
              */
@@ -15550,7 +15354,6 @@ export interface components {
              *       "move_sidecars": true,
              *       "multi_disc_naming_script_id": null,
              *       "naming_script_id": "69202666-cb88-52b0-bac2-0afc62b1e909",
-             *       "remove_empty_directories": true,
              *       "rename_enabled": true,
              *       "sidecar_patterns": [
              *         "cover.jpg",
@@ -15580,8 +15383,7 @@ export interface components {
              *         "*.m3u",
              *         "*.m3u8",
              *         "*.pls"
-             *       ],
-             *       "source_cleanup": "remove_after_confirmed_move"
+             *       ]
              *     }
              */
             organization: components["schemas"]["OrganizationManagementSettings"];
@@ -15805,11 +15607,6 @@ export interface components {
         /** @description Per-root profile overrides (`None` inherits the profile). */
         LibraryManagementRootOverrides: {
             /**
-             * @description Automatic edition acceptance.
-             * @default null
-             */
-            automatic_edition_acceptance_enabled: boolean | null;
-            /**
              * @description Embedded-artwork switch.
              * @default null
              */
@@ -15852,17 +15649,10 @@ export interface components {
              */
             naming_script_id: string | null;
             /**
-             * @description Timestamp preservation.
-             * @default null
-             */
-            preserve_timestamps: boolean | null;
-            /**
              * @description Rename switch.
              * @default null
              */
             rename_enabled: boolean | null;
-            /** @default null */
-            source_cleanup: null | components["schemas"]["SourceCleanupMode"];
         };
         /** @description PUT body: full settings plus the required CAS token. */
         LibraryManagementSaveRequest: {
@@ -15911,11 +15701,6 @@ export interface components {
              * @default []
              */
             profiles: components["schemas"]["LibraryManagementProfile"][];
-            /**
-             * @description Recycle-bin path ("" disables).
-             * @default
-             */
-            recycle_bin_path: string;
             /**
              * @description Root assignments.
              * @default []
@@ -16518,11 +16303,6 @@ export interface components {
              * @default false
              */
             preserve_existing: boolean;
-            /**
-             * @description Lyrics provider.
-             * @default lrclib
-             */
-            provider: string;
             /**
              * @description Lyrics required for completion.
              * @default false
@@ -17297,19 +17077,6 @@ export interface components {
              */
             fields: components["schemas"]["ManagedField"][];
             /**
-             * @default {
-             *       "constrained_genres_primary_only": false,
-             *       "id3_text_encoding": "utf8",
-             *       "id3_version": "2.4",
-             *       "id3v23_join_delimiter": "; ",
-             *       "mp3_apev2_policy": "preserve",
-             *       "raw_aac_tag_policy": "save_apev2",
-             *       "remove_id3_from_flac": false,
-             *       "wav_tag_policy": "id3"
-             *     }
-             */
-            format_compatibility: components["schemas"]["FormatCompatibilitySettings"];
-            /**
              * @description Keep embedded art during a scrub.
              * @default true
              */
@@ -17352,11 +17119,6 @@ export interface components {
             /** @description The artist's name, empty when MusicBrainz had nothing. */
             artist_name: string;
         };
-        /**
-         * @description APEv2 policy for MP3 writes.
-         * @enum {string}
-         */
-        Mp3ApePolicy: "preserve" | "remove";
         /**
          * @description Multi-disc naming mode for a root override.
          * @enum {string}
@@ -17936,11 +17698,6 @@ export interface components {
              */
             naming_script_id: string;
             /**
-             * @description Remove newly empty directories.
-             * @default true
-             */
-            remove_empty_directories: boolean;
-            /**
              * @description Rename files.
              * @default true
              */
@@ -17978,8 +17735,6 @@ export interface components {
              *     ]
              */
             sidecar_patterns: string[];
-            /** @default remove_after_confirmed_move */
-            source_cleanup: components["schemas"]["SourceCleanupMode"];
         };
         /** @description One section of a page. */
         PageSection: {
@@ -19413,11 +19168,6 @@ export interface components {
         /** @description Post-publish notifications. */
         ProfileNotificationSettings: {
             /**
-             * @description Refresh DroppedNeedle views.
-             * @default true
-             */
-            refresh_droppedneedle: boolean;
-            /**
              * @description Refresh external servers.
              * @default false
              */
@@ -20012,11 +19762,6 @@ export interface components {
              */
             rating: number;
         };
-        /**
-         * @description Raw-AAC tag policy.
-         * @enum {string}
-         */
-        RawAacTagPolicy: "save_apev2" | "do_not_write" | "remove_apev2";
         /**
          * @description One reason, stored and sent by its snake_case spelling.
          * @enum {string}
@@ -22385,11 +22130,6 @@ export interface components {
             version?: string | null;
         };
         /**
-         * @description Source-tree cleanup after a confirmed move.
-         * @enum {string}
-         */
-        SourceCleanupMode: "keep" | "remove_after_confirmed_move";
-        /**
          * @description Per-source release gate verdict. Each source gates independently: one
          *     red gate never flips another.
          */
@@ -23624,11 +23364,6 @@ export interface components {
          * @enum {string}
          */
         WatchState: "watching" | "stopped" | "fulfilled";
-        /**
-         * @description WAV tag policy.
-         * @enum {string}
-         */
-        WavTagPolicy: "id3" | "riff_info" | "preserve_existing";
         /** @description The weekly exploration playlist shelf. */
         WeeklyExploration: {
             /** @description Playlist date (`YYYY-MM-DD`). */

@@ -198,12 +198,6 @@
 						min={0}
 						bind:value={genres.lastfm_minimum_weight}
 					/>
-					<NumberField
-						label="Maximum ancestry depth"
-						min={0}
-						max={20}
-						bind:value={genres.maximum_ancestry_depth}
-					/>
 					<ToggleRow
 						label="Curated ListenBrainz tags only"
 						description="Reject uncurated community tags."
@@ -216,7 +210,7 @@
 					/>
 					<ToggleRow
 						label="Canonicalize genres"
-						description="Apply aliases and ancestry."
+						description="Apply genre aliases."
 						bind:checked={genres.canonicalize}
 					/>
 					<ToggleRow
@@ -228,7 +222,7 @@
 						{#snippet children(control)}
 							<textarea
 								{...control}
-								class="textarea min-h-24"
+								class="textarea min-h-24 w-full"
 								value={genres.allowlist.join('\n')}
 								oninput={(event) => (genres.allowlist = lines(event.currentTarget.value))}
 							></textarea>
@@ -238,7 +232,7 @@
 						{#snippet children(control)}
 							<textarea
 								{...control}
-								class="textarea min-h-24"
+								class="textarea min-h-24 w-full"
 								value={genres.denylist.join('\n')}
 								oninput={(event) => (genres.denylist = lines(event.currentTarget.value))}
 							></textarea>
@@ -249,7 +243,7 @@
 							{#snippet children(control)}
 								<textarea
 									{...control}
-									class="textarea min-h-20"
+									class="textarea min-h-20 w-full"
 									value={genres.preferred_casing.join('\n')}
 									oninput={(event) => (genres.preferred_casing = lines(event.currentTarget.value))}
 								></textarea>

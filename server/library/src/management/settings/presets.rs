@@ -10,10 +10,9 @@ use utoipa::ToSchema;
 use super::revision::{naming_script_revision, profile_revision};
 use droppedneedle_kernel::runtime_config::secret_sections::DEFAULT_NAMING_SCRIPT;
 use droppedneedle_kernel::runtime_config::sections::{
-    ArtworkImageType, DEFAULT_NAMING_TEMPLATE, FieldMode, GenreSource, LibraryManagement,
-    LibraryManagementProfile, ManagedField, MetadataManagementSettings, NamingScript,
-    OrganizationManagementSettings, RelationshipCreditSettings, RelationshipType, ReplayGainMode,
-    SourceCleanupMode,
+    DEFAULT_NAMING_TEMPLATE, FieldMode, GenreSource, LibraryManagement, LibraryManagementProfile,
+    ManagedField, MetadataManagementSettings, NamingScript, OrganizationManagementSettings,
+    RelationshipCreditSettings, RelationshipType, ReplayGainMode,
 };
 
 /// Management settings schema version.
@@ -410,22 +409,10 @@ pub fn complete_library_organizer_profile() -> LibraryManagementProfile {
         GenreSource::Listenbrainz,
         GenreSource::Lastfm,
     ];
-    profile.artwork.image_types = vec![
-        ArtworkImageType::Front,
-        ArtworkImageType::Back,
-        ArtworkImageType::Booklet,
-        ArtworkImageType::Medium,
-        ArtworkImageType::Tray,
-        ArtworkImageType::Obi,
-        ArtworkImageType::Spine,
-        ArtworkImageType::Track,
-        ArtworkImageType::Other,
-    ];
     profile.artwork.local_file_patterns = ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.gif", "*.pdf"]
         .iter()
         .map(ToString::to_string)
         .collect();
-    profile.artwork.external_front_only = false;
     profile.enrichment.lyrics.enabled = true;
     profile.enrichment.replaygain.enabled = true;
     profile.enrichment.replaygain.mode = ReplayGainMode::Replace;
@@ -560,8 +547,6 @@ fn legacy_naming_profile() -> LibraryManagementProfile {
     profile.organization.naming_script_id = LEGACY_NAMING_SCRIPT_ID.to_owned();
     profile.organization.move_sidecars = false;
     profile.organization.sidecar_patterns = Vec::new();
-    profile.organization.source_cleanup = SourceCleanupMode::Keep;
-    profile.organization.remove_empty_directories = false;
     profile.revision = profile_revision(&profile);
     profile
 }
@@ -654,7 +639,6 @@ pub const PRESET_DIFF_GROUPS: &[&str] = &[
     "genres",
     "artwork",
     "organization",
-    "file_behavior",
     "enrichment",
     "identity",
     "notification",

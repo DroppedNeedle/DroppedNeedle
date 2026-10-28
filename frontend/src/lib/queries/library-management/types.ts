@@ -33,16 +33,11 @@ export type ArtistCreditSettings = components['schemas']['ArtistCreditSettings']
 
 export type RelationshipCreditSettings = components['schemas']['RelationshipCreditSettings'];
 
-export type FormatCompatibilitySettings = components['schemas']['FormatCompatibilitySettings'];
-
 export type MetadataManagementSettings = components['schemas']['MetadataManagementSettings'];
 
 export type GenreAliasSettings = components['schemas']['GenreAlias'];
 
 export type GenreManagementSettings = components['schemas']['GenreManagementSettings'];
-
-export type ArtworkProvider = components['schemas']['ArtworkProvider'];
-export type ArtworkImageType = components['schemas']['ArtworkImageType'];
 
 export type ArtworkManagementSettings = components['schemas']['ArtworkManagementSettings'];
 
@@ -50,8 +45,6 @@ export type PathCompatibilitySettings = components['schemas']['PathCompatibility
 
 export type OrganizationManagementSettings =
 	components['schemas']['OrganizationManagementSettings'];
-
-export type FileBehaviorSettings = components['schemas']['FileBehaviorSettings'];
 
 export type EnrichmentManagementSettings = components['schemas']['EnrichmentManagementSettings'];
 

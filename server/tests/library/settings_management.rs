@@ -1,5 +1,5 @@
 //! Library Management: the profile routes (create, export, import
-//! preview, import) over HTTP, and profile sharing against the v2 golden
+//! preview, import) over HTTP, and profile sharing against the golden
 //! bundle (export bytes and preview ids), name collisions on import, and
 //! refusal of malformed bundles.
 
@@ -29,9 +29,9 @@ fn fixture(name: &str) -> String {
     std::fs::read_to_string(&path).expect("golden fixture reads")
 }
 
-/// The exact profile input the v2 golden was minted from (same dict,
-/// same ids). Section defaults fill the rest, so this also pins default
-/// parity with the v2 schema.
+/// The profile input the golden bundle was exported from. Section
+/// defaults fill the rest, so this also pins the defaults a bundle
+/// carries.
 fn golden_profile_input() -> serde_json::Value {
     serde_json::json!({
         "id": "11111111-1111-4111-8111-111111111111",
@@ -51,11 +51,7 @@ fn golden_profile_input() -> serde_json::Value {
             "naming_script_id": "33333333-3333-4333-8333-333333333333",
             "multi_disc_naming_script_id": null
         },
-        "artwork": {
-            "external_enabled": true,
-            "external_naming_script_id": null,
-            "overwrite_external_files": true
-        },
+        "artwork": {"external_enabled": true},
         "enrichment": {"lyrics": {"enabled": true, "preserve_existing": false}}
     })
 }
@@ -87,36 +83,23 @@ fn golden_tagging() -> Vec<TaggingScript> {
 }
 
 #[test]
-fn export_matches_v2_golden_bytes() {
+fn export_matches_golden_bytes() {
     let bundle = export_profile_bundle(&golden_profile(), &golden_naming(), &golden_tagging())
         .expect("golden profile exports");
     assert_eq!(
         bundle.bundle_hash,
-        "c901f186baa1376804a62f00d254a781967a46682fe60f42bff0f57275896045"
+        "2a22db4c39829bfd3fecc19668dd6f3f3f08438449ca2cb735508086f35523b0"
     );
     assert_eq!(
         bundle.document,
         fixture("management_bundle_golden.document.txt")
     );
-    // Share codes are zlib streams: v2 (CPython zlib) and v3 (miniz)
-    // emit different but equally valid bytes, so the share code pins
-    // a round-trip to the same hash instead of exact bytes.
+    // Share codes are zlib streams, and zlib builds emit different but
+    // equally valid bytes, so the share code pins a round trip to the
+    // same hash instead of exact bytes.
     assert!(bundle.share_code.starts_with("DNLP1:"));
     let reparsed = parse_profile_bundle(&bundle.share_code).expect("our share code parses");
     assert_eq!(reparsed.bundle_hash, bundle.bundle_hash);
-}
-
-#[test]
-fn v2_share_code_parses_with_same_hash() {
-    let from_code = parse_profile_bundle(&fixture("management_bundle_golden.share_code.txt"))
-        .expect("v2 share code parses");
-    let from_document = parse_profile_bundle(&fixture("management_bundle_golden.document.txt"))
-        .expect("v2 document parses");
-    assert_eq!(from_code.bundle_hash, from_document.bundle_hash);
-    assert_eq!(
-        from_code.bundle_hash,
-        "c901f186baa1376804a62f00d254a781967a46682fe60f42bff0f57275896045"
-    );
 }
 
 #[test]
@@ -125,8 +108,8 @@ fn preview_is_deterministic_and_names_aspects_and_warnings() {
         .expect("golden parses");
     let first = preview_materialized_profile(&parsed).expect("preview materializes");
     let second = preview_materialized_profile(&parsed).expect("preview materializes again");
-    // Deterministic preview ids, byte-equal to v2's UUIDv5 values.
-    assert_eq!(first.profile.id, "7bc82f44-e135-5c2f-879e-9c407d49248f");
+    // Deterministic preview ids: UUIDv5 over the bundle hash, as v2 made them.
+    assert_eq!(first.profile.id, "5420ee2a-6f0d-56cc-a591-8381b1b8ef21");
     assert_eq!(first.profile.id, second.profile.id);
     assert_eq!(
         first
@@ -157,8 +140,6 @@ fn preview_is_deterministic_and_names_aspects_and_warnings() {
         .map(|warning| warning.code.as_str())
         .collect();
     assert!(codes.contains(&"clear_missing_metadata"));
-    assert!(codes.contains(&"remove_sources"));
-    assert!(codes.contains(&"overwrite_external_artwork"));
     assert!(codes.contains(&"replace_enrichment"));
 }
 
@@ -296,6 +277,197 @@ fn stored_unknown_field_is_dropped_on_read() {
         .flat_map(|profile| &profile.metadata.fields)
         .any(|field| field.field == "album_mood");
     assert!(!has_unknown);
+}
+
+/// A section stored before options were removed still reads: a removed
+/// key or value never fails it, the read writes it back without them,
+/// and a folder activated against it stays activated, both where the
+/// settings page reads it and where automatic management does. A folder
+/// whose removed override changed what it does stays stale.
+#[test]
+fn a_section_from_before_removed_options_keeps_its_activation() {
+    use droppedneedle_kernel::runtime_config::sections::{
+        LibraryManagement, LibraryManagementRootAssignment, LibraryManagementRootOverrides,
+    };
+    use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+    use droppedneedle_library::management::settings::service::LibraryManagementService;
+    use droppedneedle_library::management::settings::{
+        self as lm, PICARD_ORGANIZER_PROFILE_ID, initial_settings,
+    };
+    use droppedneedle_library::policy::stable_hash;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+
+    fn merge(target: &mut Value, extra: Value) {
+        for (key, value) in extra.as_object().expect("an object") {
+            target[key] = value.clone();
+        }
+    }
+    /// Every removed profile option, none at its old default.
+    fn add_removed_options(profile: &mut Value) {
+        merge(
+            &mut profile["artwork"],
+            json!({
+                "providers": ["cover_art_archive_release", "local_files"],
+                "approved_only": false,
+                "download_size": "500",
+                "image_types": ["front", "back"],
+                "minimum_width": 300,
+                "minimum_height": 300,
+                "embedded_front_only": false,
+                "external_front_only": false,
+                "preserve_existing_types": ["back"],
+                "external_naming_script_id": null,
+                "overwrite_external_files": true
+            }),
+        );
+        profile["metadata"]["format_compatibility"] = json!({
+            "id3_version": "2.3",
+            "id3v23_join_delimiter": "/",
+            "id3_text_encoding": "utf16",
+            "remove_id3_from_flac": true,
+            "mp3_apev2_policy": "remove",
+            "raw_aac_tag_policy": "do_not_write",
+            "wav_tag_policy": "riff_info",
+            "constrained_genres_primary_only": false
+        });
+        profile["genres"]["maximum_ancestry_depth"] = json!(2);
+        merge(
+            &mut profile["organization"],
+            json!({"source_cleanup": "keep", "remove_empty_directories": false}),
+        );
+        profile["file_behavior"] = json!({
+            "preserve_timestamps": false,
+            "preserve_permissions": true,
+            "strict_capability_gate": false,
+            "reject_symlinks": true,
+            "validate_written_metadata": false,
+            "validate_technical_audio": false
+        });
+        profile["enrichment"]["lyrics"]["provider"] = json!("lrclib");
+        profile["notification"]["refresh_droppedneedle"] = json!(true);
+    }
+
+    let mut settings = initial_settings("");
+    let picard = settings
+        .profiles
+        .iter_mut()
+        .find(|profile| profile.id == PICARD_ORGANIZER_PROFILE_ID)
+        .expect("picard profile");
+    picard.enrichment.lyrics.preserve_existing = true;
+    picard.identity.automatic_edition_acceptance_enabled = true;
+    let assignment = LibraryManagementRootAssignment {
+        root_id: "music".to_owned(),
+        profile_id: Some(PICARD_ORGANIZER_PROFILE_ID.to_owned()),
+        enabled: true,
+        automatic_scan_discovered: true,
+        overrides: Some(LibraryManagementRootOverrides {
+            move_sidecars: Some(false),
+            ..LibraryManagementRootOverrides::default()
+        }),
+        ..LibraryManagementRootAssignment::default()
+    };
+    let effective = lm::pin_profile(&settings, &assignment).expect("profile pins");
+    let (standard, multi_disc) =
+        lm::pin_naming_scripts(&settings, &effective).expect("scripts pin");
+
+    // The folder's effective profile as it was, removed overrides
+    // applied, and the pin hashed from it.
+    let mut before = serde_json::to_value(&effective).expect("serializes");
+    add_removed_options(&mut before);
+    before["organization"]["source_cleanup"] = json!("remove_after_confirmed_move");
+    before["file_behavior"]["preserve_timestamps"] = json!(true);
+    before
+        .as_object_mut()
+        .expect("an object")
+        .remove("revision");
+
+    let mut document = serde_json::to_value(&settings).expect("serializes");
+    document["recycle_bin_path"] = json!("/recycle");
+    for profile in document["profiles"].as_array_mut().expect("profiles") {
+        add_removed_options(profile);
+        profile["metadata"]["artist_credits"]["standardization"] = json!("variations");
+    }
+    let mut stored_assignment = serde_json::to_value(LibraryManagementRootAssignment {
+        activation_profile_revision: Some(stable_hash(&before)),
+        activation_naming_policy_revision: Some(lm::naming_policy_revision(
+            &standard,
+            multi_disc.as_ref(),
+        )),
+        activation_policy_revision: Some("policy".to_owned()),
+        activation_preview_token: Some("token".to_owned()),
+        activation_preview_hash: Some("hash".to_owned()),
+        activation_confirmed_at: Some(1.0),
+        ..assignment
+    })
+    .expect("serializes");
+    merge(
+        &mut stored_assignment["overrides"],
+        json!({
+            "source_cleanup": "remove_after_confirmed_move",
+            "preserve_timestamps": true,
+            "automatic_edition_acceptance_enabled": true
+        }),
+    );
+    document["root_assignments"] = json!([stored_assignment]);
+
+    let current = |settings: &LibraryManagement| {
+        lm::activation_is_current(settings, &settings.root_assignments[0], "policy")
+    };
+    let mut automatic: LibraryManagement =
+        serde_json::from_value(document.clone()).expect("the stored section decodes");
+    lm::complete_fields(&mut automatic);
+    assert!(current(&automatic), "current where automatic work reads it");
+
+    // The same folder, but its own edition acceptance was off: it now
+    // follows the profile, so its activation must be confirmed again.
+    let mut differing = document.clone();
+    let edition_off = &mut differing["root_assignments"][0];
+    edition_off["overrides"]["automatic_edition_acceptance_enabled"] = json!(false);
+    let mut before_off = before.clone();
+    before_off["identity"]
+        .as_object_mut()
+        .expect("an object")
+        .remove("automatic_edition_acceptance_enabled");
+    edition_off["activation_profile_revision"] = json!(stable_hash(&before_off));
+    let mut automatic: LibraryManagement =
+        serde_json::from_value(differing).expect("the stored section decodes");
+    lm::complete_fields(&mut automatic);
+    assert!(!current(&automatic), "a changed folder is left stale");
+
+    let dir = common::ScratchDir::new("management-removed-options");
+    std::fs::write(
+        dir.join("config.json"),
+        json!({ "library_management": document }).to_string(),
+    )
+    .expect("config writes");
+    let store = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("store opens"),
+    );
+    let read = LibraryManagementService::new(store)
+        .get_settings()
+        .expect("the section reads");
+    assert!(
+        current(&read.settings),
+        "current where the settings page reads it"
+    );
+    let stored: String = rusqlite::Connection::open(dir.join("settings.db"))
+        .expect("settings database opens")
+        .query_row(
+            "SELECT value_json FROM config_sections WHERE key = 'library_management'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the section is stored");
+    for removed in [
+        "file_behavior",
+        "approved_only",
+        "recycle_bin_path",
+        "variations",
+    ] {
+        assert!(!stored.contains(removed), "{removed} is written back out");
+    }
 }
 
 /// Scripts are checked by the compiler management runs them with. A

@@ -4,20 +4,13 @@
 -->
 <script lang="ts" module>
 	export type PresetGroup =
-		| 'metadata'
-		| 'genres'
-		| 'artwork'
-		| 'organization'
-		| 'file_behavior'
-		| 'enrichment'
-		| 'notification';
+		'metadata' | 'genres' | 'artwork' | 'organization' | 'enrichment' | 'notification';
 
 	export const presetGroupLabels: Record<PresetGroup, string> = {
 		metadata: 'Metadata',
 		genres: 'Genres',
 		artwork: 'Artwork',
 		organization: 'File organization',
-		file_behavior: 'File safety',
 		enrichment: 'Lyrics and ReplayGain',
 		notification: 'Notifications'
 	};
