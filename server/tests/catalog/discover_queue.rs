@@ -67,6 +67,38 @@ pub(crate) struct Script {
     pub tag_albums: Vec<TagAlbum>,
     pub release_group: Option<ReleaseGroupFacts>,
     pub musicbrainz_down: AtomicBool,
+    /// When set, ListenBrainz top-artist reads wait here until released.
+    pub hold: Option<Arc<Hold>>,
+}
+
+/// A gate a scripted read stops at: it says it arrived, then waits until
+/// the gate is opened.
+pub(crate) struct Hold {
+    arrived: tokio::sync::Notify,
+    open: tokio::sync::Semaphore,
+}
+
+impl Hold {
+    fn new() -> Self {
+        Self {
+            arrived: tokio::sync::Notify::new(),
+            open: tokio::sync::Semaphore::new(0),
+        }
+    }
+
+    async fn pass(&self) {
+        self.arrived.notify_one();
+        // Opening closes the semaphore, which lets every waiter through.
+        let _ = self.open.acquire().await;
+    }
+
+    async fn reached(&self) {
+        self.arrived.notified().await;
+    }
+
+    fn release(&self) {
+        self.open.close();
+    }
 }
 
 type Answer<'a, T> = Read<'a, T>;
@@ -114,7 +146,14 @@ impl ListeningNetwork for Script {
         _o: u32,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<ArtistRow>> {
-        ok(self.user_artists.clone())
+        let rows = self.user_artists.clone();
+        let hold = self.hold.clone();
+        Box::pin(async move {
+            if let Some(hold) = hold {
+                hold.pass().await;
+            }
+            Ok(rows)
+        })
     }
     fn user_albums<'a>(
         &'a self,
@@ -554,7 +593,7 @@ where
     }
 }
 
-fn queue_app(rig: &AuthRig, dir: &Path) -> Router {
+fn queue_app(rig: &AuthRig, dir: &Path, script: Script) -> Router {
     rig.config
         .save_secret_blocking(AdvancedSettings {
             discover_queue_size: 5,
@@ -563,8 +602,21 @@ fn queue_app(rig: &AuthRig, dir: &Path) -> Router {
         })
         .expect("queue settings save");
     discover_routes(discover_deps(rig, dir, Providers::closed(), |network| {
-        *network = Arc::new(queue_script());
+        *network = Arc::new(script);
     }))
+}
+
+async fn seed_user(db: &Db) {
+    db.write(Lane::Foreground, "test.seed", |tx| {
+        tx.execute(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+                 VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z')",
+            [],
+        )?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .expect("user row");
 }
 
 async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -601,6 +653,22 @@ async fn settled(app: &Router, db: &Db) -> Value {
     .await
 }
 
+async fn ignore(app: &Router, release_group_mbid: &str) {
+    let (status, body) = call(
+        app,
+        "POST",
+        "/api/v3/discover/queue/ignore",
+        Some(json!({
+            "release_group_mbid": release_group_mbid,
+            "artist_mbid": SIMILAR,
+            "release_name": "Album",
+            "artist_name": "Similar",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+}
+
 fn deck_ids(body: &Value) -> Vec<String> {
     body["items"]
         .as_array()
@@ -615,17 +683,8 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     let dir = crate::common::ScratchDir::new("discover-queue");
     let rig = AuthRig::new("discover-queue").await;
     let db = rig.platform.db.clone();
-    db.write(Lane::Foreground, "test.seed", |tx| {
-        tx.execute(
-            "INSERT INTO auth_users (id, display_name, role, created_at) \
-                 VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z')",
-            [],
-        )?;
-        Ok::<_, droppedneedle_kernel::db::DbError>(())
-    })
-    .await
-    .expect("user row");
-    let app = queue_app(&rig, &dir);
+    seed_user(&db).await;
+    let app = queue_app(&rig, &dir, queue_script());
 
     let (_, idle) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
     assert_eq!(idle["status"], "idle");
@@ -675,25 +734,13 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     );
 
     let ignored = ids[0].clone();
-    let (status, _) = call(
-        &app,
-        "POST",
-        "/api/v3/discover/queue/ignore",
-        Some(json!({
-            "release_group_mbid": ignored,
-            "artist_mbid": SIMILAR,
-            "release_name": "Album",
-            "artist_name": "Similar",
-        })),
-    )
+    ignore(&app, &ignored).await;
+    // The ignore's build replaces the deck: wait for its new id.
+    let rebuilt = after_commits(&db, "the ignore rebuilt the deck", || async {
+        let (_, body) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
+        (body["status"] == "ready" && body["queue_id"] != ready["queue_id"]).then_some(body)
+    })
     .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    let rebuilt = settled(&app, &db).await;
-    assert_eq!(rebuilt["status"], "ready");
-    assert_ne!(
-        rebuilt["queue_id"], ready["queue_id"],
-        "the ignore rebuilt the deck"
-    );
     let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
     assert!(
         !deck_ids(&deck).contains(&ignored),
@@ -723,14 +770,68 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     );
 
     // A restart: a new queue over the same database.
-    let restarted = queue_app(&rig, &dir);
+    let restarted = queue_app(&rig, &dir, queue_script());
     let (_, ledger) = call(&restarted, "GET", "/api/v3/discover/queue/ignored", None).await;
     assert_eq!(ledger["items"][0]["release_group_mbid"], ignored.as_str());
-    let (_, reloaded) = call(&restarted, "GET", "/api/v3/discover/queue/status", None).await;
-    assert_eq!(reloaded["status"], "ready");
-    assert_eq!(
-        reloaded["queue_id"], rebuilt["queue_id"],
-        "the saved deck reloads"
+    // The deck reads as ready a moment before its row is written.
+    after_commits(&db, "the saved deck reloads", || async {
+        let (_, reloaded) = call(&restarted, "GET", "/api/v3/discover/queue/status", None).await;
+        (reloaded["status"] == "ready" && reloaded["queue_id"] == rebuilt["queue_id"]).then_some(())
+    })
+    .await;
+}
+
+/// An ignore that lands while a build is running, after that build read
+/// the ignores: the deck it leaves is served without the ignored albums.
+#[tokio::test]
+async fn an_ignore_during_a_build_never_reaches_the_deck() {
+    let dir = crate::common::ScratchDir::new("discover-queue-midbuild");
+    let rig = AuthRig::new("discover-queue-midbuild").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let hold = Arc::new(Hold::new());
+    let app = queue_app(
+        &rig,
+        &dir,
+        Script {
+            hold: Some(hold.clone()),
+            ..queue_script()
+        },
+    );
+
+    let (_, started) = call(
+        &app,
+        "POST",
+        "/api/v3/discover/queue/generate",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(started["action"], "started");
+    // The build has read the ignores and now waits on its seed artists.
+    hold.reached().await;
+
+    // Every deck holds at least one trending album, so ignoring all of
+    // them always catches a card this build picks.
+    let trending: Vec<String> = (11..=15).map(group).collect();
+    for mbid in &trending {
+        ignore(&app, mbid).await;
+    }
+    hold.release();
+
+    let deck = after_commits(&db, "the running build finished", || async {
+        let (_, status) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
+        if status["status"] != "ready" {
+            return None;
+        }
+        let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
+        Some(deck)
+    })
+    .await;
+    let ids = deck_ids(&deck);
+    assert!(!ids.is_empty(), "the similar artist's cards remain");
+    assert!(
+        ids.iter().all(|id| !trending.contains(id)),
+        "no ignored album is served: {ids:?}"
     );
 }
 

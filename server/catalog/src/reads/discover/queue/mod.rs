@@ -6,7 +6,8 @@
 //! it reads as stale once older than a day, and a library change leaves
 //! it alone. The warm scheduler may build decks too, but any request from
 //! the user replaces a warm build that is still running. Ignores are
-//! durable and every later deck skips them.
+//! durable: every later build skips them, and a deck is served without
+//! them, so one built before the ignore never shows the album again.
 //!
 //! The pieces: [`build`] assembles a deck from the listening reads,
 //! [`select`] holds the pure picking logic, [`cards`] the per-card
@@ -344,22 +345,35 @@ impl Inner {
 
     async fn status(&self, user_id: &str) -> DiscoverQueueStatusResponse {
         let variant = Variant::for_user(&self.listening, user_id).await;
-        let deck = self.deck(user_id, &variant).await;
         let settings = QueueSettings::read(&self.settings);
-        let mut states = self.states();
-        let state = Self::state(&mut states, user_id, &variant.source);
-        status_of(
-            state.phase,
-            state.error.clone(),
-            deck.as_ref(),
-            &settings,
-            self.decks.now_ms(),
-        )
+        // The phase is read before the deck, so a build that settles in
+        // between never reads as ready with the deck it replaced.
+        let (phase, error) = {
+            let mut states = self.states();
+            let state = Self::state(&mut states, user_id, &variant.source);
+            (state.phase, state.error.clone())
+        };
+        let deck = match phase {
+            Phase::Settled => self.deck(user_id, &variant).await,
+            Phase::Building | Phase::Failed => None,
+        };
+        status_of(phase, error, deck.as_ref(), &settings, self.decks.now_ms())
     }
 
+    /// The user's deck without the albums they ignored: a deck built, or
+    /// still building, when an ignore lands can hold the album.
     async fn current(&self, user_id: &str) -> Option<QueueDeck> {
         let variant = Variant::for_user(&self.listening, user_id).await;
-        self.deck(user_id, &variant).await.as_ref().map(to_deck)
+        let mut deck = to_deck(&self.deck(user_id, &variant).await?);
+        match self.db.ignored_mbids(user_id).await {
+            Ok(ignored) => deck
+                .items
+                .retain(|item| !ignored.contains(&item.musicbrainz_id.to_ascii_lowercase())),
+            Err(cause) => {
+                tracing::warn!(%cause, "ignored releases unreadable; the deck is served as built");
+            }
+        }
+        Some(deck)
     }
 
     /// Start a build, or say why none started. The handle is the build's
@@ -639,7 +653,8 @@ impl Inner {
 }
 
 impl LiveQueue {
-    /// The user's last built deck, stale or not, when there is one.
+    /// The user's last built deck, stale or not, when there is one,
+    /// without the albums they ignored.
     pub fn current<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Option<QueueDeck>> {
         Box::pin(self.inner.current(user_id))
     }
