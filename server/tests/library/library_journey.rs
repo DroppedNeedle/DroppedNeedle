@@ -4199,8 +4199,8 @@ async fn album_cleanup_survives_a_stop_after_the_removal() {
              VALUES ('fan', 'Fan', 'user', '2026-01-01T00:00:00Z'); \
              INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name, \
              album_title, status, created_at, updated_at) \
-             VALUES ('task-old', 'fan', 'rg-gone', 'Band', 'LP', 'failed', 1767225600.0, \
-             1767225600.0); \
+             VALUES ('task-old', 'fan', 'rg-gone', 'Band', 'LP', 'failed', 1767225600000, \
+             1767225600000); \
              INSERT INTO acquire_held_entries (id, user_id, origin, group_key, \
              release_group_mbid, state, created_at, expires_at) VALUES (1, 'fan', 'download', \
              'album:rg-gone', 'rg-gone', 'held', 1767225600000, 9999999999999); \

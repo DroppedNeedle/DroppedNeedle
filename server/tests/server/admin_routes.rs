@@ -716,7 +716,7 @@ async fn quota_usage_counts_asks_and_bytes() {
              (id, user_id, release_group_mbid, artist_name, album_title,
               status, total_size_bytes, created_at, updated_at)
          VALUES ('task-1', ?1, 'rg-1', 'artist', 'album', 'completed', 4096,
-                 1767225600.0, 1767225600.0)",
+                 1767225600000, 1767225600000)",
         &[&rig.user_id],
     )
     .await;
@@ -726,7 +726,7 @@ async fn quota_usage_counts_asks_and_bytes() {
              (id, user_id, release_group_mbid, artist_name, album_title,
               status, total_size_bytes, created_at, updated_at)
          VALUES ('task-2', ?1, 'rg-2', 'artist', 'album', 'failed', 1024,
-                 1767225600.0, 1767225600.0)",
+                 1767225600000, 1767225600000)",
         &[&rig.user_id],
     )
     .await;
