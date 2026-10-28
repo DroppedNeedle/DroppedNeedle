@@ -5190,7 +5190,7 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
         .take_album_version(&ada, RECORDING)
         .await
         .expect("taken");
-    assert!(taken.success, "{}", taken.message);
+    assert!(taken.applied(), "{taken:?}");
     let request_key = format!("track:{RECORDING}");
     let second: String = sqlx::query_scalar(
         "SELECT download_task_id FROM request_history WHERE musicbrainz_id_lower = ?1",

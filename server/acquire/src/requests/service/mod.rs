@@ -19,7 +19,9 @@ mod mixes;
 mod recovery;
 mod views;
 
+pub use decisions::{BatchCancelled, Decided};
 pub use intake::{FollowIntake, FollowRelease};
+pub use mixes::MixDecided;
 pub use recovery::RequestRecovery;
 
 use std::sync::Arc;

@@ -7,9 +7,7 @@ use crate::dispatch::{DispatchError, DispatchOrigin, DispatchTarget};
 use crate::requests::auth::auto_approves;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{CancelDecision, RequestRecord, RequestStatus, validate_mbid};
-use crate::requests::models::{
-    ActionResponse, BatchCancelResponse, ClearHistoryResponse, RequestKind,
-};
+use crate::requests::models::{ClearHistoryResponse, RequestKind};
 use droppedneedle_auth::{Admin, Principal};
 
 /// How an admin's stop of one row's download ended.
@@ -42,72 +40,126 @@ enum RequesterCancel {
     CancelledTask,
 }
 
-/// The reply to a requester's cancel, worded as v2 did.
-fn requester_reply(
+/// How a decision on one ask ended. The routes word the reply
+/// ([`crate::requests::http::decided_reply`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Decided {
+    /// No row for the id.
+    NotFound,
+    /// Approve or reject on a row not waiting for approval: its status, or
+    /// `changed` when the row went away meanwhile.
+    NotWaiting {
+        /// The row's status.
+        status: String,
+    },
+    /// Approved and its download started.
+    Approved {
+        /// The row's title.
+        title: String,
+    },
+    /// Approved, but its download could not start; the row reads failed.
+    ApprovedNotStarted {
+        /// The row's title.
+        title: String,
+    },
+    /// Approved, but the row moved on before its download was linked.
+    ApprovedStale,
+    /// Rejected.
+    Rejected {
+        /// The row's title.
+        title: String,
+    },
+    /// A row with no download was cancelled.
+    CancelledRequest {
+        /// The row's title.
+        title: String,
+    },
+    /// The row's download was stopped and the row reads cancelled.
+    CancelledDownload {
+        /// The row's title.
+        title: String,
+    },
+    /// A co-requester left the row, which goes on for the others.
+    Detached,
+    /// The row's status does not allow a cancel.
+    CannotCancel {
+        /// The row's status.
+        status: RequestStatus,
+    },
+    /// The download could not be stopped.
+    StopFailed,
+    /// The row changed during the cancel.
+    Changed,
+    /// The retry waits for an admin's approval.
+    RetryAwaitingApproval,
+    /// Retried and its download started.
+    Retried {
+        /// The row's title.
+        title: String,
+    },
+    /// The retry's download could not start; the row is as it was.
+    RetryNotStarted,
+    /// The row moved on before the retry's download was linked.
+    RetryStale,
+    /// The row's status does not allow a retry.
+    CannotRetry {
+        /// The row's status.
+        status: RequestStatus,
+    },
+}
+
+impl Decided {
+    /// Whether the decision applied.
+    pub fn applied(&self) -> bool {
+        matches!(
+            self,
+            Self::Approved { .. }
+                | Self::Rejected { .. }
+                | Self::CancelledRequest { .. }
+                | Self::CancelledDownload { .. }
+                | Self::Detached
+                | Self::RetryAwaitingApproval
+                | Self::Retried { .. }
+        )
+    }
+}
+
+/// How a batch cancel ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BatchCancelled {
+    /// Rows cancelled or left.
+    pub cancelled: u32,
+    /// Ids that could not be cancelled.
+    pub failed: u32,
+}
+
+/// The outcome of a requester's cancel.
+fn requester_decided(
     outcome: RequesterCancel,
     record: &RequestRecord,
-) -> Result<ActionResponse, RequestsError> {
+) -> Result<Decided, RequestsError> {
     Ok(match outcome {
-        RequesterCancel::NotFound => not_found(),
+        RequesterCancel::NotFound => Decided::NotFound,
         RequesterCancel::Denied(prior_status) => {
             if prior_status.is_cancellable() || prior_status == RequestStatus::AwaitingApproval {
                 return Err(RequestsError::Forbidden {
                     message: "Cannot cancel another user's request".to_owned(),
                 });
             }
-            ActionResponse {
-                success: false,
-                message: format!("Cannot cancel request with status '{prior_status}'"),
+            Decided::CannotCancel {
+                status: prior_status,
             }
         }
-        RequesterCancel::Detached => ActionResponse {
-            success: true,
-            message: "Removed from your requests. The shared server request continues for another listener."
-                .to_owned(),
+        RequesterCancel::Detached => Decided::Detached,
+        RequesterCancel::CancelledDirect => Decided::CancelledRequest {
+            title: record_title(record),
         },
-        RequesterCancel::CancelledDirect => ActionResponse {
-            success: true,
-            message: format!("Cancelled request for {}", record_title(record)),
-        },
-        RequesterCancel::StopFailed => stop_failed(),
-        RequesterCancel::Changed => changed(),
-        RequesterCancel::CancelledTask => ActionResponse {
-            success: true,
-            message: format!("Cancelled download of {}", record_title(record)),
+        RequesterCancel::StopFailed => Decided::StopFailed,
+        RequesterCancel::Changed => Decided::Changed,
+        RequesterCancel::CancelledTask => Decided::CancelledDownload {
+            title: record_title(record),
         },
     })
-}
-
-/// No row for the id.
-fn not_found() -> ActionResponse {
-    ActionResponse {
-        success: false,
-        message: "Request not found".to_owned(),
-    }
-}
-
-/// A download that would not stop.
-fn stop_failed() -> ActionResponse {
-    ActionResponse {
-        success: false,
-        message: "Could not stop the download; try again".to_owned(),
-    }
-}
-
-/// A row that moved on during a cancel.
-fn changed() -> ActionResponse {
-    ActionResponse {
-        success: false,
-        message: "Request changed while cancelling".to_owned(),
-    }
-}
-
-/// Not-waiting rejection for approve/reject.
-fn not_waiting(status: &str) -> ActionResponse {
-    ActionResponse {
-        success: false,
-        message: format!("Request is not awaiting approval (status: {status})"),
-    }
 }
 
 impl RequestsService {
@@ -119,7 +171,7 @@ impl RequestsService {
         principal: &Principal,
         ids: &[String],
         kind: RequestKind,
-    ) -> Result<BatchCancelResponse, RequestsError> {
+    ) -> Result<BatchCancelled, RequestsError> {
         let is_admin = principal.is_admin();
         let now = self.now_epoch();
         let mut cancelled = 0_u32;
@@ -150,16 +202,7 @@ impl RequestsService {
                 failed = failed.saturating_add(1);
             }
         }
-        let mut message = format!("Cancelled {cancelled} requests");
-        if failed > 0 {
-            message.push_str(&format!(", {failed} failed"));
-        }
-        Ok(BatchCancelResponse {
-            success: cancelled > 0,
-            cancelled,
-            failed,
-            message,
-        })
+        Ok(BatchCancelled { cancelled, failed })
     }
 
     /// Approve one waiting ask and dispatch it (v2 `approve_request`). The
@@ -170,14 +213,16 @@ impl RequestsService {
         admin: &Admin,
         mbid: &str,
         kind: RequestKind,
-    ) -> Result<ActionResponse, RequestsError> {
+    ) -> Result<Decided, RequestsError> {
         let mbid = validate_mbid(mbid)?;
         let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
-            return Ok(not_found());
+            return Ok(Decided::NotFound);
         };
         if record.status != RequestStatus::AwaitingApproval {
-            return Ok(not_waiting(record.status.as_str()));
+            return Ok(Decided::NotWaiting {
+                status: record.status.as_str().to_owned(),
+            });
         }
         let claimed = self
             .store
@@ -196,7 +241,7 @@ impl RequestsService {
                 .await?
                 .map(|row| row.status.as_str().to_owned())
                 .unwrap_or_else(|| "changed".to_owned());
-            return Ok(not_waiting(&status));
+            return Ok(Decided::NotWaiting { status });
         };
         // Shared approvals keep the immutable primary owner; only ownerless
         // legacy rows fall back to the acting admin (v2 `_dispatch_record`).
@@ -232,18 +277,13 @@ impl RequestsService {
                         Some(claimed.generation),
                     )
                     .await?;
-                Ok(ActionResponse {
-                    success: false,
-                    message: format!("Approved but failed to start: {}", record_title(&record)),
+                Ok(Decided::ApprovedNotStarted {
+                    title: record_title(&record),
                 })
             }
-            Dispatched::Stale => Ok(ActionResponse {
-                success: false,
-                message: "Approved request became stale".to_owned(),
-            }),
-            Dispatched::Linked(_) => Ok(ActionResponse {
-                success: true,
-                message: format!("Approved: {}", record_title(&record)),
+            Dispatched::Stale => Ok(Decided::ApprovedStale),
+            Dispatched::Linked(_) => Ok(Decided::Approved {
+                title: record_title(&record),
             }),
         }
     }
@@ -254,14 +294,16 @@ impl RequestsService {
         admin: &Admin,
         mbid: &str,
         kind: RequestKind,
-    ) -> Result<ActionResponse, RequestsError> {
+    ) -> Result<Decided, RequestsError> {
         let mbid = validate_mbid(mbid)?;
         let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
-            return Ok(not_found());
+            return Ok(Decided::NotFound);
         };
         if record.status != RequestStatus::AwaitingApproval {
-            return Ok(not_waiting(record.status.as_str()));
+            return Ok(Decided::NotWaiting {
+                status: record.status.as_str().to_owned(),
+            });
         }
         let claimed = self
             .store
@@ -280,11 +322,10 @@ impl RequestsService {
                 .await?
                 .map(|row| row.status.as_str().to_owned())
                 .unwrap_or_else(|| "changed".to_owned());
-            return Ok(not_waiting(&status));
+            return Ok(Decided::NotWaiting { status });
         }
-        Ok(ActionResponse {
-            success: true,
-            message: format!("Rejected: {}", record_title(&record)),
+        Ok(Decided::Rejected {
+            title: record_title(&record),
         })
     }
 
@@ -294,17 +335,17 @@ impl RequestsService {
         principal: &Principal,
         mbid: &str,
         kind: RequestKind,
-    ) -> Result<ActionResponse, RequestsError> {
+    ) -> Result<Decided, RequestsError> {
         let mbid = validate_mbid(mbid)?;
         let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
-            return Ok(not_found());
+            return Ok(Decided::NotFound);
         };
         if !principal.is_admin() {
             let outcome = self
                 .requester_cancel(kind, &mbid, principal.user_id(), now)
                 .await?;
-            return requester_reply(outcome, &record);
+            return requester_decided(outcome, &record);
         }
         if record.status == RequestStatus::AwaitingApproval {
             if !self
@@ -318,31 +359,28 @@ impl RequestsService {
                 )
                 .await?
             {
-                return Ok(changed());
+                return Ok(Decided::Changed);
             }
             // Approval cancellation revokes the persisted capability after
             // winning the generation CAS (v2 quirk).
             self.store
                 .set_dispatch_authorized(kind, &mbid, false)
                 .await?;
-            return Ok(ActionResponse {
-                success: true,
-                message: format!("Cancelled request for {}", record_title(&record)),
+            return Ok(Decided::CancelledRequest {
+                title: record_title(&record),
             });
         }
         if !record.status.is_cancellable() {
-            return Ok(ActionResponse {
-                success: false,
-                message: format!("Cannot cancel request with status '{}'", record.status),
+            return Ok(Decided::CannotCancel {
+                status: record.status,
             });
         }
         Ok(
             match self.admin_stop(kind, &mbid, &record, now, false).await? {
-                AdminStop::StopFailed => stop_failed(),
-                AdminStop::Changed => changed(),
-                AdminStop::Cancelled => ActionResponse {
-                    success: true,
-                    message: format!("Cancelled download of {}", record_title(&record)),
+                AdminStop::StopFailed => Decided::StopFailed,
+                AdminStop::Changed => Decided::Changed,
+                AdminStop::Cancelled => Decided::CancelledDownload {
+                    title: record_title(&record),
                 },
             },
         )
@@ -396,7 +434,7 @@ impl RequestsService {
         principal: &Principal,
         mbid: &str,
         kind: RequestKind,
-    ) -> Result<ActionResponse, RequestsError> {
+    ) -> Result<Decided, RequestsError> {
         let mbid = validate_mbid(mbid)?;
         self.retry_with(principal, &mbid, kind, false).await
     }
@@ -410,7 +448,7 @@ impl RequestsService {
         &self,
         principal: &Principal,
         mbid: &str,
-    ) -> Result<ActionResponse, RequestsError> {
+    ) -> Result<Decided, RequestsError> {
         let mbid = validate_mbid(mbid)?;
         let kind = RequestKind::Track;
         let Some(record) = self.store.get(kind, &mbid).await? else {
@@ -457,16 +495,15 @@ impl RequestsService {
         mbid: &str,
         kind: RequestKind,
         album_version: bool,
-    ) -> Result<ActionResponse, RequestsError> {
+    ) -> Result<Decided, RequestsError> {
         let mbid = mbid.to_owned();
         let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
-            return Ok(not_found());
+            return Ok(Decided::NotFound);
         };
         if !record.status.is_retryable() {
-            return Ok(ActionResponse {
-                success: false,
-                message: format!("Cannot retry request with status '{}'", record.status),
+            return Ok(Decided::CannotRetry {
+                status: record.status,
             });
         }
         let prior_status = record.status;
@@ -506,20 +543,14 @@ impl RequestsService {
                         message: "Cannot retry another user's request".to_owned(),
                     });
                 }
-                return Ok(ActionResponse {
-                    success: false,
-                    message: match current {
-                        None => "Request not found".to_owned(),
-                        Some(row) => format!("Cannot retry request with status '{}'", row.status),
-                    },
+                return Ok(match current {
+                    None => Decided::NotFound,
+                    Some(row) => Decided::CannotRetry { status: row.status },
                 });
             }
         };
         if target == RequestStatus::AwaitingApproval {
-            return Ok(ActionResponse {
-                success: true,
-                message: "Retry submitted, awaiting admin approval".to_owned(),
-            });
+            return Ok(Decided::RetryAwaitingApproval);
         }
         let owner = record
             .user_id
@@ -548,18 +579,11 @@ impl RequestsService {
                 self.store
                     .update_status(kind, &mbid, prior_status, None, Some(generation))
                     .await?;
-                Ok(ActionResponse {
-                    success: false,
-                    message: "Retry failed to start download".to_owned(),
-                })
+                Ok(Decided::RetryNotStarted)
             }
-            Dispatched::Stale => Ok(ActionResponse {
-                success: false,
-                message: "Retry request became stale".to_owned(),
-            }),
-            Dispatched::Linked(_) => Ok(ActionResponse {
-                success: true,
-                message: format!("Re-requested {}", record_title(&record)),
+            Dispatched::Stale => Ok(Decided::RetryStale),
+            Dispatched::Linked(_) => Ok(Decided::Retried {
+                title: record_title(&record),
             }),
         }
     }

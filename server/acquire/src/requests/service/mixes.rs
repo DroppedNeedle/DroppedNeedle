@@ -4,7 +4,7 @@ use super::RequestsService;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::ApprovalState;
 use crate::requests::models::{
-    ActionResponse, PersonalMixApprovalItem, PersonalMixApprovalsResponse, RefreshResponse,
+    PersonalMixApprovalItem, PersonalMixApprovalsResponse, RefreshResponse,
 };
 use droppedneedle_auth::{Admin, Principal};
 
@@ -16,12 +16,18 @@ fn reviewer(principal: &Principal) -> (&str, Option<String>) {
     )
 }
 
-/// No-match reply for approval queues.
-fn no_match() -> ActionResponse {
-    ActionResponse {
-        success: false,
-        message: "No matching approval found".to_owned(),
-    }
+/// How an admin's decision on a personal-mix grant ended. The routes
+/// word the reply ([`crate::requests::http::mix_reply`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MixDecided {
+    /// No grant or ask matched.
+    NoMatch,
+    /// The auto-request was approved.
+    Approved,
+    /// The auto-request was rejected.
+    Rejected,
+    /// The grant was revoked.
+    Revoked,
 }
 
 impl RequestsService {
@@ -52,7 +58,7 @@ impl RequestsService {
         &self,
         admin: &Admin,
         user_id: &str,
-    ) -> Result<ActionResponse, RequestsError> {
+    ) -> Result<MixDecided, RequestsError> {
         if !self
             .mixes
             .decide(
@@ -63,12 +69,9 @@ impl RequestsService {
             )
             .await?
         {
-            return Ok(no_match());
+            return Ok(MixDecided::NoMatch);
         }
-        Ok(ActionResponse {
-            success: true,
-            message: "Weekly Mix auto-request approved".to_owned(),
-        })
+        Ok(MixDecided::Approved)
     }
 
     /// Reject one mix auto-request ask (admin).
@@ -76,7 +79,7 @@ impl RequestsService {
         &self,
         admin: &Admin,
         user_id: &str,
-    ) -> Result<ActionResponse, RequestsError> {
+    ) -> Result<MixDecided, RequestsError> {
         if !self
             .mixes
             .decide(
@@ -87,16 +90,13 @@ impl RequestsService {
             )
             .await?
         {
-            return Ok(no_match());
+            return Ok(MixDecided::NoMatch);
         }
         // A rejection also turns the user's toggle off (v2).
         if let Some(mixer) = &self.mixer {
             mixer.clear_intent(user_id).await;
         }
-        Ok(ActionResponse {
-            success: true,
-            message: "Weekly Mix auto-request rejected".to_owned(),
-        })
+        Ok(MixDecided::Rejected)
     }
 
     /// Revoke one mix auto-request grant (admin).
@@ -104,21 +104,18 @@ impl RequestsService {
         &self,
         admin: &Admin,
         user_id: &str,
-    ) -> Result<ActionResponse, RequestsError> {
+    ) -> Result<MixDecided, RequestsError> {
         if !self
             .mixes
             .revoke(user_id, reviewer(admin), self.now_epoch())
             .await?
         {
-            return Ok(no_match());
+            return Ok(MixDecided::NoMatch);
         }
         if let Some(mixer) = &self.mixer {
             mixer.clear_intent(user_id).await;
         }
-        Ok(ActionResponse {
-            success: true,
-            message: "Weekly Mix auto-request revoked".to_owned(),
-        })
+        Ok(MixDecided::Revoked)
     }
 
     /// Refresh one user's personal mix. The build runs in the background

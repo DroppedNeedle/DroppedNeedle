@@ -17,6 +17,7 @@ use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidQuery;
 
 use super::error::RequestsError;
+use super::http::{decided_reply, mix_reply};
 use super::models::{
     ActionResponse, ActiveCountResponse, ActiveRequestsResponse, HistoryQuery, HistoryResponse,
     KindQuery, PersonalMixApprovalsResponse, RefreshResponse, RequestKind, WantedActionResponse,
@@ -140,11 +141,11 @@ pub async fn approve_handler(
     ValidQuery(query): ValidQuery<KindQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let kind = resolve_kind(&query)?;
-    Ok(Json(
+    Ok(Json(decided_reply(
         RequestsService::new(&state)
             .approve_request(&admin, &musicbrainz_id, kind)
             .await?,
-    ))
+    )))
 }
 
 /// Reject one waiting ask.
@@ -163,11 +164,11 @@ pub async fn reject_handler(
     ValidQuery(query): ValidQuery<KindQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let kind = resolve_kind(&query)?;
-    Ok(Json(
+    Ok(Json(decided_reply(
         RequestsService::new(&state)
             .reject_request(&admin, &musicbrainz_id, kind)
             .await?,
-    ))
+    )))
 }
 
 /// Wanted watches plus the still-retrying set.
@@ -279,11 +280,11 @@ pub async fn approve_mix_handler(
     admin: Admin,
     Path(user_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(
+    Ok(Json(mix_reply(
         RequestsService::new(&state)
             .approve_mix(&admin, &user_id)
             .await?,
-    ))
+    )))
 }
 
 /// Reject one mix auto-request ask.
@@ -301,11 +302,11 @@ pub async fn reject_mix_handler(
     admin: Admin,
     Path(user_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(
+    Ok(Json(mix_reply(
         RequestsService::new(&state)
             .reject_mix(&admin, &user_id)
             .await?,
-    ))
+    )))
 }
 
 /// Revoke one mix auto-request grant.
@@ -323,11 +324,11 @@ pub async fn revoke_mix_handler(
     admin: Admin,
     Path(user_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(
+    Ok(Json(mix_reply(
         RequestsService::new(&state)
             .revoke_mix(&admin, &user_id)
             .await?,
-    ))
+    )))
 }
 
 /// Refresh one user's personal mix.

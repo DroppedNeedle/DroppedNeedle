@@ -16,6 +16,7 @@ use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::error::RequestsError;
+use super::http::{batch_cancel_reply, decided_reply};
 use super::models::{
     ActionResponse, AlbumIntake, BatchCancelBody, BatchCancelResponse, BatchIntake,
     BatchIntakeResponse, ClearHistoryResponse, EditionAcquireQuery, EditionAcquireResponse,
@@ -119,7 +120,7 @@ pub async fn cancel_batch_handler(
     let response = RequestsService::new(&state)
         .cancel_batch(&principal, &body.musicbrainz_ids, kind)
         .await?;
-    Ok(Json(response))
+    Ok(Json(batch_cancel_reply(response)))
 }
 
 /// Cancel one ask. `DELETE /api/v3/requests/active/{musicbrainz_id}`.
@@ -141,7 +142,7 @@ pub async fn cancel_one_handler(
     let response = RequestsService::new(&state)
         .cancel_one(&principal, &musicbrainz_id, kind)
         .await?;
-    Ok(Json(response))
+    Ok(Json(decided_reply(response)))
 }
 
 /// Retry one terminal ask. `POST /api/v3/requests/retry/{musicbrainz_id}`.
@@ -164,7 +165,7 @@ pub async fn retry_one_handler(
     let response = RequestsService::new(&state)
         .retry_request(&principal, &musicbrainz_id, kind)
         .await?;
-    Ok(Json(response))
+    Ok(Json(decided_reply(response)))
 }
 
 /// Take a single from its album.
@@ -192,7 +193,7 @@ pub async fn from_album_handler(
     let response = RequestsService::new(&state)
         .take_album_version(&principal, &musicbrainz_id)
         .await?;
-    Ok(Json(response))
+    Ok(Json(decided_reply(response)))
 }
 
 /// Clear one history row. `DELETE /api/v3/requests/history/{musicbrainz_id}`.
