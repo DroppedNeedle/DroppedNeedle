@@ -20,8 +20,9 @@
 //! its pool, and an hour passed since the last reclaim. A final `TRUNCATE`
 //! runs at clean shutdown, so a stopped database leaves no `-wal` behind.
 //!
-//! Every pass records its outcome for the log and keeps the latest one for
-//! the admin health endpoint (which reads [`CheckpointService::latest`]).
+//! Every pass records its outcome for the log (a routine `PASSIVE` pass at
+//! debug, see [`record_level`]) and keeps the latest one for the admin health
+//! endpoint (which reads [`CheckpointService::latest`]).
 
 use std::{
     path::{Path, PathBuf},
@@ -401,7 +402,7 @@ impl CheckpointService {
                 )
             };
         }
-        if relief && outcome.suspended {
+        if record_level(&outcome, relief) == tracing::Level::DEBUG {
             recorded!(debug);
         } else {
             recorded!(info);
@@ -622,9 +623,91 @@ fn short_error(error: &rusqlite::Error) -> String {
     text.chars().take(160).collect()
 }
 
+/// The level a recorded pass is logged at. A steady-state `PASSIVE` pass that
+/// met no lock, no error and no hold is the heartbeat of the 30-second loop, a
+/// line that says nothing changed: it goes to debug, as does a relief pass
+/// that leaves the hold on. Every pass a person may need to see stays at
+/// info: busy, failed, holding bulk writes, or a `TRUNCATE` reclaim.
+fn record_level(outcome: &CheckpointOutcome, relief: bool) -> tracing::Level {
+    let routine = outcome.mode == CheckpointMode::Passive
+        && !outcome.busy
+        && outcome.error.is_none()
+        && !outcome.suspended;
+    if routine || (relief && outcome.suspended) {
+        tracing::Level::DEBUG
+    } else {
+        tracing::Level::INFO
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pass(mode: CheckpointMode) -> CheckpointOutcome {
+        CheckpointOutcome {
+            at: UNIX_EPOCH,
+            mode,
+            busy: false,
+            log_frames: 8,
+            checkpointed_frames: 8,
+            active_bytes: 0,
+            wal_file_bytes: 57_712,
+            duration: Duration::from_millis(11),
+            error: None,
+            suspended: false,
+            reader_blocked: Duration::ZERO,
+            progress: true,
+        }
+    }
+
+    #[test]
+    fn a_routine_passive_pass_is_logged_at_debug() {
+        assert_eq!(
+            record_level(&pass(CheckpointMode::Passive), false),
+            tracing::Level::DEBUG
+        );
+    }
+
+    #[test]
+    fn passes_worth_reading_stay_at_info() {
+        let busy = CheckpointOutcome {
+            busy: true,
+            active_bytes: -1,
+            ..pass(CheckpointMode::Passive)
+        };
+        let failed = CheckpointOutcome {
+            error: Some("disk I/O error".to_owned()),
+            active_bytes: -1,
+            ..pass(CheckpointMode::Passive)
+        };
+        let holding = CheckpointOutcome {
+            suspended: true,
+            active_bytes: ACTIVE_HIGH_WATER_BYTES + 1,
+            ..pass(CheckpointMode::Passive)
+        };
+        for (name, outcome) in [
+            ("busy", busy),
+            ("failed", failed),
+            ("holding", holding),
+            ("truncate", pass(CheckpointMode::Truncate)),
+        ] {
+            assert_eq!(
+                record_level(&outcome, false),
+                tracing::Level::INFO,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_relief_pass_that_keeps_the_hold_stays_at_debug() {
+        let holding = CheckpointOutcome {
+            suspended: true,
+            ..pass(CheckpointMode::Passive)
+        };
+        assert_eq!(record_level(&holding, true), tracing::Level::DEBUG);
+    }
 
     fn observe(policy: &mut BackpressurePolicy, active: i64, log: i64, ckpt: i64) -> Observation {
         policy.observe(false, log, ckpt, active, Instant::now(), true)
