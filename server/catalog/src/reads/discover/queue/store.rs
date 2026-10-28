@@ -153,29 +153,24 @@ impl QueueDb {
         Ok(found)
     }
 
-    /// Remember release to release-group answers (misses as `None`).
-    pub async fn save_resolutions(&self, answers: Vec<(String, Option<String>)>) {
-        if answers.is_empty() {
-            return;
-        }
+    /// Remember one release to release-group answer (a miss as `None`).
+    pub async fn save_resolution(&self, release: String, group: Option<String>) {
         let written: Result<(), DbError> = self
             .db
             .write(Lane::Background, "discover.queue.resolutions", move |tx| {
-                for (release, group) in &answers {
-                    tx.execute(
-                        "INSERT INTO catalog_mbid_resolutions \
-                             (source_mbid_lower, source_mbid, release_group_mbid) \
-                         VALUES (?1, ?1, ?2) \
-                         ON CONFLICT(source_mbid_lower) DO UPDATE SET \
-                             release_group_mbid = excluded.release_group_mbid",
-                        rusqlite::params![release, group],
-                    )?;
-                }
+                tx.execute(
+                    "INSERT INTO catalog_mbid_resolutions \
+                         (source_mbid_lower, source_mbid, release_group_mbid) \
+                     VALUES (?1, ?1, ?2) \
+                     ON CONFLICT(source_mbid_lower) DO UPDATE SET \
+                         release_group_mbid = excluded.release_group_mbid",
+                    rusqlite::params![release, group],
+                )?;
                 Ok(())
             })
             .await;
         if let Err(error) = written {
-            tracing::warn!(%error, "could not save release group answers; they are looked up again next time");
+            tracing::warn!(%error, "could not save a release group answer; it is looked up again next time");
         }
     }
 

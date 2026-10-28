@@ -6,7 +6,8 @@
 //! the user's genres, Jellyfin plays, the library's identified albums),
 //! only those a wanted section needs, every read bounded to 25 seconds
 //! so one slow service only costs its own sections. The second builds
-//! the sections in parallel under the same bound, except the artist
+//! the sections in parallel under the same bound (the Daily Mixes stop at
+//! it themselves and keep the mixes finished by then), except the artist
 //! sections, which are built one after another in page order and share a
 //! "seen" set so an artist appears once on the page. Album sections are
 //! then deduplicated by rank. Ownership is marked when the page is served
@@ -45,6 +46,9 @@ use crate::reads::discover::sections::{self, Dedupe, Input, Page, SectionDef};
 
 /// Bound on any one upstream read in a build.
 const TASK_TIMEOUT: Duration = Duration::from_secs(25);
+/// Room past [`TASK_TIMEOUT`] for the Daily Mixes, which stop at it
+/// themselves; the outer bound only catches a read that never returns.
+const MIXES_GRACE: Duration = Duration::from_secs(5);
 /// Bound on the Last.fm route into Top Picks during a ListenBrainz outage.
 const PICKS_SIMILARITY_BUDGET: Duration = Duration::from_secs(12);
 /// Bound on resolving Last.fm release ids and weekly playlist covers.
@@ -175,13 +179,47 @@ impl Tracker {
 
 /// Run a shelf builder under the task bound; a timeout empties it.
 async fn bounded<T: Default>(what: &str, build: impl Future<Output = T>) -> T {
-    match tokio::time::timeout(TASK_TIMEOUT, build).await {
+    bounded_by(what, TASK_TIMEOUT, build).await
+}
+
+/// [`bounded`] with a bound of its own.
+async fn bounded_by<T: Default>(what: &str, bound: Duration, build: impl Future<Output = T>) -> T {
+    match tokio::time::timeout(bound, build).await {
         Ok(value) => value,
         Err(_) => {
             tracing::warn!(shelf = what, "discover shelf timed out; leaving it empty");
             T::default()
         }
     }
+}
+
+/// Run `builds` one after another until `deadline`, keeping what
+/// finished in time; the flag says whether every build finished.
+async fn in_order_until<T, B>(
+    deadline: tokio::time::Instant,
+    builds: impl IntoIterator<Item = B>,
+) -> (Vec<T>, bool)
+where
+    B: Future<Output = Option<T>>,
+{
+    let mut built = Vec::new();
+    for build in builds {
+        match tokio::time::timeout_at(deadline, build).await {
+            Ok(Some(item)) => built.push(item),
+            Ok(None) => {}
+            Err(_) => return (built, false),
+        }
+    }
+    (built, true)
+}
+
+/// A library read in a Daily Mixes build: a failure is noted on `ask`, so
+/// the mixes are not memoised, and reads as empty.
+fn noted<T: Default, E: std::fmt::Display>(ask: &Ask, what: &str, result: Result<T, E>) -> T {
+    if result.is_err() {
+        ask.note_failure();
+    }
+    or_empty(what, result)
 }
 
 /// What the first round fetched.
@@ -323,7 +361,12 @@ impl Builder<'_> {
                 .filter(|def| def.dedupe != Dedupe::Artists)
                 .map(|def| async {
                     let name = def.key.name();
-                    (def.key, bounded(&name, self.section(def.key, &ctx)).await)
+                    let bound = match def.key {
+                        SectionKey::DailyMixes => TASK_TIMEOUT + MIXES_GRACE,
+                        _ => TASK_TIMEOUT,
+                    };
+                    let content = bounded_by(&name, bound, self.section(def.key, &ctx)).await;
+                    (def.key, content)
                 }),
         )
         .await;
@@ -798,6 +841,7 @@ impl Builder<'_> {
     /// Candidate albums from artists similar to `seeds`, one pool per
     /// seed: ListenBrainz normally, Last.fm while ListenBrainz popularity
     /// is down.
+    #[allow(clippy::too_many_arguments)]
     async fn similar_pools(
         &self,
         user_id: &str,
@@ -806,11 +850,15 @@ impl Builder<'_> {
         excluded: &HashSet<String>,
         similar_limit: usize,
         albums_per: usize,
+        ask: &Ask,
     ) -> Vec<Vec<crate::reads::discover::models::QueueItemLight>> {
         let mut settings = self.settings.queue.clone();
         settings.similar_artists_limit = similar_limit;
         settings.albums_per_similar = albums_per;
-        let ctx = self.queue_ctx(&settings);
+        let ctx = BuildContext {
+            ask: ask.clone(),
+            ..self.queue_ctx(&settings)
+        };
         if self.lastfm_for_popularity(user) {
             lastfm_pools(&ctx, user_id, seeds, excluded, similar_limit * albums_per).await
         } else {
@@ -819,7 +867,9 @@ impl Builder<'_> {
     }
 
     /// Three to five genre-clustered mixes, roughly 60% new to 40% owned,
-    /// built once a day per user and source.
+    /// built once a day per user and source. The mixes finished within the
+    /// task bound are kept; only a complete set built without a failed read
+    /// is memoised, so a slow or failing source is tried again next build.
     async fn daily_mixes(
         &self,
         user_id: &str,
@@ -833,22 +883,45 @@ impl Builder<'_> {
         if let Some(mixes) = self.memo.mixes(&key).await {
             return mixes;
         }
-        let mixes = self
-            .build_daily_mixes(user_id, user, primary, seeds, shared, library_groups)
+        let deadline = tokio::time::Instant::now() + TASK_TIMEOUT;
+        let ask = self.ask.watched();
+        let (mixes, finished) = self
+            .build_daily_mixes(
+                &ask,
+                deadline,
+                user_id,
+                user,
+                primary,
+                seeds,
+                shared,
+                library_groups,
+            )
             .await;
-        self.memo.store_mixes(&key, mixes.clone()).await;
+        if finished && !ask.met_failure() {
+            self.memo.store_mixes(&key, mixes.clone()).await;
+        } else {
+            tracing::info!(
+                built = mixes.len(),
+                finished,
+                "daily mixes incomplete; not memoised, built again next time"
+            );
+        }
         mixes
     }
 
+    /// The mixes built by `deadline`, and whether every one was.
+    #[allow(clippy::too_many_arguments)]
     async fn build_daily_mixes(
         &self,
+        ask: &Ask,
+        deadline: tokio::time::Instant,
         user_id: &str,
         user: &UserMusic,
         primary: ListenSource,
         seeds: &[ArtistRow],
         shared: &Shared,
         library_groups: &HashSet<String>,
-    ) -> Vec<ChartSection> {
+    ) -> (Vec<ChartSection>, bool) {
         let mut preferred: Vec<String> = Vec::new();
         for (name, _) in shared.genres.iter().flatten() {
             let folded = fold(name);
@@ -858,7 +931,8 @@ impl Builder<'_> {
         }
         if preferred.is_empty() {
             let seed_mbids: Vec<String> = seeds.iter().filter_map(|s| s.mbid.clone()).collect();
-            let by_artist = or_empty(
+            let by_artist = noted(
+                ask,
                 "artist genres",
                 self.library.genres_for_artists(&seed_mbids).await,
             );
@@ -871,9 +945,9 @@ impl Builder<'_> {
                 }
             }
         }
-        let top = or_empty("top genres", self.library.top_genres(20).await);
+        let top = noted(ask, "top genres", self.library.top_genres(20).await);
         if top.is_empty() {
-            return Vec::new();
+            return (Vec::new(), true);
         }
         let mut ordered = preferred.clone();
         for (genre, _) in &top {
@@ -882,7 +956,8 @@ impl Builder<'_> {
             }
         }
         let names: Vec<String> = ordered.iter().take(10).cloned().collect();
-        let by_genre = or_empty(
+        let by_genre = noted(
+            ask,
             "genre artists",
             self.library.artists_for_genres(&names).await,
         );
@@ -905,10 +980,12 @@ impl Builder<'_> {
         }
         clusters.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
         clusters.truncate(5);
-        let mut mixes = Vec::new();
-        for (index, (genre, artists)) in clusters.into_iter().enumerate() {
-            if let Some(mix) = self
-                .one_daily_mix(
+        let builds = clusters
+            .into_iter()
+            .enumerate()
+            .map(|(index, (genre, artists))| async move {
+                self.one_daily_mix(
+                    ask,
                     user_id,
                     user,
                     primary,
@@ -918,16 +995,21 @@ impl Builder<'_> {
                     library_groups,
                 )
                 .await
-            {
-                mixes.push(mix);
-            }
+            });
+        let (mixes, finished) = in_order_until(deadline, builds).await;
+        if !finished {
+            tracing::warn!(
+                built = mixes.len(),
+                "daily mixes ran out of time; keeping the ones built"
+            );
         }
-        mixes
+        (mixes, finished)
     }
 
     #[allow(clippy::too_many_arguments)]
     async fn one_daily_mix(
         &self,
+        ask: &Ask,
         user_id: &str,
         user: &UserMusic,
         primary: ListenSource,
@@ -940,11 +1022,13 @@ impl Builder<'_> {
         daily_shuffler(&self.today, &["daily-mix", user_id, genre]).shuffle(&mut artists);
         artists.truncate(3);
         let names = if self.listening.popularity_down() {
+            // Names stand in as "<genre> artist" until popularity is back.
+            ask.note_failure();
             vec![None; artists.len()]
         } else {
             join_all(artists.iter().map(|mbid| async move {
                 self.listening
-                    .artist_albums(user_id, mbid, 1, &self.ask)
+                    .artist_albums(user_id, mbid, 1, ask)
                     .await
                     .ok()
                     .and_then(|rows| rows.into_iter().next())
@@ -963,7 +1047,7 @@ impl Builder<'_> {
             })
             .collect();
         let pools = self
-            .similar_pools(user_id, user, &seeds, library_groups, 10, 3)
+            .similar_pools(user_id, user, &seeds, library_groups, 10, 3, ask)
             .await;
         let mut seen = HashSet::new();
         let fresh: Vec<AlbumRef> = pools
@@ -980,7 +1064,8 @@ impl Builder<'_> {
                 )
             })
             .collect();
-        let owned = or_empty(
+        let owned = noted(
+            ask,
             "genre albums",
             self.library.albums_by_genre(genre, 20).await,
         );
@@ -1044,6 +1129,7 @@ impl Builder<'_> {
                         library_groups,
                         15,
                         3,
+                        &self.ask,
                     ),
                 )
                 .await
@@ -2204,7 +2290,22 @@ pub async fn mark_ownership(pool: &sqlx::SqlitePool, page: &mut DiscoverResponse
 
 #[cfg(test)]
 mod tests {
-    use super::mix_split;
+    use super::{in_order_until, mix_split};
+
+    /// The second mix never finishes: the first is kept, the third is not
+    /// reached, and the set is reported incomplete. The deadline has
+    /// passed already; a build that is ready when polled still counts.
+    #[tokio::test]
+    async fn a_cut_off_keeps_the_mixes_finished_before_it() {
+        let deadline = tokio::time::Instant::now();
+        let builds = [1, 2, 3].map(|n| async move {
+            if n == 2 {
+                std::future::pending::<()>().await;
+            }
+            Some(n)
+        });
+        assert_eq!(in_order_until(deadline, builds).await, (vec![1], false));
+    }
 
     #[test]
     fn mix_split_prefers_sixty_forty_and_tops_up_the_short_side() {

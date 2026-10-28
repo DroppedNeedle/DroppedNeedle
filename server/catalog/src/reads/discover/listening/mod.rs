@@ -32,6 +32,7 @@ pub use rows::*;
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -141,12 +142,13 @@ impl From<ListeningError> for ProviderFailure {
 /// A listening answer or its typed failure.
 pub type ListeningResult<T> = Result<T, ListeningError>;
 
-/// Who is asking: the priority the provider calls go out at, and for a
-/// build, the cap its calls share.
+/// Who is asking: the priority the provider calls go out at, for a
+/// build the cap its calls share, and whether a read made for it failed.
 #[derive(Debug, Clone)]
 pub struct Ask {
     priority: RequestPriority,
     permits: Option<Arc<Semaphore>>,
+    failed: Arc<AtomicBool>,
 }
 
 impl Ask {
@@ -155,6 +157,7 @@ impl Ask {
         Self {
             priority: RequestPriority::UserInitiated,
             permits: None,
+            failed: Arc::default(),
         }
     }
 
@@ -164,7 +167,29 @@ impl Ask {
         Self {
             priority,
             permits: Some(Arc::new(Semaphore::new(BUILD_CAP))),
+            failed: Arc::default(),
         }
+    }
+
+    /// The same ask, under the same cap, with a failure record of its own,
+    /// so one shelf can tell whether its own reads all answered.
+    pub fn watched(&self) -> Self {
+        Self {
+            priority: self.priority,
+            permits: self.permits.clone(),
+            failed: Arc::default(),
+        }
+    }
+
+    /// Whether a read made through this ask failed, or was dropped before
+    /// it answered (a caller's time bound).
+    pub fn met_failure(&self) -> bool {
+        self.failed.load(Ordering::Relaxed)
+    }
+
+    /// Record a failed read the caller made outside the listening data.
+    pub fn note_failure(&self) {
+        self.failed.store(true, Ordering::Relaxed);
     }
 
     /// The priority this ask's calls go out at.
@@ -217,6 +242,34 @@ impl Health {
     }
 }
 
+/// Notes a read as failed on its ask unless it settles with an answer;
+/// a read dropped before it answers counts as failed too.
+struct Watch<'a> {
+    ask: &'a Ask,
+    answered: bool,
+}
+
+impl<'a> Watch<'a> {
+    fn new(ask: &'a Ask) -> Self {
+        Self {
+            ask,
+            answered: false,
+        }
+    }
+
+    fn settle(mut self, answered: bool) {
+        self.answered = answered;
+    }
+}
+
+impl Drop for Watch<'_> {
+    fn drop(&mut self) {
+        if !self.answered {
+            self.ask.note_failure();
+        }
+    }
+}
+
 type Network = Arc<dyn ListeningNetwork>;
 
 /// The listening reads Discover makes, cached and coalesced.
@@ -266,14 +319,18 @@ impl ListeningData {
         F: FnOnce(Network, RequestPriority) -> Fut + Clone + Send + 'static,
         Fut: Future<Output = ListeningResult<Fetched<T>>> + Send + 'static,
     {
+        let watch = Watch::new(ask);
         let network = Arc::clone(&self.network);
         let permits = ask.permits.clone();
-        self.cache
+        let found = self
+            .cache
             .get_or_fetch(&key, policy, ask.priority, move |priority| async move {
                 let _permit = Ask::permit(permits).await;
                 fetch(network, priority).await
             })
-            .await
+            .await;
+        watch.settle(found.is_ok());
+        found
     }
 
     /// A list under `key`, fetched through the cache.
@@ -340,9 +397,16 @@ impl ListeningData {
     }
 
     /// One uncached read under the ask's cap.
-    async fn call<T>(&self, ask: &Ask, read: impl Future<Output = T>) -> T {
+    async fn call<T>(
+        &self,
+        ask: &Ask,
+        read: impl Future<Output = ListeningResult<T>>,
+    ) -> ListeningResult<T> {
+        let watch = Watch::new(ask);
         let _permit = Ask::permit(ask.permits.clone()).await;
-        read.await
+        let result = read.await;
+        watch.settle(result.is_ok());
+        result
     }
 
     /// The MusicBrainz source in use.
