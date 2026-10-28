@@ -401,8 +401,8 @@ pub struct LyricDoc {
 
 /// Lyrics reads for one track.
 ///
-/// Production serves the lyrics the track's file carries first
-/// ([`super::file_lyrics::FileLyrics`]) and the provider fetch behind it.
+/// Production serves [`crate::reads::lyrics::LyricsService`]: the lyrics
+/// the track's file carries first, then the online lookup.
 /// None is absence (the handler answers 404), never failure.
 pub trait LyricsPort: Send + Sync {
     /// Stored lyrics for one streamable track id.

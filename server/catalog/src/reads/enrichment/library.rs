@@ -1,12 +1,13 @@
 //! The production enrichment port Library Management plans through: the
-//! catalog's ListenBrainz and Last.fm clients, LRCLIB, the shared artwork
-//! cache and AcoustID, behind the library's [`EnrichmentPort`]. A person's
+//! catalog's ListenBrainz and Last.fm clients, the online lyrics, the shared
+//! artwork cache and AcoustID, behind the library's [`EnrichmentPort`]. A person's
 //! own preview asks at user priority, an automatic run at background
 //! priority; AcoustID lookups are fingerprinting and always background.
 
 use futures_util::future::BoxFuture;
 
 use crate::reads::catalog::upstream::Upstream;
+use crate::reads::lyrics::{LyricsError, OnlineLyrics};
 use crate::reads::platform::artwork::ArtworkService;
 use droppedneedle_library::management::enrich::{
     AcoustIdAnswer, AcoustIdPrint, Cover, EnrichmentPort, ExtrasWanted, LyricsFound, LyricsQuery,
@@ -27,12 +28,12 @@ fn priority(background: bool) -> RequestPriority {
 }
 
 /// The production port: the catalog's ListenBrainz and Last.fm clients,
-/// LRCLIB, the shared artwork cache, and AcoustID on identification's
-/// rate limit.
+/// the online lyrics the player shares, the shared artwork cache, and
+/// AcoustID on identification's rate limit.
 pub struct LiveEnrichment {
     pub upstream: Upstream,
     pub artwork: Option<ArtworkService>,
-    pub lrclib: LrclibAnswers,
+    pub lyrics: OnlineLyrics,
     pub acoustid: droppedneedle_providers::acoustid::AcoustIdClient,
     /// The library settings the AcoustID key is read from, per lookup.
     pub library: droppedneedle_kernel::runtime_config::Live<
@@ -50,68 +51,6 @@ impl LiveEnrichment {
                 String::new()
             }
         }
-    }
-}
-
-/// LRCLIB's answer cache (the provider notes leave it to wiring): answers
-/// kept seven days and "no lyrics" six hours.
-#[derive(Default)]
-pub struct LrclibAnswers {
-    answers: std::sync::Mutex<
-        std::collections::HashMap<String, (std::time::Instant, Option<LyricsFound>)>,
-    >,
-}
-
-/// How long a found answer and a "no lyrics" answer are kept.
-const LRCLIB_FOUND_FOR: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
-const LRCLIB_MISSING_FOR: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
-/// Most answers kept; past it, expired ones go first, then the oldest.
-const LRCLIB_CACHE_ENTRIES: usize = 20_000;
-
-impl LrclibAnswers {
-    fn key(query: &LyricsQuery, duration: u32) -> String {
-        format!(
-            "{}\u{1f}{}\u{1f}{}\u{1f}{duration}",
-            query.title, query.artist, query.album
-        )
-    }
-
-    fn cached(&self, key: &str) -> Option<Option<LyricsFound>> {
-        let answers = self.answers.lock().ok()?;
-        let (stored, answer) = answers.get(key)?;
-        let keep = if answer.is_some() {
-            LRCLIB_FOUND_FOR
-        } else {
-            LRCLIB_MISSING_FOR
-        };
-        (stored.elapsed() < keep).then(|| answer.clone())
-    }
-
-    fn remember(&self, key: String, answer: Option<LyricsFound>) {
-        let Ok(mut answers) = self.answers.lock() else {
-            return;
-        };
-        if answers.len() >= LRCLIB_CACHE_ENTRIES {
-            answers.retain(|_, (stored, answer)| {
-                stored.elapsed()
-                    < if answer.is_some() {
-                        LRCLIB_FOUND_FOR
-                    } else {
-                        LRCLIB_MISSING_FOR
-                    }
-            });
-            while answers.len() >= LRCLIB_CACHE_ENTRIES {
-                let Some(oldest) = answers
-                    .iter()
-                    .min_by_key(|(_, (stored, _))| *stored)
-                    .map(|(key, _)| key.clone())
-                else {
-                    break;
-                };
-                answers.remove(&oldest);
-            }
-        }
-        answers.insert(key, (std::time::Instant::now(), answer));
     }
 }
 
@@ -190,39 +129,20 @@ impl EnrichmentPort for LiveEnrichment {
         query: &'a LyricsQuery,
         background: bool,
     ) -> BoxFuture<'a, Result<Option<LyricsFound>, String>> {
-        use droppedneedle_providers::ProviderError;
         Box::pin(async move {
-            let duration = query.duration_seconds.round();
-            if !duration.is_finite() || duration <= 0.0 {
-                return Ok(None);
-            }
-            let key = LrclibAnswers::key(query, duration as u32);
-            if let Some(answer) = self.lrclib.cached(&key) {
-                return Ok(answer);
-            }
-            let client = self.upstream.lrclib();
-            // A resting LRCLIB is not waited out: the lyrics wait for the
-            // next run, as they would for a person's preview.
-            if !client.limiter().cooling_for().is_zero() {
-                return Err(LRCLIB_RESTING.to_owned());
-            }
-            let found = match client
-                .get_exact_lyrics(
-                    &query.title,
-                    &query.artist,
-                    &query.album,
-                    duration as u32,
-                    priority(background),
-                )
-                .await
-            {
-                Ok(found) => found,
-                Err(ProviderError::RateLimited { .. }) => return Err(LRCLIB_RESTING.to_owned()),
-                Err(error) => return Err(format!("LRCLIB did not answer: {error}")),
+            let lookup = crate::reads::lyrics::LyricsQuery {
+                title: &query.title,
+                artist: &query.artist,
+                album: &query.album,
+                duration_secs: query.duration_seconds,
             };
-            let answer = lyrics_answer(query, found);
-            self.lrclib.remember(key, answer.clone());
-            Ok(answer)
+            match self.lyrics.lookup(lookup, priority(background)).await {
+                Ok(candidate) => {
+                    Ok(candidate.and_then(|candidate| lyrics_answer(query, candidate)))
+                }
+                Err(LyricsError::Resting) => Err(LRCLIB_RESTING.to_owned()),
+                Err(LyricsError::Failed(error)) => Err(format!("LRCLIB did not answer: {error}")),
+            }
         })
     }
 
@@ -348,10 +268,9 @@ impl EnrichmentPort for LiveEnrichment {
 /// signature, within two seconds, and not instrumental.
 fn lyrics_answer(
     query: &LyricsQuery,
-    found: droppedneedle_providers::lrclib::LyricsLookup,
+    candidate: droppedneedle_providers::lrclib::LyricsCandidate,
 ) -> Option<LyricsFound> {
     use droppedneedle_providers::lrclib::signature_matches;
-    let candidate = found.candidate.filter(|_| found.found)?;
     let same = signature_matches(&candidate.track_name, &query.title)
         && signature_matches(&candidate.artist_name, &query.artist)
         && signature_matches(&candidate.album_name, &query.album)

@@ -62,6 +62,7 @@ use droppedneedle_catalog::reads::{
         CollectionsState, db::CollectionsDb, remote_import::PlaylistImportSink, store::Stores,
     },
     enrichment::{library::LiveEnrichment, live::production_enrichment},
+    lyrics::OnlineLyrics,
     platform::artwork::ArtworkService,
 };
 use droppedneedle_compat::{CompatSetup, setup::CompatDeps};
@@ -319,7 +320,15 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         mb_source.clone(),
         queues.queue().clone(),
         outbound.library(),
-        library_ports(p, &providers, &auth, &artwork, &scans, library_core),
+        library_ports(
+            p,
+            &providers,
+            &auth,
+            &artwork,
+            &scans,
+            enrichment.lyrics.clone(),
+            library_core,
+        ),
     )
     .map_err(stage("library setup"))?;
     let library_services = LibraryServices::build(&library);
@@ -584,8 +593,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
 
 /// What the library calls outside itself. Completed scans refresh the library's
 /// images, as v2 did after a sync. Library Management plans genres, lyrics
-/// and covers through the same clients and artwork cache the pages use, and
-/// AcoustID ids on identification's shared rate limit.
+/// and covers through the same clients, online lyrics and artwork cache the
+/// pages use, and AcoustID ids on identification's shared rate limit.
 #[allow(clippy::too_many_arguments)]
 fn library_ports(
     p: &Platform,
@@ -593,6 +602,7 @@ fn library_ports(
     auth: &AuthSetup,
     artwork: &ArtworkService,
     scans: &jobs::ScansEnded,
+    lyrics: OnlineLyrics,
     core: droppedneedle_library::wiring::LibraryCore,
 ) -> droppedneedle_library::wiring::LibraryPorts {
     let enrichment = LiveEnrichment {
@@ -604,7 +614,7 @@ fn library_ports(
             auth.users.clone(),
         ),
         artwork: Some(artwork.clone()),
-        lrclib: Default::default(),
+        lyrics,
     };
     let scans = scans.clone();
     droppedneedle_library::wiring::LibraryPorts {

@@ -91,7 +91,7 @@ You can download a single track or a whole album from the library. A track comes
 
 ## Lyrics
 
-The web player and player apps show lyrics for a track. Lyrics your files carry come first: a `.lrc` file next to the track with the same name, else the file's lyrics tag. Jellyfin apps such as Finamp only offer lyrics for those tracks. When a file has none, the server asks LRCLIB ([lrclib.net](https://lrclib.net)), a free lyrics database, at the moment lyrics are opened, sending the track's title, artist, album and length. Nothing is written to your files. This is on unless an admin turns it off under Settings > Library > Lyrics; while it is off, the server never asks LRCLIB.
+The web player and player apps show lyrics for a track. Lyrics your files carry come first: a `.lrc` file next to the track with the same name, else the file's lyrics tag. Jellyfin apps such as Finamp only offer lyrics for those tracks. When a file has none, the server asks LRCLIB ([lrclib.net](https://lrclib.net)), a free lyrics database, at the moment lyrics are opened, sending the track's title, artist, album and length. LRCLIB's answer is remembered for a while (a week when it has lyrics, six hours when it has none), so opening the same track again does not ask again. Nothing is written to your files. This is on unless an admin turns it off under Settings > Library > Lyrics; while it is off, the web player and player apps never ask LRCLIB. Library Management fetching lyrics into files has its own setting.
 
 ## Ratings
 

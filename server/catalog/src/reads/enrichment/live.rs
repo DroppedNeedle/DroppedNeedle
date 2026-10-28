@@ -1,113 +1,24 @@
-//! Production enrichment built at boot: the search counts and the live
-//! LRCLIB role behind provider lyrics.
+//! Production enrichment built at boot: the search counts and the online
+//! lyrics.
 
 use std::sync::Arc;
 
-use crate::reads::enrichment as enrich;
+use crate::reads::lyrics::OnlineLyrics;
 use crate::reads::search::enrichment::SearchCounts;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     LastFmSettings, ListenBrainzConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::LyricsSettings;
-use droppedneedle_providers::{
-    Providers, RequestPriority, error::ProviderError, lrclib::LrclibClient,
-};
+use droppedneedle_providers::Providers;
 
-/// Whether lyrics are switched on now. Off when the section cannot be
-/// read.
-pub(crate) fn lyrics_on(settings: &Live<LyricsSettings>) -> bool {
-    settings
-        .get()
-        .map(|settings| settings.enabled)
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "cannot read lyrics settings; lyrics enrichment off");
-            false
-        })
-}
-
-/// Live LRCLIB lyrics behind the enrichment role, at user priority: a
-/// person opened the lyrics.
-///
-/// Queries without a usable duration skip the wire and read as not-found:
-/// duration is a required match key on `/api/get`, so sending a fabricated
-/// zero would invent a query that can never match the track.
-#[derive(Debug, Clone)]
-pub struct LiveLrclib {
-    client: LrclibClient,
-}
-
-impl LiveLrclib {
-    /// Lyrics reads through `client`.
-    pub fn new(client: LrclibClient) -> Self {
-        Self { client }
-    }
-}
-
-impl enrich::LyricsClient for LiveLrclib {
-    fn exact_lyrics<'a>(
-        &'a self,
-        query: &'a enrich::LyricsQuery,
-    ) -> enrich::BoxFuture<'a, Result<enrich::LyricsLookup, ProviderError>> {
-        Box::pin(async move {
-            let duration = query
-                .duration_secs
-                .map(|seconds| seconds.round().max(0.0) as u32)
-                .filter(|duration| *duration > 0);
-            let album = query.album.as_deref().unwrap_or("");
-            let Some(duration) = duration else {
-                return Ok(enrich::LyricsLookup {
-                    found: false,
-                    plain: None,
-                    synced: None,
-                });
-            };
-            if query.artist.trim().is_empty() || query.title.trim().is_empty() {
-                return Ok(enrich::LyricsLookup {
-                    found: false,
-                    plain: None,
-                    synced: None,
-                });
-            }
-            match self
-                .client
-                .get_exact_lyrics(
-                    &query.title,
-                    &query.artist,
-                    album,
-                    duration,
-                    RequestPriority::UserInitiated,
-                )
-                .await
-            {
-                Ok(found) => {
-                    let (plain, synced) = match found.candidate {
-                        Some(candidate) => (candidate.plain_lyrics, candidate.synced_lyrics),
-                        None => (None, None),
-                    };
-                    Ok(enrich::LyricsLookup {
-                        found: found.found,
-                        plain,
-                        synced,
-                    })
-                }
-                Err(error) => Err(error),
-            }
-        })
-    }
-}
-
-/// Live production enrichment: the search counts plus the lyrics role,
+/// Live production enrichment: the search counts plus the online lyrics,
 /// built once at boot and handed to [`ReadsSetup::build`](crate::reads::ReadsSetup::build).
 pub struct ProductionEnrichment {
     /// Search counts behind the reads `EnrichmentPort`.
     pub search: Arc<SearchCounts>,
-    /// Live lyrics role behind the reads `LyricsPort` (via
-    /// `ProviderLyrics`).
-    pub lyrics: Arc<LiveLrclib>,
-    /// The lyrics setting, read per call: while it is off, lyrics read as
-    /// absent and touch no network.
-    pub lyrics_settings: Live<LyricsSettings>,
+    /// The online lyrics the player route and Library Management share.
+    pub lyrics: OnlineLyrics,
 }
 
 /// Build the production enrichment pair over the provider deps. Search
@@ -121,8 +32,7 @@ pub fn production_enrichment(
 ) -> ProductionEnrichment {
     ProductionEnrichment {
         search: Arc::new(SearchCounts::new(providers, listenbrainz, lastfm)),
-        lyrics: Arc::new(LiveLrclib::new(providers.lrclib.clone())),
-        lyrics_settings: lyrics,
+        lyrics: OnlineLyrics::new(providers, lyrics),
     }
 }
 
@@ -168,43 +78,6 @@ mod tests {
                 github_releases: closed,
             },
         ))
-    }
-
-    #[tokio::test]
-    async fn live_lrclib_skips_queries_without_a_match_key() {
-        use crate::reads::enrichment::{LyricsClient as _, LyricsQuery};
-
-        // Unroutable origin: any wire attempt fails, so Ok(not-found)
-        // proves the skip.
-        let role = LiveLrclib::new(closed_providers().lrclib.clone());
-        for query in [
-            LyricsQuery {
-                artist: "Artist".to_owned(),
-                title: "Title".to_owned(),
-                album: None,
-                duration_secs: None,
-            },
-            LyricsQuery {
-                artist: "Artist".to_owned(),
-                title: "Title".to_owned(),
-                album: None,
-                duration_secs: Some(0.4),
-            },
-            LyricsQuery {
-                artist: "  ".to_owned(),
-                title: "Title".to_owned(),
-                album: None,
-                duration_secs: Some(200.0),
-            },
-        ] {
-            let lookup = role
-                .exact_lyrics(&query)
-                .await
-                .expect("skip reads as absence");
-            assert!(!lookup.found);
-            assert!(lookup.plain.is_none());
-            assert!(lookup.synced.is_none());
-        }
     }
 
     #[tokio::test]

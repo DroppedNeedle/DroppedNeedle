@@ -15,6 +15,7 @@ pub mod collections;
 pub mod discover;
 pub mod enrichment;
 pub mod library;
+pub mod lyrics;
 pub mod platform;
 pub mod search;
 pub mod youtube;
@@ -178,29 +179,22 @@ impl ReadsSetup {
     }
 }
 
-/// The library reads: the one local catalog, and tags
-/// and lyrics read from the files first. Without the
-/// provider pair lyrics fall back to the empty port (404s); with it,
-/// catalog tracks resolve through live LRCLIB while the lyrics setting
-/// (read per call) is on, and read as absent while it is off.
+/// The library reads: the one local catalog, and tags and lyrics read
+/// from the files first. Without the provider pair a track whose file
+/// carries no lyrics has none (404); with it, the online lyrics answer
+/// while the lyrics setting (read per call) is on.
 fn library_deps(
     catalog: library::store::LocalCatalog,
     settings: &droppedneedle_kernel::runtime_config::ConfigStore,
     enrichment: Option<&enrichment::live::ProductionEnrichment>,
     files: droppedneedle_media::stream::local_files::LibraryFiles,
 ) -> library::LibraryDeps {
-    let provider_lyrics: Arc<dyn library::stores::LyricsPort> = match enrichment {
-        Some(pair) => Arc::new(
-            enrichment::ProviderLyrics::new(catalog.clone(), pair.lyrics.clone())
-                .with_settings(pair.lyrics_settings.clone()),
-        ),
-        None => Arc::new(library::file_lyrics::NoOnlineLyrics),
-    };
+    let online = enrichment.map(|pair| pair.lyrics.clone());
     library::LibraryDeps {
-        lyrics: Arc::new(library::file_lyrics::FileLyrics::new(
+        lyrics: Arc::new(lyrics::LyricsService::new(
             catalog.clone(),
             files.clone(),
-            provider_lyrics,
+            online,
         )),
         catalog,
         upgrade_policy: Some(settings.live()),

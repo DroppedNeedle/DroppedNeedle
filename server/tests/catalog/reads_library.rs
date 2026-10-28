@@ -6,6 +6,7 @@
 use crate::common::auth::{test_principal, with_test_principal};
 use crate::common::{ScratchDir, TestApp};
 use droppedneedle_catalog::reads::library;
+use droppedneedle_catalog::reads::lyrics::LyricsService;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,7 +19,6 @@ use droppedneedle_kernel::db::Db;
 use droppedneedle_library::scan::coordinator::SharedResolver;
 use droppedneedle_media::stream::local_files::LibraryFiles;
 use library::LibraryDeps;
-use library::file_lyrics::{FileLyrics, NoOnlineLyrics};
 use library::store::LocalCatalog;
 use library::stores::{
     After, AlbumFilter, AlbumSort, ArtistScope, ArtistSort, BoxFuture, LyricDoc, LyricsPort,
@@ -29,7 +29,7 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 use tower::ServiceExt as _;
 
-/// The online lyrics source, answering from a fixed set of docs.
+/// Lyrics answered from a fixed set of docs.
 struct ScriptedLyrics(HashMap<String, LyricDoc>);
 
 impl LyricsPort for ScriptedLyrics {
@@ -51,13 +51,14 @@ fn scripted_lyrics() -> ScriptedLyrics {
     )]))
 }
 
-/// The production library deps over one database, with `online` behind
-/// the lyrics files carry.
-fn deps(db: &Db, online: Arc<dyn LyricsPort>) -> LibraryDeps {
+/// The production library deps over one database, with `lyrics` for the
+/// lyrics route, or the production lyrics without an online lookup.
+fn deps(db: &Db, lyrics: Option<Arc<dyn LyricsPort>>) -> LibraryDeps {
     let catalog = LocalCatalog::new(db.clone());
     let files = LibraryFiles::new(db.sqlx().clone(), SharedResolver::default());
     LibraryDeps {
-        lyrics: Arc::new(FileLyrics::new(catalog.clone(), files.clone(), online)),
+        lyrics: lyrics
+            .unwrap_or_else(|| Arc::new(LyricsService::new(catalog.clone(), files.clone(), None))),
         catalog,
         upgrade_policy: None,
         tags: FileTagReader::new(files),
@@ -123,7 +124,7 @@ const ROUTES: &[&str] = &[
 async fn bad_input_stays_in_the_envelope() {
     let fixture = sqlite_fixture().await;
     let app = app(
-        deps(fixture.runtime.db(), Arc::new(scripted_lyrics())),
+        deps(fixture.runtime.db(), Some(Arc::new(scripted_lyrics()))),
         Some(ADA),
     );
     for path in [
@@ -149,7 +150,7 @@ async fn bad_input_stays_in_the_envelope() {
 #[tokio::test]
 async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
     let fixture = sqlite_fixture().await;
-    let deps = deps(fixture.runtime.db(), Arc::new(scripted_lyrics()));
+    let deps = deps(fixture.runtime.db(), Some(Arc::new(scripted_lyrics())));
     let authenticated = app(deps.clone(), Some(ADA));
     let anonymous = app(deps.clone(), None);
     for path in ROUTES {
@@ -189,7 +190,7 @@ async fn every_route_hides_store_faults() {
     let secret = dir.join("secret-library.db");
     std::fs::write(&secret, b"").expect("empty database file writes");
     let db = Db::open_for_tests(&secret).expect("empty database opens");
-    let app = scope.request_scope(app(deps(&db, Arc::new(NoOnlineLyrics)), Some(ADA)));
+    let app = scope.request_scope(app(deps(&db, None), Some(ADA)));
     for path in ROUTES {
         let response = app
             .clone()
@@ -566,7 +567,7 @@ async fn sqlite_artists_scopes_and_credits() {
 #[tokio::test]
 async fn appearances_answer_by_musicbrainz_id_as_by_library_id() {
     let fixture = sqlite_fixture().await;
-    let deps = deps(fixture.runtime.db(), Arc::new(NoOnlineLyrics));
+    let deps = deps(fixture.runtime.db(), None);
     let (status, by_id) = get(
         app(deps.clone(), Some(ADA)),
         "/api/v3/library/artists/a3/appearances",

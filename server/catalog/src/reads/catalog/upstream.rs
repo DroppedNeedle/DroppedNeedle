@@ -23,7 +23,6 @@ use droppedneedle_providers::audiodb::AudioDbClient;
 use droppedneedle_providers::itunes::ITunesClient;
 use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
-use droppedneedle_providers::lrclib::LrclibClient;
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzView};
 use droppedneedle_providers::preview::PreviewClient;
 use droppedneedle_providers::wikidata::WikidataClient;
@@ -352,11 +351,6 @@ impl Upstream {
     /// The iTunes Search client behind purchase links.
     pub fn itunes(&self) -> &ITunesClient {
         &self.providers.itunes
-    }
-
-    /// The LRCLIB lyrics client.
-    pub fn lrclib(&self) -> &LrclibClient {
-        &self.providers.lrclib
     }
 
     /// The users store (roles, Last.fm links).
