@@ -487,14 +487,23 @@ impl Operations {
     /// Choose the album's edition: any MusicBrainz release, from the
     /// album's release group or another one. MusicBrainz is asked for the
     /// release's tracklist, the files are placed on it where they fit, and
-    /// the release becomes the album's protected edition.
+    /// the release becomes the album's protected edition. A stale
+    /// `expected_identity_revision` is refused before MusicBrainz is asked
+    /// and again when the choice is written.
     pub async fn choose_edition(
         &self,
         album_id: &str,
         raw_release: &str,
+        expected_identity_revision: i64,
         actor: Option<&str>,
     ) -> Result<EditionChoice, OperationError> {
         let release = parse_release(raw_release)?;
+        let album = album_id.to_owned();
+        self.db
+            .read("operations.choose_edition_guard", move |conn| {
+                choice::guard_revision(conn, &album, expected_identity_revision)
+            })
+            .await?;
         let candidate = self
             .candidate_for(
                 album_id,
@@ -508,6 +517,7 @@ impl Operations {
             let chosen =
                 ops.db
                     .write_blocking(Lane::Foreground, "operations.choose_edition", |tx| {
+                        choice::guard_revision(tx, &album, expected_identity_revision)?;
                         choice::choose(
                             tx,
                             &album,
@@ -850,22 +860,37 @@ impl Operations {
         .map_err(|error| OperationError::Store(error.to_string()))?
     }
 
-    /// "Undo match" on one file the person matched by hand. Blocking.
+    /// "Undo match" on one file the person matched by hand, decided on
+    /// the album's `expected_identity_revision`. Blocking.
     pub fn unmatch_file(
         &self,
         album_id: &str,
         track_id: &str,
+        expected_identity_revision: i64,
         actor: &str,
     ) -> Result<(), OperationError> {
         self.db
             .write_blocking(Lane::Foreground, "operations.unmatch_file", |tx| {
-                hand_match::unmatch_file(tx, album_id, track_id, actor, self.clock.now_secs())
+                hand_match::unmatch_file(
+                    tx,
+                    album_id,
+                    track_id,
+                    expected_identity_revision,
+                    actor,
+                    self.clock.now_secs(),
+                )
             })
     }
 
     /// "Let DroppedNeedle choose": hand the album's edition back to
-    /// automatic best fit and queue an identification. Blocking.
-    pub fn hand_back_edition(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
+    /// automatic best fit and queue an identification, decided on the
+    /// album's `expected_identity_revision`. Blocking.
+    pub fn hand_back_edition(
+        &self,
+        album_id: &str,
+        expected_identity_revision: i64,
+        actor: &str,
+    ) -> Result<(), OperationError> {
         let known = self
             .db
             .read_blocking("operations.hand_back_edition_album_revisions", |conn| {
@@ -876,6 +901,7 @@ impl Operations {
         }
         self.db
             .write_blocking(Lane::Foreground, "operations.hand_back", |tx| {
+                choice::guard_revision(tx, album_id, expected_identity_revision)?;
                 choice::hand_back(tx, album_id, actor, self.clock.now_secs())
             })
     }
@@ -928,20 +954,34 @@ impl Operations {
             })
     }
 
-    /// "Looks right": confirm the album's unconfirmed match. Blocking.
-    pub fn confirm_match(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
+    /// "Looks right": confirm the album's unconfirmed match, decided on
+    /// the album's `expected_identity_revision`. Blocking.
+    pub fn confirm_match(
+        &self,
+        album_id: &str,
+        expected_identity_revision: i64,
+        actor: &str,
+    ) -> Result<(), OperationError> {
         self.db
             .write_blocking(Lane::Foreground, "operations.confirm_match", |tx| {
+                choice::guard_revision(tx, album_id, expected_identity_revision)?;
                 choice::confirm(tx, album_id, actor, self.clock.now_secs())
             })?;
         self.store.link_after_command(album_id);
         Ok(())
     }
 
-    /// Take back the album's last edition change. Blocking.
-    pub fn undo_edition_choice(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
+    /// Take back the album's last edition change, decided on the album's
+    /// `expected_identity_revision`. Blocking.
+    pub fn undo_edition_choice(
+        &self,
+        album_id: &str,
+        expected_identity_revision: i64,
+        actor: &str,
+    ) -> Result<(), OperationError> {
         self.db
             .write_blocking(Lane::Foreground, "operations.undo_edition_choice", |tx| {
+                choice::guard_revision(tx, album_id, expected_identity_revision)?;
                 choice::undo(tx, album_id, actor, self.clock.now_secs())
             })
     }

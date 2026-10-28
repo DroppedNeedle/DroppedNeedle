@@ -79,6 +79,11 @@ export const LibraryV3Api = {
 	// The album's edition: read, choose, hand back, confirm, undo.
 	edition: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/edition', { path: { album_id: albumId } }),
+	editionHandBack: (albumId: string, identityRevision: number) =>
+		v3('/api/v3/library/albums/{album_id}/edition', {
+			path: { album_id: albumId },
+			query: { expected_identity_revision: identityRevision }
+		}),
 	editionConfirm: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/edition/confirm', { path: { album_id: albumId } }),
 	editionUndo: (albumId: string) =>
@@ -110,10 +115,15 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/albums/{album_id}/removals/{removal_id}/put-back', {
 			path: { album_id: albumId, removal_id: removalId }
 		}),
-	// One file matched to an edition track by hand (PUT), and its undo (DELETE).
+	// One file matched to an edition track by hand (PUT), and its undo.
 	editionFile: (albumId: string, trackId: string) =>
 		v3('/api/v3/library/albums/{album_id}/edition/files/{track_id}', {
 			path: { album_id: albumId, track_id: trackId }
+		}),
+	editionFileUnmatch: (albumId: string, trackId: string, identityRevision: number) =>
+		v3('/api/v3/library/albums/{album_id}/edition/files/{track_id}', {
+			path: { album_id: albumId, track_id: trackId },
+			query: { expected_identity_revision: identityRevision }
 		}),
 	// What taking an edition would do to the files; the current one without a release.
 	editionPlan: (albumId: string, releaseMbid?: string) =>

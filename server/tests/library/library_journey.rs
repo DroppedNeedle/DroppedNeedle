@@ -232,13 +232,15 @@ impl Rig {
     /// The owner chooses `REL_1` as the album's edition.
     async fn choose_first_edition(&self, album: &str) {
         let auth = self.app.login_admin().await;
+        let headers = [("authorization", auth.as_str())];
+        let revision = edition_revision(&self.app, &headers, album).await;
         let (status, body) = self
             .app
             .call(
                 "PUT",
                 &format!("/api/v3/library/albums/{album}/edition"),
-                &[("authorization", auth.as_str())],
-                Some(json!({"release_mbid": REL_1})),
+                &headers,
+                Some(json!({"release_mbid": REL_1, "expected_identity_revision": revision})),
             )
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -1101,7 +1103,10 @@ async fn an_editions_tags_are_written_as_the_folders_profile_says() {
             "PUT",
             &edition,
             &tris,
-            Some(json!({"release_mbid": fit.id})),
+            Some(json!({
+                "release_mbid": fit.id,
+                "expected_identity_revision": edition_revision(app, &tris, &album).await,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -1242,7 +1247,14 @@ async fn an_editions_tags_are_written_as_the_folders_profile_says() {
         json!("EDITION_TAGS_CUSTOM")
     );
     let (status, body) = app
-        .call("POST", &format!("{edition}/undo"), &admin, None)
+        .call(
+            "POST",
+            &format!("{edition}/undo"),
+            &admin,
+            Some(
+                json!({"expected_identity_revision": edition_revision(app, &admin, &album).await}),
+            ),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(jobs(), made, "no job for a refusal");
@@ -1473,7 +1485,12 @@ async fn an_edition_tag_write_planned_after_another_choice_writes_nothing() {
         )
         .expect("tag write queued");
     crate::common::library::operations(&managed.library)
-        .choose_edition(&album, other, Some("admin"))
+        .choose_edition(
+            &album,
+            other,
+            shown_revision(&managed.library, &album),
+            Some("admin"),
+        )
         .await
         .expect("another edition chosen");
 
@@ -1534,7 +1551,12 @@ async fn an_edition_choice_links_its_artists_before_it_answers() {
     scratch.identify.set_recall(recall);
 
     crate::common::library::operations(&library)
-        .choose_edition(&album, REL_1, Some("admin"))
+        .choose_edition(
+            &album,
+            REL_1,
+            shown_revision(&library, &album),
+            Some("admin"),
+        )
         .await
         .expect("edition chosen");
 
@@ -2616,10 +2638,24 @@ async fn approve_first_candidate(library: &LibrarySetup, identify: &FakeProvider
     choose_first_edition(library, album).await;
 }
 
+/// The album's identity revision as its edition status shows it, which an
+/// edition action sends back.
+fn shown_revision(library: &LibrarySetup, album: &str) -> i64 {
+    crate::common::library::operations(library)
+        .edition_status(album)
+        .expect("edition status reads")
+        .map_or(0, |status| status.identity_revision)
+}
+
 /// A person chooses `rel-1` as the album's edition.
 async fn choose_first_edition(library: &LibrarySetup, album: &str) {
     crate::common::library::operations(library)
-        .choose_edition(album, REL_1, Some("curator"))
+        .choose_edition(
+            album,
+            REL_1,
+            shown_revision(library, album),
+            Some("curator"),
+        )
         .await
         .expect("edition chosen");
 }
@@ -5244,7 +5280,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
         )
         .expect("admin row");
     crate::common::library::operations(&library)
-        .confirm_match(&album, "admin")
+        .confirm_match(&album, shown_revision(&library, &album), "admin")
         .expect("match confirmed");
     let mut settings = lm::initial_settings("");
     for profile in &mut settings.profiles {
@@ -5445,7 +5481,10 @@ async fn library_journey_choose_edition() {
             "PUT",
             &edition,
             &headers,
-            Some(json!({"release_mbid": OTHER})),
+            Some(json!({
+                "release_mbid": OTHER,
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -5466,7 +5505,14 @@ async fn library_journey_choose_edition() {
 
     // Undo brings back the automatic best fit.
     let (status, body) = app
-        .call("POST", &format!("{edition}/undo"), &headers, None)
+        .call(
+            "POST",
+            &format!("{edition}/undo"),
+            &headers,
+            Some(json!({
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], json!("confirmed"));
@@ -5478,11 +5524,24 @@ async fn library_journey_choose_edition() {
             "PUT",
             &edition,
             &headers,
-            Some(json!({"release_mbid": OTHER})),
+            Some(json!({
+                "release_mbid": OTHER,
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, body) = app.call("DELETE", &edition, &headers, None).await;
+    let (status, body) = app
+        .call(
+            "DELETE",
+            &format!(
+                "{edition}?expected_identity_revision={}",
+                edition_revision(app, &headers, &album).await
+            ),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     rig.identified(&album, 1).await;
     let back = rig
@@ -5498,7 +5557,10 @@ async fn library_journey_choose_edition() {
             "PUT",
             &edition,
             &headers,
-            Some(json!({"release_mbid": "11111111-2222-4333-8444-555555555555"})),
+            Some(json!({
+                "release_mbid": "11111111-2222-4333-8444-555555555555",
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
@@ -5630,7 +5692,14 @@ async fn custom_edition_is_sealed_on_the_album_and_undone() {
     // Undo: the release is back, the custom edition no longer active, its
     // manifest kept.
     let (status, body) = app
-        .call("POST", &format!("{edition}/undo"), &headers, None)
+        .call(
+            "POST",
+            &format!("{edition}/undo"),
+            &headers,
+            Some(json!({
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["release_mbid"], json!(fit.id), "{body}");
@@ -5668,7 +5737,10 @@ async fn custom_edition_is_sealed_on_the_album_and_undone() {
             "PUT",
             &edition,
             &headers,
-            Some(json!({"release_mbid": fit.id})),
+            Some(json!({
+                "release_mbid": fit.id,
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -5679,8 +5751,14 @@ async fn custom_edition_is_sealed_on_the_album_and_undone() {
     );
 
     // Undoing that choice brings the custom edition back as it was.
+    let revision = edition_revision(app, &headers, &album).await;
     let (status, body) = app
-        .call("POST", &format!("{edition}/undo"), &headers, None)
+        .call(
+            "POST",
+            &format!("{edition}/undo"),
+            &headers,
+            Some(json!({"expected_identity_revision": revision})),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["edition_kind"], json!("custom"), "{body}");
@@ -5801,7 +5879,14 @@ async fn leave_unmanaged_on_the_album_and_undo() {
 
     // Undo: the release and its placements are back, the hold is lifted.
     let (status, body) = app
-        .call("POST", &format!("{edition}/undo"), &headers, None)
+        .call(
+            "POST",
+            &format!("{edition}/undo"),
+            &headers,
+            Some(json!({
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["release_mbid"], json!(fit.id), "{body}");
@@ -5822,7 +5907,14 @@ async fn leave_unmanaged_on_the_album_and_undo() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let (status, body) = app
-        .call("POST", &format!("{edition}/undo"), &headers, None)
+        .call(
+            "POST",
+            &format!("{edition}/undo"),
+            &headers,
+            Some(json!({
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let hold = management_hold(app, &headers, &album).await;
@@ -5873,6 +5965,15 @@ async fn edition_status(app: &TestApp, headers: &[(&str, &str)], edition: &str) 
     let (status, body) = app.call("GET", edition, headers, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     body
+}
+
+/// The `identity_revision` the album's edition status shows, which an
+/// edition action sends back.
+async fn edition_revision(app: &TestApp, headers: &[(&str, &str)], album: &str) -> i64 {
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+    edition_status(app, headers, &edition).await["identity_revision"]
+        .as_i64()
+        .expect("identity revision")
 }
 
 /// The edition status says what happens next: while the chosen edition's
@@ -5936,7 +6037,17 @@ async fn edition_status_says_what_happens_next() {
         .await;
     assert_eq!(code, StatusCode::OK, "{body}");
     let paused_at = body["row_revision"].as_u64().expect("revision");
-    let (code, body) = app.call("DELETE", &edition, &headers, None).await;
+    let (code, body) = app
+        .call(
+            "DELETE",
+            &format!(
+                "{edition}?expected_identity_revision={}",
+                edition_revision(app, &headers, &album).await
+            ),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(code, StatusCode::OK, "{body}");
     assert_eq!(body["identifying"], json!(true), "{body}");
     assert_eq!(status().await["identifying"], json!(true));
@@ -5985,7 +6096,10 @@ async fn edition_status_says_when_the_app_writes_the_files() {
             "PUT",
             &edition,
             &headers,
-            Some(json!({"release_mbid": fit.id})),
+            Some(json!({
+                "release_mbid": fit.id,
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -6132,7 +6246,10 @@ async fn edition_status_says_when_the_app_writes_the_files() {
             "PUT",
             &edition,
             &headers,
-            Some(json!({"release_mbid": other.id})),
+            Some(json!({
+                "release_mbid": other.id,
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
         )
         .await;
     assert_eq!(code, StatusCode::OK, "{body}");
@@ -7566,7 +7683,7 @@ async fn library_management_preview_apply_undo() {
     assert_eq!(reason.code, "UNCONFIRMED_MATCH");
     assert!(!reason.action.is_empty());
     crate::common::library::operations(&library)
-        .confirm_match(&album, "admin")
+        .confirm_match(&album, shown_revision(&library, &album), "admin")
         .expect("match confirmed");
 
     // One picked file moves its whole album; the case-only rename is the
@@ -7871,7 +7988,9 @@ async fn library_journey_identity_repair_and_preparation() {
             "POST",
             &format!("/api/v3/library/albums/{album}/edition/undo"),
             &headers,
-            Some(json!({})),
+            Some(json!({
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -8195,7 +8314,7 @@ async fn library_management_tools_journey() {
         )
         .expect("admin row");
     crate::common::library::operations(&library)
-        .confirm_match(&album, "admin")
+        .confirm_match(&album, shown_revision(&library, &album), "admin")
         .expect("match confirmed");
     // No MusicBrainz credits are scripted here, so the profile writes none.
     let mut settings = lm::initial_settings("");
@@ -8676,7 +8795,11 @@ async fn library_management_tools_journey() {
         .set_recall(ambiguous_recall(&library.identify_store, &second_album));
     library.identification.identify_tick().await;
     crate::common::library::operations(&library)
-        .confirm_match(&second_album, "admin")
+        .confirm_match(
+            &second_album,
+            shown_revision(&library, &second_album),
+            "admin",
+        )
         .expect("second match confirmed");
     let settings_now = revision();
     let clash = management
@@ -8915,7 +9038,7 @@ async fn library_management_custom_edition_journey() {
         )
         .expect("admin row");
     crate::common::library::operations(&library)
-        .confirm_match(&album, "admin")
+        .confirm_match(&album, shown_revision(&library, &album), "admin")
         .expect("match confirmed");
     library
         .settings
@@ -9103,7 +9226,7 @@ async fn library_management_artwork_journey() {
         )
         .expect("admin row");
     crate::common::library::operations(&library)
-        .confirm_match(&album, "admin")
+        .confirm_match(&album, shown_revision(&library, &album), "admin")
         .expect("match confirmed");
     let mut settings = lm::initial_settings("");
     for profile in settings
@@ -9500,7 +9623,7 @@ impl ManagedLibrary {
         self.scratch.identify.set_recall(recall);
         assert_eq!(self.library.identification.identify_tick().await, 1);
         crate::common::library::operations(&self.library)
-            .confirm_match(&album, "admin")
+            .confirm_match(&album, shown_revision(&self.library, &album), "admin")
             .expect("match confirmed");
         (album, ids)
     }
@@ -9949,7 +10072,12 @@ async fn management_leaves_a_folder_that_keeps_its_own_tags() {
             _ => current.replacen("-0001-", "-0000-", 1),
         };
         crate::common::library::operations(&managed.library)
-            .choose_edition(&album, &other, Some("admin"))
+            .choose_edition(
+                &album,
+                &other,
+                shown_revision(&managed.library, &album),
+                Some("admin"),
+            )
             .await
             .expect("edition chosen");
         albums.push((album, tracks));
@@ -10234,7 +10362,12 @@ async fn unmanaged_changes_do_not_take_the_album_over() {
         .expect("edition");
     let other = if chosen == REL_1 { REL_2 } else { REL_1 };
     crate::common::library::operations(&managed.library)
-        .choose_edition(&album, other, Some("admin"))
+        .choose_edition(
+            &album,
+            other,
+            shown_revision(&managed.library, &album),
+            Some("admin"),
+        )
         .await
         .expect("edition chosen");
     managed.look(&album).await;
@@ -12055,7 +12188,12 @@ async fn a_persons_profile_run_takes_the_files_back() {
         .expect("edition");
     let other = if chosen == REL_1 { REL_2 } else { REL_1 };
     crate::common::library::operations(&managed.library)
-        .choose_edition(&album, other, Some("admin"))
+        .choose_edition(
+            &album,
+            other,
+            shown_revision(&managed.library, &album),
+            Some("admin"),
+        )
         .await
         .expect("edition chosen");
     managed.look(&album).await;
@@ -12118,7 +12256,12 @@ async fn an_unmanaged_change_stays_accepted_through_every_write() {
         chosen.replacen("-0001-", "-0000-", 1)
     };
     crate::common::library::operations(&managed.library)
-        .choose_edition(&album, &other, Some("admin"))
+        .choose_edition(
+            &album,
+            &other,
+            shown_revision(&managed.library, &album),
+            Some("admin"),
+        )
         .await
         .expect("edition chosen");
     managed.look(&album).await;
@@ -12836,7 +12979,12 @@ async fn a_wide_preview_in_a_manual_folder_blocks_without_marking() {
         chosen.replacen("-0001-", "-0000-", 1)
     };
     crate::common::library::operations(&managed.library)
-        .choose_edition(&album, &edition, Some("admin"))
+        .choose_edition(
+            &album,
+            &edition,
+            shown_revision(&managed.library, &album),
+            Some("admin"),
+        )
         .await
         .expect("edition chosen");
     let (_, items) = managed
@@ -12905,7 +13053,12 @@ async fn an_undone_profile_run_gives_the_hand_edit_back() {
         chosen.replacen("-0001-", "-0000-", 1)
     };
     crate::common::library::operations(&managed.library)
-        .choose_edition(&album, &edition, Some("admin"))
+        .choose_edition(
+            &album,
+            &edition,
+            shown_revision(&managed.library, &album),
+            Some("admin"),
+        )
         .await
         .expect("edition chosen");
     let (_, items) = managed
@@ -14195,7 +14348,7 @@ async fn an_approved_release_is_placed_and_its_undo_survives() {
     }
 
     crate::common::library::operations(&library)
-        .undo_edition_choice(&album, "curator")
+        .undo_edition_choice(&album, shown_revision(&library, &album), "curator")
         .expect("the approval's undo still applies");
     let undone = choice_row(&db, &album);
     assert_eq!(
@@ -15179,7 +15332,12 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
     both.releases.push(sibling);
     providers.set_recall(both);
     crate::common::library::operations(&library)
-        .choose_edition(&own_row, REL_1, Some("curator"))
+        .choose_edition(
+            &own_row,
+            REL_1,
+            shown_revision(&library, &own_row),
+            Some("curator"),
+        )
         .await
         .expect("edition chosen");
     assert_eq!(retired_into(&db, &album), Some(own_row.clone()));
@@ -15823,7 +15981,11 @@ async fn a_retag_that_deleted_a_file_is_left_alone_while_its_folder_stays_held()
     // The match is a weak one, so a person confirms it.
     managed.identify_as(&replacement, &album).await;
     crate::common::library::operations(&managed.library)
-        .confirm_match(&replacement, "admin")
+        .confirm_match(
+            &replacement,
+            shown_revision(&managed.library, &replacement),
+            "admin",
+        )
         .expect("match confirmed");
     managed.look(&replacement).await;
     assert!(
@@ -16114,7 +16276,11 @@ async fn a_best_guess_confirmed_after_its_folder_is_let_go_is_left_alone() {
     );
 
     crate::common::library::operations(&managed.library)
-        .confirm_match(&replacement, "admin")
+        .confirm_match(
+            &replacement,
+            shown_revision(&managed.library, &replacement),
+            "admin",
+        )
         .expect("match confirmed");
     managed.worker_looks().await;
     assert_eq!(
@@ -21269,7 +21435,7 @@ impl ManagedLibrary {
         self.scratch.identify.set_recall(recall);
         while self.library.identification.identify_tick().await > 0 {}
         crate::common::library::operations(&self.library)
-            .confirm_match(album, "admin")
+            .confirm_match(album, shown_revision(&self.library, album), "admin")
             .expect("match confirmed");
     }
 
@@ -21575,12 +21741,14 @@ async fn hand_match_album(rig: &Rig, folder: &str) -> HandMatchAlbum {
     rig.resume_identification(paused_at).await;
     rig.identified(&album, 1).await;
     let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let revision = edition_revision(app, &headers, &album).await;
     let (status, body) = app
         .call(
             "PUT",
             &format!("/api/v3/library/albums/{album}/edition"),
-            &[("authorization", auth.as_str())],
-            Some(json!({"release_mbid": fit.id})),
+            &headers,
+            Some(json!({"release_mbid": fit.id, "expected_identity_revision": revision})),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -21875,7 +22043,10 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
             "POST",
             &format!("/api/v3/library/albums/{album}/edition/extras/remove"),
             &headers,
-            Some(json!({"track_ids": [h.odd]})),
+            Some(json!({
+                "track_ids": [h.odd],
+                "expected_identity_revision": edition_revision(app, &headers, album).await,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -21888,7 +22059,10 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
             "PUT",
             &format!("/api/v3/library/albums/{album}/edition"),
             &headers,
-            Some(json!({"release_mbid": h.fit.id})),
+            Some(json!({
+                "release_mbid": h.fit.id,
+                "expected_identity_revision": edition_revision(app, &headers, album).await,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -21953,7 +22127,17 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
         plan_file(&plan(plan_uri.clone()).await, &h.odd)["match_written"],
         json!(true)
     );
-    let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
+    let (status, body) = app
+        .call(
+            "DELETE",
+            &format!(
+                "{file_uri}?expected_identity_revision={}",
+                edition_revision(app, &headers, album).await
+            ),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], json!("HAND_MATCH_WRITTEN"));
     let written = job_view(app, &headers, &edit_job).await;
@@ -21973,7 +22157,17 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
     run_management_job(app, &headers, &undo_job, &undo["preview_token"]).await;
 
     // Undo match: the file is back as it was; the play and star stay.
-    let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
+    let (status, body) = app
+        .call(
+            "DELETE",
+            &format!(
+                "{file_uri}?expected_identity_revision={}",
+                edition_revision(app, &headers, album).await
+            ),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(identity_of(&db, &h.odd), prior);
     assert_eq!(hand_match_row(&db, &h.odd), None);
@@ -21982,7 +22176,17 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
     assert_ne!(file["fate"], json!("keep"), "{undone}");
     assert_eq!(file["matched_by_hand"], json!(false));
     assert_eq!(holdings(&db, &h.odd)[..2], [1, 1], "play and star stay");
-    let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
+    let (status, body) = app
+        .call(
+            "DELETE",
+            &format!(
+                "{file_uri}?expected_identity_revision={}",
+                edition_revision(app, &headers, album).await
+            ),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(body["error"]["code"], json!("NO_HAND_MATCH"));
 
@@ -22022,7 +22226,9 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
             "POST",
             &format!("/api/v3/library/albums/{album}/edition/undo"),
             &headers,
-            None,
+            Some(
+                json!({"expected_identity_revision": edition_revision(app, &headers, album).await}),
+            ),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -22251,7 +22457,14 @@ async fn a_match_by_hand_is_refused_with_nothing_changed() {
             "{route}: nothing changed"
         );
         let (status, undone) = app
-            .call("POST", &format!("{edition}/undo"), &headers, None)
+            .call(
+                "POST",
+                &format!("{edition}/undo"),
+                &headers,
+                Some(json!({
+                    "expected_identity_revision": edition_revision(app, &headers, album).await,
+                })),
+            )
             .await;
         assert_eq!(status, StatusCode::OK, "{route}: {undone}");
     }
@@ -22273,16 +22486,129 @@ async fn a_match_by_hand_is_refused_with_nothing_changed() {
             "PUT",
             &edition,
             &headers,
-            Some(json!({"release_mbid": other.id})),
+            Some(json!({
+                "release_mbid": other.id,
+                "expected_identity_revision": edition_revision(app, &headers, album).await,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let world = hand_match_world(&db, album);
-    let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
+    let current = edition_revision(app, &headers, album).await;
+    let (status, body) = app
+        .call(
+            "DELETE",
+            &format!("{file_uri}?expected_identity_revision={current}"),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
     assert_eq!(hand_match_world(&db, album), world, "nothing changed");
     assert!(hand_match_row(&db, &h.odd).is_some(), "the record stays");
+    rig.stop().await;
+}
+
+/// Each edition action sends the identity revision the page read. One read
+/// before the album's edition changed is refused with `STALE_REVISION`, and
+/// nothing changes: no choice, hand back, confirmation, undo, recycled
+/// extra or undone match.
+#[tokio::test]
+async fn edition_actions_refuse_a_stale_revision() {
+    let rig = Rig::start("lib-edition-stale").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let h = hand_match_album(&rig, "album-s").await;
+    let db = app.db();
+    let album = &h.album;
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+    let file_uri = format!("{edition}/files/{}", h.odd);
+    let revision = || async {
+        let (status, body) = app.call("GET", &edition, &headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["identity_revision"].as_i64().expect("revision")
+    };
+    let indexed = || -> i64 {
+        db.query_row(
+            "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1 \
+             AND availability = 'indexed'",
+            [album],
+            |row| row.get(0),
+        )
+        .expect("tracks counted")
+    };
+    let refused = |case: &'static str, method: &'static str, uri: String, body: Option<Value>| {
+        let (db, headers) = (&db, &headers);
+        async move {
+            let (world, files) = (hand_match_world(db, album), indexed());
+            let (status, answer) = app.call(method, &uri, headers, body).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{case}: {answer}");
+            assert_eq!(
+                answer["error"]["code"],
+                json!("STALE_REVISION"),
+                "{case}: {answer}"
+            );
+            assert_eq!(
+                hand_match_world(db, album),
+                world,
+                "{case}: nothing changed"
+            );
+            assert_eq!(indexed(), files, "{case}: no file recycled");
+        }
+    };
+
+    let stale = revision().await - 1;
+    let body = || Some(json!({"expected_identity_revision": stale}));
+    refused(
+        "choose",
+        "PUT",
+        edition.clone(),
+        Some(json!({"release_mbid": h.fit.id, "expected_identity_revision": stale})),
+    )
+    .await;
+    refused(
+        "hand back",
+        "DELETE",
+        format!("{edition}?expected_identity_revision={stale}"),
+        None,
+    )
+    .await;
+    refused("confirm", "POST", format!("{edition}/confirm"), body()).await;
+    refused("undo", "POST", format!("{edition}/undo"), body()).await;
+    refused(
+        "remove extras",
+        "POST",
+        format!("{edition}/extras/remove"),
+        Some(json!({"track_ids": [h.odd], "expected_identity_revision": stale})),
+    )
+    .await;
+
+    // A file matched by hand, then its undo sent with the revision read
+    // before the match.
+    let before = revision().await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &file_uri,
+            &headers,
+            Some(json!({
+                "release_track_mbid": h.fit.tracks[2].id,
+                "expected_identity_revision": before,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let after = revision().await;
+    let stale = if after == before { before - 1 } else { before };
+    refused(
+        "undo match",
+        "DELETE",
+        format!("{file_uri}?expected_identity_revision={stale}"),
+        None,
+    )
+    .await;
     rig.stop().await;
 }
 

@@ -11847,6 +11847,11 @@ export interface components {
         };
         /** @description Choose an edition. */
         ChooseEditionBody: {
+            /**
+             * Format: int64
+             * @description The `identity_revision` the edition status showed.
+             */
+            expected_identity_revision: number;
             /** @description Any MusicBrainz release, from this album's release group or another. */
             release_mbid: string;
         };
@@ -13560,6 +13565,14 @@ export interface components {
             status_order: string[];
             /** @default standard */
             version: components["schemas"]["EditionVersionPreference"];
+        };
+        /** @description The edition revision a change was decided on. */
+        EditionRevisionBody: {
+            /**
+             * Format: int64
+             * @description The `identity_revision` the edition status showed.
+             */
+            expected_identity_revision: number;
         };
         /**
          * @description Where an album's edition stands.
@@ -18443,6 +18456,12 @@ export interface components {
             items: {
                 album_id: string;
                 artist_name: string;
+                /**
+                 * Format: int64
+                 * @description The identity's row revision, 0 when the album has none. "Looks
+                 *     right" echoes it.
+                 */
+                identity_revision: number;
                 reason: components["schemas"]["ReasonView"];
                 release_group_mbid?: string | null;
                 release_mbid?: string | null;
@@ -20528,6 +20547,11 @@ export interface components {
         };
         /** @description Extra files to move to the recycle bin. */
         RemoveExtrasBody: {
+            /**
+             * Format: int64
+             * @description The `identity_revision` the edition plan showed.
+             */
+            expected_identity_revision: number;
             /** @description Local track ids the album's edition plan marks anything but `keep`. */
             track_ids: string[];
         };
@@ -23391,6 +23415,12 @@ export interface components {
         WaitingAlbumView: {
             album_id: string;
             artist_name: string;
+            /**
+             * Format: int64
+             * @description The identity's row revision, 0 when the album has none. "Looks
+             *     right" echoes it.
+             */
+            identity_revision: number;
             reason: components["schemas"]["ReasonView"];
             release_group_mbid?: string | null;
             release_mbid?: string | null;
@@ -30309,6 +30339,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description The album's edition changed since it was read (STALE_REVISION) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description MusicBrainz is not answering */
             503: {
                 headers: {
@@ -30322,7 +30361,10 @@ export interface operations {
     };
     hand_back_edition: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description The `identity_revision` the edition status or plan showed. */
+                expected_identity_revision: number;
+            };
             header?: never;
             path: {
                 /** @description Local album id */
@@ -30339,6 +30381,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description No revision given */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */
@@ -30368,6 +30419,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description The album's edition changed since it was read (STALE_REVISION) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     confirm_edition: {
@@ -30380,7 +30440,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditionRevisionBody"];
+            };
+        };
         responses: {
             /** @description The album's edition */
             200: {
@@ -30418,7 +30482,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Nothing waits for confirmation */
+            /** @description Nothing waits for confirmation, or the edition changed since it was read (STALE_REVISION) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -30571,7 +30635,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Library busy or a file is outside the library folders */
+            /** @description The edition changed since the plan was read (STALE_REVISION), the library is busy, or a file is outside the library folders */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -30685,7 +30749,10 @@ export interface operations {
     };
     unmatch_edition_file: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description The `identity_revision` the edition status or plan showed. */
+                expected_identity_revision: number;
+            };
             header?: never;
             path: {
                 /** @description Local album id */
@@ -30704,6 +30771,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description No revision given */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */
@@ -30733,7 +30809,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The match changed since (STALE_REVISION), or the app has written the file since */
+            /** @description The edition or the match changed since (STALE_REVISION), or the app has written the file since */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -31160,7 +31236,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditionRevisionBody"];
+            };
+        };
         responses: {
             /** @description The album's edition */
             200: {
@@ -31198,7 +31278,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The edition changed again since */
+            /** @description The edition changed since it was read, or again since the change (STALE_REVISION) */
             409: {
                 headers: {
                     [name: string]: unknown;

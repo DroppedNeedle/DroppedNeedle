@@ -8,7 +8,7 @@
 //! a hand back queues the identification it promises. Each function runs
 //! inside the caller's transaction.
 
-use rusqlite::{OptionalExtension as _, Transaction, params};
+use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::models::{EditionChoice, OperationError, PlacedFile, ReidentificationCandidate};
 use super::reasons;
@@ -55,6 +55,20 @@ impl From<IdentityError> for OperationError {
             },
         }
     }
+}
+
+/// Refused with `STALE_REVISION` unless the album's identity is still at
+/// `expected`, the `identity_revision` the person's page showed (0 for an
+/// album with none).
+pub(super) fn guard_revision(
+    conn: &Connection,
+    album_id: &str,
+    expected: i64,
+) -> Result<(), OperationError> {
+    if identity_revision(conn, album_id)? != expected {
+        return Err(OperationError::Conflict(reasons::EDITION_CHANGED));
+    }
+    Ok(())
 }
 
 /// The spot on the candidate's release each file the evidence supports

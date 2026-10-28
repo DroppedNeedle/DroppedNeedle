@@ -266,8 +266,19 @@ export const getEditionPlanQuery = (
 // Put back.
 export function removeEditionExtras() {
 	return createMutation(() => ({
-		mutationFn: ({ localId, trackIds }: { localId: string; trackIds: string[] }) =>
-			api.global.v3.POST(LibraryV3Api.editionExtrasRemove(localId), { track_ids: trackIds }),
+		mutationFn: ({
+			localId,
+			trackIds,
+			identityRevision
+		}: {
+			localId: string;
+			trackIds: string[];
+			identityRevision: number;
+		}) =>
+			api.global.v3.POST(LibraryV3Api.editionExtrasRemove(localId), {
+				track_ids: trackIds,
+				expected_identity_revision: identityRevision
+			}),
 		onSuccess: (_data, { localId }) => {
 			const userId = authStore.user?.id;
 			invalidateEditionScope({ userId, localId });
@@ -318,8 +329,15 @@ export function matchEditionFile() {
 
 export function unmatchEditionFile() {
 	return createMutation(() => ({
-		mutationFn: ({ localId, trackId }: { localId: string; trackId: string }) =>
-			api.global.v3.DELETE(LibraryV3Api.editionFile(localId, trackId)),
+		mutationFn: ({
+			localId,
+			trackId,
+			identityRevision
+		}: {
+			localId: string;
+			trackId: string;
+			identityRevision: number;
+		}) => api.global.v3.DELETE(LibraryV3Api.editionFileUnmatch(localId, trackId, identityRevision)),
 		onSettled: (_data, _error, { localId }) => invalidateHandMatchScope(localId)
 	}));
 }
@@ -342,6 +360,8 @@ export const getWaitingAlbumsQuery = (
 	});
 
 type EditionTarget = { userId: EditionUserId; localId: string; rgMbid?: string };
+// The edition status's `identity_revision` the action was decided on.
+type GuardedEditionTarget = EditionTarget & { identityRevision: number };
 
 // Guards the per-album boundary: the local id must be known, and it must not
 // be the RG MBID itself.
@@ -383,9 +403,17 @@ function invalidateEditionScope(
 
 export function chooseAlbumEdition() {
 	return createMutation(() => ({
-		mutationFn: ({ localId, rgMbid, releaseMbid }: EditionTarget & { releaseMbid: string }) => {
+		mutationFn: ({
+			localId,
+			rgMbid,
+			releaseMbid,
+			identityRevision
+		}: GuardedEditionTarget & { releaseMbid: string }) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.v3.PUT(LibraryV3Api.edition(localId), { release_mbid: releaseMbid });
+			return api.global.v3.PUT(LibraryV3Api.edition(localId), {
+				release_mbid: releaseMbid,
+				expected_identity_revision: identityRevision
+			});
 		},
 		onSuccess: (choice, variables) => invalidateEditionScope(variables, choice.release_group_mbid)
 	}));
@@ -393,9 +421,9 @@ export function chooseAlbumEdition() {
 
 export function handBackAlbumEdition() {
 	return createMutation(() => ({
-		mutationFn: ({ localId, rgMbid }: EditionTarget) => {
+		mutationFn: ({ localId, rgMbid, identityRevision }: GuardedEditionTarget) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.v3.DELETE(LibraryV3Api.edition(localId));
+			return api.global.v3.DELETE(LibraryV3Api.editionHandBack(localId, identityRevision));
 		},
 		onSuccess: (_d, variables) => invalidateEditionScope(variables)
 	}));
@@ -403,8 +431,10 @@ export function handBackAlbumEdition() {
 
 export function confirmAlbumEdition() {
 	return createMutation(() => ({
-		mutationFn: ({ localId }: EditionTarget) =>
-			api.global.v3.POST(LibraryV3Api.editionConfirm(localId)),
+		mutationFn: ({ localId, identityRevision }: GuardedEditionTarget) =>
+			api.global.v3.POST(LibraryV3Api.editionConfirm(localId), {
+				expected_identity_revision: identityRevision
+			}),
 		onSuccess: (_d, variables) => invalidateEditionScope(variables)
 	}));
 }
@@ -563,8 +593,10 @@ export function undoTagWrite() {
 
 export function undoAlbumEdition() {
 	return createMutation(() => ({
-		mutationFn: ({ localId }: EditionTarget) =>
-			api.global.v3.POST(LibraryV3Api.editionUndo(localId)),
+		mutationFn: ({ localId, identityRevision }: GuardedEditionTarget) =>
+			api.global.v3.POST(LibraryV3Api.editionUndo(localId), {
+				expected_identity_revision: identityRevision
+			}),
 		onSuccess: (_d, variables) => {
 			invalidateHeldEditionScope(variables);
 			// Identity reports list this album's change too.

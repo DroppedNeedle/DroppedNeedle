@@ -455,7 +455,8 @@
 				userId: userId(),
 				localId: copyId,
 				rgMbid: group || undefined,
-				releaseMbid: release
+				releaseMbid: release,
+				identityRevision: status?.identity_revision ?? 0
 			});
 			chosen = { name, release, choice, gaps };
 			tracks = null;
@@ -471,10 +472,16 @@
 		if (fetchTracks) void acquireTracks(replace);
 	}
 
+	// Who acts, and the edition revision the sheet shows: a change made
+	// since is refused rather than overwritten.
+	function guarded(): { userId: string | null | undefined; identityRevision: number } {
+		return { userId: userId(), identityRevision: status?.identity_revision ?? 0 };
+	}
+
 	async function keepEdition(): Promise<void> {
 		actionError = null;
 		try {
-			await confirm.mutateAsync({ userId: userId(), localId: copyId, rgMbid: group || undefined });
+			await confirm.mutateAsync({ ...guarded(), localId: copyId, rgMbid: group || undefined });
 		} catch (error) {
 			actionError = failureSentence(error, "This edition couldn't be kept.");
 		}
@@ -483,7 +490,7 @@
 	async function letChoose(): Promise<void> {
 		actionError = null;
 		try {
-			await handBack.mutateAsync({ userId: userId(), localId: copyId, rgMbid: group || undefined });
+			await handBack.mutateAsync({ ...guarded(), localId: copyId, rgMbid: group || undefined });
 			view = 'handedBack';
 			step = 'detail';
 		} catch (error) {
@@ -495,7 +502,7 @@
 	async function undoChange(): Promise<void> {
 		actionError = null;
 		try {
-			await undo.mutateAsync({ userId: userId(), localId: copyId, rgMbid: group || undefined });
+			await undo.mutateAsync({ ...guarded(), localId: copyId, rgMbid: group || undefined });
 			chosen = null;
 			movedTo = null;
 			view = 'compare';
@@ -510,7 +517,11 @@
 	async function moveExtras(trackIds: string[]): Promise<void> {
 		actionError = null;
 		try {
-			await removeExtras.mutateAsync({ localId: copyId, trackIds });
+			await removeExtras.mutateAsync({
+				localId: copyId,
+				trackIds,
+				identityRevision: selectedPlan?.identity_revision ?? 0
+			});
 		} catch (error) {
 			actionError = failureSentence(error, "The files couldn't be moved.");
 		}
@@ -527,7 +538,11 @@
 	}
 
 	async function unmatchTrack(trackId: string): Promise<void> {
-		await unmatchFile.mutateAsync({ localId: copyId, trackId });
+		await unmatchFile.mutateAsync({
+			localId: copyId,
+			trackId,
+			identityRevision: selectedPlan?.identity_revision ?? 0
+		});
 	}
 
 	async function putBack(): Promise<void> {

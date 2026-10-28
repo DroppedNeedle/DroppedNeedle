@@ -1710,7 +1710,7 @@ async fn trusted_tier_edition_admitted_approvals_forbidden() {
         "PUT",
         "/api/v3/library/albums/e2e-dummy-id/edition",
         &tris_headers,
-        Some(json!({"release_mbid": "e2e-dummy-id"})),
+        Some(json!({"release_mbid": "e2e-dummy-id", "expected_identity_revision": 0})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");

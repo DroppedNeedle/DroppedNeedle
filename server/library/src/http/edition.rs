@@ -26,7 +26,9 @@
 //! - `GET /library/unconfirmed`: albums whose match waits for a look.
 //!
 //! Changing an edition is for curators (admins and trusted users), as
-//! pinning was; reading is open to every signed-in user.
+//! pinning was; reading is open to every signed-in user. Every change sends
+//! the `identity_revision` the page read, and one read before the edition
+//! moved is refused with `STALE_REVISION`.
 
 use axum::{
     Json,
@@ -198,6 +200,23 @@ impl EditionStatusView {
 pub struct ChooseEditionBody {
     /// Any MusicBrainz release, from this album's release group or another.
     pub release_mbid: String,
+    /// The `identity_revision` the edition status showed.
+    pub expected_identity_revision: i64,
+}
+
+/// The edition revision a change was decided on.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct EditionRevisionBody {
+    /// The `identity_revision` the edition status showed.
+    pub expected_identity_revision: i64,
+}
+
+/// The edition revision a removal was decided on.
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct EditionRevisionQuery {
+    /// The `identity_revision` the edition status or plan showed.
+    pub expected_identity_revision: i64,
 }
 
 /// A file a retag would rewrite to the chosen edition's tags.
@@ -440,6 +459,9 @@ pub struct WaitingAlbumView {
     pub release_group_mbid: Option<String>,
     pub reason: ReasonView,
     pub updated_at: f64,
+    /// The identity's row revision, 0 when the album has none. "Looks
+    /// right" echoes it.
+    pub identity_revision: i64,
 }
 
 impl From<WaitingAlbum> for WaitingAlbumView {
@@ -453,6 +475,7 @@ impl From<WaitingAlbum> for WaitingAlbumView {
             release_group_mbid: album.release_group_mbid,
             reason: album.reason.into(),
             updated_at: album.updated_at,
+            identity_revision: album.identity_revision,
         }
     }
 }
@@ -519,6 +542,7 @@ pub async fn get_edition(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown album, or MusicBrainz does not know the release"),
+        (status = 409, description = "The album's edition changed since it was read (STALE_REVISION)"),
         (status = 503, description = "MusicBrainz is not answering"),
     )
 )]
@@ -530,7 +554,12 @@ pub async fn choose_edition(
 ) -> Result<Json<EditionChoiceView>, ApiError> {
     let ops = services.operations.clone();
     let choice: EditionChoice = ops
-        .choose_edition(&album_id, &body.release_mbid, Some(caller.user_id()))
+        .choose_edition(
+            &album_id,
+            &body.release_mbid,
+            body.expected_identity_revision,
+            Some(caller.user_id()),
+        )
         .await?;
     let status = status_of(&services, &album_id).await?;
     Ok(Json(EditionChoiceView {
@@ -558,22 +587,26 @@ pub async fn choose_edition(
     delete,
     tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition",
-    params(("album_id" = String, Path, description = "Local album id")),
+    params(("album_id" = String, Path, description = "Local album id"), EditionRevisionQuery),
     responses(
         (status = 200, description = "The album's edition, identification queued", body = EditionStatusView),
+        (status = 400, description = "No revision given"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown album"),
+        (status = 409, description = "The album's edition changed since it was read (STALE_REVISION)"),
     )
 )]
 pub async fn hand_back_edition(
     State(services): State<LibraryServices>,
     caller: Curator,
     Path(album_id): Path<String>,
+    ValidQuery(query): ValidQuery<EditionRevisionQuery>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
     let ops = services.operations.clone();
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
-    blocking(move || ops.hand_back_edition(&album, &user)).await?;
+    let expected = query.expected_identity_revision;
+    blocking(move || ops.hand_back_edition(&album, expected, &user)).await?;
     Ok(Json(status_of(&services, &album_id).await?))
 }
 
@@ -583,22 +616,25 @@ pub async fn hand_back_edition(
     tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition/confirm",
     params(("album_id" = String, Path, description = "Local album id")),
+    request_body = EditionRevisionBody,
     responses(
         (status = 200, description = "The album's edition", body = EditionStatusView),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown album"),
-        (status = 409, description = "Nothing waits for confirmation"),
+        (status = 409, description = "Nothing waits for confirmation, or the edition changed since it was read (STALE_REVISION)"),
     )
 )]
 pub async fn confirm_edition(
     State(services): State<LibraryServices>,
     caller: Curator,
     Path(album_id): Path<String>,
+    ValidJson(body): ValidJson<EditionRevisionBody>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
     let ops = services.operations.clone();
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
-    blocking(move || ops.confirm_match(&album, &user)).await?;
+    let expected = body.expected_identity_revision;
+    blocking(move || ops.confirm_match(&album, expected, &user)).await?;
     Ok(Json(status_of(&services, &album_id).await?))
 }
 
@@ -608,22 +644,25 @@ pub async fn confirm_edition(
     tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition/undo",
     params(("album_id" = String, Path, description = "Local album id")),
+    request_body = EditionRevisionBody,
     responses(
         (status = 200, description = "The album's edition", body = EditionStatusView),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "No change to take back"),
-        (status = 409, description = "The edition changed again since"),
+        (status = 409, description = "The edition changed since it was read, or again since the change (STALE_REVISION)"),
     )
 )]
 pub async fn undo_edition(
     State(services): State<LibraryServices>,
     caller: Curator,
     Path(album_id): Path<String>,
+    ValidJson(body): ValidJson<EditionRevisionBody>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
     let ops = services.operations.clone();
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
-    blocking(move || ops.undo_edition_choice(&album, &user)).await?;
+    let expected = body.expected_identity_revision;
+    blocking(move || ops.undo_edition_choice(&album, expected, &user)).await?;
     Ok(Json(status_of(&services, &album_id).await?))
 }
 
@@ -808,23 +847,27 @@ pub async fn match_edition_file(
     params(
         ("album_id" = String, Path, description = "Local album id"),
         ("track_id" = String, Path, description = "Local track id of the file"),
+        EditionRevisionQuery,
     ),
     responses(
         (status = 200, description = "The album's edition", body = EditionStatusView),
+        (status = 400, description = "No revision given"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown album, not one of its files, or no match to undo"),
-        (status = 409, description = "The match changed since (STALE_REVISION), or the app has written the file since"),
+        (status = 409, description = "The edition or the match changed since (STALE_REVISION), or the app has written the file since"),
     )
 )]
 pub async fn unmatch_edition_file(
     State(services): State<LibraryServices>,
     caller: Curator,
     Path((album_id, track_id)): Path<(String, String)>,
+    ValidQuery(query): ValidQuery<EditionRevisionQuery>,
 ) -> Result<Json<EditionStatusView>, ApiError> {
     let ops = services.operations.clone();
     let (album, track, user) = (album_id.clone(), track_id, caller.user_id().to_owned());
-    blocking(move || ops.unmatch_file(&album, &track, &user)).await?;
+    let expected = query.expected_identity_revision;
+    blocking(move || ops.unmatch_file(&album, &track, expected, &user)).await?;
     Ok(Json(status_of(&services, &album_id).await?))
 }
 
@@ -833,6 +876,8 @@ pub async fn unmatch_edition_file(
 pub struct RemoveExtrasBody {
     /// Local track ids the album's edition plan marks anything but `keep`.
     pub track_ids: Vec<String>,
+    /// The `identity_revision` the edition plan showed.
+    pub expected_identity_revision: i64,
 }
 
 /// What removing extras did.
@@ -857,7 +902,7 @@ pub struct RemoveExtrasView {
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown album or track"),
-        (status = 409, description = "Library busy or a file is outside the library folders"),
+        (status = 409, description = "The edition changed since the plan was read (STALE_REVISION), the library is busy, or a file is outside the library folders"),
         (status = 422, description = "A file could not be recycled; nothing changed"),
         (status = 503, description = "MusicBrainz is not answering"),
     )
@@ -869,7 +914,12 @@ pub async fn remove_extras(
     ValidJson(body): ValidJson<RemoveExtrasBody>,
 ) -> Result<Json<RemoveExtrasView>, ApiError> {
     let removed = mutations
-        .remove_extras(&album_id, body.track_ids, caller.user_id())
+        .remove_extras(
+            &album_id,
+            body.track_ids,
+            body.expected_identity_revision,
+            caller.user_id(),
+        )
         .await
         .map_err(|error| match error {
             ExtrasError::Plan(error) => ApiError::from(error),

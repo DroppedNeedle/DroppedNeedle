@@ -34,9 +34,9 @@
 		view = next;
 	}
 
-	async function looksRight(albumId: string): Promise<void> {
+	async function looksRight(albumId: string, identityRevision: number): Promise<void> {
 		try {
-			await confirm.mutateAsync({ userId: authStore.user?.id, localId: albumId });
+			await confirm.mutateAsync({ userId: authStore.user?.id, localId: albumId, identityRevision });
 			toastStore.show({ message: 'Confirmed.', type: 'success' });
 		} catch (error) {
 			const message =
@@ -113,7 +113,8 @@
 								variant="primary"
 								size="sm"
 								disabled={confirm.isPending}
-								onclick={() => void looksRight(item.album_id)}>Looks right</Button
+								onclick={() => void looksRight(item.album_id, item.identity_revision)}
+								>Looks right</Button
 							>
 						{/if}
 						<Button

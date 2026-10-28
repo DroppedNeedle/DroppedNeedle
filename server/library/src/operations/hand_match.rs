@@ -265,17 +265,22 @@ struct Kept {
 /// "Undo match": the file's identity goes back to what it was before the
 /// match, and the match is forgotten. Refused while the match no longer
 /// stands, or once the app has written the file since the match (a scan
-/// would put it back on the track). What a carry moved stays where it
+/// would put it back on the track), or when the album's identity moved
+/// since the person read it. What a carry moved stays where it
 /// went, and the album's edition stays the person's.
 pub(super) fn unmatch_file(
     tx: &Transaction<'_>,
     album_id: &str,
     track_id: &str,
+    expected_identity_revision: i64,
     actor: &str,
     now: f64,
 ) -> Result<(), OperationError> {
     if !album_live(tx, album_id)? {
         return Err(OperationError::NotFound(reasons::ALBUM_NOT_FOUND));
+    }
+    if identity_revision(tx, album_id)? != expected_identity_revision {
+        return Err(OperationError::Conflict(reasons::EDITION_CHANGED));
     }
     let kept = tx
         .query_row(

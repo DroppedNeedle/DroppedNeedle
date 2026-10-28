@@ -226,6 +226,8 @@ pub struct WaitingAlbum {
     pub release_group_mbid: Option<String>,
     pub reason: Reason,
     pub updated_at: f64,
+    /// The identity's row revision, 0 when the album has none.
+    pub identity_revision: i64,
 }
 
 /// Albums whose match is unconfirmed (or, with `unmatched`, matches
@@ -250,7 +252,7 @@ pub fn waiting_albums(
     )?;
     let mut stmt = conn.prepare(
         "SELECT s.local_album_id, a.title, COALESCE(a.album_artist_name, ''), s.reason_code, \
-         e.release_mbid, e.release_group_mbid, s.updated_at \
+         e.release_mbid, e.release_group_mbid, s.updated_at, COALESCE(e.row_revision, 0) \
          FROM library_album_match_state s \
          JOIN local_albums a ON a.id = s.local_album_id \
          LEFT JOIN local_album_external_identities e \
@@ -274,6 +276,7 @@ pub fn waiting_albums(
                 release_mbid: row.get(4)?,
                 release_group_mbid: row.get(5)?,
                 updated_at: row.get(6)?,
+                identity_revision: row.get(7)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

@@ -110,14 +110,16 @@ it('refreshes the copy, its plans and pages and both groups after a choice', asy
 		userId: 'user-a',
 		localId: 'local-1',
 		rgMbid: 'old-group',
-		releaseMbid: 'release'
+		releaseMbid: 'release',
+		identityRevision: 3
 	};
 
 	await choose.mutationFn(variables);
 	await choose.onSuccess({ release_group_mbid: 'new-group' }, variables);
 
 	expect(h.v3.PUT).toHaveBeenCalledWith('/api/v3/library/albums/local-1/edition', {
-		release_mbid: 'release'
+		release_mbid: 'release',
+		expected_identity_revision: 3
 	});
 	const invalidated = h.invalidate.mock.calls.map(([arg]) => arg.queryKey);
 	expect(invalidated).toEqual(
@@ -222,7 +224,9 @@ it('matches a file by hand and undoes it, refreshing what the carry can move, re
 		expected_identity_revision: 4
 	});
 	await unmatch.mutationFn(variables);
-	expect(h.v3.DELETE).toHaveBeenCalledWith('/api/v3/library/albums/local-1/edition/files/file-9');
+	expect(h.v3.DELETE).toHaveBeenCalledWith(
+		'/api/v3/library/albums/local-1/edition/files/file-9?expected_identity_revision=4'
+	);
 
 	for (const [done, error] of [
 		[match, null],
@@ -255,11 +259,17 @@ it('refuses edition choices carrying an RG MBID or a missing local id', async ()
 			userId: 'user-a',
 			localId: 'release-group',
 			rgMbid: 'release-group',
-			releaseMbid: 'release'
+			releaseMbid: 'release',
+			identityRevision: 1
 		})
 	).toThrow('Choose the edition on the library copy, not the release group.');
 	expect(() =>
-		handBack.mutationFn({ userId: 'user-a', localId: '', rgMbid: 'release-group' })
+		handBack.mutationFn({
+			userId: 'user-a',
+			localId: '',
+			rgMbid: 'release-group',
+			identityRevision: 1
+		})
 	).toThrow('Missing local album id for the edition.');
 	expect(h.v3.PUT).not.toHaveBeenCalled();
 	expect(h.v3.DELETE).not.toHaveBeenCalled();

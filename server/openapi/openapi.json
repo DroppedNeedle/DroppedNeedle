@@ -9229,6 +9229,16 @@
               }
             }
           },
+          "409": {
+            "description": "The album's edition changed since it was read (STALE_REVISION)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "503": {
             "description": "MusicBrainz is not answering",
             "content": {
@@ -9263,6 +9273,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "expected_identity_revision",
+            "in": "query",
+            "description": "The `identity_revision` the edition status or plan showed.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
           }
         ],
         "responses": {
@@ -9272,6 +9292,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EditionStatusView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No revision given",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -9298,6 +9328,16 @@
           },
           "404": {
             "description": "Unknown album",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The album's edition changed since it was read (STALE_REVISION)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9334,6 +9374,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditionRevisionBody"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "The album's edition",
@@ -9376,7 +9426,7 @@
             }
           },
           "409": {
-            "description": "Nothing waits for confirmation",
+            "description": "Nothing waits for confirmation, or the edition changed since it was read (STALE_REVISION)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9584,7 +9634,7 @@
             }
           },
           "409": {
-            "description": "Library busy or a file is outside the library folders",
+            "description": "The edition changed since the plan was read (STALE_REVISION), the library is busy, or a file is outside the library folders",
             "content": {
               "application/json": {
                 "schema": {
@@ -9766,6 +9816,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "expected_identity_revision",
+            "in": "query",
+            "description": "The `identity_revision` the edition status or plan showed.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
           }
         ],
         "responses": {
@@ -9775,6 +9835,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EditionStatusView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No revision given",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -9810,7 +9880,7 @@
             }
           },
           "409": {
-            "description": "The match changed since (STALE_REVISION), or the app has written the file since",
+            "description": "The edition or the match changed since (STALE_REVISION), or the app has written the file since",
             "content": {
               "application/json": {
                 "schema": {
@@ -10427,6 +10497,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditionRevisionBody"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "The album's edition",
@@ -10469,7 +10549,7 @@
             }
           },
           "409": {
-            "description": "The edition changed again since",
+            "description": "The edition changed since it was read, or again since the change (STALE_REVISION)",
             "content": {
               "application/json": {
                 "schema": {
@@ -39675,9 +39755,15 @@
         "type": "object",
         "description": "Choose an edition.",
         "required": [
-          "release_mbid"
+          "release_mbid",
+          "expected_identity_revision"
         ],
         "properties": {
+          "expected_identity_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `identity_revision` the edition status showed."
+          },
           "release_mbid": {
             "type": "string",
             "description": "Any MusicBrainz release, from this album's release group or another."
@@ -43615,6 +43701,20 @@
               }
             ],
             "default": "standard"
+          }
+        }
+      },
+      "EditionRevisionBody": {
+        "type": "object",
+        "description": "The edition revision a change was decided on.",
+        "required": [
+          "expected_identity_revision"
+        ],
+        "properties": {
+          "expected_identity_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `identity_revision` the edition status showed."
           }
         }
       },
@@ -54585,7 +54685,8 @@
                 "artist_name",
                 "state",
                 "reason",
-                "updated_at"
+                "updated_at",
+                "identity_revision"
               ],
               "properties": {
                 "album_id": {
@@ -54593,6 +54694,11 @@
                 },
                 "artist_name": {
                   "type": "string"
+                },
+                "identity_revision": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "The identity's row revision, 0 when the album has none. \"Looks\nright\" echoes it."
                 },
                 "reason": {
                   "$ref": "#/components/schemas/ReasonView"
@@ -59257,9 +59363,15 @@
         "type": "object",
         "description": "Extra files to move to the recycle bin.",
         "required": [
-          "track_ids"
+          "track_ids",
+          "expected_identity_revision"
         ],
         "properties": {
+          "expected_identity_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `identity_revision` the edition plan showed."
+          },
           "track_ids": {
             "type": "array",
             "items": {
@@ -66052,7 +66164,8 @@
           "artist_name",
           "state",
           "reason",
-          "updated_at"
+          "updated_at",
+          "identity_revision"
         ],
         "properties": {
           "album_id": {
@@ -66060,6 +66173,11 @@
           },
           "artist_name": {
             "type": "string"
+          },
+          "identity_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The identity's row revision, 0 when the album has none. \"Looks\nright\" echoes it."
           },
           "reason": {
             "$ref": "#/components/schemas/ReasonView"

@@ -456,14 +456,16 @@ impl Mutations {
     }
 
     /// Move files the album's edition has no place for, which a person
-    /// picked, into the recycle bin. Refused when nothing is picked, or
-    /// when the album's current edition plan keeps a place for any picked
-    /// file. Answers the track ids that left the catalog and the removal's
-    /// id.
+    /// picked, into the recycle bin. Refused when nothing is picked, when
+    /// the album's identity moved since `expected_identity_revision` (the
+    /// plan the person read), or when the album's current edition plan
+    /// keeps a place for any picked file. Answers the track ids that left
+    /// the catalog and the removal's id.
     pub async fn remove_extras(
         &self,
         album_id: &str,
         track_ids: Vec<String>,
+        expected_identity_revision: i64,
         actor: &str,
     ) -> Result<Removed, ExtrasError> {
         use super::operations::models::OperationError;
@@ -474,11 +476,17 @@ impl Mutations {
                 reasons::NOTHING_PICKED,
             )));
         }
-        let plan = self
+        let reading = self
             .operations
-            .edition_plan(album_id, None)
+            .read_edition_plan(album_id, None)
             .await
             .map_err(ExtrasError::Plan)?;
+        if reading.identity_revision != expected_identity_revision {
+            return Err(ExtrasError::Plan(OperationError::Conflict(
+                reasons::EDITION_CHANGED,
+            )));
+        }
+        let plan = reading.plan;
         let spare = |id: &String| {
             plan.files
                 .iter()
