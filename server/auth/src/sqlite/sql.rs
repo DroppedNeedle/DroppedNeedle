@@ -44,8 +44,6 @@ droppedneedle_kernel::sql! {
     pub(super) UPDATE_EMAIL = "UPDATE auth_users SET email = ?1 WHERE id = ?2";
     /// Set an account's role.
     pub(super) UPDATE_ROLE = "UPDATE auth_users SET role = ?1 WHERE id = ?2";
-    /// Stamp the last sign-in.
-    pub(super) TOUCH_LOGIN = "UPDATE auth_users SET last_login_at = ?1 WHERE id = ?2";
     /// Delete an account; its own rows cascade.
     pub(super) DELETE_USER = "DELETE FROM auth_users WHERE id = ?1";
     /// Whether an artist reconciliation dismissal names the account.

@@ -443,6 +443,7 @@ async fn first_user_insert_refuses_once_anyone_exists() {
         .insert_first_user(
             user_row("admin-1", "ada", Role::Admin),
             credential("cred-1", "admin-1"),
+            session_row("tok-1", "admin-1", "token-1", 1_000),
         )
         .await
         .unwrap();

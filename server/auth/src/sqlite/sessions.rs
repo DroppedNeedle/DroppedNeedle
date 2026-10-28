@@ -78,7 +78,7 @@ impl Sessions {
     }
 
     /// The stored row for a new standard session, with a fresh id.
-    fn standard_row(&self, session: NewSession) -> SessionRecord {
+    pub(crate) fn standard_row(&self, session: NewSession) -> SessionRecord {
         SessionRecord {
             id: self.ids.new_id(),
             user_id: session.user_id,
@@ -530,7 +530,7 @@ fn lock(touching: &Mutex<HashSet<String>>) -> MutexGuard<'_, HashSet<String>> {
 
 /// Insert one session row inside the caller's transaction. Companion
 /// labels are stored in `user_agent` behind the shared prefix.
-fn insert_token_row(
+pub(super) fn insert_token_row(
     tx: &rusqlite::Transaction,
     record: &SessionRecord,
 ) -> Result<(), super::WriteError> {

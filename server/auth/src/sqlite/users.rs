@@ -4,6 +4,7 @@
 use rusqlite::OptionalExtension as _;
 use rusqlite::Transaction;
 
+use super::sessions::insert_token_row;
 use super::sql;
 use super::{
     AuthDb, WriteError, is_write_conflict, op_error, parse_local_data, render_local_data,
@@ -11,6 +12,7 @@ use super::{
 };
 use crate::federated::users::ProviderBinding;
 use crate::session::login::{LocalCredential as LoginCredential, LoginError};
+use crate::session::store::SessionRecord;
 use crate::times::{parse_iso, to_iso};
 use crate::users::models::{LocalCredential, UserRecord};
 use crate::users::roles::Role;
@@ -160,16 +162,20 @@ impl Users {
         conflict_or_store(outcome)
     }
 
-    /// First-run setup: insert the user and its local credential only when
+    /// First-run setup: insert the user, its local credential and its first
+    /// session, with `last_login_at` at the session's issue time, only when
     /// no user exists yet, decided inside the same transaction. `Ok(false)`
     /// when any user (local or federated) is already there; nothing is
-    /// written then.
+    /// written then, nor when the write fails. A write past its budget was
+    /// rolled back whole, so it is `Busy` like a write that never ran.
     pub async fn insert_first_user(
         &self,
-        user: UserRecord,
+        mut user: UserRecord,
         credential: LocalCredential,
+        session: SessionRecord,
     ) -> Result<bool, StoreError> {
         let created_at = self.db.now_unix();
+        user.last_login_at = Some(session.issued_at);
         let outcome = self
             .db
             .lane()
@@ -183,10 +189,14 @@ impl Users {
                 }
                 Self::insert_user_in(tx, &user)?;
                 Self::insert_local_credential_in(tx, &credential, created_at)?;
+                insert_token_row(tx, &session)?;
                 Ok(true)
             })
             .await;
-        conflict_or_store(outcome)
+        match outcome {
+            Err(WriteError::Db(DbError::TxTimeout { .. })) => Err(StoreError::Busy),
+            outcome => conflict_or_store(outcome),
+        }
     }
 
     /// Update display name and/or avatar URL. None fields stay untouched.
@@ -282,20 +292,6 @@ impl Users {
                 )
                 .map_err(op_error)?;
                 Ok(RoleChange::Changed)
-            })
-            .await
-            .map_err(store_error)
-    }
-
-    /// Stamp the last-login time.
-    pub async fn touch_login(&self, id: &str, at: i64) -> Result<(), StoreError> {
-        let id = id.to_owned();
-        self.db
-            .lane()
-            .write(Lane::Foreground, "auth.users.touch", move |tx| {
-                tx.execute(sql::TOUCH_LOGIN.text(), rusqlite::params![to_iso(at), id])
-                    .map_err(op_error)?;
-                Ok(())
             })
             .await
             .map_err(store_error)

@@ -2009,6 +2009,53 @@ async fn failed_authentications_are_throttled_per_client() {
     );
 }
 
+/// A setup whose write runs past its budget while it stores the admin's
+/// session answers busy and leaves no account, so the retry runs setup
+/// rather than hearing it was already done.
+#[tokio::test]
+async fn busy_setup_leaves_no_admin_and_a_retry_runs_it() {
+    use droppedneedle_kernel::db::{Budget, LaneLimits};
+    let e2e = E2e::open_with("setup-busy", |config| {
+        config.with_lane_limits(LaneLimits {
+            foreground: Budget {
+                warn: Duration::from_secs(1),
+                abort: Duration::from_secs(3),
+            },
+            ..LaneLimits::patient()
+        })
+    })
+    .await;
+    // A session insert that never finishes in time: the stand-in for a host
+    // too busy to finish the write within its budget.
+    crate::common::break_schema(
+        e2e.db(),
+        "CREATE TRIGGER slow_session AFTER INSERT ON auth_tokens BEGIN \
+         SELECT count(*) FROM sqlite_master a, sqlite_master b, sqlite_master c, \
+         sqlite_master d, sqlite_master e; END;",
+    )
+    .await;
+    let setup = json!({"username": "root", "password": "root-password-1234"});
+    let (status, body, headers) = call_once(
+        e2e.router(),
+        "POST",
+        "/api/v3/auth/setup",
+        &[],
+        Some(setup.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["error"]["code"], "SERVER_BUSY", "{body}");
+    assert!(headers.contains_key("retry-after"));
+    let (_, body, _) = call(e2e.router(), "GET", "/api/v3/auth/setup/status", &[], None).await;
+    assert_eq!(body, json!({"setup_required": true}), "no admin was left");
+
+    crate::common::break_schema(e2e.db(), "DROP TRIGGER slow_session;").await;
+    let (status, body, _) =
+        call_once(e2e.router(), "POST", "/api/v3/auth/setup", &[], Some(setup)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert!(body["user"]["last_login_at"].is_i64(), "{body}");
+}
+
 #[tokio::test]
 async fn login_store_failure_is_a_500_not_bad_credentials() {
     let e2e = E2e::open("login-store-down").await;

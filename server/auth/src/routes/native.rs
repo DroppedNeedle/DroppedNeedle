@@ -11,11 +11,11 @@ use crate::session::login::{
 };
 use crate::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
-use crate::session::store::NewSession;
 use crate::session::tokens;
 use crate::sqlite::Sessions;
 use crate::users::UsersDeps;
 use crate::users::models::UserResponse;
+use crate::users::services::SetupSession;
 use crate::users::{clock_now, services};
 use axum::{
     Json,
@@ -49,16 +49,15 @@ pub struct AuthSessionBody {
     pub token: Option<String>,
 }
 
-/// State for the native auth routes. The session store mints setup sessions,
-/// the login service owns local login, and the users deps own user creation,
-/// the setup probe, logout revocation, and login enrichment.
+/// State for the native auth routes. The login service owns local login,
+/// and the users deps own setup, the setup probe, logout revocation, and
+/// login enrichment.
 #[derive(Clone)]
 pub struct NativeAuthState {
-    /// Token store (setup session mint).
-    pub sessions: Sessions,
     /// Local-login service.
     pub login: LoginService,
-    /// User stores, clock, ids, passwords (setup, probe, logout, enrichment).
+    /// User stores, sessions, clock, ids, passwords (setup, probe, logout,
+    /// enrichment).
     pub users: UsersDeps,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
@@ -82,7 +81,6 @@ impl NativeAuthState {
         base_path: &str,
     ) -> Self {
         Self {
-            sessions: sessions.clone(),
             login: LoginService::new(sessions, passwords, users.users.clone()),
             users,
             base_path: base_path.to_owned(),
@@ -217,10 +215,12 @@ pub async fn logout_handler(
 }
 
 /// First-admin setup. Creates the admin and logs them in (201 + session,
-/// v2 parity) iff no users exist; otherwise 409. The emptiness check runs
-/// inside the insert transaction, so concurrent setups, or a setup racing
-/// a first federated login (whose role is also decided in its insert),
-/// leave exactly one admin. The early probe only skips the password hash.
+/// v2 parity) iff no users exist; otherwise 409. The account and its
+/// session are one write: a busy or failed setup leaves nothing, so a retry
+/// can still run it. The emptiness check runs inside that transaction, so
+/// concurrent setups, or a setup racing a first federated login (whose role
+/// is also decided in its insert), leave exactly one admin. The early probe
+/// only skips the password hash.
 #[utoipa::path(
     post,
     tag = "auth",
@@ -245,34 +245,21 @@ pub async fn setup_handler(
         }
         .into());
     }
+    let raw_token = tokens::mint_token().map_err(|error| AuthRouteError::internal(&error))?;
     let user = services::create_first_admin(
         &state.users,
         &body.username,
         &body.password,
         body.display_name.as_deref(),
         body.email.as_deref(),
+        SetupSession {
+            token_hash: tokens::hash_token(&raw_token),
+            user_agent: user_agent_of(&headers),
+        },
         SETUP_ALREADY_COMPLETED,
     )
     .await
     .map_err(AuthRouteError::from)?;
-    let now = clock_now(&state.users);
-    let raw_token = tokens::mint_token().map_err(|error| AuthRouteError::internal(&error))?;
-    state
-        .sessions
-        .insert(NewSession {
-            user_id: user.id.clone(),
-            token_hash: tokens::hash_token(&raw_token),
-            issued_at: now,
-            user_agent: user_agent_of(&headers),
-        })
-        .await
-        .map_err(|error| AuthRouteError::internal(&error))?;
-    state
-        .users
-        .users
-        .touch_login(&user.id, now)
-        .await
-        .map_err(|error| AuthRouteError::from(store_failure(&error)))?;
     let secure = cookies::secure_for_sign_in(
         uri.scheme_str().unwrap_or("http"),
         &headers,

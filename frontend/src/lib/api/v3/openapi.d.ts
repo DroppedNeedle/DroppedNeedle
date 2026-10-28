@@ -1365,10 +1365,12 @@ export interface paths {
         put?: never;
         /**
          * First-admin setup. Creates the admin and logs them in (201 + session,
-         *     v2 parity) iff no users exist; otherwise 409. The emptiness check runs
-         *     inside the insert transaction, so concurrent setups, or a setup racing
-         *     a first federated login (whose role is also decided in its insert),
-         *     leave exactly one admin. The early probe only skips the password hash.
+         *     v2 parity) iff no users exist; otherwise 409. The account and its
+         *     session are one write: a busy or failed setup leaves nothing, so a retry
+         *     can still run it. The emptiness check runs inside that transaction, so
+         *     concurrent setups, or a setup racing a first federated login (whose role
+         *     is also decided in its insert), leave exactly one admin. The early probe
+         *     only skips the password hash.
          */
         post: operations["setup_handler"];
         delete?: never;
