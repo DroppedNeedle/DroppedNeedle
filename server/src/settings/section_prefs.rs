@@ -1,7 +1,8 @@
 //! Per-user section visibility prefs (`/me/section-prefs`).
 //!
-//! The catalog is static code (home/discover/sidebar times a fixed entry
-//! list); only the per-user disabled sets persist, in
+//! The home and discover entries come from the catalog's section list,
+//! the sidebar's from the list here; only the per-user disabled sets
+//! persist, in
 //! `user_section_prefs`. Reads overlay the disabled set on the catalog and
 //! compute `available` from service requirements plus per-user link state
 //! (ListenBrainz row, Last.fm session behind the master switch; the
@@ -17,18 +18,17 @@ use sqlx::{Row as _, SqlitePool};
 use super::models::{SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
 use droppedneedle_auth::sqlite::LastFmLinks;
 use droppedneedle_auth::users::stores::StoreError;
+use droppedneedle_catalog::reads::discover::sections::{self, Page};
 use droppedneedle_kernel::db::{Db, DbError, Lane, sqlx_is_busy};
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Visible pages.
 pub const PAGES: &[&str] = &["home", "discover", "sidebar"];
 
-/// One static catalog entry.
+/// One entry of the section settings.
 pub struct CatalogEntry {
-    /// Page id.
-    pub page: &'static str,
     /// Section key.
-    pub key: &'static str,
+    pub key: String,
     /// Display title.
     pub title: &'static str,
     /// Description.
@@ -39,305 +39,56 @@ pub struct CatalogEntry {
     pub requires: Option<&'static str>,
 }
 
-/// The static catalog (v2 `section_catalog`, verbatim).
-pub const CATALOG: &[CatalogEntry] = &[
-    CatalogEntry {
-        page: "home",
-        key: "trending_artists",
-        title: "Trending Artists",
-        description: "Artists trending across your music source right now.",
-        zone: "What's Hot",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "home",
-        key: "popular_albums",
-        title: "Popular Now",
-        description: "Albums popular across your music source this week.",
-        zone: "What's Hot",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "home",
-        key: "weekly_exploration",
-        title: "Weekly Exploration",
-        description: "Your ListenBrainz weekly exploration playlist.",
-        zone: "For You",
-        requires: Some("listenbrainz"),
-    },
-    CatalogEntry {
-        page: "home",
-        key: "your_top_albums",
-        title: "Your Top Albums",
-        description: "What you personally played most this month.",
-        zone: "For You",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "home",
-        key: "recently_played",
-        title: "Recently Played",
-        description: "Your latest plays in DroppedNeedle.",
-        zone: "For You",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "home",
-        key: "recently_added",
-        title: "Recently Added",
-        description: "The newest imports in your library.",
-        zone: "For You",
-        requires: Some("library"),
-    },
-    CatalogEntry {
-        page: "home",
-        key: "favorite_artists",
-        title: "Favorite Artists",
-        description: "Artists from your loved tracks.",
-        zone: "Your Library",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "home",
-        key: "library_artists",
-        title: "Library Artists",
-        description: "A shelf of artists from your library.",
-        zone: "Your Library",
-        requires: Some("library"),
-    },
-    CatalogEntry {
-        page: "home",
-        key: "library_albums",
-        title: "Library Albums",
-        description: "A shelf of albums from your library.",
-        zone: "Your Library",
-        requires: Some("library"),
-    },
-    CatalogEntry {
-        page: "home",
-        key: "genre_list",
-        title: "Browse Genres",
-        description: "Genre tiles built from your library.",
-        zone: "Browse Genres",
-        requires: Some("library"),
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "discover_queue",
-        title: "Discover Queue",
-        description: "A personalised album-by-album discovery deck.",
-        zone: "Essentials",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "playlist_discovery",
-        title: "Discover for a Playlist",
-        description: "Album suggestions seeded from any playlist.",
-        zone: "Essentials",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "listeners_like_you",
-        title: "Listening Lounge",
-        description: "Browse albums picked for you by ear - tap a cover to hear it.",
-        zone: "Essentials",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "daily_mixes",
-        title: "Daily Mixes",
-        description: "Genre-clustered mixes of new and familiar albums.",
-        zone: "Made For You",
-        requires: Some("library"),
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "radio_sections",
-        title: "Radio Stations",
-        description: "Album radios seeded by your top artists.",
-        zone: "Made For You",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "because_you_listen_to",
-        title: "Because You Listened",
-        description: "Artists similar to the ones you play most.",
-        zone: "Because You Listened",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "artists_you_might_like",
-        title: "Artists You Might Like",
-        description: "A wider net of similar artists.",
-        zone: "Because You Listened",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "popular_in_your_genres",
-        title: "Popular in Your Genres",
-        description: "Big names in the genres you listen to.",
-        zone: "Because You Listened",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "fresh_releases",
-        title: "Fresh Releases",
-        description: "New releases picked for you by ListenBrainz.",
-        zone: "New & Fresh",
-        requires: Some("listenbrainz"),
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "top_picks",
-        title: "Top Picks for You",
-        description: "Albums we think you'd like, scored against your taste.",
-        zone: "New & Fresh",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "new_from_followed",
-        title: "New From Artists You Follow",
-        description: "Fresh releases from your followed artists.",
-        zone: "New & Fresh",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "missing_essentials",
-        title: "Missing Essentials",
-        description: "Celebrated albums missing from artists you collect.",
-        zone: "New & Fresh",
-        requires: Some("library"),
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "weekly_exploration",
-        title: "Weekly Exploration",
-        description: "Your ListenBrainz weekly exploration playlist.",
-        zone: "New & Fresh",
-        requires: Some("listenbrainz"),
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "anniversaries",
-        title: "Milestone Anniversaries",
-        description: "Library albums turning 10, 20, 30… this year.",
-        zone: "From Your Library",
-        requires: Some("library"),
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "rediscover",
-        title: "Rediscover",
-        description: "Library albums you haven't played in a while.",
-        zone: "From Your Library",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "lastfm_recent_scrobbles",
-        title: "Recent Scrobbles",
-        description: "Your latest Last.fm scrobbles.",
-        zone: "From Your Library",
-        requires: Some("lastfm"),
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "unexplored_genres",
-        title: "Unexplored Genres",
-        description: "Genres adjacent to your taste you haven't dug into.",
-        zone: "Browse Genres",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "genre_list",
-        title: "Browse Genres",
-        description: "Genre tiles built from your library.",
-        zone: "Browse Genres",
-        requires: Some("library"),
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "globally_trending",
-        title: "Globally Trending",
-        description: "Artists trending worldwide.",
-        zone: "Trending Now",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "lastfm_weekly_artist_chart",
-        title: "Last.fm Weekly Artists",
-        description: "Your Last.fm weekly artist chart.",
-        zone: "Trending Now",
-        requires: Some("lastfm"),
-    },
-    CatalogEntry {
-        page: "discover",
-        key: "lastfm_weekly_album_chart",
-        title: "Last.fm Weekly Albums",
-        description: "Your Last.fm weekly album chart.",
-        zone: "Trending Now",
-        requires: Some("lastfm"),
-    },
-    CatalogEntry {
-        page: "sidebar",
-        key: "youtube",
-        title: "YouTube",
-        description: "The YouTube entry in the sidebar.",
-        zone: "Services",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "sidebar",
-        key: "jellyfin",
-        title: "Jellyfin",
-        description: "The Jellyfin entry in the sidebar.",
-        zone: "Services",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "sidebar",
-        key: "navidrome",
-        title: "Navidrome",
-        description: "The Navidrome entry in the sidebar.",
-        zone: "Services",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "sidebar",
-        key: "plex",
-        title: "Plex",
-        description: "The Plex entry in the sidebar.",
-        zone: "Services",
-        requires: None,
-    },
-    CatalogEntry {
-        page: "sidebar",
-        key: "localfiles",
-        title: "Local Files",
-        description: "The Local Files entry in the sidebar.",
-        zone: "Services",
-        requires: None,
-    },
+/// The sidebar's service entries: key, title and description.
+const SIDEBAR: &[(&str, &str, &str)] = &[
+    ("youtube", "YouTube", "The YouTube entry in the sidebar."),
+    ("jellyfin", "Jellyfin", "The Jellyfin entry in the sidebar."),
+    (
+        "navidrome",
+        "Navidrome",
+        "The Navidrome entry in the sidebar.",
+    ),
+    ("plex", "Plex", "The Plex entry in the sidebar."),
+    (
+        "localfiles",
+        "Local Files",
+        "The Local Files entry in the sidebar.",
+    ),
 ];
 
+/// The entries of one page, in page order.
+pub fn catalog(page: &str) -> Vec<CatalogEntry> {
+    let sections_of = |page: Page| {
+        sections::of(page)
+            .map(|def| CatalogEntry {
+                key: def.key.name(),
+                title: def.title,
+                description: def.description,
+                zone: def.zone.label(),
+                requires: def.requires.map(sections::Requires::as_str),
+            })
+            .collect()
+    };
+    match page {
+        "home" => sections_of(Page::Home),
+        "discover" => sections_of(Page::Discover),
+        "sidebar" => SIDEBAR
+            .iter()
+            .map(|(key, title, description)| CatalogEntry {
+                key: (*key).to_owned(),
+                title,
+                description,
+                zone: "Services",
+                requires: None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Known keys for one page.
-pub fn valid_keys(page: &str) -> HashSet<&'static str> {
-    CATALOG
-        .iter()
-        .filter(|entry| entry.page == page)
-        .map(|entry| entry.key)
-        .collect()
+pub fn valid_keys(page: &str) -> HashSet<String> {
+    catalog(page).into_iter().map(|entry| entry.key).collect()
 }
 
 /// Per-user service link state behind section availability.
@@ -495,15 +246,14 @@ pub async fn page(
         ("lastfm", lastfm),
         ("library", true),
     ]);
-    Ok(CATALOG
-        .iter()
-        .filter(|entry| entry.page == page)
+    Ok(catalog(page)
+        .into_iter()
         .map(|entry| SectionPrefItem {
-            key: entry.key.to_owned(),
+            enabled: !disabled.contains(&entry.key),
+            key: entry.key,
             title: entry.title.to_owned(),
             description: entry.description.to_owned(),
             zone: entry.zone.to_owned(),
-            enabled: !disabled.contains(entry.key),
             available: entry
                 .requires
                 .and_then(|requirement| availability.get(requirement).copied())
@@ -556,7 +306,7 @@ pub async fn save_page(
         .sections
         .iter()
         .map(|section| section.key.as_str())
-        .filter(|key| !known.contains(key))
+        .filter(|key| !known.contains(*key))
         .collect();
     unknown.sort_unstable();
     unknown.dedup();

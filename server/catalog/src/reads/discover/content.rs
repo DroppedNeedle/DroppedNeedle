@@ -6,17 +6,18 @@
 //! the integration status read from the settings the way v2 read it, and
 //! genre tiles on both get artwork from the collection.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
 use crate::reads::discover::genre::artwork::GenreArt;
-use crate::reads::discover::home::{LiveHome, genre_names};
-use crate::reads::discover::page::{GENRE_ARTWORK_SCHEMA, LiveDiscover};
+use crate::reads::discover::home::{self, LiveHome, genre_names};
+use crate::reads::discover::page::{LiveDiscover, shelves::shelf_of};
 use crate::reads::discover::scheduler::{ArtistDetail, Feature};
 use crate::reads::discover::{
-    models::{DiscoverActivityResponse, DiscoverResponse, HomeResponse, IntegrationStatus},
+    models::{
+        DiscoverActivityResponse, DiscoverResponse, HomeResponse, IntegrationStatus, SectionKey,
+    },
     ports::{BoxFuture, ProviderFailure},
 };
 use droppedneedle_kernel::runtime_config::{
@@ -141,23 +142,6 @@ impl LiveContent {
         self
     }
 
-    /// True when the user switched the Discover Queue section off on the
-    /// discover page (v2 blanked the flag for a hidden section). A failed
-    /// read shows the section, with a log line.
-    async fn queue_section_hidden(&self, user_id: &str) -> bool {
-        sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM user_section_prefs WHERE user_id = ?1 \
-             AND page = 'discover' AND section_key = 'discover_queue' AND enabled = 0)",
-        )
-        .bind(user_id)
-        .fetch_one(&self.pool)
-        .await
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "section prefs unreadable; showing the discover queue");
-            false
-        })
-    }
-
     fn status(&self) -> IntegrationStatus {
         self.settings.status()
     }
@@ -171,13 +155,9 @@ impl LiveContent {
     ) -> BoxFuture<'a, Result<DiscoverResponse, ProviderFailure>> {
         let status = self.status();
         Box::pin(async move {
-            let queue_hidden = self.queue_section_hidden(user_id).await;
             let mut page = self.page.page(user_id, status).await;
-            // The queue deck is built; the page shows its entry point
-            // unless the user turned the section off.
-            page.discover_queue_enabled = !queue_hidden;
             if let Some((_, art)) = &self.home {
-                let names = genre_names(page.genre_list.as_ref());
+                let names = genre_names(shelf_of(&page.sections, SectionKey::GenreList));
                 if !names.is_empty() {
                     page.genre_artwork = art.batch(&names).await;
                 }
@@ -208,24 +188,7 @@ impl LiveContent {
                 });
                 return Ok(home.page(user_id).await);
             }
-            Ok(HomeResponse {
-                recently_added: None,
-                library_artists: None,
-                library_albums: None,
-                trending_artists: None,
-                popular_albums: None,
-                recently_played: None,
-                genre_list: None,
-                favorite_artists: None,
-                your_top_albums: None,
-                weekly_exploration: None,
-                service_prompts: Vec::new(),
-                integration_status: Some(status),
-                genre_artwork: HashMap::new(),
-                genre_artwork_schema_version: GENRE_ARTWORK_SCHEMA.to_owned(),
-                discover_preview: None,
-                refreshing: false,
-            })
+            Ok(home::empty_page(status, false))
         })
     }
 

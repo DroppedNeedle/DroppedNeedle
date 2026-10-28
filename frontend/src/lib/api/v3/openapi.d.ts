@@ -12643,19 +12643,12 @@ export interface components {
             status: components["schemas"]["QueueBuildStatus"];
         };
         /**
-         * @description Discover shelves. Every shelf is optional: absence means no data, never
-         *     a failure.
+         * @description Discover: its sections, in page order, plus the page-level fields. A
+         *     section with no rows is left out.
          */
         DiscoverResponse: {
-            anniversaries?: null | components["schemas"]["ChartSection"];
-            artists_you_might_like?: null | components["schemas"]["ChartSection"];
-            /** @description Seed-driven similar-album shelves. */
-            because_you_listen_to: components["schemas"]["BecauseYouListenTo"][];
-            /** @description Daily mix shelves. */
-            daily_mixes: components["schemas"]["ChartSection"][];
             /** @description Whether the queue deck is enabled for the user. */
             discover_queue_enabled: boolean;
-            fresh_releases?: null | components["schemas"]["ChartSection"];
             /**
              * Format: int64
              * @description Build timestamp (unix seconds), when built.
@@ -12667,19 +12660,7 @@ export interface components {
             };
             /** @description Genre artwork schema version. */
             genre_artwork_schema_version: string;
-            genre_list?: null | components["schemas"]["ChartSection"];
-            globally_trending?: null | components["schemas"]["ChartSection"];
             integration_status?: null | components["schemas"]["IntegrationStatus"];
-            lastfm_recent_scrobbles?: null | components["schemas"]["ChartSection"];
-            lastfm_weekly_album_chart?: null | components["schemas"]["ChartSection"];
-            lastfm_weekly_artist_chart?: null | components["schemas"]["ChartSection"];
-            listeners_like_you?: null | components["schemas"]["ChartSection"];
-            missing_essentials?: null | components["schemas"]["ChartSection"];
-            new_from_followed?: null | components["schemas"]["ChartSection"];
-            popular_in_your_genres?: null | components["schemas"]["ChartSection"];
-            /** @description Radio shelves. */
-            radio_sections: components["schemas"]["ChartSection"][];
-            rediscover?: null | components["schemas"]["ChartSection"];
             /**
              * Format: int64
              * @description Refresh-start timestamp (unix seconds), when refreshing.
@@ -12687,22 +12668,14 @@ export interface components {
             refresh_started_at?: number | null;
             /** @description True while a fuller build runs in the background (the UI polls). */
             refreshing: boolean;
-            /**
-             * @description Status per page zone: `loading` before the first page, `updating`
-             *     while a rebuild runs, else `ready` or `empty`.
-             */
-            section_status: {
-                [key: string]: components["schemas"]["ZoneStatus"];
-            };
+            /** @description The sections, in page order. */
+            sections: components["schemas"]["PageSection"][];
             /** @description Connect-a-service cards. */
             service_prompts: components["schemas"]["ServicePrompt"][];
             /** @description Listening services that failed during the build, when any did. */
             service_status?: {
                 [key: string]: components["schemas"]["ServiceState"];
             } | null;
-            top_picks?: null | components["schemas"]["TopPicksSection"];
-            unexplored_genres?: null | components["schemas"]["ChartSection"];
-            weekly_exploration?: null | components["schemas"]["WeeklyExploration"];
         };
         /** @description Body creating a discovery batch (one request per album). */
         DiscoveryBatchCreate: {
@@ -14936,32 +14909,24 @@ export interface components {
             total_pages: number;
         };
         /**
-         * @description Home shelves. Every shelf is optional: absence means the shelf has no
-         *     data, never a failure.
+         * @description Home: its sections, in page order, plus the page-level fields. A
+         *     section with no rows is left out.
          */
         HomeResponse: {
             discover_preview?: null | components["schemas"]["DiscoverPreview"];
-            favorite_artists?: null | components["schemas"]["ChartSection"];
             /** @description Mosaic art keyed by genre name. */
             genre_artwork: {
                 [key: string]: components["schemas"]["GenreArtwork"];
             };
             /** @description Genre artwork schema version. */
             genre_artwork_schema_version: string;
-            genre_list?: null | components["schemas"]["ChartSection"];
             integration_status?: null | components["schemas"]["IntegrationStatus"];
-            library_albums?: null | components["schemas"]["ChartSection"];
-            library_artists?: null | components["schemas"]["ChartSection"];
-            popular_albums?: null | components["schemas"]["ChartSection"];
-            recently_added?: null | components["schemas"]["ChartSection"];
-            recently_played?: null | components["schemas"]["ChartSection"];
             /** @description True while a fuller build runs in the background (the UI polls). */
             refreshing: boolean;
+            /** @description The sections, in page order. */
+            sections: components["schemas"]["PageSection"][];
             /** @description Connect-a-service cards. */
             service_prompts: components["schemas"]["ServicePrompt"][];
-            trending_artists?: null | components["schemas"]["ChartSection"];
-            weekly_exploration?: null | components["schemas"]["WeeklyExploration"];
-            your_top_albums?: null | components["schemas"]["ChartSection"];
         };
         /**
          * @description The hub: one screen of highlights per source. Sections a source lacks
@@ -18329,6 +18294,15 @@ export interface components {
             sidecar_patterns: string[];
             /** @default remove_after_confirmed_move */
             source_cleanup: components["schemas"]["SourceCleanupMode"];
+        };
+        /** @description One section of a page. */
+        PageSection: {
+            /** @description Its rows. */
+            content: components["schemas"]["SectionContent"];
+            /** @description Which section it is. */
+            key: components["schemas"]["SectionKey"];
+            /** @description The zone it is shown in. */
+            zone: components["schemas"]["SectionZone"];
         };
         /** @description Change password on an account that already has one. */
         PasswordChange: {
@@ -21923,6 +21897,33 @@ export interface components {
              */
             track_number: number;
         };
+        /** @description A section's rows, tagged by `shape`. */
+        SectionContent: {
+            /** @enum {string} */
+            shape: "shelf";
+            /** @description The shelf. */
+            shelf: components["schemas"]["ChartSection"];
+        } | {
+            /** @enum {string} */
+            shape: "shelves";
+            /** @description The shelves. */
+            shelves: components["schemas"]["ChartSection"][];
+        } | {
+            /** @description One per seed artist. */
+            entries: components["schemas"]["BecauseYouListenTo"][];
+            /** @enum {string} */
+            shape: "because";
+        } | {
+            /** @description The picks. */
+            picks: components["schemas"]["TopPicksSection"];
+            /** @enum {string} */
+            shape: "picks";
+        } | {
+            /** @enum {string} */
+            shape: "weekly";
+            /** @description The playlist. */
+            weekly: components["schemas"]["WeeklyExploration"];
+        };
         /** @description One row inside a section, tagged by `kind`. */
         SectionItem: (components["schemas"]["ArtistRef"] & {
             /** @enum {string} */
@@ -21937,6 +21938,11 @@ export interface components {
             /** @enum {string} */
             kind: "genre";
         });
+        /**
+         * @description One section of the home or discover page.
+         * @enum {string}
+         */
+        SectionKey: "popular_albums" | "trending_artists" | "weekly_exploration" | "your_top_albums" | "recently_played" | "recently_added" | "genre_list" | "favorite_artists" | "library_artists" | "library_albums" | "discover_queue" | "top_picks" | "listeners_like_you" | "playlist_discovery" | "daily_mixes" | "radio_sections" | "because_you_listen_to" | "artists_you_might_like" | "popular_in_your_genres" | "fresh_releases" | "new_from_followed" | "missing_essentials" | "rediscover" | "anniversaries" | "lastfm_recent_scrobbles" | "unexplored_genres" | "globally_trending" | "lastfm_weekly_artist_chart" | "lastfm_weekly_album_chart";
         /**
          * @description What a section's rows are.
          * @enum {string}
@@ -21983,6 +21989,11 @@ export interface components {
             /** @description Toggles to apply. */
             sections: components["schemas"]["SectionPrefUpdateItem"][];
         };
+        /**
+         * @description A group of sections on a page.
+         * @enum {string}
+         */
+        SectionZone: "whats_hot" | "for_you" | "your_library" | "browse_genres" | "essentials" | "made_for_you" | "because_you_listened" | "new_and_fresh" | "from_your_library" | "trending_now";
         /** @description Security posture settings (no secrets; the HIBP path is a local file). */
         SecuritySettings: {
             /** @default enforce */
@@ -23975,11 +23986,6 @@ export interface components {
             /** @description The saved (or already saved) track link. */
             track_link: components["schemas"]["YouTubeTrackLink"];
         };
-        /**
-         * @description Where one discover zone stands.
-         * @enum {string}
-         */
-        ZoneStatus: "loading" | "updating" | "ready" | "empty";
     };
     responses: never;
     parameters: never;

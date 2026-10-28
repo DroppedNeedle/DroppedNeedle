@@ -1,30 +1,19 @@
-//! Pure shaping for the discover page: shelf rows, the per-zone status the
-//! page renders while it updates, the "is there anything to show" test,
-//! the cross-shelf album dedupe and the connect-a-service cards.
+//! Pure shaping for the home and discover pages: shelf rows, a section's
+//! rows, the cross-shelf album dedupe and the connect-a-service cards.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use super::add_section;
 use crate::reads::discover::models::{
-    AlbumRef, ArtistRef, ChartSection, DiscoverResponse, DiscoverZone, GenreRef, PromptService,
-    SectionItem, SectionKind, ServicePrompt, ShelfSource, ZoneStatus,
+    AlbumRef, ArtistRef, ChartSection, GenreRef, PageSection, PromptService, SectionContent,
+    SectionItem, SectionKey, SectionKind, ServicePrompt, ShelfSource,
 };
 use crate::reads::discover::queue::build::cover_url;
+use crate::reads::discover::sections::{self, Dedupe, Page};
+use crate::reads::platform::artwork::warm::WarmTargets;
 
 /// Rows a shelf shows at most.
 pub const SHELF_SIZE: usize = 15;
-
-/// The zones the page groups its shelves into, in page order.
-pub const ZONES: [DiscoverZone; 9] = [
-    DiscoverZone::Picks,
-    DiscoverZone::Lounge,
-    DiscoverZone::Weekly,
-    DiscoverZone::Made,
-    DiscoverZone::Because,
-    DiscoverZone::Fresh,
-    DiscoverZone::Library,
-    DiscoverZone::Genres,
-    DiscoverZone::Trending,
-];
 
 /// An artist row.
 pub fn artist(mbid: Option<&str>, name: &str, listen_count: Option<i64>) -> SectionItem {
@@ -89,181 +78,180 @@ pub fn shelf(
     })
 }
 
-fn has_items(section: Option<&ChartSection>) -> bool {
-    section.is_some_and(|section| !section.items.is_empty())
+/// A row ownership is marked on.
+pub enum RowMut<'a> {
+    /// An album row.
+    Album(&'a mut AlbumRef),
+    /// An artist row.
+    Artist(&'a mut ArtistRef),
 }
 
-/// Whether a build found anything worth showing. An empty build never
-/// replaces a good saved page.
-pub fn has_content(page: &DiscoverResponse) -> bool {
-    zone_presence(page).values().any(|present| *present)
-}
+impl SectionContent {
+    /// The section's shelves; none for Top Picks and the weekly playlist.
+    pub fn shelves(&self) -> Vec<&ChartSection> {
+        match self {
+            Self::Shelf { shelf } => vec![shelf],
+            Self::Shelves { shelves } => shelves.iter().collect(),
+            Self::Because { entries } => entries.iter().map(|entry| &entry.section).collect(),
+            Self::Picks { .. } | Self::Weekly { .. } => Vec::new(),
+        }
+    }
 
-fn zone_presence(page: &DiscoverResponse) -> HashMap<DiscoverZone, bool> {
-    let any = |sections: &[Option<&ChartSection>]| sections.iter().any(|s| has_items(*s));
-    HashMap::from([
-        (
-            DiscoverZone::Picks,
-            page.top_picks
-                .as_ref()
-                .is_some_and(|picks| !picks.items.is_empty()),
-        ),
-        (
-            DiscoverZone::Lounge,
-            has_items(page.listeners_like_you.as_ref()),
-        ),
-        (
-            DiscoverZone::Weekly,
-            page.weekly_exploration
-                .as_ref()
-                .is_some_and(|weekly| !weekly.tracks.is_empty()),
-        ),
-        (
-            DiscoverZone::Made,
-            page.daily_mixes.iter().any(|mix| !mix.items.is_empty())
-                || page
-                    .radio_sections
-                    .iter()
-                    .any(|radio| !radio.items.is_empty()),
-        ),
-        (
-            DiscoverZone::Because,
-            page.because_you_listen_to
-                .iter()
-                .any(|entry| !entry.section.items.is_empty())
-                || any(&[
-                    page.artists_you_might_like.as_ref(),
-                    page.popular_in_your_genres.as_ref(),
-                ]),
-        ),
-        (
-            DiscoverZone::Fresh,
-            any(&[
-                page.fresh_releases.as_ref(),
-                page.new_from_followed.as_ref(),
-                page.missing_essentials.as_ref(),
-            ]),
-        ),
-        (
-            DiscoverZone::Library,
-            any(&[
-                page.rediscover.as_ref(),
-                page.anniversaries.as_ref(),
-                page.lastfm_recent_scrobbles.as_ref(),
-            ]),
-        ),
-        (
-            DiscoverZone::Genres,
-            any(&[page.unexplored_genres.as_ref(), page.genre_list.as_ref()]),
-        ),
-        (
-            DiscoverZone::Trending,
-            any(&[
-                page.globally_trending.as_ref(),
-                page.lastfm_weekly_artist_chart.as_ref(),
-                page.lastfm_weekly_album_chart.as_ref(),
-            ]),
-        ),
-    ])
-}
-
-/// Status per zone: `loading` with no page yet, `updating` while a build
-/// runs, else `ready` or `empty`.
-pub fn section_status(
-    page: Option<&DiscoverResponse>,
-    updating: bool,
-) -> HashMap<DiscoverZone, ZoneStatus> {
-    let Some(page) = page else {
-        return ZONES
-            .iter()
-            .map(|zone| (*zone, ZoneStatus::Loading))
-            .collect();
-    };
-    zone_presence(page)
-        .into_iter()
-        .map(|(zone, present)| {
-            let state = match (updating, present) {
-                (true, _) => ZoneStatus::Updating,
-                (false, true) => ZoneStatus::Ready,
-                (false, false) => ZoneStatus::Empty,
-            };
-            (zone, state)
-        })
-        .collect()
-}
-
-/// Prefer variety across album shelves: drop albums an earlier shelf (or
-/// Top Picks) already shows, unless that would leave a shelf with fewer
-/// than three of its albums, in which case the shelf stays as it was.
-pub fn dedupe_albums(page: &mut DiscoverResponse) {
-    let mut seen: HashSet<String> = page
-        .top_picks
-        .iter()
-        .flat_map(|picks| picks.items.iter())
-        .filter_map(|pick| pick.album.musicbrainz_id.as_deref())
-        .map(str::to_lowercase)
-        .collect();
-    let mut dedupe = |section: &mut ChartSection| {
-        let album_key = |item: &SectionItem| match item {
-            SectionItem::Album(album) => {
-                Some(album.musicbrainz_id.as_deref().map(str::to_lowercase))
+    /// The section's shelves, to change.
+    pub fn shelves_mut(&mut self) -> Vec<&mut ChartSection> {
+        match self {
+            Self::Shelf { shelf } => vec![shelf],
+            Self::Shelves { shelves } => shelves.iter_mut().collect(),
+            Self::Because { entries } => {
+                entries.iter_mut().map(|entry| &mut entry.section).collect()
             }
-            _ => None,
-        };
-        let albums = section
-            .items
-            .iter()
-            .filter(|item| album_key(item).is_some())
-            .count();
-        let filtered: Vec<SectionItem> = section
-            .items
-            .iter()
-            .filter(|item| match album_key(item) {
-                Some(Some(mbid)) => !seen.contains(&mbid),
-                _ => true,
+            Self::Picks { .. } | Self::Weekly { .. } => Vec::new(),
+        }
+    }
+
+    /// Every album and artist row, Top Picks' albums included.
+    pub fn rows_mut(&mut self) -> Vec<RowMut<'_>> {
+        if let Self::Picks { picks } = self {
+            return picks
+                .items
+                .iter_mut()
+                .map(|pick| RowMut::Album(&mut pick.album))
+                .collect();
+        }
+        self.shelves_mut()
+            .into_iter()
+            .flat_map(|shelf| shelf.items.iter_mut())
+            .filter_map(|item| match item {
+                SectionItem::Album(row) => Some(RowMut::Album(row)),
+                SectionItem::Artist(row) => Some(RowMut::Artist(row)),
+                SectionItem::Track(_) | SectionItem::Genre(_) => None,
             })
-            .cloned()
-            .collect();
-        let kept_albums = filtered
-            .iter()
-            .filter(|item| album_key(item).is_some())
-            .count();
-        if kept_albums >= albums.min(3) {
-            section.items = filtered;
+            .collect()
+    }
+
+    /// Whether it has no rows.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Picks { picks } => picks.items.is_empty(),
+            Self::Weekly { weekly } => weekly.tracks.is_empty(),
+            _ => self.shelves().iter().all(|shelf| shelf.items.is_empty()),
         }
-        for item in &section.items {
-            if let Some(Some(mbid)) = album_key(item) {
-                seen.insert(mbid);
+    }
+
+    /// Queue the covers and artist images it shows.
+    pub fn warm(&self, targets: &mut WarmTargets) {
+        match self {
+            Self::Picks { picks } => {
+                for pick in &picks.items {
+                    targets.cover(pick.album.musicbrainz_id.as_deref());
+                }
+            }
+            Self::Weekly { weekly } => {
+                for track in &weekly.tracks {
+                    targets.cover(track.release_group_mbid.as_deref());
+                }
+            }
+            _ => {
+                for shelf in self.shelves() {
+                    add_section(targets, shelf);
+                }
             }
         }
+    }
+}
+
+/// One shelf as section content.
+pub fn one(shelf: Option<ChartSection>) -> Option<SectionContent> {
+    shelf.map(|shelf| SectionContent::Shelf { shelf })
+}
+
+/// A section of `page`, in the zone the list gives it. `None` when it
+/// has no rows.
+pub fn section(page: Page, key: SectionKey, content: SectionContent) -> Option<PageSection> {
+    if content.is_empty() {
+        return None;
+    }
+    let def = sections::find(page, key)?;
+    Some(PageSection {
+        key,
+        zone: def.zone,
+        content,
+    })
+}
+
+/// The shelf of section `key`, when it is a one-shelf section.
+pub fn shelf_of(sections: &[PageSection], key: SectionKey) -> Option<&ChartSection> {
+    sections.iter().find_map(|section| match &section.content {
+        SectionContent::Shelf { shelf } if section.key == key => Some(shelf),
+        _ => None,
+    })
+}
+
+/// Prefer variety across album shelves: in rank order, drop albums a
+/// section of a lower rank (or Top Picks) already shows, unless that
+/// would leave a shelf with fewer than three of its albums, in which case
+/// the shelf stays as it was.
+pub fn dedupe_albums(page: &mut [PageSection]) {
+    let mut ranked: Vec<(u8, usize)> = page
+        .iter()
+        .enumerate()
+        .filter_map(
+            |(at, section)| match sections::find(Page::Discover, section.key)?.dedupe {
+                Dedupe::Albums(rank) => Some((rank, at)),
+                Dedupe::None | Dedupe::Artists => None,
+            },
+        )
+        .collect();
+    ranked.sort_unstable();
+    let mut seen: HashSet<String> = HashSet::new();
+    for (_, at) in ranked {
+        let content = &mut page[at].content;
+        if let SectionContent::Picks { picks } = content {
+            seen.extend(
+                picks
+                    .items
+                    .iter()
+                    .filter_map(|pick| pick.album.musicbrainz_id.as_deref())
+                    .map(str::to_lowercase),
+            );
+            continue;
+        }
+        for shelf in content.shelves_mut() {
+            dedupe(shelf, &mut seen);
+        }
+    }
+}
+
+fn dedupe(section: &mut ChartSection, seen: &mut HashSet<String>) {
+    let album_key = |item: &SectionItem| match item {
+        SectionItem::Album(album) => Some(album.musicbrainz_id.as_deref().map(str::to_lowercase)),
+        _ => None,
     };
-    for section in [
-        page.fresh_releases.as_mut(),
-        page.new_from_followed.as_mut(),
-        page.missing_essentials.as_mut(),
-        page.listeners_like_you.as_mut(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        dedupe(section);
+    let albums = section
+        .items
+        .iter()
+        .filter(|item| album_key(item).is_some())
+        .count();
+    let filtered: Vec<SectionItem> = section
+        .items
+        .iter()
+        .filter(|item| match album_key(item) {
+            Some(Some(mbid)) => !seen.contains(&mbid),
+            _ => true,
+        })
+        .cloned()
+        .collect();
+    let kept_albums = filtered
+        .iter()
+        .filter(|item| album_key(item).is_some())
+        .count();
+    if kept_albums >= albums.min(3) {
+        section.items = filtered;
     }
-    for section in page
-        .daily_mixes
-        .iter_mut()
-        .chain(page.radio_sections.iter_mut())
-    {
-        dedupe(section);
-    }
-    for section in [
-        page.globally_trending.as_mut(),
-        page.lastfm_weekly_album_chart.as_mut(),
-        page.lastfm_recent_scrobbles.as_mut(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        dedupe(section);
+    for item in &section.items {
+        if let Some(Some(mbid)) = album_key(item) {
+            seen.insert(mbid);
+        }
     }
 }
 
@@ -415,20 +403,35 @@ mod tests {
             .collect()
     }
 
+    fn shelf(key: SectionKey, mbids: &[&str]) -> PageSection {
+        PageSection {
+            key,
+            zone: sections::SectionZone::NewAndFresh,
+            content: SectionContent::Shelf {
+                shelf: albums(mbids),
+            },
+        }
+    }
+
+    fn shelf_ids(page: &[PageSection], key: SectionKey) -> Vec<String> {
+        shelf_of(page, key).map(ids).unwrap_or_default()
+    }
+
     #[test]
     fn dedupe_drops_repeats_but_keeps_a_shelf_that_would_shrink_below_three() {
-        let mut page = crate::reads::discover::page::empty_page();
-        page.fresh_releases = Some(albums(&["a", "b", "c", "d"]));
-        page.missing_essentials = Some(albums(&["a", "e", "f", "g"]));
-        page.globally_trending = Some(albums(&["a", "b", "h"]));
+        let mut page = vec![
+            shelf(SectionKey::LastfmWeeklyAlbumChart, &["a", "b", "h"]),
+            shelf(SectionKey::MissingEssentials, &["a", "e", "f", "g"]),
+            shelf(SectionKey::FreshReleases, &["a", "b", "c", "d"]),
+        ];
         dedupe_albums(&mut page);
-        let missing = page
-            .missing_essentials
-            .as_ref()
-            .map(ids)
-            .unwrap_or_default();
-        assert_eq!(missing, ["e", "f", "g"]);
-        let trending = page.globally_trending.as_ref().map(ids).unwrap_or_default();
-        assert_eq!(trending, ["a", "b", "h"]);
+        assert_eq!(
+            shelf_ids(&page, SectionKey::MissingEssentials),
+            ["e", "f", "g"]
+        );
+        assert_eq!(
+            shelf_ids(&page, SectionKey::LastfmWeeklyAlbumChart),
+            ["a", "b", "h"]
+        );
     }
 }

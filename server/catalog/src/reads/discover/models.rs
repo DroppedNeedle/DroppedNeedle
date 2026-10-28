@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+pub use super::sections::{SectionKey, SectionZone};
 pub use crate::reads::catalog::models::{AlbumRef, ArtistRef};
 pub use droppedneedle_kernel::runtime_config::sections::ListenSource;
 
@@ -313,40 +314,12 @@ pub struct DiscoverPreview {
     pub items: Vec<ArtistRef>,
 }
 
-/// Home shelves. Every shelf is optional: absence means the shelf has no
-/// data, never a failure.
+/// Home: its sections, in page order, plus the page-level fields. A
+/// section with no rows is left out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct HomeResponse {
-    /// Recently added library albums.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recently_added: Option<ChartSection>,
-    /// Library artists shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub library_artists: Option<ChartSection>,
-    /// Library albums shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub library_albums: Option<ChartSection>,
-    /// Trending artists teaser (full pages live on the charts routes).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trending_artists: Option<ChartSection>,
-    /// Popular albums teaser.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub popular_albums: Option<ChartSection>,
-    /// Recently played tracks.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recently_played: Option<ChartSection>,
-    /// Full genre list.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub genre_list: Option<ChartSection>,
-    /// Favorite artists.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub favorite_artists: Option<ChartSection>,
-    /// The user's top albums teaser.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub your_top_albums: Option<ChartSection>,
-    /// Weekly exploration playlist.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub weekly_exploration: Option<WeeklyExploration>,
+    /// The sections, in page order.
+    pub sections: Vec<PageSection>,
     /// Connect-a-service cards.
     pub service_prompts: Vec<ServicePrompt>,
     /// Integration availability behind the shelves.
@@ -356,7 +329,8 @@ pub struct HomeResponse {
     pub genre_artwork: HashMap<String, GenreArtwork>,
     /// Genre artwork schema version.
     pub genre_artwork_schema_version: String,
-    /// Discover teaser shelf.
+    /// Discover teaser: the first "because you listen to" shelf of the
+    /// user's last discover page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discover_preview: Option<DiscoverPreview>,
     /// True while a fuller build runs in the background (the UI polls).
@@ -533,44 +507,6 @@ pub struct TopPicksSection {
     pub personalizing: bool,
 }
 
-/// A group of shelves on the discover page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DiscoverZone {
-    /// Top Picks.
-    Picks,
-    /// Listeners like you.
-    Lounge,
-    /// The weekly exploration playlist.
-    Weekly,
-    /// Daily Mixes and radio.
-    Made,
-    /// The "because you listen to" shelves.
-    Because,
-    /// Fresh releases and new from followed artists.
-    Fresh,
-    /// Shelves from the user's own library.
-    Library,
-    /// Genre shelves.
-    Genres,
-    /// Trending charts.
-    Trending,
-}
-
-/// Where one discover zone stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ZoneStatus {
-    /// No page has been built yet.
-    Loading,
-    /// A rebuild is running.
-    Updating,
-    /// The zone has rows.
-    Ready,
-    /// The zone has no rows.
-    Empty,
-}
-
 /// How a listening service fared in a discover build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -581,38 +517,56 @@ pub enum ServiceState {
     Unavailable,
 }
 
-/// Discover shelves. Every shelf is optional: absence means no data, never
-/// a failure.
+/// One section of a page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PageSection {
+    /// Which section it is.
+    pub key: SectionKey,
+    /// The zone it is shown in.
+    pub zone: SectionZone,
+    /// Its rows.
+    pub content: SectionContent,
+}
+
+/// A section's rows, tagged by `shape`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "shape", rename_all = "snake_case")]
+pub enum SectionContent {
+    /// One shelf.
+    Shelf {
+        /// The shelf.
+        shelf: ChartSection,
+    },
+    /// Several shelves (Daily Mixes, radio).
+    Shelves {
+        /// The shelves.
+        shelves: Vec<ChartSection>,
+    },
+    /// The "because you listen to" shelves.
+    Because {
+        /// One per seed artist.
+        entries: Vec<BecauseYouListenTo>,
+    },
+    /// Top Picks.
+    Picks {
+        /// The picks.
+        picks: TopPicksSection,
+    },
+    /// The weekly exploration playlist.
+    Weekly {
+        /// The playlist.
+        weekly: WeeklyExploration,
+    },
+}
+
+/// Discover: its sections, in page order, plus the page-level fields. A
+/// section with no rows is left out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverResponse {
-    /// Seed-driven similar-album shelves.
-    pub because_you_listen_to: Vec<BecauseYouListenTo>,
+    /// The sections, in page order.
+    pub sections: Vec<PageSection>,
     /// Whether the queue deck is enabled for the user.
     pub discover_queue_enabled: bool,
-    /// Fresh releases shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fresh_releases: Option<ChartSection>,
-    /// Missing essentials shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub missing_essentials: Option<ChartSection>,
-    /// Rediscover shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rediscover: Option<ChartSection>,
-    /// Artists-you-might-like shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artists_you_might_like: Option<ChartSection>,
-    /// Popular-in-your-genres shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub popular_in_your_genres: Option<ChartSection>,
-    /// Genre list shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub genre_list: Option<ChartSection>,
-    /// Globally trending shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub globally_trending: Option<ChartSection>,
-    /// Weekly exploration playlist.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub weekly_exploration: Option<WeeklyExploration>,
     /// Integration availability behind the shelves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub integration_status: Option<IntegrationStatus>,
@@ -622,43 +576,12 @@ pub struct DiscoverResponse {
     pub genre_artwork: HashMap<String, GenreArtwork>,
     /// Genre artwork schema version.
     pub genre_artwork_schema_version: String,
-    /// Last.fm weekly artist chart.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lastfm_weekly_artist_chart: Option<ChartSection>,
-    /// Last.fm weekly album chart.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lastfm_weekly_album_chart: Option<ChartSection>,
-    /// Last.fm recent scrobbles.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lastfm_recent_scrobbles: Option<ChartSection>,
-    /// Daily mix shelves.
-    pub daily_mixes: Vec<ChartSection>,
-    /// Radio shelves.
-    pub radio_sections: Vec<ChartSection>,
-    /// Personalized top picks.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_picks: Option<TopPicksSection>,
-    /// Listeners-like-you shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub listeners_like_you: Option<ChartSection>,
-    /// Anniversaries shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub anniversaries: Option<ChartSection>,
-    /// New-from-followed shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub new_from_followed: Option<ChartSection>,
-    /// Unexplored-genres shelf.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unexplored_genres: Option<ChartSection>,
     /// Build timestamp (unix seconds), when built.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generated_at: Option<i64>,
     /// Refresh-start timestamp (unix seconds), when refreshing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_started_at: Option<i64>,
-    /// Status per page zone: `loading` before the first page, `updating`
-    /// while a rebuild runs, else `ready` or `empty`.
-    pub section_status: HashMap<DiscoverZone, ZoneStatus>,
     /// True while a fuller build runs in the background (the UI polls).
     pub refreshing: bool,
     /// Listening services that failed during the build, when any did.

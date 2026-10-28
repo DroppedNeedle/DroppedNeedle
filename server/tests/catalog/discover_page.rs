@@ -135,6 +135,15 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
     )
 }
 
+/// The content of section `key` of a page.
+fn content<'a>(page: &'a Value, key: &str) -> &'a Value {
+    page["sections"]
+        .as_array()
+        .and_then(|sections| sections.iter().find(|section| section["key"] == key))
+        .map(|section| &section["content"])
+        .unwrap_or(&Value::Null)
+}
+
 #[tokio::test]
 async fn page_builds_in_the_background_is_saved_and_records_activity() {
     let dir = crate::common::ScratchDir::new("discover-page");
@@ -155,7 +164,7 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     let (status, first) = call(&app, "GET", "/api/v3/discover", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(first["refreshing"], true);
-    assert_eq!(first["section_status"]["picks"], "loading");
+    assert_eq!(first["sections"], json!([]));
 
     let saved = || async {
         sqlx::query_scalar::<_, i64>(
@@ -172,29 +181,37 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     .await;
     let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
     assert_eq!(
-        page["because_you_listen_to"][0]["section"]["title"],
+        content(&page, "because_you_listen_to")["entries"][0]["section"]["title"],
         "Because You Listen To Seed"
     );
     assert_eq!(
-        page["globally_trending"]["items"][0]["name"],
+        content(&page, "globally_trending")["shelf"]["items"][0]["name"],
         "Everyone's Favourite"
     );
     assert_eq!(
-        page["fresh_releases"]["items"].as_array().map(Vec::len),
+        content(&page, "fresh_releases")["shelf"]["items"]
+            .as_array()
+            .map(Vec::len),
         Some(1)
     );
-    let picks = page["top_picks"]["items"].as_array().expect("top picks");
+    let picks = content(&page, "top_picks")["picks"]["items"]
+        .as_array()
+        .expect("top picks")
+        .clone();
     assert!(!picks.is_empty());
     assert_eq!(picks[0]["reasons"][0], "Because you listen to Seed");
-    assert_eq!(page["genre_list"]["items"][0]["name"], "shoegaze");
+    assert_eq!(
+        content(&page, "genre_list")["shelf"]["items"][0]["name"],
+        "shoegaze"
+    );
 
     // A restart serves the saved page straight away, built and ready.
     let restarted = page_app(&rig, &dir);
     let (_, again) = call(&restarted, "GET", "/api/v3/discover", None).await;
     assert_eq!(again["refreshing"], false, "the build finished");
-    assert_eq!(again["section_status"]["picks"], "ready");
     assert_eq!(
-        again["because_you_listen_to"][0]["seed_artist"], "Seed",
+        content(&again, "because_you_listen_to")["entries"][0]["seed_artist"],
+        "Seed",
         "served from the snapshot"
     );
 

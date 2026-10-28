@@ -15,7 +15,10 @@ use droppedneedle_catalog::reads::discover::home::{HomeInputs, LiveHome};
 use droppedneedle_catalog::reads::discover::listening::{
     ArtistRow, ListenedAlbum, ListeningData, LovedTrack, TagAlbum, UserMusic,
 };
-use droppedneedle_catalog::reads::discover::models::{ArtworkKind, PromptService, SectionItem};
+use droppedneedle_catalog::reads::discover::models::{
+    ArtworkKind, PromptService, SectionItem, SectionKey,
+};
+use droppedneedle_catalog::reads::discover::page::shelves::shelf_of;
 use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_kernel::db::{DbError, Lane};
 
@@ -144,10 +147,8 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     // First visit: library shelves at once, the rest building.
     let first = home.page("user-1").await;
     assert!(first.refreshing);
-    let Some(SectionItem::Album(recent)) = first
-        .recently_added
-        .as_ref()
-        .and_then(|shelf| shelf.items.first())
+    let Some(SectionItem::Album(recent)) =
+        shelf_of(&first.sections, SectionKey::RecentlyAdded).and_then(|shelf| shelf.items.first())
     else {
         panic!("recently added holds the album");
     };
@@ -156,8 +157,8 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
         recent.cover_url.as_deref(),
         Some("/api/v3/library/albums/al1/artwork?size=500&v=3")
     );
-    assert!(first.recently_played.is_some());
-    assert!(first.trending_artists.is_none());
+    assert!(shelf_of(&first.sections, SectionKey::RecentlyPlayed).is_some());
+    assert!(shelf_of(&first.sections, SectionKey::TrendingArtists).is_none());
 
     // Each check hands the runtime to the build until it is kept.
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -167,12 +168,10 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
         tokio::task::yield_now().await;
         page = home.page("user-1").await;
     }
-    assert!(page.trending_artists.is_some());
-    assert!(page.favorite_artists.is_some());
-    let Some(SectionItem::Album(popular)) = page
-        .popular_albums
-        .as_ref()
-        .and_then(|shelf| shelf.items.first())
+    assert!(shelf_of(&page.sections, SectionKey::TrendingArtists).is_some());
+    assert!(shelf_of(&page.sections, SectionKey::FavoriteArtists).is_some());
+    let Some(SectionItem::Album(popular)) =
+        shelf_of(&page.sections, SectionKey::PopularAlbums).and_then(|shelf| shelf.items.first())
     else {
         panic!("popular albums built");
     };
@@ -191,8 +190,8 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     // A restart serves the built shelves at once, without a build.
     let restarted = home_over().page("user-1").await;
     assert!(!restarted.refreshing, "the saved shelves are fresh");
-    assert!(restarted.trending_artists.is_some());
-    assert!(restarted.recently_played.is_some());
+    assert!(shelf_of(&restarted.sections, SectionKey::TrendingArtists).is_some());
+    assert!(shelf_of(&restarted.sections, SectionKey::RecentlyPlayed).is_some());
 
     // The genre page: owned and popular rows side by side.
     let genre = GenrePages::new(pool.clone(), listening, art.clone(), None)

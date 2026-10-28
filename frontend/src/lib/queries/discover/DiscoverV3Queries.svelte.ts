@@ -5,7 +5,6 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { discoverHasContent } from '$lib/utils/discoverContent';
 import { DiscoverV3Api } from './DiscoverV3Api';
 import {
 	DiscoverQueryKeyFactory,
@@ -31,21 +30,18 @@ async function fetchDiscoverHome(
 		signal,
 		timeoutMs: 15_000
 	});
-	if (!discoverHasContent(fresh) && fresh.refreshing) {
+	if (fresh.sections.length === 0 && fresh.refreshing) {
 		// Keep the browser-only QueryClient out of the server test module graph.
 		const { queryClient } = await import('$lib/queries/QueryClient');
 		const prev = queryClient.getQueryData<DiscoverResponseV3>(
 			DiscoverQueryKeyFactory.v3.home(userId)
 		);
-		if (prev && discoverHasContent(prev)) {
+		if (prev && prev.sections.length > 0) {
 			return {
 				...prev,
 				refreshing: true,
-				refresh_started_at: fresh.refresh_started_at,
-				section_status: Object.fromEntries(
-					Object.keys(prev.section_status ?? {}).map((section) => [section, 'updating'])
-				)
-			} as DiscoverResponseV3;
+				refresh_started_at: fresh.refresh_started_at
+			};
 		}
 	}
 	return fresh;

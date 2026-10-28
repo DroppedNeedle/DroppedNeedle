@@ -26,6 +26,7 @@ pub mod previews;
 pub mod queue;
 pub mod radio;
 pub mod scheduler;
+pub mod sections;
 pub mod services;
 pub mod wiring;
 pub mod youtube;

@@ -17,8 +17,11 @@
 	import SectionDivider from '$lib/components/SectionDivider.svelte';
 	import type {
 		ChartSection as HomeSectionType,
+		SectionKey,
+		SectionZone,
 		WeeklyExploration as WeeklyExplorationSectionType
 	} from '$lib/queries/discover/types';
+	import { shelfOf, zoneSections } from '$lib/queries/discover/sections';
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -42,106 +45,49 @@
 	const isUpdating = $derived(homeQuery.isRefetching);
 	const lastUpdated = $derived(homeQuery.dataUpdatedAt ? new Date(homeQuery.dataUpdatedAt) : null);
 
-	type PreGenreBlock =
+	type Block =
 		| {
-				key: string;
+				key: SectionKey;
 				kind: 'section';
 				section: HomeSectionType;
 				link?: string;
 				showPreview?: boolean;
 		  }
-		| { key: 'weekly_exploration'; kind: 'weekly'; section: WeeklyExplorationSectionType };
+		| { key: SectionKey; kind: 'weekly'; section: WeeklyExplorationSectionType };
 
-	function getPreGenreBlocks(): PreGenreBlock[] {
-		if (!homeData) return [];
-		const blocks: PreGenreBlock[] = [];
-		if (homeData.popular_albums && homeData.popular_albums.items.length > 0) {
-			blocks.push({
-				key: 'popular_albums',
-				kind: 'section',
-				section: homeData.popular_albums,
-				link: withBasePath('/popular')
-			});
-		}
-		if (homeData.trending_artists && homeData.trending_artists.items.length > 0) {
-			blocks.push({
-				key: 'trending_artists',
-				kind: 'section',
-				section: homeData.trending_artists,
-				link: withBasePath('/trending')
-			});
-		}
-		if (homeData.weekly_exploration && homeData.weekly_exploration.tracks.length > 0) {
-			blocks.push({
-				key: 'weekly_exploration',
-				kind: 'weekly',
-				section: homeData.weekly_exploration
-			});
-		}
-		if (homeData.your_top_albums && homeData.your_top_albums.items.length > 0) {
-			blocks.push({
-				key: 'your_top_albums',
-				kind: 'section',
-				section: homeData.your_top_albums,
-				link: withBasePath('/your-top'),
-				showPreview: false
-			});
-		}
-		if (homeData.recently_played && homeData.recently_played.items.length > 0) {
-			blocks.push({
-				key: 'recently_played',
-				kind: 'section',
-				section: homeData.recently_played
-			});
-		}
-		if (homeData.recently_added && homeData.recently_added.items.length > 0) {
-			blocks.push({
-				key: 'recently_added',
-				kind: 'section',
-				section: homeData.recently_added,
-				link: withBasePath('/library/albums'),
-				showPreview: false
-			});
-		}
-		return blocks;
+	// where a shelf's header links to, and which shelves skip the hover preview
+	const SHELF_LINKS: Partial<Record<SectionKey, { link: string; showPreview?: boolean }>> = {
+		popular_albums: { link: '/popular' },
+		trending_artists: { link: '/trending' },
+		your_top_albums: { link: '/your-top', showPreview: false },
+		recently_added: { link: '/library/albums', showPreview: false },
+		library_artists: { link: '/library/artists' },
+		library_albums: { link: '/library/albums' }
+	};
+
+	function blocks(zone: SectionZone): Block[] {
+		return zoneSections(homeData?.sections, zone).flatMap((entry): Block[] => {
+			const { content, key } = entry;
+			if (content.shape === 'weekly') return [{ key, kind: 'weekly', section: content.weekly }];
+			if (content.shape !== 'shelf') return [];
+			const shelf = SHELF_LINKS[key];
+			return [
+				{
+					key,
+					kind: 'section',
+					section: content.shelf,
+					link: shelf ? withBasePath(shelf.link) : undefined,
+					showPreview: shelf?.showPreview
+				}
+			];
+		});
 	}
 
-	function getPostGenreSections(): { key: string; section: HomeSectionType; link?: string }[] {
-		if (!homeData) return [];
-		const sections: { key: string; section: HomeSectionType; link?: string }[] = [];
-		if (homeData.favorite_artists && homeData.favorite_artists.items.length > 0) {
-			sections.push({
-				key: 'favorite_artists',
-				section: homeData.favorite_artists
-			});
-		}
-		if (homeData.library_artists && homeData.library_artists.items.length > 0) {
-			sections.push({
-				key: 'library_artists',
-				section: homeData.library_artists,
-				link: withBasePath('/library/artists')
-			});
-		}
-		if (homeData.library_albums && homeData.library_albums.items.length > 0) {
-			sections.push({
-				key: 'library_albums',
-				section: homeData.library_albums,
-				link: withBasePath('/library/albums')
-			});
-		}
-		return sections;
-	}
-	let preGenreBlocks = $derived(homeData ? getPreGenreBlocks() : []);
-	let postGenreSections = $derived(homeData ? getPostGenreSections() : []);
-
-	const whatsHotKeys = new Set(['popular_albums', 'trending_artists']);
-	let whatsHotBlocks = $derived(preGenreBlocks.filter((b) => whatsHotKeys.has(b.key)));
-	let forYouBlocks = $derived(preGenreBlocks.filter((b) => !whatsHotKeys.has(b.key)));
-	let hasContent = $derived(
-		preGenreBlocks.length > 0 ||
-			postGenreSections.length > 0 ||
-			(homeData?.genre_list?.items?.length ?? 0) > 0
-	);
+	let whatsHotBlocks = $derived(blocks('whats_hot'));
+	let forYouBlocks = $derived(blocks('for_you'));
+	let genreList = $derived(shelfOf(homeData?.sections, 'genre_list'));
+	let postGenreSections = $derived(blocks('your_library'));
+	let hasContent = $derived((homeData?.sections.length ?? 0) > 0);
 	let servicePrompts = $derived(homeData?.service_prompts || []);
 	let downloadClientConfigured = $derived(homeData?.integration_status?.download_client ?? true);
 	let downloadClientPrompt = $derived(servicePrompts.find((p) => p.service === 'download-client'));
@@ -309,12 +255,12 @@
 							{/each}
 						</div>
 					</section>
-				{:else if homeData?.genre_list && homeData.genre_list.items.length > 0}
+				{:else if genreList}
 					<div class="mt-10 mb-10">
 						<GenreGrid
-							title={homeData.genre_list.title}
-							genres={genreRows(homeData.genre_list)}
-							genreArtwork={homeData.genre_artwork}
+							title={genreList.title}
+							genres={genreRows(genreList)}
+							genreArtwork={homeData?.genre_artwork}
 						/>
 					</div>
 				{/if}
@@ -332,10 +278,12 @@
 							{#snippet icon()}<Library class="w-3.5 h-3.5" />{/snippet}
 						</SectionDivider>
 						<div class="discover-section-enter space-y-2">
-							{#each postGenreSections as { key, section, link } (key)}
-								<div>
-									<HomeSection {section} headerLink={link} />
-								</div>
+							{#each postGenreSections as block (block.key)}
+								{#if block.kind === 'section'}
+									<div>
+										<HomeSection section={block.section} headerLink={block.link} />
+									</div>
+								{/if}
 							{/each}
 						</div>
 					</div>

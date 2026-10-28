@@ -41917,69 +41917,19 @@
       },
       "DiscoverResponse": {
         "type": "object",
-        "description": "Discover shelves. Every shelf is optional: absence means no data, never\na failure.",
+        "description": "Discover: its sections, in page order, plus the page-level fields. A\nsection with no rows is left out.",
         "required": [
-          "because_you_listen_to",
+          "sections",
           "discover_queue_enabled",
           "service_prompts",
           "genre_artwork",
           "genre_artwork_schema_version",
-          "daily_mixes",
-          "radio_sections",
-          "section_status",
           "refreshing"
         ],
         "properties": {
-          "anniversaries": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Anniversaries shelf."
-              }
-            ]
-          },
-          "artists_you_might_like": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Artists-you-might-like shelf."
-              }
-            ]
-          },
-          "because_you_listen_to": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BecauseYouListenTo"
-            },
-            "description": "Seed-driven similar-album shelves."
-          },
-          "daily_mixes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ChartSection"
-            },
-            "description": "Daily mix shelves."
-          },
           "discover_queue_enabled": {
             "type": "boolean",
             "description": "Whether the queue deck is enabled for the user."
-          },
-          "fresh_releases": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Fresh releases shelf."
-              }
-            ]
           },
           "generated_at": {
             "type": [
@@ -42003,28 +41953,6 @@
             "type": "string",
             "description": "Genre artwork schema version."
           },
-          "genre_list": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Genre list shelf."
-              }
-            ]
-          },
-          "globally_trending": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Globally trending shelf."
-              }
-            ]
-          },
           "integration_status": {
             "oneOf": [
               {
@@ -42033,101 +41961,6 @@
               {
                 "$ref": "#/components/schemas/IntegrationStatus",
                 "description": "Integration availability behind the shelves."
-              }
-            ]
-          },
-          "lastfm_recent_scrobbles": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Last.fm recent scrobbles."
-              }
-            ]
-          },
-          "lastfm_weekly_album_chart": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Last.fm weekly album chart."
-              }
-            ]
-          },
-          "lastfm_weekly_artist_chart": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Last.fm weekly artist chart."
-              }
-            ]
-          },
-          "listeners_like_you": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Listeners-like-you shelf."
-              }
-            ]
-          },
-          "missing_essentials": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Missing essentials shelf."
-              }
-            ]
-          },
-          "new_from_followed": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "New-from-followed shelf."
-              }
-            ]
-          },
-          "popular_in_your_genres": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Popular-in-your-genres shelf."
-              }
-            ]
-          },
-          "radio_sections": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ChartSection"
-            },
-            "description": "Radio shelves."
-          },
-          "rediscover": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Rediscover shelf."
               }
             ]
           },
@@ -42143,27 +41976,12 @@
             "type": "boolean",
             "description": "True while a fuller build runs in the background (the UI polls)."
           },
-          "section_status": {
-            "type": "object",
-            "description": "Status per page zone: `loading` before the first page, `updating`\nwhile a rebuild runs, else `ready` or `empty`.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/ZoneStatus"
+          "sections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageSection"
             },
-            "propertyNames": {
-              "type": "string",
-              "description": "A group of shelves on the discover page.",
-              "enum": [
-                "picks",
-                "lounge",
-                "weekly",
-                "made",
-                "because",
-                "fresh",
-                "library",
-                "genres",
-                "trending"
-              ]
-            }
+            "description": "The sections, in page order."
           },
           "service_prompts": {
             "type": "array",
@@ -42189,39 +42007,6 @@
                 "lastfm"
               ]
             }
-          },
-          "top_picks": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/TopPicksSection",
-                "description": "Personalized top picks."
-              }
-            ]
-          },
-          "unexplored_genres": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Unexplored-genres shelf."
-              }
-            ]
-          },
-          "weekly_exploration": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/WeeklyExploration",
-                "description": "Weekly exploration playlist."
-              }
-            ]
           }
         }
       },
@@ -47025,8 +46810,9 @@
       },
       "HomeResponse": {
         "type": "object",
-        "description": "Home shelves. Every shelf is optional: absence means the shelf has no\ndata, never a failure.",
+        "description": "Home: its sections, in page order, plus the page-level fields. A\nsection with no rows is left out.",
         "required": [
+          "sections",
           "service_prompts",
           "genre_artwork",
           "genre_artwork_schema_version",
@@ -47040,18 +46826,7 @@
               },
               {
                 "$ref": "#/components/schemas/DiscoverPreview",
-                "description": "Discover teaser shelf."
-              }
-            ]
-          },
-          "favorite_artists": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Favorite artists."
+                "description": "Discover teaser: the first \"because you listen to\" shelf of the\nuser's last discover page."
               }
             ]
           },
@@ -47069,17 +46844,6 @@
             "type": "string",
             "description": "Genre artwork schema version."
           },
-          "genre_list": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Full genre list."
-              }
-            ]
-          },
           "integration_status": {
             "oneOf": [
               {
@@ -47091,64 +46855,16 @@
               }
             ]
           },
-          "library_albums": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Library albums shelf."
-              }
-            ]
-          },
-          "library_artists": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Library artists shelf."
-              }
-            ]
-          },
-          "popular_albums": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Popular albums teaser."
-              }
-            ]
-          },
-          "recently_added": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Recently added library albums."
-              }
-            ]
-          },
-          "recently_played": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Recently played tracks."
-              }
-            ]
-          },
           "refreshing": {
             "type": "boolean",
             "description": "True while a fuller build runs in the background (the UI polls)."
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageSection"
+            },
+            "description": "The sections, in page order."
           },
           "service_prompts": {
             "type": "array",
@@ -47156,39 +46872,6 @@
               "$ref": "#/components/schemas/ServicePrompt"
             },
             "description": "Connect-a-service cards."
-          },
-          "trending_artists": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "Trending artists teaser (full pages live on the charts routes)."
-              }
-            ]
-          },
-          "weekly_exploration": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/WeeklyExploration",
-                "description": "Weekly exploration playlist."
-              }
-            ]
-          },
-          "your_top_albums": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ChartSection",
-                "description": "The user's top albums teaser."
-              }
-            ]
           }
         }
       },
@@ -54499,6 +54182,29 @@
               }
             ],
             "default": "remove_after_confirmed_move"
+          }
+        }
+      },
+      "PageSection": {
+        "type": "object",
+        "description": "One section of a page.",
+        "required": [
+          "key",
+          "zone",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/SectionContent",
+            "description": "Its rows."
+          },
+          "key": {
+            "$ref": "#/components/schemas/SectionKey",
+            "description": "Which section it is."
+          },
+          "zone": {
+            "$ref": "#/components/schemas/SectionZone",
+            "description": "The zone it is shown in."
           }
         }
       },
@@ -62666,6 +62372,117 @@
           }
         }
       },
+      "SectionContent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "One shelf.",
+            "required": [
+              "shelf",
+              "shape"
+            ],
+            "properties": {
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "shelf"
+                ]
+              },
+              "shelf": {
+                "$ref": "#/components/schemas/ChartSection",
+                "description": "The shelf."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Several shelves (Daily Mixes, radio).",
+            "required": [
+              "shelves",
+              "shape"
+            ],
+            "properties": {
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "shelves"
+                ]
+              },
+              "shelves": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ChartSection"
+                },
+                "description": "The shelves."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The \"because you listen to\" shelves.",
+            "required": [
+              "entries",
+              "shape"
+            ],
+            "properties": {
+              "entries": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BecauseYouListenTo"
+                },
+                "description": "One per seed artist."
+              },
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "because"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Top Picks.",
+            "required": [
+              "picks",
+              "shape"
+            ],
+            "properties": {
+              "picks": {
+                "$ref": "#/components/schemas/TopPicksSection",
+                "description": "The picks."
+              },
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "picks"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The weekly exploration playlist.",
+            "required": [
+              "weekly",
+              "shape"
+            ],
+            "properties": {
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "weekly"
+                ]
+              },
+              "weekly": {
+                "$ref": "#/components/schemas/WeeklyExploration",
+                "description": "The playlist."
+              }
+            }
+          }
+        ],
+        "description": "A section's rows, tagged by `shape`."
+      },
       "SectionItem": {
         "oneOf": [
           {
@@ -62762,6 +62579,41 @@
           }
         ],
         "description": "One row inside a section, tagged by `kind`."
+      },
+      "SectionKey": {
+        "type": "string",
+        "description": "One section of the home or discover page.",
+        "enum": [
+          "popular_albums",
+          "trending_artists",
+          "weekly_exploration",
+          "your_top_albums",
+          "recently_played",
+          "recently_added",
+          "genre_list",
+          "favorite_artists",
+          "library_artists",
+          "library_albums",
+          "discover_queue",
+          "top_picks",
+          "listeners_like_you",
+          "playlist_discovery",
+          "daily_mixes",
+          "radio_sections",
+          "because_you_listen_to",
+          "artists_you_might_like",
+          "popular_in_your_genres",
+          "fresh_releases",
+          "new_from_followed",
+          "missing_essentials",
+          "rediscover",
+          "anniversaries",
+          "lastfm_recent_scrobbles",
+          "unexplored_genres",
+          "globally_trending",
+          "lastfm_weekly_artist_chart",
+          "lastfm_weekly_album_chart"
+        ]
       },
       "SectionKind": {
         "type": "string",
@@ -62876,6 +62728,22 @@
             "description": "Toggles to apply."
           }
         }
+      },
+      "SectionZone": {
+        "type": "string",
+        "description": "A group of sections on a page.",
+        "enum": [
+          "whats_hot",
+          "for_you",
+          "your_library",
+          "browse_genres",
+          "essentials",
+          "made_for_you",
+          "because_you_listened",
+          "new_and_fresh",
+          "from_your_library",
+          "trending_now"
+        ]
       },
       "SecuritySettings": {
         "type": "object",
@@ -67549,16 +67417,6 @@
             "description": "The saved (or already saved) track link."
           }
         }
-      },
-      "ZoneStatus": {
-        "type": "string",
-        "description": "Where one discover zone stands.",
-        "enum": [
-          "loading",
-          "updating",
-          "ready",
-          "empty"
-        ]
       }
     },
     "securitySchemes": {

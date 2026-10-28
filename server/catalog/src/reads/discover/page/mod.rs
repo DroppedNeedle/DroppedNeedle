@@ -1,6 +1,11 @@
 //! The discover page: shelves built in the background, served from the
 //! last good build, kept fresh while people use it.
 //!
+//! A build makes the sections the user has switched on; a section
+//! switched off costs no reads. A visit leaves out what is switched off
+//! now, and a page built while a section the user has since switched on
+//! was off is rebuilt behind the visit.
+//!
 //! A request never waits for a build. It gets the user's saved page from
 //! the page cache, however old, with ownership marked from the library as
 //! it is now. When the page is missing or more than five minutes old, a
@@ -23,17 +28,20 @@ pub mod shelves;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::reads::discover::cache::{PageKind, Timing, UserPageCache, Variant};
 use crate::reads::discover::content::IntegrationSettings;
 use crate::reads::discover::listening::{Ask, ListeningData};
 use crate::reads::discover::models::{
-    ChartSection, DiscoverActivityResponse, DiscoverResponse, IntegrationStatus, ListenSource,
-    SectionItem, ServiceState,
+    ChartSection, DiscoverActivityResponse, DiscoverPreview, DiscoverResponse, IntegrationStatus,
+    ListenSource, SectionContent, SectionItem, SectionKey, ServiceState,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 use crate::reads::discover::queue::QueueSettings;
 use crate::reads::discover::queue::store::QueueDb;
 use crate::reads::discover::scheduler::{ArtistDetail, Feature, Warm, WarmScheduler};
+use crate::reads::discover::sections::{self, Page};
 use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
 use build::{Builder, PageSettings, mark_ownership};
 use droppedneedle_kernel::clock::Clock;
@@ -60,36 +68,25 @@ pub const GENRE_ARTWORK_SCHEMA: &str = "v2";
 /// A page with no shelves.
 pub fn empty_page() -> DiscoverResponse {
     DiscoverResponse {
-        because_you_listen_to: Vec::new(),
+        sections: Vec::new(),
         discover_queue_enabled: true,
-        fresh_releases: None,
-        missing_essentials: None,
-        rediscover: None,
-        artists_you_might_like: None,
-        popular_in_your_genres: None,
-        genre_list: None,
-        globally_trending: None,
-        weekly_exploration: None,
         integration_status: None,
         service_prompts: Vec::new(),
         genre_artwork: HashMap::new(),
         genre_artwork_schema_version: GENRE_ARTWORK_SCHEMA.to_owned(),
-        lastfm_weekly_artist_chart: None,
-        lastfm_weekly_album_chart: None,
-        lastfm_recent_scrobbles: None,
-        daily_mixes: Vec::new(),
-        radio_sections: Vec::new(),
-        top_picks: None,
-        listeners_like_you: None,
-        anniversaries: None,
-        new_from_followed: None,
-        unexplored_genres: None,
         generated_at: None,
         refresh_started_at: None,
-        section_status: HashMap::new(),
         refreshing: false,
         service_status: None,
     }
+}
+
+/// A built page as the cache keeps it, with the sections the user had
+/// switched off when it was built.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuiltPage {
+    page: DiscoverResponse,
+    skipped: Vec<SectionKey>,
 }
 
 /// Everything the page reads from.
@@ -114,11 +111,12 @@ struct Inner {
     listening: ListeningData,
     queue_db: QueueDb,
     library: LibraryReads,
-    cache: UserPageCache<DiscoverResponse>,
+    cache: UserPageCache<BuiltPage>,
     memo: BuildMemo,
     advanced: Live<AdvancedSettings>,
     integrations: IntegrationSettings,
     warm: Option<CoverWarm>,
+    pool: sqlx::SqlitePool,
 }
 
 /// The discover pages: their cache and their build.
@@ -147,6 +145,7 @@ impl DiscoverPages {
         Self {
             inner: Arc::new(Inner {
                 library: LibraryReads::new(inputs.db.sqlx().clone()),
+                pool: inputs.db.sqlx().clone(),
                 cache: UserPageCache::new(
                     inputs.db.clone(),
                     inputs.clock.clone(),
@@ -163,15 +162,33 @@ impl DiscoverPages {
         }
     }
 
-    /// The user's last built page, without starting a build (home's
-    /// discover teaser).
-    pub async fn cached_page(&self, user_id: &str) -> Option<DiscoverResponse> {
+    /// Home's discover teaser: the first "because you listen to" shelf of
+    /// the user's last built page, without starting a build.
+    pub async fn teaser(&self, user_id: &str) -> Option<DiscoverPreview> {
         let variant = Variant::for_user(&self.inner.listening, user_id).await;
-        self.inner
-            .cache
-            .load(user_id, &variant)
-            .await
-            .map(|saved| saved.value)
+        let saved = self.inner.cache.load(user_id, &variant).await?.value;
+        let entry = saved.page.sections.into_iter().find_map(|section| {
+            match (section.key, section.content) {
+                (SectionKey::BecauseYouListenTo, SectionContent::Because { entries }) => {
+                    entries.into_iter().next()
+                }
+                _ => None,
+            }
+        })?;
+        Some(DiscoverPreview {
+            seed_artist: entry.seed_artist,
+            seed_artist_mbid: entry.seed_artist_mbid,
+            items: entry
+                .section
+                .items
+                .into_iter()
+                .take(shelves::SHELF_SIZE)
+                .filter_map(|item| match item {
+                    SectionItem::Artist(artist) => Some(artist),
+                    _ => None,
+                })
+                .collect(),
+        })
     }
 
     fn settings(&self, download_client: bool) -> PageSettings {
@@ -216,12 +233,8 @@ impl DiscoverPages {
 
     /// One build. `None` when it found nothing to show or the MusicBrainz
     /// source changed while it ran.
-    async fn build(
-        &self,
-        user_id: &str,
-        variant: &Variant,
-        generation: i64,
-    ) -> Option<DiscoverResponse> {
+    async fn build(&self, user_id: &str, variant: &Variant, generation: i64) -> Option<BuiltPage> {
+        let off = sections::switched_off(&self.inner.pool, user_id, Page::Discover).await;
         let source = self.inner.listening.source();
         let download_client = self.inner.integrations.download_client_ready();
         let now = self.inner.cache.now_ms() as f64 / 1000.0;
@@ -239,7 +252,9 @@ impl DiscoverPages {
             year,
             now,
         };
-        let built = builder.build(user_id).await;
+        let built = builder
+            .build(user_id, &sections::wanted(Page::Discover, &off))
+            .await;
         if self.inner.listening.source() != source {
             tracing::info!("MusicBrainz source changed during a discover build; dropping it");
             return None;
@@ -254,16 +269,18 @@ impl DiscoverPages {
         page.service_status = (!degraded.is_empty()).then_some(degraded);
         page.generated_at = Some(self.inner.cache.now_ms() / 1000);
         page.refresh_started_at = None;
-        page.section_status = HashMap::new();
         page.refreshing = false;
-        if !shelves::has_content(&page) {
+        if page.sections.is_empty() {
             tracing::warn!(user = %user_id, "discover build found nothing to show; keeping the previous page");
             return None;
         }
         if let Some(warm) = &self.inner.warm {
             warm.queue("discover", warm_targets(&page));
         }
-        Some(page)
+        Some(BuiltPage {
+            page,
+            skipped: sections::sorted(&off),
+        })
     }
 }
 
@@ -300,18 +317,24 @@ impl LiveDiscover {
     /// more than five minutes old.
     pub async fn page(&self, user_id: &str, status: IntegrationStatus) -> DiscoverResponse {
         let inner = &self.pages.inner;
+        let off = sections::switched_off(&inner.pool, user_id, Page::Discover).await;
         let variant = Variant::for_user(&inner.listening, user_id).await;
         let saved = inner.cache.load(user_id, &variant).await;
-        if inner.cache.due(user_id, saved.as_ref()) {
+        // A page that left out a section switched on since is rebuilt as
+        // if it were missing.
+        let current = saved
+            .as_ref()
+            .filter(|saved| saved.value.skipped.iter().all(|key| off.contains(key)));
+        if inner.cache.due(user_id, current) {
             self.pages.start(user_id, variant).await;
         }
         let started = inner.cache.building(user_id);
         let building = started.is_some();
         let mut page = match saved {
             Some(saved) => {
-                let mut page = saved.value;
+                let mut page = saved.value.page;
+                page.sections.retain(|section| !off.contains(&section.key));
                 mark_ownership(inner.library.pool(), &mut page).await;
-                page.section_status = shelves::section_status(Some(&page), building);
                 page
             }
             None => {
@@ -322,12 +345,10 @@ impl LiveDiscover {
                     status.download_client,
                     status.lastfm,
                 );
-                // With nothing building, a build just failed: the page has
-                // settled empty rather than still loading.
-                page.section_status = shelves::section_status((!building).then_some(&page), false);
                 page
             }
         };
+        page.discover_queue_enabled = !off.contains(&SectionKey::DiscoverQueue);
         page.refreshing = building;
         page.refresh_started_at = started.map(|at| at / 1000);
         page.integration_status = Some(status);
@@ -377,39 +398,8 @@ impl LiveDiscover {
 /// The covers and artist images a discover page shows, top to bottom.
 fn warm_targets(page: &DiscoverResponse) -> WarmTargets {
     let mut targets = WarmTargets::default();
-    if let Some(picks) = &page.top_picks {
-        for pick in &picks.items {
-            targets.cover(pick.album.musicbrainz_id.as_deref());
-        }
-    }
-    if let Some(lounge) = &page.listeners_like_you {
-        add_section(&mut targets, lounge);
-    }
-    if let Some(weekly) = &page.weekly_exploration {
-        for track in &weekly.tracks {
-            targets.cover(track.release_group_mbid.as_deref());
-        }
-    }
-    let made = page.daily_mixes.iter().chain(&page.radio_sections);
-    let because = page
-        .because_you_listen_to
-        .iter()
-        .map(|shelf| &shelf.section);
-    let rest = [
-        &page.fresh_releases,
-        &page.missing_essentials,
-        &page.rediscover,
-        &page.anniversaries,
-        &page.new_from_followed,
-        &page.lastfm_weekly_album_chart,
-        &page.lastfm_recent_scrobbles,
-        &page.artists_you_might_like,
-        &page.popular_in_your_genres,
-        &page.globally_trending,
-        &page.lastfm_weekly_artist_chart,
-    ];
-    for section in made.chain(because).chain(rest.into_iter().flatten()) {
-        add_section(&mut targets, section);
+    for section in &page.sections {
+        section.content.warm(&mut targets);
     }
     targets
 }

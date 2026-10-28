@@ -7,20 +7,7 @@ import { HOME_ENDPOINTS } from './charts/endpoints';
 import { HomeQueryKeyFactory } from './HomeQueryKeyFactory';
 
 function sectionCount(d: HomeResponse | null | undefined): number {
-	if (!d) return 0;
-	const sections = [
-		d.recently_added,
-		d.library_artists,
-		d.library_albums,
-		d.trending_artists,
-		d.popular_albums,
-		d.recently_played,
-		d.genre_list,
-		d.favorite_artists,
-		d.your_top_albums,
-		d.weekly_exploration
-	];
-	return sections.filter((s) => s != null).length;
+	return d?.sections.length ?? 0;
 }
 
 // keep the richer cached response while the server finishes its SWR rebuild

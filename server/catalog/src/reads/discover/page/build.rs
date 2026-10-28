@@ -1,14 +1,15 @@
 //! One discover page build for one user (v2 `build_discover_data`).
 //!
-//! The build runs in two rounds. The first fetches what several shelves
-//! share (seed artists, their similar artists, charts, the user's genres,
-//! Jellyfin plays, the library's identified albums), every read bounded
-//! to 25 seconds so one slow service only costs its own shelves. The
-//! second builds the shelves that need more reads of their own (Top
-//! Picks, Daily Mixes, radio, the weekly playlist, ...) in parallel under
-//! the same bound. The rest is shaping: artist shelves share a "seen"
-//! set so an artist appears once on the page, and album shelves are
-//! deduplicated. Ownership is marked when the page is served
+//! A build makes the sections the user has switched on, from the section
+//! list ([`sections`]). It runs in two rounds. The first makes the reads
+//! several sections share (seed artists, their similar artists, charts,
+//! the user's genres, Jellyfin plays, the library's identified albums),
+//! only those a wanted section needs, every read bounded to 25 seconds
+//! so one slow service only costs its own sections. The second builds
+//! the sections in parallel under the same bound, except the artist
+//! sections, which are built one after another in page order and share a
+//! "seen" set so an artist appears once on the page. Album sections are
+//! then deduplicated by rank. Ownership is marked when the page is served
 //! ([`mark_ownership`]), so a library change never makes a page wrong.
 
 use std::collections::{HashMap, HashSet};
@@ -21,16 +22,16 @@ use futures_util::future::join_all;
 use super::library::{LibraryReads, fold};
 use super::memo::{BuildMemo, MemoKey};
 use super::picks::{self, Candidate};
-use super::shelves::{self, SHELF_SIZE, album, artist, genre, shelf};
+use super::shelves::{self, RowMut, SHELF_SIZE, album, artist, genre, one, shelf};
 use crate::reads::discover::cache::Variant;
 use crate::reads::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData,
     PlayedArtist, ScoredArtist, StatsRange, UserMusic,
 };
 use crate::reads::discover::models::{
-    AlbumRef, BecauseYouListenTo, ChartSection, DiscoverResponse, RadioSeedKind, SectionItem,
-    SectionKind, ServiceState, ShelfSource, TopPickItem, TopPicksSection, WeeklyExploration,
-    WeeklyTrack,
+    AlbumRef, BecauseYouListenTo, ChartSection, DiscoverResponse, RadioSeedKind, SectionContent,
+    SectionItem, SectionKey, SectionKind, ServiceState, ShelfSource, TopPickItem, TopPicksSection,
+    WeeklyExploration, WeeklyTrack,
 };
 use crate::reads::discover::ownership;
 use crate::reads::discover::queue::QueueSettings;
@@ -40,6 +41,7 @@ use crate::reads::discover::queue::build::{
 };
 use crate::reads::discover::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
 use crate::reads::discover::queue::store::QueueDb;
+use crate::reads::discover::sections::{self, Dedupe, Input, Page, SectionDef};
 
 /// Bound on any one upstream read in a build.
 const TASK_TIMEOUT: Duration = Duration::from_secs(25);
@@ -189,6 +191,17 @@ struct Shared {
     library_albums: Vec<super::library::LibraryAlbum>,
 }
 
+/// What every section of one build reads.
+struct Ctx<'c> {
+    user_id: &'c str,
+    user: &'c UserMusic,
+    primary: ListenSource,
+    seeds: &'c [ArtistRow],
+    shared: &'c Shared,
+    library_groups: &'c HashSet<String>,
+    lb_user: Option<&'c str>,
+}
+
 /// Title-case a folded genre ("hip hop" to "Hip Hop").
 fn title_case(text: &str) -> String {
     text.split(' ')
@@ -245,16 +258,21 @@ impl Builder<'_> {
         self.listening.policy_for(user).lastfm_stands_in()
     }
 
-    /// Build the page.
-    pub async fn build(&self, user_id: &str) -> Built {
+    /// Build the page's `wanted` sections, in page order.
+    pub async fn build(&self, user_id: &str, wanted: &[&'static SectionDef]) -> Built {
         let policy = self.listening.policy(user_id).await;
         let primary = policy.listening();
         let user = policy.user().clone();
         let lb_user = user.listenbrainz.clone();
         let lfm_user = user.lastfm_username.clone().filter(|_| user.lastfm);
-        let mut seed_settings = self.settings.queue.clone();
-        seed_settings.seed_artists = SEEDS;
-        let seeds = seed_artists(&self.queue_ctx(&seed_settings), user_id, &user, primary).await;
+        let needs = |input: Input| wanted.iter().any(|def| def.inputs.contains(&input));
+        let seeds = if needs(Input::Seeds) {
+            let mut seed_settings = self.settings.queue.clone();
+            seed_settings.seed_artists = SEEDS;
+            seed_artists(&self.queue_ctx(&seed_settings), user_id, &user, primary).await
+        } else {
+            Vec::new()
+        };
 
         let tracker = Tracker::default();
         let shared = self
@@ -266,6 +284,7 @@ impl Builder<'_> {
                 &seeds,
                 lb_user.as_deref(),
                 lfm_user.as_deref(),
+                &needs,
             )
             .await;
         let library_groups: HashSet<String> = shared
@@ -273,123 +292,161 @@ impl Builder<'_> {
             .iter()
             .map(|album| album.release_group_mbid.clone())
             .collect();
+        let ctx = Ctx {
+            user_id,
+            user: &user,
+            primary,
+            seeds: &seeds,
+            shared: &shared,
+            library_groups: &library_groups,
+            lb_user: lb_user.as_deref(),
+        };
+
+        let independent = join_all(
+            wanted
+                .iter()
+                .filter(|def| def.dedupe != Dedupe::Artists)
+                .map(|def| async {
+                    let name = def.key.name();
+                    (def.key, bounded(&name, self.section(def.key, &ctx)).await)
+                }),
+        )
+        .await;
+        let mut built: HashMap<SectionKey, SectionContent> = independent
+            .into_iter()
+            .filter_map(|(key, content)| Some((key, content?)))
+            .collect();
+        let mut seen_artists: HashSet<String> = HashSet::new();
+        for def in wanted.iter().filter(|def| def.dedupe == Dedupe::Artists) {
+            let name = def.key.name();
+            let content =
+                bounded(&name, self.artist_section(def.key, &ctx, &mut seen_artists)).await;
+            if let Some(content) = content {
+                built.insert(def.key, content);
+            }
+        }
 
         let mut page = super::empty_page();
-        let mut seen_artists: HashSet<String> = HashSet::new();
-        page.because_you_listen_to =
-            because_sections(&seeds, &shared.similar, &mut seen_artists, primary);
-        page.fresh_releases = fresh_releases(&shared.fresh);
-
-        let (
-            missing,
-            weekly_albums,
-            recent,
-            mixes,
-            top_picks,
-            radio,
-            anniversaries,
-            followed,
-            lounge,
-            weekly,
-        ) = tokio::join!(
-            bounded(
-                "missing essentials",
-                self.missing_essentials(user_id, &shared)
-            ),
-            bounded(
-                "weekly albums",
-                self.lastfm_album_shelf(
-                    &shared.lastfm_weekly_albums,
-                    20,
-                    "Your Top Albums This Week",
-                    false,
-                )
-            ),
-            bounded(
-                "recent scrobbles",
-                self.lastfm_album_shelf(&shared.lastfm_recent, 30, "Recently Scrobbled", true,)
-            ),
-            bounded(
-                "daily mixes",
-                self.daily_mixes(user_id, &user, primary, &seeds, &shared, &library_groups)
-            ),
-            bounded(
-                "top picks",
-                self.top_picks(user_id, &user, primary, &seeds, &shared)
-            ),
-            bounded(
-                "radio",
-                self.radio_sections(user_id, &user, primary, &seeds, &library_groups)
-            ),
-            bounded("anniversaries", self.anniversaries()),
-            bounded("followed", self.new_from_followed(user_id)),
-            bounded("listeners like you", async {
-                match lb_user.as_deref() {
-                    Some(username) => self.listeners_like_you(user_id, username).await,
-                    None => None,
-                }
-            }),
-            bounded("weekly exploration", async {
-                match lb_user.as_deref() {
-                    Some(username) => self.weekly_exploration(user_id, username).await,
-                    None => None,
-                }
-            }),
-        );
-        page.missing_essentials = missing;
-        page.lastfm_weekly_album_chart = weekly_albums;
-        page.lastfm_recent_scrobbles = recent;
-        page.daily_mixes = mixes;
-        page.top_picks = top_picks;
-        page.radio_sections = radio;
-        page.anniversaries = anniversaries;
-        page.new_from_followed = followed;
-        page.listeners_like_you = lounge;
-        page.weekly_exploration = weekly;
-
-        page.rediscover = rediscover(&shared.jellyfin, self.now);
-        page.artists_you_might_like =
-            artists_you_might_like(&shared.similar, &mut seen_artists, primary);
-        page.popular_in_your_genres = self
-            .popular_in_genres(user_id, primary, &shared, &mut seen_artists)
-            .await;
-        page.genre_list = genre_list(shared.genres.as_deref());
-        let similar_mbids: Vec<String> = shared
-            .similar
+        page.sections = wanted
             .iter()
-            .flatten()
-            .filter_map(|scored| scored.artist.mbid.clone())
+            .filter_map(|def| shelves::section(Page::Discover, def.key, built.remove(&def.key)?))
             .collect();
-        page.unexplored_genres = self
-            .unexplored_genres(&page.because_you_listen_to, &similar_mbids)
-            .await;
-        let trending_source = if primary == ListenSource::Lastfm && user.lastfm {
-            Some(ShelfSource::Lastfm)
-        } else {
-            Some(ShelfSource::Listenbrainz)
-        };
-        page.globally_trending = artist_shelf(
-            &shared.trending_artists,
-            &mut seen_artists,
-            "Globally Trending",
-            trending_source,
-        );
-        page.lastfm_weekly_artist_chart = artist_shelf(
-            &shared.lastfm_weekly_artists,
-            &mut seen_artists,
-            "Your Weekly Top Artists",
-            Some(ShelfSource::Lastfm),
-        );
+        shelves::dedupe_albums(&mut page.sections);
         page.service_prompts = shelves::service_prompts(
             lb_user.is_some(),
             user.jellyfin,
             self.settings.download_client,
             user.lastfm,
         );
-        shelves::dedupe_albums(&mut page);
         Built {
             page,
             degraded: tracker.degraded(),
+        }
+    }
+
+    /// One section that keeps every artist it finds.
+    async fn section(&self, key: SectionKey, ctx: &Ctx<'_>) -> Option<SectionContent> {
+        let (user_id, shared) = (ctx.user_id, ctx.shared);
+        match key {
+            SectionKey::TopPicks => self
+                .top_picks(user_id, ctx.user, ctx.primary, ctx.seeds, shared)
+                .await
+                .map(|picks| SectionContent::Picks { picks }),
+            SectionKey::ListenersLikeYou => match ctx.lb_user {
+                Some(username) => one(self.listeners_like_you(user_id, username).await),
+                None => None,
+            },
+            SectionKey::WeeklyExploration => match ctx.lb_user {
+                Some(username) => self
+                    .weekly_exploration(user_id, username)
+                    .await
+                    .map(|weekly| SectionContent::Weekly { weekly }),
+                None => None,
+            },
+            SectionKey::DailyMixes => Some(SectionContent::Shelves {
+                shelves: self
+                    .daily_mixes(
+                        user_id,
+                        ctx.user,
+                        ctx.primary,
+                        ctx.seeds,
+                        shared,
+                        ctx.library_groups,
+                    )
+                    .await,
+            }),
+            SectionKey::RadioSections => Some(SectionContent::Shelves {
+                shelves: self
+                    .radio_sections(
+                        user_id,
+                        ctx.user,
+                        ctx.primary,
+                        ctx.seeds,
+                        ctx.library_groups,
+                    )
+                    .await,
+            }),
+            SectionKey::FreshReleases => one(fresh_releases(&shared.fresh)),
+            SectionKey::NewFromFollowed => one(self.new_from_followed(user_id).await),
+            SectionKey::MissingEssentials => one(self.missing_essentials(user_id, shared).await),
+            SectionKey::Rediscover => one(rediscover(&shared.jellyfin, self.now)),
+            SectionKey::Anniversaries => one(self.anniversaries().await),
+            SectionKey::LastfmRecentScrobbles => one(self
+                .lastfm_album_shelf(&shared.lastfm_recent, 30, "Recently Scrobbled", true)
+                .await),
+            SectionKey::LastfmWeeklyAlbumChart => one(self
+                .lastfm_album_shelf(
+                    &shared.lastfm_weekly_albums,
+                    20,
+                    "Your Top Albums This Week",
+                    false,
+                )
+                .await),
+            SectionKey::UnexploredGenres => one(self.unexplored_genres(&shared.similar).await),
+            SectionKey::GenreList => one(genre_list(shared.genres.as_deref())),
+            _ => None,
+        }
+    }
+
+    /// One artist section: it skips artists `seen` holds and adds the
+    /// ones it shows, so an artist appears once on the page.
+    async fn artist_section(
+        &self,
+        key: SectionKey,
+        ctx: &Ctx<'_>,
+        seen: &mut HashSet<String>,
+    ) -> Option<SectionContent> {
+        let shared = ctx.shared;
+        match key {
+            SectionKey::BecauseYouListenTo => Some(SectionContent::Because {
+                entries: because_sections(ctx.seeds, &shared.similar, seen, ctx.primary),
+            }),
+            SectionKey::ArtistsYouMightLike => {
+                one(artists_you_might_like(&shared.similar, seen, ctx.primary))
+            }
+            SectionKey::PopularInYourGenres => one(self
+                .popular_in_genres(ctx.user_id, ctx.primary, shared, seen)
+                .await),
+            SectionKey::GloballyTrending => {
+                let source = if ctx.primary == ListenSource::Lastfm && ctx.user.lastfm {
+                    ShelfSource::Lastfm
+                } else {
+                    ShelfSource::Listenbrainz
+                };
+                one(artist_shelf(
+                    &shared.trending_artists,
+                    seen,
+                    "Globally Trending",
+                    Some(source),
+                ))
+            }
+            SectionKey::LastfmWeeklyArtistChart => one(artist_shelf(
+                &shared.lastfm_weekly_artists,
+                seen,
+                "Your Weekly Top Artists",
+                Some(ShelfSource::Lastfm),
+            )),
+            _ => None,
         }
     }
 
@@ -417,6 +474,7 @@ impl Builder<'_> {
         seeds: &[ArtistRow],
         lb_user: Option<&str>,
         lfm_user: Option<&str>,
+        needs: &(dyn Fn(Input) -> bool + Sync),
     ) -> Shared {
         let listening = self.listening;
         let ask = &self.ask;
@@ -426,23 +484,29 @@ impl Builder<'_> {
         // for users who chose Last.fm.
         let lastfm_similar = policy.popularity() == ListenSource::Lastfm;
         const SIMILAR_KEYS: [&str; SEEDS] = ["similar_0", "similar_1", "similar_2"];
-        let similar = join_all(seeds.iter().take(SEEDS).enumerate().map(|(index, seed)| {
-            let key = SIMILAR_KEYS[index];
-            async move {
-                let Some(mbid) = seed.mbid.as_deref() else {
-                    return Vec::new();
-                };
-                let read = async {
-                    if lastfm_similar {
-                        listening.lastfm_similar(user_id, seed, 20, ask).await
-                    } else {
-                        listening.similar_artists(user_id, mbid, 20, ask).await
-                    }
-                };
-                tracker.run(key, read).await.unwrap_or_default()
-            }
-        }));
+        let similar_seeds = if needs(Input::Similar) { SEEDS } else { 0 };
+        let similar = join_all(seeds.iter().take(similar_seeds).enumerate().map(
+            |(index, seed)| {
+                let key = SIMILAR_KEYS[index];
+                async move {
+                    let Some(mbid) = seed.mbid.as_deref() else {
+                        return Vec::new();
+                    };
+                    let read = async {
+                        if lastfm_similar {
+                            listening.lastfm_similar(user_id, seed, 20, ask).await
+                        } else {
+                            listening.similar_artists(user_id, mbid, 20, ask).await
+                        }
+                    };
+                    tracker.run(key, read).await.unwrap_or_default()
+                }
+            },
+        ));
         let trending = async {
+            if !needs(Input::Trending) {
+                return Vec::new();
+            }
             if policy.sitewide() == ListenSource::Lastfm {
                 tracker
                     .run(
@@ -466,6 +530,9 @@ impl Builder<'_> {
             };
             tokio::join!(
                 async {
+                    if !needs(Input::LastfmWeeklyArtists) {
+                        return Vec::new();
+                    }
                     tracker
                         .run(
                             "lfm_weekly_artists",
@@ -475,6 +542,9 @@ impl Builder<'_> {
                         .unwrap_or_default()
                 },
                 async {
+                    if !needs(Input::LastfmWeeklyAlbums) {
+                        return Vec::new();
+                    }
                     tracker
                         .run(
                             "lfm_weekly_albums",
@@ -484,6 +554,9 @@ impl Builder<'_> {
                         .unwrap_or_default()
                 },
                 async {
+                    if !needs(Input::LastfmRecent) {
+                        return Vec::new();
+                    }
                     tracker
                         .run(
                             "lfm_recent",
@@ -500,28 +573,42 @@ impl Builder<'_> {
             };
             tokio::join!(
                 async {
+                    if !needs(Input::Fresh) {
+                        return Vec::new();
+                    }
                     tracker
                         .run("lb_fresh", listening.fresh_releases(username, ask))
                         .await
                         .unwrap_or_default()
                 },
-                tracker.run("lb_genres", listening.genres(username, ask)),
+                async {
+                    if !needs(Input::Genres) {
+                        return None;
+                    }
+                    tracker
+                        .run("lb_genres", listening.genres(username, ask))
+                        .await
+                },
             )
         };
         let lastfm_genre_artists = async {
             match lfm_user {
-                Some(username) if primary == ListenSource::Lastfm => tracker
-                    .run(
-                        "lfm_user_top_artists_for_genres",
-                        listening.lastfm_user_artists(user_id, username, 5, ask),
-                    )
-                    .await
-                    .unwrap_or_default(),
+                Some(username)
+                    if primary == ListenSource::Lastfm && needs(Input::LastfmGenreArtists) =>
+                {
+                    tracker
+                        .run(
+                            "lfm_user_top_artists_for_genres",
+                            listening.lastfm_user_artists(user_id, username, 5, ask),
+                        )
+                        .await
+                        .unwrap_or_default()
+                }
                 _ => Vec::new(),
             }
         };
         let jellyfin = async {
-            if !user.jellyfin {
+            if !user.jellyfin || !needs(Input::Jellyfin) {
                 return Vec::new();
             }
             tracker
@@ -530,6 +617,9 @@ impl Builder<'_> {
                 .unwrap_or_default()
         };
         let library = async {
+            if !needs(Input::LibraryAlbums) {
+                return Vec::new();
+            }
             tracker
                 .run("library_albums", self.library.identified_albums(500))
                 .await
@@ -1533,21 +1623,12 @@ impl Builder<'_> {
 
     /// Genres around the user's similar artists that the library barely
     /// has, else genres the library holds only one artist of.
-    async fn unexplored_genres(
-        &self,
-        because: &[BecauseYouListenTo],
-        similar_mbids: &[String],
-    ) -> Option<ChartSection> {
-        let mut candidates: Vec<String> = similar_mbids.to_vec();
-        for entry in because {
-            for item in &entry.section.items {
-                if let SectionItem::Artist(row) = item
-                    && let Some(mbid) = &row.musicbrainz_id
-                {
-                    candidates.push(mbid.clone());
-                }
-            }
-        }
+    async fn unexplored_genres(&self, similar: &[Vec<ScoredArtist>]) -> Option<ChartSection> {
+        let candidates: Vec<String> = similar
+            .iter()
+            .flatten()
+            .filter_map(|scored| scored.artist.mbid.clone())
+            .collect();
         let by_artist = self.library.genres_for_artists(&candidates).await.ok()?;
         let mut display: Vec<(String, String)> = Vec::new();
         let mut keys: Vec<&String> = by_artist.keys().collect();
@@ -1971,89 +2052,48 @@ fn mark(
 }
 
 /// Mark which albums and artists on the page the library holds now, and
-/// drop owned albums from Missing Essentials. Run on every serve.
+/// drop owned albums from the sections that hide them. Run on every
+/// serve.
 pub async fn mark_ownership(pool: &sqlx::SqlitePool, page: &mut DiscoverResponse) {
-    let mut sections: Vec<&mut ChartSection> = Vec::new();
-    for entry in &mut page.because_you_listen_to {
-        sections.push(&mut entry.section);
-    }
-    for section in [
-        page.fresh_releases.as_mut(),
-        page.missing_essentials.as_mut(),
-        page.rediscover.as_mut(),
-        page.artists_you_might_like.as_mut(),
-        page.popular_in_your_genres.as_mut(),
-        page.globally_trending.as_mut(),
-        page.lastfm_weekly_artist_chart.as_mut(),
-        page.lastfm_weekly_album_chart.as_mut(),
-        page.lastfm_recent_scrobbles.as_mut(),
-        page.listeners_like_you.as_mut(),
-        page.anniversaries.as_mut(),
-        page.new_from_followed.as_mut(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        sections.push(section);
-    }
-    sections.extend(page.daily_mixes.iter_mut());
-    sections.extend(page.radio_sections.iter_mut());
     let mut album_ids: Vec<String> = Vec::new();
     let mut artist_ids: Vec<String> = Vec::new();
-    for section in &sections {
-        for item in &section.items {
-            match item {
-                SectionItem::Album(row) => album_ids.extend(row.musicbrainz_id.clone()),
-                SectionItem::Artist(row) => artist_ids.extend(row.musicbrainz_id.clone()),
-                _ => {}
+    for section in &mut page.sections {
+        for row in section.content.rows_mut() {
+            match row {
+                RowMut::Album(row) => album_ids.extend(row.musicbrainz_id.clone()),
+                RowMut::Artist(row) => artist_ids.extend(row.musicbrainz_id.clone()),
             }
         }
     }
-    if let Some(picks) = &page.top_picks {
-        album_ids.extend(
-            picks
-                .items
-                .iter()
-                .filter_map(|pick| pick.album.musicbrainz_id.clone()),
-        );
-    }
     let owned_albums = owned_album_ids(pool, &album_ids).await;
     let owned_artists = owned_artist_ids(pool, &artist_ids).await;
-    let mark_album = |row: &mut AlbumRef| {
-        mark(
-            owned_albums.as_ref(),
-            row.musicbrainz_id.as_deref(),
-            &mut row.in_library,
-            &mut row.local_id,
-        );
-    };
-    for section in sections {
-        for item in &mut section.items {
-            match item {
-                SectionItem::Album(row) => mark_album(row),
-                SectionItem::Artist(row) => mark(
+    for section in &mut page.sections {
+        for row in section.content.rows_mut() {
+            let (owned, row_mbid, in_library, local_id) = match row {
+                RowMut::Album(row) => (
+                    owned_albums.as_ref(),
+                    row.musicbrainz_id.as_deref(),
+                    &mut row.in_library,
+                    &mut row.local_id,
+                ),
+                RowMut::Artist(row) => (
                     owned_artists.as_ref(),
                     row.musicbrainz_id.as_deref(),
                     &mut row.in_library,
                     &mut row.local_id,
                 ),
-                _ => {}
+            };
+            mark(owned, row_mbid, in_library, local_id);
+        }
+        if sections::find(Page::Discover, section.key).is_some_and(|def| def.hides_owned) {
+            for shelf in section.content.shelves_mut() {
+                shelf
+                    .items
+                    .retain(|item| !matches!(item, SectionItem::Album(row) if row.in_library));
             }
         }
     }
-    if let Some(picks) = &mut page.top_picks {
-        for pick in &mut picks.items {
-            mark_album(&mut pick.album);
-        }
-    }
-    if let Some(missing) = &mut page.missing_essentials {
-        missing
-            .items
-            .retain(|item| !matches!(item, SectionItem::Album(row) if row.in_library));
-        if missing.items.is_empty() {
-            page.missing_essentials = None;
-        }
-    }
+    page.sections.retain(|section| !section.content.is_empty());
 }
 
 #[cfg(test)]
