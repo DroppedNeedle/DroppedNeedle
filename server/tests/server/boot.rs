@@ -350,14 +350,11 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
     assert_eq!(runs.load(Ordering::SeqCst), 2, "the busy run ran again");
     holder.await.unwrap().unwrap();
 
-    runtime
-        .db()
-        .write(Lane::Background, "test.break", |tx| {
-            tx.execute_batch("ALTER TABLE request_history RENAME TO request_history_gone")?;
-            Ok::<_, droppedneedle_kernel::db::DbError>(())
-        })
-        .await
-        .unwrap();
+    crate::common::break_schema(
+        runtime.db(),
+        "ALTER TABLE request_history RENAME TO request_history_gone",
+    )
+    .await;
     runs.store(0, Ordering::SeqCst);
     let refused = bootstrap::wait_out_busy("acquire recovery", RecoveryError::is_busy, step).await;
     assert!(

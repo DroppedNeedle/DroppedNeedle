@@ -28,6 +28,12 @@ use std::time::{Duration, Instant};
 use axum::http::{HeaderMap, StatusCode, header::RETRY_AFTER};
 use droppedneedle_kernel::{http_client::HttpClientFactory, ids::IdGenerator};
 
+/// The longest a test waits for something the app does in its own time.
+/// Every wait returns the moment what it waits for is seen, so a fast host
+/// never comes near this; it only bounds a wait on a host loaded enough to
+/// make a minute-long step plausible.
+pub const PATIENCE: Duration = Duration::from_secs(120);
+
 /// Fixed id used across tests. A valid UUID so id-format assertions hold.
 pub const FIXED_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
@@ -101,7 +107,7 @@ pub async fn through_busy<T, F>(mut ask: impl FnMut() -> F) -> (StatusCode, Head
 where
     F: std::future::Future<Output = (StatusCode, HeaderMap, T)>,
 {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + PATIENCE;
     loop {
         let answer = ask().await;
         let retry_after = answer
@@ -115,6 +121,44 @@ where
             return answer;
         };
         tokio::time::sleep(wait).await;
+    }
+}
+
+/// Run `sql`, which breaks the schema (a table renamed away so a store read
+/// fails), as one job write. A rename re-parses the whole schema, which can
+/// outrun even the job budget on a loaded host; that write rolled back, so
+/// it runs again.
+pub async fn break_schema(db: &droppedneedle_kernel::db::Db, sql: &'static str) {
+    use droppedneedle_kernel::db::{DbError, Lane};
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        let written = db
+            .write(Lane::Background, "test.break", move |tx| {
+                tx.execute_batch(sql)?;
+                Ok::<_, DbError>(())
+            })
+            .await;
+        match written {
+            Ok(()) => return,
+            Err(DbError::TxTimeout { .. } | DbError::Busy { .. }) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(error) => panic!("the schema breaks: {error}"),
+        }
+    }
+}
+
+/// Take a reader from `pool` and hold it, for a test that starves a pool
+/// of one connection. A background read may have it for a moment, so a
+/// checkout that times out is tried again.
+pub async fn hold_reader(pool: &sqlx::SqlitePool) -> sqlx::pool::PoolConnection<sqlx::Sqlite> {
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        match pool.acquire().await {
+            Ok(reader) => return reader,
+            Err(sqlx::Error::PoolTimedOut) if Instant::now() < deadline => {}
+            Err(error) => panic!("reader held: {error}"),
+        }
     }
 }
 
@@ -149,7 +193,28 @@ pub async fn scratch_runtime(path: &Path) -> droppedneedle_kernel::db::DbRuntime
     let config = DbConfig::new(path)
         .with_lane_limits(LaneLimits::patient())
         .with_read_wait(TEST_PATIENCE);
-    open_runtime(&config).await.expect("scratch runtime opens")
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        match open_runtime(&config).await {
+            Ok(runtime) => return runtime,
+            Err(error) if busy_open(&error) && Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Err(error) => panic!("scratch runtime opens: {error}"),
+        }
+    }
+}
+
+/// Whether opening a database failed only because it was busy: a lock
+/// held or a pooled connection that did not free in time. Nothing was
+/// started yet, so opening again is safe.
+pub fn busy_open(error: &droppedneedle_kernel::db::DbError) -> bool {
+    use droppedneedle_kernel::db::{DbError, sqlx_is_busy};
+    match error {
+        DbError::Busy { .. } => true,
+        DbError::Sqlx(error) => sqlx_is_busy(error),
+        _ => false,
+    }
 }
 
 /// A started loop supervisor over a fresh scratch runtime. Hold the guard:
@@ -182,7 +247,7 @@ pub async fn loop_row(
     name: &str,
     check: impl Fn(&droppedneedle_kernel::db::LoopRecord) -> bool,
 ) -> droppedneedle_kernel::db::LoopRecord {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + PATIENCE;
     loop {
         let rows = droppedneedle_kernel::db::list_loops(db)
             .await

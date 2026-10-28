@@ -28,6 +28,23 @@ pub fn capture_logs<T>(run: impl FnOnce() -> T) -> (T, String) {
     (value, text)
 }
 
+/// A dispatch that keeps the warnings and errors logged under it, and the
+/// text they make. For a task run with
+/// [`tracing::instrument::WithSubscriber::with_subscriber`], so a failure
+/// can say what the task logged.
+pub fn warnings() -> (Dispatch, Arc<Mutex<Vec<u8>>>) {
+    let text = Arc::new(Mutex::new(Vec::new()));
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer({
+            let text = text.clone();
+            move || LogWriter(text.clone())
+        })
+        .with_ansi(false)
+        .with_max_level(LevelFilter::WARN)
+        .finish();
+    (Dispatch::new(subscriber), text)
+}
+
 struct LogWriter(Arc<Mutex<Vec<u8>>>);
 
 impl std::io::Write for LogWriter {

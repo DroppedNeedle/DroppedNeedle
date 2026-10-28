@@ -1880,7 +1880,7 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     let jellyfin = "/jellyfin/Items?IncludeItemTypes=Playlist".to_owned();
     let token = Some(format!("MediaBrowser Client=\"Test\", Token=\"{SECRET}\""));
 
-    let held = runtime.db().sqlx().acquire().await.expect("reader held");
+    let held = crate::common::hold_reader(runtime.db().sqlx()).await;
     let (status, retry_after, body) = ask(subsonic.clone(), None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(retry_after.as_deref(), Some("1"));
@@ -1893,8 +1893,24 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     assert!(body.is_empty());
 
     drop(held);
-    assert_eq!(ask(subsonic, None).await.0, StatusCode::OK);
-    assert_eq!(ask(jellyfin, token).await.0, StatusCode::OK);
+    // The one reader is free again, though a background read may have it
+    // for a moment: ask again while the answer is busy, as a client would.
+    let freed = |uri: String, authorization: Option<String>| {
+        let ask = &ask;
+        async move {
+            let deadline = std::time::Instant::now() + crate::common::PATIENCE;
+            loop {
+                let status = ask(uri.clone(), authorization.clone()).await.0;
+                if status != StatusCode::SERVICE_UNAVAILABLE || std::time::Instant::now() > deadline
+                {
+                    return status;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    };
+    assert_eq!(freed(subsonic, None).await, StatusCode::OK);
+    assert_eq!(freed(jellyfin, token).await, StatusCode::OK);
     drop(router);
     scope.stop().await;
 }
@@ -2030,7 +2046,7 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
         (count("playlists"), count("playlist_tracks"))
     };
 
-    let held = starved.db().sqlx().acquire().await.expect("reader held");
+    let held = crate::common::hold_reader(starved.db().sqlx()).await;
     let (status, retry_after, body) = ask().await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(retry_after.as_deref(), Some("1"));
@@ -2038,7 +2054,16 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
     assert_eq!(rows(), (0, 0), "a busy answer wrote nothing");
 
     drop(held);
-    let (status, _, body) = ask().await;
+    // The one reader is free again, though a background read may have it
+    // for a moment: ask again while the answer is busy, as a client would.
+    let deadline = std::time::Instant::now() + crate::common::PATIENCE;
+    let (status, _, body) = loop {
+        let answer = ask().await;
+        if answer.0 != StatusCode::SERVICE_UNAVAILABLE || std::time::Instant::now() > deadline {
+            break answer;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    };
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["subsonic-response"]["playlist"]["songCount"], 1);
     assert_eq!(rows(), (1, 1), "asking again made one playlist");

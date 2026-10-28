@@ -5,6 +5,7 @@ use std::{
     future::Future,
     net::SocketAddr,
     path::Path,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -25,8 +26,9 @@ use droppedneedle_testkit::{
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tower::ServiceExt as _;
+use tracing::instrument::WithSubscriber as _;
 
-use super::{ScratchDir, closed_outbound, migrated_db, through_busy};
+use super::{PATIENCE, ScratchDir, busy_open, closed_outbound, migrated_db, through_busy};
 
 /// The app's shutdown grace in tests. On a loaded host the database close
 /// alone has taken half a minute, so the production ten seconds would fail
@@ -81,6 +83,8 @@ pub struct TestApp {
     admin: tokio::sync::OnceCell<String>,
     stop: Option<oneshot::Sender<()>>,
     server: Option<JoinHandle<bootstrap::Stopped>>,
+    /// What the serving task logged at warning level and above.
+    shutdown_log: Arc<Mutex<Vec<u8>>>,
     sabnzbd_server: JoinHandle<()>,
     // Last, so the directory goes after everything that writes to it.
     _dir: ScratchDir,
@@ -161,6 +165,7 @@ impl TestApp {
             admin: tokio::sync::OnceCell::new(),
             stop: None,
             server: None,
+            shutdown_log: Arc::default(),
             sabnzbd_server,
             _dir: dir,
         };
@@ -172,28 +177,44 @@ impl TestApp {
     async fn boot(&mut self) {
         // `halt` drops the state before the stop signal, so no handle on
         // the app outlives the shutdown.
+        let deadline = Instant::now() + PATIENCE;
         let bootstrap::Built {
             router,
             state,
             background,
-        } = Box::pin(bootstrap::build_with(
-            self.config.clone(),
-            self.outbound.clone(),
-        ))
-        .await
-        .expect("the app builds");
+        } = loop {
+            match Box::pin(bootstrap::build_with(
+                self.config.clone(),
+                self.outbound.clone(),
+            ))
+            .await
+            {
+                Ok(built) => break built,
+                // The database open answered busy before anything else
+                // started, as a start on a loaded host can: start again.
+                Err(bootstrap::BootError::Database(error))
+                    if busy_open(&error) && Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Err(error) => panic!("the app builds: {error:?}"),
+            }
+        };
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("loopback binds");
         let (stop, signal) = oneshot::channel::<()>();
-        self.server = Some(tokio::spawn(bootstrap::serve(
-            listener,
-            router.clone(),
-            background,
-            async {
+        // The shutdown runs inside the serving task, so its warnings (a
+        // loop that would not stop, connections still open) are kept for
+        // the failure that names a slow shutdown.
+        let (warnings, logged) = super::logs::warnings();
+        self.shutdown_log = logged;
+        self.server = Some(tokio::spawn(
+            bootstrap::serve(listener, router.clone(), background, async {
                 let _ = signal.await;
-            },
-        )));
+            })
+            .with_subscriber(warnings),
+        ));
         self.router = Some(router);
         self.state = Some(Box::new(state));
         self.stop = Some(stop);
@@ -340,13 +361,13 @@ impl TestApp {
     }
 
     /// Wait for something the app does in its own time. `check` is asked
-    /// again and again until it answers; `what` names the wait if it never
-    /// does.
+    /// again and again until it answers, for up to [`PATIENCE`]; `what`
+    /// names the wait if it never does.
     pub async fn until<T, F>(&self, what: &str, mut check: impl FnMut() -> F) -> T
     where
         F: Future<Output = Option<T>>,
     {
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + PATIENCE;
         loop {
             if let Some(found) = check().await {
                 return found;
@@ -376,7 +397,7 @@ impl TestApp {
         let run = self
             .until("the new folder's first scan", || async {
                 let (status, body) = self
-                    .call("GET", "/api/v3/library/scan/runs", &headers, None)
+                    .call_through_busy("GET", "/api/v3/library/scan/runs", &headers, None)
                     .await;
                 assert_eq!(status, StatusCode::OK, "{body}");
                 if body["current"]
@@ -403,7 +424,7 @@ impl TestApp {
         let admin = self.login_admin().await;
         let headers = [("authorization", admin.as_str())];
         let (status, body) = self
-            .call("POST", "/api/v3/library/scan", &headers, Some(json!({})))
+            .call_through_busy("POST", "/api/v3/library/scan", &headers, Some(json!({})))
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let run = body["run_id"].as_str().expect("run id").to_owned();
@@ -420,7 +441,7 @@ impl TestApp {
         let headers = [("authorization", admin.as_str())];
         let uri = format!("/api/v3/library/scan/runs/{run}");
         self.until("the scan ends and settles", || async {
-            let (status, body) = self.call("GET", &uri, &headers, None).await;
+            let (status, body) = self.call_through_busy("GET", &uri, &headers, None).await;
             assert_eq!(status, StatusCode::OK, "{body}");
             let state = body["run"]["state"].as_str()?;
             let ended = matches!(
@@ -443,7 +464,7 @@ impl TestApp {
 
     async fn finished_scans(&self, headers: &[(&str, &str)]) -> Vec<String> {
         let (status, body) = self
-            .call("GET", "/api/v3/library/scan/runs", headers, None)
+            .call_through_busy("GET", "/api/v3/library/scan/runs", headers, None)
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         body["history"]
@@ -465,20 +486,50 @@ impl TestApp {
     pub async fn login_admin(&self) -> String {
         self.admin
             .get_or_init(|| async {
-                let (status, body) = self
-                    .call_through_busy(
-                        "POST",
-                        "/api/v3/auth/setup",
-                        &[],
-                        Some(json!({
-                            "username": ADMIN_NAME,
-                            "password": ADMIN_PASSWORD,
-                            "transport": "bearer",
-                        })),
-                    )
-                    .await;
-                assert_eq!(status, StatusCode::CREATED, "{body}");
-                bearer(&body)
+                let credentials = json!({
+                    "username": ADMIN_NAME,
+                    "password": ADMIN_PASSWORD,
+                    "transport": "bearer",
+                });
+                let deadline = Instant::now() + PATIENCE;
+                loop {
+                    let (status, body) = self
+                        .call_through_busy(
+                            "POST",
+                            "/api/v3/auth/setup",
+                            &[],
+                            Some(credentials.clone()),
+                        )
+                        .await;
+                    if status == StatusCode::CREATED {
+                        return bearer(&body);
+                    }
+                    // Setup makes the account before it signs the owner
+                    // in, so on a loaded host a setup that answered a
+                    // failure, or a retry that answered 409, may still
+                    // have made it.
+                    let failed = status.is_server_error();
+                    assert!(
+                        failed || status == StatusCode::CONFLICT,
+                        "setup: {status} {body}"
+                    );
+                    let (signed, session) = self
+                        .call_through_busy(
+                            "POST",
+                            "/api/v3/auth/login",
+                            &[],
+                            Some(credentials.clone()),
+                        )
+                        .await;
+                    if signed == StatusCode::OK {
+                        return bearer(&session);
+                    }
+                    assert!(
+                        failed && Instant::now() < deadline,
+                        "setup: {status} {body}; sign-in: {signed} {session}"
+                    );
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
             })
             .await
             .clone()
@@ -523,13 +574,13 @@ impl TestApp {
         let admin = self.login_admin().await;
         let admin = [("authorization", admin.as_str())];
         let (status, mut apps) = self
-            .call("GET", "/api/v3/settings/connect-apps", &admin, None)
+            .call_through_busy("GET", "/api/v3/settings/connect-apps", &admin, None)
             .await;
         assert_eq!(status, StatusCode::OK, "{apps}");
         apps["subsonic_enabled"] = json!(subsonic);
         apps["jellyfin_enabled"] = json!(jellyfin);
         let (status, saved) = self
-            .call("PUT", "/api/v3/settings/connect-apps", &admin, Some(apps))
+            .call_through_busy("PUT", "/api/v3/settings/connect-apps", &admin, Some(apps))
             .await;
         assert_eq!(status, StatusCode::OK, "{saved}");
     }
@@ -555,9 +606,17 @@ impl TestApp {
             .expect("shutdown is bounded")
             .expect("the server task joins");
         assert!(stopped.outcome.is_ok(), "{:?}", stopped.outcome);
+        let took = started.elapsed();
         assert!(
-            started.elapsed() < grace,
-            "shutdown waited out its grace: something still held the app"
+            took < grace,
+            "shutdown waited out its grace ({took:?}): something still held the app. \
+             It logged:\n{}",
+            String::from_utf8_lossy(
+                &self
+                    .shutdown_log
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+            )
         );
     }
 }

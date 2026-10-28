@@ -366,21 +366,12 @@ async fn conflicts_duplicates_and_missing_params_are_code_10() {
 #[tokio::test]
 async fn store_failure_is_generic_never_an_auth_code() {
     let (rig, store) = passwords("compat-broken").await;
-    rig.runtime()
-        .db()
-        .write(
-            droppedneedle_kernel::db::Lane::Background,
-            "test.break",
-            |tx| {
-                tx.execute_batch(
-                    "ALTER TABLE auth_users RENAME TO auth_users_gone; \
-                     ALTER TABLE connect_app_passwords RENAME TO connect_app_passwords_gone;",
-                )?;
-                Ok::<_, droppedneedle_kernel::db::DbError>(())
-            },
-        )
-        .await
-        .expect("tables rename");
+    crate::common::break_schema(
+        rig.runtime().db(),
+        "ALTER TABLE auth_users RENAME TO auth_users_gone; \
+         ALTER TABLE connect_app_passwords RENAME TO connect_app_passwords_gone;",
+    )
+    .await;
     let params = SubsonicParams::new(vec![("u", "alice"), ("p", "alice-secret")]);
     assert_eq!(
         authenticate(&store, &params).await,
