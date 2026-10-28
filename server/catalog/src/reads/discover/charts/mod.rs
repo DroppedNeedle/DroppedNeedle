@@ -3,8 +3,8 @@
 //! Ports v2's `HomeChartsService` range pages. Every row is marked when the
 //! library holds it (best effort: a failed lookup leaves rows unmarked).
 //! Every read goes through the listening data, so a chart shares its cache
-//! with home and Discover: sitewide pages are kept an hour, a user's own
-//! five minutes.
+//! with home and Discover: sitewide pages are kept twelve hours, a user's
+//! own six.
 //!
 //! ListenBrainz (the default source): trending artists and popular albums
 //! come from the sitewide stats, "your top albums" from the user's own

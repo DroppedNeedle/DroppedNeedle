@@ -70,24 +70,43 @@ pub(in crate::reads::discover) const TAG_PAGE: u32 = 100;
 const POPULARITY_DOWN_FOR: Duration = Duration::from_secs(10 * 60);
 
 const HOUR: Duration = Duration::from_secs(3_600);
-/// Sitewide charts and artist-level lists.
-const SITEWIDE: Policy = Policy::CHARTS;
-/// Artist-level lists (similar artists, an artist's albums, tags).
-const ARTIST: Policy = Policy {
-    fresh: HOUR,
+// The warm cycle rebuilds every six hours, and background reads never take
+// a stale row, so what a build reads is kept at least that long: a warm
+// build then finds the last one's answers instead of paying every paced
+// read again.
+/// Sitewide charts.
+const SITEWIDE: Policy = Policy {
+    fresh: Duration::from_secs(12 * 3_600),
     miss: HOUR,
 };
-/// A user's statistics that change by the listen.
-const LISTENING: Policy = Policy::LISTENING;
+/// Artist-level lists (similar artists, an artist's albums, tags,
+/// popularity): they move over weeks.
+const ARTIST: Policy = Policy {
+    fresh: Duration::from_secs(24 * 3_600),
+    miss: Duration::from_secs(24 * 3_600),
+};
+/// A user's statistics (top artists and albums, weekly charts and
+/// playlists): ListenBrainz recomputes them about once a day, so each warm
+/// build reads them once.
+const STATS: Policy = Policy {
+    fresh: Duration::from_secs(6 * 3_600),
+    miss: Duration::from_secs(6 * 3_600),
+};
+/// What a user changes by listening or a click: latest scrobbles and
+/// loved tracks.
+const ACTIVITY: Policy = Policy {
+    fresh: Duration::from_secs(15 * 60),
+    miss: Duration::from_secs(15 * 60),
+};
 /// A user's slower statistics (genres, similar users, fresh releases).
 const LISTENING_SLOW: Policy = Policy {
-    fresh: HOUR,
-    miss: HOUR,
+    fresh: Duration::from_secs(12 * 3_600),
+    miss: Duration::from_secs(12 * 3_600),
 };
 /// Tag searches.
 const TAGS: Policy = Policy {
-    fresh: Duration::from_secs(2 * 3_600),
-    miss: Duration::from_secs(2 * 3_600),
+    fresh: Duration::from_secs(12 * 3_600),
+    miss: Duration::from_secs(12 * 3_600),
 };
 
 /// Why a listening read failed.
@@ -415,17 +434,10 @@ impl ListeningData {
             )
             .personal()
         };
-        self.paged(
-            key,
-            LISTENING,
-            ask,
-            count,
-            0,
-            move |network, at, priority| {
-                let name = name.clone();
-                async move { network.user_artists(&name, range, PAGE, at, priority).await }
-            },
-        )
+        self.paged(key, STATS, ask, count, 0, move |network, at, priority| {
+            let name = name.clone();
+            async move { network.user_artists(&name, range, PAGE, at, priority).await }
+        })
         .await
     }
 
@@ -449,7 +461,7 @@ impl ListeningData {
         };
         self.paged(
             key,
-            LISTENING,
+            STATS,
             ask,
             count,
             offset,
@@ -557,7 +569,7 @@ impl ListeningData {
         let key = CacheKey::new(Source::ListenBrainz, &["loved", &lower(username)]).personal();
         let name = username.to_owned();
         let rows = self
-            .list(key, LISTENING, ask, move |network, priority| async move {
+            .list(key, ACTIVITY, ask, move |network, priority| async move {
                 network.loved(&name, PAGE, priority).await
             })
             .await?;
@@ -588,7 +600,7 @@ impl ListeningData {
     ) -> ListeningResult<Option<WeeklyPlaylist>> {
         let key = CacheKey::new(Source::ListenBrainz, &["weekly", &lower(username)]).personal();
         let (user, name) = (user_id.to_owned(), username.to_owned());
-        self.lookup(key, LISTENING, ask, move |network, priority| async move {
+        self.lookup(key, STATS, ask, move |network, priority| async move {
             Ok(
                 match network.weekly_playlist(&user, &name, priority).await? {
                     Some(playlist) => Fetched::Found(playlist),
@@ -651,7 +663,7 @@ impl ListeningData {
         self.health.note(&fetched);
         for (mbid, count) in fetched? {
             if let Ok(bytes) = serde_json::to_vec(&count) {
-                self.cache.set_bytes(&key_of(&mbid), bytes, HOUR);
+                self.cache.set_bytes(&key_of(&mbid), bytes, ARTIST.fresh);
             }
             if let Some(asked) = missing
                 .iter()
@@ -687,7 +699,7 @@ impl ListeningData {
         .personal();
         let (user, name) = (user_id.to_owned(), username.to_owned());
         let rows = self
-            .list(key, LISTENING, ask, move |network, priority| async move {
+            .list(key, STATS, ask, move |network, priority| async move {
                 network
                     .lastfm_user_artists(&user, &name, "3month", read, priority)
                     .await
@@ -714,7 +726,7 @@ impl ListeningData {
         )
         .personal();
         let (user, name) = (user_id.to_owned(), username.to_owned());
-        self.list(key, LISTENING, ask, move |network, priority| async move {
+        self.list(key, STATS, ask, move |network, priority| async move {
             network
                 .lastfm_user_albums(&user, &name, period, limit, priority)
                 .await
@@ -871,7 +883,7 @@ impl ListeningData {
         }
         let key = CacheKey::new(Source::LastFm, &["weekly_artists", &lower(username)]).personal();
         let (user, name) = (user_id.to_owned(), username.to_owned());
-        self.list(key, LISTENING, ask, move |network, priority| async move {
+        self.list(key, STATS, ask, move |network, priority| async move {
             network.lastfm_weekly_artists(&user, &name, priority).await
         })
         .await
@@ -889,7 +901,7 @@ impl ListeningData {
         }
         let key = CacheKey::new(Source::LastFm, &["weekly_albums", &lower(username)]).personal();
         let (user, name) = (user_id.to_owned(), username.to_owned());
-        self.list(key, LISTENING, ask, move |network, priority| async move {
+        self.list(key, STATS, ask, move |network, priority| async move {
             network.lastfm_weekly_albums(&user, &name, priority).await
         })
         .await
@@ -912,7 +924,7 @@ impl ListeningData {
         )
         .personal();
         let (user, name) = (user_id.to_owned(), username.to_owned());
-        self.list(key, LISTENING, ask, move |network, priority| async move {
+        self.list(key, ACTIVITY, ask, move |network, priority| async move {
             network
                 .lastfm_recent_albums(&user, &name, limit, priority)
                 .await
@@ -961,7 +973,7 @@ impl ListeningData {
         )
         .personal();
         let (user, name) = (user_id.to_owned(), username.to_owned());
-        self.list(key, LISTENING, ask, move |network, priority| async move {
+        self.list(key, ACTIVITY, ask, move |network, priority| async move {
             network.lastfm_loved(&user, &name, limit, priority).await
         })
         .await

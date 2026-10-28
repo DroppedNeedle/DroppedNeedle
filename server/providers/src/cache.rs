@@ -217,16 +217,6 @@ impl Policy {
         fresh: Duration::from_secs(6 * HOUR),
         miss: MB_MISS,
     };
-    /// A user's listening statistics.
-    pub const LISTENING: Self = Self {
-        fresh: Duration::from_secs(300),
-        miss: Duration::from_secs(300),
-    };
-    /// Charts and sitewide lists.
-    pub const CHARTS: Self = Self {
-        fresh: Duration::from_secs(HOUR),
-        miss: MB_MISS,
-    };
     /// TheAudioDB art.
     pub const AUDIODB: Self = Self {
         fresh: Duration::from_secs(7 * 24 * HOUR),

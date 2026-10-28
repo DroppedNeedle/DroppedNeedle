@@ -8,7 +8,7 @@
 //!
 //! A request never waits for a build. It gets the user's saved page from
 //! the page cache, however old, with ownership marked from the library as
-//! it is now. When the page is missing or more than five minutes old, a
+//! it is now. When the page is missing or more than an hour old, a
 //! rebuild starts in the background and the answer says so
 //! (`refreshing`), so the page polls until the new one lands. With no
 //! page at all the answer is an empty, `loading` page. An empty or failed
@@ -50,10 +50,11 @@ use droppedneedle_kernel::runtime_config::{Live, Plain, secret_sections::Advance
 use library::LibraryReads;
 use memo::BuildMemo;
 
-/// A page older than this is rebuilt behind the next visit, and a failed
-/// build is not retried sooner.
+/// A page older than an hour is rebuilt behind the next visit: its reads
+/// are cached for hours, so a sooner rebuild repeats the same answers. A
+/// failed or empty build is tried again after five minutes.
 const TIMING: Timing = Timing {
-    fresh_ms: 300_000,
+    fresh_ms: 3_600_000,
     retry_ms: 300_000,
 };
 /// The memos age by their own rules; their cache never builds.
@@ -314,7 +315,7 @@ impl LiveDiscover {
 
     /// The user's saved page with ownership marked as the library has it
     /// now, starting a background rebuild when there is none or it is
-    /// more than five minutes old.
+    /// more than an hour old.
     pub async fn page(&self, user_id: &str, status: IntegrationStatus) -> DiscoverResponse {
         let inner = &self.pages.inner;
         let off = sections::switched_off(&inner.pool, user_id, Page::Discover).await;
