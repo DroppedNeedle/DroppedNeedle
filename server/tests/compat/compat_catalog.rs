@@ -634,6 +634,35 @@ impl Rig {
     async fn open() -> Self {
         let dir = ScratchDir::new("compat-catalog");
         let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+        Self::over(dir, runtime).await
+    }
+
+    /// As [`Rig::open`], with a read that waits `read_wait` for a pooled
+    /// connection answering busy after it.
+    async fn open_with_read_wait(read_wait: Duration) -> Self {
+        use droppedneedle_kernel::db::{DbConfig, LaneLimits, open_runtime};
+        let dir = ScratchDir::new("compat-catalog");
+        let path = dir.join("app.db");
+        crate::common::migrated_db(&path);
+        let config = DbConfig::new(&path)
+            .with_lane_limits(LaneLimits::patient())
+            .with_read_wait(read_wait);
+        let deadline = std::time::Instant::now() + crate::common::PATIENCE;
+        let runtime = loop {
+            match open_runtime(&config).await {
+                Ok(runtime) => break runtime,
+                Err(error)
+                    if crate::common::busy_open(&error) && std::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Err(error) => panic!("runtime opens: {error}"),
+            }
+        };
+        Self::over(dir, runtime).await
+    }
+
+    async fn over(dir: ScratchDir, runtime: DbRuntime) -> Self {
         runtime
             .db()
             .write(Lane::Foreground, "seed", |tx| {
@@ -904,6 +933,124 @@ async fn stored_jellyfin_ids_survive_a_new_data_key() {
             CatalogIds::derive(kind, internal)
         );
     }
+}
+
+/// The fill loop's row as the supervisor last wrote it: heartbeat and
+/// failure code. Read through the sqlx pool, which a test can leave free
+/// while it holds every reader the fill uses.
+async fn fill_row(rig: &Rig) -> Option<(Option<i64>, Option<String>)> {
+    use sqlx::Row as _;
+    sqlx::query("SELECT last_heartbeat_at, last_error FROM durable_loops WHERE name = ?")
+        .bind(droppedneedle_compat::adapters::jellyfin_ids::JOB_NAME)
+        .fetch_optional(rig.runtime.db().sqlx())
+        .await
+        .expect("loop row reads")
+        .map(|row| (row.get(0), row.get(1)))
+}
+
+/// Poll `check` until it holds, for at most the shared patience.
+async fn eventually<F: std::future::Future<Output = bool>>(
+    what: &str,
+    mut check: impl FnMut() -> F,
+) {
+    let deadline = std::time::Instant::now() + crate::common::PATIENCE;
+    while !check().await {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// A fill pass the database is too busy for is no failure: the loop tries
+/// again with no failure on its row, so its backoff never grows, and an album
+/// added while every reader was taken gets its id on the next pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_fill_pass_runs_again_without_backing_off() {
+    let rig = Rig::open_with_read_wait(Duration::from_millis(200)).await;
+    let ids = jellyfin_ids(&rig, 7, Duration::ZERO);
+    ids.start(&rig.platform.supervisor).unwrap();
+    eventually("the first pass is on the row", || async {
+        ids.ready() && matches!(fill_row(&rig).await, Some((Some(_), None)))
+    })
+    .await;
+
+    // Every reader checked out, as on a host too busy to hand one over.
+    // Each holder keeps its reader until its release sender is dropped, on
+    // purpose or by a failing assert, or the patience runs out: a panic
+    // never leaves a reader parked for the runtime to wait on.
+    let readers = droppedneedle_kernel::db::MAX_READERS as usize;
+    let (started_tx, started) = std::sync::mpsc::channel();
+    let mut releases = Vec::new();
+    let mut holders = Vec::new();
+    for _ in 0..readers {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        releases.push(release);
+        let held = Arc::new(std::sync::Mutex::new(held));
+        let started_tx = started_tx.clone();
+        let db = rig.runtime.db().clone();
+        holders.push(tokio::spawn(async move {
+            let deadline = std::time::Instant::now() + crate::common::PATIENCE;
+            loop {
+                let (held, started_tx) = (Arc::clone(&held), started_tx.clone());
+                let outcome = db
+                    .read("test.hold", move |_| {
+                        let _ = started_tx.send(());
+                        let _ = held.lock().unwrap().recv_timeout(crate::common::PATIENCE);
+                        Ok::<_, droppedneedle_kernel::db::DbError>(())
+                    })
+                    .await;
+                match outcome {
+                    Err(droppedneedle_kernel::db::DbError::Busy { .. })
+                        if std::time::Instant::now() < deadline =>
+                    {
+                        continue;
+                    }
+                    outcome => return outcome,
+                }
+            }
+        }));
+    }
+    drop(started_tx);
+    tokio::task::spawn_blocking(move || {
+        for _ in 0..readers {
+            started
+                .recv_timeout(crate::common::PATIENCE)
+                .expect("every reader checks out");
+        }
+    })
+    .await
+    .unwrap();
+    write_catalog(&rig, SECOND_ALBUM).await;
+    // The fill queues for a reader, hears busy, and queues again. A failed
+    // turn is on the row at once, long before that second try.
+    let activity = rig.runtime.read_activity();
+    for attempt in ["first", "second"] {
+        eventually(
+            &format!("the {attempt} pass waits for a reader"),
+            || async { activity.waiting() > 0 },
+        )
+        .await;
+        eventually(&format!("the {attempt} pass hears busy"), || async {
+            activity.waiting() == 0
+        })
+        .await;
+    }
+    assert_eq!(
+        fill_row(&rig).await.and_then(|row| row.1),
+        None,
+        "a busy pass is not a failure"
+    );
+
+    drop(releases);
+    for holder in holders {
+        holder.await.unwrap().unwrap();
+    }
+    let catalog = CatalogIds::new(ids.clone(), rig.reads.library.catalog.clone());
+    let added = ids.computed("album", "alb-2");
+    eventually("the added album's id resolves", || async {
+        catalog.from_jf(&added).await == Ok(named("album", "alb-2"))
+    })
+    .await;
+    assert_eq!(fill_row(&rig).await.and_then(|row| row.1), None);
 }
 
 /// The Jellyfin router over the production adapters and `ids`, which

@@ -69,8 +69,11 @@ const LOOKUP_BATCH: usize = 500;
 /// signs is a valid id, and an id signs nothing else.
 const ITEM_ID_PURPOSE: &str = "jellyfin-item-id";
 
-/// Row code of a pass the database was too busy for.
-const BUSY: &str = "JELLYFIN_IDS_BUSY";
+/// How long a pass the database was too busy for waits before it runs
+/// again: the catalog's pace, so a busy host gets no more passes than an
+/// idle one.
+const BUSY_RETRY: Duration = CATALOG_PACE;
+
 /// Row code of a pass that failed.
 const FAILED: &str = "JELLYFIN_IDS_FAILED";
 
@@ -652,22 +655,44 @@ struct FillTick {
     fill: Fill,
 }
 
-impl Tick for FillTick {
-    async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
-        let outcome = async {
-            if let Some(wait) = self.fill.pace().await?
-                && !ctx.sleep(wait).await
-            {
-                return Ok(None);
-            }
-            self.fill.pass().await.map(Some)
+impl FillTick {
+    /// One pass after its pace; `None` when the loop stopped first.
+    async fn paced_pass(&mut self, ctx: &TickCtx) -> Result<Option<PassReport>, IdsError> {
+        if let Some(wait) = self.fill.pace().await?
+            && !ctx.sleep(wait).await
+        {
+            return Ok(None);
         }
-        .await;
-        match outcome {
-            Ok(Some(_)) => Ok(Next::Continue),
-            Ok(None) => Ok(Next::Finish),
-            Err(IdsError::Busy) => Err(TickError::new(BUSY, IdsError::Busy)),
-            Err(error) => Err(TickError::new(FAILED, error)),
+        self.fill.pass().await.map(Some)
+    }
+}
+
+impl Tick for FillTick {
+    /// A pass the database was too busy for is not a failure: it runs again
+    /// after [`BUSY_RETRY`] within the same turn, so busy never grows the
+    /// loop's backoff and a fresh id waits seconds, not a backoff. Only a
+    /// real failure ends the turn as one.
+    async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
+        let mut busy = false;
+        loop {
+            match self.paced_pass(ctx).await {
+                Ok(Some(_)) => return Ok(Next::Continue),
+                Ok(None) => return Ok(Next::Finish),
+                Err(IdsError::Busy) => {
+                    if !busy {
+                        tracing::info!(
+                            loop_name = ctx.name(),
+                            "jellyfin id fill found the database busy; trying again"
+                        );
+                        busy = true;
+                    }
+                    ctx.heartbeat();
+                    if !ctx.sleep(BUSY_RETRY).await {
+                        return Ok(Next::Finish);
+                    }
+                }
+                Err(error) => return Err(TickError::new(FAILED, error)),
+            }
         }
     }
 }
