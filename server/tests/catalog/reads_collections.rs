@@ -236,6 +236,104 @@ async fn playlist_auth_matrix() {
     assert_eq!(body["error"]["code"], "FORBIDDEN");
 }
 
+/// The store itself refuses a write to another user's playlist: Bob's
+/// handle renames, publishes, adds to, reorders, re-sources, covers,
+/// uncovers, empties and deletes Ada's playlist, and nothing changes.
+#[tokio::test]
+async fn cross_user_writes_are_refused_by_the_store() {
+    use droppedneedle_catalog::reads::collections::store::playlists::{
+        CoverImage, NewEntry, PlaylistStore, Written,
+    };
+
+    let rig = Rig::open().await;
+    let store = PlaylistStore::new(CollectionsDb::new(
+        rig.runtime.db().clone(),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ));
+    let entry = |name: &str| NewEntry {
+        track_name: name.to_owned(),
+        artist_name: "Art".to_owned(),
+        album_name: "Alb".to_owned(),
+        ..NewEntry::default()
+    };
+    let cover = || CoverImage {
+        content_type: "image/png".to_owned(),
+        bytes: vec![1, 2, 3],
+    };
+    let ada = store.owned_by(ADA.0);
+    let (id, _) = ada
+        .create_with("Mine", vec![entry("One"), entry("Two")])
+        .await
+        .unwrap();
+    assert_eq!(
+        ada.set_cover(&id, cover()).await.unwrap(),
+        Written::Done(())
+    );
+    let snapshot = || async {
+        let entries = ada
+            .tracks(&id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|track| {
+                (
+                    track.id,
+                    track.position,
+                    track.track_name,
+                    track.source_type,
+                )
+            })
+            .collect::<Vec<_>>();
+        (ada.get(&id).await.unwrap(), entries)
+    };
+    let before = snapshot().await;
+    let first = before.1[0].0.clone();
+
+    let bob = store.owned_by(BOB.0);
+    assert_eq!(bob.rename(&id, "Taken").await.unwrap(), Written::Missing);
+    assert_eq!(bob.set_public(&id, true).await.unwrap(), Written::Missing);
+    assert_eq!(
+        bob.insert(&id, Some(0), vec![entry("Three")])
+            .await
+            .unwrap(),
+        Written::Missing
+    );
+    assert_eq!(
+        bob.move_entry(&id, &first, 1).await.unwrap(),
+        Written::Missing
+    );
+    assert_eq!(
+        bob.update_sources(&id, &first, Some("plex".to_owned()), None)
+            .await
+            .unwrap(),
+        Written::Missing
+    );
+    assert_eq!(bob.set_cover(&id, cover()).await.unwrap(), Written::Missing);
+    assert_eq!(bob.remove_cover(&id).await.unwrap(), Written::Missing);
+    assert_eq!(
+        bob.remove(&id, std::slice::from_ref(&first)).await.unwrap(),
+        Written::Missing
+    );
+    assert!(matches!(
+        bob.replace_entries(&id, vec![entry("Four")]).await.unwrap(),
+        Written::Missing
+    ));
+    assert_eq!(bob.delete(&id).await.unwrap(), Written::Missing);
+    assert_eq!(bob.get(&id).await.unwrap(), None);
+    assert!(bob.tracks(&id).await.unwrap().is_empty());
+    assert!(bob.cover(&id).await.unwrap().is_none());
+
+    assert_eq!(
+        snapshot().await,
+        before,
+        "nothing about the playlist changed"
+    );
+    assert_eq!(
+        ada.cover(&id).await.unwrap().map(|cover| cover.bytes),
+        Some(vec![1, 2, 3])
+    );
+}
+
 #[tokio::test]
 async fn playlists_favorites_and_follows_survive_a_restart() {
     let rig = Rig::open().await;
@@ -610,12 +708,26 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
 
 #[tokio::test]
 async fn store_faults_render_fixed_500_envelopes() {
+    let rig = Rig::open().await;
+    // Every read below fails inside SQLite on a table that is not there.
+    rig.runtime
+        .db()
+        .write(
+            droppedneedle_kernel::db::Lane::Foreground,
+            "break tables",
+            |tx| {
+                tx.execute_batch(
+                    "ALTER TABLE playlists RENAME TO gone_playlists; \
+                     ALTER TABLE library_user_favorites RENAME TO gone_favorites; \
+                     ALTER TABLE user_followed_artists RENAME TO gone_follows;",
+                )?;
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            },
+        )
+        .await
+        .unwrap();
     let scope = TestApp::start("reads-collections-faults").await;
-    let app = scope.request_scope(
-        collections::routes()
-            .with_state(CollectionsState::unwired())
-            .into_router(),
-    );
+    let app = scope.request_scope(collections::routes().with_state(rig.state()).into_router());
     for uri in [
         "/api/v3/playlists",
         "/api/v3/favorites",
@@ -631,7 +743,7 @@ async fn store_faults_render_fixed_500_envelopes() {
             headers["x-request-id"].to_str().unwrap()
         );
         let raw = String::from_utf8(bytes).unwrap();
-        assert!(!raw.contains("wired"), "{raw}");
+        assert!(!raw.contains("table"), "{raw}");
     }
 }
 

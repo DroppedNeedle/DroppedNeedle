@@ -277,7 +277,8 @@ impl CollectionsPlaylistBridge {
         user_id: &str,
     ) -> Result<Option<String>, String> {
         self.playlists
-            .find_by_source(user_id, source_ref)
+            .owned_by(user_id)
+            .find_by_source(source_ref)
             .await
             .map_err(|error| error.to_string())
     }
@@ -292,7 +293,8 @@ impl CollectionsPlaylistBridge {
     ) -> Result<String, String> {
         if let Some(id) = self
             .playlists
-            .create(user_id, name, Some(source_ref))
+            .owned_by(user_id)
+            .create(name, Some(source_ref))
             .await
             .map_err(|error| error.to_string())?
         {
@@ -300,7 +302,8 @@ impl CollectionsPlaylistBridge {
         }
         // A racing import made it first: answer that one.
         self.playlists
-            .find_by_source(user_id, source_ref)
+            .owned_by(user_id)
+            .find_by_source(source_ref)
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("playlist for {source_ref} vanished during create"))
@@ -322,16 +325,19 @@ impl CollectionsPlaylistBridge {
             .map_err(|error| format!("spotify playlist refs read: {error}"))
     }
 
-    /// Replace every row on a playlist with `tracks`, in order, in one
-    /// transaction: a failed write keeps the rows the playlist had.
+    /// Replace every row on one of the user's playlists with `tracks`, in
+    /// order, in one transaction: a failed write keeps the rows the
+    /// playlist had.
     pub async fn replace_tracks(
         &self,
+        user_id: &str,
         playlist_id: &str,
         tracks: &[ImportedTrack],
     ) -> Result<(), SpotifyError> {
         let entries = tracks.iter().map(entry_for).collect();
         match self
             .playlists
+            .owned_by(user_id)
             .replace_entries(playlist_id, entries)
             .await
             .map_err(|error| match error {
@@ -345,9 +351,10 @@ impl CollectionsPlaylistBridge {
         }
     }
 
-    /// How many rows a playlist holds.
-    pub async fn track_count(&self, playlist_id: &str) -> Result<usize, String> {
+    /// How many rows one of the user's playlists holds.
+    pub async fn track_count(&self, user_id: &str, playlist_id: &str) -> Result<usize, String> {
         self.playlists
+            .owned_by(user_id)
             .tracks(playlist_id)
             .await
             .map(|rows| rows.len())
@@ -358,12 +365,14 @@ impl CollectionsPlaylistBridge {
     /// when a cover already exists.
     pub async fn set_imported_cover(
         &self,
+        user_id: &str,
         playlist_id: &str,
         data: &[u8],
         content_type: &str,
     ) -> Result<bool, String> {
         if self
             .playlists
+            .owned_by(user_id)
             .cover(playlist_id)
             .await
             .map_err(|error| error.to_string())?
@@ -377,6 +386,7 @@ impl CollectionsPlaylistBridge {
         };
         match self
             .playlists
+            .owned_by(user_id)
             .set_cover(playlist_id, cover)
             .await
             .map_err(|error| error.to_string())?

@@ -13,6 +13,7 @@ pub mod http;
 pub mod models;
 pub mod remote_import;
 pub mod service;
+pub(crate) mod sql;
 pub mod state;
 pub mod store;
 

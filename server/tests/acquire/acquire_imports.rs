@@ -207,14 +207,22 @@ fn rig_with(
     }
 }
 
-/// The rows on one playlist, in order.
-async fn playlist_rows(playlists: &PlaylistStore, playlist_id: &str) -> Vec<PlaylistTrack> {
-    playlists.tracks(playlist_id).await.expect("rows read")
+/// The rows on one of the user's playlists, in order.
+async fn playlist_rows(
+    playlists: &PlaylistStore,
+    user_id: &str,
+    playlist_id: &str,
+) -> Vec<PlaylistTrack> {
+    playlists
+        .owned_by(user_id)
+        .tracks(playlist_id)
+        .await
+        .expect("rows read")
 }
 
-/// The row ids on one playlist, in order.
-async fn track_ids(playlists: &PlaylistStore, playlist_id: &str) -> Vec<String> {
-    playlist_rows(playlists, playlist_id)
+/// The row ids on one of the user's playlists, in order.
+async fn track_ids(playlists: &PlaylistStore, user_id: &str, playlist_id: &str) -> Vec<String> {
+    playlist_rows(playlists, user_id, playlist_id)
         .await
         .into_iter()
         .map(|row| row.id)
@@ -979,7 +987,7 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
     // by its track's ISRC, so it carries its release group. The second
     // album's namesake carries another ISRC: a name alone proves nothing,
     // so it stays unresolved.
-    let rows = playlist_rows(&bundle.playlists, &playlist_id).await;
+    let rows = playlist_rows(&bundle.playlists, &user_id, &playlist_id).await;
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].track_name, "Midnight Drive");
     assert_eq!(rows[0].artist_name, "Aurora Current");
@@ -996,6 +1004,7 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
     // The cover persisted best-effort.
     let cover = bundle
         .playlists
+        .owned_by(&user_id)
         .cover(&playlist_id)
         .await
         .expect("cover reads");
@@ -1013,7 +1022,9 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
     let done = poll_job_done(bundle.deps.clone(), &user_id, "sp-playlist-1").await;
     assert_eq!(done["state"], "done");
     assert_eq!(
-        playlist_rows(&bundle.playlists, &playlist_id).await.len(),
+        playlist_rows(&bundle.playlists, &user_id, &playlist_id)
+            .await
+            .len(),
         2
     );
 
@@ -1057,7 +1068,7 @@ async fn spotify_failed_reimport_keeps_the_old_tracks() {
         .to_owned();
     let done = poll_job_done(bundle.deps.clone(), &user_id, "sp-playlist-1").await;
     assert_eq!(done["state"], "done");
-    let before = track_ids(&bundle.playlists, &playlist_id).await;
+    let before = track_ids(&bundle.playlists, &user_id, &playlist_id).await;
     assert_eq!(before.len(), 2);
 
     // Fail the insert of the second track, after the first one is written.
@@ -1083,7 +1094,10 @@ async fn spotify_failed_reimport_keeps_the_old_tracks() {
     assert_eq!(status, StatusCode::OK);
     let done = poll_job_done(bundle.deps.clone(), &user_id, "sp-playlist-1").await;
     assert_eq!(done["state"], "error", "{done}");
-    assert_eq!(track_ids(&bundle.playlists, &playlist_id).await, before);
+    assert_eq!(
+        track_ids(&bundle.playlists, &user_id, &playlist_id).await,
+        before
+    );
 }
 
 #[tokio::test]
@@ -1162,7 +1176,7 @@ async fn spotify_track_without_id_fails_the_import() {
     let done = poll_job_done(bundle.deps, &user_id, SPOTIFY_PLAYLIST_NO_TRACK_ID).await;
     assert_eq!(done["state"], "error", "{done}");
     assert!(
-        playlist_rows(&bundle.playlists, &playlist_id)
+        playlist_rows(&bundle.playlists, &user_id, &playlist_id)
             .await
             .is_empty()
     );
@@ -1434,7 +1448,7 @@ async fn spotify_sqlite_stores_persist_and_expire() {
     };
     for _ in 0..2 {
         bridge
-            .replace_tracks(&id, &[track.clone(), track.clone()])
+            .replace_tracks("u1", &id, &[track.clone(), track.clone()])
             .await
             .expect("replaces");
     }

@@ -235,9 +235,11 @@ impl SpotifyImportService {
             })
             .collect();
         let written = rows.len();
-        self.playlists.replace_tracks(playlist_id, &rows).await?;
+        self.playlists
+            .replace_tracks(user_id, playlist_id, &rows)
+            .await?;
         if let CoverOutcome::Skipped(reason) = self
-            .persist_cover(spotify_playlist_id, playlist_id, &info)
+            .persist_cover(user_id, spotify_playlist_id, playlist_id, &info)
             .await
         {
             tracing::debug!(%reason, "spotify playlist imported without a cover");
@@ -305,6 +307,7 @@ impl SpotifyImportService {
     /// playlist import, and no cover is normal.
     pub async fn persist_cover(
         &self,
+        user_id: &str,
         spotify_playlist_id: &str,
         playlist_id: &str,
         info: &PlaylistInfo,
@@ -327,7 +330,7 @@ impl SpotifyImportService {
         };
         match self
             .playlists
-            .set_imported_cover(playlist_id, &data, &content_type)
+            .set_imported_cover(user_id, playlist_id, &data, &content_type)
             .await
         {
             Ok(true) => CoverOutcome::Stored,

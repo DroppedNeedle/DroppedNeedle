@@ -199,6 +199,13 @@ fn record(visible: &Visible) -> PlaylistRecord {
     }
 }
 
+fn entry((id, library_file_id): (String, Option<String>)) -> PlaylistEntry {
+    PlaylistEntry {
+        id,
+        library_file_id,
+    }
+}
+
 fn saved_record(saved: SavedPlaylist) -> PlaylistRecord {
     PlaylistRecord {
         id: saved.id,
@@ -745,14 +752,9 @@ impl SubsonicStore {
         let mut missing = Vec::new();
         for (kind, id) in targets {
             let present = match kind {
-                IdKind::Playlist => self
-                    .library
-                    .collections
-                    .stores
-                    .playlists
-                    .get(id)
-                    .await?
-                    .is_some(),
+                // Never a favourite or rating target: `setRating` refuses
+                // the kind whatever this answers.
+                IdKind::Playlist => false,
                 IdKind::Genre => true,
                 other => existing
                     .get(kind_name(*other))
@@ -813,7 +815,7 @@ impl SubsonicStore {
         self.tracks_for_caller(tracks).await
     }
 
-    /// Playlists visible to the user (redacted rows carry None).
+    /// The playlists the user may read, with streamable counts (#181).
     pub async fn get_all_playlists(
         &self,
         user_id: &str,
@@ -824,31 +826,11 @@ impl SubsonicStore {
             .await?
             .iter()
             .map(|visible| PlaylistSummary {
-                record: visible.full.then(|| record(visible)),
+                record: record(visible),
                 is_owner: visible.is_owner,
                 owner_name: visible.row.owner_name.clone().unwrap_or_default(),
-            })
-            .collect())
-    }
-
-    /// Streamable (count, duration) per playlist id (#181).
-    pub async fn get_streamable_counts(&self) -> Result<HashMap<String, (i64, i64)>, CompatError> {
-        Ok(self
-            .library
-            .collections
-            .stores
-            .playlists
-            .list()
-            .await?
-            .into_iter()
-            .map(|row| {
-                (
-                    row.id,
-                    (
-                        row.streamable_count as i64,
-                        row.streamable_duration.round() as i64,
-                    ),
-                )
+                song_count: visible.row.streamable_count as i64,
+                duration: visible.row.streamable_duration.round() as i64,
             })
             .collect())
     }
@@ -862,7 +844,13 @@ impl SubsonicStore {
         let Some(visible) = self.library.playlist(user_id, playlist_id).await? else {
             return Ok(None);
         };
-        let tracks = self.get_playlist_tracks(playlist_id).await?;
+        let tracks = self
+            .library
+            .playlist_entries(user_id, playlist_id)
+            .await?
+            .into_iter()
+            .map(entry)
+            .collect();
         Ok(Some(PlaylistDetail {
             record: record(&visible),
             tracks,
@@ -871,21 +859,18 @@ impl SubsonicStore {
         }))
     }
 
-    /// Playlist entries in order.
+    /// Entries of one of the user's own playlists in order; None when it
+    /// is not theirs.
     pub async fn get_playlist_tracks(
         &self,
         playlist_id: &str,
-    ) -> Result<Vec<PlaylistEntry>, CompatError> {
+        user_id: &str,
+    ) -> Result<Option<Vec<PlaylistEntry>>, CompatError> {
         Ok(self
             .library
-            .playlist_entries(playlist_id)
+            .owned_entries(user_id, playlist_id)
             .await?
-            .into_iter()
-            .map(|(id, library_file_id)| PlaylistEntry {
-                id,
-                library_file_id,
-            })
-            .collect())
+            .map(|entries| entries.into_iter().map(entry).collect()))
     }
 
     /// Create a playlist holding the library files `file_ids`, as one

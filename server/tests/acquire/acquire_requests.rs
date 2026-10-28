@@ -967,7 +967,15 @@ async fn personal_mix_grant_build_and_refresh() {
         (2, 2, None)
     );
     let playlist = built.playlist_id.expect("mix playlist");
-    assert_eq!(playlists.tracks(&playlist).await.unwrap().len(), 2);
+    assert_eq!(
+        playlists
+            .owned_by("u-ada")
+            .tracks(&playlist)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
     assert_eq!(
         dispatch.take_calls().await.len(),
         2,

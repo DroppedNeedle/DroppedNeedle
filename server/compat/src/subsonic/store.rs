@@ -72,15 +72,19 @@ pub struct ScanStatusData {
     pub last: Option<LastScan>,
 }
 
-/// Playlist list row (None record = redacted private list, skipped).
+/// Playlist list row: one playlist the caller may read.
 #[derive(Debug, Clone, Default)]
 pub struct PlaylistSummary {
-    /// Record, or None when redacted.
-    pub record: Option<PlaylistRecord>,
+    /// Record.
+    pub record: PlaylistRecord,
     /// True when the caller owns it.
     pub is_owner: bool,
     /// Owner display name.
     pub owner_name: String,
+    /// Entries pointing at a library file (#181).
+    pub song_count: i64,
+    /// Their summed duration, whole seconds.
+    pub duration: i64,
 }
 
 /// Playlist detail: record plus entries in order.

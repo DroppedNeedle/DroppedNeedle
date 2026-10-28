@@ -542,12 +542,12 @@ impl CompatLibrary {
         Ok(self.catalog.playable_counts().await?)
     }
 
-    /// Every playlist with what the user may see of it.
+    /// Every playlist the user may read.
     pub async fn playlists(&self, user_id: &str) -> Result<Vec<Visible>, CompatError> {
         Ok(self.service().visible_playlists(user_id).await?)
     }
 
-    /// A readable playlist with its entries, or None.
+    /// A readable playlist, or None.
     pub async fn playlist(
         &self,
         user_id: &str,
@@ -556,7 +556,6 @@ impl CompatLibrary {
         match self.service().readable_playlist(user_id, playlist_id).await {
             Ok(row) => Ok(Some(Visible {
                 is_owner: row.owner_id.as_deref() == Some(user_id),
-                full: true,
                 row,
             })),
             Err(CollectionsError::NotFound) => Ok(None),
@@ -564,21 +563,39 @@ impl CompatLibrary {
         }
     }
 
-    /// Entries of a playlist as `(entry id, library file id)`, in order.
-    /// Callers check readability first.
+    /// Entries of a playlist the user may read as `(entry id, library
+    /// file id)`, in order; none when they may not read it.
     pub async fn playlist_entries(
         &self,
+        user_id: &str,
         playlist_id: &str,
     ) -> Result<Vec<(String, Option<String>)>, CompatError> {
         Ok(self
-            .collections
-            .stores
-            .playlists
-            .tracks(playlist_id)
+            .service()
+            .readable_entries(user_id, playlist_id)
             .await?
             .into_iter()
             .map(|track| (track.id, track.library_file_id))
             .collect())
+    }
+
+    /// Entries of one of the user's own playlists as `(entry id, library
+    /// file id)`, in order; None when it is not theirs.
+    pub async fn owned_entries(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+    ) -> Result<Option<Vec<(String, Option<String>)>>, CompatError> {
+        Ok(self
+            .service()
+            .owned_entries(user_id, playlist_id)
+            .await?
+            .map(|tracks| {
+                tracks
+                    .into_iter()
+                    .map(|track| (track.id, track.library_file_id))
+                    .collect()
+            }))
     }
 
     /// Create a playlist owned by the user holding the library files
@@ -742,7 +759,7 @@ impl CompatLibrary {
             };
         }
         let file_ids = self
-            .playlist_entries(playlist_id)
+            .playlist_entries(user_id, playlist_id)
             .await?
             .into_iter()
             .filter_map(|(_, file_id)| file_id)

@@ -10,10 +10,10 @@
 
 use std::sync::Arc;
 
-use rusqlite::Transaction;
+use rusqlite::{Connection, Transaction};
 use sqlx::SqlitePool;
 
-use droppedneedle_kernel::clock::{Clock, SystemClock};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane, map_sqlx_busy};
 
 /// Every way a store call can fail. The text goes to the log only.
@@ -41,18 +41,17 @@ impl StoreError {
     }
 }
 
-/// The application database, or none in bundles that never serve
-/// collections, and the clock rows are stamped by.
+/// The application database and the clock rows are stamped by.
 #[derive(Clone)]
 pub struct CollectionsDb {
-    live: Option<Db>,
+    db: Db,
     clock: Arc<dyn Clock>,
 }
 
 impl std::fmt::Debug for CollectionsDb {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CollectionsDb")
-            .field("live", &self.live)
+            .field("db", &self.db)
             .finish_non_exhaustive()
     }
 }
@@ -60,19 +59,7 @@ impl std::fmt::Debug for CollectionsDb {
 impl CollectionsDb {
     /// Handle over the serving runtime's database and clock.
     pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
-        Self {
-            live: Some(db),
-            clock,
-        }
-    }
-
-    /// A handle with no database: every call fails closed with a logged
-    /// 5xx. Only bundles that never serve collections build this.
-    pub fn unwired() -> Self {
-        Self {
-            live: None,
-            clock: Arc::new(SystemClock),
-        }
+        Self { db, clock }
     }
 
     /// Now, as epoch milliseconds.
@@ -91,9 +78,18 @@ impl CollectionsDb {
         self.clock.now_ms().max(0) as f64 / 1000.0
     }
 
-    /// Reader pool, or the unwired failure.
+    /// The reader pool the sqlx stores read through.
     pub fn pool(&self) -> Result<&SqlitePool, StoreError> {
-        self.live.as_ref().map(Db::sqlx).ok_or_else(unwired)
+        Ok(self.db.sqlx())
+    }
+
+    /// One request-path read on a pooled connection.
+    pub async fn read<F, R>(&self, name: &'static str, op: F) -> Result<R, StoreError>
+    where
+        F: FnOnce(&Connection) -> Result<R, DbError> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.db.read(name, op).await.map_err(StoreError::from_db)
     }
 
     /// One request-path write transaction.
@@ -102,15 +98,11 @@ impl CollectionsDb {
         F: FnOnce(&Transaction) -> Result<R, DbError> + Send + 'static,
         R: Send + 'static,
     {
-        let db = self.live.as_ref().ok_or_else(unwired)?;
-        db.write(Lane::Foreground, name, op)
+        self.db
+            .write(Lane::Foreground, name, op)
             .await
             .map_err(StoreError::from_db)
     }
-}
-
-fn unwired() -> StoreError {
-    StoreError::Internal("collections database is not wired".to_owned())
 }
 
 /// Epoch seconds from a REAL column. Negative or broken values read as zero.

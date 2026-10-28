@@ -41,13 +41,13 @@ impl AutoDownloadState {
 pub struct CollectionsState {
     /// The database the stores use (also lent to the compat queues).
     pub db: CollectionsDb,
-    /// The SQLite stores.
-    pub stores: Stores,
+    /// The SQLite stores. Other crates reach playlists only through the
+    /// service, which names the caller on every store call.
+    pub(crate) stores: Stores,
     /// The library's live artists, albums and tracks, which a rating
     /// names: the same id resolution and existence check Subsonic's
-    /// `setRating` goes through, over the same database. `None` only in
-    /// the unwired state.
-    pub items: Option<LocalCatalog>,
+    /// `setRating` goes through, over the same database.
+    pub items: LocalCatalog,
 }
 
 impl CollectionsState {
@@ -60,21 +60,6 @@ impl CollectionsState {
     /// The production state over the stores acquisition was built with
     /// and the one local catalog the composition root built.
     pub fn over(db: CollectionsDb, stores: Stores, items: LocalCatalog) -> Self {
-        Self {
-            stores,
-            items: Some(items),
-            db,
-        }
-    }
-
-    /// State with no database: every route fails closed. Bundles that never
-    /// serve collections use this.
-    pub fn unwired() -> Self {
-        let db = CollectionsDb::unwired();
-        Self {
-            stores: Stores::new(&db),
-            items: None,
-            db,
-        }
+        Self { db, stores, items }
     }
 }

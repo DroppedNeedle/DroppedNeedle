@@ -16,7 +16,11 @@ use crate::reads::collections::models::{
     PlaylistTrack, RedactedPlaylist, ResolveSourcesResponse, TrackInput, UpdatePlaylistBody,
     UpdateTrackBody,
 };
-use crate::reads::collections::store::playlists::{CoverImage, NewEntry, PlaylistRow, Written};
+use crate::reads::collections::store::PlaylistStore;
+pub use crate::reads::collections::store::playlists::SavedPlaylist;
+use crate::reads::collections::store::playlists::{
+    CoverImage, EntryNames, Listed, NewEntry, PlaylistRow, Written,
+};
 
 /// Longest accepted playlist name.
 const MAX_NAME_LEN: usize = 200;
@@ -39,32 +43,16 @@ const SOURCE_TYPES: [(&str, &str); 8] = [
     (LOCAL_SOURCE, LOCAL_SOURCE),
 ];
 
-/// One playlist as one caller may see it.
+/// Most tracks one membership check accepts.
+const MAX_CHECK_TRACKS: usize = 1000;
+
+/// One playlist the caller may read.
 #[derive(Debug, Clone)]
 pub struct Visible {
     /// The row with aggregates.
     pub row: PlaylistRow,
     /// True when the caller owns it.
     pub is_owner: bool,
-    /// False for another user's private playlist: only id, count and
-    /// owner may be shown.
-    pub full: bool,
-}
-
-/// A playlist as one write left it, without its entries. Times are epoch
-/// seconds.
-#[derive(Debug, Clone)]
-pub struct SavedPlaylist {
-    /// Playlist id.
-    pub id: String,
-    /// Name as stored.
-    pub name: String,
-    /// Public flag.
-    pub is_public: bool,
-    /// When it was made.
-    pub created_at: u64,
-    /// When it last changed.
-    pub updated_at: u64,
 }
 
 /// Trimmed non-empty name or 400.
@@ -141,28 +129,6 @@ fn owns(row: &PlaylistRow, user_id: &str) -> bool {
     row.owner_id.as_deref() == Some(user_id)
 }
 
-/// Owner-only guard: private plus non-owner is 404, public plus non-owner
-/// is 403.
-fn require_owner(row: &PlaylistRow, user_id: &str) -> Result<(), CollectionsError> {
-    if owns(row, user_id) {
-        Ok(())
-    } else if row.is_public {
-        Err(CollectionsError::Forbidden {
-            message: "Only the owner can change this playlist".to_owned(),
-        })
-    } else {
-        Err(CollectionsError::NotFound)
-    }
-}
-
-/// A store write that names a playlist or entry: gone means 404.
-fn found<T>(written: Written<T>) -> Result<T, CollectionsError> {
-    match written {
-        Written::Done(value) => Ok(value),
-        Written::Missing => Err(CollectionsError::NotFound),
-    }
-}
-
 /// Validate one native track input and turn it into a store entry. Local
 /// entries whose source id names a library file link to it, so compat
 /// clients can stream them (v2 #181).
@@ -208,18 +174,57 @@ fn to_entry(input: &TrackInput) -> Result<NewEntry, CollectionsError> {
 }
 
 impl CollectionsService<'_> {
-    /// Every playlist with what the caller may see of it, name order.
+    fn playlists(&self) -> &PlaylistStore {
+        &self.state.stores.playlists
+    }
+
+    /// Ok when the caller owns the playlist. Otherwise private plus
+    /// non-owner (or gone) is 404, public plus non-owner is 403.
+    async fn require_owner(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+    ) -> Result<(), CollectionsError> {
+        match self
+            .playlists()
+            .visible_to(user_id)
+            .is_owner(playlist_id)
+            .await?
+        {
+            Some(true) => Ok(()),
+            Some(false) => Err(CollectionsError::Forbidden {
+                message: "Only the owner can change this playlist".to_owned(),
+            }),
+            None => Err(CollectionsError::NotFound),
+        }
+    }
+
+    /// The outcome of an owner-scoped write. A write that found nothing
+    /// answers as [`Self::require_owner`] does, and 404 for the caller's
+    /// own playlist (the entry is gone).
+    async fn found<T>(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        written: Written<T>,
+    ) -> Result<T, CollectionsError> {
+        match written {
+            Written::Done(value) => Ok(value),
+            Written::Missing => {
+                self.require_owner(user_id, playlist_id).await?;
+                Err(CollectionsError::NotFound)
+            }
+        }
+    }
+
+    /// The playlists the caller may read, name order.
     pub async fn visible_playlists(&self, user_id: &str) -> Result<Vec<Visible>, CollectionsError> {
-        let rows = self.state.stores.playlists.list().await?;
+        let rows = self.playlists().visible_to(user_id).readable().await?;
         Ok(rows
             .into_iter()
-            .map(|row| {
-                let is_owner = owns(&row, user_id);
-                Visible {
-                    full: is_owner || row.is_public,
-                    is_owner,
-                    row,
-                }
+            .map(|row| Visible {
+                is_owner: owns(&row, user_id),
+                row,
             })
             .collect())
     }
@@ -230,20 +235,23 @@ impl CollectionsService<'_> {
         user_id: &str,
     ) -> Result<PlaylistListResponse, CollectionsError> {
         let playlists = self
-            .visible_playlists(user_id)
+            .playlists()
+            .visible_to(user_id)
+            .list()
             .await?
             .into_iter()
-            .map(|visible| {
-                if visible.full {
-                    PlaylistListItem::Full(summary(&visible.row, user_id))
-                } else {
-                    PlaylistListItem::Redacted(RedactedPlaylist {
-                        id: visible.row.id.clone(),
-                        track_count: visible.row.track_count,
-                        owner_name: visible.row.owner_name.clone(),
-                        is_redacted: true,
-                    })
-                }
+            .map(|listed| match listed {
+                Listed::Readable(row) => PlaylistListItem::Full(summary(&row, user_id)),
+                Listed::Hidden {
+                    id,
+                    track_count,
+                    owner_name,
+                } => PlaylistListItem::Redacted(RedactedPlaylist {
+                    id,
+                    track_count,
+                    owner_name,
+                    is_redacted: true,
+                }),
             })
             .collect();
         Ok(PlaylistListResponse { playlists })
@@ -256,35 +264,11 @@ impl CollectionsService<'_> {
         user_id: &str,
         playlist_id: &str,
     ) -> Result<PlaylistRow, CollectionsError> {
-        let row = self
-            .state
-            .stores
-            .playlists
+        self.playlists()
+            .visible_to(user_id)
             .get(playlist_id)
             .await?
-            .ok_or(CollectionsError::NotFound)?;
-        if owns(&row, user_id) || row.is_public {
-            Ok(row)
-        } else {
-            Err(CollectionsError::NotFound)
-        }
-    }
-
-    /// One playlist the caller owns, for a mutation.
-    async fn owned_playlist(
-        &self,
-        user_id: &str,
-        playlist_id: &str,
-    ) -> Result<PlaylistRow, CollectionsError> {
-        let row = self
-            .state
-            .stores
-            .playlists
-            .get(playlist_id)
-            .await?
-            .ok_or(CollectionsError::NotFound)?;
-        require_owner(&row, user_id)?;
-        Ok(row)
+            .ok_or(CollectionsError::NotFound)
     }
 
     /// Entries of a readable playlist, in order.
@@ -294,7 +278,39 @@ impl CollectionsService<'_> {
         playlist_id: &str,
     ) -> Result<Vec<PlaylistTrack>, CollectionsError> {
         self.readable_playlist(user_id, playlist_id).await?;
-        Ok(self.state.stores.playlists.tracks(playlist_id).await?)
+        Ok(self
+            .playlists()
+            .visible_to(user_id)
+            .tracks(playlist_id)
+            .await?)
+    }
+
+    /// Entries of a playlist the caller may read, in order; none when they
+    /// may not read it. For callers that have read the playlist already.
+    pub async fn readable_entries(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+    ) -> Result<Vec<PlaylistTrack>, CollectionsError> {
+        Ok(self
+            .playlists()
+            .visible_to(user_id)
+            .tracks(playlist_id)
+            .await?)
+    }
+
+    /// Entries of one of the caller's own playlists, in order; None when it
+    /// is not theirs or is gone.
+    pub async fn owned_entries(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+    ) -> Result<Option<Vec<PlaylistTrack>>, CollectionsError> {
+        let playlists = self.playlists();
+        if playlists.visible_to(user_id).is_owner(playlist_id).await? != Some(true) {
+            return Ok(None);
+        }
+        Ok(Some(playlists.owned_by(user_id).tracks(playlist_id).await?))
     }
 
     /// One playlist detail.
@@ -304,7 +320,11 @@ impl CollectionsService<'_> {
         playlist_id: &str,
     ) -> Result<PlaylistDetail, CollectionsError> {
         let row = self.readable_playlist(user_id, playlist_id).await?;
-        let tracks = self.state.stores.playlists.tracks(playlist_id).await?;
+        let tracks = self
+            .playlists()
+            .visible_to(user_id)
+            .tracks(playlist_id)
+            .await?;
         Ok(detail(&row, user_id, tracks))
     }
 
@@ -317,10 +337,9 @@ impl CollectionsService<'_> {
         source_ref: Option<&str>,
     ) -> Result<String, CollectionsError> {
         let name = clean_name(name)?;
-        self.state
-            .stores
-            .playlists
-            .create(user_id, &name, source_ref)
+        self.playlists()
+            .owned_by(user_id)
+            .create(&name, source_ref)
             .await?
             .ok_or_else(|| CollectionsError::Conflict {
                 message: "This playlist was already imported".to_owned(),
@@ -337,10 +356,9 @@ impl CollectionsService<'_> {
     ) -> Result<SavedPlaylist, CollectionsError> {
         let name = clean_name(name)?;
         let (id, at) = self
-            .state
-            .stores
-            .playlists
-            .create_with(user_id, &name, entries)
+            .playlists()
+            .owned_by(user_id)
+            .create_with(&name, entries)
             .await?;
         Ok(SavedPlaylist {
             id,
@@ -361,21 +379,12 @@ impl CollectionsService<'_> {
         entries: Vec<NewEntry>,
     ) -> Result<SavedPlaylist, CollectionsError> {
         let name = name.map(clean_name).transpose()?;
-        let row = self.owned_playlist(user_id, playlist_id).await?;
-        let at = found(
-            self.state
-                .stores
-                .playlists
-                .replace_named(playlist_id, name.as_deref(), entries)
-                .await?,
-        )?;
-        Ok(SavedPlaylist {
-            id: row.id,
-            name: name.unwrap_or(row.name),
-            is_public: row.is_public,
-            created_at: row.created_at,
-            updated_at: at,
-        })
+        let written = self
+            .playlists()
+            .owned_by(user_id)
+            .replace_named(playlist_id, name.as_deref(), entries)
+            .await?;
+        self.found(user_id, playlist_id, written).await
     }
 
     /// Create a playlist (native body).
@@ -399,9 +408,7 @@ impl CollectionsService<'_> {
     ) -> Result<PlaylistDetail, CollectionsError> {
         match body.name.as_deref() {
             Some(name) => self.rename(user_id, playlist_id, name).await?,
-            None => {
-                self.owned_playlist(user_id, playlist_id).await?;
-            }
+            None => self.require_owner(user_id, playlist_id).await?,
         }
         self.get_playlist(user_id, playlist_id).await
     }
@@ -414,14 +421,12 @@ impl CollectionsService<'_> {
         name: &str,
     ) -> Result<(), CollectionsError> {
         let name = clean_name(name)?;
-        self.owned_playlist(user_id, playlist_id).await?;
-        found(
-            self.state
-                .stores
-                .playlists
-                .rename(playlist_id, &name)
-                .await?,
-        )
+        let written = self
+            .playlists()
+            .owned_by(user_id)
+            .rename(playlist_id, &name)
+            .await?;
+        self.found(user_id, playlist_id, written).await
     }
 
     /// Delete a playlist.
@@ -430,8 +435,12 @@ impl CollectionsService<'_> {
         user_id: &str,
         playlist_id: &str,
     ) -> Result<(), CollectionsError> {
-        self.owned_playlist(user_id, playlist_id).await?;
-        found(self.state.stores.playlists.delete(playlist_id).await?)
+        let written = self
+            .playlists()
+            .owned_by(user_id)
+            .delete(playlist_id)
+            .await?;
+        self.found(user_id, playlist_id, written).await
     }
 
     /// Flip visibility.
@@ -453,14 +462,12 @@ impl CollectionsService<'_> {
         playlist_id: &str,
         public: bool,
     ) -> Result<(), CollectionsError> {
-        self.owned_playlist(user_id, playlist_id).await?;
-        found(
-            self.state
-                .stores
-                .playlists
-                .set_public(playlist_id, public)
-                .await?,
-        )
+        let written = self
+            .playlists()
+            .owned_by(user_id)
+            .set_public(playlist_id, public)
+            .await?;
+        self.found(user_id, playlist_id, written).await
     }
 
     /// Insert ready-made entries at a position (None appends); returns the
@@ -472,14 +479,12 @@ impl CollectionsService<'_> {
         position: Option<usize>,
         entries: Vec<NewEntry>,
     ) -> Result<Vec<String>, CollectionsError> {
-        self.owned_playlist(user_id, playlist_id).await?;
-        found(
-            self.state
-                .stores
-                .playlists
-                .insert(playlist_id, position, entries)
-                .await?,
-        )
+        let written = self
+            .playlists()
+            .owned_by(user_id)
+            .insert(playlist_id, position, entries)
+            .await?;
+        self.found(user_id, playlist_id, written).await
     }
 
     /// Add native tracks at a position, or append.
@@ -498,9 +503,8 @@ impl CollectionsService<'_> {
             .add_entries(user_id, playlist_id, body.position, entries)
             .await?;
         let tracks = self
-            .state
-            .stores
-            .playlists
+            .playlists()
+            .owned_by(user_id)
             .tracks(playlist_id)
             .await?
             .into_iter()
@@ -516,14 +520,12 @@ impl CollectionsService<'_> {
         playlist_id: &str,
         entry_ids: &[String],
     ) -> Result<usize, CollectionsError> {
-        self.owned_playlist(user_id, playlist_id).await?;
-        found(
-            self.state
-                .stores
-                .playlists
-                .remove(playlist_id, entry_ids)
-                .await?,
-        )
+        let written = self
+            .playlists()
+            .owned_by(user_id)
+            .remove(playlist_id, entry_ids)
+            .await?;
+        self.found(user_id, playlist_id, written).await
     }
 
     /// Remove one entry; an unknown entry is 404.
@@ -550,14 +552,12 @@ impl CollectionsService<'_> {
         entry_id: &str,
         position: usize,
     ) -> Result<usize, CollectionsError> {
-        self.owned_playlist(user_id, playlist_id).await?;
-        found(
-            self.state
-                .stores
-                .playlists
-                .move_entry(playlist_id, entry_id, position)
-                .await?,
-        )
+        let written = self
+            .playlists()
+            .owned_by(user_id)
+            .move_entry(playlist_id, entry_id, position)
+            .await?;
+        self.found(user_id, playlist_id, written).await
     }
 
     /// Update one entry's source fields.
@@ -574,17 +574,12 @@ impl CollectionsService<'_> {
             .as_deref()
             .map(clean_sources)
             .transpose()?;
-        self.owned_playlist(user_id, playlist_id).await?;
-        found(
-            self.state
-                .stores
-                .playlists
-                .update_sources(playlist_id, entry_id, source_type, sources)
-                .await?,
-        )?;
-        self.state
-            .stores
-            .playlists
+        let owned = self.playlists().owned_by(user_id);
+        let written = owned
+            .update_sources(playlist_id, entry_id, source_type, sources)
+            .await?;
+        self.found(user_id, playlist_id, written).await?;
+        owned
             .tracks(playlist_id)
             .await?
             .into_iter()
@@ -593,33 +588,32 @@ impl CollectionsService<'_> {
     }
 
     /// Which of the caller's readable playlists hold each queried track,
-    /// matched on exact name, artist and album.
+    /// matched on exact name, artist and album. At most
+    /// [`MAX_CHECK_TRACKS`] tracks per check.
     pub async fn check_track_membership(
         &self,
         user_id: &str,
         body: &CheckTracksBody,
     ) -> Result<CheckTracksResponse, CollectionsError> {
-        let readable = self
-            .visible_playlists(user_id)
-            .await?
-            .into_iter()
-            .filter(|visible| visible.full)
-            .map(|visible| visible.row.id)
+        if body.tracks.len() > MAX_CHECK_TRACKS {
+            return Err(CollectionsError::invalid("At most 1000 tracks per check"));
+        }
+        let asked = body
+            .tracks
+            .iter()
+            .map(|query| EntryNames {
+                track_name: &query.track_name,
+                artist_name: &query.artist_name,
+                album_name: &query.album_name,
+            })
             .collect::<Vec<_>>();
-        let mut membership = HashMap::new();
-        for (index, query) in body.tracks.iter().enumerate() {
-            let holding = self
-                .state
-                .stores
-                .playlists
-                .holding(
-                    &readable,
-                    &query.track_name,
-                    &query.artist_name,
-                    &query.album_name,
-                )
-                .await?;
-            membership.insert(index.to_string(), holding);
+        let mut membership = (0..asked.len())
+            .map(|index| (index.to_string(), Vec::new()))
+            .collect::<HashMap<_, _>>();
+        for (index, playlist_id) in self.playlists().visible_to(user_id).holding(&asked).await? {
+            if let Some(holding) = membership.get_mut(&index.to_string()) {
+                holding.push(playlist_id);
+            }
         }
         Ok(CheckTracksResponse { membership })
     }
@@ -661,20 +655,16 @@ impl CollectionsService<'_> {
         if bytes.is_empty() {
             return Err(CollectionsError::invalid("Cover must not be empty"));
         }
-        self.owned_playlist(user_id, playlist_id).await?;
-        found(
-            self.state
-                .stores
-                .playlists
-                .set_cover(
-                    playlist_id,
-                    CoverImage {
-                        content_type: body.content_type.clone(),
-                        bytes,
-                    },
-                )
-                .await?,
-        )?;
+        let cover = CoverImage {
+            content_type: body.content_type.clone(),
+            bytes,
+        };
+        let written = self
+            .playlists()
+            .owned_by(user_id)
+            .set_cover(playlist_id, cover)
+            .await?;
+        self.found(user_id, playlist_id, written).await?;
         Ok(cover_url(playlist_id))
     }
 
@@ -684,10 +674,8 @@ impl CollectionsService<'_> {
         user_id: &str,
         playlist_id: &str,
     ) -> Result<CoverImage, CollectionsError> {
-        self.readable_playlist(user_id, playlist_id).await?;
-        self.state
-            .stores
-            .playlists
+        self.playlists()
+            .visible_to(user_id)
             .cover(playlist_id)
             .await?
             .ok_or(CollectionsError::NotFound)
@@ -699,14 +687,12 @@ impl CollectionsService<'_> {
         user_id: &str,
         playlist_id: &str,
     ) -> Result<(), CollectionsError> {
-        self.owned_playlist(user_id, playlist_id).await?;
-        found(
-            self.state
-                .stores
-                .playlists
-                .remove_cover(playlist_id)
-                .await?,
-        )
+        let written = self
+            .playlists()
+            .owned_by(user_id)
+            .remove_cover(playlist_id)
+            .await?;
+        self.found(user_id, playlist_id, written).await
     }
 
     /// Import a remote playlist into the owner's playlists, keyed by its
@@ -720,21 +706,22 @@ impl CollectionsService<'_> {
         name: &str,
         entries: Vec<NewEntry>,
     ) -> Result<(String, bool), CollectionsError> {
-        let playlists = &self.state.stores.playlists;
-        if let Some(existing) = playlists.find_by_source(owner_id, source_ref).await? {
+        let playlists = self.playlists().owned_by(owner_id);
+        if let Some(existing) = playlists.find_by_source(source_ref).await? {
             return Ok((existing, true));
         }
         let name = clean_name(name).or_else(|_| clean_name("Imported playlist"))?;
-        let Some(id) = playlists.create(owner_id, &name, Some(source_ref)).await? else {
+        let Some(id) = playlists.create(&name, Some(source_ref)).await? else {
             // A concurrent import won the race; answer with its copy.
             let existing = playlists
-                .find_by_source(owner_id, source_ref)
+                .find_by_source(source_ref)
                 .await?
                 .ok_or(CollectionsError::NotFound)?;
             return Ok((existing, true));
         };
         if !entries.is_empty() {
-            found(playlists.insert(&id, None, entries).await?)?;
+            let written = playlists.insert(&id, None, entries).await?;
+            self.found(owner_id, &id, written).await?;
         }
         Ok((id, false))
     }

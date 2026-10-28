@@ -87,8 +87,7 @@ fn playlist_view(
     }
 }
 
-/// Playlist list with streamable-only counts (#181); redacted private
-/// rows are skipped.
+/// The playlists the caller may read, with streamable-only counts (#181).
 pub async fn playlists(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let user_id = ctx.user()?.user_id().to_owned();
     let views = ctx
@@ -96,22 +95,15 @@ pub async fn playlists(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         .get_all_playlists(&user_id)
         .await
         .map_err(Ctx::store_err)?;
-    let streamable = ctx
-        .store
-        .get_streamable_counts()
-        .await
-        .map_err(Ctx::store_err)?;
     let mut out = Vec::new();
     for view in &views {
-        let Some(record) = view.record.as_ref() else {
-            continue;
-        };
+        let record = &view.record;
         let owner = if view.is_owner {
             ctx.user()?.username().to_owned()
         } else {
             view.owner_name.clone()
         };
-        let (song_count, duration) = streamable.get(&record.id).copied().unwrap_or((0, 0));
+        let (song_count, duration) = (view.song_count, view.duration);
         out.push(SPlaylist {
             id: encode(IdKind::Playlist, &record.id),
             name: record.name.clone(),
@@ -219,19 +211,28 @@ pub async fn update_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         }
         None => None,
     };
-    let remove_ids = if remove_indices.is_empty() {
-        Vec::new()
+    // Indexes are read against the caller's own playlist. On anyone else's
+    // the remove is still sent, so it answers the usual refusal whatever
+    // the index and never hints at the playlist's length.
+    let (remove_ids, not_theirs) = if remove_indices.is_empty() {
+        (Vec::new(), false)
     } else {
-        let entries = ctx
+        match ctx
             .store
-            .get_playlist_tracks(&pid)
+            .get_playlist_tracks(&pid, &user_id)
             .await
-            .map_err(Ctx::store_err)?;
-        remove_indices
-            .into_iter()
-            .flatten()
-            .filter_map(|index| entries.get(index as usize).map(|entry| entry.id.clone()))
-            .collect::<Vec<_>>()
+            .map_err(Ctx::store_err)?
+        {
+            Some(entries) => (
+                remove_indices
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|index| entries.get(index as usize).map(|entry| entry.id.clone()))
+                    .collect::<Vec<_>>(),
+                false,
+            ),
+            None => (Vec::new(), true),
+        }
     };
     let mut wrote = false;
     let failed = |wrote: bool| {
@@ -251,7 +252,7 @@ pub async fn update_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             .map_err(failed(wrote))?;
         wrote = true;
     }
-    if !remove_ids.is_empty() {
+    if !remove_ids.is_empty() || not_theirs {
         ctx.store
             .remove_playlist_tracks(&pid, &user_id, &remove_ids)
             .await

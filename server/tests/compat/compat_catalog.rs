@@ -566,6 +566,15 @@ async fn playlist_refusals_keep_their_codes_and_repeats_stay() {
     // Private to someone else: not found (70), never a server fault.
     let hidden = subsonic(&rig, "getPlaylist", &[("id", &id)]).await;
     assert!(hidden.contains("\"code\":70"), "{hidden}");
+    // Removing past its end is refused the same, so the answer never tells
+    // how long someone else's private playlist is.
+    let past_end = subsonic(
+        &rig,
+        "updatePlaylist",
+        &[("playlistId", &id), ("songIndexToRemove", "5")],
+    )
+    .await;
+    assert!(past_end.contains("\"code\":70"), "{past_end}");
     // Public but not ours to change: not authorized (50).
     let (status, shown) = rig
         .app

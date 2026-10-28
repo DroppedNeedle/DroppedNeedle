@@ -14,6 +14,7 @@ pub mod reads;
 pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
     vec![
         concerts::sql::registered(),
+        reads::collections::sql::registered(),
         reads::library::sql::registered(),
     ]
 }

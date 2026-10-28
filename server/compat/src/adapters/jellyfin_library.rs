@@ -322,7 +322,7 @@ impl JellyfinLibrary {
         };
         let entries = self
             .library
-            .playlist_entries(playlist_id)
+            .playlist_entries(user_id, playlist_id)
             .await?
             .into_iter()
             .map(|(id, file_id)| PlaylistEntry { id, file_id })
@@ -621,7 +621,6 @@ impl JellyfinLibrary {
             .playlists(user_id)
             .await?
             .into_iter()
-            .filter(|visible| visible.full)
             .map(|visible| PlaylistView {
                 id: visible.row.id,
                 name: visible.row.name,

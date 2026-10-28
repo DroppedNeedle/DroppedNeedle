@@ -1787,11 +1787,16 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     let dir = crate::common::ScratchDir::new("busy-read");
     let path = dir.join("app.db");
     crate::common::migrated_db(&path);
-    let mut config = DbConfig::new(&path)
+    let runtime = open_runtime(&DbConfig::new(&path))
+        .await
+        .expect("runtime opens");
+    // The collections read through a runtime of one pooled reader and a
+    // short wait for it; the test holds that reader.
+    let mut starved = DbConfig::new(&path)
         .with_lane_limits(LaneLimits::patient())
         .with_read_wait(Duration::from_millis(100));
-    config.readers = 1;
-    let runtime = open_runtime(&config).await.expect("runtime opens");
+    starved.readers = 1;
+    let starved = open_runtime(&starved).await.expect("starved runtime opens");
     let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
         .build()
         .await;
@@ -1805,7 +1810,7 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
         crate::common::reads_inputs(&dir),
         &library,
         CollectionsState::new(
-            CollectionsDb::new(runtime.db().clone(), platform.clock.clone()),
+            CollectionsDb::new(starved.db().clone(), platform.clock.clone()),
             LocalCatalog::new(runtime.db().clone()),
         ),
         None,
@@ -1880,7 +1885,20 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     let jellyfin = "/jellyfin/Items?IncludeItemTypes=Playlist".to_owned();
     let token = Some(format!("MediaBrowser Client=\"Test\", Token=\"{SECRET}\""));
 
-    let held = crate::common::hold_reader(runtime.db().sqlx()).await;
+    // The playlist list reads on the starved runtime's one reader: hold it.
+    let (entered, inside) = std::sync::mpsc::channel();
+    let (let_go, release) = std::sync::mpsc::channel::<()>();
+    let held = {
+        let db = starved.db().clone();
+        std::thread::spawn(move || {
+            db.read_blocking("test.held", |_| {
+                entered.send(()).expect("test waits");
+                release.recv().expect("test lets go");
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            })
+        })
+    };
+    inside.recv().expect("reader held");
     let (status, retry_after, body) = ask(subsonic.clone(), None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(retry_after.as_deref(), Some("1"));
@@ -1892,7 +1910,8 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     assert_eq!(retry_after.as_deref(), Some("1"));
     assert!(body.is_empty());
 
-    drop(held);
+    let_go.send(()).expect("reader lets go");
+    held.join().expect("reader joins").expect("held read");
     // The one reader is free again, though a background read may have it
     // for a moment: ask again while the answer is busy, as a client would.
     let freed = |uri: String, authorization: Option<String>| {

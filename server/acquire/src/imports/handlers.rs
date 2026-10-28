@@ -619,7 +619,7 @@ pub async fn get_spotify_job(
         ImportState::Done => {
             let tracks = deps
                 .spotify_playlists
-                .track_count(&playlist_id)
+                .track_count(user_id, &playlist_id)
                 .await
                 .map_err(|cause| ImportsError::internal(&cause))?;
             SpotifyJobStatus {

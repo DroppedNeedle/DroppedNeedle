@@ -30,6 +30,7 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { QueueItem } from '$lib/player/types';
 
+	const CHECK_CHUNK = 1000;
 	const reducedMotion = browser && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 	// Creating a playlist / adding tracks here changes the user's playlist list and
@@ -108,8 +109,18 @@
 					artist_name: t.artistName,
 					album_name: t.albumName
 				}));
-				const checked = await checkTracksMutation.mutateAsync({ tracks: trackIdentifiers });
-				membership = transposeMembership(checked.membership);
+				// The server checks at most CHECK_CHUNK tracks per call; each
+				// answer's keys index into its own chunk.
+				const merged: Record<string, string[]> = {};
+				for (let start = 0; start < trackIdentifiers.length; start += CHECK_CHUNK) {
+					const checked = await checkTracksMutation.mutateAsync({
+						tracks: trackIdentifiers.slice(start, start + CHECK_CHUNK)
+					});
+					for (const [index, playlistIds] of Object.entries(checked.membership)) {
+						merged[String(start + Number(index))] = playlistIds;
+					}
+				}
+				membership = transposeMembership(merged);
 			}
 		} catch {
 			fetchError = "Couldn't load your playlists.";

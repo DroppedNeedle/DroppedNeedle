@@ -70,11 +70,7 @@ impl CollectionsService<'_> {
         if rating > MAX_RATING {
             return Err(CollectionsError::invalid("Rating must be 0 to 5"));
         }
-        let items = self
-            .state
-            .items
-            .as_ref()
-            .ok_or_else(|| CollectionsError::internal(&"the local catalog is not wired"))?;
+        let items = &self.state.items;
         let current = items
             .current_id(kind.as_str(), item_id)
             .await

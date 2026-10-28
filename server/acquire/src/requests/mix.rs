@@ -369,12 +369,14 @@ impl PersonalMixBuilder {
         let source_ref = format!("{SOURCE_REF_PREFIX}{user_id}");
         let existing = self
             .playlists
-            .find_by_source(user_id, &source_ref)
+            .owned_by(user_id)
+            .find_by_source(&source_ref)
             .await
             .map_err(store_fault)?;
         if !force && let Some(id) = &existing {
             let updated_at = self
                 .playlists
+                .owned_by(user_id)
                 .get(id)
                 .await
                 .map_err(store_fault)?
@@ -650,10 +652,10 @@ impl PersonalMixBuilder {
         source_ref: &str,
         mix: &[MixTrack],
     ) -> Result<String, RequestsError> {
+        let playlists = self.playlists.owned_by(user_id);
         let playlist_id = match existing {
             Some(id) => {
-                let entries: Vec<String> = self
-                    .playlists
+                let entries: Vec<String> = playlists
                     .tracks(&id)
                     .await
                     .map_err(store_fault)?
@@ -661,31 +663,25 @@ impl PersonalMixBuilder {
                     .map(|track| track.id)
                     .collect();
                 if !entries.is_empty() {
-                    self.playlists
-                        .remove(&id, &entries)
-                        .await
-                        .map_err(store_fault)?;
+                    playlists.remove(&id, &entries).await.map_err(store_fault)?;
                 }
                 id
             }
-            None => match self
-                .playlists
-                .create(user_id, PLAYLIST_NAME, Some(source_ref))
+            None => match playlists
+                .create(PLAYLIST_NAME, Some(source_ref))
                 .await
                 .map_err(store_fault)?
             {
                 Some(id) => id,
-                None => self
-                    .playlists
-                    .find_by_source(user_id, source_ref)
+                None => playlists
+                    .find_by_source(source_ref)
                     .await
                     .map_err(store_fault)?
                     .ok_or_else(|| RequestsError::internal(&"mix playlist vanished on create"))?,
             },
         };
         let entries = mix.iter().map(entry_for).collect();
-        match self
-            .playlists
+        match playlists
             .insert(&playlist_id, None, entries)
             .await
             .map_err(store_fault)?
