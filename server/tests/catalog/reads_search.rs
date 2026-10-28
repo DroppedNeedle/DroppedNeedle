@@ -545,7 +545,7 @@ async fn enrich_failure_degrades_inside_a_200() {
 
     assert_eq!(status, StatusCode::OK);
     let response = json(&bytes);
-    assert_eq!(response["source"], "none");
+    assert!(response["source"].is_null());
     assert_eq!(response["artists"][0]["musicbrainz_id"], "artist-1");
     assert!(response["artists"][0]["listen_count"].is_null());
     assert_eq!(

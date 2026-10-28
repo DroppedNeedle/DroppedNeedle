@@ -14,7 +14,6 @@
 	import GenreAlbumCard from '$lib/components/GenreAlbumCard.svelte';
 	import SampleButton from '$lib/components/discover/SampleButton.svelte';
 	import { getDiscoverPlaylistSuggestionsV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
-	import { toHomeSection } from '$lib/queries/chartAdapters';
 	import {
 		getPlaylistListV3Query,
 		isRedactedPlaylistV3
@@ -23,7 +22,9 @@
 	import { fetchAlbumTracks } from '$lib/queries/catalog/albumTracks';
 	import { ApiError } from '$lib/api/client';
 	import { formatDuration } from '$lib/utils/formatting';
-	import type { HomeAlbum, Track } from '$lib/types';
+	import type { Track } from '$lib/types';
+	import type { AlbumRef } from '$lib/queries/discover/types';
+	import { albumRows } from '$lib/utils/sectionRows';
 	import { toastStore } from '$lib/stores/toast';
 	import { libraryStore } from '$lib/stores/library';
 	import { albumHrefOrNull } from '$lib/utils/entityRoutes';
@@ -69,9 +70,7 @@
 		enabled: open
 	}));
 
-	const suggestions = $derived(
-		suggestionsQuery.data ? toHomeSection(suggestionsQuery.data.suggestions) : null
-	);
+	const suggestions = $derived(suggestionsQuery.data?.suggestions ?? null);
 	const profile = $derived(suggestionsQuery.data?.profile ?? null);
 	const isLoading = $derived(suggestionsQuery.isLoading && !!activePlaylistId);
 	const isError = $derived(suggestionsQuery.isError);
@@ -79,7 +78,7 @@
 
 	const visibleAlbums = $derived.by(() => {
 		if (!suggestions || suggestions.type !== 'albums') return [];
-		return (suggestions.items as HomeAlbum[]).filter((a) => !ignoredIds.has(a.mbid ?? a.name));
+		return albumRows(suggestions).filter((a) => !ignoredIds.has(a.musicbrainz_id ?? a.title));
 	});
 
 	const topGenres = $derived.by(() => {
@@ -135,8 +134,8 @@
 		suggestionCount = parseInt(target.value, 10);
 	}
 
-	function ignoreAlbum(album: HomeAlbum) {
-		const key = album.mbid ?? album.name;
+	function ignoreAlbum(album: AlbumRef) {
+		const key = album.musicbrainz_id ?? album.title;
 		ignoredIds = new Set([...ignoredIds, key]);
 		if (expandedAlbumId === key) {
 			expandedAlbumId = null;
@@ -144,8 +143,8 @@
 		}
 	}
 
-	async function toggleExpand(album: HomeAlbum) {
-		const key = album.mbid ?? album.name;
+	async function toggleExpand(album: AlbumRef) {
+		const key = album.musicbrainz_id ?? album.title;
 		if (expandedAlbumId === key) {
 			expandAbortController?.abort();
 			expandAbortController = null;
@@ -158,13 +157,13 @@
 		expandedAlbumId = key;
 		expandedTracks = [];
 
-		if (!album.mbid) return;
+		if (!album.musicbrainz_id) return;
 
 		const controller = new AbortController();
 		expandAbortController = controller;
 		expandLoading = true;
 		try {
-			const data = await fetchAlbumTracks(album.mbid, controller.signal);
+			const data = await fetchAlbumTracks(album.musicbrainz_id, controller.signal);
 			if (expandedAlbumId === key) {
 				expandedTracks = data.tracks;
 			}
@@ -396,8 +395,8 @@
 						{/if}
 
 						<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-							{#each visibleAlbums as album (album.mbid ?? album.name)}
-								{@const albumKey = album.mbid ?? album.name}
+							{#each visibleAlbums as album (album.musicbrainz_id ?? album.title)}
+								{@const albumKey = album.musicbrainz_id ?? album.title}
 								{@const isExpanded = expandedAlbumId === albumKey}
 								<div
 									class="flex flex-col overflow-hidden"
@@ -437,9 +436,9 @@
 																				title={track.title}
 																				kind="track"
 																				size="xs"
-																				albumMbid={album.mbid}
-																				artistMbid={album.artist_mbid}
-																				coverUrl={album.image_url}
+																				albumMbid={album.musicbrainz_id}
+																				artistMbid={album.artist_id}
+																				coverUrl={album.cover_url}
 																			/>
 																		</td>
 																	</tr>
@@ -456,16 +455,16 @@
 										{/if}
 									</div>
 									<div class="flex items-center justify-center gap-1 mt-2">
-										{#if album.mbid}
-											{@const albumLink = albumHrefOrNull(album.mbid)}
+										{#if album.musicbrainz_id}
+											{@const albumLink = albumHrefOrNull(album.musicbrainz_id)}
 											{@const isAlbumRequested =
-												album.requested || libraryStore.isRequested(album.mbid)}
+												album.requested || libraryStore.isRequested(album.musicbrainz_id)}
 											{#if albumLink}
 												<div class="tooltip tooltip-bottom" data-tip="Go to album">
 													<IconButton
 														size="sm"
 														icon={ExternalLink}
-														label="Go to {album.name}"
+														label="Go to {album.title}"
 														href={albumLink}
 														class="min-h-[36px] min-w-[36px]"
 													/>
@@ -475,10 +474,10 @@
 											{#if !album.in_library && !isAlbumRequested}
 												<div class="tooltip tooltip-bottom" data-tip="Request album">
 													<AlbumRequestButton
-														mbid={album.mbid}
+														mbid={album.musicbrainz_id}
 														artistName={album.artist_name ?? ''}
-														albumName={album.name}
-														artistMbid={album.artist_mbid ?? undefined}
+														albumName={album.title}
+														artistMbid={album.artist_id ?? undefined}
 													/>
 												</div>
 											{:else if album.in_library}
@@ -493,15 +492,15 @@
 												</div>
 											{/if}
 
-											{#if album.mbid}
+											{#if album.musicbrainz_id}
 												<SampleButton
-													sampleKey={album.mbid}
+													sampleKey={album.musicbrainz_id}
 													artist={album.artist_name ?? ''}
-													title={album.name}
+													title={album.title}
 													kind="album"
 													size="sm"
-													artistMbid={album.artist_mbid}
-													coverUrl={album.image_url}
+													artistMbid={album.artist_id}
+													coverUrl={album.cover_url}
 												/>
 											{/if}
 										{/if}

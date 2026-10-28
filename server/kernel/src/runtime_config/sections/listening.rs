@@ -36,16 +36,26 @@ impl Section for UserPreferences {
 
 // --- primary_music_source -------------------------------------------------
 
-/// Which service backs scrobble-targeted discovery.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+/// A listening-data service: the primary source setting, and the one the
+/// discover shelves, charts, radio and enrichment answers name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum MusicSource {
+pub enum ListenSource {
     /// ListenBrainz.
     #[default]
     Listenbrainz,
     /// Last.fm.
-    #[serde(rename = "lastfm")]
     Lastfm,
+}
+
+impl ListenSource {
+    /// Wire spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Listenbrainz => "listenbrainz",
+            Self::Lastfm => "lastfm",
+        }
+    }
 }
 
 /// Primary music source selection.
@@ -53,7 +63,7 @@ pub enum MusicSource {
 #[serde(default)]
 pub struct PrimaryMusicSource {
     /// Active source.
-    pub source: MusicSource,
+    pub source: ListenSource,
 }
 
 impl Section for PrimaryMusicSource {

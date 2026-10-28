@@ -16,7 +16,7 @@ import { api } from '$lib/api/client';
 import { SvelteSet } from 'svelte/reactivity';
 import { audioFocus } from '$lib/stores/audioFocus.svelte';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
-import type { PreviewTrackItem } from '$lib/types';
+import type { PreviewTrackItem } from '$lib/queries/discover/types';
 import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
 
 const FOCUS_ID = 'deck-sampler';

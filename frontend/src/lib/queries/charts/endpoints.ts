@@ -1,15 +1,14 @@
 import { v3 } from '$lib/api/v3/endpoint';
+import type { ListenSource, StatsRange } from '../discover/types';
 
 /** The three ranked chart pages under /home. */
 export type ChartKind = 'trending-artists' | 'popular-albums' | 'your-top-albums';
-export type ChartRange = 'this_week' | 'this_month' | 'this_year' | 'all_time';
-export type ChartSource = 'listenbrainz' | 'lastfm';
 
 export interface ChartPageParams {
-	range: ChartRange;
+	range: StatsRange;
 	limit: number;
 	offset: number;
-	source: ChartSource | null;
+	source: ListenSource | null;
 }
 
 function chartQuery({ range, limit, offset, source }: ChartPageParams) {

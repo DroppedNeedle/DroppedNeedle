@@ -23,7 +23,7 @@
 
 	let {
 		album = $bindable(),
-		enrichmentSource = 'none',
+		enrichmentSource = null,
 		onadded = undefined,
 		onremoved = undefined,
 		onenrichmentrequest = undefined

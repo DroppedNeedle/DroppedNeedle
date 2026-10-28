@@ -20,9 +20,10 @@ use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 
 use super::models::{
     AlbumEnrichment, AlbumEnrichmentRequest, ArtistEnrichment, ArtistEnrichmentRequest,
-    Degradation, EnrichmentBatchRequest, EnrichmentResponse, EnrichmentSource,
+    Degradation, EnrichmentBatchRequest, EnrichmentResponse,
 };
 use super::ports::{BoxFuture, EnrichmentPort, EnrichmentPortError, MAX_ENRICHMENT_PER_BUCKET};
+use droppedneedle_kernel::runtime_config::sections::ListenSource;
 
 /// Per-row lookups in flight at once, kept from v2: one small batch never
 /// presses a provider harder than this.
@@ -101,17 +102,17 @@ impl SearchCounts {
         let mut notes = Notes::default();
         let (source, artists, albums) = match self.source() {
             Source::ListenBrainz => (
-                EnrichmentSource::Listenbrainz,
+                Some(ListenSource::Listenbrainz),
                 self.listenbrainz_artists(artists, &mut notes).await,
                 self.listenbrainz_albums(albums, &mut notes).await,
             ),
             Source::LastFm(creds) => (
-                EnrichmentSource::Lastfm,
+                Some(ListenSource::Lastfm),
                 self.lastfm_artists(&creds, artists, &mut notes).await,
                 self.lastfm_albums(&creds, albums, &mut notes).await,
             ),
             Source::None => (
-                EnrichmentSource::None,
+                None,
                 artists.into_iter().map(bare_artist).collect(),
                 albums.into_iter().map(bare_album).collect(),
             ),
@@ -369,7 +370,7 @@ pub async fn enrich_with_degradation(
             EnrichmentResponse {
                 artists: artists.into_iter().map(bare_artist).collect(),
                 albums: albums.into_iter().map(bare_album).collect(),
-                source: EnrichmentSource::None,
+                source: None,
                 degradations: vec![note(&error.source)],
             }
         }

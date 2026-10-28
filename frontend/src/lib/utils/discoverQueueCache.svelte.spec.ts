@@ -32,11 +32,10 @@ describe('discoverQueueCache', () => {
 			{
 				items: [
 					{
-						release_group_mbid: 'rg-1',
-						album_name: 'Album 1',
+						musicbrainz_id: 'rg-1',
+						title: 'Album 1',
 						artist_name: 'Artist 1',
-						artist_mbid: 'artist-1',
-						cover_url: null,
+						artist_id: 'artist-1',
 						recommendation_reason: 'reason',
 						is_wildcard: false,
 						in_library: false,

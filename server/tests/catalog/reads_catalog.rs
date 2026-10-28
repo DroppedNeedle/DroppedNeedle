@@ -22,7 +22,7 @@ use droppedneedle_catalog::reads::catalog::{
 use droppedneedle_catalog::reads::search::{self, SearchDeps, service::SearchService};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_kernel::runtime_config::sections::{
-    MbSourceMode, MusicBrainzSettings, MusicSource, UserPreferences,
+    ListenSource, MbSourceMode, MusicBrainzSettings, UserPreferences,
 };
 use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
@@ -290,8 +290,8 @@ impl CatalogSettings for TestSettings {
         true
     }
 
-    fn primary_source(&self) -> MusicSource {
-        MusicSource::Listenbrainz
+    fn primary_source(&self) -> ListenSource {
+        ListenSource::Listenbrainz
     }
 
     fn store_region(&self) -> Option<String> {
@@ -642,7 +642,7 @@ async fn artist_sections_use_listenbrainz_then_lastfm() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|album| &album["release_group_mbid"])
+        .map(|album| &album["musicbrainz_id"])
         .collect();
     assert_eq!(
         groups,
@@ -664,7 +664,6 @@ async fn artist_sections_use_listenbrainz_then_lastfm() {
             "title": "Dummy",
             "artist_name": "Portishead",
             "artist_id": "b7539c32-53e7-4908-bda3-81449c367da6",
-            "year": null,
             "in_library": false,
             "requested": false,
             "cover_url": format!("/api/v3/covers/release-group/{DUMMY_GROUP}?size=500")
@@ -1325,7 +1324,8 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
 /// while the read behind them fails.
 #[tokio::test]
 async fn a_passing_failure_is_not_cached_as_a_short_section() {
-    use droppedneedle_catalog::reads::catalog::models::{DiscoveryAlbum, DiscoverySource};
+    use droppedneedle_catalog::reads::catalog::models::AlbumRef;
+    use droppedneedle_kernel::runtime_config::sections::ListenSource;
     use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
     use droppedneedle_providers::{
         ProviderEndpoints, RequestPriority, TransportKind, listenbrainz,
@@ -1426,7 +1426,7 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
             USER,
             ARTIST,
             5,
-            Some(DiscoverySource::Listenbrainz),
+            Some(ListenSource::Listenbrainz),
             RequestPriority::UserInitiated,
         )
     };
@@ -1440,10 +1440,10 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
         "the song links its album once ListenBrainz answers"
     );
 
-    let ids = |albums: &[DiscoveryAlbum]| {
+    let ids = |albums: &[AlbumRef]| {
         albums
             .iter()
-            .map(|album| album.musicbrainz_id.clone())
+            .filter_map(|album| album.musicbrainz_id.clone())
             .collect::<Vec<_>>()
     };
     let first = catalog

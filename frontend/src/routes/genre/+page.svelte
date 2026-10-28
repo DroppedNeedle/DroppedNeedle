@@ -84,16 +84,16 @@
 		const entries: SampleEntry[] = [];
 		const albums = [...popularAlbums, ...(genreData?.library?.albums ?? [])];
 		for (const album of albums) {
-			if (!album.mbid || seen[album.mbid]) continue;
-			seen[album.mbid] = true;
+			if (!album.musicbrainz_id || seen[album.musicbrainz_id]) continue;
+			seen[album.musicbrainz_id] = true;
 			entries.push({
-				key: album.mbid,
+				key: album.musicbrainz_id,
 				kind: 'album',
 				artist: album.artist_name ?? '',
-				title: album.name,
-				albumMbid: album.mbid,
-				artistMbid: album.artist_mbid,
-				coverUrl: album.image_url
+				title: album.title,
+				albumMbid: album.musicbrainz_id,
+				artistMbid: album.artist_id,
+				coverUrl: album.cover_url
 			});
 		}
 		return { title: genreName ? `${genreName} previews` : 'Genre previews', entries };
@@ -277,11 +277,11 @@
 						<div
 							class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 mb-8"
 						>
-							{#each genreData.library?.artists ?? [] as artist (artist.local_id || artist.mbid || artist.name)}
+							{#each genreData.library?.artists ?? [] as artist (artist.local_id || artist.musicbrainz_id || artist.name)}
 								<GenreArtistCard
 									{artist}
 									showLibraryBadge={true}
-									href={artistHrefOrNull(artist.mbid) ??
+									href={artistHrefOrNull(artist.musicbrainz_id) ??
 										(artist.local_id ? localArtistHref(artist.local_id) : null)}
 								/>
 							{/each}
@@ -293,11 +293,11 @@
 						<div
 							class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 						>
-							{#each genreData.library?.albums ?? [] as album (album.local_id || album.mbid || album.name)}
+							{#each genreData.library?.albums ?? [] as album (album.local_id || album.musicbrainz_id || album.title)}
 								<GenreAlbumCard
 									{album}
 									showLibraryBadge={true}
-									href={albumHrefOrNull(album.mbid) ??
+									href={albumHrefOrNull(album.musicbrainz_id) ??
 										(album.local_id ? localAlbumHref(album.local_id) : null)}
 								/>
 							{/each}
@@ -329,8 +329,8 @@
 					<div
 						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 					>
-						{#each popularArtists as artist (artist.mbid || artist.name)}
-							<GenreArtistCard {artist} href={artistHrefOrNull(artist.mbid)} />
+						{#each popularArtists as artist (artist.musicbrainz_id || artist.name)}
+							<GenreArtistCard {artist} href={artistHrefOrNull(artist.musicbrainz_id)} />
 						{/each}
 					</div>
 					{#if genreQuery.hasNextPage}
@@ -371,8 +371,8 @@
 					<div
 						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 					>
-						{#each popularAlbums as album (album.mbid || album.name)}
-							<GenreAlbumCard {album} href={albumHrefOrNull(album.mbid)} />
+						{#each popularAlbums as album (album.musicbrainz_id || album.title)}
+							<GenreAlbumCard {album} href={albumHrefOrNull(album.musicbrainz_id)} />
 						{/each}
 					</div>
 					{#if hasMoreAlbums}

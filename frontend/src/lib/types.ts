@@ -89,7 +89,8 @@ export type SearchSuggestResponse = {
 	remote_status: SearchRemoteStatus;
 };
 
-export type EnrichmentSource = 'listenbrainz' | 'lastfm' | 'none';
+/** The provider behind an enrichment batch; `null` when none answered. */
+export type EnrichmentSource = components['schemas']['ListenSource'] | null;
 
 export type ArtistEnrichment = components['schemas']['ArtistEnrichment'];
 
@@ -102,11 +103,11 @@ export type ArtistEnrichmentRequest = {
 
 export type AlbumEnrichmentRequest = components['schemas']['AlbumEnrichmentRequest'];
 
-export type EnrichmentResponse = {
-	artists: ArtistEnrichment[];
-	albums: AlbumEnrichment[];
-	source: EnrichmentSource;
-};
+export type TopSong = components['schemas']['TopSong'];
+
+export type SimilarAlbumsResponse = components['schemas']['SimilarAlbumsResponse'];
+
+export type MoreByArtistResponse = components['schemas']['MoreByArtistResponse'];
 
 export type ReleaseGroup = {
 	id: string;
@@ -233,235 +234,9 @@ export type AlbumTracksInfo = {
 
 export type OIDCConnectionSettings = components['schemas']['OidcConnection'];
 
-export type HomeArtist = {
-	mbid: string | null;
-	local_id?: string | null;
-	name: string;
-	image_url: string | null;
-	listen_count: number | null;
-	in_library: boolean;
-};
-
-export type HomeAlbum = {
-	mbid: string | null;
-	local_id?: string | null;
-	name: string;
-	artist_name: string | null;
-	artist_mbid: string | null;
-	image_url: string | null;
-	release_date: string | null;
-	listen_count: number | null;
-	in_library: boolean;
-	requested?: boolean;
-};
-
-export type HomeTrack = {
-	mbid: string | null;
-	name: string;
-	artist_name: string | null;
-	artist_mbid: string | null;
-	album_name: string | null;
-	listen_count: number | null;
-	listened_at: string | null;
-	image_url?: string | null;
-};
-
-export type HomeGenre = {
-	name: string;
-	listen_count: number | null;
-	artist_count: number | null;
-	artist_mbid: string | null;
-};
-
-export type HomeSection = {
-	title: string;
-	type: 'artists' | 'albums' | 'tracks' | 'genres';
-	items: (HomeArtist | HomeAlbum | HomeTrack | HomeGenre)[];
-	source: string | null;
-	fallback_message: string | null;
-	connect_service: string | null;
-	radio_seed_type?: string | null;
-	radio_seed_id?: string | null;
-};
-
-export type ServicePrompt = {
-	service: string;
-	title: string;
-	description: string;
-	icon: string;
-	color: string;
-	features: string[];
-};
-
 export type ServiceHealthItem = components['schemas']['ServiceHealthItem'];
 
 export type SystemHealthResponse = components['schemas']['SystemHealthResponse'];
-
-export type HomeResponse = {
-	refreshing?: boolean;
-	recently_added: HomeSection | null;
-	library_artists: HomeSection | null;
-	library_albums: HomeSection | null;
-	trending_artists: HomeSection | null;
-	popular_albums: HomeSection | null;
-	recently_played: HomeSection | null;
-	genre_list: HomeSection | null;
-	favorite_artists: HomeSection | null;
-	your_top_albums: HomeSection | null;
-	weekly_exploration: WeeklyExplorationSection | null;
-	service_prompts: ServicePrompt[];
-	integration_status: Record<string, boolean>;
-	genre_artwork: Record<string, GenreArtwork>;
-	genre_artwork_schema_version: 'v2';
-	discover_preview: DiscoverPreview | null;
-};
-
-export type DiscoverPreview = {
-	seed_artist: string;
-	seed_artist_mbid: string;
-	items: HomeArtist[];
-};
-
-export type BecauseYouListenTo = {
-	seed_artist: string;
-	seed_artist_mbid: string;
-	listen_count: number;
-	section: HomeSection;
-	banner_url?: string | null;
-	wide_thumb_url?: string | null;
-	fanart_url?: string | null;
-};
-
-export type WeeklyExplorationTrack = {
-	title: string;
-	artist_name: string;
-	album_name: string;
-	recording_mbid: string | null;
-	artist_mbid: string | null;
-	release_group_mbid: string | null;
-	cover_url: string | null;
-	duration_ms: number | null;
-};
-
-export type WeeklyExplorationSection = {
-	title: string;
-	playlist_date: string;
-	tracks: WeeklyExplorationTrack[];
-	source_url: string;
-};
-
-export interface TopPickItem {
-	album: HomeAlbum;
-	match_pct: number;
-	reasons: string[];
-	seed_artist: string | null;
-}
-
-export interface TopPicksSection {
-	title: string;
-	items: TopPickItem[];
-	source: string | null;
-	// still trending-only while personalisation resolves during a ListenBrainz outage
-	personalizing: boolean;
-}
-
-export type DiscoverResponse = {
-	because_you_listen_to: BecauseYouListenTo[];
-	discover_queue_enabled: boolean;
-	fresh_releases: HomeSection | null;
-	missing_essentials: HomeSection | null;
-	rediscover: HomeSection | null;
-	artists_you_might_like: HomeSection | null;
-	popular_in_your_genres: HomeSection | null;
-	genre_list: HomeSection | null;
-	globally_trending: HomeSection | null;
-	weekly_exploration: WeeklyExplorationSection | null;
-	lastfm_weekly_artist_chart: HomeSection | null;
-	lastfm_weekly_album_chart: HomeSection | null;
-	lastfm_recent_scrobbles: HomeSection | null;
-	daily_mixes: HomeSection[];
-	radio_sections: HomeSection[];
-	top_picks: TopPicksSection | null;
-	listeners_like_you: HomeSection | null;
-	anniversaries: HomeSection | null;
-	new_from_followed: HomeSection | null;
-	unexplored_genres: HomeSection | null;
-	generated_at: number | null;
-	refresh_started_at: number | null;
-	section_status: Record<string, string>;
-	genre_artwork: Record<string, GenreArtwork>;
-	genre_artwork_schema_version: 'v2';
-	integration_status: Record<string, boolean>;
-	service_prompts: ServicePrompt[];
-	refreshing: boolean;
-	service_status: Record<string, string> | null;
-};
-
-export type PlaylistProfile = {
-	artist_mbids: string[];
-	genre_distribution: Record<string, string[]>;
-	track_count: number;
-};
-
-export type PlaylistSuggestionsResponse = {
-	suggestions: HomeSection;
-	playlist_id: string;
-	profile: PlaylistProfile;
-};
-
-export type GenreLibrarySection = {
-	artists: HomeArtist[];
-	albums: HomeAlbum[];
-	artist_count: number;
-	album_count: number;
-};
-
-export type GenrePopularSection = {
-	artists: HomeArtist[];
-	albums: HomeAlbum[];
-	has_more_artists: boolean;
-	has_more_albums: boolean;
-};
-
-export type GenreDetailResponse = {
-	genre: string;
-	genre_artwork: GenreArtwork;
-	library: GenreLibrarySection | null;
-	popular: GenrePopularSection | null;
-	total_count: number | null;
-};
-
-export type GenreArtworkAlbum = {
-	album_id: string;
-	album_title: string;
-	album_artist_name: string | null;
-	cover_version: number;
-};
-
-export type GenreArtwork = {
-	kind: 'collage' | 'gradient';
-	albums: GenreArtworkAlbum[];
-	version: string;
-};
-
-export type SimilarArtist = {
-	musicbrainz_id: string;
-	name: string;
-	listen_count: number;
-	in_library: boolean;
-};
-
-export type TopSong = {
-	recording_mbid?: string | null;
-	release_group_mbid?: string | null;
-	original_release_mbid?: string | null;
-	title: string;
-	artist_name: string;
-	release_name?: string | null;
-	listen_count: number;
-	disc_number?: number | null;
-	track_number?: number | null;
-};
 
 export type ResolvedTrack = {
 	release_group_mbid?: string | null;
@@ -474,57 +249,6 @@ export type ResolvedTrack = {
 	duration?: number | null;
 };
 
-export type TopAlbum = {
-	release_group_mbid?: string | null;
-	title: string;
-	artist_name: string;
-	year?: number | null;
-	listen_count: number;
-	in_library: boolean;
-	requested?: boolean;
-	cover_url?: string | null;
-};
-
-export type DiscoveryAlbum = {
-	musicbrainz_id: string;
-	title: string;
-	artist_name: string;
-	artist_id?: string | null;
-	year?: number | null;
-	in_library: boolean;
-	requested?: boolean;
-	cover_url?: string | null;
-};
-
-export type SimilarAlbumsResponse = {
-	albums: DiscoveryAlbum[];
-	source: string;
-	configured: boolean;
-};
-
-export type DiscoverQueueItemLight = {
-	release_group_mbid: string;
-	album_name: string;
-	artist_name: string;
-	artist_mbid: string;
-	cover_url: string | null;
-	recommendation_reason: string;
-	is_wildcard: boolean;
-	in_library: boolean;
-};
-
-export type DiscoverQueueEnrichment = {
-	artist_mbid: string | null;
-	release_date: string | null;
-	country: string | null;
-	tags: string[];
-	youtube_url: string | null;
-	youtube_search_url: string;
-	youtube_search_available: boolean;
-	artist_description: string | null;
-	listen_count: number | null;
-};
-
 export type DiscoverActivity = components['schemas']['DiscoverActivityRequest'];
 
 export type YouTubeQuotaStatus = components['schemas']['YouTubeQuotaStatus'];
@@ -533,17 +257,6 @@ export type TrackCacheCheckItem = {
 	artist: string;
 	track: string;
 	cached: boolean;
-};
-
-export type DiscoverQueueItemFull = DiscoverQueueItemLight & {
-	enrichment?: DiscoverQueueEnrichment;
-	// client-side marker set after the user requests the album from the deck
-	requested?: boolean;
-};
-
-export type MoreByArtistResponse = {
-	albums: DiscoveryAlbum[];
-	artist_name: string;
 };
 
 export type YouTubeLink = components['schemas']['YouTubeLink'];
@@ -1263,19 +976,6 @@ export interface StatusMessageResponse {
 	message: string;
 }
 
-export interface HomeIntegrationStatus {
-	listenbrainz: boolean;
-	jellyfin: boolean;
-	download_client: boolean;
-	youtube: boolean;
-	lastfm: boolean;
-	navidrome: boolean;
-	youtube_api: boolean;
-	plex: boolean;
-	library: boolean;
-	localfiles: boolean;
-}
-
 // Hand-mirrors backend PluginRouteRequest/PluginRouteResponse
 // (infrastructure/plugins/protocols.py). Typed transport for one /ext/ call.
 export interface PluginRouteRequest {
@@ -1359,39 +1059,4 @@ export interface SectionPrefsUpdate {
 	sections: { key: string; enabled: boolean }[];
 }
 
-export interface PreviewTrackItem {
-	title: string;
-	artist_name: string;
-	preview_url: string;
-	duration_s: number | null;
-	position: number | null;
-}
-
 export type RadioSeedItem = components['schemas']['RadioSeedItem'];
-
-export interface RadioPlanRequest {
-	seed_type: 'artist' | 'album' | 'genre' | 'items';
-	seed_id?: string | null;
-	items?: RadioSeedItem[];
-	mode?: 'library' | 'hybrid';
-	count?: number;
-	exclude_recording_mbids?: string[];
-}
-
-export interface RadioPlanTrack {
-	track_name: string;
-	artist_name: string;
-	artist_mbid: string;
-	recording_mbid: string | null;
-	album_mbid: string | null;
-	album_name: string | null;
-	in_library: boolean;
-	local_file_id: string | null;
-	file_format: string | null;
-	duration_s: number | null;
-}
-
-export interface RadioPlanResponse {
-	title: string;
-	tracks: RadioPlanTrack[];
-}

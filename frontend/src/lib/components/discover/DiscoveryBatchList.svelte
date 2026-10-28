@@ -131,15 +131,15 @@
 							>
 								{#if details[batch.id]}
 									<ul class="divide-y divide-base-content/5">
-										{#each details[batch.id].items ?? [] as item (item.release_group_mbid)}
-											{@const href = albumHrefOrNull(item.release_group_mbid)}
+										{#each details[batch.id].items ?? [] as item (item.musicbrainz_id)}
+											{@const href = albumHrefOrNull(item.musicbrainz_id)}
 											<li class="flex items-center gap-3 py-1.5 text-sm">
 												<svelte:element
 													this={href ? 'a' : 'span'}
 													href={href ?? undefined}
 													class="min-w-0 flex-1 truncate {href ? 'hover:text-primary' : ''}"
 												>
-													{item.album_name}
+													{item.title}
 													<span class="text-base-content/50">· {item.artist_name}</span>
 												</svelte:element>
 												{#if item.outcome !== 'requested'}

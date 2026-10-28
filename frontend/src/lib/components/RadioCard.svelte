@@ -1,10 +1,10 @@
 <script lang="ts">
-	import type { HomeSection as HomeSectionType, HomeAlbum } from '$lib/types';
+	import type { ChartSection as HomeSectionType, RadioSeedKind } from '$lib/queries/discover/types';
+	import { albumRows } from '$lib/utils/sectionRows';
 	import HomeSection from '$lib/components/HomeSection.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import { getDiscoverRadioV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
-	import { toHomeSection } from '$lib/queries/chartAdapters';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -17,7 +17,7 @@
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
-		seedType: string;
+		seedType: RadioSeedKind;
 		seedId: string;
 		initialSection?: HomeSectionType | null;
 	}
@@ -26,14 +26,12 @@
 
 	let expanded = $state(false);
 	const radioQuery = getDiscoverRadioV3Query(() => ({ seedType, seedId, enabled: expanded }));
-	const freshSection = $derived(radioQuery.data ? toHomeSection(radioQuery.data) : undefined);
+	const freshSection = $derived(radioQuery.data);
 	const section = $derived(
 		freshSection?.items.length ? freshSection : (initialSection ?? freshSection)
 	);
 
-	const albumItems = $derived(
-		section ? section.items.filter((_item): _item is HomeAlbum => section.type === 'albums') : []
-	);
+	const albumItems = $derived(albumRows(section));
 	const featuredAlbum = $derived(albumItems[0] ?? null);
 	const albumCount = $derived(albumItems.length);
 
@@ -74,12 +72,12 @@
 				<div class="absolute inset-0 h-[140px]">
 					{#if featuredAlbum}
 						<AlbumImage
-							mbid={featuredAlbum.mbid || ''}
-							alt={featuredAlbum.name}
+							mbid={featuredAlbum.musicbrainz_id || ''}
+							alt={featuredAlbum.title}
 							size="md"
 							rounded="none"
 							className="w-full h-full object-cover"
-							customUrl={featuredAlbum.image_url || null}
+							customUrl={featuredAlbum.cover_url || null}
 						/>
 					{:else if seedType === 'artist' && seedId}
 						<ArtistImage

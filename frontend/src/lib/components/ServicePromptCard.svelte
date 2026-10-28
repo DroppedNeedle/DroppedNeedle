@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ServicePrompt } from '$lib/types';
+	import type { ServicePrompt } from '$lib/queries/discover/types';
 	import { ArrowRight, Headphones, Tv, Download, Radio, Music, X } from 'lucide-svelte';
 	import { dismiss } from '$lib/utils/dismissedPrompts';
 	import type { ComponentType } from 'svelte';

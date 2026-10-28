@@ -37,7 +37,7 @@
 	let { data }: Props = $props();
 
 	let enrichment: EnrichmentResponseV3 | null = $state(null);
-	let enrichmentSource: EnrichmentSource = $state('none');
+	let enrichmentSource: EnrichmentSource = $state(null);
 	let enrichmentQuery = $state('');
 
 	let normalizedQuery = $derived(data.query.trim());
@@ -110,7 +110,7 @@
 		const result = enrichQuery.data;
 		if (result) {
 			enrichment = result;
-			enrichmentSource = result.source;
+			enrichmentSource = result.source ?? null;
 		}
 	});
 
@@ -119,7 +119,7 @@
 		enrichmentQuery = normalizedQuery;
 		enrichCollector.reset();
 		enrichment = null;
-		enrichmentSource = 'none';
+		enrichmentSource = null;
 	});
 
 	$effect(() => {

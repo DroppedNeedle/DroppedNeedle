@@ -29,16 +29,13 @@ use sqlx::SqlitePool;
 
 use super::ownership::{owned_albums, owned_artists};
 use crate::reads::discover::listening::{
-    ArtistRow, Ask, LastFmChartAlbum, ListenedAlbum, ListeningData, ListeningError, MusicSource,
+    ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData, ListeningError,
     SourcePolicy, StatsRange,
 };
 use crate::reads::discover::{
-    models::{
-        ChartAlbum, ChartArtist, ChartRange, ChartSource, PopularAlbumsPage, TrendingArtistsPage,
-    },
+    models::{AlbumRef, ArtistRef, ChartPage},
     ports::{BoxFuture, ProviderFailure},
 };
-use droppedneedle_providers::lastfm;
 
 /// Most rows one Last.fm range page reads (v2 `min(limit + offset + 1, 200)`).
 const LASTFM_MAX_ROWS: i64 = 200;
@@ -60,16 +57,19 @@ impl LiveCharts {
 
     async fn artist_page(
         &self,
-        range: ChartRange,
+        range: StatsRange,
         limit: i64,
         offset: i64,
-        mut artists: Vec<ChartArtist>,
-    ) -> Result<TrendingArtistsPage, ProviderFailure> {
-        let mbids: Vec<&str> = artists.iter().filter_map(|a| a.mbid.as_deref()).collect();
+        mut artists: Vec<ArtistRef>,
+    ) -> Result<ChartPage<ArtistRef>, ProviderFailure> {
+        let mbids: Vec<&str> = artists
+            .iter()
+            .filter_map(|a| a.musicbrainz_id.as_deref())
+            .collect();
         let owned = best_effort(owned_artists(&self.pool, &mbids).await);
         for artist in &mut artists {
             if let Some(local) = artist
-                .mbid
+                .musicbrainz_id
                 .as_deref()
                 .and_then(|mbid| owned.get(&mbid.to_ascii_lowercase()))
             {
@@ -79,8 +79,8 @@ impl LiveCharts {
         }
         let has_more = artists.len() as i64 > limit;
         artists.truncate(usize::try_from(limit).unwrap_or(0));
-        Ok(TrendingArtistsPage {
-            range_key: range.as_str().to_owned(),
+        Ok(ChartPage {
+            range_key: range,
             label: range.label().to_owned(),
             items: artists,
             offset,
@@ -91,16 +91,19 @@ impl LiveCharts {
 
     async fn album_page(
         &self,
-        range: ChartRange,
+        range: StatsRange,
         limit: i64,
         offset: i64,
-        mut albums: Vec<ChartAlbum>,
-    ) -> Result<PopularAlbumsPage, ProviderFailure> {
-        let mbids: Vec<&str> = albums.iter().filter_map(|a| a.mbid.as_deref()).collect();
+        mut albums: Vec<AlbumRef>,
+    ) -> Result<ChartPage<AlbumRef>, ProviderFailure> {
+        let mbids: Vec<&str> = albums
+            .iter()
+            .filter_map(|a| a.musicbrainz_id.as_deref())
+            .collect();
         let owned = best_effort(owned_albums(&self.pool, &mbids).await);
         for album in &mut albums {
             if let Some(local) = album
-                .mbid
+                .musicbrainz_id
                 .as_deref()
                 .and_then(|mbid| owned.get(&mbid.to_ascii_lowercase()))
             {
@@ -110,8 +113,8 @@ impl LiveCharts {
         }
         let has_more = albums.len() as i64 > limit;
         albums.truncate(usize::try_from(limit).unwrap_or(0));
-        Ok(PopularAlbumsPage {
-            range_key: range.as_str().to_owned(),
+        Ok(ChartPage {
+            range_key: range,
             label: range.label().to_owned(),
             items: albums,
             offset,
@@ -121,79 +124,68 @@ impl LiveCharts {
     }
 }
 
-fn stats_range(range: ChartRange) -> StatsRange {
-    match range {
-        ChartRange::ThisWeek => StatsRange::ThisWeek,
-        ChartRange::ThisMonth => StatsRange::ThisMonth,
-        ChartRange::ThisYear => StatsRange::ThisYear,
-        ChartRange::AllTime => StatsRange::AllTime,
-    }
-}
-
-fn listenbrainz_artists(rows: Vec<ArtistRow>) -> Vec<ChartArtist> {
+fn listenbrainz_artists(rows: Vec<ArtistRow>) -> Vec<ArtistRef> {
     rows.into_iter()
         .filter_map(|row| {
             let mbid = row.mbid?;
-            Some(ChartArtist {
+            Some(ArtistRef {
                 name: row.name,
-                mbid: Some(mbid),
+                musicbrainz_id: Some(mbid),
                 local_id: None,
                 image_url: None,
                 listen_count: Some(row.listen_count),
                 in_library: false,
-                source: None,
             })
         })
         .collect()
 }
 
-fn listenbrainz_albums(rows: Vec<ListenedAlbum>) -> Vec<ChartAlbum> {
+fn listenbrainz_albums(rows: Vec<ListenedAlbum>) -> Vec<AlbumRef> {
     rows.into_iter()
-        .map(|row| ChartAlbum {
-            name: row.title,
-            mbid: row.release_group_mbid,
+        .map(|row| AlbumRef {
+            title: row.title,
+            musicbrainz_id: row.release_group_mbid,
             local_id: None,
             artist_name: Some(row.artist_name),
-            artist_mbid: row.artist_mbid,
-            image_url: None,
+            artist_id: row.artist_mbid,
+            cover_url: None,
             release_date: None,
+            year: None,
             listen_count: Some(row.listen_count),
             in_library: false,
             requested: false,
-            source: None,
         })
         .collect()
 }
 
 /// Last.fm chart artists keep rows without an MBID, as v2 did.
-fn lastfm_artists(rows: Vec<ArtistRow>) -> Vec<ChartArtist> {
+fn lastfm_artists(rows: Vec<ArtistRow>) -> Vec<ArtistRef> {
     rows.into_iter()
-        .map(|row| ChartArtist {
+        .map(|row| ArtistRef {
             name: row.name,
-            mbid: row.mbid,
+            musicbrainz_id: row.mbid,
             local_id: None,
             image_url: None,
             listen_count: Some(row.listen_count),
             in_library: false,
-            source: Some(lastfm::SOURCE.to_owned()),
         })
         .collect()
 }
 
-fn lastfm_albums(rows: Vec<LastFmChartAlbum>) -> Vec<ChartAlbum> {
+fn lastfm_albums(rows: Vec<LastFmChartAlbum>) -> Vec<AlbumRef> {
     rows.into_iter()
-        .map(|row| ChartAlbum {
-            name: row.name,
-            mbid: row.mbid,
+        .map(|row| AlbumRef {
+            title: row.name,
+            musicbrainz_id: row.mbid,
             local_id: None,
             artist_name: Some(row.artist_name).filter(|name| !name.is_empty()),
-            artist_mbid: None,
-            image_url: Some(row.image_url).filter(|url| !url.is_empty()),
+            artist_id: None,
+            cover_url: Some(row.image_url).filter(|url| !url.is_empty()),
             release_date: None,
+            year: None,
             listen_count: Some(row.playcount),
             in_library: false,
             requested: false,
-            source: Some(lastfm::SOURCE.to_owned()),
         })
         .collect()
 }
@@ -228,12 +220,12 @@ fn lastfm_window(limit: i64, offset: i64) -> (u32, usize) {
 }
 
 /// Last.fm's period for a chart range (v2 `_lastfm_period_for_range`).
-fn lastfm_period(range: ChartRange) -> &'static str {
+fn lastfm_period(range: StatsRange) -> &'static str {
     match range {
-        ChartRange::ThisWeek => "7day",
-        ChartRange::ThisMonth => "1month",
-        ChartRange::ThisYear => "12month",
-        ChartRange::AllTime => "overall",
+        StatsRange::ThisWeek => "7day",
+        StatsRange::ThisMonth => "1month",
+        StatsRange::ThisYear => "12month",
+        StatsRange::AllTime => "overall",
     }
 }
 
@@ -246,7 +238,7 @@ impl LiveCharts {
         limit: i64,
         offset: i64,
         ask: &Ask,
-    ) -> Result<Vec<ChartArtist>, ProviderFailure> {
+    ) -> Result<Vec<ArtistRef>, ProviderFailure> {
         let (count, skip) = lastfm_window(limit, offset);
         let rows = self
             .listening
@@ -260,11 +252,11 @@ impl LiveCharts {
         &self,
         user_id: &str,
         username: &str,
-        range: ChartRange,
+        range: StatsRange,
         limit: i64,
         offset: i64,
         ask: &Ask,
-    ) -> Result<Vec<ChartAlbum>, ProviderFailure> {
+    ) -> Result<Vec<AlbumRef>, ProviderFailure> {
         let (count, skip) = lastfm_window(limit, offset);
         let rows = self
             .listening
@@ -277,26 +269,26 @@ impl LiveCharts {
     pub fn trending_artists<'a>(
         &'a self,
         user_id: &'a str,
-        range: ChartRange,
+        range: StatsRange,
         limit: i64,
         offset: i64,
-        source: ChartSource,
-    ) -> BoxFuture<'a, Result<TrendingArtistsPage, ProviderFailure>> {
+        source: ListenSource,
+    ) -> BoxFuture<'a, Result<ChartPage<ArtistRef>, ProviderFailure>> {
         Box::pin(async move {
             let ask = Ask::person();
             let policy = self.listening.policy(user_id).await;
             let artists = match source {
-                ChartSource::Lastfm => {
-                    if !policy.ready(MusicSource::LastFm) {
+                ListenSource::Lastfm => {
+                    if !policy.ready(ListenSource::Lastfm) {
                         return Err(ProviderFailure::not_configured(LASTFM_OFF));
                     }
                     self.lastfm_trending(user_id, limit, offset, &ask).await?
                 }
-                ChartSource::Listenbrainz => {
+                ListenSource::Listenbrainz => {
                     let (count, skip) = window(limit, offset);
                     match self
                         .listening
-                        .sitewide_artists(stats_range(range), count, skip, &ask)
+                        .sitewide_artists(range, count, skip, &ask)
                         .await
                     {
                         Ok(rows) => listenbrainz_artists(rows),
@@ -316,31 +308,31 @@ impl LiveCharts {
     pub fn popular_albums<'a>(
         &'a self,
         user_id: &'a str,
-        range: ChartRange,
+        range: StatsRange,
         limit: i64,
         offset: i64,
-        source: ChartSource,
-    ) -> BoxFuture<'a, Result<PopularAlbumsPage, ProviderFailure>> {
+        source: ListenSource,
+    ) -> BoxFuture<'a, Result<ChartPage<AlbumRef>, ProviderFailure>> {
         Box::pin(async move {
             let albums = match source {
-                ChartSource::Lastfm => {
+                ListenSource::Lastfm => {
                     // No sitewide Last.fm album chart and no admin account
                     // to stand in for one (see the module docs).
                     if !self
                         .listening
                         .policy(user_id)
                         .await
-                        .ready(MusicSource::LastFm)
+                        .ready(ListenSource::Lastfm)
                     {
                         return Err(ProviderFailure::not_configured(LASTFM_OFF));
                     }
                     Vec::new()
                 }
-                ChartSource::Listenbrainz => {
+                ListenSource::Listenbrainz => {
                     let (count, skip) = window(limit, offset);
                     listenbrainz_albums(
                         self.listening
-                            .sitewide_albums(stats_range(range), count, skip, &Ask::person())
+                            .sitewide_albums(range, count, skip, &Ask::person())
                             .await?,
                     )
                 }
@@ -353,11 +345,11 @@ impl LiveCharts {
     pub fn your_top_albums<'a>(
         &'a self,
         user_id: &'a str,
-        range: ChartRange,
+        range: StatsRange,
         limit: i64,
         offset: i64,
-        source: ChartSource,
-    ) -> BoxFuture<'a, Result<PopularAlbumsPage, ProviderFailure>> {
+        source: ListenSource,
+    ) -> BoxFuture<'a, Result<ChartPage<AlbumRef>, ProviderFailure>> {
         Box::pin(async move {
             let ask = Ask::person();
             let policy = self.listening.policy(user_id).await;
@@ -365,15 +357,11 @@ impl LiveCharts {
             let lastfm_user = user
                 .lastfm_username
                 .clone()
-                .filter(|_| policy.ready(MusicSource::LastFm));
-            let asked = match source {
-                ChartSource::Lastfm => MusicSource::LastFm,
-                ChartSource::Listenbrainz => MusicSource::ListenBrainz,
-            };
+                .filter(|_| policy.ready(ListenSource::Lastfm));
             // v2 `resolve_source_value`: the asked source when the user has
             // it linked, else the other one.
             let use_lastfm = lastfm_user.is_some()
-                && (asked == MusicSource::LastFm || user.listenbrainz.is_none());
+                && (source == ListenSource::Lastfm || user.listenbrainz.is_none());
             let albums = match (use_lastfm, &lastfm_user, &user.listenbrainz) {
                 (true, Some(username), _) => {
                     self.lastfm_top(user_id, username, range, limit, offset, &ask)
@@ -383,7 +371,7 @@ impl LiveCharts {
                     let (count, skip) = window(limit, offset);
                     match self
                         .listening
-                        .user_albums(listenbrainz, stats_range(range), count, skip, &ask)
+                        .user_albums(listenbrainz, range, count, skip, &ask)
                         .await
                     {
                         Ok(rows) => listenbrainz_albums(rows),

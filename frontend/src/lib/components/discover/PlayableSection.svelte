@@ -5,7 +5,9 @@
 	import DiscoveryBatchModal from '$lib/components/discover/DiscoveryBatchModal.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import Button from '$lib/ui/Button.svelte';
-	import type { HomeAlbum, HomeSection as HomeSectionType, RadioSeedItem } from '$lib/types';
+	import type { RadioSeedItem } from '$lib/types';
+	import type { ChartSection as HomeSectionType } from '$lib/queries/discover/types';
+	import { albumRows } from '$lib/utils/sectionRows';
 
 	interface Props {
 		section: HomeSectionType;
@@ -19,22 +21,22 @@
 
 	let batchModalOpen = $state(false);
 
-	const albums = $derived(section.items as HomeAlbum[]);
-	const requestableCount = $derived(albums.filter((a) => a.mbid && !a.in_library).length);
+	const albums = $derived(albumRows(section));
+	const requestableCount = $derived(albums.filter((a) => a.musicbrainz_id && !a.in_library).length);
 	const showDownloadAll = $derived(downloadable && requestableCount > 1);
 
 	const seedItems = $derived.by(() => {
 		const items: RadioSeedItem[] = [];
 		const seen = new SvelteSet<string>();
-		for (const item of section.items as HomeAlbum[]) {
-			const mbid = item.artist_mbid;
-			if (!mbid || !item.mbid || seen.has(item.mbid)) continue;
-			seen.add(item.mbid);
+		for (const item of albums) {
+			const mbid = item.artist_id;
+			if (!mbid || !item.musicbrainz_id || seen.has(item.musicbrainz_id)) continue;
+			seen.add(item.musicbrainz_id);
 			items.push({
 				artist_mbid: mbid,
 				artist_name: item.artist_name ?? '',
-				album_mbid: item.mbid,
-				album_name: item.name
+				album_mbid: item.musicbrainz_id,
+				album_name: item.title
 			});
 		}
 		return items;

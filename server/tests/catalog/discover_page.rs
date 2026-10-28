@@ -330,3 +330,34 @@ async fn a_clear_wins_over_a_running_build() {
         "a build claimed before the clear keeps nothing"
     );
 }
+
+/// A page saved in an older shape is dropped on its first load, so it is
+/// rebuilt and never logged again.
+#[tokio::test]
+async fn a_page_in_an_old_shape_is_dropped() {
+    let rig = AuthRig::new("discover-old-shape").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let old = page_cache(&rig);
+    let claim = old.claim("user-1").await.expect("first build");
+    old.run(claim, &built_for(), async { Some("old shape".to_owned()) })
+        .await;
+
+    let new: UserPageCache<HashMap<String, i64>> = UserPageCache::new(
+        db.clone(),
+        rig.platform.clock.clone(),
+        PageKind::Discover,
+        Timing {
+            fresh_ms: 300_000,
+            retry_ms: 300_000,
+        },
+    );
+    let loaded = new.load("user-1", &built_for()).await;
+    assert!(loaded.is_none(), "an old shape reads as missing");
+    assert!(new.due("user-1", loaded.as_ref()), "and is rebuilt");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_cached_pages")
+        .fetch_one(db.sqlx())
+        .await
+        .expect("rows counted");
+    assert_eq!(rows, 0, "the old row is gone");
+}

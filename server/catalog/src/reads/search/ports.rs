@@ -92,7 +92,7 @@ impl EnrichmentPort for UnconfiguredEnrichment {
                         listen_count: None,
                     })
                     .collect(),
-                source: super::models::EnrichmentSource::None,
+                source: None,
                 degradations: Vec::new(),
             })
         })

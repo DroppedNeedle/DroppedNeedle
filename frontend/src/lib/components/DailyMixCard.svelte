@@ -1,5 +1,7 @@
 <script lang="ts">
-	import type { HomeSection as HomeSectionType, HomeAlbum, RadioSeedItem } from '$lib/types';
+	import type { RadioSeedItem } from '$lib/types';
+	import type { ChartSection as HomeSectionType } from '$lib/queries/discover/types';
+	import { albumRows } from '$lib/utils/sectionRows';
 	import HomeSection from '$lib/components/HomeSection.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import DiscoveryShelfActions from '$lib/components/discover/DiscoveryShelfActions.svelte';
@@ -18,22 +20,20 @@
 
 	let expanded = $state(false);
 
-	const albumItems = $derived(
-		section.items.filter((_item): _item is HomeAlbum => section.type === 'albums')
-	);
+	const albumItems = $derived(albumRows(section));
 	const mosaicAlbums = $derived(albumItems.slice(0, 4));
 	const albumCount = $derived(albumItems.length);
 	const seedItems = $derived.by(() => {
 		const items: RadioSeedItem[] = [];
 		const seen = new SvelteSet<string>();
 		for (const album of albumItems) {
-			if (!album.artist_mbid || !album.mbid || seen.has(album.mbid)) continue;
-			seen.add(album.mbid);
+			if (!album.artist_id || !album.musicbrainz_id || seen.has(album.musicbrainz_id)) continue;
+			seen.add(album.musicbrainz_id);
 			items.push({
-				artist_mbid: album.artist_mbid,
+				artist_mbid: album.artist_id,
 				artist_name: album.artist_name ?? '',
-				album_mbid: album.mbid,
-				album_name: album.name
+				album_mbid: album.musicbrainz_id,
+				album_name: album.title
 			});
 		}
 		return items;
@@ -67,15 +67,15 @@
 				: 'Expand'} to browse."
 		>
 			<div class="absolute inset-0 grid h-[160px] grid-cols-2 grid-rows-2">
-				{#each mosaicAlbums as album, i (album.mbid ?? `${album.name}-${i}`)}
+				{#each mosaicAlbums as album, i (album.musicbrainz_id ?? `${album.title}-${i}`)}
 					<div class="relative overflow-hidden">
 						<AlbumImage
-							mbid={album.mbid || ''}
-							alt={album.name}
+							mbid={album.musicbrainz_id || ''}
+							alt={album.title}
 							size="sm"
 							rounded="none"
 							className="w-full h-full"
-							customUrl={album.image_url || null}
+							customUrl={album.cover_url || null}
 						/>
 					</div>
 				{:else}

@@ -1,4 +1,5 @@
 import { musicBrainzSourceKey } from '../musicbrainz/sourceScope.svelte';
+import type { ListenSource } from './types';
 import { userIdSegment } from '../userKeySegment';
 
 // Every personalized discover key carries a userId and provider source identity.
@@ -6,7 +7,7 @@ export type DiscoverV3UserId = string | null | undefined;
 
 export interface DiscoverV3RadioParams {
 	count?: number;
-	source?: string | null;
+	source?: ListenSource | null;
 }
 
 export interface DiscoverV3RadioPlanFingerprint {

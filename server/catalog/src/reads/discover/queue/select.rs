@@ -81,8 +81,8 @@ pub fn round_robin(
             }
             while let Some(item) = pool.get(*cursor) {
                 *cursor += 1;
-                let key = item.release_group_mbid.to_ascii_lowercase();
-                let artist = item.artist_mbid.to_ascii_lowercase();
+                let key = item.musicbrainz_id.to_ascii_lowercase();
+                let artist = item.artist_id.to_ascii_lowercase();
                 if seen.contains(&key) {
                     continue;
                 }
@@ -128,10 +128,10 @@ mod tests {
 
     fn card(id: &str, artist: &str) -> QueueItemLight {
         QueueItemLight {
-            release_group_mbid: id.to_owned(),
-            album_name: id.to_owned(),
+            musicbrainz_id: id.to_owned(),
+            title: id.to_owned(),
             artist_name: artist.to_owned(),
-            artist_mbid: artist.to_owned(),
+            artist_id: artist.to_owned(),
             recommendation_reason: String::new(),
             cover_url: None,
             is_wildcard: false,
@@ -146,14 +146,14 @@ mod tests {
             vec![card("b1", "y"), card("A1", "z")],
         ];
         let picked = round_robin(pools, 10, 2, &mut Shuffler::seeded(7));
-        let x_count = picked.iter().filter(|item| item.artist_mbid == "x").count();
+        let x_count = picked.iter().filter(|item| item.artist_id == "x").count();
         assert_eq!(x_count, 2, "one artist holds at most two cards");
         let ids: HashSet<String> = picked
             .iter()
-            .map(|item| item.release_group_mbid.to_ascii_lowercase())
+            .map(|item| item.musicbrainz_id.to_ascii_lowercase())
             .collect();
         assert_eq!(ids.len(), picked.len(), "release groups are unique");
-        assert!(picked.iter().any(|item| item.artist_mbid == "y"));
+        assert!(picked.iter().any(|item| item.artist_id == "y"));
     }
 
     #[test]
@@ -163,7 +163,7 @@ mod tests {
         let deck = interleave(base, wild, &WILDCARD_POSITIONS);
         let ids: Vec<&str> = deck
             .iter()
-            .map(|item| item.release_group_mbid.as_str())
+            .map(|item| item.musicbrainz_id.as_str())
             .collect();
         assert_eq!(ids[2], "w0");
         assert_eq!(ids[7], "w1");

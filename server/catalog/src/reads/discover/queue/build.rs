@@ -21,8 +21,8 @@ use super::QueueSettings;
 use super::select::{self, Shuffler};
 use super::store::QueueDb;
 use crate::reads::discover::listening::{
-    AlbumRow, ArtistRow, Ask, JellyfinList, LastFmAlbum, ListenedAlbum, ListeningData, MusicSource,
-    StatsRange, TagAlbum, UserMusic,
+    AlbumRow, ArtistRow, Ask, JellyfinList, LastFmAlbum, ListenSource, ListenedAlbum,
+    ListeningData, StatsRange, TagAlbum, UserMusic,
 };
 use crate::reads::discover::models::QueueItemLight;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
@@ -61,10 +61,10 @@ fn card(
     is_wildcard: bool,
 ) -> QueueItemLight {
     QueueItemLight {
-        release_group_mbid: release_group_mbid.to_owned(),
-        album_name: album_name.to_owned(),
+        musicbrainz_id: release_group_mbid.to_owned(),
+        title: album_name.to_owned(),
         artist_name: artist_name.to_owned(),
-        artist_mbid: artist_mbid.to_owned(),
+        artist_id: artist_mbid.to_owned(),
         recommendation_reason: reason.to_owned(),
         cover_url: Some(cover_url(release_group_mbid)),
         is_wildcard,
@@ -132,7 +132,7 @@ pub async fn build_deck(
         anonymous(ctx, user_id, &user, count, &ignored, &mut shuffler).await
     };
     let mut owned = owned_of(ctx, &items).await?;
-    items.retain(|item| !owned.contains(&item.release_group_mbid.to_ascii_lowercase()));
+    items.retain(|item| !owned.contains(&item.musicbrainz_id.to_ascii_lowercase()));
     // v2 stopped here, so owning a few picks shrank the deck. One more
     // trending pass fills the gap, skipping everything seen so far.
     if items.len() < count {
@@ -152,7 +152,7 @@ pub async fn build_deck(
         owned = owned_of(ctx, &more).await?;
         items.extend(
             more.into_iter()
-                .filter(|item| !owned.contains(&item.release_group_mbid.to_ascii_lowercase())),
+                .filter(|item| !owned.contains(&item.musicbrainz_id.to_ascii_lowercase())),
         );
     }
     items.truncate(count);
@@ -165,7 +165,7 @@ async fn owned_of(
 ) -> Result<HashSet<String>, String> {
     let ids: Vec<String> = items
         .iter()
-        .map(|item| item.release_group_mbid.clone())
+        .map(|item| item.musicbrainz_id.clone())
         .collect();
     if ids.is_empty() {
         return Ok(HashSet::new());
@@ -176,7 +176,7 @@ async fn owned_of(
 fn lower_ids(items: &[QueueItemLight]) -> HashSet<String> {
     items
         .iter()
-        .map(|item| item.release_group_mbid.to_ascii_lowercase())
+        .map(|item| item.musicbrainz_id.to_ascii_lowercase())
         .collect()
 }
 
@@ -187,7 +187,7 @@ pub(in crate::reads::discover) async fn seed_artists(
     ctx: &BuildContext<'_>,
     user_id: &str,
     user: &UserMusic,
-    source: MusicSource,
+    source: ListenSource,
 ) -> Vec<ArtistRow> {
     let wanted = ctx.settings.seed_artists.max(1);
     let mut seeds: Vec<ArtistRow> = Vec::new();
@@ -207,7 +207,7 @@ pub(in crate::reads::discover) async fn seed_artists(
             }
         }
     };
-    if source == MusicSource::LastFm
+    if source == ListenSource::Lastfm
         && user.lastfm
         && let Some(username) = &user.lastfm_username
     {
@@ -219,7 +219,7 @@ pub(in crate::reads::discover) async fn seed_artists(
         );
         take(rows, &mut seeds);
     }
-    if source == MusicSource::LastFm {
+    if source == ListenSource::Lastfm {
         return seeds;
     }
     if let Some(username) = &user.listenbrainz {
@@ -263,12 +263,12 @@ pub(in crate::reads::discover) async fn seed_artists(
 pub(in crate::reads::discover) async fn listened_albums(
     ctx: &BuildContext<'_>,
     user: &UserMusic,
-    source: MusicSource,
+    source: ListenSource,
 ) -> HashSet<String> {
     let Some(username) = user.listenbrainz.as_deref() else {
         return HashSet::new();
     };
-    if source != MusicSource::ListenBrainz {
+    if source != ListenSource::Listenbrainz {
         return HashSet::new();
     }
     let rows = or_empty(
@@ -288,7 +288,7 @@ async fn personalized(
     ctx: &BuildContext<'_>,
     user_id: &str,
     user: &UserMusic,
-    source: MusicSource,
+    source: ListenSource,
     count: usize,
     ignored: &HashSet<String>,
     shuffler: &mut Shuffler,
@@ -300,7 +300,7 @@ async fn personalized(
     let settings = ctx.settings;
     // During a ListenBrainz popularity outage, Last.fm stands in for the
     // album reads even for a ListenBrainz-first user.
-    let use_lastfm = ctx.listening.policy_for(user).popularity() == MusicSource::LastFm;
+    let use_lastfm = ctx.listening.policy_for(user).popularity() == ListenSource::Lastfm;
     let wildcard_slots = settings.wildcard_slots;
     let target = count.saturating_sub(wildcard_slots);
     let per_seed = (target / seeds.len().max(1) + 3).max(4);
@@ -853,7 +853,7 @@ async fn trending_filler(
         return Vec::new();
     }
     let mut exclude: HashSet<String> = ignored.union(seen).cloned().collect();
-    let use_lastfm = ctx.listening.policy_for(user).popularity() == MusicSource::LastFm;
+    let use_lastfm = ctx.listening.policy_for(user).popularity() == ListenSource::Lastfm;
     let target = (count * 2).max(6);
     let mut wildcards = if use_lastfm {
         let mut artists = or_empty(
@@ -972,7 +972,7 @@ async fn anonymous(
     shuffler: &mut Shuffler,
 ) -> Vec<QueueItemLight> {
     let mut exclude = ignored.clone();
-    let mut items = if ctx.listening.policy_for(user).sitewide() == MusicSource::LastFm {
+    let mut items = if ctx.listening.policy_for(user).sitewide() == ListenSource::Lastfm {
         let mut artists = or_empty(
             "lastfm chart",
             ctx.listening

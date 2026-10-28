@@ -1,6 +1,6 @@
 import { page } from 'vitest/browser';
 import { describe, expect, it } from 'vitest';
-import type { HomeArtist } from '$lib/types';
+import type { ArtistRef } from '$lib/queries/discover/types';
 import { apiError, fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
@@ -13,11 +13,10 @@ const mbidOf = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, 
 // Cards are 128 px wide with a 16 px gap on a phone-width page, so the strip
 // shows about three. Artist 7 starts roughly 600 px past the strip's right
 // edge; Artist 19 is well over 2000 px past it.
-const artists: HomeArtist[] = Array.from({ length: 20 }, (_, i) => ({
-	mbid: mbidOf(i),
+const artists: (ArtistRef & { kind: 'artist' })[] = Array.from({ length: 20 }, (_, i) => ({
+	kind: 'artist',
+	musicbrainz_id: mbidOf(i),
 	name: `Artist ${i}`,
-	image_url: null,
-	listen_count: null,
 	in_library: false
 }));
 
@@ -30,10 +29,7 @@ describe('carousel images', () => {
 			section: {
 				title: 'Similar artists',
 				type: 'artists',
-				items: artists,
-				source: null,
-				fallback_message: null,
-				connect_service: null
+				items: artists
 			}
 		});
 

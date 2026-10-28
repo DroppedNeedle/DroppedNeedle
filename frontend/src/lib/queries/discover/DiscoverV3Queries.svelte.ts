@@ -13,6 +13,8 @@ import {
 	type DiscoverV3UserId
 } from './DiscoverQueryKeyFactory';
 
+import type { ListenSource, RadioSeedKind } from './types';
+
 export type DiscoverResponseV3 = components['schemas']['DiscoverResponse'];
 export type DiscoveryBatchDetailV3 = components['schemas']['DiscoveryBatchDetail'];
 export type DiscoveryBatchItemStatusV3 = components['schemas']['DiscoveryBatchItemStatus'];
@@ -72,10 +74,10 @@ export const getDiscoveryBatchesV3Query = (getEnabled: Getter<boolean> = () => t
 	}));
 
 export interface DiscoverV3RadioInput {
-	seedType: string;
+	seedType: RadioSeedKind;
 	seedId: string;
 	count?: number;
-	source?: string | null;
+	source?: ListenSource | null;
 	enabled?: boolean;
 }
 
@@ -111,7 +113,7 @@ export const getDiscoverRadioV3Query = (getParams: Getter<DiscoverV3RadioInput>)
 export interface DiscoverV3PlaylistSuggestionsInput {
 	playlistId: string;
 	count?: number;
-	source?: string | null;
+	source?: ListenSource | null;
 	enabled?: boolean;
 }
 

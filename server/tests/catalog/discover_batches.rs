@@ -11,7 +11,9 @@ use droppedneedle_acquire::requests::discovery::DiscoveryBatchRequests;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Admin, Principal, Role};
 use droppedneedle_catalog::reads::discover::batches::{BatchAlbum, BatchRequests, LiveBatches};
-use droppedneedle_catalog::reads::discover::models::{DiscoveryBatchCreate, DiscoveryBatchItemIn};
+use droppedneedle_catalog::reads::discover::models::{
+    BatchOutcome, DiscoveryBatchCreate, DiscoveryBatchItemIn,
+};
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture};
 
 use crate::common::auth::test_principal;
@@ -32,9 +34,9 @@ fn batch(name: &str, ids: &[&str]) -> DiscoveryBatchCreate {
         items: ids
             .iter()
             .map(|id| DiscoveryBatchItemIn {
-                release_group_mbid: (*id).to_owned(),
-                artist_mbid: String::new(),
-                album_name: format!("Album {}", &id[..2]),
+                musicbrainz_id: (*id).to_owned(),
+                artist_id: String::new(),
+                title: format!("Album {}", &id[..2]),
                 artist_name: "Someone".to_owned(),
             })
             .collect(),
@@ -102,22 +104,22 @@ async fn batch_files_requests_and_removal_cancels_only_its_own() {
     let outcome = |id: &str| {
         adas.items
             .iter()
-            .find(|item| item.release_group_mbid == id)
-            .map(|item| (item.outcome.clone(), item.request_status.clone()))
+            .find(|item| item.musicbrainz_id == id)
+            .map(|item| (item.outcome, item.request_status.clone()))
     };
     // A plain user's requests wait for approval, as any request would.
     let waiting = Some("awaiting_approval".to_owned());
     assert_eq!(
         outcome(MBID_A),
-        Some(("requested".to_owned(), waiting.clone()))
+        Some((BatchOutcome::Requested, waiting.clone()))
     );
     assert_eq!(
         outcome(MBID_B),
-        Some(("requested".to_owned(), waiting.clone()))
+        Some((BatchOutcome::Requested, waiting.clone()))
     );
     assert_eq!(
         outcome(MBID_C),
-        Some(("skipped_duplicate".to_owned(), waiting.clone()))
+        Some((BatchOutcome::SkippedDuplicate, waiting.clone()))
     );
     assert_eq!(adas.pending_count, 2);
 

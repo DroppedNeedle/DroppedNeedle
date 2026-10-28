@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { WeeklyExplorationTrack } from '$lib/types';
+	import type { WeeklyTrack } from '$lib/queries/discover/types';
 	import { Music2 } from 'lucide-svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import { albumHrefOrNull, artistHrefOrNull } from '$lib/utils/entityRoutes';
@@ -10,7 +10,7 @@
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
-		track: WeeklyExplorationTrack;
+		track: WeeklyTrack;
 	}
 
 	let { track }: Props = $props();

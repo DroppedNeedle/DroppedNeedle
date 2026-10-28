@@ -2930,7 +2930,7 @@
             "description": "Provider to ask; default is the primary music source setting.",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/DiscoverySource"
+              "$ref": "#/components/schemas/ListenSource"
             }
           }
         ],
@@ -3009,7 +3009,7 @@
             "description": "Provider to ask; default is the primary music source setting.",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/DiscoverySource"
+              "$ref": "#/components/schemas/ListenSource"
             }
           }
         ],
@@ -3088,7 +3088,7 @@
             "description": "Provider to ask; default is the primary music source setting.",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/DiscoverySource"
+              "$ref": "#/components/schemas/ListenSource"
             }
           }
         ],
@@ -8267,10 +8267,10 @@
           {
             "name": "range",
             "in": "query",
-            "description": "Range key, this_week default",
+            "description": "Range, this_week default",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/StatsRange"
             }
           },
           {
@@ -8296,10 +8296,10 @@
           {
             "name": "source",
             "in": "query",
-            "description": "listenbrainz or lastfm",
+            "description": "Provider, listenbrainz default",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/ListenSource"
             }
           }
         ],
@@ -8309,7 +8309,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PopularAlbumsPage"
+                  "$ref": "#/components/schemas/ChartPage_AlbumRef"
                 }
               }
             }
@@ -8365,10 +8365,10 @@
           {
             "name": "range",
             "in": "query",
-            "description": "Range key, this_week default",
+            "description": "Range, this_week default",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/StatsRange"
             }
           },
           {
@@ -8394,10 +8394,10 @@
           {
             "name": "source",
             "in": "query",
-            "description": "listenbrainz or lastfm",
+            "description": "Provider, listenbrainz default",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/ListenSource"
             }
           }
         ],
@@ -8407,7 +8407,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TrendingArtistsPage"
+                  "$ref": "#/components/schemas/ChartPage_ArtistRef"
                 }
               }
             }
@@ -8463,10 +8463,10 @@
           {
             "name": "range",
             "in": "query",
-            "description": "Range key, this_week default",
+            "description": "Range, this_week default",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/StatsRange"
             }
           },
           {
@@ -8492,10 +8492,10 @@
           {
             "name": "source",
             "in": "query",
-            "description": "listenbrainz or lastfm",
+            "description": "Provider, listenbrainz default",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/ListenSource"
             }
           }
         ],
@@ -8505,7 +8505,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PopularAlbumsPage"
+                  "$ref": "#/components/schemas/ChartPage_AlbumRef"
                 }
               }
             }
@@ -36411,6 +36411,87 @@
           }
         }
       },
+      "AlbumRef": {
+        "type": "object",
+        "description": "One album as a row in a list: discover shelves, charts and the\ncatalog's discovery rows share it. Absent means unknown.",
+        "required": [
+          "title",
+          "in_library",
+          "requested"
+        ],
+        "properties": {
+          "artist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The artist's MusicBrainz id, when known."
+          },
+          "artist_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Credited artist, when known."
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cover URL, when known."
+          },
+          "in_library": {
+            "type": "boolean",
+            "description": "True when the library holds this album."
+          },
+          "listen_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Listen or play count behind the row, when known."
+          },
+          "local_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Native library id, when the album is owned."
+          },
+          "musicbrainz_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz release-group id, when known."
+          },
+          "release_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release date (`YYYY-MM-DD` or coarser), when known."
+          },
+          "requested": {
+            "type": "boolean",
+            "description": "True when an acquisition request is open for it."
+          },
+          "title": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "First release year, when known."
+          }
+        }
+      },
       "AlbumRemovalView": {
         "type": "object",
         "description": "One removal of an album whose files can be put back.",
@@ -38056,6 +38137,53 @@
           }
         }
       },
+      "ArtistRef": {
+        "type": "object",
+        "description": "One artist as a row in a list: discover shelves, charts and the\ncatalog's similar artists share it. Absent means unknown.",
+        "required": [
+          "name",
+          "in_library"
+        ],
+        "properties": {
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Image URL, when known."
+          },
+          "in_library": {
+            "type": "boolean",
+            "description": "True when the library holds this artist."
+          },
+          "listen_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Listen or play count behind the row, when known."
+          },
+          "local_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Native library id, when the artist is owned."
+          },
+          "musicbrainz_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz artist id, when known."
+          },
+          "name": {
+            "type": "string",
+            "description": "Artist name."
+          }
+        }
+      },
       "ArtistReleases": {
         "type": "object",
         "description": "`GET /artists/{artist_mbid}/releases`: one page of the discography,\nfiltered by the release-type preferences. Pages run across albums, then\nEPs, then singles, each newest first.",
@@ -38250,6 +38378,14 @@
           "spine",
           "track",
           "other"
+        ]
+      },
+      "ArtworkKind": {
+        "type": "string",
+        "description": "How a genre's mosaic art is drawn.",
+        "enum": [
+          "collage",
+          "gradient"
         ]
       },
       "ArtworkManagementSettings": {
@@ -39038,13 +39174,24 @@
           }
         }
       },
+      "BatchOutcome": {
+        "type": "string",
+        "description": "What a batch did with one album.",
+        "enum": [
+          "requested",
+          "skipped_in_library",
+          "skipped_duplicate",
+          "not_requested"
+        ]
+      },
       "BecauseYouListenTo": {
         "type": "object",
         "description": "One \"because you listen to\" shelf: seed plus similar albums.",
         "required": [
           "seed_artist",
           "seed_artist_mbid",
-          "section"
+          "section",
+          "listen_count"
         ],
         "properties": {
           "banner_url": {
@@ -39742,204 +39889,240 @@
           "library"
         ]
       },
-      "ChartAlbum": {
+      "ChartPage_AlbumRef": {
         "type": "object",
-        "description": "One album inside a section or chart page.",
+        "description": "One page of a ranked chart.",
         "required": [
-          "name"
+          "range_key",
+          "label",
+          "items",
+          "offset",
+          "limit",
+          "has_more"
         ],
         "properties": {
-          "artist_mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "MusicBrainz artist id, when known."
-          },
-          "artist_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Album artist name, when known."
-          },
-          "image_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Cover art URL, when resolved."
-          },
-          "in_library": {
+          "has_more": {
             "type": "boolean",
-            "description": "True when the album has files in the library."
+            "description": "True when more rows follow."
           },
-          "listen_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Scrobble/listen count backing the rank, when known."
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One album as a row in a list: discover shelves, charts and the\ncatalog's discovery rows share it. Absent means unknown.",
+              "required": [
+                "title",
+                "in_library",
+                "requested"
+              ],
+              "properties": {
+                "artist_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The artist's MusicBrainz id, when known."
+                },
+                "artist_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Credited artist, when known."
+                },
+                "cover_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Cover URL, when known."
+                },
+                "in_library": {
+                  "type": "boolean",
+                  "description": "True when the library holds this album."
+                },
+                "listen_count": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64",
+                  "description": "Listen or play count behind the row, when known."
+                },
+                "local_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Native library id, when the album is owned."
+                },
+                "musicbrainz_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "MusicBrainz release-group id, when known."
+                },
+                "release_date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Release date (`YYYY-MM-DD` or coarser), when known."
+                },
+                "requested": {
+                  "type": "boolean",
+                  "description": "True when an acquisition request is open for it."
+                },
+                "title": {
+                  "type": "string",
+                  "description": "Album title."
+                },
+                "year": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32",
+                  "description": "First release year, when known."
+                }
+              }
+            },
+            "description": "Ranked rows for the page."
           },
-          "local_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Native library id, when the album is owned."
-          },
-          "mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "MusicBrainz release-group id, when known."
-          },
-          "name": {
+          "label": {
             "type": "string",
-            "description": "Album title."
+            "description": "Human range label."
           },
-          "release_date": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Release date (`YYYY-MM-DD` or coarser), when known."
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Limit behind this page."
           },
-          "requested": {
-            "type": "boolean",
-            "description": "True when the album already has a request."
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Offset behind this page."
           },
-          "source": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Provider that ranked this row (`listenbrainz`, `lastfm`)."
+          "range_key": {
+            "$ref": "#/components/schemas/StatsRange",
+            "description": "Range behind this page."
           }
         }
       },
-      "ChartArtist": {
+      "ChartPage_ArtistRef": {
         "type": "object",
-        "description": "One artist inside a section or chart page.",
+        "description": "One page of a ranked chart.",
         "required": [
-          "name"
+          "range_key",
+          "label",
+          "items",
+          "offset",
+          "limit",
+          "has_more"
         ],
         "properties": {
-          "image_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Cover art URL, when resolved."
-          },
-          "in_library": {
+          "has_more": {
             "type": "boolean",
-            "description": "True when the artist has files in the library."
+            "description": "True when more rows follow."
           },
-          "listen_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Scrobble/listen count backing the rank, when known."
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One artist as a row in a list: discover shelves, charts and the\ncatalog's similar artists share it. Absent means unknown.",
+              "required": [
+                "name",
+                "in_library"
+              ],
+              "properties": {
+                "image_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Image URL, when known."
+                },
+                "in_library": {
+                  "type": "boolean",
+                  "description": "True when the library holds this artist."
+                },
+                "listen_count": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64",
+                  "description": "Listen or play count behind the row, when known."
+                },
+                "local_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Native library id, when the artist is owned."
+                },
+                "musicbrainz_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "MusicBrainz artist id, when known."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Artist name."
+                }
+              }
+            },
+            "description": "Ranked rows for the page."
           },
-          "local_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Native library id, when the artist is owned."
-          },
-          "mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "MusicBrainz artist id, when known."
-          },
-          "name": {
+          "label": {
             "type": "string",
-            "description": "Display name."
+            "description": "Human range label."
           },
-          "source": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Provider that ranked this row (`listenbrainz`, `lastfm`)."
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Limit behind this page."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Offset behind this page."
+          },
+          "range_key": {
+            "$ref": "#/components/schemas/StatsRange",
+            "description": "Range behind this page."
           }
         }
-      },
-      "ChartGenre": {
-        "type": "object",
-        "description": "One genre inside a section.",
-        "required": [
-          "name"
-        ],
-        "properties": {
-          "artist_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Owned artists tagged with this genre, when counted."
-          },
-          "artist_mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Seed artist id behind the row, when there is one."
-          },
-          "listen_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Scrobble/listen count backing the rank, when known."
-          },
-          "name": {
-            "type": "string",
-            "description": "Genre name."
-          }
-        }
-      },
-      "ChartRange": {
-        "type": "string",
-        "description": "Valid chart ranges. v2 spelled these as path pairs\n(`/trending/artists` plus `/trending/artists/{range_key}`); v3 takes one\nroute with `?range=`. Keys keep the v2 spelling.",
-        "enum": [
-          "this_week",
-          "this_month",
-          "this_year",
-          "all_time"
-        ]
       },
       "ChartSection": {
         "type": "object",
         "description": "A titled shelf of rows: the unit both home and discover render.",
         "required": [
           "title",
-          "type"
+          "type",
+          "items"
         ],
         "properties": {
           "connect_service": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Service the user must connect for the full shelf, when gated."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ShelfSource",
+                "description": "Service the user must connect for the full shelf, when gated."
+              }
+            ]
           },
           "fallback_message": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Fallback explanation when the shelf degraded, when shown."
+            "description": "Explanation shown in place of rows when the shelf could not fill."
           },
           "items": {
             "type": "array",
@@ -39956,97 +40139,34 @@
             "description": "Radio seed id, when playable."
           },
           "radio_seed_type": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Radio seed kind (`artist`, `album`, `genre`), when playable."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RadioSeedKind",
+                "description": "Radio seed kind, when the shelf is playable as radio."
+              }
+            ]
           },
           "source": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Provider behind the shelf, when it has one."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ShelfSource",
+                "description": "Where the rows came from, when the shelf names it."
+              }
+            ]
           },
           "title": {
             "type": "string",
             "description": "Shelf title."
           },
           "type": {
-            "type": "string",
-            "description": "Row kind (`artist`, `album`, `track`, `genre`)."
-          }
-        }
-      },
-      "ChartSource": {
-        "type": "string",
-        "description": "Chart provider preference.",
-        "enum": [
-          "listenbrainz",
-          "lastfm"
-        ]
-      },
-      "ChartTrack": {
-        "type": "object",
-        "description": "One track inside a section.",
-        "required": [
-          "name"
-        ],
-        "properties": {
-          "album_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Album title, when known."
-          },
-          "artist_mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "MusicBrainz artist id, when known."
-          },
-          "artist_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Artist name, when known."
-          },
-          "image_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Cover art URL, when resolved."
-          },
-          "listen_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Scrobble/listen count backing the rank, when known."
-          },
-          "listened_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Last listen timestamp (RFC 3339), when known."
-          },
-          "mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "MusicBrainz recording id, when known."
-          },
-          "name": {
-            "type": "string",
-            "description": "Track title."
+            "$ref": "#/components/schemas/SectionKind",
+            "description": "What the rows are."
           }
         }
       },
@@ -41629,11 +41749,15 @@
             "description": "Surface the interaction happened on (`home`, `discover`, `queue`, `artist`)."
           },
           "provider": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Provider behind the row (`lastfm`, `listenbrainz`), when it had one."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ListenSource",
+                "description": "Provider behind the row, when it had one."
+              }
+            ]
           },
           "section": {
             "type": [
@@ -41673,13 +41797,14 @@
         "description": "A discover teaser on home: one seed artist plus similar artists.",
         "required": [
           "seed_artist",
-          "seed_artist_mbid"
+          "seed_artist_mbid",
+          "items"
         ],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ChartArtist"
+              "$ref": "#/components/schemas/ArtistRef"
             },
             "description": "Similar artists."
           },
@@ -41701,8 +41826,8 @@
         ],
         "properties": {
           "status": {
-            "type": "string",
-            "description": "`available`, `not_found`, or `unavailable`."
+            "$ref": "#/components/schemas/PreviewStatus",
+            "description": "Whether a preview was found."
           },
           "youtube_search_url": {
             "type": [
@@ -41794,8 +41919,15 @@
         "type": "object",
         "description": "Discover shelves. Every shelf is optional: absence means no data, never\na failure.",
         "required": [
+          "because_you_listen_to",
           "discover_queue_enabled",
-          "genre_artwork_schema_version"
+          "service_prompts",
+          "genre_artwork",
+          "genre_artwork_schema_version",
+          "daily_mixes",
+          "radio_sections",
+          "section_status",
+          "refreshing"
         ],
         "properties": {
           "anniversaries": {
@@ -42013,12 +42145,24 @@
           },
           "section_status": {
             "type": "object",
-            "description": "Status per page zone (`picks`, `lounge`, `weekly`, `made`,\n`because`, `fresh`, `library`, `genres`, `trending`): `loading`\nbefore the first page, `updating` while a rebuild runs, else\n`ready` or `empty`.",
+            "description": "Status per page zone: `loading` before the first page, `updating`\nwhile a rebuild runs, else `ready` or `empty`.",
             "additionalProperties": {
-              "type": "string"
+              "$ref": "#/components/schemas/ZoneStatus"
             },
             "propertyNames": {
-              "type": "string"
+              "type": "string",
+              "description": "A group of shelves on the discover page.",
+              "enum": [
+                "picks",
+                "lounge",
+                "weekly",
+                "made",
+                "because",
+                "fresh",
+                "library",
+                "genres",
+                "trending"
+              ]
             }
           },
           "service_prompts": {
@@ -42033,12 +42177,17 @@
               "object",
               "null"
             ],
-            "description": "Per-service degradation notes (`ok`/`degraded`/`down`).",
+            "description": "Listening services that failed during the build, when any did.",
             "additionalProperties": {
-              "type": "string"
+              "$ref": "#/components/schemas/ServiceState"
             },
             "propertyNames": {
-              "type": "string"
+              "type": "string",
+              "description": "A listening-data service: the primary source setting, and the one the\ndiscover shelves, charts, radio and enrichment answers name.",
+              "enum": [
+                "listenbrainz",
+                "lastfm"
+              ]
             }
           },
           "top_picks": {
@@ -42073,61 +42222,6 @@
                 "description": "Weekly exploration playlist."
               }
             ]
-          }
-        }
-      },
-      "DiscoveryAlbum": {
-        "type": "object",
-        "description": "An album in a discovery row.",
-        "required": [
-          "musicbrainz_id",
-          "title",
-          "artist_name",
-          "in_library",
-          "requested"
-        ],
-        "properties": {
-          "artist_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Artist MBID, when known."
-          },
-          "artist_name": {
-            "type": "string",
-            "description": "Credited artist."
-          },
-          "cover_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The album's cover."
-          },
-          "in_library": {
-            "type": "boolean",
-            "description": "True when the library holds this album."
-          },
-          "musicbrainz_id": {
-            "type": "string",
-            "description": "Release-group MBID."
-          },
-          "requested": {
-            "type": "boolean",
-            "description": "True when an acquisition request is open for it."
-          },
-          "title": {
-            "type": "string",
-            "description": "Title."
-          },
-          "year": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "description": "First release year."
           }
         }
       },
@@ -42217,24 +42311,24 @@
         "type": "object",
         "description": "One album to request inside a new batch.",
         "required": [
-          "release_group_mbid"
+          "musicbrainz_id"
         ],
         "properties": {
-          "album_name": {
+          "artist_id": {
             "type": "string",
-            "description": "Album name."
-          },
-          "artist_mbid": {
-            "type": "string",
-            "description": "MusicBrainz artist id."
+            "description": "The artist's MusicBrainz id."
           },
           "artist_name": {
             "type": "string",
             "description": "Artist name."
           },
-          "release_group_mbid": {
+          "musicbrainz_id": {
             "type": "string",
             "description": "MusicBrainz release-group id."
+          },
+          "title": {
+            "type": "string",
+            "description": "Album title."
           }
         }
       },
@@ -42242,17 +42336,13 @@
         "type": "object",
         "description": "Per-album outcome inside a batch.",
         "required": [
-          "release_group_mbid",
+          "musicbrainz_id",
           "outcome"
         ],
         "properties": {
-          "album_name": {
+          "artist_id": {
             "type": "string",
-            "description": "Album name."
-          },
-          "artist_mbid": {
-            "type": "string",
-            "description": "MusicBrainz artist id."
+            "description": "The artist's MusicBrainz id."
           },
           "artist_name": {
             "type": "string",
@@ -42262,13 +42352,13 @@
             "type": "boolean",
             "description": "True when already owned."
           },
-          "outcome": {
-            "type": "string",
-            "description": "`requested`, `skipped_in_library`, `skipped_duplicate`, or\n`not_requested` (the requests service did not file it)."
-          },
-          "release_group_mbid": {
+          "musicbrainz_id": {
             "type": "string",
             "description": "MusicBrainz release-group id."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/BatchOutcome",
+            "description": "What the batch did with the album."
           },
           "request_status": {
             "type": [
@@ -42276,6 +42366,10 @@
               "null"
             ],
             "description": "Request state, when requested."
+          },
+          "title": {
+            "type": "string",
+            "description": "Album title."
           }
         }
       },
@@ -42385,14 +42479,6 @@
             "description": "Hub title, e.g. \"Recommended for you\"."
           }
         }
-      },
-      "DiscoverySource": {
-        "type": "string",
-        "description": "Which listening-data provider answered a discovery section.",
-        "enum": [
-          "listenbrainz",
-          "lastfm"
-        ]
       },
       "DiscoveryView": {
         "type": "object",
@@ -44906,7 +44992,6 @@
         "required": [
           "artists",
           "albums",
-          "source",
           "degradations"
         ],
         "properties": {
@@ -44932,19 +45017,17 @@
             "description": "Sources that degraded while answering; usually empty."
           },
           "source": {
-            "$ref": "#/components/schemas/EnrichmentSource",
-            "description": "Provider that answered."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ListenSource",
+                "description": "Provider that answered; `null` when none did, and the counts are\nthen absent, never zero-filled."
+              }
+            ]
           }
         }
-      },
-      "EnrichmentSource": {
-        "type": "string",
-        "description": "Which provider answered the batch.",
-        "enum": [
-          "listenbrainz",
-          "lastfm",
-          "none"
-        ]
       },
       "EntryOrigin": {
         "type": "string",
@@ -45944,7 +46027,8 @@
         "description": "Genre mosaic art: a collage of owned covers or a flat gradient.",
         "required": [
           "kind",
-          "version"
+          "version",
+          "albums"
         ],
         "properties": {
           "albums": {
@@ -45955,8 +46039,8 @@
             "description": "Owned covers composing the collage (empty for gradients)."
           },
           "kind": {
-            "type": "string",
-            "description": "`collage` or `gradient`."
+            "$ref": "#/components/schemas/ArtworkKind",
+            "description": "How the art is drawn."
           },
           "version": {
             "type": "string",
@@ -46047,6 +46131,8 @@
         "type": "object",
         "description": "Owned artists and albums for a genre.",
         "required": [
+          "artists",
+          "albums",
           "artist_count",
           "album_count"
         ],
@@ -46059,7 +46145,7 @@
           "albums": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ChartAlbum"
+              "$ref": "#/components/schemas/AlbumRef"
             },
             "description": "Owned albums."
           },
@@ -46071,7 +46157,7 @@
           "artists": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ChartArtist"
+              "$ref": "#/components/schemas/ArtistRef"
             },
             "description": "Owned artists."
           }
@@ -46219,6 +46305,8 @@
         "type": "object",
         "description": "Popular artists and albums for a genre.",
         "required": [
+          "artists",
+          "albums",
           "has_more_artists",
           "has_more_albums"
         ],
@@ -46226,14 +46314,14 @@
           "albums": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ChartAlbum"
+              "$ref": "#/components/schemas/AlbumRef"
             },
             "description": "Popular albums."
           },
           "artists": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ChartArtist"
+              "$ref": "#/components/schemas/ArtistRef"
             },
             "description": "Popular artists."
           },
@@ -46244,6 +46332,42 @@
           "has_more_artists": {
             "type": "boolean",
             "description": "More artists behind the offsets."
+          }
+        }
+      },
+      "GenreRef": {
+        "type": "object",
+        "description": "One genre inside a section.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "artist_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Owned artists tagged with this genre, when counted."
+          },
+          "artist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz id of the seed artist behind the row, when there is one."
+          },
+          "listen_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Listen or play count behind the row, when known."
+          },
+          "name": {
+            "type": "string",
+            "description": "Genre name."
           }
         }
       },
@@ -46903,7 +47027,10 @@
         "type": "object",
         "description": "Home shelves. Every shelf is optional: absence means the shelf has no\ndata, never a failure.",
         "required": [
-          "genre_artwork_schema_version"
+          "service_prompts",
+          "genre_artwork",
+          "genre_artwork_schema_version",
+          "refreshing"
         ],
         "properties": {
           "discover_preview": {
@@ -47749,7 +47876,12 @@
           "jellyfin",
           "download_client",
           "youtube",
-          "lastfm"
+          "lastfm",
+          "navidrome",
+          "youtube_api",
+          "plex",
+          "library",
+          "localfiles"
         ],
         "properties": {
           "download_client": {
@@ -50448,6 +50580,14 @@
           }
         }
       },
+      "ListenSource": {
+        "type": "string",
+        "description": "A listening-data service: the primary source setting, and the one the\ndiscover shelves, charts, radio and enrichment answers name.",
+        "enum": [
+          "listenbrainz",
+          "lastfm"
+        ]
+      },
       "LocalPasswordSet": {
         "type": "object",
         "description": "Set the first local password on an account without one.",
@@ -53076,7 +53216,7 @@
           "albums": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DiscoveryAlbum"
+              "$ref": "#/components/schemas/AlbumRef"
             },
             "description": "Other release groups by the artist, in MusicBrainz browse order."
           },
@@ -53361,14 +53501,6 @@
             "description": "Folder name."
           }
         }
-      },
-      "MusicSource": {
-        "type": "string",
-        "description": "Which service backs scrobble-targeted discovery.",
-        "enum": [
-          "listenbrainz",
-          "lastfm"
-        ]
       },
       "NamingScript": {
         "type": "object",
@@ -55007,11 +55139,15 @@
             "description": "Playlist to extend."
           },
           "source": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Provider preference (`listenbrainz`, `lastfm`)."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ListenSource",
+                "description": "Provider preference."
+              }
+            ]
           }
         }
       },
@@ -56291,49 +56427,6 @@
           }
         }
       },
-      "PopularAlbumsPage": {
-        "type": "object",
-        "description": "One page of a popular-albums or your-top chart.",
-        "required": [
-          "range_key",
-          "label",
-          "items",
-          "offset",
-          "limit",
-          "has_more"
-        ],
-        "properties": {
-          "has_more": {
-            "type": "boolean",
-            "description": "True when more rows follow."
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ChartAlbum"
-            },
-            "description": "Ranked albums for the page."
-          },
-          "label": {
-            "type": "string",
-            "description": "Human range label."
-          },
-          "limit": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Limit behind this page."
-          },
-          "offset": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Offset behind this page."
-          },
-          "range_key": {
-            "type": "string",
-            "description": "Range key behind this page."
-          }
-        }
-      },
       "PrecacheRunResponse": {
         "type": "object",
         "description": "One precache run starting. The run continues in the background under\nthe `precache-library` job name; a second start while it is live is 409.",
@@ -56410,11 +56503,22 @@
           }
         }
       },
+      "PreviewStatus": {
+        "type": "string",
+        "description": "Whether a queue card's YouTube preview was found.",
+        "enum": [
+          "available",
+          "not_found",
+          "unavailable"
+        ]
+      },
       "PreviewTrackItem": {
         "type": "object",
         "description": "One previewed track.",
         "required": [
-          "title"
+          "title",
+          "artist_name",
+          "preview_url"
         ],
         "properties": {
           "artist_name": {
@@ -56454,7 +56558,7 @@
           "source": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MusicSource",
+                "$ref": "#/components/schemas/ListenSource",
                 "description": "Active source."
               }
             ],
@@ -56486,6 +56590,16 @@
           }
         ],
         "description": "Own profile. Identity only; connected services and library stats belong\nto the connections and library routes."
+      },
+      "PromptService": {
+        "type": "string",
+        "description": "A service a connect-a-service card points at.",
+        "enum": [
+          "listenbrainz",
+          "lastfm",
+          "jellyfin",
+          "download-client"
+        ]
       },
       "ProviderCallsView": {
         "type": "object",
@@ -56946,6 +57060,16 @@
           }
         }
       },
+      "QueueAction": {
+        "type": "string",
+        "description": "What a generate trigger did.",
+        "enum": [
+          "started",
+          "already_building",
+          "already_ready",
+          "disabled"
+        ]
+      },
       "QueueBuildStatus": {
         "type": "string",
         "description": "Where one user's queue build stands.",
@@ -56993,6 +57117,11 @@
       "QueueEnrichment": {
         "type": "object",
         "description": "Enrichment behind one queue card.",
+        "required": [
+          "tags",
+          "youtube_search_url",
+          "youtube_search_available"
+        ],
         "properties": {
           "artist_description": {
             "type": [
@@ -57073,8 +57202,8 @@
         ],
         "properties": {
           "action": {
-            "type": "string",
-            "description": "`started`, `already_building`, or `fresh`."
+            "$ref": "#/components/schemas/QueueAction",
+            "description": "What the trigger did."
           },
           "built_at": {
             "type": [
@@ -57151,20 +57280,18 @@
         "type": "object",
         "description": "One lightweight queue card: the deck renders these before enrichment.",
         "required": [
-          "release_group_mbid",
-          "album_name",
+          "musicbrainz_id",
+          "title",
           "artist_name",
-          "artist_mbid",
-          "recommendation_reason"
+          "artist_id",
+          "recommendation_reason",
+          "is_wildcard",
+          "in_library"
         ],
         "properties": {
-          "album_name": {
+          "artist_id": {
             "type": "string",
-            "description": "Album name."
-          },
-          "artist_mbid": {
-            "type": "string",
-            "description": "MusicBrainz artist id."
+            "description": "The artist's MusicBrainz id."
           },
           "artist_name": {
             "type": "string",
@@ -57175,7 +57302,7 @@
               "string",
               "null"
             ],
-            "description": "Cover art URL, when resolved."
+            "description": "Cover URL, when known."
           },
           "in_library": {
             "type": "boolean",
@@ -57185,13 +57312,17 @@
             "type": "boolean",
             "description": "True for wildcard (out-of-profile) picks."
           },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "MusicBrainz release-group id."
+          },
           "recommendation_reason": {
             "type": "string",
             "description": "Human reason behind the pick."
           },
-          "release_group_mbid": {
+          "title": {
             "type": "string",
-            "description": "MusicBrainz release-group id."
+            "description": "Album title."
           }
         }
       },
@@ -57383,6 +57514,14 @@
           }
         }
       },
+      "RadioMode": {
+        "type": "string",
+        "description": "Which tracks a radio plan may use.",
+        "enum": [
+          "library",
+          "hybrid"
+        ]
+      },
       "RadioPlanRequest": {
         "type": "object",
         "description": "Body planning track-level radio. The UI resolves playback per track\n(library rows use the native stream endpoint, the rest use YouTube or\n30-second previews).",
@@ -57410,8 +57549,8 @@
             "description": "Seed rows for `items` plans."
           },
           "mode": {
-            "type": "string",
-            "description": "`library` (owned only) or `hybrid` (owned plus provider picks, the\ndefault)."
+            "$ref": "#/components/schemas/RadioMode",
+            "description": "Which tracks the plan may use."
           },
           "seed_id": {
             "type": [
@@ -57421,8 +57560,8 @@
             "description": "Seed id (mbid or genre name); empty for item seeds."
           },
           "seed_type": {
-            "type": "string",
-            "description": "Seed kind (`artist`, `album`, `genre`, `items`)."
+            "$ref": "#/components/schemas/RadioSeedKind",
+            "description": "What the plan starts from."
           }
         }
       },
@@ -57430,7 +57569,8 @@
         "type": "object",
         "description": "A complete radio plan.",
         "required": [
-          "title"
+          "title",
+          "tracks"
         ],
         "properties": {
           "title": {
@@ -57451,7 +57591,9 @@
         "description": "One planned radio track.",
         "required": [
           "track_name",
-          "artist_name"
+          "artist_name",
+          "artist_mbid",
+          "in_library"
         ],
         "properties": {
           "album_mbid": {
@@ -57533,15 +57675,19 @@
             "description": "Seed id (mbid or genre name)."
           },
           "seed_type": {
-            "type": "string",
-            "description": "Seed kind (`artist`, `album`, `genre`)."
+            "$ref": "#/components/schemas/RadioSeedKind",
+            "description": "What the shelf starts from (`artist`, `album` or `genre`)."
           },
           "source": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Provider preference (`listenbrainz`, `lastfm`)."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ListenSource",
+                "description": "Provider preference."
+              }
+            ]
           }
         }
       },
@@ -57572,6 +57718,16 @@
             "description": "Seed artist name."
           }
         }
+      },
+      "RadioSeedKind": {
+        "type": "string",
+        "description": "The seed a radio shelf or plan starts from.",
+        "enum": [
+          "artist",
+          "album",
+          "genre",
+          "items"
+        ]
       },
       "RatedKind": {
         "type": "string",
@@ -62513,23 +62669,109 @@
       "SectionItem": {
         "oneOf": [
           {
-            "$ref": "#/components/schemas/ChartArtist",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ArtistRef",
+                "description": "An artist row."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "artist"
+                    ]
+                  }
+                }
+              }
+            ],
             "description": "An artist row."
           },
           {
-            "$ref": "#/components/schemas/ChartAlbum",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AlbumRef",
+                "description": "An album row."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "album"
+                    ]
+                  }
+                }
+              }
+            ],
             "description": "An album row."
           },
           {
-            "$ref": "#/components/schemas/ChartTrack",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TrackRef",
+                "description": "A track row."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "track"
+                    ]
+                  }
+                }
+              }
+            ],
             "description": "A track row."
           },
           {
-            "$ref": "#/components/schemas/ChartGenre",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GenreRef",
+                "description": "A genre row."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "genre"
+                    ]
+                  }
+                }
+              }
+            ],
             "description": "A genre row."
           }
         ],
-        "description": "One row inside a section. The `type` field on the section names which\nvariant the rows hold; untagged so the wire keeps flat v2-style items."
+        "description": "One row inside a section, tagged by `kind`."
+      },
+      "SectionKind": {
+        "type": "string",
+        "description": "What a section's rows are.",
+        "enum": [
+          "artists",
+          "albums",
+          "tracks",
+          "genres"
+        ]
       },
       "SectionPrefItem": {
         "type": "object",
@@ -62799,7 +63041,8 @@
           "title",
           "description",
           "icon",
-          "color"
+          "color",
+          "features"
         ],
         "properties": {
           "color": {
@@ -62822,8 +63065,8 @@
             "description": "Icon name."
           },
           "service": {
-            "type": "string",
-            "description": "Service key (`listenbrainz`, `lastfm`, ...)."
+            "$ref": "#/components/schemas/PromptService",
+            "description": "The service to connect."
           },
           "title": {
             "type": "string",
@@ -62850,6 +63093,14 @@
             "description": "True when the report is waiting for that service. A scrobble waits\nin a kept queue and is sent, retried while the service is down,\nwithin two weeks of the play; a now-playing report is sent once."
           }
         }
+      },
+      "ServiceState": {
+        "type": "string",
+        "description": "How a listening service fared in a discover build.",
+        "enum": [
+          "degraded",
+          "unavailable"
+        ]
       },
       "SessionKind": {
         "type": "string",
@@ -63026,6 +63277,18 @@
           }
         }
       },
+      "ShelfSource": {
+        "type": "string",
+        "description": "Where a shelf's rows came from.",
+        "enum": [
+          "listenbrainz",
+          "lastfm",
+          "jellyfin",
+          "musicbrainz",
+          "library",
+          "local"
+        ]
+      },
       "SimilarAlbumsResponse": {
         "type": "object",
         "description": "`GET /albums/{album_id}/similar`.",
@@ -63038,7 +63301,7 @@
           "albums": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DiscoveryAlbum"
+              "$ref": "#/components/schemas/AlbumRef"
             },
             "description": "Albums by similar artists."
           },
@@ -63047,37 +63310,8 @@
             "description": "False when ListenBrainz is not set up."
           },
           "source": {
-            "$ref": "#/components/schemas/DiscoverySource",
+            "$ref": "#/components/schemas/ListenSource",
             "description": "Provider that answered."
-          }
-        }
-      },
-      "SimilarArtist": {
-        "type": "object",
-        "description": "One similar artist.",
-        "required": [
-          "musicbrainz_id",
-          "name",
-          "listen_count",
-          "in_library"
-        ],
-        "properties": {
-          "in_library": {
-            "type": "boolean",
-            "description": "True when the library holds this artist."
-          },
-          "listen_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Listen count from the provider (zero when it reports none)."
-          },
-          "musicbrainz_id": {
-            "type": "string",
-            "description": "Artist MBID."
-          },
-          "name": {
-            "type": "string",
-            "description": "Artist name."
           }
         }
       },
@@ -63097,12 +63331,12 @@
           "similar_artists": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/SimilarArtist"
+              "$ref": "#/components/schemas/ArtistRef"
             },
             "description": "Similar artists, most similar first."
           },
           "source": {
-            "$ref": "#/components/schemas/DiscoverySource",
+            "$ref": "#/components/schemas/ListenSource",
             "description": "Provider that answered."
           }
         }
@@ -63501,6 +63735,16 @@
             "description": "Optional absolute origin the OAuth redirect URI is built from."
           }
         }
+      },
+      "StatsRange": {
+        "type": "string",
+        "description": "A listening-statistics window: the chart pages' `range`, and the\nListenBrainz statistics range.",
+        "enum": [
+          "this_week",
+          "this_month",
+          "this_year",
+          "all_time"
+        ]
       },
       "StatsView": {
         "type": "object",
@@ -64313,54 +64557,6 @@
           }
         }
       },
-      "TopAlbum": {
-        "type": "object",
-        "description": "One of an artist's most played albums.",
-        "required": [
-          "title",
-          "artist_name",
-          "listen_count",
-          "in_library",
-          "requested"
-        ],
-        "properties": {
-          "artist_name": {
-            "type": "string",
-            "description": "Credited artist."
-          },
-          "cover_url": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The album's cover, when the release group is known."
-          },
-          "in_library": {
-            "type": "boolean",
-            "description": "True when the library holds this album."
-          },
-          "listen_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Listen or play count."
-          },
-          "release_group_mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Release-group MBID, when known."
-          },
-          "requested": {
-            "type": "boolean",
-            "description": "True when an acquisition request is open for it."
-          },
-          "title": {
-            "type": "string",
-            "description": "Album title."
-          }
-        }
-      },
       "TopAlbumsResponse": {
         "type": "object",
         "description": "`GET /artists/{artist_mbid}/top-albums`.",
@@ -64373,7 +64569,7 @@
           "albums": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/TopAlbum"
+              "$ref": "#/components/schemas/AlbumRef"
             },
             "description": "Albums, most played first."
           },
@@ -64382,7 +64578,7 @@
             "description": "False when the provider is not set up."
           },
           "source": {
-            "$ref": "#/components/schemas/DiscoverySource",
+            "$ref": "#/components/schemas/ListenSource",
             "description": "Provider that answered."
           }
         }
@@ -64392,11 +64588,12 @@
         "description": "One personalized top pick.",
         "required": [
           "album",
-          "match_pct"
+          "match_pct",
+          "reasons"
         ],
         "properties": {
           "album": {
-            "$ref": "#/components/schemas/ChartAlbum",
+            "$ref": "#/components/schemas/AlbumRef",
             "description": "Picked album."
           },
           "match_pct": {
@@ -64424,7 +64621,9 @@
         "type": "object",
         "description": "The personalized top-picks shelf.",
         "required": [
-          "title"
+          "title",
+          "items",
+          "personalizing"
         ],
         "properties": {
           "items": {
@@ -64439,11 +64638,15 @@
             "description": "True while picks are trending-only because personalization has not\nresolved yet (the UI shows a \"still personalising\" hint)."
           },
           "source": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Provider behind the picks, when it has one."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ShelfSource",
+                "description": "Provider behind the picks, when it has one."
+              }
+            ]
           },
           "title": {
             "type": "string",
@@ -64542,7 +64745,7 @@
             "description": "Songs, most played first."
           },
           "source": {
-            "$ref": "#/components/schemas/DiscoverySource",
+            "$ref": "#/components/schemas/ListenSource",
             "description": "Provider that answered."
           }
         }
@@ -64969,6 +65172,69 @@
           }
         }
       },
+      "TrackRef": {
+        "type": "object",
+        "description": "One track inside a section.",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "album_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album title, when known."
+          },
+          "artist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The artist's MusicBrainz id, when known."
+          },
+          "artist_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist name, when known."
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cover URL, when known."
+          },
+          "listen_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Listen or play count behind the row, when known."
+          },
+          "listened_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last listen timestamp (RFC 3339), when known."
+          },
+          "musicbrainz_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz recording id, when known."
+          },
+          "title": {
+            "type": "string",
+            "description": "Track title."
+          }
+        }
+      },
       "TrackTags": {
         "type": "object",
         "description": "The tags in one audio file, field for field v2's `AudioTag`. The\n`musicbrainz_*` fields use Picard's tag names.",
@@ -65355,49 +65621,6 @@
           "cookie",
           "bearer"
         ]
-      },
-      "TrendingArtistsPage": {
-        "type": "object",
-        "description": "One page of a trending-artists chart.",
-        "required": [
-          "range_key",
-          "label",
-          "items",
-          "offset",
-          "limit",
-          "has_more"
-        ],
-        "properties": {
-          "has_more": {
-            "type": "boolean",
-            "description": "True when more rows follow."
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ChartArtist"
-            },
-            "description": "Ranked artists for the page."
-          },
-          "label": {
-            "type": "string",
-            "description": "Human range label."
-          },
-          "limit": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Limit behind this page."
-          },
-          "offset": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Offset behind this page."
-          },
-          "range_key": {
-            "type": "string",
-            "description": "Range key behind this page."
-          }
-        }
       },
       "UnicodeNormalization": {
         "type": "string",
@@ -66277,7 +66500,9 @@
         "description": "The weekly exploration playlist shelf.",
         "required": [
           "title",
-          "playlist_date"
+          "playlist_date",
+          "tracks",
+          "source_url"
         ],
         "properties": {
           "playlist_date": {
@@ -67324,6 +67549,16 @@
             "description": "The saved (or already saved) track link."
           }
         }
+      },
+      "ZoneStatus": {
+        "type": "string",
+        "description": "Where one discover zone stands.",
+        "enum": [
+          "loading",
+          "updating",
+          "ready",
+          "empty"
+        ]
       }
     },
     "securitySchemes": {

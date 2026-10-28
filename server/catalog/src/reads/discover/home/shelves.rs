@@ -3,16 +3,17 @@
 
 use super::super::listening::LovedTrack;
 use super::library::{HomeAlbum, HomeArtist, Play};
-use crate::reads::discover::listening::ArtistRow;
+use crate::reads::discover::listening::{ArtistRow, ListenSource};
 use crate::reads::discover::listening::{LastFmChartAlbum, RankedAlbum};
 use crate::reads::discover::models::{
-    ChartAlbum, ChartArtist, ChartSection, ChartTrack, SectionItem, ServicePrompt,
+    AlbumRef, ArtistRef, ChartSection, PromptService, SectionItem, SectionKind, ServicePrompt,
+    ShelfSource, TrackRef,
 };
 use crate::reads::discover::page::shelves::{SHELF_SIZE, album, shelf};
 
 /// A library album row: its own art when it has some, else the release
 /// group's cover.
-pub fn library_album(row: &HomeAlbum) -> ChartAlbum {
+pub fn library_album(row: &HomeAlbum) -> AlbumRef {
     let mut item = album(
         row.release_group_mbid.as_deref(),
         &row.title,
@@ -21,7 +22,7 @@ pub fn library_album(row: &HomeAlbum) -> ChartAlbum {
         None,
     );
     if let Some(version) = row.art_version {
-        item.image_url = Some(format!(
+        item.cover_url = Some(format!(
             "/api/v3/library/albums/{}/artwork?size=500&v={version}",
             row.local_id
         ));
@@ -33,15 +34,14 @@ pub fn library_album(row: &HomeAlbum) -> ChartAlbum {
 }
 
 /// A library artist row; the count is the artist's albums.
-pub fn library_artist(row: &HomeArtist) -> ChartArtist {
-    ChartArtist {
+pub fn library_artist(row: &HomeArtist) -> ArtistRef {
+    ArtistRef {
         name: row.name.clone(),
-        mbid: row.mbid.clone(),
+        musicbrainz_id: row.mbid.clone(),
         local_id: Some(row.local_id.clone()),
         image_url: None,
         listen_count: Some(row.album_count),
         in_library: true,
-        source: None,
     }
 }
 
@@ -49,13 +49,13 @@ pub fn library_artist(row: &HomeArtist) -> ChartArtist {
 pub fn recently_added(albums: &[HomeAlbum]) -> Option<ChartSection> {
     shelf(
         "Recently Added",
-        "albums",
+        SectionKind::Albums,
         albums
             .iter()
             .take(SHELF_SIZE)
             .map(|row| SectionItem::Album(library_album(row)))
             .collect(),
-        Some("library"),
+        Some(ShelfSource::Library),
     )
 }
 
@@ -65,13 +65,13 @@ pub fn your_albums(albums: &[HomeAlbum]) -> Option<ChartSection> {
     sorted.sort_by(|a, b| (b.year.unwrap_or(0), &b.title).cmp(&(a.year.unwrap_or(0), &a.title)));
     shelf(
         "Your Albums",
-        "albums",
+        SectionKind::Albums,
         sorted
             .into_iter()
             .take(SHELF_SIZE)
             .map(|row| SectionItem::Album(library_album(row)))
             .collect(),
-        Some("library"),
+        Some(ShelfSource::Library),
     )
 }
 
@@ -79,42 +79,43 @@ pub fn your_albums(albums: &[HomeAlbum]) -> Option<ChartSection> {
 pub fn your_artists(artists: &[HomeArtist]) -> Option<ChartSection> {
     shelf(
         "Your Artists",
-        "artists",
+        SectionKind::Artists,
         artists
             .iter()
             .take(SHELF_SIZE)
             .map(|row| SectionItem::Artist(library_artist(row)))
             .collect(),
-        Some("library"),
+        Some(ShelfSource::Library),
     )
 }
 
 /// Trending Artists from one chart. ListenBrainz rows need an artist id
 /// to link to; Last.fm rows link by name.
-pub fn trending_artists(rows: &[ArtistRow], source: &str) -> Option<ChartSection> {
+pub fn trending_artists(rows: &[ArtistRow], source: ListenSource) -> Option<ChartSection> {
     let items = rows
         .iter()
-        .filter(|row| source == "lastfm" || row.mbid.is_some())
+        .filter(|row| source == ListenSource::Lastfm || row.mbid.is_some())
         .take(SHELF_SIZE)
         .map(|row| {
-            SectionItem::Artist(ChartArtist {
-                name: row.name.clone(),
-                mbid: row.mbid.clone(),
-                local_id: None,
-                image_url: None,
+            SectionItem::Artist(ArtistRef {
+                musicbrainz_id: row.mbid.clone(),
                 listen_count: Some(row.listen_count),
-                in_library: false,
-                source: (source == "lastfm").then(|| source.to_owned()),
+                ..ArtistRef::named(row.name.clone())
             })
         })
         .collect();
-    shelf("Trending Artists", "artists", items, Some(source))
+    shelf(
+        "Trending Artists",
+        SectionKind::Artists,
+        items,
+        Some(source.into()),
+    )
 }
 
 fn ranked_albums(title: &str, rows: &[RankedAlbum]) -> Option<ChartSection> {
     shelf(
         title,
-        "albums",
+        SectionKind::Albums,
         rows.iter()
             .take(SHELF_SIZE)
             .map(|row| {
@@ -127,7 +128,7 @@ fn ranked_albums(title: &str, rows: &[RankedAlbum]) -> Option<ChartSection> {
                 ))
             })
             .collect(),
-        Some("listenbrainz"),
+        Some(ShelfSource::Listenbrainz),
     )
 }
 
@@ -146,42 +147,41 @@ pub fn your_top_albums(rows: &[RankedAlbum]) -> Option<ChartSection> {
 pub fn your_top_albums_lastfm(rows: &[LastFmChartAlbum]) -> Option<ChartSection> {
     shelf(
         "Your Top Albums",
-        "albums",
+        SectionKind::Albums,
         rows.iter()
             .take(SHELF_SIZE)
             .map(|row| {
                 let mut item = album(None, &row.name, Some(&row.artist_name), None, None);
-                item.image_url = Some(row.image_url.clone()).filter(|url| !url.is_empty());
+                item.cover_url = Some(row.image_url.clone()).filter(|url| !url.is_empty());
                 item.listen_count = Some(row.playcount);
-                item.source = Some("lastfm".to_owned());
                 SectionItem::Album(item)
             })
             .collect(),
-        Some("lastfm"),
+        Some(ShelfSource::Lastfm),
     )
 }
 
 /// Your Favorites: the user's loved tracks.
-pub fn favorites(rows: &[LovedTrack], source: &str) -> Option<ChartSection> {
+pub fn favorites(rows: &[LovedTrack], source: ListenSource) -> Option<ChartSection> {
     shelf(
         "Your Favorites",
-        "tracks",
+        SectionKind::Tracks,
         rows.iter()
             .take(SHELF_SIZE)
             .map(|row| {
-                SectionItem::Track(ChartTrack {
-                    name: row.name.clone(),
-                    mbid: row.recording_mbid.clone(),
+                SectionItem::Track(TrackRef {
+                    title: row.name.clone(),
+                    musicbrainz_id: row.recording_mbid.clone(),
                     artist_name: Some(row.artist_name.clone()),
-                    artist_mbid: row.artist_mbid.clone(),
+                    artist_id: row.artist_mbid.clone(),
                     album_name: row.album_name.clone(),
                     listen_count: None,
                     listened_at: None,
-                    image_url: row.image_url.clone(),
+                    cover_url: row.image_url.clone(),
                 })
             })
             .collect(),
-        Some(source),
+        Some(source.into()),
     )
 }
 
@@ -189,32 +189,32 @@ pub fn favorites(rows: &[LovedTrack], source: &str) -> Option<ChartSection> {
 pub fn recently_played(plays: &[Play]) -> Option<ChartSection> {
     shelf(
         "Recently Played",
-        "tracks",
+        SectionKind::Tracks,
         plays
             .iter()
             .take(SHELF_SIZE)
             .map(|play| {
-                SectionItem::Track(ChartTrack {
-                    name: play.track_name.clone(),
-                    mbid: play.recording_mbid.clone(),
+                SectionItem::Track(TrackRef {
+                    title: play.track_name.clone(),
+                    musicbrainz_id: play.recording_mbid.clone(),
                     artist_name: Some(play.artist_name.clone()),
-                    artist_mbid: None,
+                    artist_id: None,
                     album_name: play.album_name.clone(),
                     listen_count: None,
                     listened_at: Some(play.played_at.clone()),
-                    image_url: play
+                    cover_url: play
                         .release_group_mbid
                         .as_deref()
                         .map(|group| format!("/api/v3/covers/release-group/{group}?size=250")),
                 })
             })
             .collect(),
-        Some("local"),
+        Some(ShelfSource::Local),
     )
 }
 
 fn prompt(
-    service: &str,
+    service: PromptService,
     title: &str,
     description: &str,
     icon: &str,
@@ -222,7 +222,7 @@ fn prompt(
     features: [&str; 4],
 ) -> ServicePrompt {
     ServicePrompt {
-        service: service.to_owned(),
+        service,
         title: title.to_owned(),
         description: description.to_owned(),
         icon: icon.to_owned(),
@@ -241,7 +241,7 @@ pub fn service_prompts(
     let mut prompts = Vec::new();
     if !download_client {
         prompts.push(prompt(
-            "download-client",
+            PromptService::DownloadClient,
             "Connect a download client",
             "DroppedNeedle needs a download source (slskd for Soulseek, or SABnzbd with an indexer for Usenet) to fetch the albums and tracks you request. Add one in Settings to start downloading into your library.",
             "DL",
@@ -256,7 +256,7 @@ pub fn service_prompts(
     }
     if !listenbrainz && !lastfm {
         prompts.push(prompt(
-            "listenbrainz",
+            PromptService::Listenbrainz,
             "Connect ListenBrainz",
             "Get recommendations from your listening history, spot new releases from artists you already love, and keep an eye on your top genres. Connect Last.fm too if you want global listener stats.",
             "LB",
@@ -269,7 +269,7 @@ pub fn service_prompts(
             ],
         ));
         prompts.push(prompt(
-            "lastfm",
+            PromptService::Lastfm,
             "Connect Last.fm",
             "Track your listening, compare stats, and discover music that matches your taste.",
             "FM",

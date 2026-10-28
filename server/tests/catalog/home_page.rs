@@ -15,7 +15,7 @@ use droppedneedle_catalog::reads::discover::home::{HomeInputs, LiveHome};
 use droppedneedle_catalog::reads::discover::listening::{
     ArtistRow, ListenedAlbum, ListeningData, LovedTrack, TagAlbum, UserMusic,
 };
-use droppedneedle_catalog::reads::discover::models::SectionItem;
+use droppedneedle_catalog::reads::discover::models::{ArtworkKind, PromptService, SectionItem};
 use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_kernel::db::{DbError, Lane};
 
@@ -153,7 +153,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     };
     assert_eq!(recent.local_id.as_deref(), Some("al1"));
     assert_eq!(
-        recent.image_url.as_deref(),
+        recent.cover_url.as_deref(),
         Some("/api/v3/library/albums/al1/artwork?size=500&v=3")
     );
     assert!(first.recently_played.is_some());
@@ -179,13 +179,13 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     assert!(popular.in_library, "owned albums are marked");
     assert_eq!(popular.local_id.as_deref(), Some("al1"));
     let tile = page.genre_artwork.get("Shoegaze").expect("genre tile art");
-    assert_eq!(tile.kind, "collage");
+    assert_eq!(tile.kind, ArtworkKind::Collage);
     assert_eq!(tile.albums[0].album_id, "al1");
     assert_eq!(tile.albums[0].cover_version, 3);
     assert!(
         page.service_prompts
             .iter()
-            .any(|p| p.service == "download-client")
+            .any(|p| p.service == PromptService::DownloadClient)
     );
 
     // A restart serves the built shelves at once, without a build.
@@ -206,7 +206,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     assert!(!popular.artists[1].in_library);
     assert_eq!(popular.albums[0].release_date.as_deref(), Some("1991"));
     assert!(!popular.has_more_artists);
-    assert_eq!(genre.genre_artwork.kind, "collage");
+    assert_eq!(genre.genre_artwork.kind, ArtworkKind::Collage);
 
     // Art the scan finds gone is not shown again: dropping its row bumps
     // the genre's revision, so the remembered collage is replaced.
@@ -222,5 +222,5 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
         })
         .await
         .expect("art row removed");
-    assert_eq!(art.one("Shoegaze").await.kind, "gradient");
+    assert_eq!(art.one("Shoegaze").await.kind, ArtworkKind::Gradient);
 }

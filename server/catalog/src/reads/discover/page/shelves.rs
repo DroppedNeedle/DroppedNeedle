@@ -5,7 +5,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::reads::discover::models::{
-    ChartAlbum, ChartArtist, ChartGenre, ChartSection, DiscoverResponse, SectionItem, ServicePrompt,
+    AlbumRef, ArtistRef, ChartSection, DiscoverResponse, DiscoverZone, GenreRef, PromptService,
+    SectionItem, SectionKind, ServicePrompt, ShelfSource, ZoneStatus,
 };
 use crate::reads::discover::queue::build::cover_url;
 
@@ -13,75 +14,74 @@ use crate::reads::discover::queue::build::cover_url;
 pub const SHELF_SIZE: usize = 15;
 
 /// The zones the page groups its shelves into, in page order.
-pub const ZONES: [&str; 9] = [
-    "picks", "lounge", "weekly", "made", "because", "fresh", "library", "genres", "trending",
+pub const ZONES: [DiscoverZone; 9] = [
+    DiscoverZone::Picks,
+    DiscoverZone::Lounge,
+    DiscoverZone::Weekly,
+    DiscoverZone::Made,
+    DiscoverZone::Because,
+    DiscoverZone::Fresh,
+    DiscoverZone::Library,
+    DiscoverZone::Genres,
+    DiscoverZone::Trending,
 ];
 
 /// An artist row.
 pub fn artist(mbid: Option<&str>, name: &str, listen_count: Option<i64>) -> SectionItem {
-    SectionItem::Artist(ChartArtist {
-        name: name.to_owned(),
-        mbid: mbid.map(str::to_owned),
-        local_id: None,
-        image_url: None,
+    SectionItem::Artist(ArtistRef {
+        musicbrainz_id: mbid.map(str::to_owned),
         listen_count,
-        in_library: false,
-        source: None,
+        ..ArtistRef::named(name)
     })
 }
 
 /// An album row; the cover comes from the release group when known.
 pub fn album(
     mbid: Option<&str>,
-    name: &str,
+    title: &str,
     artist_name: Option<&str>,
     artist_mbid: Option<&str>,
     listen_count: Option<i64>,
-) -> ChartAlbum {
-    ChartAlbum {
-        name: name.to_owned(),
-        mbid: mbid.map(str::to_owned),
-        local_id: None,
+) -> AlbumRef {
+    AlbumRef {
+        musicbrainz_id: mbid.map(str::to_owned),
         artist_name: artist_name
             .filter(|name| !name.is_empty())
             .map(str::to_owned),
-        artist_mbid: artist_mbid
+        artist_id: artist_mbid
             .filter(|mbid| !mbid.is_empty())
             .map(str::to_owned),
-        image_url: mbid.map(cover_url),
-        release_date: None,
+        cover_url: mbid.map(cover_url),
         listen_count,
-        in_library: false,
-        requested: false,
-        source: None,
+        ..AlbumRef::titled(title)
     }
 }
 
 /// A genre row.
 pub fn genre(name: &str, listen_count: Option<i64>, artist_count: Option<i64>) -> SectionItem {
-    SectionItem::Genre(ChartGenre {
+    SectionItem::Genre(GenreRef {
         name: name.to_owned(),
         listen_count,
         artist_count,
-        artist_mbid: None,
+        artist_id: None,
     })
 }
 
 /// A shelf, `None` when it has no rows.
 pub fn shelf(
     title: &str,
-    kind: &str,
+    kind: SectionKind,
     items: Vec<SectionItem>,
-    source: Option<&str>,
+    source: Option<ShelfSource>,
 ) -> Option<ChartSection> {
     if items.is_empty() {
         return None;
     }
     Some(ChartSection {
         title: title.to_owned(),
-        section_type: kind.to_owned(),
+        kind,
         items,
-        source: source.map(str::to_owned),
+        source,
         fallback_message: None,
         connect_service: None,
         radio_seed_type: None,
@@ -99,24 +99,27 @@ pub fn has_content(page: &DiscoverResponse) -> bool {
     zone_presence(page).values().any(|present| *present)
 }
 
-fn zone_presence(page: &DiscoverResponse) -> HashMap<&'static str, bool> {
+fn zone_presence(page: &DiscoverResponse) -> HashMap<DiscoverZone, bool> {
     let any = |sections: &[Option<&ChartSection>]| sections.iter().any(|s| has_items(*s));
     HashMap::from([
         (
-            "picks",
+            DiscoverZone::Picks,
             page.top_picks
                 .as_ref()
                 .is_some_and(|picks| !picks.items.is_empty()),
         ),
-        ("lounge", has_items(page.listeners_like_you.as_ref())),
         (
-            "weekly",
+            DiscoverZone::Lounge,
+            has_items(page.listeners_like_you.as_ref()),
+        ),
+        (
+            DiscoverZone::Weekly,
             page.weekly_exploration
                 .as_ref()
                 .is_some_and(|weekly| !weekly.tracks.is_empty()),
         ),
         (
-            "made",
+            DiscoverZone::Made,
             page.daily_mixes.iter().any(|mix| !mix.items.is_empty())
                 || page
                     .radio_sections
@@ -124,7 +127,7 @@ fn zone_presence(page: &DiscoverResponse) -> HashMap<&'static str, bool> {
                     .any(|radio| !radio.items.is_empty()),
         ),
         (
-            "because",
+            DiscoverZone::Because,
             page.because_you_listen_to
                 .iter()
                 .any(|entry| !entry.section.items.is_empty())
@@ -134,7 +137,7 @@ fn zone_presence(page: &DiscoverResponse) -> HashMap<&'static str, bool> {
                 ]),
         ),
         (
-            "fresh",
+            DiscoverZone::Fresh,
             any(&[
                 page.fresh_releases.as_ref(),
                 page.new_from_followed.as_ref(),
@@ -142,7 +145,7 @@ fn zone_presence(page: &DiscoverResponse) -> HashMap<&'static str, bool> {
             ]),
         ),
         (
-            "library",
+            DiscoverZone::Library,
             any(&[
                 page.rediscover.as_ref(),
                 page.anniversaries.as_ref(),
@@ -150,11 +153,11 @@ fn zone_presence(page: &DiscoverResponse) -> HashMap<&'static str, bool> {
             ]),
         ),
         (
-            "genres",
+            DiscoverZone::Genres,
             any(&[page.unexplored_genres.as_ref(), page.genre_list.as_ref()]),
         ),
         (
-            "trending",
+            DiscoverZone::Trending,
             any(&[
                 page.globally_trending.as_ref(),
                 page.lastfm_weekly_artist_chart.as_ref(),
@@ -166,22 +169,25 @@ fn zone_presence(page: &DiscoverResponse) -> HashMap<&'static str, bool> {
 
 /// Status per zone: `loading` with no page yet, `updating` while a build
 /// runs, else `ready` or `empty`.
-pub fn section_status(page: Option<&DiscoverResponse>, updating: bool) -> HashMap<String, String> {
+pub fn section_status(
+    page: Option<&DiscoverResponse>,
+    updating: bool,
+) -> HashMap<DiscoverZone, ZoneStatus> {
     let Some(page) = page else {
         return ZONES
             .iter()
-            .map(|zone| ((*zone).to_owned(), "loading".to_owned()))
+            .map(|zone| (*zone, ZoneStatus::Loading))
             .collect();
     };
     zone_presence(page)
         .into_iter()
         .map(|(zone, present)| {
             let state = match (updating, present) {
-                (true, _) => "updating",
-                (false, true) => "ready",
-                (false, false) => "empty",
+                (true, _) => ZoneStatus::Updating,
+                (false, true) => ZoneStatus::Ready,
+                (false, false) => ZoneStatus::Empty,
             };
-            (zone.to_owned(), state.to_owned())
+            (zone, state)
         })
         .collect()
 }
@@ -194,12 +200,14 @@ pub fn dedupe_albums(page: &mut DiscoverResponse) {
         .top_picks
         .iter()
         .flat_map(|picks| picks.items.iter())
-        .filter_map(|pick| pick.album.mbid.as_deref())
+        .filter_map(|pick| pick.album.musicbrainz_id.as_deref())
         .map(str::to_lowercase)
         .collect();
     let mut dedupe = |section: &mut ChartSection| {
         let album_key = |item: &SectionItem| match item {
-            SectionItem::Album(album) => Some(album.mbid.as_deref().map(str::to_lowercase)),
+            SectionItem::Album(album) => {
+                Some(album.musicbrainz_id.as_deref().map(str::to_lowercase))
+            }
             _ => None,
         };
         let albums = section
@@ -260,7 +268,7 @@ pub fn dedupe_albums(page: &mut DiscoverResponse) {
 }
 
 fn prompt(
-    service: &str,
+    service: PromptService,
     title: &str,
     description: &str,
     icon: &str,
@@ -268,7 +276,7 @@ fn prompt(
     features: [&str; 4],
 ) -> ServicePrompt {
     ServicePrompt {
-        service: service.to_owned(),
+        service,
         title: title.to_owned(),
         description: description.to_owned(),
         icon: icon.to_owned(),
@@ -290,7 +298,7 @@ pub fn service_prompts(
     let mut prompts = Vec::new();
     if !listenbrainz {
         prompts.push(prompt(
-            "listenbrainz",
+            PromptService::Listenbrainz,
             "Connect ListenBrainz",
             "Pulls recommendations from your listening history, finds similar artists, and tracks your top genres. Add Last.fm for global listener stats.",
             "LB",
@@ -305,7 +313,7 @@ pub fn service_prompts(
     }
     if !jellyfin {
         prompts.push(prompt(
-            "jellyfin",
+            PromptService::Jellyfin,
             "Connect Jellyfin",
             "Uses your play history to bring back old favorites and improve recommendations.",
             "JF",
@@ -320,7 +328,7 @@ pub fn service_prompts(
     }
     if !download_client {
         prompts.push(prompt(
-            "download-client",
+            PromptService::DownloadClient,
             "Connect Download Client",
             "Lets you request and download albums and tracks straight into your library.",
             "DL",
@@ -335,7 +343,7 @@ pub fn service_prompts(
     }
     if !lastfm {
         prompts.push(prompt(
-            "lastfm",
+            PromptService::Lastfm,
             "Connect Last.fm",
             "Tracks what you listen to, shows your stats, and suggests music based on your taste.",
             "FM",
@@ -383,7 +391,7 @@ mod tests {
     fn albums(mbids: &[&str]) -> ChartSection {
         ChartSection {
             title: "s".to_owned(),
-            section_type: "albums".to_owned(),
+            kind: SectionKind::Albums,
             items: mbids
                 .iter()
                 .map(|mbid| SectionItem::Album(album(Some(mbid), mbid, None, None, None)))
@@ -401,7 +409,7 @@ mod tests {
             .items
             .iter()
             .filter_map(|item| match item {
-                SectionItem::Album(album) => album.mbid.clone(),
+                SectionItem::Album(album) => album.musicbrainz_id.clone(),
                 _ => None,
             })
             .collect()
@@ -409,11 +417,7 @@ mod tests {
 
     #[test]
     fn dedupe_drops_repeats_but_keeps_a_shelf_that_would_shrink_below_three() {
-        let mut page: DiscoverResponse = serde_json::from_value(serde_json::json!({
-            "discover_queue_enabled": true,
-            "genre_artwork_schema_version": "v2"
-        }))
-        .unwrap_or_else(|error| panic!("page: {error}"));
+        let mut page = crate::reads::discover::page::empty_page();
         page.fresh_releases = Some(albums(&["a", "b", "c", "d"]));
         page.missing_essentials = Some(albums(&["a", "e", "f", "g"]));
         page.globally_trending = Some(albums(&["a", "b", "h"]));

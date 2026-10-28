@@ -1,11 +1,11 @@
 <script lang="ts">
 	import type {
-		HomeSection as HomeSectionType,
-		HomeArtist,
-		HomeAlbum,
-		HomeTrack,
-		HomeGenre
-	} from '$lib/types';
+		AlbumRef,
+		ChartSection,
+		GenreRef,
+		SectionItem,
+		TrackRef
+	} from '$lib/queries/discover/types';
 	import type { Snippet } from 'svelte';
 	import { ArrowRight, X, Check, Music2, Tv, Sparkles, Search } from 'lucide-svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
@@ -33,7 +33,7 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
-		section: HomeSectionType;
+		section: ChartSection;
 		showConnectCard?: boolean;
 		headerLink?: string | null;
 		headerActions?: Snippet;
@@ -55,19 +55,19 @@
 
 	const lazyAt = (i: number) => !eager || i >= EAGER_IMAGE_COUNT;
 
-	function getGenreHref(genre: HomeGenre): string {
+	function getGenreHref(genre: GenreRef): string {
 		return withBasePath(`/genre?name=${encodeURIComponent(genre.name)}`);
 	}
 
-	function handleAlbumSearch(album: HomeAlbum) {
-		const query = [album.artist_name, album.name].filter(Boolean).join(' ').trim();
+	function handleAlbumSearch(album: AlbumRef) {
+		const query = [album.artist_name, album.title].filter(Boolean).join(' ').trim();
 		if (query) {
 			goto(withBasePath(`/search/albums?q=${encodeURIComponent(query)}`));
 		}
 	}
 
-	function handleTrackAlbumSearch(track: HomeTrack) {
-		const query = [track.artist_name, track.album_name || track.name]
+	function handleTrackAlbumSearch(track: TrackRef) {
+		const query = [track.artist_name, track.album_name || track.title]
 			.filter(Boolean)
 			.join(' ')
 			.trim();
@@ -76,20 +76,8 @@
 		}
 	}
 
-	function isArtist(_item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): _item is HomeArtist {
-		return section.type === 'artists';
-	}
-
-	function isAlbum(_item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): _item is HomeAlbum {
-		return section.type === 'albums';
-	}
-
-	function isTrack(_item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): _item is HomeTrack {
-		return section.type === 'tracks';
-	}
-
-	function isGenre(_item: HomeArtist | HomeAlbum | HomeTrack | HomeGenre): _item is HomeGenre {
-		return section.type === 'genres';
+	function rowKey(item: SectionItem, i: number): string {
+		return `${item.kind === 'album' || item.kind === 'track' ? item.title : item.name}-${i}`;
 	}
 </script>
 
@@ -154,8 +142,8 @@
 		</Card>
 	{:else if section.type === 'genres'}
 		<div class="flex flex-wrap gap-2">
-			{#each section.items as item, i (`${item.name}-${i}`)}
-				{#if isGenre(item)}
+			{#each section.items as item, i (rowKey(item, i))}
+				{#if item.kind === 'genre'}
 					<Button variant="outline" size="sm" href={getGenreHref(item)}>
 						{item.name}
 						{#if item.listen_count}
@@ -169,10 +157,11 @@
 		</div>
 	{:else}
 		<HorizontalCarousel class="-mx-4 px-4 sm:mx-0 sm:px-0 pb-2">
-			{#each section.items as item, i (`${item.name}-${i}`)}
-				{#if isArtist(item)}
+			{#each section.items as item, i (rowKey(item, i))}
+				{#if item.kind === 'artist'}
 					{@const artistHref =
-						artistHrefOrNull(item.mbid) ?? (item.local_id ? localArtistHref(item.local_id) : null)}
+						artistHrefOrNull(item.musicbrainz_id) ??
+						(item.local_id ? localArtistHref(item.local_id) : null)}
 					<div class="w-32 sm:w-36 md:w-44 shrink-0">
 						<Card
 							variant="raised"
@@ -183,13 +172,13 @@
 						>
 							<figure class="flex justify-center pt-4 relative">
 								<ArtistImage
-									mbid={item.mbid ?? ''}
+									mbid={item.musicbrainz_id ?? ''}
 									localId={item.local_id}
 									alt={item.name}
 									size="md"
 									lazy={lazyAt(i)}
 								/>
-								{#if !item.mbid}
+								{#if !item.musicbrainz_id}
 									<div
 										class="absolute top-2 left-2 badge badge-ghost badge-sm"
 										title="Not linked to MusicBrainz"
@@ -211,10 +200,11 @@
 							</div>
 						</Card>
 					</div>
-				{:else if isAlbum(item)}
+				{:else if item.kind === 'album'}
 					{@const albumHref =
-						albumHrefOrNull(item.mbid) ?? (item.local_id ? localAlbumHref(item.local_id) : null)}
-					{@const isItemRequested = item.requested || libraryStore.isRequested(item.mbid)}
+						albumHrefOrNull(item.musicbrainz_id) ??
+						(item.local_id ? localAlbumHref(item.local_id) : null)}
+					{@const isItemRequested = item.requested || libraryStore.isRequested(item.musicbrainz_id)}
 					<div class="w-32 sm:w-36 md:w-44 shrink-0">
 						<Card
 							variant="raised"
@@ -224,29 +214,29 @@
 						>
 							<figure class="aspect-square overflow-hidden relative">
 								<AlbumImage
-									mbid={item.mbid || ''}
-									alt={item.name}
+									mbid={item.musicbrainz_id || ''}
+									alt={item.title}
 									size="md"
 									rounded="none"
 									className="w-full h-full"
 									lazy={lazyAt(i)}
-									customUrl={item.image_url || null}
+									customUrl={item.cover_url || null}
 								/>
 								{#if item.in_library}
 									<div class="absolute top-2 left-2 z-20 badge badge-success badge-sm">
 										<Check class="w-3.5 h-3.5" />
 									</div>
 								{/if}
-								{#if item.mbid && item.in_library}
+								{#if item.musicbrainz_id && item.in_library}
 									<AlbumCardOverlay
-										mbid={item.mbid}
-										albumName={item.name}
+										mbid={item.musicbrainz_id}
+										albumName={item.title}
 										artistName={item.artist_name || 'Unknown'}
-										coverUrl={item.image_url || null}
+										coverUrl={item.cover_url || null}
 										size="sm"
 									/>
 								{/if}
-								{#if !item.mbid && !item.local_id}
+								{#if !item.musicbrainz_id && !item.local_id}
 									<IconButton
 										size="xs"
 										icon={Search}
@@ -260,38 +250,38 @@
 								{/if}
 							</figure>
 							<div class="flex flex-col gap-2 px-2 pb-2">
-								<CardTitle as="h3" class="text-xs line-clamp-1">{item.name}</CardTitle>
+								<CardTitle as="h3" class="text-xs line-clamp-1">{item.title}</CardTitle>
 								{#if item.artist_name}
 									<p class="text-xs text-base-content/50 line-clamp-1">{item.artist_name}</p>
 								{/if}
 							</div>
 						</Card>
-						{#if item.mbid && ((!item.in_library && !isItemRequested) || showPreview)}
+						{#if item.musicbrainz_id && ((!item.in_library && !isItemRequested) || showPreview)}
 							<div class="flex items-center justify-center gap-1 mt-1 pb-1">
 								{#if !item.in_library && !isItemRequested}
 									<AlbumRequestButton
-										mbid={item.mbid}
+										mbid={item.musicbrainz_id}
 										artistName={item.artist_name ?? ''}
-										albumName={item.name}
-										artistMbid={item.artist_mbid ?? undefined}
+										albumName={item.title}
+										artistMbid={item.artist_id ?? undefined}
 									/>
 								{/if}
-								{#if showPreview && item.mbid}
+								{#if showPreview && item.musicbrainz_id}
 									<SampleButton
-										sampleKey={item.mbid}
+										sampleKey={item.musicbrainz_id}
 										artist={item.artist_name ?? ''}
-										title={item.name}
+										title={item.title}
 										kind="album"
 										size="sm"
-										artistMbid={item.artist_mbid}
-										coverUrl={item.image_url}
+										artistMbid={item.artist_id}
+										coverUrl={item.cover_url}
 									/>
 								{/if}
 							</div>
 						{/if}
 					</div>
-				{:else if isTrack(item)}
-					{@const trackArtistHref = artistHrefOrNull(item.artist_mbid)}
+				{:else if item.kind === 'track'}
+					{@const trackArtistHref = artistHrefOrNull(item.artist_id)}
 					<div class="w-56 sm:w-64 md:w-72 shrink-0">
 						<Card
 							variant="raised"
@@ -301,10 +291,10 @@
 						>
 							<div class="flex items-center">
 								<figure class="w-16 h-16 shrink-0 rounded-l-box">
-									{#if item.image_url}
+									{#if item.cover_url}
 										<AlbumImage
-											customUrl={item.image_url}
-											alt={item.album_name || item.name}
+											customUrl={item.cover_url}
+											alt={item.album_name || item.title}
 											size="full"
 											rounded="none"
 											className="w-full h-full"
@@ -312,19 +302,19 @@
 										/>
 									{:else}
 										<div class="relative w-full h-full overflow-hidden">
-											<CoverPlaceholder name={item.album_name || item.name} />
+											<CoverPlaceholder name={item.album_name || item.title} />
 										</div>
 									{/if}
 								</figure>
 								<div class="flex min-w-0 flex-1 flex-col justify-center gap-2 p-2">
-									<CardTitle as="h3" class="text-xs line-clamp-1">{item.name}</CardTitle>
+									<CardTitle as="h3" class="text-xs line-clamp-1">{item.title}</CardTitle>
 									{#if item.artist_name}
 										<p class="text-xs text-base-content/50 line-clamp-1">{item.artist_name}</p>
 									{/if}
 									{#if item.listened_at}
 										<p class="text-xs text-base-content/40">{formatListenedAt(item.listened_at)}</p>
 									{/if}
-									{#if !item.artist_mbid}
+									{#if !item.artist_id}
 										<div class="flex justify-end pt-1">
 											<IconButton
 												size="xs"

@@ -17,16 +17,16 @@ use serde::Deserialize;
 
 use super::{
     models::{
-        AlbumPreviewResponse, ChartSection, DiscoverActivityRequest, DiscoverActivityResponse,
-        DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
-        DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchListResponse,
-        DiscoveryBatchRemoveResult, GenreDetailResponse, HomeResponse, IgnoredReleasesResponse,
-        IntegrationStatus, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse,
-        PopularAlbumsPage, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
-        QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse, RadioPlanRequest,
-        RadioPlanResponse, RadioRequest, RefreshResponse, TrackCacheCheckRequest,
-        TrackCacheCheckResponse, TrackPreviewResponse, TrendingArtistsPage, YouTubeQuotaResponse,
-        YouTubeSearchResponse,
+        AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
+        DiscoverActivityRequest, DiscoverActivityResponse, DiscoverQueuePreview,
+        DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse, DiscoveryBatchCreate,
+        DiscoveryBatchDetail, DiscoveryBatchListResponse, DiscoveryBatchRemoveResult,
+        GenreDetailResponse, HomeResponse, IgnoredReleasesResponse, IntegrationStatus,
+        ListenSource, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
+        QueueGenerateRequest, QueueGenerateResponse, QueueIgnoreRequest, QueueValidateRequest,
+        QueueValidateResponse, RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse,
+        StatsRange, TrackCacheCheckRequest, TrackCacheCheckResponse, TrackPreviewResponse,
+        YouTubeQuotaResponse, YouTubeSearchResponse,
     },
     services::{self, ReadsDeps},
 };
@@ -45,14 +45,14 @@ pub struct QueueQuery {
 /// Chart page params shared by the three redesigned routes.
 #[derive(Debug, Deserialize)]
 pub struct ChartQuery {
-    /// Range key (`this_week` default).
-    pub range: Option<String>,
+    /// Range (`this_week` default).
+    pub range: Option<StatsRange>,
     /// Page size.
     pub limit: Option<i64>,
     /// Page offset.
     pub offset: Option<i64>,
     /// Provider preference (`listenbrainz` default).
-    pub source: Option<String>,
+    pub source: Option<ListenSource>,
 }
 
 /// Genre detail params.
@@ -789,13 +789,13 @@ pub async fn genre_detail(
     tag = "discover",
     path = "/api/v3/home/trending/artists",
     params(
-        ("range" = Option<String>, Query, description = "Range key, this_week default"),
+        ("range" = Option<StatsRange>, Query, description = "Range, this_week default"),
         ("limit" = Option<i64>, Query, description = "Page size"),
         ("offset" = Option<i64>, Query, description = "Page offset"),
-        ("source" = Option<String>, Query, description = "listenbrainz or lastfm"),
+        ("source" = Option<ListenSource>, Query, description = "Provider, listenbrainz default"),
     ),
     responses(
-        (status = 200, description = "Trending artists page", body = TrendingArtistsPage),
+        (status = 200, description = "Trending artists page", body = ChartPage<ArtistRef>),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
         (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
@@ -805,14 +805,14 @@ pub async fn trending_artists(
     State(deps): State<ReadsDeps>,
     User(user): User,
     ValidQuery(query): ValidQuery<ChartQuery>,
-) -> Result<Json<TrendingArtistsPage>, ApiError> {
+) -> Result<Json<ChartPage<ArtistRef>>, ApiError> {
     services::trending_artists(
         &deps,
         user.user_id(),
-        query.range.as_deref(),
+        query.range,
         query.limit,
         query.offset,
-        query.source.as_deref(),
+        query.source,
     )
     .await
     .map(Json)
@@ -825,13 +825,13 @@ pub async fn trending_artists(
     tag = "discover",
     path = "/api/v3/home/popular/albums",
     params(
-        ("range" = Option<String>, Query, description = "Range key, this_week default"),
+        ("range" = Option<StatsRange>, Query, description = "Range, this_week default"),
         ("limit" = Option<i64>, Query, description = "Page size"),
         ("offset" = Option<i64>, Query, description = "Page offset"),
-        ("source" = Option<String>, Query, description = "listenbrainz or lastfm"),
+        ("source" = Option<ListenSource>, Query, description = "Provider, listenbrainz default"),
     ),
     responses(
-        (status = 200, description = "Popular albums page", body = PopularAlbumsPage),
+        (status = 200, description = "Popular albums page", body = ChartPage<AlbumRef>),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
         (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
@@ -841,14 +841,14 @@ pub async fn popular_albums(
     State(deps): State<ReadsDeps>,
     User(user): User,
     ValidQuery(query): ValidQuery<ChartQuery>,
-) -> Result<Json<PopularAlbumsPage>, ApiError> {
+) -> Result<Json<ChartPage<AlbumRef>>, ApiError> {
     services::popular_albums(
         &deps,
         user.user_id(),
-        query.range.as_deref(),
+        query.range,
         query.limit,
         query.offset,
-        query.source.as_deref(),
+        query.source,
     )
     .await
     .map(Json)
@@ -861,13 +861,13 @@ pub async fn popular_albums(
     tag = "discover",
     path = "/api/v3/home/your-top/albums",
     params(
-        ("range" = Option<String>, Query, description = "Range key, this_week default"),
+        ("range" = Option<StatsRange>, Query, description = "Range, this_week default"),
         ("limit" = Option<i64>, Query, description = "Page size"),
         ("offset" = Option<i64>, Query, description = "Page offset"),
-        ("source" = Option<String>, Query, description = "listenbrainz or lastfm"),
+        ("source" = Option<ListenSource>, Query, description = "Provider, listenbrainz default"),
     ),
     responses(
-        (status = 200, description = "Your-top albums page", body = PopularAlbumsPage),
+        (status = 200, description = "Your-top albums page", body = ChartPage<AlbumRef>),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
         (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
@@ -877,14 +877,14 @@ pub async fn your_top_albums(
     State(deps): State<ReadsDeps>,
     User(user): User,
     ValidQuery(query): ValidQuery<ChartQuery>,
-) -> Result<Json<PopularAlbumsPage>, ApiError> {
+) -> Result<Json<ChartPage<AlbumRef>>, ApiError> {
     services::your_top_albums(
         &deps,
         user.user_id(),
-        query.range.as_deref(),
+        query.range,
         query.limit,
         query.offset,
-        query.source.as_deref(),
+        query.source,
     )
     .await
     .map(Json)

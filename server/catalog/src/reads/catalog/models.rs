@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::reads::collections::state::AutoDownloadState;
+use droppedneedle_kernel::runtime_config::sections::ListenSource;
 
 /// How one optional source fared while a page was built. Sources that
 /// answered normally are left out of the map.
@@ -202,36 +203,104 @@ pub struct ArtistReleases {
     pub service_status: ServiceStatus,
 }
 
-/// Which listening-data provider answered a discovery section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum DiscoverySource {
-    /// ListenBrainz.
-    Listenbrainz,
-    /// Last.fm.
-    Lastfm,
+/// One album as a row in a list: discover shelves, charts and the
+/// catalog's discovery rows share it. Absent means unknown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AlbumRef {
+    /// Album title.
+    pub title: String,
+    /// MusicBrainz release-group id, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musicbrainz_id: Option<String>,
+    /// Native library id, when the album is owned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_id: Option<String>,
+    /// Credited artist, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_name: Option<String>,
+    /// The artist's MusicBrainz id, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_id: Option<String>,
+    /// Cover URL, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
+    /// Release date (`YYYY-MM-DD` or coarser), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_date: Option<String>,
+    /// First release year, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    /// Listen or play count behind the row, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen_count: Option<i64>,
+    /// True when the library holds this album.
+    pub in_library: bool,
+    /// True when an acquisition request is open for it.
+    pub requested: bool,
 }
 
-/// One similar artist.
+impl AlbumRef {
+    /// A row with only a title; the caller fills in the rest.
+    pub fn titled(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            musicbrainz_id: None,
+            local_id: None,
+            artist_name: None,
+            artist_id: None,
+            cover_url: None,
+            release_date: None,
+            year: None,
+            listen_count: None,
+            in_library: false,
+            requested: false,
+        }
+    }
+}
+
+/// One artist as a row in a list: discover shelves, charts and the
+/// catalog's similar artists share it. Absent means unknown.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct SimilarArtist {
-    /// Artist MBID.
-    pub musicbrainz_id: String,
+pub struct ArtistRef {
     /// Artist name.
     pub name: String,
-    /// Listen count from the provider (zero when it reports none).
-    pub listen_count: i64,
+    /// MusicBrainz artist id, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musicbrainz_id: Option<String>,
+    /// Native library id, when the artist is owned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_id: Option<String>,
+    /// Image URL, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
+    /// Listen or play count behind the row, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen_count: Option<i64>,
     /// True when the library holds this artist.
     pub in_library: bool,
+}
+
+impl ArtistRef {
+    /// A row with only a name; the caller fills in the rest.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            musicbrainz_id: None,
+            local_id: None,
+            image_url: None,
+            listen_count: None,
+            in_library: false,
+        }
+    }
 }
 
 /// `GET /artists/{artist_mbid}/similar`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SimilarArtistsResponse {
     /// Similar artists, most similar first.
-    pub similar_artists: Vec<SimilarArtist>,
+    pub similar_artists: Vec<ArtistRef>,
     /// Provider that answered.
-    pub source: DiscoverySource,
+    pub source: ListenSource,
     /// False when the provider is not set up; the list is then empty.
     pub configured: bool,
 }
@@ -265,37 +334,18 @@ pub struct TopSongsResponse {
     /// Songs, most played first.
     pub songs: Vec<TopSong>,
     /// Provider that answered.
-    pub source: DiscoverySource,
+    pub source: ListenSource,
     /// False when the provider is not set up.
     pub configured: bool,
-}
-
-/// One of an artist's most played albums.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct TopAlbum {
-    /// Album title.
-    pub title: String,
-    /// Credited artist.
-    pub artist_name: String,
-    /// Release-group MBID, when known.
-    pub release_group_mbid: Option<String>,
-    /// Listen or play count.
-    pub listen_count: i64,
-    /// True when the library holds this album.
-    pub in_library: bool,
-    /// True when an acquisition request is open for it.
-    pub requested: bool,
-    /// The album's cover, when the release group is known.
-    pub cover_url: Option<String>,
 }
 
 /// `GET /artists/{artist_mbid}/top-albums`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct TopAlbumsResponse {
     /// Albums, most played first.
-    pub albums: Vec<TopAlbum>,
+    pub albums: Vec<AlbumRef>,
     /// Provider that answered.
-    pub source: DiscoverySource,
+    pub source: ListenSource,
     /// False when the provider is not set up.
     pub configured: bool,
 }
@@ -591,34 +641,13 @@ pub struct AlbumEditionsResponse {
     pub selected_basis: Option<String>,
 }
 
-/// An album in a discovery row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct DiscoveryAlbum {
-    /// Release-group MBID.
-    pub musicbrainz_id: String,
-    /// Title.
-    pub title: String,
-    /// Credited artist.
-    pub artist_name: String,
-    /// Artist MBID, when known.
-    pub artist_id: Option<String>,
-    /// First release year.
-    pub year: Option<i32>,
-    /// True when the library holds this album.
-    pub in_library: bool,
-    /// True when an acquisition request is open for it.
-    pub requested: bool,
-    /// The album's cover.
-    pub cover_url: Option<String>,
-}
-
 /// `GET /albums/{album_id}/similar`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SimilarAlbumsResponse {
     /// Albums by similar artists.
-    pub albums: Vec<DiscoveryAlbum>,
+    pub albums: Vec<AlbumRef>,
     /// Provider that answered.
-    pub source: DiscoverySource,
+    pub source: ListenSource,
     /// False when ListenBrainz is not set up.
     pub configured: bool,
 }
@@ -627,7 +656,7 @@ pub struct SimilarAlbumsResponse {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct MoreByArtistResponse {
     /// Other release groups by the artist, in MusicBrainz browse order.
-    pub albums: Vec<DiscoveryAlbum>,
+    pub albums: Vec<AlbumRef>,
     /// The artist's name, empty when MusicBrainz had nothing.
     pub artist_name: String,
 }
@@ -649,7 +678,7 @@ pub struct DiscoveryQuery {
     /// How many to return, 1 to 50.
     pub count: Option<u32>,
     /// Provider to ask; default is the primary music source setting.
-    pub source: Option<DiscoverySource>,
+    pub source: Option<ListenSource>,
 }
 
 /// Query for `GET /artists/{artist_mbid}/lastfm`.

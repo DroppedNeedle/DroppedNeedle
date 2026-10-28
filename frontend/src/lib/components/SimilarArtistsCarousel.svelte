@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Check } from 'lucide-svelte';
-	import type { SimilarArtist } from '$lib/types';
+	import type { ArtistRef } from '$lib/queries/discover/types';
 	import HorizontalCarousel from './HorizontalCarousel.svelte';
 	import CarouselSkeleton from './CarouselSkeleton.svelte';
 	import ArtistImage from './ArtistImage.svelte';
@@ -10,12 +10,18 @@
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
-		artists: SimilarArtist[];
+		artists: ArtistRef[];
 		loading?: boolean;
 		configured?: boolean;
 	}
 
 	let { artists, loading = false, configured = true }: Props = $props();
+
+	const linked = $derived(
+		artists.flatMap((artist) =>
+			artist.musicbrainz_id ? [{ ...artist, musicbrainz_id: artist.musicbrainz_id }] : []
+		)
+	);
 </script>
 
 <div>
@@ -41,7 +47,7 @@
 		</Card>
 	{:else}
 		<HorizontalCarousel>
-			{#each artists as artist (artist.musicbrainz_id)}
+			{#each linked as artist (artist.musicbrainz_id)}
 				<a href={artistHref(artist.musicbrainz_id)} class="w-32 shrink-0 cursor-pointer">
 					<div class="relative group">
 						<div

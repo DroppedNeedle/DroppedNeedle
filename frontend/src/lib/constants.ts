@@ -7,7 +7,7 @@ const CACHE_KEY_GROUPS = {
 	core: {
 		RECENTLY_ADDED: 'droppedneedle_recently_added',
 		HOME_CACHE: 'droppedneedle_home_cache',
-		DISCOVER_QUEUE: 'droppedneedle_discover_queue',
+		DISCOVER_QUEUE: 'droppedneedle_discover_deck',
 		SEARCH: 'droppedneedle_search_cache'
 	},
 	library: {

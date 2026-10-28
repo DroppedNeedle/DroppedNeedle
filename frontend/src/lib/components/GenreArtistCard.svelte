@@ -3,10 +3,10 @@
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import ArtistCardDownloadButton from '$lib/components/ArtistCardDownloadButton.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import type { HomeArtist } from '$lib/types';
+	import type { ArtistRef } from '$lib/queries/discover/types';
 
 	interface Props {
-		artist: HomeArtist;
+		artist: ArtistRef;
 		showLibraryBadge?: boolean;
 		onclick?: () => void;
 		href?: string | null;
@@ -35,12 +35,12 @@
 			? 'cursor-pointer transition-colors hover:bg-base-300 focus-visible:outline-2 focus-visible:outline-primary'
 			: 'cursor-default'}"
 >
-	{#if artist.mbid}
-		<ArtistCardDownloadButton artistName={artist.name} artistMbid={artist.mbid} />
+	{#if artist.musicbrainz_id}
+		<ArtistCardDownloadButton artistName={artist.name} artistMbid={artist.musicbrainz_id} />
 	{/if}
 	<figure class="flex justify-center pt-4 relative">
 		<ArtistImage
-			mbid={artist.mbid || ''}
+			mbid={artist.musicbrainz_id || ''}
 			localId={artist.local_id}
 			alt={artist.name}
 			size="md"

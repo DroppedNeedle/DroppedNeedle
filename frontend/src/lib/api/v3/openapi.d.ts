@@ -10262,6 +10262,40 @@ export interface components {
             /** @description Sampled tracks in album order. */
             tracks?: components["schemas"]["PreviewTrackItem"][];
         };
+        /**
+         * @description One album as a row in a list: discover shelves, charts and the
+         *     catalog's discovery rows share it. Absent means unknown.
+         */
+        AlbumRef: {
+            /** @description The artist's MusicBrainz id, when known. */
+            artist_id?: string | null;
+            /** @description Credited artist, when known. */
+            artist_name?: string | null;
+            /** @description Cover URL, when known. */
+            cover_url?: string | null;
+            /** @description True when the library holds this album. */
+            in_library: boolean;
+            /**
+             * Format: int64
+             * @description Listen or play count behind the row, when known.
+             */
+            listen_count?: number | null;
+            /** @description Native library id, when the album is owned. */
+            local_id?: string | null;
+            /** @description MusicBrainz release-group id, when known. */
+            musicbrainz_id?: string | null;
+            /** @description Release date (`YYYY-MM-DD` or coarser), when known. */
+            release_date?: string | null;
+            /** @description True when an acquisition request is open for it. */
+            requested: boolean;
+            /** @description Album title. */
+            title: string;
+            /**
+             * Format: int32
+             * @description First release year, when known.
+             */
+            year?: number | null;
+        };
         /** @description One removal of an album whose files can be put back. */
         AlbumRemovalView: {
             /**
@@ -10909,6 +10943,27 @@ export interface components {
             waiting_for_identity_count: number;
         };
         /**
+         * @description One artist as a row in a list: discover shelves, charts and the
+         *     catalog's similar artists share it. Absent means unknown.
+         */
+        ArtistRef: {
+            /** @description Image URL, when known. */
+            image_url?: string | null;
+            /** @description True when the library holds this artist. */
+            in_library: boolean;
+            /**
+             * Format: int64
+             * @description Listen or play count behind the row, when known.
+             */
+            listen_count?: number | null;
+            /** @description Native library id, when the artist is owned. */
+            local_id?: string | null;
+            /** @description MusicBrainz artist id, when known. */
+            musicbrainz_id?: string | null;
+            /** @description Artist name. */
+            name: string;
+        };
+        /**
          * @description `GET /artists/{artist_mbid}/releases`: one page of the discography,
          *     filtered by the release-type preferences. Pages run across albums, then
          *     EPs, then singles, each newest first.
@@ -11011,6 +11066,11 @@ export interface components {
          * @enum {string}
          */
         ArtworkImageType: "front" | "back" | "booklet" | "medium" | "tray" | "obi" | "spine" | "track" | "other";
+        /**
+         * @description How a genre's mosaic art is drawn.
+         * @enum {string}
+         */
+        ArtworkKind: "collage" | "gradient";
         /** @description Artwork management block. */
         ArtworkManagementSettings: {
             /**
@@ -11402,6 +11462,11 @@ export interface components {
              */
             year?: number | null;
         };
+        /**
+         * @description What a batch did with one album.
+         * @enum {string}
+         */
+        BatchOutcome: "requested" | "skipped_in_library" | "skipped_duplicate" | "not_requested";
         /** @description One "because you listen to" shelf: seed plus similar albums. */
         BecauseYouListenTo: {
             /** @description Banner art URL, when resolved. */
@@ -11412,7 +11477,7 @@ export interface components {
              * Format: int64
              * @description Seed listen count backing the pick.
              */
-            listen_count?: number;
+            listen_count: number;
             /** @description Similar-albums shelf. */
             section: components["schemas"]["ChartSection"];
             /** @description Seed artist name. */
@@ -11792,123 +11857,108 @@ export interface components {
          * @enum {string}
          */
         CatalogSource: "musicbrainz" | "library";
-        /** @description One album inside a section or chart page. */
-        ChartAlbum: {
-            /** @description MusicBrainz artist id, when known. */
-            artist_mbid?: string | null;
-            /** @description Album artist name, when known. */
-            artist_name?: string | null;
-            /** @description Cover art URL, when resolved. */
-            image_url?: string | null;
-            /** @description True when the album has files in the library. */
-            in_library?: boolean;
+        /** @description One page of a ranked chart. */
+        ChartPage_AlbumRef: {
+            /** @description True when more rows follow. */
+            has_more: boolean;
+            /** @description Ranked rows for the page. */
+            items: {
+                /** @description The artist's MusicBrainz id, when known. */
+                artist_id?: string | null;
+                /** @description Credited artist, when known. */
+                artist_name?: string | null;
+                /** @description Cover URL, when known. */
+                cover_url?: string | null;
+                /** @description True when the library holds this album. */
+                in_library: boolean;
+                /**
+                 * Format: int64
+                 * @description Listen or play count behind the row, when known.
+                 */
+                listen_count?: number | null;
+                /** @description Native library id, when the album is owned. */
+                local_id?: string | null;
+                /** @description MusicBrainz release-group id, when known. */
+                musicbrainz_id?: string | null;
+                /** @description Release date (`YYYY-MM-DD` or coarser), when known. */
+                release_date?: string | null;
+                /** @description True when an acquisition request is open for it. */
+                requested: boolean;
+                /** @description Album title. */
+                title: string;
+                /**
+                 * Format: int32
+                 * @description First release year, when known.
+                 */
+                year?: number | null;
+            }[];
+            /** @description Human range label. */
+            label: string;
             /**
              * Format: int64
-             * @description Scrobble/listen count backing the rank, when known.
+             * @description Limit behind this page.
              */
-            listen_count?: number | null;
-            /** @description Native library id, when the album is owned. */
-            local_id?: string | null;
-            /** @description MusicBrainz release-group id, when known. */
-            mbid?: string | null;
-            /** @description Album title. */
-            name: string;
-            /** @description Release date (`YYYY-MM-DD` or coarser), when known. */
-            release_date?: string | null;
-            /** @description True when the album already has a request. */
-            requested?: boolean;
-            /** @description Provider that ranked this row (`listenbrainz`, `lastfm`). */
-            source?: string | null;
+            limit: number;
+            /**
+             * Format: int64
+             * @description Offset behind this page.
+             */
+            offset: number;
+            /** @description Range behind this page. */
+            range_key: components["schemas"]["StatsRange"];
         };
-        /** @description One artist inside a section or chart page. */
-        ChartArtist: {
-            /** @description Cover art URL, when resolved. */
-            image_url?: string | null;
-            /** @description True when the artist has files in the library. */
-            in_library?: boolean;
+        /** @description One page of a ranked chart. */
+        ChartPage_ArtistRef: {
+            /** @description True when more rows follow. */
+            has_more: boolean;
+            /** @description Ranked rows for the page. */
+            items: {
+                /** @description Image URL, when known. */
+                image_url?: string | null;
+                /** @description True when the library holds this artist. */
+                in_library: boolean;
+                /**
+                 * Format: int64
+                 * @description Listen or play count behind the row, when known.
+                 */
+                listen_count?: number | null;
+                /** @description Native library id, when the artist is owned. */
+                local_id?: string | null;
+                /** @description MusicBrainz artist id, when known. */
+                musicbrainz_id?: string | null;
+                /** @description Artist name. */
+                name: string;
+            }[];
+            /** @description Human range label. */
+            label: string;
             /**
              * Format: int64
-             * @description Scrobble/listen count backing the rank, when known.
+             * @description Limit behind this page.
              */
-            listen_count?: number | null;
-            /** @description Native library id, when the artist is owned. */
-            local_id?: string | null;
-            /** @description MusicBrainz artist id, when known. */
-            mbid?: string | null;
-            /** @description Display name. */
-            name: string;
-            /** @description Provider that ranked this row (`listenbrainz`, `lastfm`). */
-            source?: string | null;
+            limit: number;
+            /**
+             * Format: int64
+             * @description Offset behind this page.
+             */
+            offset: number;
+            /** @description Range behind this page. */
+            range_key: components["schemas"]["StatsRange"];
         };
-        /** @description One genre inside a section. */
-        ChartGenre: {
-            /**
-             * Format: int64
-             * @description Owned artists tagged with this genre, when counted.
-             */
-            artist_count?: number | null;
-            /** @description Seed artist id behind the row, when there is one. */
-            artist_mbid?: string | null;
-            /**
-             * Format: int64
-             * @description Scrobble/listen count backing the rank, when known.
-             */
-            listen_count?: number | null;
-            /** @description Genre name. */
-            name: string;
-        };
-        /**
-         * @description Valid chart ranges. v2 spelled these as path pairs
-         *     (`/trending/artists` plus `/trending/artists/{range_key}`); v3 takes one
-         *     route with `?range=`. Keys keep the v2 spelling.
-         * @enum {string}
-         */
-        ChartRange: "this_week" | "this_month" | "this_year" | "all_time";
         /** @description A titled shelf of rows: the unit both home and discover render. */
         ChartSection: {
-            /** @description Service the user must connect for the full shelf, when gated. */
-            connect_service?: string | null;
-            /** @description Fallback explanation when the shelf degraded, when shown. */
+            connect_service?: null | components["schemas"]["ShelfSource"];
+            /** @description Explanation shown in place of rows when the shelf could not fill. */
             fallback_message?: string | null;
             /** @description Shelf rows. */
-            items?: components["schemas"]["SectionItem"][];
+            items: components["schemas"]["SectionItem"][];
             /** @description Radio seed id, when playable. */
             radio_seed_id?: string | null;
-            /** @description Radio seed kind (`artist`, `album`, `genre`), when playable. */
-            radio_seed_type?: string | null;
-            /** @description Provider behind the shelf, when it has one. */
-            source?: string | null;
+            radio_seed_type?: null | components["schemas"]["RadioSeedKind"];
+            source?: null | components["schemas"]["ShelfSource"];
             /** @description Shelf title. */
             title: string;
-            /** @description Row kind (`artist`, `album`, `track`, `genre`). */
-            type: string;
-        };
-        /**
-         * @description Chart provider preference.
-         * @enum {string}
-         */
-        ChartSource: "listenbrainz" | "lastfm";
-        /** @description One track inside a section. */
-        ChartTrack: {
-            /** @description Album title, when known. */
-            album_name?: string | null;
-            /** @description MusicBrainz artist id, when known. */
-            artist_mbid?: string | null;
-            /** @description Artist name, when known. */
-            artist_name?: string | null;
-            /** @description Cover art URL, when resolved. */
-            image_url?: string | null;
-            /**
-             * Format: int64
-             * @description Scrobble/listen count backing the rank, when known.
-             */
-            listen_count?: number | null;
-            /** @description Last listen timestamp (RFC 3339), when known. */
-            listened_at?: string | null;
-            /** @description MusicBrainz recording id, when known. */
-            mbid?: string | null;
-            /** @description Track title. */
-            name: string;
+            /** @description What the rows are. */
+            type: components["schemas"]["SectionKind"];
         };
         /** @description Membership-check body. */
         CheckTracksBody: {
@@ -12530,8 +12580,7 @@ export interface components {
             artist_mbid?: string | null;
             /** @description Surface the interaction happened on (`home`, `discover`, `queue`, `artist`). */
             feature: string;
-            /** @description Provider behind the row (`lastfm`, `listenbrainz`), when it had one. */
-            provider?: string | null;
+            provider?: null | components["schemas"]["ListenSource"];
             /** @description Artist-page section (`similar`, `top_songs`, `top_albums`), when it had one. */
             section?: string | null;
         };
@@ -12550,7 +12599,7 @@ export interface components {
         /** @description A discover teaser on home: one seed artist plus similar artists. */
         DiscoverPreview: {
             /** @description Similar artists. */
-            items?: components["schemas"]["ChartArtist"][];
+            items: components["schemas"]["ArtistRef"][];
             /** @description Seed artist name. */
             seed_artist: string;
             /** @description Seed MusicBrainz artist id. */
@@ -12558,8 +12607,8 @@ export interface components {
         };
         /** @description On-demand YouTube preview behind one queue card. */
         DiscoverQueuePreview: {
-            /** @description `available`, `not_found`, or `unavailable`. */
-            status: string;
+            /** @description Whether a preview was found. */
+            status: components["schemas"]["PreviewStatus"];
             /** @description Search URL fallback, when there is one. */
             youtube_search_url?: string | null;
             /** @description Watch URL, when available. */
@@ -12601,9 +12650,9 @@ export interface components {
             anniversaries?: null | components["schemas"]["ChartSection"];
             artists_you_might_like?: null | components["schemas"]["ChartSection"];
             /** @description Seed-driven similar-album shelves. */
-            because_you_listen_to?: components["schemas"]["BecauseYouListenTo"][];
+            because_you_listen_to: components["schemas"]["BecauseYouListenTo"][];
             /** @description Daily mix shelves. */
-            daily_mixes?: components["schemas"]["ChartSection"][];
+            daily_mixes: components["schemas"]["ChartSection"][];
             /** @description Whether the queue deck is enabled for the user. */
             discover_queue_enabled: boolean;
             fresh_releases?: null | components["schemas"]["ChartSection"];
@@ -12613,7 +12662,7 @@ export interface components {
              */
             generated_at?: number | null;
             /** @description Mosaic art keyed by genre name. */
-            genre_artwork?: {
+            genre_artwork: {
                 [key: string]: components["schemas"]["GenreArtwork"];
             };
             /** @description Genre artwork schema version. */
@@ -12629,7 +12678,7 @@ export interface components {
             new_from_followed?: null | components["schemas"]["ChartSection"];
             popular_in_your_genres?: null | components["schemas"]["ChartSection"];
             /** @description Radio shelves. */
-            radio_sections?: components["schemas"]["ChartSection"][];
+            radio_sections: components["schemas"]["ChartSection"][];
             rediscover?: null | components["schemas"]["ChartSection"];
             /**
              * Format: int64
@@ -12637,47 +12686,23 @@ export interface components {
              */
             refresh_started_at?: number | null;
             /** @description True while a fuller build runs in the background (the UI polls). */
-            refreshing?: boolean;
+            refreshing: boolean;
             /**
-             * @description Status per page zone (`picks`, `lounge`, `weekly`, `made`,
-             *     `because`, `fresh`, `library`, `genres`, `trending`): `loading`
-             *     before the first page, `updating` while a rebuild runs, else
-             *     `ready` or `empty`.
+             * @description Status per page zone: `loading` before the first page, `updating`
+             *     while a rebuild runs, else `ready` or `empty`.
              */
-            section_status?: {
-                [key: string]: string;
+            section_status: {
+                [key: string]: components["schemas"]["ZoneStatus"];
             };
             /** @description Connect-a-service cards. */
-            service_prompts?: components["schemas"]["ServicePrompt"][];
-            /** @description Per-service degradation notes (`ok`/`degraded`/`down`). */
+            service_prompts: components["schemas"]["ServicePrompt"][];
+            /** @description Listening services that failed during the build, when any did. */
             service_status?: {
-                [key: string]: string;
+                [key: string]: components["schemas"]["ServiceState"];
             } | null;
             top_picks?: null | components["schemas"]["TopPicksSection"];
             unexplored_genres?: null | components["schemas"]["ChartSection"];
             weekly_exploration?: null | components["schemas"]["WeeklyExploration"];
-        };
-        /** @description An album in a discovery row. */
-        DiscoveryAlbum: {
-            /** @description Artist MBID, when known. */
-            artist_id?: string | null;
-            /** @description Credited artist. */
-            artist_name: string;
-            /** @description The album's cover. */
-            cover_url?: string | null;
-            /** @description True when the library holds this album. */
-            in_library: boolean;
-            /** @description Release-group MBID. */
-            musicbrainz_id: string;
-            /** @description True when an acquisition request is open for it. */
-            requested: boolean;
-            /** @description Title. */
-            title: string;
-            /**
-             * Format: int32
-             * @description First release year.
-             */
-            year?: number | null;
         };
         /** @description Body creating a discovery batch (one request per album). */
         DiscoveryBatchCreate: {
@@ -12723,34 +12748,31 @@ export interface components {
         };
         /** @description One album to request inside a new batch. */
         DiscoveryBatchItemIn: {
-            /** @description Album name. */
-            album_name?: string;
-            /** @description MusicBrainz artist id. */
-            artist_mbid?: string;
+            /** @description The artist's MusicBrainz id. */
+            artist_id?: string;
             /** @description Artist name. */
             artist_name?: string;
             /** @description MusicBrainz release-group id. */
-            release_group_mbid: string;
+            musicbrainz_id: string;
+            /** @description Album title. */
+            title?: string;
         };
         /** @description Per-album outcome inside a batch. */
         DiscoveryBatchItemStatus: {
-            /** @description Album name. */
-            album_name?: string;
-            /** @description MusicBrainz artist id. */
-            artist_mbid?: string;
+            /** @description The artist's MusicBrainz id. */
+            artist_id?: string;
             /** @description Artist name. */
             artist_name?: string;
             /** @description True when already owned. */
             in_library?: boolean;
-            /**
-             * @description `requested`, `skipped_in_library`, `skipped_duplicate`, or
-             *     `not_requested` (the requests service did not file it).
-             */
-            outcome: string;
             /** @description MusicBrainz release-group id. */
-            release_group_mbid: string;
+            musicbrainz_id: string;
+            /** @description What the batch did with the album. */
+            outcome: components["schemas"]["BatchOutcome"];
             /** @description Request state, when requested. */
             request_status?: string | null;
+            /** @description Album title. */
+            title?: string;
         };
         /** @description The user's batches. */
         DiscoveryBatchListResponse: {
@@ -12814,11 +12836,6 @@ export interface components {
             /** @description Hub title, e.g. "Recommended for you". */
             title: string;
         };
-        /**
-         * @description Which listening-data provider answered a discovery section.
-         * @enum {string}
-         */
-        DiscoverySource: "listenbrainz" | "lastfm";
         /** @description Plex discovery shelves for the hub page. */
         DiscoveryView: {
             /** @description Album shelves, in upstream order. */
@@ -14008,14 +14025,8 @@ export interface components {
             artists: components["schemas"]["ArtistEnrichment"][];
             /** @description Sources that degraded while answering; usually empty. */
             degradations: components["schemas"]["Degradation"][];
-            /** @description Provider that answered. */
-            source: components["schemas"]["EnrichmentSource"];
+            source?: null | components["schemas"]["ListenSource"];
         };
-        /**
-         * @description Which provider answered the batch.
-         * @enum {string}
-         */
-        EnrichmentSource: "listenbrainz" | "lastfm" | "none";
         /**
          * @description Where an entry's files came from.
          * @enum {string}
@@ -14483,9 +14494,9 @@ export interface components {
         /** @description Genre mosaic art: a collage of owned covers or a flat gradient. */
         GenreArtwork: {
             /** @description Owned covers composing the collage (empty for gradients). */
-            albums?: components["schemas"]["GenreArtworkAlbum"][];
-            /** @description `collage` or `gradient`. */
-            kind: string;
+            albums: components["schemas"]["GenreArtworkAlbum"][];
+            /** @description How the art is drawn. */
+            kind: components["schemas"]["ArtworkKind"];
             /** @description Artwork schema version. */
             version: string;
         };
@@ -14525,14 +14536,14 @@ export interface components {
              */
             album_count: number;
             /** @description Owned albums. */
-            albums?: components["schemas"]["ChartAlbum"][];
+            albums: components["schemas"]["AlbumRef"][];
             /**
              * Format: int64
              * @description Total owned artists.
              */
             artist_count: number;
             /** @description Owned artists. */
-            artists?: components["schemas"]["ChartArtist"][];
+            artists: components["schemas"]["ArtistRef"][];
         };
         /** @description Full genre listing. Catalogs hold dozens of genres, so no paging. */
         GenreList: {
@@ -14635,13 +14646,30 @@ export interface components {
         /** @description Popular artists and albums for a genre. */
         GenrePopularSection: {
             /** @description Popular albums. */
-            albums?: components["schemas"]["ChartAlbum"][];
+            albums: components["schemas"]["AlbumRef"][];
             /** @description Popular artists. */
-            artists?: components["schemas"]["ChartArtist"][];
+            artists: components["schemas"]["ArtistRef"][];
             /** @description More albums behind the offsets. */
             has_more_albums: boolean;
             /** @description More artists behind the offsets. */
             has_more_artists: boolean;
+        };
+        /** @description One genre inside a section. */
+        GenreRef: {
+            /**
+             * Format: int64
+             * @description Owned artists tagged with this genre, when counted.
+             */
+            artist_count?: number | null;
+            /** @description MusicBrainz id of the seed artist behind the row, when there is one. */
+            artist_id?: string | null;
+            /**
+             * Format: int64
+             * @description Listen or play count behind the row, when known.
+             */
+            listen_count?: number | null;
+            /** @description Genre name. */
+            name: string;
         };
         /**
          * @description Genre source.
@@ -14915,7 +14943,7 @@ export interface components {
             discover_preview?: null | components["schemas"]["DiscoverPreview"];
             favorite_artists?: null | components["schemas"]["ChartSection"];
             /** @description Mosaic art keyed by genre name. */
-            genre_artwork?: {
+            genre_artwork: {
                 [key: string]: components["schemas"]["GenreArtwork"];
             };
             /** @description Genre artwork schema version. */
@@ -14928,9 +14956,9 @@ export interface components {
             recently_added?: null | components["schemas"]["ChartSection"];
             recently_played?: null | components["schemas"]["ChartSection"];
             /** @description True while a fuller build runs in the background (the UI polls). */
-            refreshing?: boolean;
+            refreshing: boolean;
             /** @description Connect-a-service cards. */
-            service_prompts?: components["schemas"]["ServicePrompt"][];
+            service_prompts: components["schemas"]["ServicePrompt"][];
             trending_artists?: null | components["schemas"]["ChartSection"];
             weekly_exploration?: null | components["schemas"]["WeeklyExploration"];
             your_top_albums?: null | components["schemas"]["ChartSection"];
@@ -15215,19 +15243,19 @@ export interface components {
             /** @description Last.fm is connected. */
             lastfm: boolean;
             /** @description The native library has files. */
-            library?: boolean;
+            library: boolean;
             /** @description ListenBrainz charts and history are available. */
             listenbrainz: boolean;
             /** @description Local files back playback. Home-only; discover leaves it false. */
-            localfiles?: boolean;
+            localfiles: boolean;
             /** @description A Navidrome source is connected. */
-            navidrome?: boolean;
+            navidrome: boolean;
             /** @description A Plex source is connected. */
-            plex?: boolean;
+            plex: boolean;
             /** @description YouTube playback is configured. */
             youtube: boolean;
             /** @description The YouTube data API (quota'd) is configured. */
-            youtube_api?: boolean;
+            youtube_api: boolean;
         };
         /**
          * @description Jellyfin connection. The section URL is the single owner (the top-level
@@ -16622,6 +16650,12 @@ export interface components {
              */
             username: string;
         };
+        /**
+         * @description A listening-data service: the primary source setting, and the one the
+         *     discover shelves, charts, radio and enrichment answers name.
+         * @enum {string}
+         */
+        ListenSource: "listenbrainz" | "lastfm";
         /** @description Set the first local password on an account without one. */
         LocalPasswordSet: {
             /** @description New password, at least 12 chars. */
@@ -17658,7 +17692,7 @@ export interface components {
         /** @description `GET /albums/{album_id}/more-by-artist`. */
         MoreByArtistResponse: {
             /** @description Other release groups by the artist, in MusicBrainz browse order. */
-            albums: components["schemas"]["DiscoveryAlbum"][];
+            albums: components["schemas"]["AlbumRef"][];
             /** @description The artist's name, empty when MusicBrainz had nothing. */
             artist_name: string;
         };
@@ -17794,11 +17828,6 @@ export interface components {
             /** @description Folder name. */
             name: string;
         };
-        /**
-         * @description Which service backs scrobble-targeted discovery.
-         * @enum {string}
-         */
-        MusicSource: "listenbrainz" | "lastfm";
         /** @description One naming script. */
         NamingScript: {
             /**
@@ -18591,8 +18620,7 @@ export interface components {
             count?: number;
             /** @description Playlist to extend. */
             playlist_id: string;
-            /** @description Provider preference (`listenbrainz`, `lastfm`). */
-            source?: string | null;
+            source?: null | components["schemas"]["ListenSource"];
         };
         /** @description Suggested rows for a playlist. */
         PlaylistSuggestionsResponse: {
@@ -19173,27 +19201,6 @@ export interface components {
             /** @description Backend-composed contract sentence. */
             summary: string;
         };
-        /** @description One page of a popular-albums or your-top chart. */
-        PopularAlbumsPage: {
-            /** @description True when more rows follow. */
-            has_more: boolean;
-            /** @description Ranked albums for the page. */
-            items: components["schemas"]["ChartAlbum"][];
-            /** @description Human range label. */
-            label: string;
-            /**
-             * Format: int64
-             * @description Limit behind this page.
-             */
-            limit: number;
-            /**
-             * Format: int64
-             * @description Offset behind this page.
-             */
-            offset: number;
-            /** @description Range key behind this page. */
-            range_key: string;
-        };
         /**
          * @description One precache run starting. The run continues in the background under
          *     the `precache-library` job name; a second start while it is live is 409.
@@ -19225,10 +19232,15 @@ export interface components {
             ready_album_count: number;
             selected_root_count: number;
         };
+        /**
+         * @description Whether a queue card's YouTube preview was found.
+         * @enum {string}
+         */
+        PreviewStatus: "available" | "not_found" | "unavailable";
         /** @description One previewed track. */
         PreviewTrackItem: {
             /** @description Artist name. */
-            artist_name?: string;
+            artist_name: string;
             /**
              * Format: int64
              * @description Preview length in seconds, when known.
@@ -19240,14 +19252,14 @@ export interface components {
              */
             position?: number | null;
             /** @description Preview audio URL (short-lived, never long-cached). */
-            preview_url?: string;
+            preview_url: string;
             /** @description Track title. */
             title: string;
         };
         /** @description Primary music source selection. */
         PrimaryMusicSource: {
             /** @default listenbrainz */
-            source: components["schemas"]["MusicSource"];
+            source: components["schemas"]["ListenSource"];
         };
         /** @description Post-publish notifications. */
         ProfileNotificationSettings: {
@@ -19267,6 +19279,11 @@ export interface components {
          *     to the connections and library routes.
          */
         ProfileResponse: components["schemas"]["UserResponse"];
+        /**
+         * @description A service a connect-a-service card points at.
+         * @enum {string}
+         */
+        PromptService: "listenbrainz" | "lastfm" | "jellyfin" | "download-client";
         /**
          * @description The calls one rate row sent at one priority that ended one way, since
          *     the server started.
@@ -19508,6 +19525,11 @@ export interface components {
             page: number;
         };
         /**
+         * @description What a generate trigger did.
+         * @enum {string}
+         */
+        QueueAction: "started" | "already_building" | "already_ready" | "disabled";
+        /**
          * @description Where one user's queue build stands.
          * @enum {string}
          */
@@ -19548,11 +19570,11 @@ export interface components {
             /** @description Release date, when known. */
             release_date?: string | null;
             /** @description Genre/style tags. */
-            tags?: string[];
+            tags: string[];
             /** @description Whether YouTube search is available at all. */
-            youtube_search_available?: boolean;
+            youtube_search_available: boolean;
             /** @description YouTube search URL fallback. */
-            youtube_search_url?: string;
+            youtube_search_url: string;
             /** @description YouTube URL for the album, when found. */
             youtube_url?: string | null;
         };
@@ -19563,8 +19585,8 @@ export interface components {
         };
         /** @description What the generate trigger did, plus current build state. */
         QueueGenerateResponse: {
-            /** @description `started`, `already_building`, or `fresh`. */
-            action: string;
+            /** @description What the trigger did. */
+            action: components["schemas"]["QueueAction"];
             /**
              * Format: int64
              * @description Build timestamp (unix seconds), when built.
@@ -19597,22 +19619,22 @@ export interface components {
         };
         /** @description One lightweight queue card: the deck renders these before enrichment. */
         QueueItemLight: {
-            /** @description Album name. */
-            album_name: string;
-            /** @description MusicBrainz artist id. */
-            artist_mbid: string;
+            /** @description The artist's MusicBrainz id. */
+            artist_id: string;
             /** @description Artist name. */
             artist_name: string;
-            /** @description Cover art URL, when resolved. */
+            /** @description Cover URL, when known. */
             cover_url?: string | null;
             /** @description True when already owned. */
-            in_library?: boolean;
+            in_library: boolean;
             /** @description True for wildcard (out-of-profile) picks. */
-            is_wildcard?: boolean;
+            is_wildcard: boolean;
+            /** @description MusicBrainz release-group id. */
+            musicbrainz_id: string;
             /** @description Human reason behind the pick. */
             recommendation_reason: string;
-            /** @description MusicBrainz release-group id. */
-            release_group_mbid: string;
+            /** @description Album title. */
+            title: string;
         };
         /** @description Background loops, job queues and the latest checkpoint pass. */
         QueueStatsResponse: {
@@ -19706,6 +19728,11 @@ export interface components {
             user_id: string;
         };
         /**
+         * @description Which tracks a radio plan may use.
+         * @enum {string}
+         */
+        RadioMode: "library" | "hybrid";
+        /**
          * @description Body planning track-level radio. The UI resolves playback per track
          *     (library rows use the native stream endpoint, the rest use YouTube or
          *     30-second previews).
@@ -19720,22 +19747,19 @@ export interface components {
             exclude_recording_mbids?: string[];
             /** @description Seed rows for `items` plans. */
             items?: components["schemas"]["RadioSeedItem"][];
-            /**
-             * @description `library` (owned only) or `hybrid` (owned plus provider picks, the
-             *     default).
-             */
-            mode?: string;
+            /** @description Which tracks the plan may use. */
+            mode?: components["schemas"]["RadioMode"];
             /** @description Seed id (mbid or genre name); empty for item seeds. */
             seed_id?: string | null;
-            /** @description Seed kind (`artist`, `album`, `genre`, `items`). */
-            seed_type: string;
+            /** @description What the plan starts from. */
+            seed_type: components["schemas"]["RadioSeedKind"];
         };
         /** @description A complete radio plan. */
         RadioPlanResponse: {
             /** @description Plan title. */
             title: string;
             /** @description Planned tracks in order. */
-            tracks?: components["schemas"]["RadioPlanTrack"][];
+            tracks: components["schemas"]["RadioPlanTrack"][];
         };
         /** @description One planned radio track. */
         RadioPlanTrack: {
@@ -19744,7 +19768,7 @@ export interface components {
             /** @description Album title, when known. */
             album_name?: string | null;
             /** @description MusicBrainz artist id, when known. */
-            artist_mbid?: string;
+            artist_mbid: string;
             /** @description Artist name. */
             artist_name: string;
             /**
@@ -19755,7 +19779,7 @@ export interface components {
             /** @description File container for owned rows, when known. */
             file_format?: string | null;
             /** @description True when owned (resolves to the native stream endpoint). */
-            in_library?: boolean;
+            in_library: boolean;
             /** @description Native file id for owned rows, when known. */
             local_file_id?: string | null;
             /** @description MusicBrainz recording id, when known. */
@@ -19772,10 +19796,9 @@ export interface components {
             count?: number;
             /** @description Seed id (mbid or genre name). */
             seed_id: string;
-            /** @description Seed kind (`artist`, `album`, `genre`). */
-            seed_type: string;
-            /** @description Provider preference (`listenbrainz`, `lastfm`). */
-            source?: string | null;
+            /** @description What the shelf starts from (`artist`, `album` or `genre`). */
+            seed_type: components["schemas"]["RadioSeedKind"];
+            source?: null | components["schemas"]["ListenSource"];
         };
         /** @description One seed row for an item-seeded radio plan. */
         RadioSeedItem: {
@@ -19788,6 +19811,11 @@ export interface components {
             /** @description Seed artist name. */
             artist_name?: string;
         };
+        /**
+         * @description The seed a radio shelf or plan starts from.
+         * @enum {string}
+         */
+        RadioSeedKind: "artist" | "album" | "genre" | "items";
         /**
          * @description What a rating is on: the table's `item_kind` values.
          * @enum {string}
@@ -21895,11 +21923,25 @@ export interface components {
              */
             track_number: number;
         };
+        /** @description One row inside a section, tagged by `kind`. */
+        SectionItem: (components["schemas"]["ArtistRef"] & {
+            /** @enum {string} */
+            kind: "artist";
+        }) | (components["schemas"]["AlbumRef"] & {
+            /** @enum {string} */
+            kind: "album";
+        }) | (components["schemas"]["TrackRef"] & {
+            /** @enum {string} */
+            kind: "track";
+        }) | (components["schemas"]["GenreRef"] & {
+            /** @enum {string} */
+            kind: "genre";
+        });
         /**
-         * @description One row inside a section. The `type` field on the section names which
-         *     variant the rows hold; untagged so the wire keeps flat v2-style items.
+         * @description What a section's rows are.
+         * @enum {string}
          */
-        SectionItem: components["schemas"]["ChartArtist"] | components["schemas"]["ChartAlbum"] | components["schemas"]["ChartTrack"] | components["schemas"]["ChartGenre"];
+        SectionKind: "artists" | "albums" | "tracks" | "genres";
         /** @description One toggleable UI section. */
         SectionPrefItem: {
             /** @description Backend availability (requires + linked services). */
@@ -22028,11 +22070,11 @@ export interface components {
             /** @description Card body. */
             description: string;
             /** @description Feature bullets. */
-            features?: string[];
+            features: string[];
             /** @description Icon name. */
             icon: string;
-            /** @description Service key (`listenbrainz`, `lastfm`, ...). */
-            service: string;
+            /** @description The service to connect. */
+            service: components["schemas"]["PromptService"];
             /** @description Card title. */
             title: string;
         };
@@ -22050,6 +22092,11 @@ export interface components {
              */
             queued: boolean;
         };
+        /**
+         * @description How a listening service fared in a discover build.
+         * @enum {string}
+         */
+        ServiceState: "degraded" | "unavailable";
         /**
          * @description Session kind, v2 `session_kind` values kept verbatim.
          * @enum {string}
@@ -22126,37 +22173,28 @@ export interface components {
             /** @description True when no users exist yet and setup must run. */
             setup_required: boolean;
         };
+        /**
+         * @description Where a shelf's rows came from.
+         * @enum {string}
+         */
+        ShelfSource: "listenbrainz" | "lastfm" | "jellyfin" | "musicbrainz" | "library" | "local";
         /** @description `GET /albums/{album_id}/similar`. */
         SimilarAlbumsResponse: {
             /** @description Albums by similar artists. */
-            albums: components["schemas"]["DiscoveryAlbum"][];
+            albums: components["schemas"]["AlbumRef"][];
             /** @description False when ListenBrainz is not set up. */
             configured: boolean;
             /** @description Provider that answered. */
-            source: components["schemas"]["DiscoverySource"];
-        };
-        /** @description One similar artist. */
-        SimilarArtist: {
-            /** @description True when the library holds this artist. */
-            in_library: boolean;
-            /**
-             * Format: int64
-             * @description Listen count from the provider (zero when it reports none).
-             */
-            listen_count: number;
-            /** @description Artist MBID. */
-            musicbrainz_id: string;
-            /** @description Artist name. */
-            name: string;
+            source: components["schemas"]["ListenSource"];
         };
         /** @description `GET /artists/{artist_mbid}/similar`. */
         SimilarArtistsResponse: {
             /** @description False when the provider is not set up; the list is then empty. */
             configured: boolean;
             /** @description Similar artists, most similar first. */
-            similar_artists: components["schemas"]["SimilarArtist"][];
+            similar_artists: components["schemas"]["ArtistRef"][];
             /** @description Provider that answered. */
-            source: components["schemas"]["DiscoverySource"];
+            source: components["schemas"]["ListenSource"];
         };
         /** @description Reviews one reason held back. */
         SkippedReviews: {
@@ -22355,6 +22393,12 @@ export interface components {
             /** @description Optional absolute origin the OAuth redirect URI is built from. */
             spotify_redirect_origin: string;
         };
+        /**
+         * @description A listening-statistics window: the chart pages' `range`, and the
+         *     ListenBrainz statistics range.
+         * @enum {string}
+         */
+        StatsRange: "this_week" | "this_month" | "this_year" | "all_time";
         /** @description Library totals. Track and size totals count streamable tracks only. */
         StatsView: {
             /**
@@ -22676,60 +22720,39 @@ export interface components {
             /** @description Server version, when known. */
             version?: string | null;
         };
-        /** @description One of an artist's most played albums. */
-        TopAlbum: {
-            /** @description Credited artist. */
-            artist_name: string;
-            /** @description The album's cover, when the release group is known. */
-            cover_url?: string | null;
-            /** @description True when the library holds this album. */
-            in_library: boolean;
-            /**
-             * Format: int64
-             * @description Listen or play count.
-             */
-            listen_count: number;
-            /** @description Release-group MBID, when known. */
-            release_group_mbid?: string | null;
-            /** @description True when an acquisition request is open for it. */
-            requested: boolean;
-            /** @description Album title. */
-            title: string;
-        };
         /** @description `GET /artists/{artist_mbid}/top-albums`. */
         TopAlbumsResponse: {
             /** @description Albums, most played first. */
-            albums: components["schemas"]["TopAlbum"][];
+            albums: components["schemas"]["AlbumRef"][];
             /** @description False when the provider is not set up. */
             configured: boolean;
             /** @description Provider that answered. */
-            source: components["schemas"]["DiscoverySource"];
+            source: components["schemas"]["ListenSource"];
         };
         /** @description One personalized top pick. */
         TopPickItem: {
             /** @description Picked album. */
-            album: components["schemas"]["ChartAlbum"];
+            album: components["schemas"]["AlbumRef"];
             /**
              * Format: int64
              * @description Match score, 0-100.
              */
             match_pct: number;
             /** @description Human reasons behind the pick. */
-            reasons?: string[];
+            reasons: string[];
             /** @description Seed artist name, when there is one. */
             seed_artist?: string | null;
         };
         /** @description The personalized top-picks shelf. */
         TopPicksSection: {
             /** @description Ranked picks. */
-            items?: components["schemas"]["TopPickItem"][];
+            items: components["schemas"]["TopPickItem"][];
             /**
              * @description True while picks are trending-only because personalization has not
              *     resolved yet (the UI shows a "still personalising" hint).
              */
-            personalizing?: boolean;
-            /** @description Provider behind the picks, when it has one. */
-            source?: string | null;
+            personalizing: boolean;
+            source?: null | components["schemas"]["ShelfSource"];
             /** @description Shelf title. */
             title: string;
         };
@@ -22770,7 +22793,7 @@ export interface components {
             /** @description Songs, most played first. */
             songs: components["schemas"]["TopSong"][];
             /** @description Provider that answered. */
-            source: components["schemas"]["DiscoverySource"];
+            source: components["schemas"]["ListenSource"];
         };
         TrackAlignment: {
             classification?: components["schemas"]["AlignmentClassification"];
@@ -22936,6 +22959,28 @@ export interface components {
             /** @description Track title, when found. */
             title?: string | null;
         };
+        /** @description One track inside a section. */
+        TrackRef: {
+            /** @description Album title, when known. */
+            album_name?: string | null;
+            /** @description The artist's MusicBrainz id, when known. */
+            artist_id?: string | null;
+            /** @description Artist name, when known. */
+            artist_name?: string | null;
+            /** @description Cover URL, when known. */
+            cover_url?: string | null;
+            /**
+             * Format: int64
+             * @description Listen or play count behind the row, when known.
+             */
+            listen_count?: number | null;
+            /** @description Last listen timestamp (RFC 3339), when known. */
+            listened_at?: string | null;
+            /** @description MusicBrainz recording id, when known. */
+            musicbrainz_id?: string | null;
+            /** @description Track title. */
+            title: string;
+        };
         /**
          * @description The tags in one audio file, field for field v2's `AudioTag`. The
          *     `musicbrainz_*` fields use Picard's tag names.
@@ -23080,27 +23125,6 @@ export interface components {
          * @enum {string}
          */
         TransportDto: "cookie" | "bearer";
-        /** @description One page of a trending-artists chart. */
-        TrendingArtistsPage: {
-            /** @description True when more rows follow. */
-            has_more: boolean;
-            /** @description Ranked artists for the page. */
-            items: components["schemas"]["ChartArtist"][];
-            /** @description Human range label. */
-            label: string;
-            /**
-             * Format: int64
-             * @description Limit behind this page.
-             */
-            limit: number;
-            /**
-             * Format: int64
-             * @description Offset behind this page.
-             */
-            offset: number;
-            /** @description Range key behind this page. */
-            range_key: string;
-        };
         /**
          * @description Unicode normalization for paths.
          * @enum {string}
@@ -23496,11 +23520,11 @@ export interface components {
             /** @description Playlist date (`YYYY-MM-DD`). */
             playlist_date: string;
             /** @description Provider playlist URL, when there is one. */
-            source_url?: string;
+            source_url: string;
             /** @description Shelf title. */
             title: string;
             /** @description Playlist tracks in order. */
-            tracks?: components["schemas"]["WeeklyTrack"][];
+            tracks: components["schemas"]["WeeklyTrack"][];
         };
         /** @description One track of the weekly exploration playlist. */
         WeeklyTrack: {
@@ -23951,6 +23975,11 @@ export interface components {
             /** @description The saved (or already saved) track link. */
             track_link: components["schemas"]["YouTubeTrackLink"];
         };
+        /**
+         * @description Where one discover zone stands.
+         * @enum {string}
+         */
+        ZoneStatus: "loading" | "updating" | "ready" | "empty";
     };
     responses: never;
     parameters: never;
@@ -25899,7 +25928,7 @@ export interface operations {
                 /** @description How many to return, 1 to 50. */
                 count?: number;
                 /** @description Provider to ask; default is the primary music source setting. */
-                source?: components["schemas"]["DiscoverySource"];
+                source?: components["schemas"]["ListenSource"];
             };
             header?: never;
             path: {
@@ -25945,7 +25974,7 @@ export interface operations {
                 /** @description How many to return, 1 to 50. */
                 count?: number;
                 /** @description Provider to ask; default is the primary music source setting. */
-                source?: components["schemas"]["DiscoverySource"];
+                source?: components["schemas"]["ListenSource"];
             };
             header?: never;
             path: {
@@ -25991,7 +26020,7 @@ export interface operations {
                 /** @description How many to return, 1 to 50. */
                 count?: number;
                 /** @description Provider to ask; default is the primary music source setting. */
-                source?: components["schemas"]["DiscoverySource"];
+                source?: components["schemas"]["ListenSource"];
             };
             header?: never;
             path: {
@@ -29608,14 +29637,14 @@ export interface operations {
     popular_albums: {
         parameters: {
             query?: {
-                /** @description Range key, this_week default */
-                range?: string;
+                /** @description Range, this_week default */
+                range?: components["schemas"]["StatsRange"];
                 /** @description Page size */
                 limit?: number;
                 /** @description Page offset */
                 offset?: number;
-                /** @description listenbrainz or lastfm */
-                source?: string;
+                /** @description Provider, listenbrainz default */
+                source?: components["schemas"]["ListenSource"];
             };
             header?: never;
             path?: never;
@@ -29629,7 +29658,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PopularAlbumsPage"];
+                    "application/json": components["schemas"]["ChartPage_AlbumRef"];
                 };
             };
             /** @description Bad range or source */
@@ -29664,14 +29693,14 @@ export interface operations {
     trending_artists: {
         parameters: {
             query?: {
-                /** @description Range key, this_week default */
-                range?: string;
+                /** @description Range, this_week default */
+                range?: components["schemas"]["StatsRange"];
                 /** @description Page size */
                 limit?: number;
                 /** @description Page offset */
                 offset?: number;
-                /** @description listenbrainz or lastfm */
-                source?: string;
+                /** @description Provider, listenbrainz default */
+                source?: components["schemas"]["ListenSource"];
             };
             header?: never;
             path?: never;
@@ -29685,7 +29714,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TrendingArtistsPage"];
+                    "application/json": components["schemas"]["ChartPage_ArtistRef"];
                 };
             };
             /** @description Bad range or source */
@@ -29720,14 +29749,14 @@ export interface operations {
     your_top_albums: {
         parameters: {
             query?: {
-                /** @description Range key, this_week default */
-                range?: string;
+                /** @description Range, this_week default */
+                range?: components["schemas"]["StatsRange"];
                 /** @description Page size */
                 limit?: number;
                 /** @description Page offset */
                 offset?: number;
-                /** @description listenbrainz or lastfm */
-                source?: string;
+                /** @description Provider, listenbrainz default */
+                source?: components["schemas"]["ListenSource"];
             };
             header?: never;
             path?: never;
@@ -29741,7 +29770,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PopularAlbumsPage"];
+                    "application/json": components["schemas"]["ChartPage_AlbumRef"];
                 };
             };
             /** @description Bad range or source */

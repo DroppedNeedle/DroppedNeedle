@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RadioPlanTrack } from '$lib/types';
+import type { RadioPlanTrack } from '$lib/queries/discover/types';
 
 const { apiMock, playerMock, toastMock } = vi.hoisted(() => ({
 	apiMock: { global: { get: vi.fn(), post: vi.fn() } },

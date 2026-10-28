@@ -17,8 +17,8 @@ use crate::reads::discover::home::mark_owned;
 use crate::reads::discover::home::shelves::{library_album, library_artist};
 use crate::reads::discover::listening::{Ask, ListeningData};
 use crate::reads::discover::models::{
-    ChartAlbum, ChartArtist, ChartRange, ChartSource, GenreDetailResponse, GenreLibrarySection,
-    GenrePopularSection, PopularAlbumsPage, TrendingArtistsPage,
+    AlbumRef, ArtistRef, ChartPage, GenreDetailResponse, GenreLibrarySection, GenrePopularSection,
+    ListenSource, StatsRange,
 };
 use crate::reads::discover::page::shelves::album;
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
@@ -96,19 +96,18 @@ impl GenrePages {
         });
         let has_more_artists = popular_artists.len() >= limit_u32 as usize;
         let has_more_albums = popular_albums.len() >= limit_u32 as usize;
-        let mut artists: Vec<ChartArtist> = popular_artists
+        let mut artists: Vec<ArtistRef> = popular_artists
             .iter()
-            .map(|row| ChartArtist {
+            .map(|row| ArtistRef {
                 name: row.name.clone(),
-                mbid: row.mbid.clone(),
+                musicbrainz_id: row.mbid.clone(),
                 local_id: None,
                 image_url: None,
                 listen_count: None,
                 in_library: false,
-                source: None,
             })
             .collect();
-        let mut albums: Vec<ChartAlbum> = popular_albums
+        let mut albums: Vec<AlbumRef> = popular_albums
             .iter()
             .map(|row| {
                 let mut item = album(
@@ -131,10 +130,10 @@ impl GenrePages {
         if let Some(warm) = &self.warm {
             let mut targets = WarmTargets::default();
             for row in &albums {
-                targets.cover(row.mbid.as_deref());
+                targets.cover(row.musicbrainz_id.as_deref());
             }
             for row in &artists {
-                targets.artist(row.mbid.as_deref());
+                targets.artist(row.musicbrainz_id.as_deref());
             }
             warm.queue("genre", targets);
         }
@@ -176,11 +175,11 @@ impl WithGenrePages {
     pub fn trending_artists<'a>(
         &'a self,
         user_id: &'a str,
-        range: ChartRange,
+        range: StatsRange,
         limit: i64,
         offset: i64,
-        source: ChartSource,
-    ) -> BoxFuture<'a, Result<TrendingArtistsPage, ProviderFailure>> {
+        source: ListenSource,
+    ) -> BoxFuture<'a, Result<ChartPage<ArtistRef>, ProviderFailure>> {
         self.inner
             .trending_artists(user_id, range, limit, offset, source)
     }
@@ -189,11 +188,11 @@ impl WithGenrePages {
     pub fn popular_albums<'a>(
         &'a self,
         user_id: &'a str,
-        range: ChartRange,
+        range: StatsRange,
         limit: i64,
         offset: i64,
-        source: ChartSource,
-    ) -> BoxFuture<'a, Result<PopularAlbumsPage, ProviderFailure>> {
+        source: ListenSource,
+    ) -> BoxFuture<'a, Result<ChartPage<AlbumRef>, ProviderFailure>> {
         self.inner
             .popular_albums(user_id, range, limit, offset, source)
     }
@@ -202,11 +201,11 @@ impl WithGenrePages {
     pub fn your_top_albums<'a>(
         &'a self,
         user_id: &'a str,
-        range: ChartRange,
+        range: StatsRange,
         limit: i64,
         offset: i64,
-        source: ChartSource,
-    ) -> BoxFuture<'a, Result<PopularAlbumsPage, ProviderFailure>> {
+        source: ListenSource,
+    ) -> BoxFuture<'a, Result<ChartPage<AlbumRef>, ProviderFailure>> {
         self.inner
             .your_top_albums(user_id, range, limit, offset, source)
     }

@@ -14,7 +14,8 @@
 		getChartRangeQuery,
 		type ChartItem
 	} from '$lib/queries/charts/ChartQueries.svelte';
-	import type { ChartKind, ChartRange, ChartSource } from '$lib/queries/charts/endpoints';
+	import type { ChartKind } from '$lib/queries/charts/endpoints';
+	import type { ListenSource, StatsRange } from '$lib/queries/discover/types';
 
 	type ItemType = 'album' | 'artist';
 
@@ -24,12 +25,12 @@
 		title: string;
 		subtitle: string;
 		errorIcon?: ComponentType | null;
-		source?: ChartSource | null;
+		source?: ListenSource | null;
 	}
 
 	let { itemType, chart, title, subtitle, errorIcon = null, source = null }: Props = $props();
 
-	const timeRanges: { key: ChartRange; label: string }[] = [
+	const timeRanges: { key: StatsRange; label: string }[] = [
 		{ key: 'this_week', label: 'This Week' },
 		{ key: 'this_month', label: 'This Month' },
 		{ key: 'this_year', label: 'This Year' },
@@ -38,7 +39,7 @@
 
 	// The expanded range belongs to the source it was opened on, so switching
 	// source closes it.
-	let expanded = $state<{ source: ChartSource | null; range: ChartRange } | null>(null);
+	let expanded = $state<{ source: ListenSource | null; range: StatsRange } | null>(null);
 	let expandedRange = $derived(expanded?.source === source ? expanded.range : null);
 
 	const overviewQuery = getChartOverviewQuery(
@@ -59,7 +60,7 @@
 		rangeQuery.isFetchNextPageError ? `Failed to load more ${itemType}s.` : null
 	);
 
-	function expandRange(rangeKey: ChartRange) {
+	function expandRange(rangeKey: StatsRange) {
 		expanded = expandedRange === rangeKey ? null : { source, range: rangeKey };
 	}
 
@@ -74,11 +75,11 @@
 	}
 
 	function getItemHref(item: ChartItem): string | null {
-		if (!item.mbid) return null;
+		if (!item.musicbrainz_id) return null;
 		if (itemType === 'album') {
-			return albumHref(item.mbid);
+			return albumHref(item.musicbrainz_id);
 		}
-		return artistHref(item.mbid);
+		return artistHref(item.musicbrainz_id);
 	}
 
 	function handleItemClick(item: ChartItem) {
@@ -88,11 +89,11 @@
 		}
 	}
 
-	function getItemsForRange(rangeKey: ChartRange): ChartItem[] {
+	function getItemsForRange(rangeKey: StatsRange): ChartItem[] {
 		return overviewData?.[rangeKey]?.items ?? [];
 	}
 
-	function getFeaturedForRange(rangeKey: ChartRange): ChartItem | null {
+	function getFeaturedForRange(rangeKey: StatsRange): ChartItem | null {
 		return overviewData?.[rangeKey]?.featured ?? null;
 	}
 </script>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import type { GenreArtwork as GenreArtworkModel } from '$lib/types';
+	import type { GenreArtwork as GenreArtworkModel } from '$lib/queries/discover/types';
 
 	interface Props {
 		artwork?: GenreArtworkModel;

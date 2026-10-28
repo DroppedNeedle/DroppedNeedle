@@ -49,28 +49,26 @@
 	const previewMutation = getQueuePreviewV3Mutation();
 
 	const current = $derived(deck.current);
-	const cardIdentity = $derived(`${deck.requestKey}:${current?.release_group_mbid ?? ''}`);
+	const cardIdentity = $derived(`${deck.requestKey}:${current?.musicbrainz_id ?? ''}`);
 	const enrichment = $derived(current?.enrichment);
 	const enriching = $derived(current != null && !current.enrichment);
-	const artistMbid = $derived(current?.artist_mbid || enrichment?.artist_mbid || '');
+	const artistMbid = $derived(current?.artist_id || enrichment?.artist_mbid || '');
 	const progressText = $derived(
 		deck.queue.length > 0 ? `${deck.currentIndex + 1} / ${deck.queue.length}` : ''
 	);
 	const isRequested = $derived(
 		!!current &&
 			(('requested' in current && (current as { requested?: boolean }).requested) ||
-				libraryStore.isRequested(current.release_group_mbid))
+				libraryStore.isRequested(current.musicbrainz_id))
 	);
 	const releaseYear = $derived(enrichment?.release_date?.slice(0, 4) ?? null);
 	const sampling = $derived(
-		!!current &&
-			deckSampler.activeKey === current.release_group_mbid &&
-			deckSampler.status !== 'idle'
+		!!current && deckSampler.activeKey === current.musicbrainz_id && deckSampler.status !== 'idle'
 	);
 	const externalSearchUrl = $derived(
 		ytSearchUrl ||
 			enrichment?.youtube_search_url ||
-			`https://www.youtube.com/results?search_query=${encodeURIComponent(`${current?.artist_name ?? ''} ${current?.album_name ?? ''} music video`)}`
+			`https://www.youtube.com/results?search_query=${encodeURIComponent(`${current?.artist_name ?? ''} ${current?.title ?? ''} music video`)}`
 	);
 
 	// one-sound rule (other direction): global playback starting kills deck audio
@@ -133,12 +131,12 @@
 
 	async function openVideo() {
 		if (!current || ytSearching) return;
-		const mbid = current.release_group_mbid;
+		const mbid = current.musicbrainz_id;
 		const scope = deck.requestKey;
 		const generation = ++previewGeneration;
 		const isCurrent = () =>
 			generation === previewGeneration &&
-			current?.release_group_mbid === mbid &&
+			current?.musicbrainz_id === mbid &&
 			deck.requestKey === scope;
 		deckSampler.stop();
 		audioFocus.claim('deck-video', () => {
@@ -185,7 +183,7 @@
 			return;
 		}
 		videoOpen = false;
-		void deckSampler.start(current.release_group_mbid, current.artist_name, current.album_name);
+		void deckSampler.start(current.musicbrainz_id, current.artist_name, current.title);
 	}
 
 	async function handleRequest() {
@@ -194,10 +192,10 @@
 		try {
 			const result = await deckRequest
 				.mutateAsync({
-					release_group_mbid: current.release_group_mbid,
+					release_group_mbid: current.musicbrainz_id,
 					artist_name: current.artist_name,
-					album_title: current.album_name,
-					artist_mbid: current.artist_mbid || undefined
+					album_title: current.title,
+					artist_mbid: current.artist_id || undefined
 				})
 				.catch(() => null);
 			if (result?.success) deck.markCurrentRequested();
@@ -260,7 +258,7 @@
 	>
 		{#if current}
 			<HeroBackdrop
-				imageUrl={coverSrc('release-group', current.release_group_mbid, 500)}
+				imageUrl={coverSrc('release-group', current.musicbrainz_id, 500)}
 				opacity={0.16}
 				hoverOpacity={0.22}
 				blur={22}
@@ -334,7 +332,7 @@
 				</Button>
 			</div>
 		{:else if current}
-			{#key current.release_group_mbid}
+			{#key current.musicbrainz_id}
 				<div in:fly={{ x: 24, duration: 300 }} class="relative">
 					<div class="flex items-start justify-between gap-3 px-6 pt-5 sm:px-8">
 						<span
@@ -378,13 +376,10 @@
 								/>
 							{:else}
 								<div class="deck-cover relative overflow-hidden rounded-2xl shadow-xl">
-									<a
-										href={`/album/${current.release_group_mbid}`}
-										aria-label="View {current.album_name}"
-									>
+									<a href={`/album/${current.musicbrainz_id}`} aria-label="View {current.title}">
 										<AlbumImage
-											mbid={current.release_group_mbid}
-											alt={current.album_name}
+											mbid={current.musicbrainz_id}
+											alt={current.title}
 											size="full"
 											requestSize={250}
 											responsiveSizes="(max-width: 400px) 70vw, 280px"
@@ -474,10 +469,10 @@
 						<!-- info pane -->
 						<div class="flex min-w-0 flex-col">
 							<a
-								href={`/album/${current.release_group_mbid}`}
+								href={`/album/${current.musicbrainz_id}`}
 								class="w-fit max-w-full truncate text-2xl font-extrabold leading-tight tracking-tight transition-colors hover:text-primary sm:text-3xl"
 							>
-								{current.album_name}
+								{current.title}
 							</a>
 							{#if artistMbid}
 								<a
@@ -667,12 +662,12 @@
 								>
 									Up next
 								</span>
-								{#each deck.queue as item, i (item.release_group_mbid)}
+								{#each deck.queue as item, i (item.musicbrainz_id)}
 									<button
 										role="tab"
 										aria-selected={i === deck.currentIndex}
-										aria-label="{item.album_name} by {item.artist_name}"
-										title="{item.album_name} - {item.artist_name}"
+										aria-label="{item.title} by {item.artist_name}"
+										title="{item.title} - {item.artist_name}"
 										class="deck-strip-item shrink-0 overflow-hidden rounded-lg transition-all duration-200 {i ===
 										deck.currentIndex
 											? 'ring-2 ring-primary ring-offset-2 ring-offset-base-100'
@@ -683,8 +678,8 @@
 										}}
 									>
 										<AlbumImage
-											mbid={item.release_group_mbid}
-											alt={item.album_name}
+											mbid={item.musicbrainz_id}
+											alt={item.title}
 											size="full"
 											requestSize={250}
 											lazy={i > deck.currentIndex + 4}

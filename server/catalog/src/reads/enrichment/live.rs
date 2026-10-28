@@ -211,7 +211,6 @@ mod tests {
     async fn production_enrichment_without_listenbrainz_echoes_bare() {
         use crate::reads::search::models::{
             AlbumEnrichmentRequest, ArtistEnrichmentRequest, EnrichmentBatchRequest,
-            EnrichmentSource,
         };
         use crate::reads::search::ports::EnrichmentPort as _;
 
@@ -242,7 +241,7 @@ mod tests {
             })
             .await
             .expect("unconfigured batch still answers");
-        assert_eq!(response.source, EnrichmentSource::None);
+        assert_eq!(response.source, None);
         assert!(response.degradations.is_empty());
         assert_eq!(response.artists.len(), 1);
         assert_eq!(response.artists[0].listen_count, None);

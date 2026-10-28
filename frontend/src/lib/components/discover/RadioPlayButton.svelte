@@ -6,7 +6,7 @@
 	import { deckSampler, type SampleEntry } from '$lib/stores/deckSampler.svelte';
 	import { integrationStore } from '$lib/stores/integration';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
-	import type { RadioPlanRequest } from '$lib/types';
+	import type { RadioPlanRequest } from '$lib/queries/discover/types';
 
 	interface Props {
 		seed: Omit<RadioPlanRequest, 'exclude_recording_mbids' | 'fast'>;

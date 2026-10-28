@@ -2,21 +2,14 @@ import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { HomeAlbum, HomeArtist } from '$lib/types';
-import { toAlbum, toArtist } from '../chartAdapters';
+import type { AlbumRef, ArtistRef, ListenSource, StatsRange } from '../discover/types';
 import { ChartQueryKeyFactory } from './ChartQueryKeyFactory';
-import {
-	HOME_ENDPOINTS,
-	type ChartKind,
-	type ChartPageParams,
-	type ChartRange,
-	type ChartSource
-} from './endpoints';
+import { HOME_ENDPOINTS, type ChartKind, type ChartPageParams } from './endpoints';
 
 type Getter<T> = () => T;
-export type ChartItem = HomeAlbum | HomeArtist;
+export type ChartItem = AlbumRef | ArtistRef;
 
-export const CHART_RANGES: readonly ChartRange[] = [
+export const CHART_RANGES: readonly StatsRange[] = [
 	'this_week',
 	'this_month',
 	'this_year',
@@ -36,7 +29,7 @@ export interface ChartRangeOverview {
 	items: ChartItem[];
 }
 
-export type ChartOverview = Record<ChartRange, ChartRangeOverview>;
+export type ChartOverview = Record<StatsRange, ChartRangeOverview>;
 
 const OVERVIEW_LIMIT = 10;
 const PAGE_SIZE = 25;
@@ -47,21 +40,19 @@ async function fetchChartPage(
 	signal?: AbortSignal
 ): Promise<ChartPage> {
 	if (chart === 'trending-artists') {
-		const page = await api.global.v3.GET(HOME_ENDPOINTS.trendingArtists(params), { signal });
-		return { ...page, items: page.items.map(toArtist) };
+		return api.global.v3.GET(HOME_ENDPOINTS.trendingArtists(params), { signal });
 	}
 	const url =
 		chart === 'popular-albums'
 			? HOME_ENDPOINTS.popularAlbums(params)
 			: HOME_ENDPOINTS.yourTopAlbums(params);
-	const page = await api.global.v3.GET(url, { signal });
-	return { ...page, items: page.items.map(toAlbum) };
+	return api.global.v3.GET(url, { signal });
 }
 
 // The overview shows every range at once: one short page per range.
 export const getChartOverviewQuery = (
 	getChart: Getter<ChartKind>,
-	getSource: Getter<ChartSource | null>
+	getSource: Getter<ListenSource | null>
 ) =>
 	createQuery(() => ({
 		staleTime: CACHE_TTL.TIME_RANGE_OVERVIEW,
@@ -85,8 +76,8 @@ export const getChartOverviewQuery = (
 // The expanded range pages through the full chart.
 export const getChartRangeQuery = (
 	getChart: Getter<ChartKind>,
-	getSource: Getter<ChartSource | null>,
-	getRange: Getter<ChartRange | null>
+	getSource: Getter<ListenSource | null>,
+	getRange: Getter<StatsRange | null>
 ) =>
 	createInfiniteQuery(() => ({
 		staleTime: CACHE_TTL.TIME_RANGE_OVERVIEW,

@@ -2,9 +2,8 @@ import { createInfiniteQuery } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { GenreDetailResponse } from '$lib/types';
+import type { GenreDetailResponse } from '../discover/types';
 import { GenreQueryKeyFactory } from './GenreQueryKeyFactory';
-import { toGenreDetail } from '../chartAdapters';
 import { HOME_ENDPOINTS } from '../charts/endpoints';
 
 type Getter<T> = () => T;
@@ -17,7 +16,7 @@ async function fetchGenrePage(
 	signal: AbortSignal
 ): Promise<GenreDetailResponse> {
 	const url = HOME_ENDPOINTS.genre(genre, PAGE_SIZE, artistOffset, albumOffset);
-	return toGenreDetail(await api.global.v3.GET(url, { signal }));
+	return api.global.v3.GET(url, { signal });
 }
 
 export const getGenreDetailQuery = (getGenre: Getter<string>) =>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { WeeklyExplorationSection as SectionType } from '$lib/types';
+	import type { WeeklyExploration as SectionType } from '$lib/queries/discover/types';
 	import { Sparkles, ExternalLink } from 'lucide-svelte';
 	import HorizontalCarousel from './HorizontalCarousel.svelte';
 	import WeeklyExplorationCard from './WeeklyExplorationCard.svelte';

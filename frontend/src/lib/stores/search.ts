@@ -75,7 +75,7 @@ function createSearchStore() {
 			query: string,
 			artists: Artist[],
 			albums: Album[],
-			enrichmentSource: EnrichmentSource = 'none',
+			enrichmentSource: EnrichmentSource = null,
 			topArtist: Artist | null = null,
 			topAlbum: Album | null = null
 		) {

@@ -15,7 +15,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, ListenBrainzConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    MusicBrainzSettings, MusicSource, PrimaryMusicSource, UserPreferences,
+    ListenSource, MusicBrainzSettings, PrimaryMusicSource, UserPreferences,
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Listed, Live};
 use droppedneedle_library::edition_prefs::LivePreferences;
@@ -40,7 +40,7 @@ pub trait CatalogSettings: Send + Sync {
     /// Whether ListenBrainz reads are switched on.
     fn listenbrainz_enabled(&self) -> bool;
     /// Which provider answers discovery sections by default.
-    fn primary_source(&self) -> MusicSource;
+    fn primary_source(&self) -> ListenSource;
     /// Two-letter store region for purchase lookups; `None` while it does
     /// not read.
     fn store_region(&self) -> Option<String>;
@@ -120,7 +120,7 @@ impl CatalogSettings for LiveCatalogSettings {
         or_default(&self.listenbrainz).enabled
     }
 
-    fn primary_source(&self) -> MusicSource {
+    fn primary_source(&self) -> ListenSource {
         or_default(&self.primary).source
     }
 

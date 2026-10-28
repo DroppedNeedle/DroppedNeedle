@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Check, Headphones, Search } from 'lucide-svelte';
-	import type { HomeAlbum, HomeArtist } from '$lib/types';
+	import type { AlbumRef, ArtistRef } from '$lib/queries/discover/types';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import AlbumImage from './AlbumImage.svelte';
 	import ArtistImage from './ArtistImage.svelte';
@@ -13,18 +13,20 @@
 	type TimeRangeCardVariant = 'featured' | 'overview' | 'expanded';
 
 	interface Props {
-		item: HomeAlbum | HomeArtist;
+		item: AlbumRef | ArtistRef;
 		itemType: ItemType;
 		href?: string | null;
 		rank: number;
 		variant: TimeRangeCardVariant;
 		className: string;
-		onFallbackClick: (item: HomeAlbum | HomeArtist) => void;
+		onFallbackClick: (item: AlbumRef | ArtistRef) => void;
 	}
 
 	let { item, itemType, href = null, rank, variant, className, onFallbackClick }: Props = $props();
 
-	function isAlbum(_value: HomeAlbum | HomeArtist): _value is HomeAlbum {
+	const itemName = $derived('title' in item ? item.title : item.name);
+
+	function isAlbum(_value: AlbumRef | ArtistRef): _value is AlbumRef {
 		return itemType === 'album';
 	}
 
@@ -61,18 +63,18 @@
 		<figure class="relative aspect-square w-full">
 			{#if itemType === 'album'}
 				<AlbumImage
-					mbid={item.mbid || ''}
-					alt={item.name}
+					mbid={item.musicbrainz_id || ''}
+					alt={itemName}
 					size="xl"
 					requestSize={250}
 					rounded="none"
 					className="w-full h-full"
-					customUrl={(item as HomeAlbum).image_url || null}
+					customUrl={(item as AlbumRef).cover_url || null}
 				/>
 			{:else}
 				<ArtistImage
-					mbid={item.mbid || ''}
-					alt={item.name}
+					mbid={item.musicbrainz_id || ''}
+					alt={itemName}
 					size="full"
 					requestSize={250}
 					rounded="none"
@@ -93,16 +95,16 @@
 					</div>
 				{/if}
 			</div>
-			{#if isAlbum(item) && item.mbid && item.in_library}
+			{#if isAlbum(item) && item.musicbrainz_id && item.in_library}
 				<AlbumCardOverlay
-					mbid={item.mbid}
-					albumName={item.name}
-					artistName={(item as HomeAlbum).artist_name || 'Unknown'}
-					coverUrl={(item as HomeAlbum).image_url || null}
+					mbid={item.musicbrainz_id}
+					albumName={itemName}
+					artistName={(item as AlbumRef).artist_name || 'Unknown'}
+					coverUrl={(item as AlbumRef).cover_url || null}
 				/>
 			{/if}
 			<div class="absolute inset-x-0 bottom-0 p-4 text-white">
-				<h3 class="line-clamp-2 text-lg font-bold sm:text-xl">{item.name}</h3>
+				<h3 class="line-clamp-2 text-lg font-bold sm:text-xl">{itemName}</h3>
 				{#if isAlbum(item) && item.artist_name}
 					<p class="line-clamp-1 text-sm text-white/80">{item.artist_name}</p>
 				{/if}
@@ -113,7 +115,7 @@
 					</p>
 				{/if}
 			</div>
-			{#if !item.mbid}
+			{#if !item.musicbrainz_id}
 				<IconButton
 					variant="neutral"
 					size="xs"
@@ -128,24 +130,24 @@
 		{#if itemType === 'album'}
 			<figure class="relative aspect-square overflow-hidden">
 				<AlbumImage
-					mbid={item.mbid || ''}
-					alt={item.name}
+					mbid={item.musicbrainz_id || ''}
+					alt={itemName}
 					size="md"
 					rounded="none"
 					className="w-full h-full"
-					customUrl={(item as HomeAlbum).image_url || null}
+					customUrl={(item as AlbumRef).cover_url || null}
 				/>
 				{#if item.in_library}
 					<div class="badge badge-success badge-sm absolute left-1 top-1 z-20">
 						<Check class="h-3 w-3" />
 					</div>
 				{/if}
-				{#if item.mbid && item.in_library}
+				{#if item.musicbrainz_id && item.in_library}
 					<AlbumCardOverlay
-						mbid={item.mbid}
-						albumName={item.name}
-						artistName={(item as HomeAlbum).artist_name || 'Unknown'}
-						coverUrl={(item as HomeAlbum).image_url || null}
+						mbid={item.musicbrainz_id}
+						albumName={itemName}
+						artistName={(item as AlbumRef).artist_name || 'Unknown'}
+						coverUrl={(item as AlbumRef).cover_url || null}
 						size="sm"
 					/>
 				{/if}
@@ -157,7 +159,7 @@
 				>
 					#{rank}
 				</div>
-				{#if !item.mbid}
+				{#if !item.musicbrainz_id}
 					<IconButton
 						size="xs"
 						icon={Search}
@@ -174,8 +176,8 @@
 					: 'relative aspect-square overflow-hidden'}
 			>
 				<ArtistImage
-					mbid={item.mbid || ''}
-					alt={item.name}
+					mbid={item.musicbrainz_id || ''}
+					alt={itemName}
 					size={variant === 'overview' ? 'md' : 'full'}
 					rounded={variant === 'overview' ? undefined : 'none'}
 					className={variant === 'overview' ? undefined : 'w-full h-full'}
@@ -194,7 +196,7 @@
 				>
 					#{rank}
 				</div>
-				{#if !item.mbid}
+				{#if !item.musicbrainz_id}
 					<IconButton
 						size="xs"
 						icon={Search}
@@ -214,7 +216,7 @@
 				as="h3"
 				class={variant === 'expanded' ? 'line-clamp-1 text-xs sm:text-sm' : 'line-clamp-1 text-xs'}
 			>
-				{item.name}
+				{itemName}
 			</CardTitle>
 			{#if isAlbum(item) && item.artist_name}
 				<p class="line-clamp-1 text-xs text-base-content/50">{item.artist_name}</p>

@@ -27,8 +27,8 @@ use serde::{Deserialize, Serialize};
 use crate::reads::discover::cache::{PageKind, Saved, Timing, UserPageCache, Variant};
 use crate::reads::discover::listening::{Ask, ListeningData};
 use crate::reads::discover::models::{
-    DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueBuildStatus,
-    QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItemLight,
+    DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueAction,
+    QueueBuildStatus, QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItemLight,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueDeck, QueueTrigger};
 use crate::reads::discover::scheduler::{Feature, Warm};
@@ -232,9 +232,12 @@ fn to_deck(saved: &Saved<Deck>) -> QueueDeck {
     }
 }
 
-fn generate_response(action: &str, status: DiscoverQueueStatusResponse) -> QueueGenerateResponse {
+fn generate_response(
+    action: QueueAction,
+    status: DiscoverQueueStatusResponse,
+) -> QueueGenerateResponse {
     QueueGenerateResponse {
-        action: action.to_owned(),
+        action,
         status: status.status,
         queue_id: status.queue_id,
         item_count: status.item_count,
@@ -377,7 +380,7 @@ impl Inner {
         let now = self.decks.now_ms();
         let mut states = self.states();
         let state = Self::state(&mut states, user_id, &variant.source);
-        let answer = |action: &str, state: &UserState| {
+        let answer = |action: QueueAction, state: &UserState| {
             generate_response(
                 action,
                 status_of(
@@ -390,7 +393,7 @@ impl Inner {
             )
         };
         if scheduled && !settings.warm_cycle_build {
-            return (answer("disabled", state), None);
+            return (answer(QueueAction::Disabled, state), None);
         }
         if state.phase == Phase::Building && state.scheduled && !scheduled {
             // The person asking wins over the warm cycle.
@@ -398,10 +401,10 @@ impl Inner {
             state.settled();
         }
         if state.phase == Phase::Building {
-            return (answer("already_building", state), None);
+            return (answer(QueueAction::AlreadyBuilding, state), None);
         }
         if !force && state.phase == Phase::Settled && !is_stale(deck.as_ref(), &settings, now) {
-            return (answer("already_ready", state), None);
+            return (answer(QueueAction::AlreadyReady, state), None);
         }
         state.stop_task();
         state.phase = Phase::Building;
@@ -424,7 +427,7 @@ impl Inner {
                 .await
         });
         state.task = Some(task.abort_handle());
-        (answer("started", state), Some(task))
+        (answer(QueueAction::Started, state), Some(task))
     }
 
     /// One background build. Its result lands only if no newer build or
@@ -509,7 +512,7 @@ impl Inner {
             .value
             .items
             .iter()
-            .map(|item| item.release_group_mbid.clone())
+            .map(|item| item.musicbrainz_id.clone())
             .collect();
         if let Err(cause) = self.listening.listen_counts(&user_id, &ids, &ask).await {
             tracing::debug!(%cause, "queue listen counts not prefetched");
@@ -545,10 +548,10 @@ impl Inner {
     /// A scheduled build, waited for; true when it left a deck.
     async fn warm(self: &Arc<Self>, user_id: &str) -> bool {
         let (started, task) = self.start_build(user_id, QueueTrigger::Scheduled).await;
-        match started.action.as_str() {
-            "already_ready" => return true,
-            "started" => {}
-            _ => return false,
+        match started.action {
+            QueueAction::AlreadyReady => return true,
+            QueueAction::Started => {}
+            QueueAction::AlreadyBuilding | QueueAction::Disabled => return false,
         }
         let Some(task) = task else {
             return false;

@@ -44,7 +44,7 @@
 		{ items: Album[]; top: Album | null; status: SearchRemoteStatus; source: unknown }
 	>();
 	let enrichment: EnrichmentResponseV3 | null = $state(null);
-	let enrichmentSource: EnrichmentSource = $state('none');
+	let enrichmentSource: EnrichmentSource = $state(null);
 	let sentinel = $state<HTMLElement>();
 
 	const pageQuery = getSearchBucketV3Query(
@@ -101,7 +101,7 @@
 		pages.clear();
 		enrichCollector.reset();
 		enrichment = null;
-		enrichmentSource = 'none';
+		enrichmentSource = null;
 		if (offset === 0) {
 			void pageQuery.refetch();
 		} else {
@@ -120,7 +120,7 @@
 		pages.clear();
 		enrichCollector.reset();
 		enrichment = null;
-		enrichmentSource = 'none';
+		enrichmentSource = null;
 	});
 
 	$effect(() => {
@@ -138,7 +138,7 @@
 		const result = enrichQuery.data;
 		if (result) {
 			enrichment = result;
-			enrichmentSource = result.source;
+			enrichmentSource = result.source ?? null;
 		}
 	});
 

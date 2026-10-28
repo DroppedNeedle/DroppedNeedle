@@ -28,10 +28,6 @@ use droppedneedle_kernel::{
         // answer after the operations are collected.
         ErrorEnvelope,
         droppedneedle_kernel::error::ErrorBody,
-        // Chart query enums the web UI imports by name; no operation refers
-        // to them.
-        droppedneedle_catalog::reads::discover::models::ChartRange,
-        droppedneedle_catalog::reads::discover::models::ChartSource,
         // The value type of the `service_status` maps; no operation refers
         // to it by name.
         droppedneedle_catalog::reads::catalog::models::SourceStatus,

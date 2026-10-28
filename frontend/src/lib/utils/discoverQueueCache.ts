@@ -1,11 +1,11 @@
 import { CACHE_KEYS, CACHE_TTL } from '$lib/constants';
 import { clearLocalStorageNamespace, createLocalStorageCache } from '$lib/utils/localStorageCache';
-import type { DiscoverQueueItemFull } from '$lib/types';
+import type { DeckCard } from '$lib/queries/discover/types';
 import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import type { MusicBrainzSourceIdentity } from '$lib/stores/authStore.svelte';
 
 export interface QueueCacheData {
-	items: DiscoverQueueItemFull[];
+	items: DeckCard[];
 	currentIndex: number;
 	queueId: string;
 }

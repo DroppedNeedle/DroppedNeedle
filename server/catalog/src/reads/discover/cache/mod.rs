@@ -294,8 +294,9 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
 
     /// The user's page when there is one built for `wanted`, however old:
     /// the saved row, or a page held while the database was busy (whose
-    /// save is tried again first). A row that cannot be read or decoded
-    /// counts as missing, with a log line.
+    /// save is tried again first). A row that cannot be read counts as
+    /// missing, with a log line. A row that does not decode (one saved in
+    /// an older shape) is deleted, with one log line, and counts as missing.
     pub async fn load(&self, user_id: &str, wanted: &Variant) -> Option<Saved<T>> {
         let held = self.inner.flights().pending.get(user_id).cloned();
         if let Some(held) = held {
@@ -321,7 +322,11 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
         match serde_json::from_slice(&payload) {
             Ok(value) => Some(Saved { value, built_at }),
             Err(error) => {
-                tracing::warn!(%error, page = self.inner.kind.as_str(), "saved page does not decode");
+                tracing::warn!(%error, page = self.inner.kind.as_str(), "saved page does not decode; dropping it");
+                self.inner.flights().pending.remove(user_id);
+                if let Err(error) = rows::forget(&self.inner.db, user_id, self.inner.kind).await {
+                    tracing::warn!(%error, page = self.inner.kind.as_str(), "undecodable page not dropped");
+                }
                 None
             }
         }

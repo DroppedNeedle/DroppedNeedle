@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use droppedneedle_kernel::runtime_config::sections::MusicSource;
+use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_providers::musicbrainz::Criticality;
 use droppedneedle_providers::{
     CacheKey, Fetched, IntegrationStatus, Policy, RequestPriority, Source, lastfm, listenbrainz,
@@ -23,8 +23,8 @@ use super::artist::checked_mbid;
 use super::error::CatalogError;
 use super::mapping;
 use super::models::{
-    DiscoveryAlbum, DiscoverySource, MoreByArtistResponse, SimilarAlbumsResponse, SimilarArtist,
-    SimilarArtistsResponse, TopAlbum, TopAlbumsResponse, TopSong, TopSongsResponse,
+    AlbumRef, ArtistRef, MoreByArtistResponse, SimilarAlbumsResponse, SimilarArtistsResponse,
+    TopAlbumsResponse, TopSong, TopSongsResponse,
 };
 use super::{Catalog, is_mbid, mb_error, record_mb_down};
 use crate::reads::cache_hold::CacheHold;
@@ -48,11 +48,13 @@ enum Section {
 }
 
 impl Section {
+    /// The cache key part. A part names its row shape too, so a cached
+    /// answer in an older shape is never read as the new one.
     fn key_part(self) -> &'static str {
         match self {
-            Self::Similar => "similar_artists",
+            Self::Similar => "similar_artist_refs",
             Self::TopSongs => "top_songs",
-            Self::TopAlbums => "top_albums",
+            Self::TopAlbums => "top_album_refs",
         }
     }
 }
@@ -60,9 +62,9 @@ impl Section {
 /// One section's raw rows before library flags, as cached.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct SectionRows {
-    similar: Vec<SimilarArtist>,
+    similar: Vec<ArtistRef>,
     songs: Vec<TopSong>,
-    albums: Vec<TopAlbum>,
+    albums: Vec<AlbumRef>,
 }
 
 impl SectionRows {
@@ -74,7 +76,7 @@ impl SectionRows {
 /// A section answer: rows, who answered, and whether that source is set up.
 struct Answer {
     rows: SectionRows,
-    source: DiscoverySource,
+    source: ListenSource,
     configured: bool,
 }
 
@@ -98,11 +100,8 @@ fn section_answer(
 }
 
 impl Catalog {
-    fn preferred_source(&self, asked: Option<DiscoverySource>) -> DiscoverySource {
-        asked.unwrap_or_else(|| match self.upstream().settings().primary_source() {
-            MusicSource::Listenbrainz => DiscoverySource::Listenbrainz,
-            MusicSource::Lastfm => DiscoverySource::Lastfm,
-        })
+    fn preferred_source(&self, asked: Option<ListenSource>) -> ListenSource {
+        asked.unwrap_or_else(|| self.upstream().settings().primary_source())
     }
 
     /// Build one artist section from the preferred source, falling back
@@ -112,7 +111,7 @@ impl Catalog {
         user_id: &str,
         raw_mbid: &str,
         count: u32,
-        asked: Option<DiscoverySource>,
+        asked: Option<ListenSource>,
         section: Section,
         priority: RequestPriority,
     ) -> Result<Answer, CatalogError> {
@@ -121,10 +120,10 @@ impl Catalog {
         let first = self
             .section_from(source, user_id, &mbid, count, section, priority)
             .await;
-        if source == DiscoverySource::Listenbrainz && first.rows.is_empty() {
+        if source == ListenSource::Listenbrainz && first.rows.is_empty() {
             let fallback = self
                 .section_from(
-                    DiscoverySource::Lastfm,
+                    ListenSource::Lastfm,
                     user_id,
                     &mbid,
                     count,
@@ -142,27 +141,27 @@ impl Catalog {
     /// The cache key of one section from one source.
     fn section_key(
         &self,
-        source: DiscoverySource,
+        source: ListenSource,
         mbid: &str,
         count: u32,
         section: Section,
     ) -> CacheKey {
         let count_part = count.to_string();
         match (source, section) {
-            (DiscoverySource::Listenbrainz, _) => CacheKey::new(
+            (ListenSource::Listenbrainz, _) => CacheKey::new(
                 Source::ListenBrainz,
                 &[section.key_part(), mbid, &count_part],
             ),
             // Last.fm titles are matched against the MusicBrainz
             // discography, so the MusicBrainz source is in the key.
-            (DiscoverySource::Lastfm, Section::TopAlbums) => {
+            (ListenSource::Lastfm, Section::TopAlbums) => {
                 let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
                 CacheKey::new(
                     Source::LastFm,
                     &[&namespace, section.key_part(), mbid, &count_part],
                 )
             }
-            (DiscoverySource::Lastfm, _) => {
+            (ListenSource::Lastfm, _) => {
                 CacheKey::new(Source::LastFm, &[section.key_part(), mbid, &count_part])
             }
         }
@@ -170,7 +169,7 @@ impl Catalog {
 
     async fn section_from(
         &self,
-        source: DiscoverySource,
+        source: ListenSource,
         user_id: &str,
         mbid: &str,
         count: u32,
@@ -184,7 +183,7 @@ impl Catalog {
             configured: false,
         };
         let rows = match source {
-            DiscoverySource::Listenbrainz => {
+            ListenSource::Listenbrainz => {
                 let Some((client, creds)) = self.upstream().listenbrainz() else {
                     return unconfigured;
                 };
@@ -209,7 +208,7 @@ impl Catalog {
                 )
                 .await
             }
-            DiscoverySource::Lastfm => {
+            ListenSource::Lastfm => {
                 let Some((client, creds)) = self.upstream().lastfm(user_id).await else {
                     return unconfigured;
                 };
@@ -272,7 +271,7 @@ impl Catalog {
         mbid: &str,
         (similar, songs, albums): (u32, u32, u32),
     ) -> bool {
-        let listenbrainz = self.preferred_source(None) == DiscoverySource::Listenbrainz
+        let listenbrainz = self.preferred_source(None) == ListenSource::Listenbrainz
             && self.upstream().listenbrainz().is_some();
         let mut lastfm = None;
         for (section, count) in [
@@ -281,7 +280,7 @@ impl Catalog {
             (Section::TopAlbums, albums),
         ] {
             if listenbrainz {
-                let key = self.section_key(DiscoverySource::Listenbrainz, mbid, count, section);
+                let key = self.section_key(ListenSource::Listenbrainz, mbid, count, section);
                 match self.upstream().cache().peek::<SectionRows>(&key).await {
                     None => return false,
                     Some(Some(_)) => continue,
@@ -294,7 +293,7 @@ impl Catalog {
             };
             if configured
                 && !self
-                    .held(&self.section_key(DiscoverySource::Lastfm, mbid, count, section))
+                    .held(&self.section_key(ListenSource::Lastfm, mbid, count, section))
                     .await
             {
                 return false;
@@ -324,11 +323,10 @@ impl Catalog {
                         .into_iter()
                         .filter(|artist| is_mbid(&artist.artist_mbid))
                         .take(count)
-                        .map(|artist| SimilarArtist {
-                            name: artist.artist_name,
-                            musicbrainz_id: artist.artist_mbid,
-                            listen_count: artist.listen_count,
-                            in_library: false,
+                        .map(|artist| ArtistRef {
+                            musicbrainz_id: Some(artist.artist_mbid),
+                            listen_count: Some(artist.listen_count),
+                            ..ArtistRef::named(artist.artist_name)
                         })
                         .collect(),
                     ..SectionRows::default()
@@ -398,14 +396,11 @@ impl Catalog {
                 Some(SectionRows {
                     albums: groups
                         .into_iter()
-                        .map(|group| TopAlbum {
-                            title: group.name,
-                            artist_name: group.artist_name,
-                            release_group_mbid: Some(group.release_group_mbid),
-                            listen_count: group.listen_count,
-                            in_library: false,
-                            requested: false,
-                            cover_url: None,
+                        .map(|group| AlbumRef {
+                            artist_name: Some(group.artist_name),
+                            musicbrainz_id: Some(group.release_group_mbid),
+                            listen_count: Some(group.listen_count),
+                            ..AlbumRef::titled(group.name)
                         })
                         .collect(),
                     ..SectionRows::default()
@@ -421,7 +416,7 @@ impl Catalog {
         user_id: &str,
         mbid: &str,
         count: u32,
-        source: Option<DiscoverySource>,
+        source: Option<ListenSource>,
         priority: RequestPriority,
     ) -> Result<SimilarArtistsResponse, CatalogError> {
         let answer = self
@@ -429,14 +424,25 @@ impl Catalog {
             .await?;
         let mut similar = answer.rows.similar;
         let mut seen = std::collections::HashSet::new();
-        similar.retain(|artist| seen.insert(artist.musicbrainz_id.to_ascii_lowercase()));
+        similar.retain(|artist| {
+            seen.insert(
+                artist
+                    .musicbrainz_id
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase(),
+            )
+        });
         let ids: Vec<String> = similar
             .iter()
-            .map(|artist| artist.musicbrainz_id.clone())
+            .filter_map(|artist| artist.musicbrainz_id.clone())
             .collect();
         let owned = self.artist_flags(&ids).await;
         for artist in &mut similar {
-            artist.in_library = owned.contains(&artist.musicbrainz_id.to_ascii_lowercase());
+            artist.in_library = artist
+                .musicbrainz_id
+                .as_deref()
+                .is_some_and(|id| owned.contains(&id.to_ascii_lowercase()));
         }
         if priority.is_user_facing() {
             let mut targets = WarmTargets::default();
@@ -459,7 +465,7 @@ impl Catalog {
         user_id: &str,
         mbid: &str,
         count: u32,
-        source: Option<DiscoverySource>,
+        source: Option<ListenSource>,
         priority: RequestPriority,
     ) -> Result<TopSongsResponse, CatalogError> {
         let answer = self
@@ -562,7 +568,7 @@ impl Catalog {
         user_id: &str,
         mbid: &str,
         count: u32,
-        source: Option<DiscoverySource>,
+        source: Option<ListenSource>,
         priority: RequestPriority,
     ) -> Result<TopAlbumsResponse, CatalogError> {
         let answer = self
@@ -571,12 +577,12 @@ impl Catalog {
         let mut albums = answer.rows.albums;
         let ids: Vec<String> = albums
             .iter()
-            .filter_map(|album| album.release_group_mbid.clone())
+            .filter_map(|album| album.musicbrainz_id.clone())
             .collect();
         let (owned, requested) = self.album_flags(&ids).await;
         for album in &mut albums {
             let id = album
-                .release_group_mbid
+                .musicbrainz_id
                 .as_deref()
                 .unwrap_or("")
                 .to_ascii_lowercase();
@@ -608,7 +614,7 @@ impl Catalog {
         let Some((client, creds)) = self.upstream().listenbrainz() else {
             return Ok(SimilarAlbumsResponse {
                 albums: Vec::new(),
-                source: DiscoverySource::Listenbrainz,
+                source: ListenSource::Listenbrainz,
                 configured: false,
             });
         };
@@ -657,19 +663,15 @@ impl Catalog {
                             if group.release_group_mbid.eq_ignore_ascii_case(&lb_album) {
                                 continue;
                             }
-                            albums.push(DiscoveryAlbum {
-                                musicbrainz_id: group.release_group_mbid,
-                                title: group.name,
-                                artist_name: if group.artist_name.is_empty() {
+                            albums.push(AlbumRef {
+                                musicbrainz_id: Some(group.release_group_mbid),
+                                artist_name: Some(if group.artist_name.is_empty() {
                                     similar_name.clone()
                                 } else {
                                     group.artist_name
-                                },
+                                }),
                                 artist_id: Some(similar_mbid.clone()),
-                                year: None,
-                                in_library: false,
-                                requested: false,
-                                cover_url: None,
+                                ..AlbumRef::titled(group.name)
                             });
                         }
                         if albums.len() >= count as usize {
@@ -699,7 +701,7 @@ impl Catalog {
         self.flag_discovery_albums(&mut albums).await;
         Ok(SimilarAlbumsResponse {
             albums,
-            source: DiscoverySource::Listenbrainz,
+            source: ListenSource::Listenbrainz,
             configured: true,
         })
     }
@@ -715,7 +717,7 @@ impl Catalog {
         album: &str,
         similar: &[(String, String)],
         count: u32,
-    ) -> Vec<DiscoveryAlbum> {
+    ) -> Vec<AlbumRef> {
         let Some((client, creds)) = self.upstream().lastfm(user_id).await else {
             return Vec::new();
         };
@@ -734,7 +736,7 @@ impl Catalog {
                 Policy::DISCOVERY,
                 priority,
                 move |priority| async move {
-                    let mut albums: Vec<DiscoveryAlbum> = Vec::new();
+                    let mut albums: Vec<AlbumRef> = Vec::new();
                     let mut seen: HashSet<String> = HashSet::from([album.clone()]);
                     let mut complete = true;
                     let mut hold = CacheHold::default();
@@ -795,19 +797,15 @@ impl Catalog {
                             if !seen.insert(group.to_ascii_lowercase()) {
                                 continue;
                             }
-                            albums.push(DiscoveryAlbum {
-                                musicbrainz_id: group,
-                                title: item.name,
-                                artist_name: if item.artist_name.is_empty() {
+                            albums.push(AlbumRef {
+                                musicbrainz_id: Some(group),
+                                artist_name: Some(if item.artist_name.is_empty() {
                                     artist_name.clone()
                                 } else {
                                     item.artist_name
-                                },
+                                }),
                                 artist_id: Some(artist_mbid.clone()),
-                                year: None,
-                                in_library: false,
-                                requested: false,
-                                cover_url: None,
+                                ..AlbumRef::titled(item.name)
                             });
                         }
                     }
@@ -893,23 +891,21 @@ impl Catalog {
             .iter()
             .find_map(|item| item.artist_name.clone())
             .unwrap_or_default();
-        let mut albums: Vec<DiscoveryAlbum> = list
+        let mut albums: Vec<AlbumRef> = list
             .items
             .iter()
             .filter(|item| item.id.to_ascii_lowercase() != album)
             .take(count as usize)
-            .map(|item| DiscoveryAlbum {
-                musicbrainz_id: item.id.clone(),
-                title: item.title.clone().unwrap_or_else(|| "Unknown".to_owned()),
-                artist_name: item
-                    .artist_name
-                    .clone()
-                    .unwrap_or_else(|| artist_name.clone()),
+            .map(|item| AlbumRef {
+                musicbrainz_id: Some(item.id.clone()),
+                artist_name: Some(
+                    item.artist_name
+                        .clone()
+                        .unwrap_or_else(|| artist_name.clone()),
+                ),
                 artist_id: Some(artist.clone()),
                 year: mapping::year_of(item.first_release_date.as_deref()),
-                in_library: false,
-                requested: false,
-                cover_url: None,
+                ..AlbumRef::titled(item.title.clone().unwrap_or_else(|| "Unknown".to_owned()))
             })
             .collect();
         self.flag_discovery_albums(&mut albums).await;
@@ -919,14 +915,16 @@ impl Catalog {
         })
     }
 
-    async fn flag_discovery_albums(&self, albums: &mut [DiscoveryAlbum]) {
+    async fn flag_discovery_albums(&self, albums: &mut [AlbumRef]) {
         let ids: Vec<String> = albums
             .iter()
-            .map(|album| album.musicbrainz_id.clone())
+            .filter_map(|album| album.musicbrainz_id.clone())
             .collect();
         let (owned, requested) = self.album_flags(&ids).await;
         for album in albums {
-            let id = album.musicbrainz_id.to_ascii_lowercase();
+            let Some(id) = album.musicbrainz_id.as_deref().map(str::to_ascii_lowercase) else {
+                continue;
+            };
             album.in_library = owned.contains(&id);
             album.requested = !album.in_library && requested.contains(&id);
             album.cover_url = mapping::release_group_cover_url(&id);
@@ -951,11 +949,9 @@ async fn lastfm_rows(
                 similar: similar
                     .into_iter()
                     .filter_map(|artist| {
-                        Some(SimilarArtist {
-                            musicbrainz_id: artist.mbid.filter(|id| is_mbid(id))?,
-                            name: artist.name,
-                            listen_count: 0,
-                            in_library: false,
+                        Some(ArtistRef {
+                            musicbrainz_id: Some(artist.mbid.filter(|id| is_mbid(id))?),
+                            ..ArtistRef::named(artist.name)
                         })
                     })
                     .collect(),
@@ -1005,7 +1001,7 @@ async fn albums_from_recordings(
     creds: &listenbrainz::ListenBrainzCredentials,
     (mbid, count, priority): (&str, usize, RequestPriority),
     hold: &mut CacheHold,
-) -> Option<Vec<TopAlbum>> {
+) -> Option<Vec<AlbumRef>> {
     let recordings = client
         .artist_top_recordings(mbid, (count * 8).max(80), creds, priority)
         .await
@@ -1022,7 +1018,7 @@ async fn albums_from_recordings(
             HashMap::new()
         });
     let mut order: Vec<String> = Vec::new();
-    let mut totals: HashMap<String, TopAlbum> = HashMap::new();
+    let mut totals: HashMap<String, AlbumRef> = HashMap::new();
     for recording in recordings {
         let group = recording
             .recording_mbid
@@ -1037,23 +1033,20 @@ async fn albums_from_recordings(
         };
         let entry = totals.entry(key.clone()).or_insert_with(|| {
             order.push(key);
-            TopAlbum {
-                title: if title.trim().is_empty() {
+            AlbumRef {
+                artist_name: Some(recording.artist_name.clone()),
+                musicbrainz_id: group.clone(),
+                listen_count: Some(0),
+                ..AlbumRef::titled(if title.trim().is_empty() {
                     "Unknown".to_owned()
                 } else {
                     title.trim().to_owned()
-                },
-                artist_name: recording.artist_name.clone(),
-                release_group_mbid: group.clone(),
-                listen_count: 0,
-                in_library: false,
-                requested: false,
-                cover_url: None,
+                })
             }
         });
-        entry.listen_count += recording.listen_count;
+        entry.listen_count = Some(entry.listen_count.unwrap_or(0) + recording.listen_count);
     }
-    let mut albums: Vec<TopAlbum> = order
+    let mut albums: Vec<AlbumRef> = order
         .into_iter()
         .filter_map(|key| totals.remove(&key))
         .collect();
@@ -1089,7 +1082,7 @@ fn title_key(title: &str) -> String {
 fn match_lastfm_albums(
     top: Vec<lastfm::TopItem>,
     groups: Option<&ReleaseGroupList>,
-) -> Vec<TopAlbum> {
+) -> Vec<AlbumRef> {
     let mut ids: HashSet<String> = HashSet::new();
     let mut by_title: HashMap<String, Option<String>> = HashMap::new();
     for group in groups.map(|list| list.items.as_slice()).unwrap_or_default() {
@@ -1126,14 +1119,11 @@ fn match_lastfm_albums(
         {
             continue;
         }
-        albums.push(TopAlbum {
-            title: item.name,
-            artist_name: item.artist_name,
-            release_group_mbid: group,
-            listen_count: item.playcount,
-            in_library: false,
-            requested: false,
-            cover_url: None,
+        albums.push(AlbumRef {
+            artist_name: Some(item.artist_name),
+            musicbrainz_id: group,
+            listen_count: Some(item.playcount),
+            ..AlbumRef::titled(item.name)
         });
     }
     albums
@@ -1164,6 +1154,6 @@ fn title_candidates(title: &str) -> Vec<String> {
 /// Last.fm fallback can reuse them.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct SimilarAlbumRows {
-    albums: Vec<DiscoveryAlbum>,
+    albums: Vec<AlbumRef>,
     similar: Vec<(String, String)>,
 }

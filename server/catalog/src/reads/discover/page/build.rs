@@ -24,12 +24,13 @@ use super::picks::{self, Candidate};
 use super::shelves::{self, SHELF_SIZE, album, artist, genre, shelf};
 use crate::reads::discover::cache::Variant;
 use crate::reads::discover::listening::{
-    AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenedAlbum, ListeningData, MusicSource,
+    AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData,
     PlayedArtist, ScoredArtist, StatsRange, UserMusic,
 };
 use crate::reads::discover::models::{
-    BecauseYouListenTo, ChartAlbum, ChartSection, DiscoverResponse, SectionItem, TopPickItem,
-    TopPicksSection, WeeklyExploration, WeeklyTrack,
+    AlbumRef, BecauseYouListenTo, ChartSection, DiscoverResponse, RadioSeedKind, SectionItem,
+    SectionKind, ServiceState, ShelfSource, TopPickItem, TopPicksSection, WeeklyExploration,
+    WeeklyTrack,
 };
 use crate::reads::discover::ownership;
 use crate::reads::discover::queue::QueueSettings;
@@ -111,9 +112,8 @@ pub struct Builder<'a> {
 pub struct Built {
     /// The page.
     pub page: DiscoverResponse,
-    /// `listenbrainz`/`lastfm` mapped to `unavailable` when all of that
-    /// service's reads failed.
-    pub degraded: HashMap<String, String>,
+    /// Each listening service all of whose reads failed.
+    pub degraded: HashMap<ListenSource, ServiceState>,
 }
 
 /// Failed reads of the first round, for the degraded banner.
@@ -146,14 +146,17 @@ impl Tracker {
     }
 
     /// Services whose every attempted read failed.
-    fn degraded(&self) -> HashMap<String, String> {
+    fn degraded(&self) -> HashMap<ListenSource, ServiceState> {
         let attempted = self.attempted.lock().map(|a| a.clone()).unwrap_or_default();
         let failed = self.failed.lock().map(|f| f.clone()).unwrap_or_default();
         let mut status = HashMap::new();
-        for (prefix, label) in [("lb_", "listenbrainz"), ("lfm_", "lastfm")] {
+        for (prefix, source) in [
+            ("lb_", ListenSource::Listenbrainz),
+            ("lfm_", ListenSource::Lastfm),
+        ] {
             let family: Vec<&&str> = attempted.iter().filter(|k| k.starts_with(prefix)).collect();
             if !family.is_empty() && family.iter().all(|key| failed.contains(**key)) {
-                status.insert(label.to_owned(), "unavailable".to_owned());
+                status.insert(source, ServiceState::Unavailable);
             }
         }
         status
@@ -184,13 +187,6 @@ struct Shared {
     lastfm_genre_artists: Vec<ArtistRow>,
     jellyfin: Vec<PlayedArtist>,
     library_albums: Vec<super::library::LibraryAlbum>,
-}
-
-fn source_label(source: MusicSource) -> &'static str {
-    match source {
-        MusicSource::ListenBrainz => "listenbrainz",
-        MusicSource::LastFm => "lastfm",
-    }
 }
 
 /// Title-case a folded genre ("hip hop" to "Hip Hop").
@@ -367,10 +363,10 @@ impl Builder<'_> {
         page.unexplored_genres = self
             .unexplored_genres(&page.because_you_listen_to, &similar_mbids)
             .await;
-        let trending_source = if primary == MusicSource::LastFm && user.lastfm {
-            Some("lastfm")
+        let trending_source = if primary == ListenSource::Lastfm && user.lastfm {
+            Some(ShelfSource::Lastfm)
         } else {
-            Some("listenbrainz")
+            Some(ShelfSource::Listenbrainz)
         };
         page.globally_trending = artist_shelf(
             &shared.trending_artists,
@@ -382,7 +378,7 @@ impl Builder<'_> {
             &shared.lastfm_weekly_artists,
             &mut seen_artists,
             "Your Weekly Top Artists",
-            Some("lastfm"),
+            Some(ShelfSource::Lastfm),
         );
         page.service_prompts = shelves::service_prompts(
             lb_user.is_some(),
@@ -401,12 +397,12 @@ impl Builder<'_> {
         self.library.pool()
     }
 
-    fn memo_key<'k>(&'k self, user_id: &'k str, primary: MusicSource) -> MemoKey<'k> {
+    fn memo_key<'k>(&'k self, user_id: &'k str, primary: ListenSource) -> MemoKey<'k> {
         MemoKey {
             user_id,
             variant: self.variant,
             generation: self.generation,
-            listening: source_label(primary),
+            listening: primary.as_str(),
             today: &self.today,
         }
     }
@@ -417,7 +413,7 @@ impl Builder<'_> {
         tracker: &Tracker,
         user_id: &str,
         user: &UserMusic,
-        primary: MusicSource,
+        primary: ListenSource,
         seeds: &[ArtistRow],
         lb_user: Option<&str>,
         lfm_user: Option<&str>,
@@ -428,7 +424,7 @@ impl Builder<'_> {
         // ListenBrainz's similar-artist read is popularity ranked, so it goes
         // empty in a popularity outage; Last.fm stands in then, and always
         // for users who chose Last.fm.
-        let lastfm_similar = policy.popularity() == MusicSource::LastFm;
+        let lastfm_similar = policy.popularity() == ListenSource::Lastfm;
         const SIMILAR_KEYS: [&str; SEEDS] = ["similar_0", "similar_1", "similar_2"];
         let similar = join_all(seeds.iter().take(SEEDS).enumerate().map(|(index, seed)| {
             let key = SIMILAR_KEYS[index];
@@ -447,7 +443,7 @@ impl Builder<'_> {
             }
         }));
         let trending = async {
-            if policy.sitewide() == MusicSource::LastFm {
+            if policy.sitewide() == ListenSource::Lastfm {
                 tracker
                     .run(
                         "lfm_global_top",
@@ -514,7 +510,7 @@ impl Builder<'_> {
         };
         let lastfm_genre_artists = async {
             match lfm_user {
-                Some(username) if primary == MusicSource::LastFm => tracker
+                Some(username) if primary == ListenSource::Lastfm => tracker
                     .run(
                         "lfm_user_top_artists_for_genres",
                         listening.lastfm_user_artists(user_id, username, 5, ask),
@@ -599,7 +595,7 @@ impl Builder<'_> {
             )
         }))
         .await;
-        let mut missing: Vec<(i64, ChartAlbum)> = Vec::new();
+        let mut missing: Vec<(i64, AlbumRef)> = Vec::new();
         for albums in found {
             let mut taken = 0;
             for ranked in albums {
@@ -626,13 +622,13 @@ impl Builder<'_> {
         missing.sort_by(|a, b| b.0.cmp(&a.0));
         shelf(
             "Missing Essentials",
-            "albums",
+            SectionKind::Albums,
             missing
                 .into_iter()
                 .take(SHELF_SIZE)
                 .map(|(_, album)| SectionItem::Album(album))
                 .collect(),
-            Some("library"),
+            Some(ShelfSource::Library),
         )
     }
 
@@ -685,13 +681,13 @@ impl Builder<'_> {
                 None,
                 (row.playcount > 0).then_some(row.playcount),
             );
-            if item.image_url.is_none() && !row.image_url.is_empty() {
-                item.image_url = Some(row.image_url.clone());
+            if item.cover_url.is_none() && !row.image_url.is_empty() {
+                item.cover_url = Some(row.image_url.clone());
             }
             items.push(SectionItem::Album(item));
         }
         items.truncate(SHELF_SIZE);
-        shelf(title, "albums", items, Some("lastfm"))
+        shelf(title, SectionKind::Albums, items, Some(ShelfSource::Lastfm))
     }
 
     /// Candidate albums from artists similar to `seeds`, one pool per
@@ -723,7 +719,7 @@ impl Builder<'_> {
         &self,
         user_id: &str,
         user: &UserMusic,
-        primary: MusicSource,
+        primary: ListenSource,
         seeds: &[ArtistRow],
         shared: &Shared,
         library_groups: &HashSet<String>,
@@ -743,7 +739,7 @@ impl Builder<'_> {
         &self,
         user_id: &str,
         user: &UserMusic,
-        primary: MusicSource,
+        primary: ListenSource,
         seeds: &[ArtistRow],
         shared: &Shared,
         library_groups: &HashSet<String>,
@@ -829,7 +825,7 @@ impl Builder<'_> {
         &self,
         user_id: &str,
         user: &UserMusic,
-        primary: MusicSource,
+        primary: ListenSource,
         index: usize,
         genre: &str,
         mut artists: Vec<String>,
@@ -865,16 +861,16 @@ impl Builder<'_> {
             .similar_pools(user_id, user, &seeds, library_groups, 10, 3)
             .await;
         let mut seen = HashSet::new();
-        let fresh: Vec<ChartAlbum> = pools
+        let fresh: Vec<AlbumRef> = pools
             .into_iter()
             .flatten()
-            .filter(|item| seen.insert(item.release_group_mbid.to_lowercase()))
+            .filter(|item| seen.insert(item.musicbrainz_id.to_lowercase()))
             .map(|item| {
                 album(
-                    Some(&item.release_group_mbid),
-                    &item.album_name,
+                    Some(&item.musicbrainz_id),
+                    &item.title,
                     Some(&item.artist_name),
-                    Some(&item.artist_mbid),
+                    Some(&item.artist_id),
                     None,
                 )
             })
@@ -883,7 +879,7 @@ impl Builder<'_> {
             "genre albums",
             self.library.albums_by_genre(genre, 20).await,
         );
-        let familiar: Vec<ChartAlbum> = owned
+        let familiar: Vec<AlbumRef> = owned
             .into_iter()
             .filter(|row| {
                 let key = row
@@ -915,9 +911,9 @@ impl Builder<'_> {
             .collect();
         shelf(
             &format!("Daily Mix {} - {label}", index + 1),
-            "albums",
+            SectionKind::Albums,
             items,
-            Some(source_label(primary)),
+            Some(primary.into()),
         )
     }
 
@@ -927,7 +923,7 @@ impl Builder<'_> {
         &self,
         user_id: &str,
         user: &UserMusic,
-        primary: MusicSource,
+        primary: ListenSource,
         seeds: &[ArtistRow],
         library_groups: &HashSet<String>,
     ) -> Vec<ChartSection> {
@@ -959,22 +955,22 @@ impl Builder<'_> {
                     .into_iter()
                     .map(|item| {
                         SectionItem::Album(album(
-                            Some(&item.release_group_mbid),
-                            &item.album_name,
+                            Some(&item.musicbrainz_id),
+                            &item.title,
                             Some(&item.artist_name),
-                            Some(&item.artist_mbid),
+                            Some(&item.artist_id),
                             None,
                         ))
                     })
                     .collect();
                 let mut section = ChartSection {
                     title: format!("Radio: {}", seed.name),
-                    section_type: "albums".to_owned(),
+                    kind: SectionKind::Albums,
                     items,
-                    source: Some(source_label(primary).to_owned()),
+                    source: Some(primary.into()),
                     fallback_message: None,
                     connect_service: None,
-                    radio_seed_type: Some("artist".to_owned()),
+                    radio_seed_type: Some(RadioSeedKind::Artist),
                     radio_seed_id: Some(seed_mbid),
                 };
                 section.items.truncate(10);
@@ -992,7 +988,7 @@ impl Builder<'_> {
         &self,
         user_id: &str,
         user: &UserMusic,
-        primary: MusicSource,
+        primary: ListenSource,
         seeds: &[ArtistRow],
         shared: &Shared,
     ) -> Option<TopPicksSection> {
@@ -1011,7 +1007,7 @@ impl Builder<'_> {
         &self,
         user_id: &str,
         user: &UserMusic,
-        primary: MusicSource,
+        primary: ListenSource,
         seeds: &[ArtistRow],
         shared: &Shared,
     ) -> (Option<TopPicksSection>, bool) {
@@ -1219,7 +1215,7 @@ impl Builder<'_> {
                     }
                 })
                 .collect(),
-            source: Some(source_label(primary).to_owned()),
+            source: Some(primary.into()),
             personalizing: degraded,
         };
         (Some(section), degraded)
@@ -1334,9 +1330,9 @@ impl Builder<'_> {
         }
         shelf(
             "Listeners Like You Are Playing",
-            "albums",
+            SectionKind::Albums,
             items,
-            Some("listenbrainz"),
+            Some(ShelfSource::Listenbrainz),
         )
     }
 
@@ -1375,7 +1371,12 @@ impl Builder<'_> {
                 SectionItem::Album(item)
             })
             .collect();
-        shelf("Milestone Anniversaries", "albums", items, Some("library"))
+        shelf(
+            "Milestone Anniversaries",
+            SectionKind::Albums,
+            items,
+            Some(ShelfSource::Library),
+        )
     }
 
     /// The newest releases from artists the user follows.
@@ -1400,9 +1401,9 @@ impl Builder<'_> {
             .collect();
         shelf(
             "New From Artists You Follow",
-            "albums",
+            SectionKind::Albums,
             items,
-            Some("library"),
+            Some(ShelfSource::Library),
         )
     }
 
@@ -1411,11 +1412,11 @@ impl Builder<'_> {
     async fn popular_in_genres(
         &self,
         user_id: &str,
-        primary: MusicSource,
+        primary: ListenSource,
         shared: &Shared,
         seen: &mut HashSet<String>,
     ) -> Option<ChartSection> {
-        if primary == MusicSource::LastFm {
+        if primary == ListenSource::Lastfm {
             return self.popular_in_genres_lastfm(user_id, shared, seen).await;
         }
         let genres: Vec<String> = shared
@@ -1446,9 +1447,9 @@ impl Builder<'_> {
         items.truncate(SHELF_SIZE);
         shelf(
             "Popular In Your Genres",
-            "artists",
+            SectionKind::Artists,
             items,
-            Some("musicbrainz"),
+            Some(ShelfSource::Musicbrainz),
         )
     }
 
@@ -1522,7 +1523,12 @@ impl Builder<'_> {
             }
         }
         items.truncate(SHELF_SIZE);
-        shelf("Popular In Your Genres", "artists", items, Some("lastfm"))
+        shelf(
+            "Popular In Your Genres",
+            SectionKind::Artists,
+            items,
+            Some(ShelfSource::Lastfm),
+        )
     }
 
     /// Genres around the user's similar artists that the library barely
@@ -1536,7 +1542,7 @@ impl Builder<'_> {
         for entry in because {
             for item in &entry.section.items {
                 if let SectionItem::Artist(row) = item
-                    && let Some(mbid) = &row.mbid
+                    && let Some(mbid) = &row.musicbrainz_id
                 {
                     candidates.push(mbid.clone());
                 }
@@ -1593,7 +1599,7 @@ impl Builder<'_> {
                 .map(|(name, count)| genre(&name, None, Some(count)))
                 .collect()
         };
-        shelf("Genres to Explore", "genres", items, None)
+        shelf("Genres to Explore", SectionKind::Genres, items, None)
     }
 }
 
@@ -1615,7 +1621,7 @@ fn because_sections(
     seeds: &[ArtistRow],
     similar: &[Vec<ScoredArtist>],
     seen: &mut HashSet<String>,
-    primary: MusicSource,
+    primary: ListenSource,
 ) -> Vec<BecauseYouListenTo> {
     let mut sections = Vec::new();
     for (seed, rows) in seeds.iter().zip(similar) {
@@ -1639,9 +1645,9 @@ fn because_sections(
         items.truncate(SHELF_SIZE);
         let Some(section) = shelf(
             &format!("Because You Listen To {}", seed.name),
-            "artists",
+            SectionKind::Artists,
             items,
-            Some(source_label(primary)),
+            Some(primary.into()),
         ) else {
             continue;
         };
@@ -1662,7 +1668,7 @@ fn because_sections(
 fn artists_you_might_like(
     similar: &[Vec<ScoredArtist>],
     seen: &mut HashSet<String>,
-    primary: MusicSource,
+    primary: ListenSource,
 ) -> Option<ChartSection> {
     let mut rows: Vec<&ArtistRow> = Vec::new();
     for scored in similar.iter().flatten() {
@@ -1681,9 +1687,9 @@ fn artists_you_might_like(
         .collect();
     shelf(
         "Artists You Might Like",
-        "artists",
+        SectionKind::Artists,
         items,
-        Some(source_label(primary)),
+        Some(primary.into()),
     )
 }
 
@@ -1692,7 +1698,7 @@ fn artist_shelf(
     rows: &[ArtistRow],
     seen: &mut HashSet<String>,
     title: &str,
-    source: Option<&str>,
+    source: Option<ShelfSource>,
 ) -> Option<ChartSection> {
     let mut items = Vec::new();
     for row in rows.iter().take(20) {
@@ -1708,7 +1714,7 @@ fn artist_shelf(
         }
     }
     items.truncate(SHELF_SIZE);
-    shelf(title, "artists", items, source)
+    shelf(title, SectionKind::Artists, items, source)
 }
 
 /// Recent releases by artists the user listens to.
@@ -1728,9 +1734,9 @@ fn fresh_releases(rows: &[AlbumRow]) -> Option<ChartSection> {
         .collect();
     shelf(
         "Fresh Releases For You",
-        "albums",
+        SectionKind::Albums,
         items,
-        Some("listenbrainz"),
+        Some(ShelfSource::Listenbrainz),
     )
 }
 
@@ -1757,21 +1763,25 @@ fn rediscover(plays: &[PlayedArtist], now: f64) -> Option<ChartSection> {
             None => row.image_url.clone(),
         };
         items.push(SectionItem::Artist(
-            crate::reads::discover::models::ChartArtist {
+            crate::reads::discover::models::ArtistRef {
                 name: row.name.clone(),
-                mbid: row.mbid.clone(),
+                musicbrainz_id: row.mbid.clone(),
                 local_id: None,
                 image_url,
                 listen_count: Some(row.play_count),
                 in_library: false,
-                source: None,
             },
         ));
         if items.len() >= SHELF_SIZE {
             break;
         }
     }
-    shelf("Rediscover", "artists", items, Some("jellyfin"))
+    shelf(
+        "Rediscover",
+        SectionKind::Artists,
+        items,
+        Some(ShelfSource::Jellyfin),
+    )
 }
 
 /// The user's ListenBrainz weekly exploration playlist, with covers from
@@ -1877,22 +1887,22 @@ pub fn genre_list(genres: Option<&[(String, i64)]>) -> Option<ChartSection> {
     match genres.filter(|g| !g.is_empty()) {
         Some(genres) => shelf(
             "Browse by Genre",
-            "genres",
+            SectionKind::Genres,
             genres
                 .iter()
                 .take(20)
                 .map(|(name, count)| genre(name, Some(*count), None))
                 .collect(),
-            Some("listenbrainz"),
+            Some(ShelfSource::Listenbrainz),
         ),
         None => shelf(
             "Browse by Genre",
-            "genres",
+            SectionKind::Genres,
             shelves::DEFAULT_GENRES
                 .iter()
                 .map(|name| genre(name, None, None))
                 .collect(),
-            Some("library"),
+            Some(ShelfSource::Library),
         ),
     }
 }
@@ -1993,8 +2003,8 @@ pub async fn mark_ownership(pool: &sqlx::SqlitePool, page: &mut DiscoverResponse
     for section in &sections {
         for item in &section.items {
             match item {
-                SectionItem::Album(row) => album_ids.extend(row.mbid.clone()),
-                SectionItem::Artist(row) => artist_ids.extend(row.mbid.clone()),
+                SectionItem::Album(row) => album_ids.extend(row.musicbrainz_id.clone()),
+                SectionItem::Artist(row) => artist_ids.extend(row.musicbrainz_id.clone()),
                 _ => {}
             }
         }
@@ -2004,15 +2014,15 @@ pub async fn mark_ownership(pool: &sqlx::SqlitePool, page: &mut DiscoverResponse
             picks
                 .items
                 .iter()
-                .filter_map(|pick| pick.album.mbid.clone()),
+                .filter_map(|pick| pick.album.musicbrainz_id.clone()),
         );
     }
     let owned_albums = owned_album_ids(pool, &album_ids).await;
     let owned_artists = owned_artist_ids(pool, &artist_ids).await;
-    let mark_album = |row: &mut ChartAlbum| {
+    let mark_album = |row: &mut AlbumRef| {
         mark(
             owned_albums.as_ref(),
-            row.mbid.as_deref(),
+            row.musicbrainz_id.as_deref(),
             &mut row.in_library,
             &mut row.local_id,
         );
@@ -2023,7 +2033,7 @@ pub async fn mark_ownership(pool: &sqlx::SqlitePool, page: &mut DiscoverResponse
                 SectionItem::Album(row) => mark_album(row),
                 SectionItem::Artist(row) => mark(
                     owned_artists.as_ref(),
-                    row.mbid.as_deref(),
+                    row.musicbrainz_id.as_deref(),
                     &mut row.in_library,
                     &mut row.local_id,
                 ),

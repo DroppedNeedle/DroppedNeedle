@@ -27,7 +27,8 @@ use crate::reads::discover::cache::{PageKind, Timing, UserPageCache, Variant};
 use crate::reads::discover::content::IntegrationSettings;
 use crate::reads::discover::listening::{Ask, ListeningData};
 use crate::reads::discover::models::{
-    ChartSection, DiscoverActivityResponse, DiscoverResponse, IntegrationStatus, SectionItem,
+    ChartSection, DiscoverActivityResponse, DiscoverResponse, IntegrationStatus, ListenSource,
+    SectionItem, ServiceState,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 use crate::reads::discover::queue::QueueSettings;
@@ -247,8 +248,8 @@ impl DiscoverPages {
         let mut degraded = built.degraded;
         if self.inner.listening.popularity_down() {
             degraded
-                .entry("listenbrainz".to_owned())
-                .or_insert_with(|| "degraded".to_owned());
+                .entry(ListenSource::Listenbrainz)
+                .or_insert(ServiceState::Degraded);
         }
         page.service_status = (!degraded.is_empty()).then_some(degraded);
         page.generated_at = Some(self.inner.cache.now_ms() / 1000);
@@ -378,7 +379,7 @@ fn warm_targets(page: &DiscoverResponse) -> WarmTargets {
     let mut targets = WarmTargets::default();
     if let Some(picks) = &page.top_picks {
         for pick in &picks.items {
-            targets.cover(pick.album.mbid.as_deref());
+            targets.cover(pick.album.musicbrainz_id.as_deref());
         }
     }
     if let Some(lounge) = &page.listeners_like_you {
@@ -417,8 +418,8 @@ fn warm_targets(page: &DiscoverResponse) -> WarmTargets {
 pub(crate) fn add_section(targets: &mut WarmTargets, section: &ChartSection) {
     for item in &section.items {
         match item {
-            SectionItem::Album(album) => targets.cover(album.mbid.as_deref()),
-            SectionItem::Artist(artist) => targets.artist(artist.mbid.as_deref()),
+            SectionItem::Album(album) => targets.cover(album.musicbrainz_id.as_deref()),
+            SectionItem::Artist(artist) => targets.artist(artist.musicbrainz_id.as_deref()),
             SectionItem::Track(_) | SectionItem::Genre(_) => {}
         }
     }

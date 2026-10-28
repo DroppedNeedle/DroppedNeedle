@@ -1,7 +1,7 @@
 <script lang="ts">
 	import GenreArtwork from '$lib/components/GenreArtwork.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import type { GenreArtwork as GenreArtworkModel } from '$lib/types';
+	import type { GenreArtwork as GenreArtworkModel } from '$lib/queries/discover/types';
 	import { getGenreGradient } from '$lib/utils/genreGradient';
 
 	interface Props {

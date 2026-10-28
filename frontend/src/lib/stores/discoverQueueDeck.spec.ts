@@ -80,10 +80,10 @@ function deferred<T>() {
 
 function makeItem(mbid: string) {
 	return {
-		release_group_mbid: mbid,
-		album_name: `Album ${mbid}`,
+		musicbrainz_id: mbid,
+		title: `Album ${mbid}`,
 		artist_name: 'Artist',
-		artist_mbid: 'a-1',
+		artist_id: 'a-1',
 		cover_url: null,
 		recommendation_reason: 'reason',
 		is_wildcard: false,
@@ -120,7 +120,7 @@ describe('discoverQueueDeck state machine', () => {
 
 		await discoverQueueDeck.init();
 
-		expect(discoverQueueDeck.queue.map((i) => i.release_group_mbid)).toEqual(['rg-1', 'rg-2']);
+		expect(discoverQueueDeck.queue.map((i) => i.musicbrainz_id)).toEqual(['rg-1', 'rg-2']);
 	});
 
 	it.each([
@@ -141,7 +141,7 @@ describe('discoverQueueDeck state machine', () => {
 
 			await discoverQueueDeck.init();
 
-			expect(discoverQueueDeck.queue.map((i) => i.release_group_mbid)).toEqual(['rg-1', 'rg-2']);
+			expect(discoverQueueDeck.queue.map((i) => i.musicbrainz_id)).toEqual(['rg-1', 'rg-2']);
 			expect(discoverQueueDeck.currentIndex).toBe(expectedIndex);
 			expect(apiMock.global.post).toHaveBeenCalledWith(
 				expect.stringContaining('validate'),
@@ -160,7 +160,7 @@ describe('discoverQueueDeck state machine', () => {
 
 		await discoverQueueDeck.init();
 
-		expect(discoverQueueDeck.queue.map((i) => i.release_group_mbid)).toEqual(['rg-2']);
+		expect(discoverQueueDeck.queue.map((i) => i.musicbrainz_id)).toEqual(['rg-2']);
 		expect(cacheMock.setQueueCachedData).toHaveBeenCalledWith(
 			expect.objectContaining({ queueId: 'q1' }),
 			'user-1'
@@ -205,9 +205,9 @@ describe('discoverQueueDeck state machine', () => {
 		expect(statusMock.triggerGenerate).toHaveBeenCalledWith(true);
 		expect(discoverQueueDeck.phase).toBe('ready');
 		discoverQueueDeck.next();
-		expect(discoverQueueDeck.current?.release_group_mbid).toBe('rg-2');
+		expect(discoverQueueDeck.current?.musicbrainz_id).toBe('rg-2');
 		statusMock.emit({ status: 'error', error: 'replacement failed' });
-		expect(discoverQueueDeck.current?.release_group_mbid).toBe('rg-2');
+		expect(discoverQueueDeck.current?.musicbrainz_id).toBe('rg-2');
 		expect(discoverQueueDeck.replacing).toBe(false);
 	});
 

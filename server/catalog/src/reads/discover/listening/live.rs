@@ -12,7 +12,7 @@ use std::sync::Arc;
 use super::network::{ListeningNetwork, Read};
 use super::rows::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
-    ListenedAlbum, LovedTrack, MusicSource, PlayedArtist, PlaylistTrack, RankedAlbum,
+    ListenSource, ListenedAlbum, LovedTrack, PlayedArtist, PlaylistTrack, RankedAlbum,
     ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange, TagAlbum, UserMusic,
     WeeklyPlaylist,
 };
@@ -99,7 +99,7 @@ impl LiveNetwork {
 
     /// Where the user's listening is read from. Preferences that do not
     /// read follow ListenBrainz, the default.
-    async fn primary_source(&self, user_id: &str) -> MusicSource {
+    async fn primary_source(&self, user_id: &str) -> ListenSource {
         match self
             .listening
             .prefs(user_id)
@@ -107,8 +107,8 @@ impl LiveNetwork {
             .primary_music_source
             .as_str()
         {
-            "lastfm" => MusicSource::LastFm,
-            _ => MusicSource::ListenBrainz,
+            "lastfm" => ListenSource::Lastfm,
+            _ => ListenSource::Listenbrainz,
         }
     }
 

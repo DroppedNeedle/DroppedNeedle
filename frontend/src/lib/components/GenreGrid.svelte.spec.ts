@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { describe, expect, it, vi } from 'vitest';
 import { fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
-import type { GenreArtwork } from '$lib/types';
+import type { GenreArtwork } from '$lib/queries/discover/types';
 
 import GenreGrid from './GenreGrid.svelte';
 

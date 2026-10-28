@@ -16,12 +16,13 @@
 	import GenreGrid from '$lib/components/GenreGrid.svelte';
 	import SectionDivider from '$lib/components/SectionDivider.svelte';
 	import type {
-		HomeSection as HomeSectionType,
-		WeeklyExplorationSection as WeeklyExplorationSectionType
-	} from '$lib/types';
+		ChartSection as HomeSectionType,
+		WeeklyExploration as WeeklyExplorationSectionType
+	} from '$lib/queries/discover/types';
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { genreRows } from '$lib/utils/sectionRows';
 	import { getGreeting } from '$lib/utils/homeCache';
 	import { isDismissed } from '$lib/utils/dismissedPrompts';
 	import HomeSectionNowPlaying from '$lib/components/HomeSectionNowPlaying.svelte';
@@ -312,7 +313,7 @@
 					<div class="mt-10 mb-10">
 						<GenreGrid
 							title={homeData.genre_list.title}
-							genres={homeData.genre_list.items}
+							genres={genreRows(homeData.genre_list)}
 							genreArtwork={homeData.genre_artwork}
 						/>
 					</div>

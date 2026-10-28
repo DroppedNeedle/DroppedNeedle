@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::{Json, Router, extract::Query, http::StatusCode, routing::get};
-use droppedneedle_catalog::reads::discover::models::{ChartRange, ChartSource};
+use droppedneedle_catalog::reads::discover::models::{ListenSource, StatsRange};
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_catalog::reads::discover::wiring::{deps_over, live_network};
 use droppedneedle_kernel::http_client::HttpClientFactory;
@@ -292,14 +292,14 @@ async fn your_top_reads_the_callers_own_link() {
     let page = charts
         .your_top_albums(
             "user-9",
-            ChartRange::AllTime,
+            StatsRange::AllTime,
             3,
             0,
-            ChartSource::Listenbrainz,
+            ListenSource::Listenbrainz,
         )
         .await
         .unwrap();
-    assert_eq!(page.range_key, "all_time");
+    assert_eq!(page.range_key, StatsRange::AllTime);
     assert_eq!(page.items.len(), 3);
     assert!(page.has_more);
     assert_eq!(
@@ -352,7 +352,7 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
     let charts = live_deps(&auth, &dir, providers, links).charts;
 
     let off = charts
-        .trending_artists("user-1", ChartRange::ThisWeek, 2, 0, ChartSource::Lastfm)
+        .trending_artists("user-1", StatsRange::ThisWeek, 2, 0, ListenSource::Lastfm)
         .await
         .unwrap_err();
     assert!(matches!(off, ProviderFailure::NotConfigured(_)), "{off:?}");
@@ -360,27 +360,29 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
 
     auth.set_lastfm_instance_key("instance-key");
     let page = charts
-        .trending_artists("user-1", ChartRange::ThisWeek, 2, 0, ChartSource::Lastfm)
+        .trending_artists("user-1", StatsRange::ThisWeek, 2, 0, ListenSource::Lastfm)
         .await
         .unwrap();
     let names: Vec<&str> = page.items.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(names, ["One", "Two"]);
     assert!(page.has_more);
-    assert_eq!(page.items[1].mbid, None, "artists without an MBID stay");
+    assert_eq!(
+        page.items[1].musicbrainz_id, None,
+        "artists without an MBID stay"
+    );
 
     // ListenBrainz is not answering: a user who can read Last.fm gets its
     // chart instead, from the read already kept.
     let fallback = charts
         .trending_artists(
             "user-1",
-            ChartRange::ThisWeek,
+            StatsRange::ThisWeek,
             2,
             0,
-            ChartSource::Listenbrainz,
+            ListenSource::Listenbrainz,
         )
         .await
         .unwrap();
     assert_eq!(fallback.items[0].name, "One");
-    assert_eq!(fallback.items[0].source.as_deref(), Some("lastfm"));
     assert_eq!(*seen.lock().unwrap(), ["instance-key"], "one Last.fm read");
 }

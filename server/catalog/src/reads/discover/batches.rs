@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::discover::models::{
-    DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchItemStatus,
+    BatchOutcome, DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchItemStatus,
     DiscoveryBatchRemoveResult, DiscoveryBatchSummary,
 };
 use crate::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
@@ -28,16 +28,6 @@ use droppedneedle_auth::{Admin, Principal};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
-
-/// Outcome of an album the batch filed a request for.
-pub const OUTCOME_REQUESTED: &str = "requested";
-/// Outcome of an album the library already held.
-pub const OUTCOME_IN_LIBRARY: &str = "skipped_in_library";
-/// Outcome of an album someone had already requested.
-pub const OUTCOME_DUPLICATE: &str = "skipped_duplicate";
-/// Outcome of an album the requests service did not file (no usable
-/// names, or someone else's request won a race).
-pub const OUTCOME_NOT_REQUESTED: &str = "not_requested";
 
 /// Request states that mean "still cancellable, nothing on disk yet".
 const PENDING_STATUSES: [&str; 4] = ["awaiting_approval", "pending", "queued", "downloading"];
@@ -99,7 +89,7 @@ struct BatchItem {
     artist_mbid: String,
     album_name: String,
     artist_name: String,
-    outcome: String,
+    outcome: BatchOutcome,
 }
 
 /// Batches over the catalog database.
@@ -209,6 +199,10 @@ impl LiveBatches {
             for (batch_id, release_group_mbid, artist_mbid, album_name, artist_name, outcome) in
                 rows
             {
+                let Some(outcome) = BatchOutcome::parse(&outcome) else {
+                    tracing::warn!(%batch_id, %outcome, "batch item with an unknown outcome left out");
+                    continue;
+                };
                 grouped.entry(batch_id).or_default().push(BatchItem {
                     release_group_mbid,
                     artist_mbid,
@@ -331,11 +325,11 @@ impl LiveBatches {
             .map(|item| {
                 let key = item.release_group_mbid.to_ascii_lowercase();
                 DiscoveryBatchItemStatus {
-                    release_group_mbid: item.release_group_mbid.clone(),
-                    artist_mbid: item.artist_mbid.clone(),
-                    album_name: item.album_name.clone(),
+                    musicbrainz_id: item.release_group_mbid.clone(),
+                    artist_id: item.artist_mbid.clone(),
+                    title: item.album_name.clone(),
                     artist_name: item.artist_name.clone(),
-                    outcome: item.outcome.clone(),
+                    outcome: item.outcome,
                     request_status: states.get(&key).cloned(),
                     in_library: owned.contains(&key),
                 }
@@ -348,7 +342,7 @@ impl LiveBatches {
         let pending = statuses
             .iter()
             .filter(|status| {
-                status.outcome == OUTCOME_REQUESTED
+                status.outcome == BatchOutcome::Requested
                     && !status.in_library
                     && status
                         .request_status
@@ -413,7 +407,7 @@ impl LiveBatches {
                             item.artist_mbid,
                             item.album_name,
                             item.artist_name,
-                            item.outcome,
+                            item.outcome.as_str(),
                             created_at,
                         ],
                     )?;
@@ -492,11 +486,11 @@ impl LiveBatches {
         let mut seen = HashSet::new();
         let mut wanted = Vec::new();
         for item in &body.items {
-            let id = item.release_group_mbid.trim().to_ascii_lowercase();
+            let id = item.musicbrainz_id.trim().to_ascii_lowercase();
             if !is_valid_mbid(&id) {
                 return Err(BatchFailure::Invalid(format!(
                     "'{}' is not a MusicBrainz release-group id",
-                    item.release_group_mbid
+                    item.musicbrainz_id
                 )));
             }
             if seen.insert(id.clone()) {
@@ -516,25 +510,25 @@ impl LiveBatches {
         let mut to_request = Vec::new();
         for (id, item) in wanted {
             let outcome = if owned.contains(&id) {
-                OUTCOME_IN_LIBRARY
+                BatchOutcome::SkippedInLibrary
             } else if active.contains(&id) {
-                OUTCOME_DUPLICATE
+                BatchOutcome::SkippedDuplicate
             } else {
                 to_request.push(BatchAlbum {
                     release_group_mbid: id.clone(),
                     artist_name: item.artist_name.trim().to_owned(),
-                    album_title: item.album_name.trim().to_owned(),
-                    artist_mbid: Some(item.artist_mbid.trim().to_owned())
+                    album_title: item.title.trim().to_owned(),
+                    artist_mbid: Some(item.artist_id.trim().to_owned())
                         .filter(|mbid| !mbid.is_empty()),
                 });
-                OUTCOME_REQUESTED
+                BatchOutcome::Requested
             };
             rows.push(BatchItem {
                 release_group_mbid: id,
-                artist_mbid: item.artist_mbid.clone(),
-                album_name: item.album_name.clone(),
+                artist_mbid: item.artist_id.clone(),
+                album_name: item.title.clone(),
                 artist_name: item.artist_name.clone(),
-                outcome: outcome.to_owned(),
+                outcome,
             });
         }
         if to_request.is_empty() {
@@ -557,11 +551,14 @@ impl LiveBatches {
             .await
             .map_err(failed)?;
         for row in &mut rows {
-            if row.outcome == OUTCOME_REQUESTED && !filed.contains(&row.release_group_mbid) {
-                row.outcome = OUTCOME_NOT_REQUESTED.to_owned();
+            if row.outcome == BatchOutcome::Requested && !filed.contains(&row.release_group_mbid) {
+                row.outcome = BatchOutcome::NotRequested;
             }
         }
-        if !rows.iter().any(|row| row.outcome == OUTCOME_REQUESTED) {
+        if !rows
+            .iter()
+            .any(|row| row.outcome == BatchOutcome::Requested)
+        {
             return Err(BatchFailure::Invalid(
                 "None of these albums could be requested.".to_owned(),
             ));
@@ -639,9 +636,9 @@ impl LiveBatches {
             // Recycling is for admins: anyone else's landed albums stay.
             let admin = Admin::try_from(caller.clone()).ok();
             for status in &detail.items {
-                let mbid = status.release_group_mbid.as_str();
+                let mbid = status.musicbrainz_id.as_str();
                 // Only albums this batch caused; skipped ones are never touched.
-                if status.outcome != OUTCOME_REQUESTED {
+                if status.outcome != BatchOutcome::Requested {
                     result.kept += 1;
                 } else if status.in_library {
                     // Never takes an album someone else asked for,

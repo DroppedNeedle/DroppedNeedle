@@ -10,7 +10,7 @@
 use crate::reads::cache_hold::CacheHold;
 use crate::reads::catalog::mapping::clean_lastfm_bio;
 use crate::reads::discover::listening::{Ask, ListeningData, ListeningError, ListeningResult};
-use crate::reads::discover::models::{DiscoverQueuePreview, QueueEnrichment};
+use crate::reads::discover::models::{DiscoverQueuePreview, PreviewStatus, QueueEnrichment};
 use crate::reads::discover::ports::ProviderFailure;
 use crate::reads::discover::youtube::LiveYouTube;
 
@@ -215,7 +215,7 @@ pub async fn preview(
     let facts = listening.release_group(release_group_mbid, &ask).await?;
     let Some(facts) = facts else {
         return Ok(DiscoverQueuePreview {
-            status: "not_found".to_owned(),
+            status: PreviewStatus::NotFound,
             youtube_url: None,
             youtube_search_url: None,
         });
@@ -227,7 +227,7 @@ pub async fn preview(
         url.as_deref()
             .and_then(youtube_embed)
             .map(|embed| DiscoverQueuePreview {
-                status: "available".to_owned(),
+                status: PreviewStatus::Available,
                 youtube_url: Some(embed),
                 youtube_search_url: Some(search_url.clone()),
             })
@@ -267,7 +267,7 @@ pub async fn preview(
         }
     }
     let unavailable = DiscoverQueuePreview {
-        status: "unavailable".to_owned(),
+        status: PreviewStatus::Unavailable,
         youtube_url: None,
         youtube_search_url: Some(search_url.clone()),
     };
@@ -276,12 +276,12 @@ pub async fn preview(
     }
     match youtube.search_video(&artist, &album).await {
         Ok(Some(video_id)) => Ok(DiscoverQueuePreview {
-            status: "available".to_owned(),
+            status: PreviewStatus::Available,
             youtube_url: Some(format!("https://www.youtube.com/embed/{video_id}")),
             youtube_search_url: Some(search_url),
         }),
         Ok(None) => Ok(DiscoverQueuePreview {
-            status: "not_found".to_owned(),
+            status: PreviewStatus::NotFound,
             youtube_url: None,
             youtube_search_url: Some(search_url),
         }),

@@ -43,10 +43,10 @@
 		getRefreshDiscoverV3Mutation
 	} from '$lib/queries/discover/DiscoverV3Mutations.svelte';
 	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
-	import type { TopPickItem } from '$lib/types';
+	import type { TopPickItem } from '$lib/queries/discover/types';
 	import { getSectionPrefsQuery } from '$lib/queries/section-prefs/SectionPrefsQuery.svelte';
 	import { discoverHasContent } from '$lib/utils/discoverContent';
-	import { toDiscoverResponseV1 } from '$lib/queries/discover/DiscoverV3Adapters';
+	import { genreRows } from '$lib/utils/sectionRows';
 
 	useDiscoverActivity(() => ({ feature: 'discover' }));
 
@@ -61,9 +61,7 @@
 		sectionPrefsQuery.data?.pages?.discover?.find((s) => s.key === 'playlist_discovery')?.enabled ??
 			true
 	);
-	const discoverData = $derived(
-		discoverQuery.data ? toDiscoverResponseV1(discoverQuery.data) : null
-	);
+	const discoverData = $derived(discoverQuery.data ?? null);
 	const loading = $derived(discoverQuery.isLoading);
 	const refreshing = $derived(discoverQuery.isFetching && !discoverQuery.isLoading);
 	const isUpdating = $derived(discoverQuery.isRefetching && !!discoverData);
@@ -76,11 +74,11 @@
 	}
 
 	async function handleIgnoreTopPick(pick: TopPickItem) {
-		if (!pick.album.mbid || !pick.album.artist_mbid) return;
+		if (!pick.album.musicbrainz_id || !pick.album.artist_id) return;
 		await ignoreDiscoveryMutation.mutateAsync({
-			releaseGroupMbid: pick.album.mbid,
-			artistMbid: pick.album.artist_mbid,
-			releaseName: pick.album.name,
+			releaseGroupMbid: pick.album.musicbrainz_id,
+			artistMbid: pick.album.artist_id,
+			releaseName: pick.album.title,
 			artistName: pick.album.artist_name ?? ''
 		});
 	}
@@ -276,7 +274,7 @@
 						{#if queueEnabled}
 							<div id="zone-queue" class="scroll-mt-28">
 								<DiscoverQueueDeck
-									youtubeEnabled={discoverData.integration_status.youtube ?? false}
+									youtubeEnabled={discoverData.integration_status?.youtube ?? false}
 								/>
 							</div>
 						{/if}
@@ -294,8 +292,8 @@
 						{#if hasLounge}
 							<div id="zone-lounge" class="scroll-mt-28">
 								<ListeningLounge
-									section={discoverData.listeners_like_you}
-									topPicks={discoverData.top_picks}
+									section={discoverData.listeners_like_you ?? null}
+									topPicks={discoverData.top_picks ?? null}
 									updating={sectionUpdating('lounge')}
 								/>
 							</div>
@@ -499,7 +497,7 @@
 										<div class="mt-4 mb-4">
 											<GenreGrid
 												title={discoverData.genre_list.title}
-												genres={discoverData.genre_list.items}
+												genres={genreRows(discoverData.genre_list)}
 												genreArtwork={discoverData.genre_artwork}
 											/>
 										</div>

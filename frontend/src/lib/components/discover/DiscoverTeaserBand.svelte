@@ -4,7 +4,7 @@
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import { discoverQueueStatusStore } from '$lib/stores/discoverQueueStatus';
 	import { withBasePath } from '$lib/utils/basePath';
-	import type { DiscoverPreview } from '$lib/types';
+	import type { DiscoverPreview } from '$lib/queries/discover/types';
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
@@ -42,13 +42,13 @@
 	<div class="flex flex-col items-center gap-4 px-5 py-6 sm:flex-row sm:gap-6 sm:px-7">
 		{#if teaserArtists.length > 0}
 			<div class="flex shrink-0 -space-x-4">
-				{#each teaserArtists as artist, i (artist.mbid ?? `${artist.name}-${i}`)}
+				{#each teaserArtists as artist, i (artist.musicbrainz_id ?? `${artist.name}-${i}`)}
 					<div
 						class="h-14 w-14 overflow-hidden rounded-full border-2 border-base-100 shadow-md"
 						style="z-index: {teaserArtists.length - i};"
 					>
 						<ArtistImage
-							mbid={artist.mbid ?? ''}
+							mbid={artist.musicbrainz_id ?? ''}
 							alt={artist.name}
 							size="full"
 							requestSize={250}

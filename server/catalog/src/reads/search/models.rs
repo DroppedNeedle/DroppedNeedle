@@ -6,6 +6,7 @@
 //! `in_library` and `requested` are read fresh from the library and the
 //! request list on every search.
 
+use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -265,18 +266,6 @@ pub struct EnrichmentBatchRequest {
     pub albums: Vec<AlbumEnrichmentRequest>,
 }
 
-/// Which provider answered the batch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum EnrichmentSource {
-    /// ListenBrainz listen counts.
-    Listenbrainz,
-    /// Last.fm listener counts.
-    Lastfm,
-    /// No provider answered; counts are absent, never zero-filled.
-    None,
-}
-
 /// Enriched artist counts. Absent counts mean unknown, never zero.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ArtistEnrichment {
@@ -318,8 +307,9 @@ pub struct EnrichmentResponse {
     pub artists: Vec<ArtistEnrichment>,
     /// Album counts, same order as the request.
     pub albums: Vec<AlbumEnrichment>,
-    /// Provider that answered.
-    pub source: EnrichmentSource,
+    /// Provider that answered; `null` when none did, and the counts are
+    /// then absent, never zero-filled.
+    pub source: Option<ListenSource>,
     /// Sources that degraded while answering; usually empty.
     pub degradations: Vec<Degradation>,
 }

@@ -1,200 +1,192 @@
-//! Discover, home, and now-playing DTOs for `/api/v3`.
+//! Discover and home DTOs for `/api/v3`.
 //!
-//! Clean-slate shapes in snake_case. They carry the same information the v2
-//! UI consumed (sections, charts, queue deck, batches, presence) without
-//! keeping the v2 field spellings.
+//! Album and artist rows are the catalog's [`AlbumRef`] and [`ArtistRef`],
+//! so a row reads the same on every page. Fields with a closed set of
+//! values are enums.
+
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+
+pub use crate::reads::catalog::models::{AlbumRef, ArtistRef};
+pub use droppedneedle_kernel::runtime_config::sections::ListenSource;
 
 // ---------------------------------------------------------------------------
 // Shared section items
 // ---------------------------------------------------------------------------
 
-/// One artist inside a section or chart page.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChartArtist {
-    /// Display name.
-    pub name: String,
-    /// MusicBrainz artist id, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mbid: Option<String>,
-    /// Native library id, when the artist is owned.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub local_id: Option<String>,
-    /// Cover art URL, when resolved.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_url: Option<String>,
-    /// Scrobble/listen count backing the rank, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub listen_count: Option<i64>,
-    /// True when the artist has files in the library.
-    #[serde(default)]
-    pub in_library: bool,
-    /// Provider that ranked this row (`listenbrainz`, `lastfm`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-}
-
-/// One album inside a section or chart page.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChartAlbum {
-    /// Album title.
-    pub name: String,
-    /// MusicBrainz release-group id, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mbid: Option<String>,
-    /// Native library id, when the album is owned.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub local_id: Option<String>,
-    /// Album artist name, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artist_name: Option<String>,
-    /// MusicBrainz artist id, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artist_mbid: Option<String>,
-    /// Cover art URL, when resolved.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_url: Option<String>,
-    /// Release date (`YYYY-MM-DD` or coarser), when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub release_date: Option<String>,
-    /// Scrobble/listen count backing the rank, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub listen_count: Option<i64>,
-    /// True when the album has files in the library.
-    #[serde(default)]
-    pub in_library: bool,
-    /// True when the album already has a request.
-    #[serde(default)]
-    pub requested: bool,
-    /// Provider that ranked this row (`listenbrainz`, `lastfm`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-}
-
 /// One track inside a section.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChartTrack {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct TrackRef {
     /// Track title.
-    pub name: String,
+    pub title: String,
     /// MusicBrainz recording id, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mbid: Option<String>,
+    pub musicbrainz_id: Option<String>,
     /// Artist name, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artist_name: Option<String>,
-    /// MusicBrainz artist id, when known.
+    /// The artist's MusicBrainz id, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artist_mbid: Option<String>,
+    pub artist_id: Option<String>,
     /// Album title, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub album_name: Option<String>,
-    /// Scrobble/listen count backing the rank, when known.
+    /// Listen or play count behind the row, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listen_count: Option<i64>,
     /// Last listen timestamp (RFC 3339), when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listened_at: Option<String>,
-    /// Cover art URL, when resolved.
+    /// Cover URL, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_url: Option<String>,
+    pub cover_url: Option<String>,
 }
 
 /// One genre inside a section.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChartGenre {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct GenreRef {
     /// Genre name.
     pub name: String,
-    /// Scrobble/listen count backing the rank, when known.
+    /// Listen or play count behind the row, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listen_count: Option<i64>,
     /// Owned artists tagged with this genre, when counted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artist_count: Option<i64>,
-    /// Seed artist id behind the row, when there is one.
+    /// MusicBrainz id of the seed artist behind the row, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artist_mbid: Option<String>,
+    pub artist_id: Option<String>,
 }
 
-/// One row inside a section. The `type` field on the section names which
-/// variant the rows hold; untagged so the wire keeps flat v2-style items.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-#[serde(untagged)]
+/// One row inside a section, tagged by `kind`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SectionItem {
     /// An artist row.
-    Artist(ChartArtist),
+    Artist(ArtistRef),
     /// An album row.
-    Album(ChartAlbum),
+    Album(AlbumRef),
     /// A track row.
-    Track(ChartTrack),
+    Track(TrackRef),
     /// A genre row.
-    Genre(ChartGenre),
+    Genre(GenreRef),
 }
 
-/// Reads a row back by the fields only its kind writes: an album always
-/// writes `requested`, an artist `in_library`; a genre is told from a
-/// track by `artist_count` or by having none of a track's own fields.
-/// Trying each kind in turn would read every album as an artist, since an
-/// artist's fields are all optional.
-impl<'de> Deserialize<'de> for SectionItem {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error as _;
-        let value = serde_json::Value::deserialize(deserializer)?;
-        let has = |key: &str| value.get(key).is_some();
-        const TRACK_ONLY: [&str; 5] = [
-            "mbid",
-            "artist_name",
-            "album_name",
-            "listened_at",
-            "image_url",
-        ];
-        let item = if has("requested") {
-            serde_json::from_value(value).map(Self::Album)
-        } else if has("in_library") {
-            serde_json::from_value(value).map(Self::Artist)
-        } else if !has("artist_count") && TRACK_ONLY.iter().any(|key| has(key)) {
-            serde_json::from_value(value).map(Self::Track)
-        } else {
-            serde_json::from_value(value).map(Self::Genre)
-        };
-        item.map_err(D::Error::custom)
+/// What a section's rows are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SectionKind {
+    /// Artist rows.
+    Artists,
+    /// Album rows.
+    Albums,
+    /// Track rows.
+    Tracks,
+    /// Genre rows.
+    Genres,
+}
+
+/// Where a shelf's rows came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ShelfSource {
+    /// ListenBrainz.
+    Listenbrainz,
+    /// Last.fm.
+    Lastfm,
+    /// The user's Jellyfin server.
+    Jellyfin,
+    /// MusicBrainz.
+    Musicbrainz,
+    /// The native library.
+    Library,
+    /// The user's own plays in DroppedNeedle.
+    Local,
+}
+
+impl From<ListenSource> for ShelfSource {
+    fn from(source: ListenSource) -> Self {
+        match source {
+            ListenSource::Listenbrainz => Self::Listenbrainz,
+            ListenSource::Lastfm => Self::Lastfm,
+        }
+    }
+}
+
+/// The seed a radio shelf or plan starts from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RadioSeedKind {
+    /// An artist MBID.
+    Artist,
+    /// A release-group MBID.
+    Album,
+    /// A genre name.
+    Genre,
+    /// A list of seed rows (radio plans only).
+    Items,
+}
+
+impl RadioSeedKind {
+    /// Wire spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Artist => "artist",
+            Self::Album => "album",
+            Self::Genre => "genre",
+            Self::Items => "items",
+        }
     }
 }
 
 /// A titled shelf of rows: the unit both home and discover render.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ChartSection {
     /// Shelf title.
     pub title: String,
-    /// Row kind (`artist`, `album`, `track`, `genre`).
+    /// What the rows are.
     #[serde(rename = "type")]
-    pub section_type: String,
+    pub kind: SectionKind,
     /// Shelf rows.
-    #[serde(default)]
     pub items: Vec<SectionItem>,
-    /// Provider behind the shelf, when it has one.
+    /// Where the rows came from, when the shelf names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-    /// Fallback explanation when the shelf degraded, when shown.
+    pub source: Option<ShelfSource>,
+    /// Explanation shown in place of rows when the shelf could not fill.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback_message: Option<String>,
     /// Service the user must connect for the full shelf, when gated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub connect_service: Option<String>,
-    /// Radio seed kind (`artist`, `album`, `genre`), when playable.
+    pub connect_service: Option<ShelfSource>,
+    /// Radio seed kind, when the shelf is playable as radio.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub radio_seed_type: Option<String>,
+    pub radio_seed_type: Option<RadioSeedKind>,
     /// Radio seed id, when playable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub radio_seed_id: Option<String>,
 }
 
+/// A service a connect-a-service card points at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum PromptService {
+    /// ListenBrainz.
+    Listenbrainz,
+    /// Last.fm.
+    Lastfm,
+    /// Jellyfin.
+    Jellyfin,
+    /// A download client.
+    DownloadClient,
+}
+
 /// A card nudging the user to connect a service.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ServicePrompt {
-    /// Service key (`listenbrainz`, `lastfm`, ...).
-    pub service: String,
+    /// The service to connect.
+    pub service: PromptService,
     /// Card title.
     pub title: String,
     /// Card body.
@@ -204,12 +196,11 @@ pub struct ServicePrompt {
     /// Accent color token.
     pub color: String,
     /// Feature bullets.
-    #[serde(default)]
     pub features: Vec<String>,
 }
 
 /// Which integrations back the shelves right now.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct IntegrationStatus {
     /// ListenBrainz charts and history are available.
     pub listenbrainz: bool,
@@ -222,24 +213,19 @@ pub struct IntegrationStatus {
     /// Last.fm is connected.
     pub lastfm: bool,
     /// A Navidrome source is connected.
-    #[serde(default)]
     pub navidrome: bool,
     /// The YouTube data API (quota'd) is configured.
-    #[serde(default)]
     pub youtube_api: bool,
     /// A Plex source is connected.
-    #[serde(default)]
     pub plex: bool,
     /// The native library has files.
-    #[serde(default)]
     pub library: bool,
     /// Local files back playback. Home-only; discover leaves it false.
-    #[serde(default)]
     pub localfiles: bool,
 }
 
 /// One track of the weekly exploration playlist.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct WeeklyTrack {
     /// Track title.
     pub title: String,
@@ -265,17 +251,15 @@ pub struct WeeklyTrack {
 }
 
 /// The weekly exploration playlist shelf.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct WeeklyExploration {
     /// Shelf title.
     pub title: String,
     /// Playlist date (`YYYY-MM-DD`).
     pub playlist_date: String,
     /// Playlist tracks in order.
-    #[serde(default)]
     pub tracks: Vec<WeeklyTrack>,
     /// Provider playlist URL, when there is one.
-    #[serde(default)]
     pub source_url: String,
 }
 
@@ -283,20 +267,29 @@ pub struct WeeklyExploration {
 // Home
 // ---------------------------------------------------------------------------
 
+/// How a genre's mosaic art is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtworkKind {
+    /// A collage of owned covers.
+    Collage,
+    /// A flat gradient.
+    Gradient,
+}
+
 /// Genre mosaic art: a collage of owned covers or a flat gradient.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct GenreArtwork {
-    /// `collage` or `gradient`.
-    pub kind: String,
+    /// How the art is drawn.
+    pub kind: ArtworkKind,
     /// Artwork schema version.
     pub version: String,
     /// Owned covers composing the collage (empty for gradients).
-    #[serde(default)]
     pub albums: Vec<GenreArtworkAlbum>,
 }
 
 /// One cover inside a genre collage.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct GenreArtworkAlbum {
     /// Native album id.
     pub album_id: String,
@@ -310,20 +303,19 @@ pub struct GenreArtworkAlbum {
 }
 
 /// A discover teaser on home: one seed artist plus similar artists.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverPreview {
     /// Seed artist name.
     pub seed_artist: String,
     /// Seed MusicBrainz artist id.
     pub seed_artist_mbid: String,
     /// Similar artists.
-    #[serde(default)]
-    pub items: Vec<ChartArtist>,
+    pub items: Vec<ArtistRef>,
 }
 
 /// Home shelves. Every shelf is optional: absence means the shelf has no
 /// data, never a failure.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct HomeResponse {
     /// Recently added library albums.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -356,26 +348,23 @@ pub struct HomeResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weekly_exploration: Option<WeeklyExploration>,
     /// Connect-a-service cards.
-    #[serde(default)]
     pub service_prompts: Vec<ServicePrompt>,
     /// Integration availability behind the shelves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub integration_status: Option<IntegrationStatus>,
     /// Mosaic art keyed by genre name.
-    #[serde(default)]
-    pub genre_artwork: std::collections::HashMap<String, GenreArtwork>,
+    pub genre_artwork: HashMap<String, GenreArtwork>,
     /// Genre artwork schema version.
     pub genre_artwork_schema_version: String,
     /// Discover teaser shelf.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discover_preview: Option<DiscoverPreview>,
     /// True while a fuller build runs in the background (the UI polls).
-    #[serde(default)]
     pub refreshing: bool,
 }
 
 /// Owned plus popular rows behind one genre page.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct GenreDetailResponse {
     /// Genre name as requested.
     pub genre: String,
@@ -393,14 +382,12 @@ pub struct GenreDetailResponse {
 }
 
 /// Owned artists and albums for a genre.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct GenreLibrarySection {
     /// Owned artists.
-    #[serde(default)]
-    pub artists: Vec<ChartArtist>,
+    pub artists: Vec<ArtistRef>,
     /// Owned albums.
-    #[serde(default)]
-    pub albums: Vec<ChartAlbum>,
+    pub albums: Vec<AlbumRef>,
     /// Total owned artists.
     pub artist_count: i64,
     /// Total owned albums.
@@ -408,14 +395,12 @@ pub struct GenreLibrarySection {
 }
 
 /// Popular artists and albums for a genre.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct GenrePopularSection {
     /// Popular artists.
-    #[serde(default)]
-    pub artists: Vec<ChartArtist>,
+    pub artists: Vec<ArtistRef>,
     /// Popular albums.
-    #[serde(default)]
-    pub albums: Vec<ChartAlbum>,
+    pub albums: Vec<AlbumRef>,
     /// More artists behind the offsets.
     pub has_more_artists: bool,
     /// More albums behind the offsets.
@@ -423,16 +408,16 @@ pub struct GenrePopularSection {
 }
 
 // ---------------------------------------------------------------------------
-// Charts (range-pair redesign)
+// Charts
 // ---------------------------------------------------------------------------
 
-/// Valid chart ranges. v2 spelled these as path pairs
-/// (`/trending/artists` plus `/trending/artists/{range_key}`); v3 takes one
-/// route with `?range=`. Keys keep the v2 spelling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+/// A listening-statistics window: the chart pages' `range`, and the
+/// ListenBrainz statistics range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ChartRange {
+pub enum StatsRange {
     /// This week.
+    #[default]
     ThisWeek,
     /// This month.
     ThisMonth,
@@ -442,9 +427,9 @@ pub enum ChartRange {
     AllTime,
 }
 
-impl ChartRange {
-    /// Parse a `range` query value. Unknown values fail; v2 silently fell
-    /// back to `this_week`, which hid client bugs.
+impl StatsRange {
+    /// Parse a `range` query value. Unknown values fail rather than fall
+    /// back, which would hide client bugs.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "this_week" => Some(Self::ThisWeek),
@@ -455,7 +440,7 @@ impl ChartRange {
         }
     }
 
-    /// Wire spelling.
+    /// Wire spelling, which is also ListenBrainz's.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ThisWeek => "this_week",
@@ -465,7 +450,7 @@ impl ChartRange {
         }
     }
 
-    /// Human label, kept from v2.
+    /// Human label.
     pub fn label(self) -> &'static str {
         match self {
             Self::ThisWeek => "This Week",
@@ -476,65 +461,15 @@ impl ChartRange {
     }
 }
 
-impl Default for ChartRange {
-    fn default() -> Self {
-        Self::ThisWeek
-    }
-}
-
-/// Chart provider preference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ChartSource {
-    /// ListenBrainz charts.
-    Listenbrainz,
-    /// Last.fm charts.
-    Lastfm,
-}
-
-impl ChartSource {
-    /// Parse a `source` query value.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "listenbrainz" => Some(Self::Listenbrainz),
-            "lastfm" => Some(Self::Lastfm),
-            _ => None,
-        }
-    }
-}
-
-impl Default for ChartSource {
-    fn default() -> Self {
-        Self::Listenbrainz
-    }
-}
-
-/// One page of a trending-artists chart.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct TrendingArtistsPage {
-    /// Range key behind this page.
-    pub range_key: String,
+/// One page of a ranked chart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ChartPage<T> {
+    /// Range behind this page.
+    pub range_key: StatsRange,
     /// Human range label.
     pub label: String,
-    /// Ranked artists for the page.
-    pub items: Vec<ChartArtist>,
-    /// Offset behind this page.
-    pub offset: i64,
-    /// Limit behind this page.
-    pub limit: i64,
-    /// True when more rows follow.
-    pub has_more: bool,
-}
-
-/// One page of a popular-albums or your-top chart.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PopularAlbumsPage {
-    /// Range key behind this page.
-    pub range_key: String,
-    /// Human range label.
-    pub label: String,
-    /// Ranked albums for the page.
-    pub items: Vec<ChartAlbum>,
+    /// Ranked rows for the page.
+    pub items: Vec<T>,
     /// Offset behind this page.
     pub offset: i64,
     /// Limit behind this page.
@@ -548,7 +483,7 @@ pub struct PopularAlbumsPage {
 // ---------------------------------------------------------------------------
 
 /// One "because you listen to" shelf: seed plus similar albums.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct BecauseYouListenTo {
     /// Seed artist name.
     pub seed_artist: String,
@@ -557,7 +492,6 @@ pub struct BecauseYouListenTo {
     /// Similar-albums shelf.
     pub section: ChartSection,
     /// Seed listen count backing the pick.
-    #[serde(default)]
     pub listen_count: i64,
     /// Banner art URL, when resolved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -571,14 +505,13 @@ pub struct BecauseYouListenTo {
 }
 
 /// One personalized top pick.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct TopPickItem {
     /// Picked album.
-    pub album: ChartAlbum,
+    pub album: AlbumRef,
     /// Match score, 0-100.
     pub match_pct: i64,
     /// Human reasons behind the pick.
-    #[serde(default)]
     pub reasons: Vec<String>,
     /// Seed artist name, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -586,28 +519,73 @@ pub struct TopPickItem {
 }
 
 /// The personalized top-picks shelf.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct TopPicksSection {
     /// Shelf title.
     pub title: String,
     /// Ranked picks.
-    #[serde(default)]
     pub items: Vec<TopPickItem>,
     /// Provider behind the picks, when it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+    pub source: Option<ShelfSource>,
     /// True while picks are trending-only because personalization has not
     /// resolved yet (the UI shows a "still personalising" hint).
-    #[serde(default)]
     pub personalizing: bool,
+}
+
+/// A group of shelves on the discover page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscoverZone {
+    /// Top Picks.
+    Picks,
+    /// Listeners like you.
+    Lounge,
+    /// The weekly exploration playlist.
+    Weekly,
+    /// Daily Mixes and radio.
+    Made,
+    /// The "because you listen to" shelves.
+    Because,
+    /// Fresh releases and new from followed artists.
+    Fresh,
+    /// Shelves from the user's own library.
+    Library,
+    /// Genre shelves.
+    Genres,
+    /// Trending charts.
+    Trending,
+}
+
+/// Where one discover zone stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ZoneStatus {
+    /// No page has been built yet.
+    Loading,
+    /// A rebuild is running.
+    Updating,
+    /// The zone has rows.
+    Ready,
+    /// The zone has no rows.
+    Empty,
+}
+
+/// How a listening service fared in a discover build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceState {
+    /// It answered only in part.
+    Degraded,
+    /// Every read of it failed.
+    Unavailable,
 }
 
 /// Discover shelves. Every shelf is optional: absence means no data, never
 /// a failure.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverResponse {
     /// Seed-driven similar-album shelves.
-    #[serde(default)]
     pub because_you_listen_to: Vec<BecauseYouListenTo>,
     /// Whether the queue deck is enabled for the user.
     pub discover_queue_enabled: bool,
@@ -639,11 +617,9 @@ pub struct DiscoverResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub integration_status: Option<IntegrationStatus>,
     /// Connect-a-service cards.
-    #[serde(default)]
     pub service_prompts: Vec<ServicePrompt>,
     /// Mosaic art keyed by genre name.
-    #[serde(default)]
-    pub genre_artwork: std::collections::HashMap<String, GenreArtwork>,
+    pub genre_artwork: HashMap<String, GenreArtwork>,
     /// Genre artwork schema version.
     pub genre_artwork_schema_version: String,
     /// Last.fm weekly artist chart.
@@ -656,10 +632,8 @@ pub struct DiscoverResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lastfm_recent_scrobbles: Option<ChartSection>,
     /// Daily mix shelves.
-    #[serde(default)]
     pub daily_mixes: Vec<ChartSection>,
     /// Radio shelves.
-    #[serde(default)]
     pub radio_sections: Vec<ChartSection>,
     /// Personalized top picks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -682,18 +656,14 @@ pub struct DiscoverResponse {
     /// Refresh-start timestamp (unix seconds), when refreshing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_started_at: Option<i64>,
-    /// Status per page zone (`picks`, `lounge`, `weekly`, `made`,
-    /// `because`, `fresh`, `library`, `genres`, `trending`): `loading`
-    /// before the first page, `updating` while a rebuild runs, else
-    /// `ready` or `empty`.
-    #[serde(default)]
-    pub section_status: std::collections::HashMap<String, String>,
+    /// Status per page zone: `loading` before the first page, `updating`
+    /// while a rebuild runs, else `ready` or `empty`.
+    pub section_status: HashMap<DiscoverZone, ZoneStatus>,
     /// True while a fuller build runs in the background (the UI polls).
-    #[serde(default)]
     pub refreshing: bool,
-    /// Per-service degradation notes (`ok`/`degraded`/`down`).
+    /// Listening services that failed during the build, when any did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service_status: Option<std::collections::HashMap<String, String>>,
+    pub service_status: Option<HashMap<ListenSource, ServiceState>>,
 }
 
 /// Body recording one discover interaction for personalization.
@@ -707,9 +677,9 @@ pub struct DiscoverActivityRequest {
     /// Artist-page section (`similar`, `top_songs`, `top_albums`), when it had one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
-    /// Provider behind the row (`lastfm`, `listenbrainz`), when it had one.
+    /// Provider behind the row, when it had one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
+    pub provider: Option<ListenSource>,
 }
 
 /// Personalization cursor after recording activity.
@@ -737,26 +707,24 @@ pub struct RefreshResponse {
 // ---------------------------------------------------------------------------
 
 /// One lightweight queue card: the deck renders these before enrichment.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct QueueItemLight {
     /// MusicBrainz release-group id.
-    pub release_group_mbid: String,
-    /// Album name.
-    pub album_name: String,
+    pub musicbrainz_id: String,
+    /// Album title.
+    pub title: String,
     /// Artist name.
     pub artist_name: String,
-    /// MusicBrainz artist id.
-    pub artist_mbid: String,
+    /// The artist's MusicBrainz id.
+    pub artist_id: String,
     /// Human reason behind the pick.
     pub recommendation_reason: String,
-    /// Cover art URL, when resolved.
+    /// Cover URL, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover_url: Option<String>,
     /// True for wildcard (out-of-profile) picks.
-    #[serde(default)]
     pub is_wildcard: bool,
     /// True when already owned.
-    #[serde(default)]
     pub in_library: bool,
 }
 
@@ -773,16 +741,13 @@ pub struct QueueEnrichment {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub country: Option<String>,
     /// Genre/style tags.
-    #[serde(default)]
     pub tags: Vec<String>,
     /// YouTube URL for the album, when found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub youtube_url: Option<String>,
     /// YouTube search URL fallback.
-    #[serde(default)]
     pub youtube_search_url: String,
     /// Whether YouTube search is available at all.
-    #[serde(default)]
     pub youtube_search_available: bool,
     /// Artist biography snippet, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -793,7 +758,7 @@ pub struct QueueEnrichment {
 }
 
 /// The queue deck: cards plus the build they came from.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverQueueResponse {
     /// Deck cards in order.
     #[serde(default)]
@@ -846,11 +811,25 @@ pub struct QueueGenerateRequest {
     pub force: bool,
 }
 
+/// What a generate trigger did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueAction {
+    /// A build started.
+    Started,
+    /// A build was already running.
+    AlreadyBuilding,
+    /// A fresh deck is saved; nothing started.
+    AlreadyReady,
+    /// Scheduled builds are switched off; nothing started.
+    Disabled,
+}
+
 /// What the generate trigger did, plus current build state.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct QueueGenerateResponse {
-    /// `started`, `already_building`, or `fresh`.
-    pub action: String,
+    /// What the trigger did.
+    pub action: QueueAction,
     /// Build state after the trigger.
     pub status: QueueBuildStatus,
     /// Build id, when there is one.
@@ -870,11 +849,24 @@ pub struct QueueGenerateResponse {
     pub error: Option<String>,
 }
 
+/// Whether a queue card's YouTube preview was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewStatus {
+    /// A video was found.
+    Available,
+    /// The search ran and found nothing.
+    NotFound,
+    /// No search could run (no key, no quota left, or no names); the
+    /// search link still works.
+    Unavailable,
+}
+
 /// On-demand YouTube preview behind one queue card.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverQueuePreview {
-    /// `available`, `not_found`, or `unavailable`.
-    pub status: String,
+    /// Whether a preview was found.
+    pub status: PreviewStatus,
     /// Watch URL, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub youtube_url: Option<String>,
@@ -953,33 +945,39 @@ pub struct RadioSeedItem {
     pub album_name: String,
 }
 
+/// Which tracks a radio plan may use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RadioMode {
+    /// Owned tracks only.
+    Library,
+    /// Owned tracks plus provider picks.
+    #[default]
+    Hybrid,
+}
+
 /// Body planning track-level radio. The UI resolves playback per track
 /// (library rows use the native stream endpoint, the rest use YouTube or
 /// 30-second previews).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RadioPlanRequest {
-    /// Seed kind (`artist`, `album`, `genre`, `items`).
-    pub seed_type: String,
+    /// What the plan starts from.
+    pub seed_type: RadioSeedKind,
     /// Seed id (mbid or genre name); empty for item seeds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed_id: Option<String>,
     /// Seed rows for `items` plans.
     #[serde(default)]
     pub items: Vec<RadioSeedItem>,
-    /// `library` (owned only) or `hybrid` (owned plus provider picks, the
-    /// default).
-    #[serde(default = "default_radio_mode")]
-    pub mode: String,
+    /// Which tracks the plan may use.
+    #[serde(default)]
+    pub mode: RadioMode,
     /// Wanted track count.
     #[serde(default = "default_radio_count")]
     pub count: i64,
     /// Recording mbids to leave out.
     #[serde(default)]
     pub exclude_recording_mbids: Vec<String>,
-}
-
-fn default_radio_mode() -> String {
-    "hybrid".to_owned()
 }
 
 fn default_radio_count() -> i64 {
@@ -994,7 +992,6 @@ pub struct RadioPlanTrack {
     /// Artist name.
     pub artist_name: String,
     /// MusicBrainz artist id, when known.
-    #[serde(default)]
     pub artist_mbid: String,
     /// MusicBrainz recording id, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1006,7 +1003,6 @@ pub struct RadioPlanTrack {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub album_name: Option<String>,
     /// True when owned (resolves to the native stream endpoint).
-    #[serde(default)]
     pub in_library: bool,
     /// Native file id for owned rows, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1025,23 +1021,22 @@ pub struct RadioPlanResponse {
     /// Plan title.
     pub title: String,
     /// Planned tracks in order.
-    #[serde(default)]
     pub tracks: Vec<RadioPlanTrack>,
 }
 
 /// Body generating one radio shelf.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RadioRequest {
-    /// Seed kind (`artist`, `album`, `genre`).
-    pub seed_type: String,
+    /// What the shelf starts from (`artist`, `album` or `genre`).
+    pub seed_type: RadioSeedKind,
     /// Seed id (mbid or genre name).
     pub seed_id: String,
     /// Wanted row count.
     #[serde(default = "default_radio_shelf_count")]
     pub count: i64,
-    /// Provider preference (`listenbrainz`, `lastfm`).
+    /// Provider preference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+    pub source: Option<ListenSource>,
 }
 
 fn default_radio_shelf_count() -> i64 {
@@ -1056,7 +1051,7 @@ pub struct PlaylistProfile {
     pub artist_mbids: Vec<String>,
     /// Genres per artist MBID on the playlist, from the library.
     #[serde(default)]
-    pub genre_distribution: std::collections::HashMap<String, Vec<String>>,
+    pub genre_distribution: HashMap<String, Vec<String>>,
     /// Playlist track count.
     #[serde(default)]
     pub track_count: i64,
@@ -1070,9 +1065,9 @@ pub struct PlaylistSuggestionsRequest {
     /// Wanted suggestion count.
     #[serde(default = "default_radio_shelf_count")]
     pub count: i64,
-    /// Provider preference (`listenbrainz`, `lastfm`).
+    /// Provider preference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+    pub source: Option<ListenSource>,
 }
 
 /// Suggested rows for a playlist.
@@ -1096,10 +1091,8 @@ pub struct PreviewTrackItem {
     /// Track title.
     pub title: String,
     /// Artist name.
-    #[serde(default)]
     pub artist_name: String,
     /// Preview audio URL (short-lived, never long-cached).
-    #[serde(default)]
     pub preview_url: String,
     /// Preview length in seconds, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1215,13 +1208,13 @@ pub struct TrackCacheCheckResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoveryBatchItemIn {
     /// MusicBrainz release-group id.
-    pub release_group_mbid: String,
-    /// MusicBrainz artist id.
+    pub musicbrainz_id: String,
+    /// The artist's MusicBrainz id.
     #[serde(default)]
-    pub artist_mbid: String,
-    /// Album name.
+    pub artist_id: String,
+    /// Album title.
     #[serde(default)]
-    pub album_name: String,
+    pub title: String,
     /// Artist name.
     #[serde(default)]
     pub artist_name: String,
@@ -1244,23 +1237,59 @@ pub struct DiscoveryBatchCreate {
     pub idempotency_key: Option<String>,
 }
 
+/// What a batch did with one album.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchOutcome {
+    /// A request was filed.
+    Requested,
+    /// The library already held it.
+    SkippedInLibrary,
+    /// Someone had already requested it.
+    SkippedDuplicate,
+    /// The requests service did not file it.
+    NotRequested,
+}
+
+impl BatchOutcome {
+    /// The stored spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Requested => "requested",
+            Self::SkippedInLibrary => "skipped_in_library",
+            Self::SkippedDuplicate => "skipped_duplicate",
+            Self::NotRequested => "not_requested",
+        }
+    }
+
+    /// Reads a stored spelling back.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "requested" => Some(Self::Requested),
+            "skipped_in_library" => Some(Self::SkippedInLibrary),
+            "skipped_duplicate" => Some(Self::SkippedDuplicate),
+            "not_requested" => Some(Self::NotRequested),
+            _ => None,
+        }
+    }
+}
+
 /// Per-album outcome inside a batch.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoveryBatchItemStatus {
     /// MusicBrainz release-group id.
-    pub release_group_mbid: String,
-    /// MusicBrainz artist id.
+    pub musicbrainz_id: String,
+    /// The artist's MusicBrainz id.
     #[serde(default)]
-    pub artist_mbid: String,
-    /// Album name.
+    pub artist_id: String,
+    /// Album title.
     #[serde(default)]
-    pub album_name: String,
+    pub title: String,
     /// Artist name.
     #[serde(default)]
     pub artist_name: String,
-    /// `requested`, `skipped_in_library`, `skipped_duplicate`, or
-    /// `not_requested` (the requests service did not file it).
-    pub outcome: String,
+    /// What the batch did with the album.
+    pub outcome: BatchOutcome,
     /// Request state, when requested.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_status: Option<String>,

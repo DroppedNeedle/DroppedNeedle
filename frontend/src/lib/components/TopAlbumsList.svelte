@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte';
 	import { Download } from 'lucide-svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
-	import type { TopAlbum } from '$lib/types';
+	import type { AlbumRef } from '$lib/queries/discover/types';
 	import { libraryStore } from '$lib/stores/library';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -15,7 +15,7 @@
 	import { SvelteSet } from 'svelte/reactivity';
 
 	interface Props {
-		albums: TopAlbum[];
+		albums: AlbumRef[];
 		loading?: boolean;
 		configured?: boolean;
 		source?: string;
@@ -40,27 +40,27 @@
 		return unsubscribe;
 	});
 
-	function isInLibrary(album: TopAlbum): boolean {
-		const mbid = album.release_group_mbid?.toLowerCase();
+	function isInLibrary(album: AlbumRef): boolean {
+		const mbid = album.musicbrainz_id?.toLowerCase();
 		if (storeInitialized) return mbid ? libraryMbids.has(mbid) : false;
 		return album.in_library || (mbid ? libraryMbids.has(mbid) : false);
 	}
 
-	function isRequested(album: TopAlbum): boolean {
+	function isRequested(album: AlbumRef): boolean {
 		if (album.requested) return true;
-		const mbid = album.release_group_mbid?.toLowerCase();
+		const mbid = album.musicbrainz_id?.toLowerCase();
 		if (!mbid) return false;
 		return requestedMbids.has(mbid) && !libraryMbids.has(mbid);
 	}
 
-	function isRequesting(album: TopAlbum): boolean {
-		return album.release_group_mbid ? requestingIds.has(album.release_group_mbid) : false;
+	function isRequesting(album: AlbumRef): boolean {
+		return album.musicbrainz_id ? requestingIds.has(album.musicbrainz_id) : false;
 	}
 
-	async function handleRequest(album: TopAlbum) {
-		if (!album.release_group_mbid) return;
+	async function handleRequest(album: AlbumRef) {
+		if (!album.musicbrainz_id) return;
 
-		const id = album.release_group_mbid;
+		const id = album.musicbrainz_id;
 		requestingIds.add(id);
 
 		try {
@@ -108,15 +108,15 @@
 		</Card>
 	{:else}
 		<div class="space-y-1">
-			{#each albums as album, i (album.release_group_mbid || `album-${i}`)}
-				{#if album.release_group_mbid}
+			{#each albums as album, i (album.musicbrainz_id || `album-${i}`)}
+				{#if album.musicbrainz_id}
 					<a
-						href={albumHref(album.release_group_mbid)}
+						href={albumHref(album.musicbrainz_id)}
 						class="flex items-center gap-3 p-2 rounded-lg hover:bg-base-200 cursor-pointer transition-colors group"
 					>
 						<div class="w-12 h-12 shrink-0 relative">
 							<AlbumImage
-								mbid={album.release_group_mbid}
+								mbid={album.musicbrainz_id}
 								alt={album.title}
 								size="full"
 								requestSize={250}
@@ -125,7 +125,7 @@
 							{#if isInLibrary(album)}
 								<LibraryBadge
 									status="library"
-									musicbrainzId={album.release_group_mbid}
+									musicbrainzId={album.musicbrainz_id}
 									albumTitle={album.title}
 									artistName={album.artist_name || 'Unknown'}
 									size="sm"
@@ -134,7 +134,7 @@
 							{:else if isRequested(album)}
 								<LibraryBadge
 									status="requested"
-									musicbrainzId={album.release_group_mbid}
+									musicbrainzId={album.musicbrainz_id}
 									albumTitle={album.title}
 									artistName={album.artist_name || 'Unknown'}
 									size="sm"

@@ -19,7 +19,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::reads::discover::home::library::{ArtCandidate, GenreCandidates, HomeLibrary};
-use crate::reads::discover::models::{GenreArtwork, GenreArtworkAlbum};
+use crate::reads::discover::models::{ArtworkKind, GenreArtwork, GenreArtworkAlbum};
 use crate::reads::discover::page::library::fold;
 use crate::reads::platform::artwork::cache::sha256_hex;
 use crate::reads::platform::artwork::local::{LocalArt, local_art_stamp, read_local_art};
@@ -209,11 +209,10 @@ fn artwork_of(revision: i64, albums: Vec<GenreArtworkAlbum>) -> GenreArtwork {
     let digest = sha256_hex(joined.as_bytes());
     GenreArtwork {
         kind: if albums.is_empty() {
-            "gradient"
+            ArtworkKind::Gradient
         } else {
-            "collage"
-        }
-        .to_owned(),
+            ArtworkKind::Collage
+        },
         version: format!("{ALGORITHM_VERSION}:{revision}:{}", &digest[..12]),
         albums,
     }

@@ -535,14 +535,14 @@ impl PersonalMixBuilder {
                         continue;
                     }
                     pool.push(QueueItemLight {
-                        release_group_mbid: group_mbid,
-                        album_name: group.name,
+                        musicbrainz_id: group_mbid,
+                        title: group.name,
                         artist_name: if group.artist_name.is_empty() {
                             artist.artist_name.clone()
                         } else {
                             group.artist_name
                         },
-                        artist_mbid: artist_mbid.clone(),
+                        artist_id: artist_mbid.clone(),
                         recommendation_reason: format!("Similar to {seed_name}"),
                         cover_url: None,
                         is_wildcard: false,
@@ -565,26 +565,26 @@ impl PersonalMixBuilder {
             if tracks.len() >= needed {
                 break;
             }
-            if !top.contains_key(&item.artist_mbid) {
+            if !top.contains_key(&item.artist_id) {
                 let recording = self
                     .sources
-                    .top_recording(&item.artist_mbid)
+                    .top_recording(&item.artist_id)
                     .await
                     .unwrap_or_else(|cause| {
                         tracing::debug!(%cause, "personal mix: top recording unavailable");
                         None
                     });
-                top.insert(item.artist_mbid.clone(), recording);
+                top.insert(item.artist_id.clone(), recording);
             }
-            let Some(Some(recording)) = top.get(&item.artist_mbid) else {
+            let Some(Some(recording)) = top.get(&item.artist_id) else {
                 continue;
             };
             tracks.push(MixTrack {
                 track_name: recording.title.clone(),
                 artist_name: item.artist_name,
-                album_name: item.album_name,
-                release_group_mbid: item.release_group_mbid,
-                artist_mbid: Some(item.artist_mbid),
+                album_name: item.title,
+                release_group_mbid: item.musicbrainz_id,
+                artist_mbid: Some(item.artist_id),
                 recording_mbid: recording.recording_mbid.clone(),
                 // Owned albums never enter the pools.
                 in_library: false,

@@ -606,7 +606,7 @@ fn deck_ids(body: &Value) -> Vec<String> {
         .as_array()
         .expect("items array")
         .iter()
-        .map(|item| item["release_group_mbid"].as_str().unwrap_or("").to_owned())
+        .map(|item| item["musicbrainz_id"].as_str().unwrap_or("").to_owned())
         .collect()
 }
 

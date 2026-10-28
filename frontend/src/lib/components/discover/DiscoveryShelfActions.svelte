@@ -4,10 +4,11 @@
 	import RadioPlayButton from '$lib/components/discover/RadioPlayButton.svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import Button from '$lib/ui/Button.svelte';
-	import type { HomeAlbum, HomeSection, RadioPlanRequest } from '$lib/types';
+	import type { ChartSection, RadioPlanRequest } from '$lib/queries/discover/types';
+	import { albumRows } from '$lib/utils/sectionRows';
 
 	interface Props {
-		section: HomeSection;
+		section: ChartSection;
 		sectionKey: string;
 		seed: Omit<RadioPlanRequest, 'exclude_recording_mbids' | 'fast'>;
 	}
@@ -15,13 +16,14 @@
 	let { section, sectionKey, seed }: Props = $props();
 	let batchModalOpen = $state(false);
 
-	const albums = $derived(
-		section.type === 'albums' ? (section.items as HomeAlbum[]) : ([] as HomeAlbum[])
-	);
+	const albums = $derived(albumRows(section));
 	const requestableCount = $derived(
 		albums.filter(
 			(album) =>
-				album.mbid && !album.in_library && !album.requested && !libraryStore.isRequested(album.mbid)
+				album.musicbrainz_id &&
+				!album.in_library &&
+				!album.requested &&
+				!libraryStore.isRequested(album.musicbrainz_id)
 		).length
 	);
 	const canDownload = $derived(requestableCount > 0);

@@ -8,13 +8,13 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import { createDiscoveryBatchV3 } from '$lib/queries/discover/DiscoverV3Mutations.svelte';
-	import type { HomeAlbum } from '$lib/types';
+	import type { AlbumRef } from '$lib/queries/discover/types';
 
 	interface Props {
 		open: boolean;
 		sectionTitle: string;
 		sectionKey: string;
-		albums: HomeAlbum[];
+		albums: AlbumRef[];
 	}
 
 	let { open = $bindable(false), sectionTitle, sectionKey, albums }: Props = $props();
@@ -24,12 +24,16 @@
 	let submitting = $state(false);
 
 	const eligible = $derived(
-		albums.filter((a, i) => a.mbid && albums.findIndex((b) => b.mbid === a.mbid) === i)
+		albums.filter(
+			(a, i) =>
+				a.musicbrainz_id && albums.findIndex((b) => b.musicbrainz_id === a.musicbrainz_id) === i
+		)
 	);
-	const isRequested = (album: HomeAlbum) =>
-		!!album.requested || libraryStore.isRequested(album.mbid);
+	const isRequested = (album: AlbumRef) =>
+		!!album.requested || libraryStore.isRequested(album.musicbrainz_id);
 	const selectedCount = $derived(
-		eligible.filter((a) => !a.in_library && !isRequested(a) && !deselected.has(a.mbid!)).length
+		eligible.filter((a) => !a.in_library && !isRequested(a) && !deselected.has(a.musicbrainz_id!))
+			.length
 	);
 	const needsApproval = $derived(authStore.user?.role === 'user');
 
@@ -41,7 +45,7 @@
 			})}`;
 			deselected.clear();
 			for (const album of eligible.filter((item) => item.in_library || isRequested(item))) {
-				deselected.add(album.mbid!);
+				deselected.add(album.musicbrainz_id!);
 			}
 		}
 	});
@@ -59,11 +63,11 @@
 		submitting = true;
 		try {
 			const items = eligible
-				.filter((a) => !a.in_library && !isRequested(a) && !deselected.has(a.mbid!))
+				.filter((a) => !a.in_library && !isRequested(a) && !deselected.has(a.musicbrainz_id!))
 				.map((a) => ({
-					release_group_mbid: a.mbid!,
-					artist_mbid: a.artist_mbid ?? '',
-					album_name: a.name,
+					musicbrainz_id: a.musicbrainz_id!,
+					artist_id: a.artist_id ?? '',
+					title: a.title,
 					artist_name: a.artist_name ?? ''
 				}));
 			const created = await createDiscoveryBatchV3({
@@ -91,7 +95,7 @@
 		<TextField label="Batch name" bind:value={name} />
 
 		<div class="max-h-80 space-y-1 overflow-y-auto pr-1">
-			{#each eligible as album (album.mbid)}
+			{#each eligible as album (album.musicbrainz_id)}
 				<label
 					class="flex items-center gap-3 rounded-lg px-2 py-1.5 {album.in_library ||
 					isRequested(album)
@@ -101,22 +105,22 @@
 					<input
 						type="checkbox"
 						class="checkbox checkbox-sm"
-						checked={!deselected.has(album.mbid!)}
+						checked={!deselected.has(album.musicbrainz_id!)}
 						disabled={album.in_library || isRequested(album)}
-						onchange={() => toggle(album.mbid!)}
+						onchange={() => toggle(album.musicbrainz_id!)}
 					/>
 					<AlbumImage
-						mbid={album.mbid!}
-						alt={album.name}
+						mbid={album.musicbrainz_id!}
+						alt={album.title}
 						size="full"
 						requestSize={250}
 						lazy={true}
 						rounded="md"
 						className="block h-10 w-10 shrink-0 object-cover"
-						customUrl={album.image_url || null}
+						customUrl={album.cover_url || null}
 					/>
 					<div class="min-w-0 flex-1">
-						<p class="truncate text-sm font-medium">{album.name}</p>
+						<p class="truncate text-sm font-medium">{album.title}</p>
 						<p class="truncate text-xs text-base-content/50">{album.artist_name}</p>
 					</div>
 					{#if album.in_library}

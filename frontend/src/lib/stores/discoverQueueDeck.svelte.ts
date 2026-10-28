@@ -20,18 +20,17 @@ import { isAbortError } from '$lib/utils/errorHandling';
 import { invalidateDiscoverRecommendations } from '$lib/queries/discover/DiscoverInvalidation';
 import { recordDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
 import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
-import { toQueueEnrichment, toQueueItem } from '$lib/queries/discover/DiscoverV3Adapters';
 import {
 	musicBrainzSourceKey,
 	subscribeMusicBrainzSourceScope,
 	watchMusicBrainzSourceScope
 } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-import type { DiscoverQueueEnrichment, DiscoverQueueItemFull } from '$lib/types';
+import type { DeckCard, QueueEnrichment } from '$lib/queries/discover/types';
 
 export type DeckPhase = 'idle' | 'loading' | 'building' | 'ready' | 'finished' | 'empty' | 'error';
 
-function emptyEnrichment(): DiscoverQueueEnrichment {
+function emptyEnrichment(): QueueEnrichment {
 	return {
 		artist_mbid: null,
 		release_date: null,
@@ -45,11 +44,11 @@ function emptyEnrichment(): DiscoverQueueEnrichment {
 	};
 }
 
-function dedupeByMbid(items: DiscoverQueueItemFull[]): DiscoverQueueItemFull[] {
+function dedupeByMbid(items: DeckCard[]): DeckCard[] {
 	const seen = new SvelteSet<string>();
-	const unique: DiscoverQueueItemFull[] = [];
+	const unique: DeckCard[] = [];
 	for (const item of items) {
-		const mbid = item.release_group_mbid;
+		const mbid = item.musicbrainz_id;
 		if (!mbid || seen.has(mbid)) continue;
 		seen.add(mbid);
 		unique.push(item);
@@ -59,7 +58,7 @@ function dedupeByMbid(items: DiscoverQueueItemFull[]): DiscoverQueueItemFull[] {
 
 function createDiscoverQueueDeck() {
 	let phase = $state<DeckPhase>('idle');
-	let queue = $state<DiscoverQueueItemFull[]>([]);
+	let queue = $state<DeckCard[]>([]);
 	let currentIndex = $state(0);
 	let queueId = $state('');
 	let errorMessage = $state('');
@@ -75,7 +74,7 @@ function createDiscoverQueueDeck() {
 
 	let abortController: AbortController | null = null;
 	let statusUnsub: (() => void) | null = null;
-	const inFlightEnrich = new SvelteMap<string, Promise<DiscoverQueueEnrichment | null>>();
+	const inFlightEnrich = new SvelteMap<string, Promise<QueueEnrichment | null>>();
 
 	const current = $derived(queue[currentIndex]);
 	const isLast = $derived(currentIndex >= queue.length - 1);
@@ -139,7 +138,7 @@ function createDiscoverQueueDeck() {
 			if (key !== requestKey() || abortController?.signal.aborted) return;
 			generation++;
 			replacing = false;
-			queue = dedupeByMbid((data.items ?? []).map(toQueueItem));
+			queue = dedupeByMbid(data.items ?? []);
 			queueId = data.queue_id;
 			currentIndex = 0;
 			inFlightEnrich.clear();
@@ -163,7 +162,7 @@ function createDiscoverQueueDeck() {
 		if (queue.length === 0) return;
 		const key = requestKey();
 		try {
-			const mbids = queue.map((i) => i.release_group_mbid);
+			const mbids = queue.map((i) => i.musicbrainz_id);
 			const data = await api.global.v3.POST(
 				DiscoverV3Api.queueValidate(),
 				{ release_group_mbids: mbids },
@@ -172,7 +171,7 @@ function createDiscoverQueueDeck() {
 			if (key !== requestKey()) return;
 			const inLibrary = new SvelteSet(data.in_library || []);
 			if (inLibrary.size > 0) {
-				queue = queue.filter((i) => !inLibrary.has(i.release_group_mbid));
+				queue = queue.filter((i) => !inLibrary.has(i.musicbrainz_id));
 				if (currentIndex >= queue.length) currentIndex = Math.max(0, queue.length - 1);
 				persist();
 			}
@@ -188,7 +187,7 @@ function createDiscoverQueueDeck() {
 		const item = queue[index];
 		if (!item || item.enrichment) return;
 
-		const mbid = item.release_group_mbid;
+		const mbid = item.musicbrainz_id;
 		const key = requestKey();
 		const existing = inFlightEnrich.get(mbid);
 		if (existing) {
@@ -197,20 +196,18 @@ function createDiscoverQueueDeck() {
 		}
 
 		const signal = abortController?.signal;
-		const promise = (async (): Promise<DiscoverQueueEnrichment | null> => {
+		const promise = (async (): Promise<QueueEnrichment | null> => {
 			try {
-				const data = toQueueEnrichment(
-					await api.global.v3.GET(DiscoverV3Api.queueEnrich(mbid), { signal })
-				);
+				const data = await api.global.v3.GET(DiscoverV3Api.queueEnrich(mbid), { signal });
 				if (key !== requestKey()) return null;
-				const idx = queue.findIndex((q) => q.release_group_mbid === mbid);
+				const idx = queue.findIndex((q) => q.musicbrainz_id === mbid);
 				if (idx >= 0 && !queue[idx].enrichment) {
 					queue[idx] = { ...queue[idx], enrichment: data };
 				}
 				return data;
 			} catch (e) {
 				if (isAbortError(e) || key !== requestKey()) return null;
-				const idx = queue.findIndex((q) => q.release_group_mbid === mbid);
+				const idx = queue.findIndex((q) => q.musicbrainz_id === mbid);
 				if (idx >= 0 && !queue[idx].enrichment) {
 					queue[idx] = { ...queue[idx], enrichment: emptyEnrichment() };
 				}
@@ -292,13 +289,13 @@ function createDiscoverQueueDeck() {
 
 			const cached = getQueueCachedData(userId());
 			const cachedCurrentMbid = cached
-				? cached.data.items[cached.data.currentIndex]?.release_group_mbid
+				? cached.data.items[cached.data.currentIndex]?.musicbrainz_id
 				: undefined;
 			const cachedItems = cached ? dedupeByMbid(cached.data.items) : [];
 			if (cached && cachedItems.length > 0) {
 				queue = cachedItems;
 				const resumedIndex = cachedCurrentMbid
-					? queue.findIndex((item) => item.release_group_mbid === cachedCurrentMbid)
+					? queue.findIndex((item) => item.musicbrainz_id === cachedCurrentMbid)
 					: -1;
 				currentIndex =
 					resumedIndex >= 0
@@ -356,11 +353,11 @@ function createDiscoverQueueDeck() {
 		},
 
 		removeByMbid(mbid: string): void {
-			const removedIndex = queue.findIndex((item) => item.release_group_mbid === mbid);
+			const removedIndex = queue.findIndex((item) => item.musicbrainz_id === mbid);
 			if (removedIndex < 0) {
 				const cached = getQueueCachedData(userId());
 				if (!cached) return;
-				const items = cached.data.items.filter((item) => item.release_group_mbid !== mbid);
+				const items = cached.data.items.filter((item) => item.musicbrainz_id !== mbid);
 				if (items.length === cached.data.items.length) return;
 				if (items.length === 0) {
 					removeQueueCachedData(userId());
@@ -377,7 +374,7 @@ function createDiscoverQueueDeck() {
 				return;
 			}
 
-			queue = queue.filter((item) => item.release_group_mbid !== mbid);
+			queue = queue.filter((item) => item.musicbrainz_id !== mbid);
 			if (removedIndex < currentIndex) currentIndex--;
 			if (currentIndex >= queue.length) currentIndex = Math.max(0, queue.length - 1);
 			if (queue.length === 0) {
@@ -397,9 +394,9 @@ function createDiscoverQueueDeck() {
 				await api.global.v3.POST(
 					DiscoverV3Api.queueIgnore(),
 					{
-						release_group_mbid: item.release_group_mbid,
-						artist_mbid: item.artist_mbid,
-						release_name: item.album_name,
+						release_group_mbid: item.musicbrainz_id,
+						artist_mbid: item.artist_id,
+						release_name: item.title,
 						artist_name: item.artist_name
 					},
 					{ signal: abortController?.signal }
@@ -409,7 +406,7 @@ function createDiscoverQueueDeck() {
 				// removing it locally is still right even if the ignore write failed
 			}
 			if (key !== requestKey()) return;
-			this.removeByMbid(item.release_group_mbid);
+			this.removeByMbid(item.musicbrainz_id);
 			if (saved) await invalidateDiscoverRecommendations();
 		},
 

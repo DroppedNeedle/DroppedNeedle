@@ -1,17 +1,17 @@
-import type { HomeAlbum, HomeArtist } from '$lib/types';
+import type { AlbumRef, ArtistRef } from '$lib/queries/discover/types';
 
 export type TimeRangeItemType = 'album' | 'artist';
 
 export function getTimeRangeFallbackPath(
 	itemType: TimeRangeItemType,
-	item: HomeAlbum | HomeArtist
+	item: AlbumRef | ArtistRef
 ): string | null {
 	if (itemType === 'album') {
-		const album = item as HomeAlbum;
-		const query = [album.artist_name, album.name].filter(Boolean).join(' ').trim();
+		const album = item as AlbumRef;
+		const query = [album.artist_name, album.title].filter(Boolean).join(' ').trim();
 		return query ? `/search/albums?q=${encodeURIComponent(query)}` : null;
 	}
 
-	const query = item.name?.trim();
+	const query = 'name' in item ? item.name.trim() : '';
 	return query ? `/search/artists?q=${encodeURIComponent(query)}` : null;
 }

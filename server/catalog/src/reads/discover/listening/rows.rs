@@ -2,15 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Which listening service a user's discovery follows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MusicSource {
-    /// ListenBrainz (the default).
-    #[default]
-    ListenBrainz,
-    /// Last.fm.
-    LastFm,
-}
+pub use crate::reads::discover::models::StatsRange;
+pub use droppedneedle_kernel::runtime_config::sections::ListenSource;
 
 /// One user's listening services, resolved once per build.
 #[derive(Debug, Clone, Default)]
@@ -24,32 +17,7 @@ pub struct UserMusic {
     /// Whether a Jellyfin connection resolves for this user.
     pub jellyfin: bool,
     /// The user's primary source preference.
-    pub primary: MusicSource,
-}
-
-/// ListenBrainz statistics windows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StatsRange {
-    /// The current week.
-    ThisWeek,
-    /// The current month.
-    ThisMonth,
-    /// The current year.
-    ThisYear,
-    /// Everything.
-    AllTime,
-}
-
-impl StatsRange {
-    /// The ListenBrainz spelling.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ThisWeek => "this_week",
-            Self::ThisMonth => "this_month",
-            Self::ThisYear => "this_year",
-            Self::AllTime => "all_time",
-        }
-    }
+    pub primary: ListenSource,
 }
 
 /// Which Jellyfin artist list seeds a deck.

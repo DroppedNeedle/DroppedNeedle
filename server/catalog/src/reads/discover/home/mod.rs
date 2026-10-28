@@ -31,7 +31,7 @@ use sqlx::SqlitePool;
 
 use super::cache::{PageKind, Timing, UserPageCache, Variant};
 use super::content::IntegrationSettings;
-use super::listening::{Ask, ListenedAlbum, ListeningData, MusicSource, StatsRange, UserMusic};
+use super::listening::{Ask, ListenSource, ListenedAlbum, ListeningData, StatsRange, UserMusic};
 use super::ownership;
 use super::page::build::{genre_list, weekly_exploration};
 use super::page::shelves::SHELF_SIZE;
@@ -39,7 +39,7 @@ use super::page::{DiscoverPages, GENRE_ARTWORK_SCHEMA, add_section};
 use super::scheduler::{Feature, Warm};
 use crate::reads::discover::genre::{self, artwork::GenreArt};
 use crate::reads::discover::models::{
-    ChartAlbum, ChartArtist, ChartSection, DiscoverPreview, HomeResponse, IntegrationStatus,
+    AlbumRef, ArtistRef, ChartSection, DiscoverPreview, HomeResponse, IntegrationStatus,
     SectionItem, WeeklyExploration,
 };
 use crate::reads::discover::ports::BoxFuture;
@@ -85,16 +85,16 @@ async fn bounded<T: Default, E: std::fmt::Display>(
 /// Mark which albums and artists the library holds.
 pub(super) async fn mark_owned(
     pool: &SqlitePool,
-    albums: Vec<&mut ChartAlbum>,
-    artists: Vec<&mut ChartArtist>,
+    albums: Vec<&mut AlbumRef>,
+    artists: Vec<&mut ArtistRef>,
 ) {
     let album_ids: Vec<&str> = albums
         .iter()
-        .filter_map(|row| row.mbid.as_deref())
+        .filter_map(|row| row.musicbrainz_id.as_deref())
         .collect();
     let artist_ids: Vec<&str> = artists
         .iter()
-        .filter_map(|row| row.mbid.as_deref())
+        .filter_map(|row| row.musicbrainz_id.as_deref())
         .collect();
     let owned_albums = if album_ids.is_empty() {
         HashMap::new()
@@ -118,7 +118,7 @@ pub(super) async fn mark_owned(
     };
     for row in albums {
         if let Some(local) = row
-            .mbid
+            .musicbrainz_id
             .as_deref()
             .and_then(|mbid| owned_albums.get(&mbid.to_ascii_lowercase()))
         {
@@ -128,7 +128,7 @@ pub(super) async fn mark_owned(
     }
     for row in artists {
         if let Some(local) = row
-            .mbid
+            .musicbrainz_id
             .as_deref()
             .and_then(|mbid| owned_artists.get(&mbid.to_ascii_lowercase()))
         {
@@ -140,8 +140,8 @@ pub(super) async fn mark_owned(
 
 /// Mark ownership on every album and artist row of a page.
 async fn mark_page(pool: &SqlitePool, page: &mut HomeResponse) {
-    let mut albums: Vec<&mut ChartAlbum> = Vec::new();
-    let mut artists: Vec<&mut ChartArtist> = Vec::new();
+    let mut albums: Vec<&mut AlbumRef> = Vec::new();
+    let mut artists: Vec<&mut ArtistRef> = Vec::new();
     let shelves = [
         page.recently_added.as_mut(),
         page.library_artists.as_mut(),
@@ -188,7 +188,7 @@ fn warm_targets(page: &HomeResponse, shelves: &ProviderShelves) -> WarmTargets {
     }
     if let Some(preview) = &page.discover_preview {
         for artist in &preview.items {
-            targets.artist(artist.mbid.as_deref());
+            targets.artist(artist.musicbrainz_id.as_deref());
         }
     }
     targets
@@ -407,7 +407,7 @@ impl LiveHome {
         let listening = &self.inner.listening;
         let ask = Ask::build(droppedneedle_providers::RequestPriority::BackgroundSync);
         let ask = &ask;
-        let lastfm_primary = listening.policy_for(music).listening() == MusicSource::LastFm;
+        let lastfm_primary = listening.policy_for(music).listening() == ListenSource::Lastfm;
         let lb_user = music.listenbrainz.as_deref();
         let lfm_user = music.lastfm_username.as_deref().filter(|_| music.lastfm);
         let charts = async {
@@ -417,7 +417,10 @@ impl LiveHome {
                     listening.lastfm_chart_artists(user_id, PROVIDER_ROWS, ask),
                 )
                 .await;
-                (shelves::trending_artists(&artists, "lastfm"), None)
+                (
+                    shelves::trending_artists(&artists, ListenSource::Lastfm),
+                    None,
+                )
             } else {
                 let (artists, albums) = tokio::join!(
                     bounded(
@@ -432,7 +435,7 @@ impl LiveHome {
                     }),
                 );
                 (
-                    shelves::trending_artists(&artists, "listenbrainz"),
+                    shelves::trending_artists(&artists, ListenSource::Listenbrainz),
                     shelves::popular_albums(&albums),
                 )
             }
@@ -454,7 +457,7 @@ impl LiveHome {
                     );
                     (
                         shelves::your_top_albums(&top),
-                        shelves::favorites(&loved, "listenbrainz"),
+                        shelves::favorites(&loved, ListenSource::Listenbrainz),
                     )
                 }
                 (true, _, Some(username)) => {
@@ -476,7 +479,7 @@ impl LiveHome {
                     );
                     (
                         shelves::your_top_albums_lastfm(&top),
-                        shelves::favorites(&loved, "lastfm"),
+                        shelves::favorites(&loved, ListenSource::Lastfm),
                     )
                 }
                 _ => (None, None),

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { coverSrc } from '$lib/api/covers';
 	import { imageSettingsStore } from '$lib/stores/imageSettings';
-	import type { BecauseYouListenTo } from '$lib/types';
+	import type { BecauseYouListenTo } from '$lib/queries/discover/types';
 	import HomeSection from './HomeSection.svelte';
 	import HeroBackdrop from './HeroBackdrop.svelte';
 	import ArtistImage from './ArtistImage.svelte';

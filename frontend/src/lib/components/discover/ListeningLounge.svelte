@@ -6,11 +6,12 @@
 	import { libraryStore } from '$lib/stores/library';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { albumHrefOrNull } from '$lib/utils/entityRoutes';
-	import type { HomeAlbum, HomeSection, TopPicksSection } from '$lib/types';
+	import type { AlbumRef, ChartSection, TopPicksSection } from '$lib/queries/discover/types';
+	import { albumRows } from '$lib/utils/sectionRows';
 	import LiveUpdatingBadge from '$lib/components/LiveUpdatingBadge.svelte';
 
 	interface Props {
-		section: HomeSection | null;
+		section: ChartSection | null;
 		topPicks: TopPicksSection | null;
 		updating?: boolean;
 	}
@@ -22,16 +23,16 @@
 	// browse-by-ear pool: listeners-like-you albums + top-pick runners-up
 	const pool = $derived.by(() => {
 		const seen = new SvelteSet<string>();
-		const albums: HomeAlbum[] = [];
-		for (const item of (section?.items ?? []) as HomeAlbum[]) {
-			if (item.mbid && !seen.has(item.mbid)) {
-				seen.add(item.mbid);
+		const albums: AlbumRef[] = [];
+		for (const item of albumRows(section)) {
+			if (item.musicbrainz_id && !seen.has(item.musicbrainz_id)) {
+				seen.add(item.musicbrainz_id);
 				albums.push(item);
 			}
 		}
 		for (const pick of topPicks?.items.slice(3) ?? []) {
-			if (pick.album.mbid && !seen.has(pick.album.mbid)) {
-				seen.add(pick.album.mbid);
+			if (pick.album.musicbrainz_id && !seen.has(pick.album.musicbrainz_id)) {
+				seen.add(pick.album.musicbrainz_id);
 				albums.push(pick.album);
 			}
 		}
@@ -39,34 +40,35 @@
 	});
 
 	const activeAlbum = $derived(
-		pool.find((a) => a.mbid === deckSampler.activeKey && deckSampler.status !== 'idle') ?? null
+		pool.find((a) => a.musicbrainz_id === deckSampler.activeKey && deckSampler.status !== 'idle') ??
+			null
 	);
 	const activeRequested = $derived(
-		!!activeAlbum && (activeAlbum.requested || libraryStore.isRequested(activeAlbum.mbid))
+		!!activeAlbum && (activeAlbum.requested || libraryStore.isRequested(activeAlbum.musicbrainz_id))
 	);
 
-	function albumEntry(album: HomeAlbum): SampleEntry {
+	function albumEntry(album: AlbumRef): SampleEntry {
 		// pool guarantees a non-null mbid (filtered below), so the coalesce never fires
 		return {
-			key: album.mbid ?? '',
+			key: album.musicbrainz_id ?? '',
 			kind: 'album',
 			artist: album.artist_name ?? '',
-			title: album.name,
-			albumMbid: album.mbid,
-			artistMbid: album.artist_mbid,
-			coverUrl: album.image_url
+			title: album.title,
+			albumMbid: album.musicbrainz_id,
+			artistMbid: album.artist_id,
+			coverUrl: album.cover_url
 		};
 	}
 
-	function sample(album: HomeAlbum) {
-		if (!album.mbid) return;
-		if (deckSampler.activeKey === album.mbid && deckSampler.status !== 'idle') {
+	function sample(album: AlbumRef) {
+		if (!album.musicbrainz_id) return;
+		if (deckSampler.activeKey === album.musicbrainz_id && deckSampler.status !== 'idle') {
 			deckSampler.stop();
 			return;
 		}
-		void deckSampler.start(album.mbid, album.artist_name ?? '', album.name, {
-			artistMbid: album.artist_mbid,
-			coverUrl: album.image_url
+		void deckSampler.start(album.musicbrainz_id, album.artist_name ?? '', album.title, {
+			artistMbid: album.artist_id,
+			coverUrl: album.cover_url
 		});
 	}
 
@@ -79,15 +81,15 @@
 	const loungeRequest = requestAlbum();
 
 	async function requestActive() {
-		if (!activeAlbum?.mbid || requesting) return;
+		if (!activeAlbum?.musicbrainz_id || requesting) return;
 		requesting = true;
 		try {
 			await loungeRequest
 				.mutateAsync({
-					release_group_mbid: activeAlbum.mbid,
+					release_group_mbid: activeAlbum.musicbrainz_id,
 					artist_name: activeAlbum.artist_name ?? undefined,
-					album_title: activeAlbum.name,
-					artist_mbid: activeAlbum.artist_mbid ?? undefined
+					album_title: activeAlbum.title,
+					artist_mbid: activeAlbum.artist_id ?? undefined
 				})
 				.catch(() => null);
 		} finally {
@@ -150,27 +152,28 @@
 		</div>
 
 		<div class="flex gap-4 overflow-x-auto pb-2">
-			{#each pool as album (album.mbid)}
-				{@const isActive = album.mbid === deckSampler.activeKey && deckSampler.status !== 'idle'}
-				{@const href = albumHrefOrNull(album.mbid)}
+			{#each pool as album (album.musicbrainz_id)}
+				{@const isActive =
+					album.musicbrainz_id === deckSampler.activeKey && deckSampler.status !== 'idle'}
+				{@const href = albumHrefOrNull(album.musicbrainz_id)}
 				<div class="w-40 shrink-0 sm:w-48">
 					<button
 						class="lounge-cover group/card relative w-full overflow-hidden rounded-xl shadow-md transition-all duration-300 {isActive
 							? 'ring-2 ring-secondary ring-offset-2 ring-offset-base-100'
 							: 'hover:-translate-y-1 hover:shadow-xl'}"
 						onclick={() => sample(album)}
-						aria-label="{isActive ? 'Stop' : 'Preview'} {album.name} by {album.artist_name}"
+						aria-label="{isActive ? 'Stop' : 'Preview'} {album.title} by {album.artist_name}"
 						title={isActive ? 'Stop preview' : 'Preview this album'}
 					>
 						<AlbumImage
-							mbid={album.mbid || ''}
-							alt={album.name}
+							mbid={album.musicbrainz_id || ''}
+							alt={album.title}
 							size="full"
 							requestSize={250}
 							lazy={true}
 							rounded="none"
 							className="block aspect-square w-full object-cover"
-							customUrl={album.image_url || null}
+							customUrl={album.cover_url || null}
 						/>
 						<div
 							class="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors duration-300 {isActive
@@ -218,7 +221,7 @@
 							? 'transition-colors hover:text-secondary'
 							: ''}"
 					>
-						{album.name}
+						{album.title}
 					</svelte:element>
 					<p class="truncate text-xs text-base-content/50">{album.artist_name}</p>
 				</div>

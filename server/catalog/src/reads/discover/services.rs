@@ -12,16 +12,16 @@ use crate::reads::discover::{
     content::LiveContent,
     genre::WithGenrePages,
     models::{
-        AlbumPreviewResponse, ChartRange, ChartSection, ChartSource, DiscoverActivityResponse,
-        DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
-        DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchListResponse,
-        DiscoveryBatchRemoveResult, GenreDetailResponse, HomeResponse, IgnoredReleasesResponse,
-        IntegrationStatus, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse,
-        PopularAlbumsPage, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
+        AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
+        DiscoverActivityResponse, DiscoverQueuePreview, DiscoverQueueResponse,
+        DiscoverQueueStatusResponse, DiscoverResponse, DiscoveryBatchCreate, DiscoveryBatchDetail,
+        DiscoveryBatchListResponse, DiscoveryBatchRemoveResult, GenreDetailResponse, HomeResponse,
+        IgnoredReleasesResponse, IntegrationStatus, ListenSource, PlaylistSuggestionsRequest,
+        PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
         QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse, RadioPlanRequest,
-        RadioPlanResponse, RadioRequest, RefreshResponse, TrackCacheCheckRequest,
-        TrackCacheCheckResponse, TrackCacheCheckResponseItem, TrackPreviewResponse,
-        TrendingArtistsPage, YouTubeQuotaResponse, YouTubeSearchResponse,
+        RadioPlanResponse, RadioRequest, RadioSeedKind, RefreshResponse, StatsRange,
+        TrackCacheCheckRequest, TrackCacheCheckResponse, TrackCacheCheckResponseItem,
+        TrackPreviewResponse, YouTubeQuotaResponse, YouTubeSearchResponse,
     },
     ports::{BatchFailure, BatchRefusal, ProviderFailure, QueueTrigger, RadioFailure},
     previews::LivePreviews,
@@ -128,31 +128,6 @@ fn clamp_limit(value: Option<i64>, default: i64, max: i64) -> i64 {
     value.unwrap_or(default).clamp(1, max)
 }
 
-/// Parse a `range` query value, defaulting to this week. Unknown values
-/// fail: v2 silently fell back, which hid client bugs.
-pub fn parse_range(value: Option<&str>) -> Result<ChartRange, ServiceError> {
-    match value {
-        None => Ok(ChartRange::default()),
-        Some(raw) => ChartRange::parse(raw).ok_or_else(|| {
-            ServiceError::InvalidInput(format!(
-                "Unknown range '{raw}'; want this_week, this_month, this_year, or all_time"
-            ))
-        }),
-    }
-}
-
-/// Parse a `source` query value, defaulting to ListenBrainz.
-pub fn parse_source(value: Option<&str>) -> Result<ChartSource, ServiceError> {
-    match value {
-        None => Ok(ChartSource::default()),
-        Some(raw) => ChartSource::parse(raw).ok_or_else(|| {
-            ServiceError::InvalidInput(format!(
-                "Unknown source '{raw}'; want listenbrainz or lastfm"
-            ))
-        }),
-    }
-}
-
 /// Reject blank or overlong names with a user-facing reason.
 fn check_name(value: &str, what: &str) -> Result<(), ServiceError> {
     if value.trim().is_empty() {
@@ -208,13 +183,6 @@ pub async fn record_activity(
             "Unknown section '{section}'; want similar, top_songs, or top_albums"
         )));
     }
-    if let Some(provider) = body.provider.as_deref()
-        && !matches!(provider, "lastfm" | "listenbrainz")
-    {
-        return Err(ServiceError::InvalidInput(format!(
-            "Unknown provider '{provider}'; want lastfm or listenbrainz"
-        )));
-    }
     if feature == Feature::Artist {
         let valid_artist = body
             .artist_mbid
@@ -238,7 +206,7 @@ pub async fn record_activity(
             ArtistDetail {
                 artist_mbid: body.artist_mbid.as_deref(),
                 section: body.section.as_deref(),
-                provider: body.provider.as_deref(),
+                provider: body.provider.map(ListenSource::as_str),
             },
         )
         .await?)
@@ -250,18 +218,16 @@ pub async fn radio_shelf(
     user_id: &str,
     body: &RadioRequest,
 ) -> Result<ChartSection, ServiceError> {
-    if !matches!(body.seed_type.as_str(), "artist" | "album" | "genre") {
-        return Err(ServiceError::InvalidInput(format!(
-            "Unknown seed type '{}'; want artist, album, or genre",
-            body.seed_type
-        )));
+    if body.seed_type == RadioSeedKind::Items {
+        return Err(ServiceError::InvalidInput(
+            "A radio shelf starts from an artist, an album or a genre".to_owned(),
+        ));
     }
     if body.seed_id.trim().is_empty() {
         return Err(ServiceError::InvalidInput(
             "seed_id must not be blank".to_owned(),
         ));
     }
-    parse_source(body.source.as_deref())?;
     let request = RadioRequest {
         count: body.count.clamp(1, RADIO_SHELF_MAX),
         ..body.clone()
@@ -278,16 +244,9 @@ pub async fn radio_plan(
     user_id: &str,
     body: &RadioPlanRequest,
 ) -> Result<RadioPlanResponse, ServiceError> {
-    if !matches!(
-        body.seed_type.as_str(),
-        "artist" | "album" | "genre" | "items"
-    ) {
-        return Err(ServiceError::InvalidInput(format!(
-            "Unknown seed type '{}'; want artist, album, genre, or items",
-            body.seed_type
-        )));
-    }
-    if body.seed_type != "items" && body.seed_id.as_deref().unwrap_or("").trim().is_empty() {
+    if body.seed_type != RadioSeedKind::Items
+        && body.seed_id.as_deref().unwrap_or("").trim().is_empty()
+    {
         return Err(ServiceError::InvalidInput(
             "seed_id must not be blank for artist, album, and genre plans".to_owned(),
         ));
@@ -300,12 +259,6 @@ pub async fn radio_plan(
     if body.exclude_recording_mbids.len() > RADIO_EXCLUDE_MAX {
         return Err(ServiceError::InvalidInput(format!(
             "A radio plan can leave out at most {RADIO_EXCLUDE_MAX} recordings"
-        )));
-    }
-    if !matches!(body.mode.as_str(), "library" | "hybrid") {
-        return Err(ServiceError::InvalidInput(format!(
-            "Unknown mode '{}'; want library or hybrid",
-            body.mode
         )));
     }
     let request = RadioPlanRequest {
@@ -329,7 +282,6 @@ pub async fn playlist_suggestions(
             "playlist_id must not be blank".to_owned(),
         ));
     }
-    parse_source(body.source.as_deref())?;
     let request = PlaylistSuggestionsRequest {
         count: body.count.clamp(1, RADIO_SHELF_MAX),
         ..body.clone()
@@ -642,13 +594,13 @@ pub async fn genre_detail(
 pub async fn trending_artists(
     deps: &ReadsDeps,
     user_id: &str,
-    range: Option<&str>,
+    range: Option<StatsRange>,
     limit: Option<i64>,
     offset: Option<i64>,
-    source: Option<&str>,
-) -> Result<TrendingArtistsPage, ServiceError> {
-    let range = parse_range(range)?;
-    let source = parse_source(source)?;
+    source: Option<ListenSource>,
+) -> Result<ChartPage<ArtistRef>, ServiceError> {
+    let range = range.unwrap_or_default();
+    let source = source.unwrap_or_default();
     let limit = clamp_limit(limit, 25, CHART_RANGE_LIMIT_MAX);
     let offset = offset.unwrap_or(0).max(0);
     Ok(deps
@@ -661,13 +613,13 @@ pub async fn trending_artists(
 pub async fn popular_albums(
     deps: &ReadsDeps,
     user_id: &str,
-    range: Option<&str>,
+    range: Option<StatsRange>,
     limit: Option<i64>,
     offset: Option<i64>,
-    source: Option<&str>,
-) -> Result<PopularAlbumsPage, ServiceError> {
-    let range = parse_range(range)?;
-    let source = parse_source(source)?;
+    source: Option<ListenSource>,
+) -> Result<ChartPage<AlbumRef>, ServiceError> {
+    let range = range.unwrap_or_default();
+    let source = source.unwrap_or_default();
     let limit = clamp_limit(limit, 25, CHART_RANGE_LIMIT_MAX);
     let offset = offset.unwrap_or(0).max(0);
     Ok(deps
@@ -680,13 +632,13 @@ pub async fn popular_albums(
 pub async fn your_top_albums(
     deps: &ReadsDeps,
     user_id: &str,
-    range: Option<&str>,
+    range: Option<StatsRange>,
     limit: Option<i64>,
     offset: Option<i64>,
-    source: Option<&str>,
-) -> Result<PopularAlbumsPage, ServiceError> {
-    let range = parse_range(range)?;
-    let source = parse_source(source)?;
+    source: Option<ListenSource>,
+) -> Result<ChartPage<AlbumRef>, ServiceError> {
+    let range = range.unwrap_or_default();
+    let source = source.unwrap_or_default();
     let limit = clamp_limit(limit, 25, CHART_RANGE_LIMIT_MAX);
     let offset = offset.unwrap_or(0).max(0);
     Ok(deps
@@ -775,19 +727,6 @@ pub async fn remove_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn unknown_range_fails_instead_of_falling_back() {
-        assert!(parse_range(Some("last_eon")).is_err());
-        assert_eq!(parse_range(None).unwrap(), ChartRange::ThisWeek);
-        assert_eq!(parse_range(Some("all_time")).unwrap(), ChartRange::AllTime);
-    }
-
-    #[test]
-    fn unknown_source_fails() {
-        assert!(parse_source(Some("deezer")).is_err());
-        assert_eq!(parse_source(None).unwrap(), ChartSource::Listenbrainz);
-    }
 
     #[test]
     fn blank_names_fail() {
