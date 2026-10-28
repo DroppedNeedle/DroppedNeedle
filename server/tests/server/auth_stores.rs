@@ -518,8 +518,8 @@ async fn users_named_by_library_history_are_not_deleted() {
     );
     assert!(fx.auth.users.get_by_id("user-2").await.unwrap().is_some());
 
-    // Once nothing names the account, it goes, and its discover rows with
-    // it.
+    // Once nothing names the account, it goes, and its discover rows and
+    // discovery batches with it.
     let side = rusqlite::Connection::open(fx.runtime().path()).unwrap();
     side.busy_timeout(std::time::Duration::from_secs(5))
         .unwrap();
@@ -531,7 +531,11 @@ async fn users_named_by_library_history_are_not_deleted() {
          INSERT INTO catalog_cached_pages (user_id, page, source, listenbrainz, lastfm, \
          payload, built_at) VALUES ('user-2', 'home', 's', 0, 0, x'7b7d', 1); \
          INSERT INTO catalog_discover_activity (user_id, feature, source, used_at) \
-         VALUES ('user-2', 'home', 's', 1);",
+         VALUES ('user-2', 'home', 's', 1); \
+         INSERT INTO acquire_discovery_batches (id, user_id, name, created_at) \
+         VALUES ('batch-2', 'user-2', 'B', 1); \
+         INSERT INTO acquire_discovery_batch_items (batch_id, release_group_mbid, outcome, \
+         added_at) VALUES ('batch-2', 'rg', 'requested', 1);",
     )
     .unwrap();
     drop(side);
@@ -544,7 +548,9 @@ async fn users_named_by_library_history_are_not_deleted() {
             &fx,
             "SELECT (SELECT COUNT(*) FROM catalog_ignored_releases) \
              + (SELECT COUNT(*) FROM catalog_cached_pages) \
-             + (SELECT COUNT(*) FROM catalog_discover_activity)"
+             + (SELECT COUNT(*) FROM catalog_discover_activity) \
+             + (SELECT COUNT(*) FROM acquire_discovery_batches) \
+             + (SELECT COUNT(*) FROM acquire_discovery_batch_items)"
         )
         .await,
         0

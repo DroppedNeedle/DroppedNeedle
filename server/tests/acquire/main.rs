@@ -17,6 +17,7 @@ mod acquire_slskd;
 mod acquire_sources;
 mod acquire_track_album;
 mod acquire_usenet;
+mod discover_batches;
 
 use droppedneedle_acquire::downloads::DownloadSource;
 

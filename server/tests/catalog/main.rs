@@ -4,7 +4,6 @@
 mod common;
 
 mod concerts;
-mod discover_batches;
 mod discover_page;
 mod discover_queue;
 mod home_page;

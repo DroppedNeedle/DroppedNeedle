@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, OptionalExtension, Params, Transaction, params, params_from_iter};
 
+use super::super::batches::models::BatchOutcome;
+use super::super::batches::store::{BatchWrite, NewBatch};
 use super::super::error::RequestsError;
 use super::super::ledger::{
     BeginOutcome, CancelDecision, QuotaGate, QuotaRefusal, RequestRecord, RequestStatus, Requester,
@@ -146,6 +148,28 @@ fn has_room(
     let since = now.saturating_sub(u64::from(gate.window_days.max(1)) * 86_400);
     let used = count_asks_tx(tx, owner, since)?;
     Ok(used.saturating_add(gate.new_requests) <= gate.limit)
+}
+
+/// The refusal `gate` gives `owner`'s asks at `now`, counted once before
+/// any row of the write.
+fn gate_refusal(
+    tx: &Transaction,
+    owner: &str,
+    gate: Option<QuotaGate>,
+    now: u64,
+) -> rusqlite::Result<Option<QuotaRefusal>> {
+    let Some(gate) = gate.filter(|gate| gate.limit > 0) else {
+        return Ok(None);
+    };
+    let since = now.saturating_sub(u64::from(gate.window_days.max(1)) * 86_400);
+    let used = count_asks_tx(tx, owner, since)?;
+    Ok(
+        (used.saturating_add(gate.new_requests) > gate.limit).then_some(QuotaRefusal {
+            used,
+            limit: gate.limit,
+            window_days: gate.window_days,
+        }),
+    )
 }
 
 /// Whether one user owns or listens to a row, inside a write transaction.
@@ -392,16 +416,8 @@ impl RequestStore {
         let clock = self.db.clock().clone();
         self.db
             .write("requests.begin", move |tx| {
-                if let Some(gate) = gate.filter(|gate| gate.limit > 0) {
-                    let since = now.saturating_sub(u64::from(gate.window_days.max(1)) * 86_400);
-                    let used = count_asks_tx(tx, &owner, since)?;
-                    if used.saturating_add(gate.new_requests) > gate.limit {
-                        return Ok(Err(QuotaRefusal {
-                            used,
-                            limit: gate.limit,
-                            window_days: gate.window_days,
-                        }));
-                    }
+                if let Some(refusal) = gate_refusal(tx, &owner, gate, now)? {
+                    return Ok(Err(refusal));
                 }
                 let mut outcomes = Vec::with_capacity(records.len());
                 for (record, follow) in records {
@@ -415,6 +431,70 @@ impl RequestStore {
             })
             .await
             .map_err(|error| lane_error("requests.begin", error))
+    }
+
+    /// File a discovery batch in one write. A batch id already taken
+    /// claims nothing and answers its owner. Otherwise the quota gate
+    /// counts `asker`'s window once, as [`Self::begin_batch`]; then each
+    /// record is claimed, a live row in its way and each of `joins` is
+    /// joined, every album the batch meant to file reads what that came
+    /// to, and the batch is recorded with its albums. A refusal, or a
+    /// batch that filed nothing, writes nothing.
+    pub(crate) async fn file_batch(
+        &self,
+        records: Vec<RequestRecord>,
+        joins: Vec<String>,
+        asker: (String, String),
+        gate: Option<QuotaGate>,
+        mut batch: NewBatch,
+    ) -> Result<BatchWrite, RequestsError> {
+        let now = self.db.now_epoch();
+        self.db
+            .write("requests.batches.file", move |tx| {
+                if let Some(owner) = batch.owner_tx(tx)? {
+                    return Ok(BatchWrite::Taken { owner });
+                }
+                let (user_id, name) = asker;
+                if let Some(refusal) = gate_refusal(tx, &user_id, gate, now)? {
+                    return Ok(BatchWrite::Refused(refusal));
+                }
+                let mut filed = HashSet::new();
+                let mut won = Vec::new();
+                for record in records {
+                    match begin_tx(tx, record)? {
+                        BeginOutcome::Won(record) => {
+                            filed.insert(record.key.clone());
+                            won.push(record);
+                        }
+                        BeginOutcome::Existing(winner) => {
+                            let stored = row_key(RequestKind::Album, &winner.key);
+                            if attach_tx(tx, &stored, &user_id, Some(&name), now)? {
+                                filed.insert(winner.key);
+                            }
+                        }
+                    }
+                }
+                for key in joins {
+                    let stored = row_key(RequestKind::Album, &key);
+                    if attach_tx(tx, &stored, &user_id, Some(&name), now)? {
+                        filed.insert(key);
+                    }
+                }
+                if filed.is_empty() {
+                    return Ok(BatchWrite::NothingFiled);
+                }
+                for item in &mut batch.items {
+                    if item.outcome == BatchOutcome::Requested
+                        && !filed.contains(&item.release_group_mbid)
+                    {
+                        item.outcome = BatchOutcome::NotRequested;
+                    }
+                }
+                batch.insert_tx(tx)?;
+                Ok(BatchWrite::Filed { won })
+            })
+            .await
+            .map_err(|error| lane_error("requests.batches.file", error))
     }
 
     /// Claim one row that never refuses for quota: when `hold` is set or

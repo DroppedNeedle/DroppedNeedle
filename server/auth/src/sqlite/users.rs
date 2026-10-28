@@ -63,15 +63,6 @@ const RESTRICTING_HISTORY: [(Statement, &str); 3] = [
     ),
 ];
 
-/// Discovery batches, which have no foreign key (the tables predate it),
-/// deleted with the account as in v2. The batch items go first; v2 left
-/// the batches behind. Discover's other per-user rows go with the account
-/// by their foreign keys.
-const DISCOVERY_ROWS: [Statement; 2] = [
-    sql::DELETE_DISCOVERY_BATCH_ITEMS,
-    sql::DELETE_DISCOVERY_BATCHES,
-];
-
 /// A constraint conflict is the caller's `Conflict`; the rest as
 /// [`store_error`].
 fn conflict_or_store<R>(outcome: Result<R, WriteError>) -> Result<R, StoreError> {
@@ -312,7 +303,8 @@ impl Users {
 
     /// Delete a user, refusing the last admin and users that library
     /// history still names. Cascades to providers, tokens, codes, app
-    /// passwords, and connections via the baseline foreign keys.
+    /// passwords, connections, Discover's per-user rows and discovery
+    /// batches via their foreign keys.
     pub async fn delete(&self, id: &str) -> Result<UserDeletion, StoreError> {
         let id = id.to_owned();
         self.db
@@ -336,10 +328,6 @@ impl Users {
                 }
                 if !holders.is_empty() {
                     return Ok(UserDeletion::Referenced(holders));
-                }
-                for statement in DISCOVERY_ROWS {
-                    tx.execute(statement.text(), rusqlite::params![id])
-                        .map_err(op_error)?;
                 }
                 tx.execute(sql::DELETE_USER.text(), rusqlite::params![id])
                     .map_err(op_error)?;

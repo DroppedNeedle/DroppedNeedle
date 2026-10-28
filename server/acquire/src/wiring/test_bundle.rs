@@ -90,6 +90,7 @@ impl AcquireSetup {
                 release_poll: Arc::new(crate::search::NoReleasePoll),
                 mix: None,
                 targets: clients.targets().clone(),
+                albums: None,
             },
             events.clone(),
         );

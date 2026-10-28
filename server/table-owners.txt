@@ -97,6 +97,8 @@ import_progress
 import_runs
 
 [acquire]
+acquire_discovery_batch_items
+acquire_discovery_batches
 acquire_edition_acquires
 acquire_follow_cursors
 acquire_held_entries
@@ -133,8 +135,6 @@ catalog_discover_activity
 catalog_ignored_releases
 catalog_mbid_resolutions
 catalog_page_generations
-discovery_batch_items
-discovery_batches
 library_artist_album_credits
 library_artist_counts
 library_genre_artwork_revisions

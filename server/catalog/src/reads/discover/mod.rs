@@ -1,4 +1,4 @@
-//! Discover: discover + queue + radio + batches, and home
+//! Discover: discover + queue + radio, and home
 //! shelves with the range-pair redesign.
 //!
 //! The handlers call [`services`], which hold each feature's concrete
@@ -8,7 +8,6 @@
 //! Wiring: the app mounts [`routes`], which also registers the paths in
 //! the API document. The now-playing route is served by `playback`.
 
-pub mod batches;
 pub mod cache;
 pub mod charts;
 pub mod content;

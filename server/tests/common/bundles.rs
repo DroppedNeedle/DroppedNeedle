@@ -8,9 +8,8 @@ use droppedneedle_acquire::AcquireSetup;
 use droppedneedle_acquire::flows::seams::{FlowEvent, TickSink};
 use droppedneedle_acquire::landing::library::LibraryLanding;
 use droppedneedle_acquire::plugin_events::FlowTicks;
-use droppedneedle_acquire::requests::discovery::DiscoveryBatchRequests;
 use droppedneedle_acquire::wiring::{AcquirePorts, AcquireStores};
-use droppedneedle_auth::{Admin, Principal, users::UsersDeps};
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::catalog::{
     Catalog,
     library::LocalCatalog,
@@ -19,9 +18,7 @@ use droppedneedle_catalog::reads::catalog::{
 use droppedneedle_catalog::reads::collections::{
     CollectionsState, db::CollectionsDb, store::Stores,
 };
-use droppedneedle_catalog::reads::discover::batches::{BatchAlbum, BatchRequests};
 use droppedneedle_catalog::reads::discover::content::DownloadReadiness;
-use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
 use droppedneedle_catalog::reads::{ReadsInputs, ReadsPorts, ReadsSetup};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_library::wiring::{LibraryCore, LibrarySetup};
@@ -114,6 +111,7 @@ pub fn acquire_at(
             plugins,
             collections: collections.clone(),
             providers,
+            albums: droppedneedle_library::mutations::Mutations::new(library),
         },
         &outbound.spotify(),
         droppedneedle_kernel::jobs::queue::JobQueue::new(
@@ -126,8 +124,8 @@ pub fn acquire_at(
 
 /// The production reads bundle over `platform`, with no provider pair:
 /// collections in `collections`, the catalog and artwork on closed
-/// upstreams, files read through `library`, and discovery batches filed
-/// through `acquire` when there is one.
+/// upstreams, files read through `library`, and download readiness from
+/// `acquire` when there is one.
 pub fn reads_at(
     platform: &Platform,
     users: UsersDeps,
@@ -147,13 +145,6 @@ pub fn reads_at(
         LocalCatalog::new(platform.db.clone()),
     );
     let artwork = droppedneedle_catalog::reads::artwork(platform, &inputs, catalog.clone());
-    let batch_requests: Arc<dyn BatchRequests> = match acquire {
-        Some(acquire) => Arc::new(DiscoveryBatchRequests::new(
-            acquire.requests.clone(),
-            Some(droppedneedle_library::mutations::Mutations::new(library)),
-        )),
-        None => Arc::new(NoBatchRequests),
-    };
     let download_readiness: Arc<dyn DownloadReadiness> = match acquire {
         Some(acquire) => Arc::new(acquire.readiness.clone()),
         None => Arc::new(NoDownloadSource),
@@ -169,7 +160,6 @@ pub fn reads_at(
             catalog,
             artwork,
             library_files: LibraryFiles::new(platform.db.clone(), library.core.root_source()),
-            batch_requests,
             download_readiness,
             cover_warm: None,
         },
@@ -209,40 +199,6 @@ impl DownloadReadiness for NoDownloadSource {
     fn can_acquire(&self) -> bool {
         false
     }
-}
-
-/// Discovery batches for a rig with no download system: every request is
-/// refused.
-struct NoBatchRequests;
-
-impl BatchRequests for NoBatchRequests {
-    fn request_albums<'a>(
-        &'a self,
-        _caller: &'a Principal,
-        _albums: Vec<BatchAlbum>,
-    ) -> BoxFuture<'a, Result<(), BatchFailure>> {
-        Box::pin(async { Err(BatchFailure::Provider(not_running())) })
-    }
-
-    fn withdraw_album<'a>(
-        &'a self,
-        _owner_id: &'a str,
-        _release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<bool, String>> {
-        Box::pin(async { Ok(false) })
-    }
-
-    fn remove_album<'a>(
-        &'a self,
-        _admin: &'a Admin,
-        _release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<bool, String>> {
-        Box::pin(async { Ok(false) })
-    }
-}
-
-fn not_running() -> ProviderFailure {
-    ProviderFailure::not_built("no download system in this rig")
 }
 
 /// The connection resolver the app builds: the per-user rows in the

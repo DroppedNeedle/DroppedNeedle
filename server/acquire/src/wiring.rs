@@ -72,6 +72,7 @@ use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, UsenetBackend, UsenetBackendSetting,
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, Section};
+use droppedneedle_library::mutations::Mutations;
 use droppedneedle_library::operations::port::EditionPlans;
 use droppedneedle_library::publish::bin::DownloadTrees;
 use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
@@ -340,6 +341,9 @@ pub struct AcquirePorts {
     /// The shared providers; the Weekly Mix reads ListenBrainz through
     /// them.
     pub providers: Arc<Providers>,
+    /// The library's album removal, for an admin removing a discovery
+    /// batch with its albums.
+    pub albums: Mutations,
 }
 
 /// What the Weekly Mix builder is made from.
@@ -360,6 +364,7 @@ struct CorePorts {
     mix: Option<MixInputs>,
     /// MusicBrainz reads the wanted watcher dates its watches with.
     targets: Arc<Targets>,
+    albums: Option<Mutations>,
 }
 
 /// The pieces shared by the production and test bundles.
@@ -395,6 +400,7 @@ fn core(
         // the upgrade cutoff, under the policy the upgrade sweep reads.
         upgrade_policy: Some(settings.live()),
         readiness: ports.readiness,
+        albums: ports.albums,
         ..RequestsState::new(db, quota, dispatch.clone())
     };
     let mixer = ports.mix.map(|mix| {
@@ -546,6 +552,7 @@ impl AcquireSetup {
                     }
                 }),
                 targets: clients.targets().clone(),
+                albums: Some(ports.albums),
             },
             events.clone(),
         );

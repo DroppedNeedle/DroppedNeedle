@@ -1,5 +1,5 @@
 //! Request intake: album, track, batch, and edition-acquire asks plus the
-//! approval queues behind them.
+//! approval queues behind them, and Discover's discovery batches.
 //!
 //! Clean-slate `/api/v3` surface. [`routes`] mounts each handler at the
 //! full path its utoipa annotation names, in the group of the `User`,
@@ -12,7 +12,7 @@
 //! watcher loop shares the wanted rows through [`sqlite::WantedStore`].
 
 pub mod auth;
-pub mod discovery;
+pub mod batches;
 pub mod error;
 pub mod http;
 pub mod intake;
@@ -47,6 +47,7 @@ pub fn requests_routes(state: RequestsState) -> Router {
 /// The requests routes. Reads and intake take any signed-in user, approval
 /// verbs an admin, edition acquire a curator.
 pub fn routes() -> Routes<RequestsState> {
+    use batches::http::*;
     use intake::*;
     use views::*;
 
@@ -77,4 +78,6 @@ pub fn routes() -> Routes<RequestsState> {
         .user(routes!(refresh_mix_handler))
         .curator(routes!(acquire_edition_handler))
         .curator(routes!(edition_fetch_handler))
+        .user(routes!(create_batch, list_batches))
+        .user(routes!(get_batch, remove_batch))
 }

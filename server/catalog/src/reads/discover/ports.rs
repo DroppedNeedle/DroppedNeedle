@@ -1,5 +1,5 @@
 //! Shared discover types: the failures the services answer with, the
-//! queue trigger and deck, and batch and radio failures.
+//! queue trigger and deck, and radio failures.
 //!
 //! Every fallible service call returns a [`ProviderFailure`]: a provider's
 //! typed error, or a local cause that stays in the log.
@@ -83,40 +83,6 @@ pub struct QueueDeck {
 
 /// Ordered album samples plus the provider that served them.
 pub type AlbumSamples = (Vec<PreviewTrackItem>, Option<String>);
-
-/// Why a batch action was refused by the request rules (quota spent,
-/// storage full). Carries the requests envelope as is, so the page shows
-/// the same message and details a plain album request would.
-#[derive(Debug, Clone, PartialEq)]
-pub struct BatchRefusal {
-    /// HTTP status the requests routes answer with (429 or 403).
-    pub status: u16,
-    /// Stable code (`QUOTA_EXCEEDED`, `STORAGE_FULL`).
-    pub code: &'static str,
-    /// User-facing sentence.
-    pub message: String,
-    /// The usage numbers behind the refusal, when there are any.
-    pub details: Option<serde_json::Value>,
-}
-
-/// Why a batch action failed.
-#[derive(Debug, Clone, PartialEq)]
-pub enum BatchFailure {
-    /// Unknown batch, or one the caller may not see.
-    NotFound,
-    /// The batch itself is wrong. The string is user-facing.
-    Invalid(String),
-    /// The request rules refused it.
-    Refused(BatchRefusal),
-    /// A store or the acquisition side failed.
-    Provider(ProviderFailure),
-}
-
-impl From<ProviderFailure> for BatchFailure {
-    fn from(failure: ProviderFailure) -> Self {
-        Self::Provider(failure)
-    }
-}
 
 /// Why a radio station or playlist suggestion could not be built.
 #[derive(Debug, Clone, PartialEq)]

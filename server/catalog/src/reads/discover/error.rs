@@ -9,7 +9,6 @@
 use axum::http::StatusCode;
 use droppedneedle_kernel::error::{ApiError, RATE_LIMITED};
 
-use super::ports::BatchRefusal;
 use super::services::ServiceError;
 
 /// The feature needs setup first: a key, an account (409).
@@ -34,18 +33,6 @@ impl From<ServiceError> for ApiError {
             ServiceError::Exhausted(message) => {
                 ApiError::new(StatusCode::TOO_MANY_REQUESTS, RATE_LIMITED, message)
             }
-            ServiceError::Refused(refusal) => refused(refusal),
         }
-    }
-}
-
-/// A batch the request rules refused, answered with the status, code and
-/// details the requests routes give.
-fn refused(refusal: BatchRefusal) -> ApiError {
-    let status = StatusCode::from_u16(refusal.status).unwrap_or(StatusCode::FORBIDDEN);
-    let error = ApiError::new(status, refusal.code, refusal.message);
-    match refusal.details {
-        Some(details) => error.with_details(details),
-        None => error,
     }
 }

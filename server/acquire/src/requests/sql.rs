@@ -1,6 +1,7 @@
 //! The requests area's statements: the request ledger, its listeners and
 //! hides, the wanted watches, the edition marks, the personal-mix
-//! approvals, and what requests read from the library and the accounts.
+//! approvals, the discovery batches, and what requests read from the
+//! library and the accounts.
 //! The first group moves a request with its download: settling rows when
 //! their task finishes or their album reaches the library, linking rows to
 //! a new download, and the sweep that finds rows left behind.
@@ -369,6 +370,64 @@ droppedneedle_kernel::sql! {
            WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL)";
     /// Whether the library holds release group `?1` (lowercased).
     pub(crate) LIBRARY_HOLDS = "SELECT EXISTS (SELECT 1 " + OWNED_TRACKS_FROM + ")";
+    /// Who owns discovery batch `?1`.
+    pub(crate) BATCH_OWNER = "SELECT user_id FROM acquire_discovery_batches WHERE id = ?1";
+    /// One discovery batch (`?1`): `(id, user, name, section, created_at)`.
+    pub(crate) BATCH_HEAD = "SELECT id, user_id, name, source_section, created_at \
+         FROM acquire_discovery_batches WHERE id = ?1";
+    /// User `?1`'s discovery batches, newest first.
+    pub(crate) BATCHES_OF_USER = "SELECT id, user_id, name, source_section, created_at \
+         FROM acquire_discovery_batches WHERE user_id = ?1 ORDER BY created_at DESC, id";
+    /// Batch `?1`'s albums with the live state of each album's request:
+    /// `(group, artist id, album, artist, outcome, request status)`.
+    pub(crate) BATCH_ITEMS = "SELECT i.release_group_mbid, i.artist_mbid, i.album_name, \
+             i.artist_name, i.outcome, h.status \
+         FROM acquire_discovery_batch_items i \
+         LEFT JOIN request_history h ON h.musicbrainz_id_lower = lower(i.release_group_mbid) \
+             AND h.request_kind = 'album' \
+         WHERE i.batch_id = ?1 ORDER BY i.added_at, i.album_name";
+    /// Record one discovery batch.
+    pub(crate) INSERT_BATCH = "INSERT INTO acquire_discovery_batches (id, user_id, name, \
+         source_section, created_at) VALUES (?1, ?2, ?3, ?4, ?5)";
+    /// Record one album of a discovery batch.
+    pub(crate) INSERT_BATCH_ITEM = "INSERT INTO acquire_discovery_batch_items (batch_id, \
+         release_group_mbid, artist_mbid, album_name, artist_name, outcome, added_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+    /// Drop album `?2` from batch `?1`.
+    pub(crate) DELETE_BATCH_ITEM = "DELETE FROM acquire_discovery_batch_items \
+         WHERE batch_id = ?1 AND release_group_mbid = ?2";
+    /// Drop batch `?1` once it holds no albums.
+    pub(crate) DELETE_EMPTY_BATCH = "DELETE FROM acquire_discovery_batches WHERE id = ?1 \
+         AND NOT EXISTS (SELECT 1 FROM acquire_discovery_batch_items WHERE batch_id = ?1)";
+    /// Whether anyone but `?2` requested, favourited, rated, played or
+    /// marked played or unplayed album `?1` (lowercased).
+    pub(crate) HELD_BY_OTHERS = "SELECT EXISTS (SELECT 1 FROM request_history \
+             WHERE request_kind = 'album' AND musicbrainz_id_lower = ?1 \
+             AND user_id IS NOT NULL AND user_id != ?2) \
+         OR EXISTS (SELECT 1 FROM request_history_requesters \
+             WHERE musicbrainz_id_lower = ?1 AND user_id != ?2) \
+         OR EXISTS (SELECT 1 FROM library_user_favorites f WHERE f.user_id != ?2 AND ( \
+             (f.item_kind = 'album' AND f.item_id IN (SELECT e.local_album_id \
+                 FROM local_album_external_identities e \
+                 WHERE lower(e.release_group_mbid) = ?1)) \
+             OR (f.item_kind = 'track' AND f.item_id IN (SELECT t.id FROM local_tracks t \
+                 JOIN local_album_external_identities e ON e.local_album_id = t.local_album_id \
+                 WHERE lower(e.release_group_mbid) = ?1)))) \
+         OR EXISTS (SELECT 1 FROM library_user_ratings r WHERE r.user_id != ?2 AND ( \
+             (r.item_kind = 'album' AND r.item_id IN (SELECT e.local_album_id \
+                 FROM local_album_external_identities e \
+                 WHERE lower(e.release_group_mbid) = ?1)) \
+             OR (r.item_kind = 'track' AND r.item_id IN (SELECT t.id FROM local_tracks t \
+                 JOIN local_album_external_identities e ON e.local_album_id = t.local_album_id \
+                 WHERE lower(e.release_group_mbid) = ?1)))) \
+         OR EXISTS (SELECT 1 FROM library_user_play_marks k WHERE k.user_id != ?2 \
+             AND k.local_track_id IN (SELECT t.id FROM local_tracks t \
+                 JOIN local_album_external_identities e ON e.local_album_id = t.local_album_id \
+                 WHERE lower(e.release_group_mbid) = ?1)) \
+         OR EXISTS (SELECT 1 FROM library_play_history p WHERE p.user_id != ?2 AND ( \
+             lower(p.release_group_mbid) = ?1 OR p.local_album_id IN (SELECT e.local_album_id \
+                 FROM local_album_external_identities e \
+                 WHERE lower(e.release_group_mbid) = ?1)))";
 }
 
 /// `?, ?, ...` for a list of `len` values.

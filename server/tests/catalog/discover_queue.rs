@@ -14,16 +14,15 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_auth::{Admin, Principal, Role};
-use droppedneedle_catalog::reads::discover::batches::{BatchAlbum, BatchRequests};
 use droppedneedle_catalog::reads::discover::listening::{
     AlbumRow, ArtistFacts, ArtistRow, Ask, JellyfinList, LastFmAlbum, LastFmChartAlbum,
     LastFmFacts, ListenedAlbum, ListeningData, ListeningError, ListeningNetwork, LovedTrack,
     PlayedArtist, RankedAlbum, Read, ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange,
     TagAlbum, UserMusic, WeeklyPlaylist,
 };
-use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture, ProviderFailure};
+use droppedneedle_catalog::reads::discover::ports::BoxFuture;
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_catalog::reads::discover::wiring::{DiscoverInputs, deps_over, live_network};
 use droppedneedle_kernel::db::{Db, Lane};
@@ -487,40 +486,6 @@ fn queue_script() -> Script {
     }
 }
 
-/// Discovery batches in a rig with no download system: nothing in these
-/// journeys files one.
-struct NoBatchRequests;
-
-impl BatchRequests for NoBatchRequests {
-    fn request_albums<'a>(
-        &'a self,
-        _caller: &'a Principal,
-        _albums: Vec<BatchAlbum>,
-    ) -> BoxFuture<'a, Result<(), BatchFailure>> {
-        Box::pin(async {
-            Err(BatchFailure::Provider(ProviderFailure::not_built(
-                "no download system in this rig",
-            )))
-        })
-    }
-
-    fn withdraw_album<'a>(
-        &'a self,
-        _owner_id: &'a str,
-        _release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<bool, String>> {
-        Box::pin(async { Ok(false) })
-    }
-
-    fn remove_album<'a>(
-        &'a self,
-        _admin: &'a Admin,
-        _release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<bool, String>> {
-        Box::pin(async { Ok(false) })
-    }
-}
-
 /// What production discover is built from, over `rig`'s platform,
 /// `providers` and the users' ListenBrainz `links`.
 pub(crate) fn discover_inputs(
@@ -540,7 +505,6 @@ pub(crate) fn discover_inputs(
         discover_warmer: false,
         clock: platform.clock.clone(),
         warm: None,
-        batch_requests: Arc::new(NoBatchRequests),
         download_readiness: Arc::new(NoDownloadSource),
         remotes: Arc::new(remotes_resolver(platform)),
     }

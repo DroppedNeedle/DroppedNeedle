@@ -1,7 +1,7 @@
 //! The builder that wires the discover services.
 //!
 //! ListenBrainz and Last.fm charts, Deezer/iTunes previews, YouTube search
-//! when a key is set, the queue deck, radio and discovery batches. A part
+//! when a key is set, the queue deck and radio. A part
 //! that cannot run answers empty or with a typed "not available", never
 //! with invented rows.
 
@@ -14,7 +14,7 @@ use crate::reads::catalog::upstream::{LiveCatalogSettings, Upstream};
 use crate::reads::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::reads::discover::services::ReadsDeps;
 use crate::reads::discover::{
-    batches, charts, content, home, page, previews, queue, radio, scheduler, youtube,
+    charts, content, home, page, previews, queue, radio, scheduler, youtube,
 };
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::Db;
@@ -48,8 +48,6 @@ pub struct DiscoverInputs {
     pub clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     /// Where built pages queue the warm of their covers and artist images.
     pub warm: Option<crate::reads::platform::artwork::warm::CoverWarm>,
-    /// The requests side of discovery batches.
-    pub batch_requests: Arc<dyn batches::BatchRequests>,
     /// Whether a download source is on, for the "set up a download
     /// client" prompts.
     pub download_readiness: Arc<dyn content::DownloadReadiness>,
@@ -134,11 +132,6 @@ pub fn deps_over(
         cache: inputs.providers.cache.clone(),
         clock: Arc::clone(&inputs.clock),
     });
-    let batches = batches::LiveBatches::new(
-        inputs.db.clone(),
-        Arc::clone(&inputs.clock),
-        Some(inputs.batch_requests.clone()),
-    );
     let pages = page::DiscoverPages::new(page::PageInputs {
         listening: listening.clone(),
         queue_db: queue::store::QueueDb::new(inputs.db.clone()),
@@ -179,7 +172,6 @@ pub fn deps_over(
             .with_home(home, genre_art),
         ),
         queues,
-        batches: Arc::new(batches),
         charts: Arc::new(charts),
         previews: Arc::new(previews::LivePreviews::new(
             inputs.providers.previews.clone(),

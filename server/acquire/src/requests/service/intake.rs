@@ -6,6 +6,9 @@ use crate::dispatch::DispatchOrigin;
 use crate::follows::FollowAsk;
 use crate::follows::cursors::Follower;
 use crate::requests::auth::auto_approves;
+use crate::requests::batches::BatchFiling;
+use crate::requests::batches::models::BatchOutcome;
+use crate::requests::batches::store::{BatchWrite, NewBatch};
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{
     BeginOutcome, RequestRecord, RequestStatus, meaningful_name, validate_mbid,
@@ -775,21 +778,7 @@ impl RequestsService {
             });
         }
 
-        let mut dispatched = 0_u32;
-        for won in &created {
-            match self.dispatch_won(won, DispatchOrigin::User, user_id).await {
-                Ok(_) => {
-                    dispatched = dispatched.saturating_add(1);
-                }
-                Err(RequestsError::InvalidInput { .. }) => {
-                    // Admission fault: the row already reads failed.
-                }
-                Err(error) => {
-                    // One row's dispatch fault never fails its siblings.
-                    tracing::warn!(key = %won.key, ?error, "batch dispatch failed");
-                }
-            }
-        }
+        let dispatched = self.dispatch_created(&created, user_id).await;
         Ok(BatchIntakeResponse {
             success: true,
             message: format!("Batch request accepted: {dispatched} started"),
@@ -802,6 +791,121 @@ impl RequestsService {
                 RequestStatus::Failed.as_str().to_owned()
             },
         })
+    }
+
+    /// File a discovery batch: its albums are asked for under the rules
+    /// any album ask follows (quota, storage, approval, the chosen
+    /// edition), albums someone already asked for are joined, and the
+    /// batch is recorded with what each album came to, all in one write.
+    /// Downloads start after it, as for any album ask; a held one waits
+    /// for a source like any other.
+    pub(crate) async fn file_discovery_batch(
+        &self,
+        principal: &Principal,
+        batch: NewBatch,
+    ) -> Result<BatchFiling, RequestsError> {
+        let (user_id, role) = (principal.user_id(), principal.role());
+        let needs_approval = !auto_approves(role);
+        let now = self.now_epoch();
+        let live = self.store.active_mbids(RequestKind::Album).await?;
+        let mut joins = Vec::new();
+        let mut asks = Vec::new();
+        for item in &batch.items {
+            if item.outcome != BatchOutcome::Requested {
+                continue;
+            }
+            if live.contains(&item.release_group_mbid) {
+                joins.push(item.release_group_mbid.clone());
+            } else {
+                asks.push(item);
+            }
+        }
+        let gate = if asks.is_empty() {
+            None
+        } else {
+            let gate = self.quota.request_gate(
+                user_id,
+                role,
+                u32::try_from(asks.len()).unwrap_or(u32::MAX),
+            )?;
+            self.quota
+                .check_storage_admission(user_id, role, DispatchOrigin::User)
+                .await?;
+            gate
+        };
+        let mut records = Vec::with_capacity(asks.len());
+        for item in asks {
+            let (Some(artist_name), Some(album_title)) = (
+                meaningful_name(Some(&item.artist_name)),
+                meaningful_name(Some(&item.album_name)),
+            ) else {
+                continue;
+            };
+            let release_mbid = self.chosen_release(&item.release_group_mbid).await;
+            let artist_mbid = Some(item.artist_mbid.trim().to_owned()).filter(|id| !id.is_empty());
+            records.push(RequestRecord {
+                artist_name,
+                album_title,
+                artist_mbid,
+                release_mbid,
+                ..fresh_record(
+                    RequestKind::Album,
+                    item.release_group_mbid.clone(),
+                    principal,
+                    DispatchOrigin::User,
+                    status_for_role(needs_approval),
+                    now,
+                )
+            });
+        }
+        if records.is_empty() && joins.is_empty() {
+            return Err(RequestsError::InvalidInput {
+                message: "None of these albums could be requested: each one needs an artist and \
+                          an album name."
+                    .to_owned(),
+            });
+        }
+        let asker = (user_id.to_owned(), principal.username_display().to_owned());
+        match self
+            .store
+            .file_batch(records, joins, asker, gate, batch)
+            .await?
+        {
+            BatchWrite::Taken { owner } => Ok(BatchFiling::Taken { owner }),
+            BatchWrite::Refused(refusal) => Err(QuotaLedger::refusal(&refusal)),
+            BatchWrite::NothingFiled => Err(RequestsError::InvalidInput {
+                message: "None of these albums could be requested.".to_owned(),
+            }),
+            BatchWrite::Filed { won } => {
+                for record in &won {
+                    self.announce_created(record);
+                }
+                if !needs_approval {
+                    self.dispatch_created(&won, user_id).await;
+                }
+                Ok(BatchFiling::Filed)
+            }
+        }
+    }
+
+    /// Start the downloads of rows a batch ask won. One row's fault never
+    /// fails its siblings. Answers how many started.
+    async fn dispatch_created(&self, created: &[RequestRecord], actor_id: &str) -> u32 {
+        let mut dispatched = 0_u32;
+        for won in created {
+            match self.dispatch_won(won, DispatchOrigin::User, actor_id).await {
+                Ok(_) => {
+                    dispatched = dispatched.saturating_add(1);
+                }
+                Err(RequestsError::InvalidInput { .. }) => {
+                    // Admission fault: the row already reads failed.
+                }
+                Err(error) => {
+                    tracing::warn!(key = %won.key, ?error, "batch dispatch failed");
+                }
+            }
+        }
+        dispatched
     }
 
     /// Attach a duplicate album ask to its live row, with the follow it

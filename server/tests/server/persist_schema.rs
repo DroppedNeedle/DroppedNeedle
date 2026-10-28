@@ -7644,3 +7644,103 @@ async fn artist_genres_rebuild_to_the_conventions_on_upgrade() {
     .unwrap();
     assert_eq!(index, 1);
 }
+
+/// Migration 0099 moves discovery batches to acquire, rebuilt as STRICT
+/// with millisecond times. A batch and its albums carry; a batch of a user
+/// who no longer exists, an album of a missing batch and an album with an
+/// unknown outcome do not; and a batch then goes with its user, its
+/// albums with it.
+#[tokio::test]
+async fn discovery_batches_move_to_acquire_with_their_rows() {
+    let pool = scratch_pool().await;
+    migrator_through(98).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'T', 'user', 'now'); \
+         INSERT INTO discovery_batches (id, user_id, name, source_section, created_at) VALUES \
+         ('b1', 'u1', 'Shelf', 'fresh_releases', '2026-10-01T12:00:00.25Z'), \
+         ('b-gone', 'gone', 'Orphan', '', '2026-10-01T12:00:00Z'); \
+         INSERT INTO discovery_batch_items (batch_id, release_group_mbid, artist_mbid, \
+         album_name, artist_name, outcome, added_at) VALUES \
+         ('b1', 'rg-1', 'a-1', 'One', 'Someone', 'requested', '2026-10-01T12:00:00.25Z'), \
+         ('b1', 'rg-2', '', 'Two', 'Someone', 'skipped_in_library', \
+          '2026-10-01T12:00:00+00:00'), \
+         ('b1', 'rg-3', '', 'Three', 'Someone', 'mystery', '2026-10-01T12:00:00Z'), \
+         ('b-gone', 'rg-4', '', 'Four', 'Nobody', 'requested', '2026-10-01T12:00:00Z'), \
+         ('b-none', 'rg-5', '', 'Five', 'Nobody', 'requested', '2026-10-01T12:00:00Z');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    migrator_through(99).run(&pool).await.unwrap();
+
+    let tables = table_names(&pool).await;
+    for gone in ["discovery_batches", "discovery_batch_items"] {
+        assert!(!tables.contains(&gone.to_owned()), "{gone} must be gone");
+    }
+    for table in ["acquire_discovery_batches", "acquire_discovery_batch_items"] {
+        let sql: String =
+            sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1")
+                .bind(table)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(sql.trim_end().ends_with("STRICT"), "{sql}");
+    }
+    let batches: Vec<(String, String, String, String, i64)> = sqlx::query_as(
+        "SELECT id, user_id, name, source_section, created_at FROM acquire_discovery_batches",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        batches,
+        vec![(
+            "b1".to_owned(),
+            "u1".to_owned(),
+            "Shelf".to_owned(),
+            "fresh_releases".to_owned(),
+            1_790_856_000_250
+        )]
+    );
+    let items: Vec<(String, String, String, String, i64)> = sqlx::query_as(
+        "SELECT batch_id, release_group_mbid, album_name, outcome, added_at \
+         FROM acquire_discovery_batch_items ORDER BY release_group_mbid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        items,
+        vec![
+            (
+                "b1".to_owned(),
+                "rg-1".to_owned(),
+                "One".to_owned(),
+                "requested".to_owned(),
+                1_790_856_000_250
+            ),
+            (
+                "b1".to_owned(),
+                "rg-2".to_owned(),
+                "Two".to_owned(),
+                "skipped_in_library".to_owned(),
+                1_790_856_000_000
+            ),
+        ]
+    );
+
+    sqlx::query("DELETE FROM auth_users WHERE id = 'u1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM acquire_discovery_batches) \
+         + (SELECT COUNT(*) FROM acquire_discovery_batch_items)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(left, 0, "a batch and its albums go with their user");
+}

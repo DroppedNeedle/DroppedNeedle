@@ -42,7 +42,6 @@ use crate::{
 use droppedneedle_acquire::{
     AcquireSetup,
     library_removal::{self, AcquireAlbumCleanup},
-    requests::discovery::DiscoveryBatchRequests,
     wiring::{AcquirePorts, AcquireStores},
 };
 use droppedneedle_auth::{
@@ -361,12 +360,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             catalog,
             artwork,
             library_files: LibraryFiles::new(db.clone(), library.core.root_source()),
-            // Discovery batches file their albums through the requests
-            // service.
-            batch_requests: Arc::new(DiscoveryBatchRequests::new(
-                acquire.requests.clone(),
-                Some(library_services.mutations.clone()),
-            )),
             download_readiness: Arc::new(acquire.readiness.clone()),
             cover_warm: Some(cover_warm),
         },
@@ -650,6 +643,7 @@ fn acquire_ports(
         plugins: plugin_host.clone(),
         collections: collections.clone(),
         providers: providers.clone(),
+        albums: library.mutations.clone(),
     }
 }
 

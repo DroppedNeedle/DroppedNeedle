@@ -4,18 +4,15 @@
 
 use std::sync::Arc;
 
-use droppedneedle_auth::Principal;
 use droppedneedle_providers::ProviderError;
 
 use crate::reads::discover::{
-    batches::LiveBatches,
     content::LiveContent,
     genre::WithGenrePages,
     models::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
         DiscoverActivityResponse, DiscoverQueuePreview, DiscoverQueueResponse,
-        DiscoverQueueStatusResponse, DiscoverResponse, DiscoveryBatchCreate, DiscoveryBatchDetail,
-        DiscoveryBatchListResponse, DiscoveryBatchRemoveResult, GenreDetailResponse, HomeResponse,
+        DiscoverQueueStatusResponse, DiscoverResponse, GenreDetailResponse, HomeResponse,
         IgnoredReleasesResponse, IntegrationStatus, ListenSource, PlaylistSuggestionsRequest,
         PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
         QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse, RadioPlanRequest,
@@ -23,7 +20,7 @@ use crate::reads::discover::{
         TrackCacheCheckRequest, TrackCacheCheckResponse, TrackCacheCheckResponseItem,
         TrackPreviewResponse, YouTubeQuotaResponse, YouTubeSearchResponse,
     },
-    ports::{BatchFailure, BatchRefusal, ProviderFailure, QueueTrigger, RadioFailure},
+    ports::{ProviderFailure, QueueTrigger, RadioFailure},
     previews::LivePreviews,
     queue::LiveQueue,
     radio::LiveRadio,
@@ -45,12 +42,6 @@ pub const NAME_MAX_LEN: usize = 200;
 pub const RADIO_PLAN_MIN: i64 = 5;
 /// Max radio plan tracks (v2 caps plans at fifty).
 pub const RADIO_PLAN_MAX: i64 = 50;
-/// Max albums in one discovery batch (v2 `MAX_BATCH_ITEMS`).
-pub const BATCH_MAX_ITEMS: usize = 30;
-/// Max characters in a batch name.
-pub const BATCH_NAME_MAX: usize = 200;
-/// Max characters in a batch's source section.
-pub const BATCH_SECTION_MAX: usize = 100;
 /// Max seed rows in one radio plan.
 pub const RADIO_ITEMS_MAX: usize = 50;
 /// Max recordings one radio plan may leave out.
@@ -78,8 +69,6 @@ pub enum ServiceError {
     NotBuilt(String),
     /// A usage limit is spent for now; the sentence is shown.
     Exhausted(String),
-    /// The request rules refused a batch (quota, storage).
-    Refused(BatchRefusal),
 }
 
 impl From<ProviderFailure> for ServiceError {
@@ -111,8 +100,6 @@ pub struct ReadsDeps {
     pub content: Arc<LiveContent>,
     /// Queue builds and ignore ledger.
     pub queues: Arc<LiveQueue>,
-    /// Discovery batches.
-    pub batches: Arc<LiveBatches>,
     /// Chart pages and genre detail.
     pub charts: Arc<WithGenrePages>,
     /// 30-second previews.
@@ -645,83 +632,6 @@ pub async fn your_top_albums(
         .charts
         .your_top_albums(user_id, range, limit, offset, source)
         .await?)
-}
-
-fn batch_failure(failure: BatchFailure) -> ServiceError {
-    match failure {
-        BatchFailure::NotFound => ServiceError::NotFound,
-        BatchFailure::Invalid(message) => ServiceError::InvalidInput(message),
-        BatchFailure::Refused(refusal) => ServiceError::Refused(refusal),
-        BatchFailure::Provider(failure) => owned_store_failure(failure),
-    }
-}
-
-/// Create a batch: every album not owned or already requested is filed
-/// as a real album request, under the caller's quota and approval rules.
-pub async fn create_batch(
-    deps: &ReadsDeps,
-    caller: &Principal,
-    body: &DiscoveryBatchCreate,
-) -> Result<DiscoveryBatchDetail, ServiceError> {
-    if body.items.is_empty() {
-        return Err(ServiceError::InvalidInput(
-            "A discovery batch needs at least one album".to_owned(),
-        ));
-    }
-    if body.items.len() > BATCH_MAX_ITEMS {
-        return Err(ServiceError::InvalidInput(format!(
-            "A discovery batch is capped at {BATCH_MAX_ITEMS} albums"
-        )));
-    }
-    if body.name.chars().count() > BATCH_NAME_MAX {
-        return Err(ServiceError::InvalidInput(format!(
-            "A batch name is at most {BATCH_NAME_MAX} characters"
-        )));
-    }
-    if body.source_section.chars().count() > BATCH_SECTION_MAX {
-        return Err(ServiceError::InvalidInput(format!(
-            "source_section is at most {BATCH_SECTION_MAX} characters"
-        )));
-    }
-    deps.batches
-        .create(caller, body)
-        .await
-        .map_err(batch_failure)
-}
-
-/// The user's batches, newest first.
-pub async fn list_batches(
-    deps: &ReadsDeps,
-    user_id: &str,
-) -> Result<DiscoveryBatchListResponse, ServiceError> {
-    Ok(DiscoveryBatchListResponse {
-        batches: deps.batches.list(user_id).await.map_err(batch_failure)?,
-    })
-}
-
-/// One batch. Foreign ids read as missing.
-pub async fn get_batch(
-    deps: &ReadsDeps,
-    caller: &Principal,
-    batch_id: &str,
-) -> Result<DiscoveryBatchDetail, ServiceError> {
-    deps.batches
-        .detail(caller, batch_id)
-        .await
-        .map_err(batch_failure)
-}
-
-/// Remove one batch. Foreign ids read as missing.
-pub async fn remove_batch(
-    deps: &ReadsDeps,
-    caller: &Principal,
-    batch_id: &str,
-    remove_albums: bool,
-) -> Result<DiscoveryBatchRemoveResult, ServiceError> {
-    deps.batches
-        .remove(caller, batch_id, remove_albums)
-        .await
-        .map_err(batch_failure)
 }
 
 #[cfg(test)]

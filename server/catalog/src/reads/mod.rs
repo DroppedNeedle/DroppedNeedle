@@ -60,8 +60,6 @@ pub struct ReadsPorts {
     /// File tags and the lyrics files carry, from the library catalog and
     /// roots.
     pub library_files: droppedneedle_media::stream::local_files::LibraryFiles,
-    /// Discovery batches file their albums through this.
-    pub batch_requests: Arc<dyn discover::batches::BatchRequests>,
     /// Acquisition's answer on whether a download source is on.
     pub download_readiness: Arc<dyn discover::content::DownloadReadiness>,
     /// Where discover, home and genre pages queue their image warm.
@@ -97,8 +95,8 @@ impl ReadsSetup {
     /// library reads, search reads (through its sqlx pool) and discover's
     /// writes, and its settings hand out the live handles the reads hold
     /// on their sections;
-    /// `users` gives wrapped its display names and discover its batch
-    /// callers and Last.fm links;
+    /// `users` gives wrapped its display names and discover its Last.fm
+    /// links;
     /// `inputs` carries what the version check, wrapped and discover read
     /// from the composition root; `enrichment` carries the live provider
     /// pair (`None` keeps the unconfigured ports: bare enrichment echoes
@@ -118,7 +116,6 @@ impl ReadsSetup {
             catalog,
             artwork,
             library_files,
-            batch_requests,
             download_readiness,
             cover_warm,
         } = ports;
@@ -132,7 +129,6 @@ impl ReadsSetup {
                 users: users.clone(),
                 discover_warmer: inputs.discover_warmer,
                 clock: Arc::clone(&platform.clock),
-                batch_requests,
                 download_readiness,
                 warm: cover_warm,
                 remotes,

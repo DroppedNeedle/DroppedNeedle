@@ -57,11 +57,6 @@ droppedneedle_kernel::sql! {
     /// Whether a library management exclusion names the account.
     pub(super) HELD_BY_MANAGEMENT_EXCLUSIONS = "SELECT 1 FROM library_management_exclusions \
         WHERE excluded_by_user_id = ?1 LIMIT 1";
-    /// The account's discovery batch items, which have no foreign key.
-    pub(super) DELETE_DISCOVERY_BATCH_ITEMS = "DELETE FROM discovery_batch_items WHERE batch_id IN \
-        (SELECT id FROM discovery_batches WHERE user_id = ?1)";
-    /// The account's discovery batches.
-    pub(super) DELETE_DISCOVERY_BATCHES = "DELETE FROM discovery_batches WHERE user_id = ?1";
 
     /// Insert one provider row: a local credential or a sign-in binding.
     pub(super) INSERT_PROVIDER = "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \

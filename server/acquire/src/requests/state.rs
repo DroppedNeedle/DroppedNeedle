@@ -48,6 +48,9 @@ pub struct RequestsState {
     >,
     /// Whether a download source is set up and where downloads land.
     pub readiness: Option<AcquireReadiness>,
+    /// The library's album removal: an admin removing a discovery batch
+    /// recycles the albums it brought in. `None` leaves them in place.
+    pub albums: Option<droppedneedle_library::mutations::Mutations>,
 }
 
 /// What "get missing tracks" checks before it asks for anything: a
@@ -80,6 +83,7 @@ impl RequestsState {
             edition_plans: None,
             upgrade_policy: None,
             readiness: None,
+            albums: None,
         }
     }
 

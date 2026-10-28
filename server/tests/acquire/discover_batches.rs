@@ -1,26 +1,32 @@
 //! Discovery batch journey: a batch files real album requests under the
-//! normal approval rules, skips what someone already asked for, stays
-//! private to its owner, and its removal cancels only what it caused and
-//! never recycles a plain user's albums.
-
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+//! normal approval rules in the same write as the batch, skips what
+//! someone already asked for, answers a retried create with the batch it
+//! made, stays private to its owner, and its removal cancels only what it
+//! caused and never recycles a plain user's albums.
 
 use droppedneedle_acquire::requests::RequestsState;
-use droppedneedle_acquire::requests::discovery::DiscoveryBatchRequests;
-use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_auth::{Admin, Principal, Role};
-use droppedneedle_catalog::reads::discover::batches::{BatchAlbum, BatchRequests, LiveBatches};
-use droppedneedle_catalog::reads::discover::models::{
+use droppedneedle_acquire::requests::batches::DiscoveryBatches;
+use droppedneedle_acquire::requests::batches::models::{
     BatchOutcome, DiscoveryBatchCreate, DiscoveryBatchItemIn,
 };
-use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BoxFuture};
+use droppedneedle_acquire::requests::error::RequestsError;
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::{Principal, Role};
 
 use crate::common::auth::test_principal;
 
 const MBID_A: &str = "11111111-1111-4111-8111-111111111111";
 const MBID_B: &str = "22222222-2222-4222-8222-222222222222";
 const MBID_C: &str = "33333333-3333-4333-8333-333333333333";
+const KEY: &str = "44444444-4444-4444-8444-444444444444";
+
+async fn request_rows(db: &droppedneedle_acquire::db::AcquireDb) -> i64 {
+    db.write("test.count_requests", |tx| {
+        Ok(tx.query_row("SELECT COUNT(*) FROM request_history", [], |row| row.get(0))?)
+    })
+    .await
+    .expect("request count")
+}
 
 /// A plain user signed in, as the session gate would hand the handler.
 fn user(user_id: &str) -> Principal {
@@ -44,54 +50,33 @@ fn batch(name: &str, ids: &[&str]) -> DiscoveryBatchCreate {
     }
 }
 
-/// The real requests side, counting every recycle it is asked for.
-struct Counting {
-    inner: DiscoveryBatchRequests,
-    recycles: AtomicUsize,
-}
-
-impl BatchRequests for Counting {
-    fn request_albums<'a>(
-        &'a self,
-        caller: &'a Principal,
-        albums: Vec<BatchAlbum>,
-    ) -> BoxFuture<'a, Result<(), BatchFailure>> {
-        self.inner.request_albums(caller, albums)
-    }
-    fn withdraw_album<'a>(
-        &'a self,
-        owner_id: &'a str,
-        release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<bool, String>> {
-        self.inner.withdraw_album(owner_id, release_group_mbid)
-    }
-    fn remove_album<'a>(
-        &'a self,
-        admin: &'a Admin,
-        release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<bool, String>> {
-        self.recycles.fetch_add(1, Ordering::SeqCst);
-        self.inner.remove_album(admin, release_group_mbid)
-    }
-}
-
 #[tokio::test]
 async fn batch_files_requests_and_removal_cancels_only_its_own() {
     let (requests, db, _dispatch) = RequestsState::for_tests().expect("requests state");
     for (id, name) in [("u-ada", "Ada"), ("u-bob", "Bob")] {
         db.add_user(id, name, "user").await.expect("user row");
     }
-    let counting = Arc::new(Counting {
-        inner: DiscoveryBatchRequests::new(requests, None),
-        recycles: AtomicUsize::new(0),
-    });
-    let batches = LiveBatches::new(db.db().clone(), db.clock().clone(), Some(counting.clone()));
+    let batches = DiscoveryBatches::new(&requests);
 
-    // Bob asks for C first; Ada's batch then skips it as a duplicate.
+    // Bob asks for C first; Ada's batch then skips it as a duplicate. A
+    // retried create with the same key answers the batch it made and
+    // files nothing twice.
+    let bobs_ask = DiscoveryBatchCreate {
+        idempotency_key: Some(KEY.to_owned()),
+        ..batch("Bob's", &[MBID_C])
+    };
     let bobs = batches
-        .create(&user("u-bob"), &batch("Bob's", &[MBID_C]))
+        .create(&user("u-bob"), &bobs_ask)
         .await
         .expect("bob's batch");
+    assert_eq!(bobs.id, KEY);
+    let again = batches
+        .create(&user("u-bob"), &bobs_ask)
+        .await
+        .expect("bob's retry");
+    assert_eq!(again.id, KEY);
+    assert_eq!(batches.list("u-bob").await.expect("bob's list").len(), 1);
+    assert_eq!(request_rows(&db).await, 1);
     let adas = batches
         .create(
             &user("u-ada"),
@@ -128,18 +113,18 @@ async fn batch_files_requests_and_removal_cancels_only_its_own() {
         batches
             .create(&user("u-ada"), &batch("Again", &[MBID_C]))
             .await,
-        Err(BatchFailure::Invalid(_))
+        Err(RequestsError::InvalidInput { .. })
     ));
 
     // Another user's batch reads as missing, and stays out of their list.
-    assert_eq!(
-        batches.detail(&user("u-bob"), &adas.id).await.err(),
-        Some(BatchFailure::NotFound)
-    );
-    assert_eq!(
-        batches.remove(&user("u-bob"), &adas.id, true).await.err(),
-        Some(BatchFailure::NotFound)
-    );
+    assert!(matches!(
+        batches.detail(&user("u-bob"), &adas.id).await,
+        Err(RequestsError::NotFound)
+    ));
+    assert!(matches!(
+        batches.remove(&user("u-bob"), &adas.id, true).await,
+        Err(RequestsError::NotFound)
+    ));
     let listed = batches.list("u-bob").await.expect("bob's list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, bobs.id);
@@ -181,7 +166,6 @@ async fn batch_files_requests_and_removal_cancels_only_its_own() {
         ),
         (1, 0, 2)
     );
-    assert_eq!(counting.recycles.load(Ordering::SeqCst), 0);
     assert!(batches.list("u-ada").await.expect("ada's list").is_empty());
     let bob = batches
         .detail(&user("u-bob"), &bobs.id)
