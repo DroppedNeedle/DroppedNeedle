@@ -92,7 +92,7 @@ impl RequestsService {
         {
             return Ok(MixDecided::NoMatch);
         }
-        // A rejection also turns the user's toggle off (v2).
+        // A rejection also turns the user's toggle off.
         if let Some(mixer) = &self.mixer {
             mixer.clear_intent(user_id).await;
         }
@@ -121,7 +121,7 @@ impl RequestsService {
     /// Refresh one user's personal mix. The build runs in the background
     /// (a cold build waits on ListenBrainz pacing for minutes) and lands as
     /// a `personal_mix_refreshed` event. While it runs, repeat calls answer
-    /// `already_running` instead of stacking builds (v2).
+    /// `already_running` instead of stacking builds.
     pub async fn refresh_personal_mix(
         &self,
         principal: &Principal,

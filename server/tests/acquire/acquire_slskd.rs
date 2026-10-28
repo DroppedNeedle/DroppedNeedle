@@ -109,7 +109,7 @@ async fn bitrate_absent_lossless_stays_none_and_extension_comes_from_filename() 
         .await
         .expect("search succeeds");
 
-    // Multi-peer fan-out: 12 FLAC + 5 MP3 + 1 junk (v2 mock canned set).
+    // Multi-peer fan-out: 12 FLAC + 5 MP3 + 1 junk (the mock's canned set).
     assert_eq!(hits.len(), 18, "all three peers fan out: {hits:?}");
     let flac: Vec<_> = hits.iter().filter(|hit| hit.extension == "flac").collect();
     assert_eq!(flac.len(), 12);
@@ -137,7 +137,7 @@ async fn search_timeout_is_sent_in_milliseconds() {
         .await
         .expect("search succeeds");
 
-    // searchTimeout is MILLISECONDS (v2: verified).
+    // searchTimeout is MILLISECONDS (verified live).
     assert_eq!(mock.search_timeouts(), vec![2000]);
 }
 
@@ -162,7 +162,7 @@ async fn enqueue_posts_a_plain_array_and_reads_pascal_case_enqueued() {
         .await
         .expect("enqueue succeeds");
 
-    // No batch GUID: correlation is (username, filenames) (v2 C2).
+    // No batch GUID: correlation is (username, filenames).
     assert_eq!(handle.source, "soulseek");
     assert_eq!(handle.username, "alice");
     assert_eq!(handle.filenames.len(), 2);
@@ -196,7 +196,7 @@ async fn all_downloads_preserves_usernames_across_peers() {
     .expect("bob enqueues");
 
     // The flatten loses the username, so it is carried down from the
-    // per-user block (v2 `get_all_downloads`).
+    // per-user block.
     let mut owners: Vec<String> = client
         .get_all_downloads()
         .await
@@ -208,7 +208,7 @@ async fn all_downloads_preserves_usernames_across_peers() {
     assert_eq!(owners, vec!["alice".to_owned(), "bob".to_owned()]);
 }
 
-// Single-op tests (v2 C3).
+// Single-op tests.
 
 #[tokio::test]
 async fn enqueue_429_is_retried_with_backoff() {
@@ -372,7 +372,7 @@ async fn concurrent_enqueues_serialize_through_semaphore_one() {
     second.expect("second enqueue succeeds");
 
     // slskd permits only one concurrent enqueue; the repository owns a
-    // Semaphore(1) (v2 C3), so the mock never sees overlap.
+    // Semaphore(1), so the mock never sees overlap.
     assert_eq!(mock.max_in_flight(), 1);
 }
 
@@ -394,7 +394,7 @@ async fn album_ladder_falls_back_past_silent_specific_rungs() {
         texts.len() >= 2,
         "the year rungs ran and came back empty: {texts:?}"
     );
-    // The specific rung leads (verified-live escalation, v2 `search_album`).
+    // The specific rung leads (verified-live escalation).
     assert!(
         texts[0].contains("1997"),
         "most-specific rung first: {texts:?}"
@@ -404,7 +404,7 @@ async fn album_ladder_falls_back_past_silent_specific_rungs() {
         "a broader rung answered: {texts:?}"
     );
 
-    // Reset clears the recorded searches between tests (v2 `reset_state`).
+    // Reset clears the recorded searches between tests.
     mock.reset();
     assert!(mock.search_texts().is_empty());
     assert!(mock.search_timeouts().is_empty());
@@ -434,7 +434,7 @@ async fn handle_correlates_accepted_filenames_only() {
         .expect("enqueue succeeds");
 
     // The correlation key reflects what slskd accepted, not the input set,
-    // or status/cancel poll forever on transfers never created (v2).
+    // or status/cancel poll forever on transfers never created.
     assert_eq!(handle.filenames, vec!["good.flac".to_owned()]);
     let status = repo.get_status(&handle).await.expect("status succeeds");
     assert_eq!(status.status, "completed");
@@ -446,7 +446,7 @@ async fn status_judges_each_file_by_its_latest_attempt() {
     let mock = MockSlskd::start().await.expect("mock starts");
     let repo = repository(&mock);
 
-    // Stale Succeeded shadowed by a newer TimedOut (v2 #131/#253): the file
+    // Stale Succeeded shadowed by a newer TimedOut (issues #131/#253): the file
     // is failed, not completed.
     mock.inject_transfer(
         "alice",
@@ -469,7 +469,7 @@ async fn status_judges_each_file_by_its_latest_attempt() {
     assert_eq!(status.status, "failed");
     assert_eq!(status.files_failed, 1);
     assert_eq!(status.files_completed, 0);
-    // Byte totals stay sum-over-all-records (v2): both attempts count.
+    // Byte totals stay sum-over-all-records: both attempts count.
     assert_eq!(status.bytes_total, 200);
 
     // And vice versa: a newer Succeeded beats an older Errored.
@@ -503,7 +503,7 @@ async fn truncated_stub_flagged_succeeded_is_failed_not_completed() {
     let mock = MockSlskd::start().await.expect("mock starts");
     let repo = repository(&mock);
 
-    // Succeeded flag but only half the bytes moved: a truncated stub (v2
+    // Succeeded flag but only half the bytes moved: a truncated stub (issue
     // #122): never importable, so failed when terminal.
     mock.inject_transfer_progress(
         "alice",
@@ -535,7 +535,7 @@ async fn transfers_match_exact_spelling_first_then_single_nfc_alias() {
     );
     let handle = TaskHandle::new("alice", vec!["cafe\u{301}.flac".to_owned()]);
     let status = repo.get_status(&handle).await.expect("status succeeds");
-    // One distinct NFC-equivalent spelling is claimed (v2 `_match_transfers`).
+    // One distinct NFC-equivalent spelling is claimed.
     assert_eq!(status.matched_transfers, 1);
     assert_eq!(status.status, "completed");
     assert!(aggregate_status(&handle, &[]).status == "queued");
@@ -561,8 +561,7 @@ async fn abort_removes_matched_transfer_records() {
     assert_eq!(status.matched_transfers, 0);
     assert_eq!(status.status, "queued");
 
-    // Post-import record removal shares the same path (v2
-    // `discard_client_artifacts`).
+    // Post-import record removal shares the same path.
     let second = repo
         .enqueue(&[EnqueueFile {
             username: "alice".to_owned(),
@@ -589,7 +588,7 @@ async fn wrong_key_health_message_is_uniform_and_leaks_nothing() {
     let health = repo.health_check().await;
     assert!(!health.ok);
     assert!(health.message.contains("Authentication rejected (401)"));
-    // Never the URL/host/key/headers (v2 `health_check`).
+    // Never the URL/host/key/headers.
     assert!(!health.message.contains("wrong-key"));
     assert!(!health.message.contains(MOCK_API_KEY));
     assert!(!health.message.contains("127.0.0.1"));
@@ -611,7 +610,7 @@ fn recipe_ranking_prefers_flac_then_320_with_dsd_rejected() {
     // 128 kbps is outside the default band.
     assert_eq!(low_mp3, None);
     // DSD must not spend bandwidth even when a noisy title claims
-    // "lossless" (v2 `NOT_IMPORTABLE_EXTENSIONS`).
+    // "lossless".
     assert_eq!(
         policy.recipe_rank("dsf", None, Some(1), Some(2822400)),
         None
@@ -627,10 +626,10 @@ fn recipe_ranking_prefers_flac_then_320_with_dsd_rejected() {
 #[test]
 fn album_ladder_escalates_specific_first_with_wildcard_siblings() {
     // Multi-artist credits query the primary artist only: Soulseek ANDs
-    // every term (v2 issue #373).
+    // every term (issue #373).
     let ladder = album_query_ladder("YMO, Some Guest", "Solid State Survivor", Some(1979));
     assert_eq!(ladder[0], "YMO Solid State Survivor 1979");
-    // The blocked-artist wildcard sibling follows the exact rung (v2).
+    // The blocked-artist wildcard sibling follows the exact rung.
     assert_eq!(
         ladder[1],
         "YMO Solid State Survivor 1979".replace("YMO", "*MO")
@@ -662,7 +661,7 @@ fn locator_resolves_leaf_flat_and_username_layouts() {
     .expect("user file");
     let locator = Locator::new(mount.to_path_buf(), None);
 
-    // Step 1: {mount}/{leaf remote folder}/{filename} (v2).
+    // Step 1: {mount}/{leaf remote folder}/{filename}.
     let hit = locator
         .locate_file(
             "alice",
@@ -673,19 +672,19 @@ fn locator_resolves_leaf_flat_and_username_layouts() {
     assert!(hit.starts_with(mount.canonicalize().expect("mount resolves")));
     assert_eq!(hit.file_name().unwrap(), "01 Track 1.flac");
 
-    // Step 2: flat layout (v2).
+    // Step 2: flat layout.
     let hit = locator
         .locate_file("alice", "@@music\\Other\\flat.flac", None)
         .expect("flat layout resolves");
     assert_eq!(hit.file_name().unwrap(), "flat.flac");
 
-    // Step 3: {mount}/{username}/ at any depth (v2).
+    // Step 3: {mount}/{username}/ at any depth.
     let hit = locator
         .locate_file("alice", "@@music\\Other\\buried.flac", None)
         .expect("username layout resolves");
     assert_eq!(hit.file_name().unwrap(), "buried.flac");
 
-    // Traversal is refused outright (v2).
+    // Traversal is refused outright.
     assert_eq!(
         locator.locate_file("alice", "..\\..\\etc\\passwd", None),
         None
@@ -788,12 +787,12 @@ fn locator_refuses_size_mismatched_exact_hits_but_keeps_aliases() {
     let locator = Locator::new(mount.to_path_buf(), None);
 
     // A same-named file with the wrong bytes is another peer's stale
-    // leftover, not this transfer (v2 #397).
+    // leftover, not this transfer (issue #397).
     assert_eq!(
         locator.locate_file("alice", "stale.flac", Some(1_000_000)),
         None
     );
-    // Unknown size keeps the old name-only behavior (v2).
+    // Unknown size keeps the old name-only behavior.
     assert!(locator.locate_file("alice", "stale.flac", None).is_some());
 }
 
@@ -806,13 +805,13 @@ fn partial_lookup_is_basename_keyed_and_mount_confined() {
         .expect("partial file");
     let locator = Locator::new(downloads.to_path_buf(), Some(incomplete.to_path_buf()));
 
-    // The incomplete layout is not username-scoped (v2 `_locate_partial`).
+    // The incomplete layout is not username-scoped.
     let hit = locator
         .locate_partial("anyone", "@@music\\X\\part.flac", Some(30_000_000))
         .expect("partial resolves");
     assert_eq!(hit.file_name().unwrap(), "part.flac");
 
-    // No incomplete mount disables the fallback entirely (v2).
+    // No incomplete mount disables the fallback entirely.
     let bare_mount = temp_mount("bare");
     let bare = Locator::new(bare_mount.to_path_buf(), None);
     assert_eq!(bare.locate_partial("anyone", "part.flac", Some(1)), None);

@@ -93,7 +93,7 @@ impl DownloadStore<'_> {
         Ok(serde_json::from_str(&row.missing_positions).unwrap_or_default())
     }
 
-    /// v2's wrong-product verdict: the album's files all named different
+    /// The wrong-product verdict: the album's files all named different
     /// content. The first verdict stands.
     pub fn record_wrong_product_verdict(
         &self,
@@ -117,7 +117,7 @@ impl DownloadStore<'_> {
 
     /// A person imported held files and the album is now whole: a failed
     /// or partial task becomes completed, so it stops waiting on a retry
-    /// it no longer needs (v2 `settle_after_manual_import`). Answers
+    /// it no longer needs. Answers
     /// whether the task moved.
     pub fn complete_after_manual_import(
         &self,

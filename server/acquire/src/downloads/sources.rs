@@ -2,7 +2,7 @@
 //!
 //! The slskd and usenet clients live in their own modules. This one defines
 //! only the narrow surface downloads depend on (search, enqueue, poll,
-//! landed, discard, abort), ported from v2's download-client protocol. Source adapters implement
+//! landed, discard, abort). Source adapters implement
 //! [`DownloadSource`]; the watchdog, recovery, and orphan logic below
 //! never touch a client directly.
 
@@ -17,7 +17,7 @@ use crate::reason::Reason;
 use crate::search_jobs::candidates::Candidate;
 use crate::target::SearchTarget;
 
-/// Client correlation handle. Mirrors v2's `TaskHandle`: soulseek fills
+/// Client correlation handle: soulseek fills
 /// username plus filenames (no batch id); usenet fills the job name before
 /// enqueue so a crash between enqueue and journaling stays recoverable.
 /// Serializes into the attempt journal's `handle_json` at enqueue time.

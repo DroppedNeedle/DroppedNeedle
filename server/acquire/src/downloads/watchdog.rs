@@ -1,4 +1,4 @@
-//! Watchdog and retry timing, ported from the orchestrator.
+//! Watchdog and retry timing.
 //!
 //! The poll loop watches real byte progress: an actively-transferring
 //! batch that stops moving trips the stall timeout, a batch stuck in the
@@ -54,7 +54,7 @@ pub enum WatchdogOutcome {
     Deadline,
 }
 
-/// Watchdog timing. Defaults are the v2 production values.
+/// Watchdog timing. Defaults are the production values.
 #[derive(Debug, Clone)]
 pub struct WatchdogConfig {
     /// Poll cadence in seconds.
@@ -101,7 +101,7 @@ impl Watchdog {
         Self { config }
     }
 
-    /// Judge one poll sample. The order mirrors `_poll_until_done`:
+    /// Judge one poll sample, in this order:
     /// terminal states first, then the ceiling, then the materialize
     /// fast-fail, then stall versus queued off real byte progress.
     pub fn evaluate(&self, sample: &PollSample) -> WatchdogOutcome {

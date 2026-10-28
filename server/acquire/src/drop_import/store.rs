@@ -17,14 +17,14 @@ use crate::db::{AcquireDb, ms_from_secs_f64 as ms, secs_f64_from_ms as secs};
 use crate::held::store::{EntryOrigin, GroupKey, HeldRows, NewEntry, NewFile};
 use crate::reason::Reason;
 
-/// Job lifecycle (v2 `JobStatus`).
+/// Job lifecycle.
 pub mod job_status {
     pub const PROCESSING: &str = "processing";
     pub const COMPLETED: &str = "completed";
     pub const FAILED: &str = "failed";
 }
 
-/// Item lifecycle (v2 `ItemStatus`).
+/// Item lifecycle.
 pub mod item_status {
     pub const PROCESSING: &str = "processing";
     pub const IMPORTED: &str = "imported";

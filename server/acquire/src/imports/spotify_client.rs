@@ -1,8 +1,8 @@
 //! Spotify Web API client.
 //!
-//! Ports v2's Spotify client: the Basic-auth token exchange, the 60-second
+//! The Basic-auth token exchange, the 60-second
 //! refresh buffer with one 401 retry and one short 429 wait, the
-//! `items`/`tracks` track-count quirk (v2.9.0 issue #353), the `/items`
+//! `items`/`tracks` track-count quirk (issue #353), the `/items`
 //! tracks endpoint (the old `/tracks` 403s for dev-mode apps after the
 //! March 2026 migration), the `track`/`item` alias with `is_local` skips,
 //! and the bounded no-redirect cover fetch that never fails an import.
@@ -21,9 +21,9 @@ use super::spotify_store::SqliteSpotifyLinks;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
-/// Seconds before expiry a token counts as expired (v2 buffer).
+/// Seconds before expiry a token counts as expired.
 pub const REFRESH_BUFFER_SECS: i64 = 60;
-/// Network read bound for one playlist cover (v2 5 MiB). Looser than the
+/// Network read bound for one playlist cover. Looser than the
 /// storage cap on purpose: it only stops an unbounded wire read.
 pub const MAX_COVER_FETCH_BYTES: usize = 5 * 1024 * 1024;
 /// Largest Web API answer read.
@@ -34,7 +34,7 @@ pub fn now_unix_secs(clock: &dyn Clock) -> i64 {
     clock.now_unix().max(0)
 }
 
-/// Track count of a listed playlist (v2 `_playlist_track_count`). The
+/// Track count of a listed playlist. The
 /// count lives under `items` on the current shape, with `tracks` null or
 /// absent; the older shape used `tracks`. Neither with a total reads as 0.
 pub fn playlist_track_count(playlist: &SimplifiedPlaylist) -> i64 {
@@ -47,8 +47,8 @@ pub fn playlist_track_count(playlist: &SimplifiedPlaylist) -> i64 {
         .unwrap_or(0)
 }
 
-/// Pick the smallest image at least `min_size` wide, else the largest (v2
-/// `_best_image_url`, default floor 250).
+/// Pick the smallest image at least `min_size` wide, else the largest
+/// (default floor 250).
 pub fn best_image_url(images: Option<&[Image]>, min_size: i64) -> Option<String> {
     let mut sorted: Vec<&Image> = images.unwrap_or_default().iter().collect();
     sorted.sort_by_key(|image| image.width.unwrap_or(0));
@@ -74,8 +74,8 @@ pub fn allowed_cover_url(url: &str, extra_cdn: Option<&reqwest::Url>) -> Option<
     spotify_cdn.then_some(parsed)
 }
 
-/// Classified Spotify failure. Wire detail stays out; handlers map to the
-/// v2 texts (400 not-linked, 502 fetch failure).
+/// Classified Spotify failure. Wire detail stays out; handlers map it to
+/// 400 not-linked or 502 fetch failure.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpotifyError {
     /// No link row, or the token flow cannot proceed.
@@ -89,15 +89,14 @@ pub enum SpotifyError {
     Busy,
 }
 
-/// Per-user Spotify Web API client (v2 `SpotifyClient`). Base URLs inject
+/// Per-user Spotify Web API client. Base URLs inject
 /// so tests run against the loopback mocks; production passes the
 /// `api.spotify.com` / `accounts.spotify.com` pair.
 #[derive(Debug, Clone)]
 pub struct SpotifyClient {
     http: reqwest::Client,
-    /// Redirect-refusing client for covers: a CDN URL must answer directly
-    /// (v2 `follow_redirects=False`), so the shared redirect-following
-    /// client must never fetch artwork.
+    /// Redirect-refusing client for covers: a CDN URL must answer directly,
+    /// so the shared redirect-following client must never fetch artwork.
     direct: reqwest::Client,
     api_base: String,
     accounts_base: String,
@@ -124,8 +123,8 @@ impl SpotifyClient {
         }
     }
 
-    /// True when the token is missing or inside the refresh buffer (v2
-    /// `_is_expired`: unparseable reads as expired).
+    /// True when the token is missing or inside the refresh buffer
+    /// (unparseable reads as expired).
     pub fn is_expired(expires_at_unix: i64, now_unix: i64) -> bool {
         if expires_at_unix <= 0 {
             return true;
@@ -133,7 +132,7 @@ impl SpotifyClient {
         now_unix >= expires_at_unix - REFRESH_BUFFER_SECS
     }
 
-    /// Exchange an OAuth code for tokens (v2 callback exchange).
+    /// Exchange an OAuth code for tokens.
     pub async fn exchange_code(
         &self,
         client_id: &str,
@@ -154,7 +153,7 @@ impl SpotifyClient {
         .await
     }
 
-    /// Refresh an access token (v2 `_refresh`).
+    /// Refresh an access token.
     pub async fn refresh(
         &self,
         client_id: &str,
@@ -202,7 +201,7 @@ impl SpotifyClient {
         Ok(TokenGrant::from(answer))
     }
 
-    /// Authenticated GET with the v2 retry rules: refresh-then-once on 401,
+    /// Authenticated GET with these retry rules: refresh-then-once on 401,
     /// one short wait on 429 when `Retry-After` is at most 10 seconds.
     async fn authed_get<T: DeserializeOwned>(
         &self,
@@ -369,7 +368,7 @@ impl SpotifyClient {
     /// Fetch and validate a playlist image: single attempt, no redirects (a
     /// CDN URL must answer directly), host allowlist, `image/*` content
     /// type, and a capped read refusing anything past
-    /// [`MAX_COVER_FETCH_BYTES`] (v2 `fetch_spotify_playlist_cover`).
+    /// [`MAX_COVER_FETCH_BYTES`].
     /// Unusable answers return none;
     /// network errors propagate for the caller to degrade.
     pub async fn fetch_cover(&self, url: &str) -> Result<Option<(Vec<u8>, String)>, SpotifyError> {
@@ -440,7 +439,7 @@ pub struct TokenGrant {
     pub access_token: String,
     /// Rotated refresh token, when the grant carries one.
     pub refresh_token: Option<String>,
-    /// Lifetime in seconds (default 3600, v2).
+    /// Lifetime in seconds (default 3600).
     pub expires_in_secs: i64,
 }
 

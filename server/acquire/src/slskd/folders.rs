@@ -19,7 +19,7 @@
 //! folder ([`rank_listing`]), for a person to take on purpose.
 //!
 //! This is soularr's folder check and Lidarr's import matching moved in
-//! front of the download, with v2's pairing rules (a hard length miss
+//! front of the download, with these pairing rules (a hard length miss
 //! never pairs, a title the name contradicts needs the number and the
 //! length to agree). For a single track, a folder holding little of the
 //! album is a lone-track share: it only ranks after every album folder.

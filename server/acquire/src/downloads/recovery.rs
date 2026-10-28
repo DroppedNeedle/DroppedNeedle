@@ -1,14 +1,13 @@
 //! Startup recovery and orchestrator failover.
 //!
-//! Ports `startup_resume` / `_resume_single_task` classification over the
-//! journal's rows: queued tasks re-dispatch (they never started, so
-//! failing them would be spurious); a task that was landing resumes its
-//! landing from the files its attempt names; a task with a live attempt
-//! whose client handle is journaled resumes polling the transfers the
-//! client kept across the restart; anything else restarts cleanly from
-//! scratch. Recovery never blocks startup and never repeats a fetch
-//! destructively: resume re-correlates before polling, and restart reuses
-//! the idempotency key so a double resume cannot double-enqueue.
+//! Classifies the journal's rows at startup: queued tasks re-dispatch (they
+//! never started, so failing them would be spurious); a task that was landing
+//! resumes its landing from the files its attempt names; a task with a live
+//! attempt whose client handle is journaled resumes polling the transfers the
+//! client kept across the restart; anything else restarts cleanly from scratch.
+//! Recovery never blocks startup and never repeats a fetch destructively:
+//! resume re-correlates before polling, and restart reuses the idempotency key
+//! so a double resume cannot double-enqueue.
 //!
 //! Failover between orchestrator instances rides the attempt-lease
 //! mechanism in [`super::store`]: a successor claims only rows whose
@@ -79,11 +78,10 @@ pub fn classify_startup(status: TaskStatus, attempts: &[AttemptRow]) -> StartupA
     }
 }
 
-/// Planned successor for a terminal task. Ports `_create_retry_task`:
-/// the original stays terminal for audit while a fresh queued task
-/// carries `retry_count + 1`. An upgrade's retry stays an upgrade (keeps
-/// the origin-aware gate); everything else becomes `retry` so quota
-/// counts ignore it.
+/// Planned successor for a terminal task: the original stays terminal for audit
+/// while a fresh queued task carries `retry_count + 1`. An upgrade's retry
+/// stays an upgrade (keeps the origin-aware gate); everything else becomes
+/// `retry` so quota counts ignore it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetrySpawn {
     /// Successor task id.
@@ -117,9 +115,9 @@ pub fn plan_retry(
 }
 
 /// Failover claim window: a successor orchestrator may claim attempt rows
-/// whose lease expired this long ago or more. Mirrors the 300-second
-/// cleanup lease in `AcquisitionCleanupService.run_once`.
+/// whose lease expired this long ago or more. Matches the 300-second
+/// cleanup lease.
 pub const FAILOVER_LEASE_SECONDS: f64 = 300.0;
 
-/// Maximum cleanup rows claimed per worker pass (v2: 25).
+/// Maximum cleanup rows claimed per worker pass.
 pub const FAILOVER_CLAIM_LIMIT: i64 = 25;

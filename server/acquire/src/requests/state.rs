@@ -50,8 +50,8 @@ pub struct RequestsState {
     pub readiness: Option<AcquireReadiness>,
 }
 
-/// What "get missing tracks" checks before it asks for anything (v2
-/// checked a source was set up and the staging disk had room).
+/// What "get missing tracks" checks before it asks for anything: a
+/// source is set up and the staging disk has room.
 #[derive(Clone)]
 pub struct AcquireReadiness {
     /// Whether a download source (Soulseek, Usenet or a plugin) is on.

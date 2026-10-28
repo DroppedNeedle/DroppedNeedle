@@ -130,7 +130,7 @@ impl FoundRelease {
 
 /// The files as the matching engine sees them. Untagged files fall back
 /// to the file name ("03 - Title.flac") and the disc folder ("CD2"), and
-/// an untagged album takes the requested names, as v2's folder import did.
+/// an untagged album takes the requested names.
 /// Those names prove nothing: a download's untagged files import only with
 /// other evidence of their artist (`specs::artist_proof`).
 pub fn local_album(files: &[LandedFile], target: &Target) -> LocalAlbum {
@@ -545,8 +545,8 @@ pub(super) fn file_name_parts(file: &LandedFile) -> (Option<u32>, Option<u32>, S
 }
 
 /// The leading number of a file name as `(disc, track)` plus the title
-/// after it. Three digits are disc then track, as v2's naming wrote them
-/// ("101 Title" is disc 1, track 1); a leading zero disc means none.
+/// after it. Three digits are disc then track, as older naming wrote
+/// them ("101 Title" is disc 1, track 1); a leading zero disc means none.
 fn number_and_title(stem: &str) -> (Option<u32>, Option<u32>, String) {
     let trimmed = stem.trim_start();
     let digits: String = trimmed.chars().take_while(char::is_ascii_digit).collect();

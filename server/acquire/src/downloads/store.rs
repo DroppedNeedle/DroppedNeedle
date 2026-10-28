@@ -1,10 +1,9 @@
 //! The download journal: tasks, attempts, keys, and sweeps on SQLite.
 //!
-//! Ports the durable half of `download_store.py` plus the lifecycle bits
-//! the orchestrator leans on: task transitions, the attempt journal with
-//! revision-CAS and leases, idempotency keys, quarantine rows, held-import
-//! retry, the newest-per-target retryable sweep, and the stale-task query.
-//! Table shapes mirror migrations 0001/0002.
+//! The durable store plus the lifecycle bits the orchestrator leans on: task
+//! transitions, the attempt journal with revision-CAS and leases, idempotency
+//! keys, quarantine rows, held-import retry, the newest-per-target retryable
+//! sweep, and the stale-task query. Table shapes mirror migrations 0001/0002.
 //!
 //! [`DownloadStore`] runs over whatever connection it is given: a writer
 //! transaction for writes, a read-pool connection for reads (see
@@ -89,7 +88,7 @@ pub struct TaskRow {
     /// Download client that owns the transfer (`slskd`, `sabnzbd`).
     pub download_client: String,
     /// Source username (soulseek) or linked marker (usenet persists `""`,
-    /// never NULL, per the v2 #245 note; NULL means never linked).
+    /// never NULL, see issue #245; NULL means never linked).
     pub source_username: Option<String>,
     /// Search job id that produced the picked candidate, once linked.
     pub search_job_id: Option<String>,
@@ -676,9 +675,8 @@ impl<'conn> DownloadStore<'conn> {
 
     /// Whether one task can be reimported: failed or short-landed, with
     /// an attempt whose client handle still names its files (kept on a
-    /// failure, or settled without removing the files). Ports v2
-    /// `get_reimportable_task_ids`, keyed on the attempt journal instead
-    /// of the never-written candidate link.
+    /// failure, or settled without removing the files). Keyed on the
+    /// attempt journal, not on the never-written candidate link.
     pub fn is_reimportable(&self, task_id: &str) -> Result<bool, StoreError> {
         Ok(self.conn.query_row(
             sql::REIMPORTABLE.text(),
@@ -905,7 +903,7 @@ impl<'conn> DownloadStore<'conn> {
 
     /// Claim due cleanup attempts for one worker.
     ///
-    /// Ports `claim_download_cleanup_attempts`: claimable rows are
+    /// Claimable rows are
     /// `cleanup_pending`/`workspace_removed` (plus due `needs_attention`
     /// rechecks) whose retry time passed and whose lease is absent or
     /// expired. Claiming stamps owner plus expiry so a second worker -
@@ -931,7 +929,7 @@ impl<'conn> DownloadStore<'conn> {
     }
 
     /// Record a deferred cleanup: bump failures, stamp the error, and push
-    /// the next retry out with the same growth the v2 worker uses.
+    /// the next retry out with the cleanup backoff's growth.
     pub fn record_cleanup_failure(
         &self,
         attempt_id: &str,
@@ -993,7 +991,7 @@ impl<'conn> DownloadStore<'conn> {
 
     /// Settle a task terminal while keeping its attempt for audit.
     ///
-    /// Ports `_fail_task_preserving_attempt`: the task goes terminal but
+    /// The task goes terminal but
     /// the attempt row survives (marked preserved or cleanup-pending), so
     /// a reaped or failed download never loses its cleanup evidence.
     pub fn finalize_task_and_attempt(
@@ -1068,7 +1066,7 @@ impl<'conn> DownloadStore<'conn> {
 
     /// Blocklist a release by source identity, pruning expired rows first.
     ///
-    /// Ports `record_quarantine`: the prune-on-write keeps the table small
+    /// The prune-on-write keeps the table small
     /// and the TTL self-heal lands on disk, not just filtered on read.
     pub fn record_quarantine(
         &self,
@@ -1142,9 +1140,9 @@ impl<'conn> DownloadStore<'conn> {
     /// Retryable tasks: the newest task per target (album, or track plus
     /// user) when that newest task is terminal `failed`/`partial` under
     /// the retry ceiling. Oldest first so the most overdue retry goes
-    /// first. Ports `list_retryable_tasks`, including the upgrade-origin
-    /// exclusion on both sides: a failed upgrade never auto-retries, and
-    /// a newer upgrade cannot suppress a user task's legitimate retry.
+    /// first. Upgrades are excluded on both sides: a failed upgrade never
+    /// auto-retries, and a newer upgrade cannot suppress a user task's
+    /// legitimate retry.
     pub fn list_retryable(&self, max_retry_count: i64) -> Result<Vec<TaskRow>, StoreError> {
         self.rows(
             sql::RETRYABLE.text(),

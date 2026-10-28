@@ -1,7 +1,7 @@
 //! Wire structs mirroring slskd 0.25.1 JSON shapes.
 //!
-//! Ported from v2's slskd models (shapes verified against a live slskd
-//! 0.25.1.0 instance under v2; that run's date is not recorded). Each
+//! Shapes were verified against a live slskd 0.25.1.0 instance under v2;
+//! that run's date is not recorded. Each
 //! model was checked again on 2026-10-21 against the in-repo `MockSlskd`
 //! in the testkit crate, the recording of those 0.25.1.0 answers. Unknown
 //! fields are ignored on decode so newer slskd versions stay readable;
@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 /// each peer's `files`; checked against `MockSlskd`'s canned peers).
 ///
 /// `filename` and `size` are required: they are what an enqueue names.
-/// `bit_rate` is absent for lossless files (v2 models: "left None, do not
-/// coerce to 0"). `extension` can be empty even for a real file, so the
-/// repository parses the extension from `filename` instead, as v2 did.
+/// `bit_rate` is absent for lossless files: left `None`,
+/// never coerced to 0. `extension` can be empty even for a real file, so the
+/// repository parses the extension from `filename` instead.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SlskdFile {
@@ -70,7 +70,7 @@ pub struct SlskdUserSearchResponse {
 /// against `MockSlskd`, whose state read carries only `id`, `state`,
 /// `isComplete` and `responseCount`). `id` is required: the poll reads
 /// the search by it. `state` is a comma-joined flags string such as
-/// `"Completed, Succeeded"` (v2 models).
+/// `"Completed, Succeeded"`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SlskdSearchResponse {
@@ -95,7 +95,7 @@ pub struct SlskdSearchResponse {
 /// PascalCase (`Enqueued` / `Failed`); there is no batch GUID: each file
 /// becomes its own transfer, matched later by username and filename. Both
 /// lists default to empty on purpose: the repository then falls back to
-/// the files it asked for (v2).
+/// the files it asked for.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SlskdEnqueueResponse {
@@ -107,10 +107,10 @@ pub struct SlskdEnqueueResponse {
 
 /// One transfer record (`GET /transfers/downloads[/{username}]`, each
 /// directory's `files`; checked against `MockSlskd`). `requested_at` / `started_at` are retry-attempt
-/// timestamps (v2 #131/#253): slskd appends one record per attempt per file,
-/// so recency-ordering records needs these. Absent on some slskd versions
-/// (v2 PR #222); left `None` there.
-/// `id` and `filename` are required: a record without them fails decoding.
+/// timestamps (issues #131/#253): slskd appends one record per attempt per
+/// file, so recency-ordering records needs these. Absent on some slskd versions
+/// (PR #222); left `None` there. `id` and `filename` are required: a record
+/// without them fails decoding.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SlskdTransfer {
@@ -182,7 +182,7 @@ impl SlskdUserTransfers {
 /// `directories` block of GET /api/v0/options (checked against
 /// `MockSlskd`): where slskd saves files
 /// (verified keys `downloads` and `incomplete`; both are slskd's
-/// in-container paths, v2 models).
+/// in-container paths).
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SlskdDirectories {

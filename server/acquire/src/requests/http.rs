@@ -35,7 +35,7 @@ impl From<RequestsError> for ApiError {
     }
 }
 
-/// The reply to a decision on one ask, worded as v2 did.
+/// The reply to a decision on one ask.
 pub(crate) fn decided_reply(outcome: Decided) -> ActionResponse {
     let success = outcome.applied();
     let message = match outcome {

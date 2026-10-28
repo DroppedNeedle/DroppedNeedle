@@ -1,10 +1,10 @@
 //! Quality tiers for landed files, judged from the files themselves.
 //!
-//! Search results only promise a quality; the files on disk are the truth
-//! (v2 `local_probe`). One linear axis, worst to best: `low`, `mp3_192`,
+//! Search results only promise a quality; the files on disk are the truth.
+//! One linear axis, worst to best: `low`, `mp3_192`,
 //! `mp3_256`, `mp3_320`, `lossless`. Lossy codecs share the bitrate bands;
 //! an MP4-family file counts as lossless only when the header reports a
-//! bit depth (ALAC), as in v2.
+//! bit depth (ALAC).
 
 use droppedneedle_kernel::runtime_config::sections::tier_rank;
 
@@ -13,7 +13,7 @@ const LOSSLESS: [&str; 4] = ["flac", "wav", "ape", "wv"];
 /// Containers that are lossless only with a bit depth (ALAC).
 const MP4_FAMILY: [&str; 3] = ["m4a", "mp4", "m4b"];
 
-/// The tier one file reaches (v2 `tier_for`).
+/// The tier one file reaches.
 pub fn tier_for(format: &str, bitrate_kbps: Option<u32>, bit_depth: Option<u8>) -> &'static str {
     let format = format.to_ascii_lowercase();
     if LOSSLESS.contains(&format.as_str()) {

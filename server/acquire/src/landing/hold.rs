@@ -1,6 +1,6 @@
 //! Hold files for a person: copy each into the held folder and record it
 //! in the download's entry of the held list, with the evidence that
-//! stopped it (v2 `_hold_for_review`). The copy lands and syncs before its
+//! stopped it. The copy lands and syncs before its
 //! row, so a row never points at a missing file; a track (or unpaired
 //! file) the entry already holds keeps its first copy, whichever candidate
 //! or retry brought it.

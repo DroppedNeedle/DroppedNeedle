@@ -1,8 +1,7 @@
 //! Imports and acquisition health: Lidarr read-only import, Spotify
 //! OAuth/playlist import, and the acquisition health smoke.
 //!
-//! The semantics are ported from v2; every quirk below cites its v2 call
-//! site. The Lidarr surface is read-only import: monitored artists become
+//! The Lidarr surface is read-only import: monitored artists become
 //! follows keyed on the MusicBrainz MBID, and this module issues no Lidarr
 //! management call of any kind.
 //!

@@ -2,9 +2,10 @@
 //!
 //! - [`SqliteSpotifyStates`]: authorize states in `spotify_auth_requests`
 //!   (migration 0023), each with the redirect URI the authorize step sent,
-//!   valid for ten minutes and pruned on every insert, as v2 did.
+//!   valid for ten minutes and pruned on every insert.
 //! - [`SqliteSpotifyLinks`]: per-user links in `user_connections` under
-//!   service `spotify`. The document keeps v2's field names and is sealed
+//!   service `spotify`. The document keeps the field names v2 links were
+//!   imported with and is sealed
 //!   whole with the instance key, like the other sealed connections.
 //! - [`CollectionsPlaylistBridge`]: imported playlists are ordinary rows in
 //!   `playlists` / `playlist_tracks`, written through the collections
@@ -30,7 +31,7 @@ use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
-/// The `user_connections.service` tag for Spotify links (v2's).
+/// The `user_connections.service` tag for Spotify links.
 const SERVICE: &str = "spotify";
 
 /// Single-use authorize states over the shared database.
@@ -93,7 +94,8 @@ impl SqliteSpotifyStates {
     }
 }
 
-/// The sealed link document, with v2's field names.
+/// The sealed link document, with the field names v2 links were imported
+/// with.
 #[derive(Serialize, Deserialize)]
 struct LinkDocument {
     access_token: String,
@@ -215,7 +217,7 @@ impl SqliteSpotifyLinks {
             return Ok(None);
         };
         // A link that no longer opens (lost or rotated key, damaged
-        // row) reads as no link, as in v2: the user connects again.
+        // row) reads as no link: the user connects again.
         let document = match self.crypto.decrypt(&sealed).map(|plain| {
             serde_json::from_str::<LinkDocument>(&plain).map_err(|error| error.to_string())
         }) {
@@ -233,7 +235,7 @@ impl SqliteSpotifyLinks {
             access_token: document.access_token,
             refresh_token: document.refresh_token,
             // An unreadable expiry reads as expired, so the next call
-            // refreshes (v2 `_is_expired`).
+            // refreshes.
             expires_at_unix: parse_iso(&document.expires_at).unwrap_or(0),
             username: document.username,
             spotify_user_id: document.spotify_user_id,
@@ -254,7 +256,7 @@ impl SqliteSpotifyLinks {
 }
 
 /// Imported playlists as collection playlists, keyed on `spotify:{id}`
-/// source refs (v2 `PlaylistService` source-ref half).
+/// source refs.
 #[derive(Clone)]
 pub struct CollectionsPlaylistBridge {
     playlists: PlaylistStore,
@@ -353,7 +355,7 @@ impl CollectionsPlaylistBridge {
     }
 
     /// Store the picked provider image as the local cover. Answers false
-    /// when a cover already exists (v2 `kept_existing`).
+    /// when a cover already exists.
     pub async fn set_imported_cover(
         &self,
         playlist_id: &str,

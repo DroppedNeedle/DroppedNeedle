@@ -1,8 +1,7 @@
 //! Landing: from a finished download to the library.
 //!
 //! When the download worker sees a transfer finish, the landing takes the
-//! files from there, the way Lidarr's completed-download handling and v2's
-//! file processor did:
+//! files from there, the way Lidarr's completed-download handling does:
 //!
 //! 1. [`probe`] walks what landed and reads tags and stream headers.
 //! 2. The file checks in [`specs`] judge the files alone: present and
@@ -725,7 +724,7 @@ impl LandingService {
         }
     }
 
-    /// v2's wrong-product verdict: an album whose files all failed on
+    /// The wrong-product verdict: an album whose files all failed on
     /// their own tags is a different product than asked for. Recorded on
     /// the task once, for the review card.
     async fn record_wrong_product(

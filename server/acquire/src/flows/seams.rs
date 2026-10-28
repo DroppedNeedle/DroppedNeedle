@@ -33,10 +33,9 @@ pub trait ReleasePoll: Send + Sync {
     ) -> BoxFuture<'a, Result<Vec<ObservedRelease>, String>>;
 }
 
-/// Durable tick sink. v2 fired plugin ticks as fire-and-forget asyncio
-/// tasks; v3 emits each tick at its durable state transition, beside the
-/// store write. Production logs each tick, forwards the outcomes plugins
-/// care about and sends user notices to the live event stream
+/// Durable tick sink. Each tick is emitted at its durable state
+/// transition, beside the store write. Production logs each tick, forwards the
+/// outcomes plugins care about and sends user notices to the live event stream
 /// (`acquire::plugin_events::FlowTicks`).
 pub trait TickSink: Send + Sync {
     /// Record one tick.

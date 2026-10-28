@@ -6,7 +6,7 @@
 //! [`super::journal::Journal`]: the scoped task list, the per-task attempt
 //! and decision summaries the cards show, and the activity summary.
 //!
-//! "Scoped" means what v2 did: an admin sees every user's tasks, anyone
+//! "Scoped" means an admin sees every user's tasks, anyone
 //! else only their own.
 
 use droppedneedle_kernel::db::statement::ListLen;
@@ -77,7 +77,7 @@ pub struct AlbumPurge {
 
 impl DownloadStore<'_> {
     /// Download-side cleanup after an album left the library at
-    /// `removed_at` (unix seconds; v2 `purge_album_downloads`): its failed
+    /// `removed_at` (unix seconds): its failed
     /// or short tasks stop retrying, its held downloads are discarded and
     /// its blocklist entries go. Only rows made at or before the removal
     /// are touched, so a request made since keeps its own; held files go
@@ -152,7 +152,7 @@ impl DownloadStore<'_> {
     /// cancelled so the retry sweep skips it, and files kept for "Retry
     /// import" go to cleanup. Either way the owner's
     /// wanted watch on the album stops too, so it cannot start the task
-    /// again (v2 #255: one action, no hidden second switch).
+    /// again (issue #255: one action, no hidden second switch).
     pub fn stop_task(&self, task: &TaskRow, now: f64) -> Result<Stopped, StoreError> {
         let outcome = match task.status {
             TaskStatus::Queued | TaskStatus::Downloading | TaskStatus::Processing => {
@@ -312,7 +312,7 @@ pub struct ListFilter {
 pub struct TaskFacts {
     /// Attempts that reached a download client.
     pub attempts: i64,
-    /// v2's `acquisition_cleanup_state` summary of the attempts.
+    /// The cleanup-state summary of the attempts.
     pub cleanup_state: Option<String>,
     /// A file of this task waits in the held list.
     pub held_for_review: bool,

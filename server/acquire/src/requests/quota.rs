@@ -1,4 +1,4 @@
-//! Cost-control enforcement, ported from v2 `quota_service.py`.
+//! Cost-control enforcement.
 //!
 //! Two layers on purpose, not one choke point:
 //!
@@ -137,7 +137,7 @@ impl QuotaLedger {
             .ok_or_else(|| RequestsError::internal(&"download settings cannot be read"))
     }
 
-    /// Set one user's override row. Bounds mirror v2 (`set_override`).
+    /// Set one user's override row, within the bounds below.
     pub fn set_override(&self, user_id: &str, quota: QuotaOverride) -> Result<(), RequestsError> {
         let bounds = [
             (
@@ -228,7 +228,7 @@ impl QuotaLedger {
     }
 
     /// Asks by one user inside the trailing window. Every history ask counts
-    /// once, pending approvals included (v2 `count_requests_in_window`).
+    /// once, pending approvals included.
     pub async fn count_in_window(
         &self,
         user_id: &str,
@@ -293,7 +293,7 @@ impl QuotaLedger {
         Ok(())
     }
 
-    /// Whole-library indexed bytes (v2 `get_total_library_bytes`).
+    /// Whole-library indexed bytes.
     async fn library_bytes(&self) -> Result<u64, RequestsError> {
         let total: i64 = self
             .db
@@ -309,8 +309,8 @@ impl QuotaLedger {
         Ok(to_u64(total))
     }
 
-    /// Indexed bytes landed by one user's download tasks (v2
-    /// `get_user_library_bytes`). Scanned files have no task and count only
+    /// Indexed bytes landed by one user's download tasks.
+    /// Scanned files have no task and count only
     /// toward the global cap.
     async fn user_bytes(&self, user_id: &str) -> Result<u64, RequestsError> {
         let user_id = user_id.to_owned();
@@ -332,7 +332,7 @@ fn gib() -> u64 {
     1024 * 1024 * 1024
 }
 
-/// `used / cap GB` label, one decimal on the used side (v2 `_gb_label`).
+/// `used / cap GB` label, one decimal on the used side.
 fn gb_label(bytes_used: u64, cap_gb: u64) -> String {
     format!("{:.1} / {cap_gb} GB", bytes_used as f64 / gib() as f64)
 }

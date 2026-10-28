@@ -29,8 +29,7 @@ impl ReleasePoll for NoReleasePoll {
 }
 
 /// The artist's release groups from the MusicBrainz browse endpoint,
-/// every page, at background priority on the shared limiter (v2
-/// `get_artist_release_groups_with_context`, `BACKGROUND_SYNC`). The
+/// every page, at background priority on the shared limiter. The
 /// browse list is complete, so a release cannot hide behind search
 /// ranking. A provider outage is an error, never an empty page.
 pub struct MusicBrainzReleasePoll {

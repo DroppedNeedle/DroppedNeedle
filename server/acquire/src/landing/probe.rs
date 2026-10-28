@@ -202,7 +202,7 @@ fn read_one(path: &Path, format: AudioFormat) -> Option<LandedFile> {
 }
 
 /// A file named with the standalone word "sample" (not "sampler",
-/// not "sample rate"), as Lidarr's `NotSample` and v2's sample spec.
+/// not "sample rate"), as Lidarr's `NotSample`.
 pub fn is_sample(path: &Path) -> bool {
     let stem = path
         .file_stem()

@@ -3,7 +3,7 @@
 //! One row per (kind, MBID); concurrent asks for the same key attach as
 //! co-requesters instead of spawning rival rows. Every mutation carries a
 //! generation compare-and-swap so a stale actor loses loudly instead of
-//! overwriting a newer decision (v2 `expected_generation` quirk). The
+//! overwriting a newer decision. The
 //! SQLite stores in [`super::sqlite`] persist these rows.
 
 use super::error::RequestsError;
@@ -98,7 +98,7 @@ impl RequestStatus {
             .find(|status| status.as_str() == value)
     }
 
-    /// Asks that keep a row alive (v2 `_ACTIVE_REQUEST_STATUSES`).
+    /// Asks that keep a row alive.
     pub const fn is_active(self) -> bool {
         matches!(
             self,
@@ -106,17 +106,17 @@ impl RequestStatus {
         )
     }
 
-    /// Tasks an owner may still stop (v2 `_CANCELLABLE_STATUSES`).
+    /// Tasks an owner may still stop.
     pub const fn is_cancellable(self) -> bool {
         matches!(self, Self::Pending | Self::Downloading | Self::Queued)
     }
 
-    /// Finished rows a retry may revive (v2 `_RETRYABLE_STATUSES`).
+    /// Finished rows a retry may revive.
     pub const fn is_retryable(self) -> bool {
         matches!(self, Self::Failed | Self::Cancelled | Self::Incomplete)
     }
 
-    /// Finished rows history-clearing may drop (v2 `_CLEARABLE_STATUSES`).
+    /// Finished rows history-clearing may drop.
     pub const fn is_clearable(self) -> bool {
         matches!(
             self,
@@ -299,7 +299,7 @@ pub struct RequestRecord {
     pub duration_seconds: Option<i64>,
     /// Containing release group for exact-track rows.
     pub track_release_group_mbid: Option<String>,
-    /// Immutable primary owner; retries keep it (v2 `_dispatch_record`).
+    /// Immutable primary owner; retries keep it.
     pub user_id: Option<String>,
     /// What made the request.
     pub origin: crate::dispatch::DispatchOrigin,
@@ -317,7 +317,7 @@ pub struct RequestRecord {
     pub generation: u64,
     /// True once a privileged role or an approval authorized dispatch. An
     /// ordinary user's retry may only dispatch generations carrying this
-    /// provenance (v2 `claim_retry` quirk).
+    /// provenance.
     pub dispatch_authorized: bool,
     /// Follow the artist for new releases.
     pub monitor_artist: bool,
@@ -508,8 +508,8 @@ pub struct EditionMark {
     pub started_at: u64,
 }
 
-/// Validate one MBID to the UUID shape v2 enforces (`validators.py`
-/// `MBID_PATTERN`): 8-4-4-4-12 lowercase-insensitive hex with dashes.
+/// Validate one MBID to the UUID shape: 8-4-4-4-12 lowercase-insensitive hex
+/// with dashes.
 pub fn validate_mbid(value: &str) -> Result<String, RequestsError> {
     let trimmed = value.trim();
     let bytes = trimmed.as_bytes();
@@ -538,7 +538,7 @@ pub fn validate_mbid(value: &str) -> Result<String, RequestsError> {
     Ok(trimmed.to_owned())
 }
 
-/// The v2 MBID rejection message, kept word for word.
+/// The MBID rejection message.
 fn invalid_mbid() -> RequestsError {
     RequestsError::InvalidInput {
         message: "Invalid MBID format".to_owned(),
@@ -546,8 +546,7 @@ fn invalid_mbid() -> RequestsError {
 }
 
 /// None for absent, blank, or literal-"Unknown" names; else the stripped
-/// value (v2 `request_service._meaningful_name` quirk: older callers send
-/// placeholders that must not become stored names).
+/// value (older callers send placeholders that must not become stored names).
 pub fn meaningful_name(value: Option<&str>) -> Option<String> {
     let text = value?.trim();
     if text.is_empty() || text.eq_ignore_ascii_case("unknown") {

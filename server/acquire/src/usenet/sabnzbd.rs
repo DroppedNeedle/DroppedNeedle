@@ -1,14 +1,13 @@
 //! SABnzbd download client: enqueue NZBs, track jobs, locate output.
 //!
-//! [`SabnzbdClient`] is the raw API wrapper (no business logic), ported
-//! from v2 `sabnzbd_client.py` and verified against SABnzbd
-//! 5.0.4: every call appends `output=json` + `apikey` as suffix query
-//! params (never headers; Lidarr `SabnzbdProxy`), adds go through
-//! `mode=addfile` (multipart POST of fetched + validated NZB bytes), and
-//! `mode=addurl` is the enqueue fallback only. [`SabnzbdQueue`] is the
-//! download-client layer (v2 `SabnzbdDownloadClient`): pre-enqueue
-//! `job_name` correlation, queue→history status walk, storage remap onto
-//! the DroppedNeedle downloads mount, and folder-based import source.
+//! [`SabnzbdClient`] is the raw API wrapper (no business logic),
+//! verified against SABnzbd 5.0.4: every call appends `output=json` + `apikey`
+//! as suffix query params (never headers; Lidarr `SabnzbdProxy`), adds go
+//! through `mode=addfile` (multipart POST of fetched + validated NZB bytes),
+//! and `mode=addurl` is the enqueue fallback only. [`SabnzbdQueue`] is the
+//! download-client layer: pre-enqueue `job_name` correlation, queue→history
+//! status walk, storage remap onto the DroppedNeedle downloads mount, and
+//! folder-based import source.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -94,9 +93,8 @@ impl SabnzbdError {
 }
 
 /// NZB fetch failure, classified so the enqueue path can decide: only a
-/// no-response transport failure falls back to addurl (v2
-/// `transport_failure` marker); a definitive indexer HTTP error or a
-/// content rejection (v2 `content_rejection` marker) never does.
+/// no-response transport failure falls back to addurl; a definitive indexer
+/// HTTP error or a content rejection never does.
 #[derive(Debug, Clone, Error)]
 pub enum NzbFetchError {
     /// No response at all (DNS/refused/timeout): addurl may help. The
@@ -133,7 +131,7 @@ pub enum NzbFetchError {
 /// word. Each is one a client here sends or a recorded response shows:
 /// - `apikey`: the Newznab client's own parameter, SABnzbd's, and the
 ///   download URL Prowlarr returns (`?apikey=...&link=...`);
-/// - `api_key`: the spelling v2 scrubbed, kept;
+/// - `api_key`: the underscore spelling;
 /// - `r`: DrunkenSlug's per-user key in the recorded feed's enclosures
 ///   (`...nzb&i=1&r=KEY`), anchored so `error=` and the like pass;
 /// - `link`: the other value in Prowlarr's download URL, an opaque
@@ -150,8 +148,8 @@ const SECRET_QUERY_KEYS: [(&str, bool); 4] = [
 
 /// Scrub credential-looking query values from text SABnzbd or an indexer
 /// sent back: the Newznab enclosure URL carries the indexer's key and
-/// either may echo it. The keys are [`SECRET_QUERY_KEYS`]. Ported from v2
-/// `_QUERY_SECRET_RE` (without a regex dependency).
+/// either may echo it. The keys are [`SECRET_QUERY_KEYS`], matched
+/// without a regex dependency.
 pub fn redact_query_secrets(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
@@ -179,8 +177,8 @@ pub fn redact_query_secrets(text: &str) -> String {
 }
 
 /// Length of a secret `key=` at `index`, case-insensitive. A key that
-/// must start a word does not match after an identifier char (the v2
-/// anchor).
+/// must start a word does not match after an identifier
+/// char.
 fn match_secret_key(bytes: &[u8], index: usize) -> Option<usize> {
     let rest = &bytes[index..];
     let starts_word =
@@ -575,8 +573,8 @@ fn api_error(message: String) -> SabnzbdError {
     SabnzbdError::Api(message)
 }
 
-/// Rebuild an addurl failure with echoed enclosure credentials scrubbed
-/// (v2 `_redacted_addurl_error`). SABnzbd's own answer is what can echo
+/// Rebuild an addurl failure with echoed enclosure credentials
+/// scrubbed. SABnzbd's own answer is what can echo
 /// them; a transport failure never holds the URL to begin with.
 fn redacted_addurl_error(err: &SabnzbdError) -> SabnzbdError {
     let redacted = |detail: &String| redact_query_secrets(detail);
@@ -609,7 +607,7 @@ fn redacted_addurl_error(err: &SabnzbdError) -> SabnzbdError {
 }
 
 /// Both SABnzbd error forms: plain-text `error: …` and JSON
-/// `{"status": false, "error": …}` (v2 `_parse`).
+/// `{"status": false, "error": …}`.
 fn parse_body(text: &str) -> Result<serde_json::Value, SabnzbdError> {
     let trimmed = text.trim();
     if trimmed.to_ascii_lowercase().starts_with("error") {
@@ -631,7 +629,7 @@ fn parse_body(text: &str) -> Result<serde_json::Value, SabnzbdError> {
 }
 
 /// SABnzbd serialises the status boolean as `false` or `"False"`,
-/// matched case-insensitively (v2 `_is_false`).
+/// matched case-insensitively.
 fn is_false(value: Option<&serde_json::Value>) -> bool {
     match value {
         Some(serde_json::Value::Bool(flag)) => !flag,
@@ -652,7 +650,7 @@ async fn response_snippet(response: reqwest::Response) -> String {
     String::from_utf8_lossy(&bytes).chars().take(200).collect()
 }
 
-/// The NZB head check (v2 `fetch_nzb`): `<?xml` or `<nzb` up front, or
+/// The NZB head check: `<?xml` or `<nzb` up front, or
 /// `<nzb` anywhere in the first 512 bytes.
 fn looks_like_nzb(head: &[u8]) -> bool {
     let trimmed: Vec<u8> = head
@@ -671,7 +669,7 @@ fn looks_like_nzb(head: &[u8]) -> bool {
 
 /// Hand-rolled multipart/form-data: the crate has no multipart feature,
 /// and the shape is one file field. Field `name`, filename
-/// `{job_name}.nzb`, type `application/x-nzb` (v2 `add_file`).
+/// `{job_name}.nzb`, type `application/x-nzb`.
 fn multipart_nzb(job_name: &str, nzb_bytes: &[u8]) -> (Vec<u8>, String) {
     let boundary = "droppedneedle-nzb-boundary";
     let mut body = Vec::new();
@@ -687,7 +685,7 @@ fn multipart_nzb(job_name: &str, nzb_bytes: &[u8]) -> (Vec<u8>, String) {
 }
 
 // ---------------------------------------------------------------------------
-// Queue layer (v2 `SabnzbdDownloadClient`).
+// Queue layer.
 // ---------------------------------------------------------------------------
 
 /// Queue states that move 0 bytes (never active transfers). Anything else
@@ -695,7 +693,7 @@ fn multipart_nzb(job_name: &str, nzb_bytes: &[u8]) -> (Vec<u8>, String) {
 const QUEUE_NOT_ACTIVE: [&str; 4] = ["queued", "grabbing", "propagating", "paused"];
 /// History window for job lookups.
 const HISTORY_LIMIT: u32 = 50;
-/// Failure-path-only bound for the suffix walk (v2 `_REMAP_WALK_BUDGET`).
+/// Failure-path-only bound for the suffix walk.
 const REMAP_WALK_BUDGET: usize = 10_000;
 /// Bound for the finished-folder audio enumeration.
 const ENUMERATE_BUDGET: usize = 10_000;
@@ -704,12 +702,12 @@ const MOUNT_PROBE_BUDGET: usize = 5_000;
 /// History sample for mount diagnosis.
 const DIAGNOSIS_SAMPLE: usize = 3;
 
-/// Mirror of the importer's accepted audio set (v2 `_AUDIO_SUFFIXES`).
+/// Mirror of the importer's accepted audio set.
 const AUDIO_SUFFIXES: [&str; 9] = [
     ".flac", ".mp3", ".m4a", ".m4b", ".mp4", ".ogg", ".oga", ".opus", ".wav",
 ];
 
-/// Client-agnostic task correlation (v2 `TaskHandle`, Usenet half).
+/// Client-agnostic task correlation, Usenet half.
 #[derive(Debug, Clone, Default)]
 pub struct TaskHandle {
     /// Always `usenet` here.
@@ -720,7 +718,7 @@ pub struct TaskHandle {
     pub nzo_id: String,
 }
 
-/// One status poll, shaped like v2 `DownloadTaskStatus`.
+/// One status poll.
 #[derive(Debug, Clone, Default)]
 pub struct TaskStatus {
     /// `queued` / `downloading` / `processing` / `completed` / `failed`.
@@ -743,7 +741,7 @@ pub struct TaskStatus {
     pub matched_transfers: u32,
 }
 
-/// Fresh evidence about bytes and client records (v2 `DownloadMaterialization`).
+/// Fresh evidence about bytes and client records.
 #[derive(Debug, Clone, Default)]
 pub struct Materialization {
     /// `active` / `completed` / `failed` / `missing`.
@@ -760,7 +758,7 @@ pub struct Materialization {
     pub mount_healthy: bool,
 }
 
-/// Mount cross-check (v2 `MountDiagnosis`).
+/// Mount cross-check.
 #[derive(Debug, Clone)]
 pub struct MountDiagnosis {
     /// SABnzbd can introspect its downloads: always true here.
@@ -777,7 +775,7 @@ pub struct MountDiagnosis {
     pub client_downloads_dir: Option<String>,
 }
 
-/// Health answer (v2 `ServiceStatus` shape).
+/// Health answer.
 #[derive(Debug, Clone)]
 pub struct Health {
     /// `ok` or `error`.
@@ -886,7 +884,7 @@ impl SabnzbdQueue {
 
     /// Enqueue one album release: `droppedneedle-{task_id}` job, NZB
     /// fetched + validated, `addfile`'d. `category`/`priority`/`pp` ride
-    /// along like v2's `EnqueueRequest`.
+    /// along.
     pub async fn enqueue_album(
         &self,
         task_id: &str,
@@ -900,7 +898,7 @@ impl SabnzbdQueue {
     }
 
     /// Enqueue one album release under a worker-built job name. The worker
-    /// passes `droppedneedle-{task_id}-{candidate_index}` (v2 strategy):
+    /// passes `droppedneedle-{task_id}-{candidate_index}`:
     /// the counter keeps failover attempts distinct on the client and is
     /// the shape the orphan reconciler recognises.
     pub async fn enqueue_album_as(
@@ -974,7 +972,7 @@ impl SabnzbdQueue {
                 // No-response transport failure: this indexer may be
                 // reachable only from the SABnzbd host, so hand SABnzbd
                 // the enclosure URL. The URL is never logged: enclosures
-                // carry the indexer apikey (v2 `enqueue`).
+                // carry the indexer apikey.
                 let response = self
                     .client
                     .add_url(
@@ -1148,7 +1146,7 @@ impl SabnzbdQueue {
     }
 
     /// Audio files of the finished job, on disk (the folder-based import
-    /// source, as in v2).
+    /// source).
     pub async fn list_completed_files(
         &self,
         handle: &TaskHandle,
@@ -1280,9 +1278,8 @@ impl SabnzbdQueue {
         // Query by nzo_id alone when we have it: also passing
         // search=job_name risks a logical AND that drops the row when SAB renamed
         // the job (category sorting, `.1` dedup), making a completed job
-        // read as never-completed and falsely blocklisting a good release
-        // (v2 `_find_history_slot`). job_name search is only the
-        // pre-enqueue crash-recovery fallback.
+        // read as never-completed and falsely blocklisting a good release.
+        // job_name search is only the pre-enqueue crash-recovery fallback.
         let nzo_ids = non_empty(handle.nzo_id.clone());
         let search = if nzo_ids.is_some() {
             None
@@ -1325,7 +1322,7 @@ impl SabnzbdQueue {
     /// Whether the downloads mount itself is usable. False only when the
     /// mount root is missing or unreadable (a real environment fault). A
     /// healthy mount whose per-job folder is merely empty is a release
-    /// problem, not a mount fault (v2 `downloads_mount_healthy`).
+    /// problem, not a mount fault.
     async fn downloads_mount_healthy(&self) -> bool {
         let mount = self.mount.clone();
         tokio::task::spawn_blocking(move || {
@@ -1341,7 +1338,7 @@ impl SabnzbdQueue {
 
     /// Cached `complete_dir`, but only non-empty values: a transient
     /// failure must not poison the cache and force the basename-only
-    /// remap forever (v2 `_complete_dir`).
+    /// remap forever.
     async fn complete_dir(&self) -> String {
         if let Some(cached) = self.complete_dir_cache.lock().await.clone() {
             return cached;
@@ -1361,7 +1358,7 @@ impl SabnzbdQueue {
     /// Remap SABnzbd's `storage` (its namespace) onto the DroppedNeedle
     /// mount by stripping the `complete_dir` prefix, basename fallback
     /// when the prefix doesn't match. Repairs two deterministic breakages
-    /// first (v2 #245): backslash paths from a Windows-native SAB, and a
+    /// first (issue #245): backslash paths from a Windows-native SAB, and a
     /// mount pointed at a category subfolder via a bounded suffix walk.
     /// A storage that names no folder below `complete_dir` (the complete
     /// folder itself, or nothing at all) maps to nothing: the whole
@@ -1404,7 +1401,7 @@ impl SabnzbdQueue {
     }
 
     /// Cleanup-evidence mapping only when SAB's complete root is known
-    /// exactly (v2 `_exact_local_storage`). The complete folder itself is
+    /// exactly. The complete folder itself is
     /// never one job's storage, so an empty remainder maps to nothing.
     async fn exact_local_storage(&self, storage: &str) -> Option<PathBuf> {
         let complete_dir = self.complete_dir().await;
@@ -1444,7 +1441,7 @@ fn unique_queue_slot<'a>(
     Ok(first)
 }
 
-/// Queue mapping (v2 `_queue_status`): only true `Downloading` is active;
+/// Queue mapping: only true `Downloading` is active;
 /// post-download phases hold the bar at 100% with `processing` (SABnzbd
 /// zeroes the queue percentage during unpack, so surfacing it would show
 /// a 0% regression).
@@ -1477,7 +1474,7 @@ fn queue_status(slot: &QueueSlot) -> TaskStatus {
     }
 }
 
-/// History mapping (v2 `_history_status`): `Deleted` is a terminal failure
+/// History mapping: `Deleted` is a terminal failure
 /// so the orchestrator fails over instead of polling to the deadline; the
 /// fail message surfaces verbatim (disk-full classification lives in the
 /// orchestrator, not here).
@@ -1539,7 +1536,7 @@ fn to_int(value: &str) -> i64 {
     value.trim().parse::<f64>().unwrap_or(0.0) as i64
 }
 
-/// Fold separators to posix before any remap (v2 `_posix_norm`): a
+/// Fold separators to posix before any remap: a
 /// Windows-native SAB reports backslash paths.
 /// `.` and `..` segments are dropped, so a storage path joined onto the
 /// mount can never climb out of it.
@@ -1567,7 +1564,7 @@ fn strip_prefix<'a>(remote: &'a [String], complete: &[String]) -> Option<&'a [St
 /// storage-relative suffix (the category-subfolder mount: the mount IS
 /// `complete_dir/<cat>`, so the stripped remainder still carries the
 /// category component). Longest suffix wins; failure-path only; sync I/O
-/// the caller offloads (v2 `_suffix_walk`).
+/// the caller offloads.
 fn suffix_walk(mount: &Path, relative: &[String]) -> Option<PathBuf> {
     let mount = mount.canonicalize().unwrap_or_else(|_| mount.to_path_buf());
     let suffixes: Vec<String> = (0..relative.len())
@@ -1614,7 +1611,7 @@ fn suffix_walk(mount: &Path, relative: &[String]) -> Option<PathBuf> {
 }
 
 /// Audio files under the finished job folder (bounded DFS), confined to
-/// the mount (v2 `_enumerate_audio`). Sync I/O the caller offloads.
+/// the mount. Sync I/O the caller offloads.
 fn enumerate_audio(mount: &Path, folder: &Path) -> Vec<PathBuf> {
     let mount = mount.canonicalize().unwrap_or_else(|_| mount.to_path_buf());
     let root = match folder.canonicalize() {

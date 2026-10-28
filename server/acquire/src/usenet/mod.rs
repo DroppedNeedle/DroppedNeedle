@@ -4,17 +4,16 @@
 //! tracks jobs, [`newznab`] and [`prowlarr`] search indexers for releases,
 //! and [`indexer`] is the one search seam they and plugin indexers share.
 //! [`policy`] carries the Usenet quality tiers, search recipe, timeouts,
-//! and retention gates, ported from v2's `DownloadPolicySettings` and
-//! `quality_tiers`. The testkit crate serves the loopback
+//! and retention gates. The testkit crate serves the loopback
 //! SAB/Newznab/Prowlarr servers the contract tests run against. No test
 //! touches the live network: every one runs against `127.0.0.1` mocks.
 //!
 //! HTTP seam: each client takes an injected `reqwest::Client` (built once
-//! from the shared `HttpClientFactory`), mirroring v2's injected httpx
-//! client. The provider catalog `HttpPort` is GET-only and does not fit
-//! SABnzbd's multipart POST, so Usenet keeps this minimal seam.
+//! from the shared `HttpClientFactory`). The provider catalog `HttpPort` is
+//! GET-only and does not fit SABnzbd's multipart POST, so Usenet keeps this
+//! minimal seam.
 //!
-//! Live-version-cited quirks ported from v2 (each cited at its call site):
+//! Live-version-cited quirks (each cited at its call site):
 //! SABnzbd 5.0.4 suffix params + `cat`-not-`category` + multipart addfile
 //! with the addurl fallback, the JSON/`"False"`/plain-text error forms,
 //! Newznab's XML-only feed with the 202 `t=music` → `t=search` fallback,

@@ -1,10 +1,10 @@
 //! Newznab indexer search: per-indexer HTTP + XML, fan-out, ladder.
 //!
 //! [`NewznabClient`] is the raw XML wrapper around one indexer (no fan-out
-//! logic), ported from v2 `newznab_client.py`: XML-only, `extended=1`
+//! logic): XML-only, `extended=1`
 //! always, `<error>` checked on caps and search alike, auth via an
 //! `apikey` query param that is never logged. [`NewznabIndexer`] fans one
-//! logical search across the configured indexers (v2 `newznab_indexer.py`):
+//! logical search across the configured indexers:
 //! caps-gated query strategy, the 202 `t=music` → `t=search` fallback, the
 //! punctuation-normalized retry ladder (#259), rate-limit backoff, search
 //! caching, and cross-indexer dedup by the (title, size) identity.
@@ -25,7 +25,7 @@ use crate::downloads::source_tag::SourceTag;
 use droppedneedle_kernel::http_client::{BodyError, transport_error};
 
 // ---------------------------------------------------------------------------
-// Boundary types (v2 `repositories/protocols/indexer.py` + `download_identity.py`).
+// Boundary types.
 // ---------------------------------------------------------------------------
 
 /// One NZB release from a Newznab indexer (release-granular). Debug is
@@ -85,7 +85,7 @@ pub struct IndexerResult {
 }
 
 /// Cross-indexer release identity: normalised title + size bucketed to the
-/// MB, joined by the unit separator (v2 `usenet_identity`). Trivial
+/// MB, joined by the unit separator. Trivial
 /// spacing/case differences dedup together; a byte or two of size jitter
 /// doesn't split the identity.
 pub fn usenet_identity(title: &str, size_bytes: u64) -> String {
@@ -102,7 +102,7 @@ pub fn usenet_identity(title: &str, size_bytes: u64) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Caps models (v2 `newznab_models.py`).
+// Caps models.
 // ---------------------------------------------------------------------------
 
 /// One Newznab subcategory.
@@ -217,7 +217,7 @@ impl NewznabError {
 }
 
 // ---------------------------------------------------------------------------
-// Query normalization (v2 `normalize_newznab_query`, #259).
+// Query normalization (issue #259).
 // ---------------------------------------------------------------------------
 
 /// Characters a scene release name never carries. A canonical MusicBrainz
@@ -228,7 +228,7 @@ impl NewznabError {
 /// the apostrophe.
 const QUERY_STRIP: [char; 8] = [',', '\'', '"', '?', '!', ';', ':', '&'];
 
-/// Fold one typographic quote to ASCII (v2 `_TYPOGRAPHIC_QUOTES`).
+/// Fold one typographic quote to ASCII.
 fn fold_quote(ch: char) -> char {
     match ch {
         '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' | '\u{2032}' | '\u{2035}' | '`'
@@ -519,9 +519,9 @@ impl NewznabClient {
     }
 }
 
-/// Parse XML, hardening on failure (v2 `_safe_fromstring`, Prowlarr
-/// `XmlCleaner`): strip illegal control chars, then escape bare
-/// ampersands/non-predefined entities and retry.
+/// Parse XML, hardening on failure (as Prowlarr's `XmlCleaner` does): strip
+/// illegal control chars, then escape bare ampersands/non-predefined entities
+/// and retry.
 fn safe_parse(raw: &[u8]) -> Result<Element, NewznabError> {
     let text = String::from_utf8_lossy(raw);
     let cleaned = xml::strip_illegal(&text);
@@ -585,7 +585,7 @@ fn parse_caps(root: &Element) -> NewznabCaps {
     let searching = root.child("searching");
     let text_el = searching.and_then(|el| el.child("search"));
     // `<audio-search>` first, `<music-search>` fallback: Prowlarr-as-server
-    // emits both, real indexers vary (v2 robustness finding).
+    // emits both, real indexers vary.
     let audio_el = searching.and_then(|el| {
         el.child("audio-search")
             .or_else(|| el.child("music-search"))
@@ -670,7 +670,7 @@ fn parse_items(
             Ok(None) => {}
             Err(ItemFault::Torznab) => {
                 // Torrent/magnet enclosures: a Torznab indexer added as
-                // Generic Newznab. Bail the whole feed (v2 `_TorznabFeed`).
+                // Generic Newznab. Bail the whole feed.
                 tracing::warn!(
                     indexer = indexer_name,
                     "newznab indexer returned torrent enclosures; is a Torznab indexer added as Generic Newznab?"
@@ -715,7 +715,7 @@ fn parse_item(
         }
     }
     let Some(nzb_url) = nzb_url.filter(|url| !url.is_empty()) else {
-        // Not an NZB item; `<link>` is intentionally ignored (v2).
+        // Not an NZB item; `<link>` is intentionally ignored.
         return Ok(None);
     };
     let attrs = attr_map(item);
@@ -823,7 +823,7 @@ fn join_url(request_url: &str, nzb_url: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Fan-out indexer (v2 `NewznabIndexer`).
+// Fan-out indexer.
 // ---------------------------------------------------------------------------
 
 /// Newznab "No such function": fall back `t=music` → `t=search`.
@@ -852,7 +852,7 @@ pub struct NewznabIndexerEntry {
     pub limit: u32,
 }
 
-/// Health answer (v2 `ServiceStatus` shape).
+/// Health answer.
 #[derive(Debug, Clone)]
 pub struct IndexerHealth {
     /// `ok` or `error`.
@@ -1221,7 +1221,7 @@ impl NewznabIndexer {
     }
 
     /// Cached caps with the permissive default: a fetch failure keeps the
-    /// indexer enabled on working-indexer defaults (v2 `_caps`).
+    /// indexer enabled on working-indexer defaults.
     async fn caps_for(&self, entry: &NewznabIndexerEntry, timeout: Duration) -> NewznabCaps {
         let now = Instant::now();
         if let Ok(guard) = self.caps_cache.lock()
@@ -1272,7 +1272,7 @@ impl Indexer for NewznabIndexer {
 
 /// Pool to one list, deduped by the cross-indexer (title, size) identity.
 /// Higher-priority indexers come first, so first-seen-wins keeps the
-/// preferred copy (v2 `_dedup`).
+/// preferred copy.
 fn dedup_releases(releases: Vec<UsenetRelease>) -> Vec<UsenetRelease> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(releases.len());

@@ -1,4 +1,4 @@
-//! Task and attempt states, ported from `acquisition/status.py`.
+//! Task and attempt states.
 //!
 //! The persisted vocabulary mirrors the `download_tasks.status` CHECK in
 //! migration 0001 exactly; `retrying` and `awaiting_review` stay SSE-only
@@ -6,7 +6,7 @@
 //! a retry always spawns a fresh task carrying `retry_count + 1` while the
 //! original stays terminal for audit.
 
-/// Persisted download-task status. Wire strings match v2 byte for byte.
+/// Persisted download-task status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
@@ -121,15 +121,14 @@ impl AttemptState {
 
 /// True for `completed`, `partial`, `failed`, `cancelled`.
 ///
-/// Accepts the wire string so bare database values work without parsing,
-/// mirroring v2's `is_terminal`, which takes either form.
+/// Accepts the wire string so bare database values work without parsing.
 pub fn is_terminal(status: &str) -> bool {
     matches!(status, "completed" | "partial" | "failed" | "cancelled")
 }
 
 /// Whether `from -> to` is a defined transition.
 ///
-/// Advisory only, exactly like v2: the store never rejects a write for a
+/// Advisory only: the store never rejects a write for a
 /// missing edge, because a wrongly narrow map would block a legitimate
 /// flow. Tests and reviewers use this to assert legality instead.
 pub fn can_transition(from: TaskStatus, to: TaskStatus) -> bool {

@@ -45,7 +45,7 @@ use droppedneedle_providers::listenbrainz::{
     ListenBrainzCredentials, SimilarArtist, TopRecording, TopReleaseGroup,
 };
 
-/// The playlist's display name (v2).
+/// The playlist's display name.
 pub const PLAYLIST_NAME: &str = "Your Weekly Mix";
 /// Source-ref prefix that marks a user's mix playlist.
 pub const SOURCE_REF_PREFIX: &str = "personal-mix:";
@@ -83,7 +83,7 @@ pub enum SkipReason {
 }
 
 impl SkipReason {
-    /// Stable code (v2 spellings).
+    /// Stable code.
     pub fn code(self) -> &'static str {
         match self {
             Self::NotLinked => "listenbrainz_not_linked",
@@ -263,7 +263,7 @@ impl PersonalMixBuilder {
 
     /// Display state of the user's standing grant
     /// (`none|pending|approved|rejected|revoked`), with the override for
-    /// admins and trusted users. An enabled toggle with no row reads `none` (v2).
+    /// admins and trusted users. An enabled toggle with no row reads `none`.
     pub async fn auto_request_state(&self, user_id: &str, role: Role, toggle_on: bool) -> String {
         if toggle_on && role.is_curator() {
             return "approved".to_owned();

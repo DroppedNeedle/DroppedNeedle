@@ -1,6 +1,6 @@
 //! `SlskdRepository`: search and acquisition over one slskd instance.
 //!
-//! Ported from v2's slskd repository. Owns the search and enqueue
+//! Owns the search and enqueue
 //! semaphores (both 1; slskd permits only one concurrent search and one
 //! concurrent enqueue) and translates slskd JSON shapes to/from the
 //! protocol types. slskd has no batch id: a task is correlated to its
@@ -22,7 +22,7 @@ use crate::client_error::{ClientError, Service};
 use crate::landing::DownloadsFolder;
 
 /// How many finished transfers the mount diagnosis tries to locate under
-/// the mount (v2 `_DIAGNOSIS_SAMPLE`). Small: it is a settings-page check
+/// the mount. Small: it is a settings-page check
 /// and a wrong mount makes each a full walk.
 const DIAGNOSIS_SAMPLE: usize = 3;
 
@@ -54,8 +54,7 @@ pub struct EnqueueFile {
     pub size: i64,
 }
 
-/// One per-file search hit, translated from slskd's shapes (v2
-/// `DownloadSearchResult` fields the repository fills).
+/// One per-file search hit, translated from slskd's shapes.
 #[derive(Debug, Clone)]
 pub struct SearchResult {
     pub username: String,
@@ -74,8 +73,7 @@ pub struct SearchResult {
     pub queue_length: i64,
 }
 
-/// Aggregate per-file status for one task (v2 `DownloadTaskStatus` fields
-/// the repository fills).
+/// Aggregate per-file status for one task.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskStatus {
     /// `completed` | `partial` | `failed` | `downloading` | `queued`.
@@ -95,7 +93,7 @@ pub struct TaskStatus {
 
 /// Health outcome. Auth failures carry the uniform message (never the
 /// URL/host/key/headers); the slskd body (usually empty) is appended only
-/// as a stripped single-line snippet (v2 `health_check`).
+/// as a stripped single-line snippet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceStatus {
     pub ok: bool,
@@ -103,8 +101,7 @@ pub struct ServiceStatus {
     pub message: String,
 }
 
-/// Mount cross-check outcome (v2 `MountDiagnosis` fields the repository
-/// fills). Best-effort: diagnosing never raises.
+/// Mount cross-check outcome. Best-effort: diagnosing never raises.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountDiagnosis {
     pub supported: bool,
@@ -150,7 +147,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         }
     }
 
-    /// Optional second mount for slskd's incomplete dir (v2 #292). `None`
+    /// Optional second mount for slskd's incomplete dir (issue #292). `None`
     /// disables the partial fallback entirely; never consulted by
     /// `get_file_path`, only by `locate_partial`.
     #[must_use]
@@ -180,7 +177,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         match self.client.health_check().await {
             Err(ClientError::Auth { status, detail, .. }) => {
                 // Wrong key and key-CIDR deny are both 401 server-side: one
-                // uniform message, never the URL/host/key/headers (v2).
+                // uniform message, never the URL/host/key/headers.
                 let code = status.unwrap_or(401);
                 let mut message = format!(
                     "Authentication rejected ({code}): check the API key and slskd's CIDR allowlist"
@@ -227,8 +224,8 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         }
     }
 
-    /// Album acquisition search: escalating query breadth (v2
-    /// `search_album`). Returns the first rung with results.
+    /// Album acquisition search: escalating query breadth.
+    /// Returns the first rung with results.
     pub async fn search_album(
         &self,
         artist_name: &str,
@@ -246,7 +243,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
 
     /// Track acquisition search: like [`Self::search_album`] but every rung
     /// keeps the track title so the track matcher can pick the right
-    /// recording (v2 `search_track`).
+    /// recording.
     pub async fn search_track(
         &self,
         artist_name: &str,
@@ -263,9 +260,9 @@ impl<T: SlskdHttp> SlskdRepository<T> {
     }
 
     /// Enqueue files from one peer. The correlation key is
-    /// (username, filenames) since slskd returns no batch GUID (v2).
+    /// (username, filenames) since slskd returns no batch GUID.
     /// Serialized via the enqueue semaphore; the client retries the 429
-    /// "only one concurrent operation" with backoff (v2).
+    /// "only one concurrent operation" with backoff.
     pub async fn enqueue(&self, files: &[EnqueueFile]) -> Result<TaskHandle, ClientError> {
         let first = files.first().ok_or_else(|| ClientError::BadRequest {
             service: Service::Slskd,
@@ -293,7 +290,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         }
         // The correlation key must reflect what slskd accepted, not the
         // input set, or get_status/cancel poll forever on transfers never
-        // created for rejected files (v2).
+        // created for rejected files.
         Ok(TaskHandle::new(
             &username,
             accepted_filenames(&result, &requested),
@@ -307,8 +304,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         Ok(aggregate_status(handle, &matched))
     }
 
-    /// Remove the transfer records for one task (v2 `abort` /
-    /// `discard_client_artifacts` / `_remove_transfer_records`).
+    /// Remove the transfer records for one task.
     pub async fn abort(&self, handle: &TaskHandle) -> Result<bool, ClientError> {
         self.remove_transfer_records(handle).await
     }
@@ -332,7 +328,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
     }
 
     /// Cross-check slskd's completed (not-yet-imported) downloads against
-    /// the configured mount (v2 `diagnose_downloads_mount`). Best-effort:
+    /// the configured mount. Best-effort:
     /// never raises. The real test is whether a sample of those finished
     /// files actually resolves under the mount (`resolvable_downloads`);
     /// `mount_has_files` is a weaker signal that a parent-of-downloads
@@ -368,7 +364,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         }
         // Resolve a small sample under the mount: the cheap get_file_path
         // steps hit first for a correct mount, so only a misconfigured one
-        // pays the walk cost (v2).
+        // pays the walk cost.
         let mut resolvable = 0;
         let sample: Vec<&&SlskdTransfer> = completed.iter().take(DIAGNOSIS_SAMPLE).collect();
         for transfer in &sample {
@@ -403,7 +399,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
     }
 
     /// slskd's own `directories.downloads` (its in-container path),
-    /// best-effort, shown to the user so they can match it to the mount (v2).
+    /// best-effort, shown to the user so they can match it to the mount.
     async fn configured_downloads_dir(&self) -> Option<String> {
         match self.client.get_options().await {
             Ok(options) if !options.directories.downloads.is_empty() => {
@@ -414,9 +410,9 @@ impl<T: SlskdHttp> SlskdRepository<T> {
     }
 
     /// Resolve a finished transfer to its on-disk path, off the async
-    /// runtime (v2 runs the lookup in a thread: the bounded but potentially
-    /// large walks froze the whole loop (polling, SSE, every request)
-    /// whenever the mount was big or misconfigured).
+    /// runtime (the bounded but potentially large walks froze the whole loop
+    /// (polling, SSE, every request) whenever the mount was big or
+    /// misconfigured).
     pub async fn get_file_path(
         &self,
         handle: &TaskHandle,
@@ -432,8 +428,8 @@ impl<T: SlskdHttp> SlskdRepository<T> {
             .map_err(|err| ClientError::transport(Service::Slskd, err.to_string()))
     }
 
-    /// Basename-keyed partial fallback confined to the incomplete mount
-    /// (v2 `locate_partial`). Never called by `get_file_path`; only the
+    /// Basename-keyed partial fallback confined to the incomplete mount.
+    /// Never called by `get_file_path`; only the
     /// verifier's retry-signal path consults it, and only for subset
     /// imports.
     pub async fn locate_partial(
@@ -452,7 +448,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
     }
 
     /// Run one query rung: start the search, then poll past the search
-    /// window by the completion grace (v2 `_run_search`).
+    /// window by the completion grace.
     async fn run_search(&self, query: &str) -> Result<Vec<SearchResult>, ClientError> {
         let _permit = self
             .search_permits
@@ -481,8 +477,8 @@ impl<T: SlskdHttp> SlskdRepository<T> {
     }
 }
 
-/// Translate peer responses to per-file hits (v2 `_parse_search_responses`).
-/// Walks up past disc-pattern directories (`Disc N` / `CD N`, v2 `_DISC_DIR`)
+/// Translate peer responses to per-file hits.
+/// Walks up past disc-pattern directories (`Disc N` / `CD N`)
 /// so multi-disc albums group by the album-level folder.
 pub fn parse_search_responses(responses: &[SlskdUserSearchResponse]) -> Vec<SearchResult> {
     let mut out = Vec::new();
@@ -513,7 +509,7 @@ pub fn parse_search_responses(responses: &[SlskdUserSearchResponse]) -> Vec<Sear
 }
 
 fn is_disc_dir(name: &str) -> bool {
-    // `\b(?:Disc|CD)\s*\d+\b`, case-insensitive (v2 `_DISC_DIR`).
+    // `\b(?:Disc|CD)\s*\d+\b`, case-insensitive.
     let lower = name.to_lowercase();
     let bytes = lower.as_bytes();
     let mut index = 0;
@@ -552,8 +548,8 @@ fn is_disc_dir(name: &str) -> bool {
     false
 }
 
-/// Lowercase extension parsed from the filename (v2
-/// `_extension_from_filename`; slskd's `extension` field is unreliable).
+/// Lowercase extension parsed from the filename (slskd's `extension`
+/// field is unreliable).
 #[must_use]
 pub fn extension_from_filename(filename: &str) -> String {
     let base = filename.rsplit(['/', '\\']).next().unwrap_or(filename);
@@ -563,7 +559,7 @@ pub fn extension_from_filename(filename: &str) -> String {
     }
 }
 
-/// Lowercase comma-joined state flags (v2 `_state_flags`).
+/// Lowercase comma-joined state flags.
 #[must_use]
 pub fn state_flags(state: &str) -> HashSet<String> {
     state
@@ -574,7 +570,7 @@ pub fn state_flags(state: &str) -> HashSet<String> {
         .collect()
 }
 
-/// Filenames slskd actually accepted (v2 `_accepted_filenames`).
+/// Filenames slskd actually accepted.
 /// Enqueued/Failed entries are untyped: extract filenames when present,
 /// else requested-minus-failed, else the full requested set.
 #[must_use]
@@ -606,25 +602,23 @@ pub fn accepted_filenames(result: &SlskdEnqueueResponse, requested: &[String]) -
         .collect()
 }
 
-/// NFC form used for filename comparisons only (v2 `_normalised_filename`).
+/// NFC form used for filename comparisons only.
 fn normalised_filename(value: &str) -> String {
     value.nfc().collect()
 }
 
-/// Transfer path key with separators normalised, but not Unicode (v2
-/// `_exact_transfer_path`).
+/// Transfer path key with separators normalised, but not Unicode.
 fn exact_transfer_path(value: &str) -> String {
     value.replace('\\', "/")
 }
 
-/// Canonical comparison key for a path reported by slskd (v2
-/// `_normalised_path`).
+/// Canonical comparison key for a path reported by slskd.
 fn normalised_path(value: &str) -> String {
     normalised_filename(&exact_transfer_path(value))
 }
 
-/// Match transfer records to handle filenames without merging spellings
-/// (v2 `_match_transfers`). Each handle filename claims all records with
+/// Match transfer records to handle filenames without merging spellings.
+/// Each handle filename claims all records with
 /// its exact transfer path key; if no exact spelling is present, it may
 /// claim the NFC-equivalent records only when those records have one
 /// distinct exact spelling. A record is assigned only once when multiple
@@ -672,8 +666,8 @@ pub fn match_transfers<'t>(
         .collect()
 }
 
-/// Collapse records to the latest attempt per unique file (v2
-/// `_latest_transfer_per_file`, #131/#253): slskd appends one record per
+/// Collapse records to the latest attempt per unique file
+/// (issues #131/#253): slskd appends one record per
 /// retry attempt, so raw counts double-count retried files and let a stale
 /// Succeeded row shadow a newer TimedOut/Errored one (and vice versa).
 /// Highest recency key wins; exact ties (including two
@@ -700,9 +694,9 @@ pub fn latest_transfer_per_file<'t>(transfers: &[&'t SlskdTransfer]) -> Vec<&'t 
     winners.into_iter().map(|(_, transfer)| transfer).collect()
 }
 
-/// Best-effort recency key for one transfer record (v2 `_transfer_recency`):
+/// Best-effort recency key for one transfer record:
 /// RequestedAt first, falling back to StartedAt (requestedAt is
-/// absent/mixed across slskd versions, v2 PR #222). Absent or unparseable
+/// absent/mixed across slskd versions, PR #222). Absent or unparseable
 /// values rank as the oldest possible instant; naive timestamps read as
 /// UTC. slskd's `id` is a GUID, not monotonic, so it carries no recency
 /// signal.
@@ -719,7 +713,7 @@ fn transfer_recency(transfer: &SlskdTransfer) -> i64 {
 }
 
 /// Parse the ISO-8601 timestamps slskd emits into epoch seconds. Naive
-/// timestamps read as UTC (v2). Returns `None` for unparseable values.
+/// timestamps read as UTC. Returns `None` for unparseable values.
 fn parse_datetime(text: &str) -> Option<i64> {
     let text = text.trim().replace('T', " ");
     let (date_part, time_part) = text.split_once(' ')?;
@@ -771,12 +765,12 @@ fn parse_datetime(text: &str) -> Option<i64> {
     Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset_seconds)
 }
 
-/// Per-file status from matched transfer records (v2 `_aggregate_status`).
+/// Per-file status from matched transfer records.
 /// File-level verdicts judge each file only by its latest attempt; byte
 /// totals stay sum-over-all-records on purpose so cumulative progress
 /// keeps counting prior attempts. A "succeeded" flag only counts when the
 /// transfer moved at least `size` bytes (size known positive); a short
-/// succeeded record is a truncated stub (v2 #122): failed when terminal,
+/// succeeded record is a truncated stub (issue #122): failed when terminal,
 /// non-terminal when still active. Unknown or non-positive sizes fail open
 /// to the flag verdict.
 #[must_use]
@@ -825,7 +819,7 @@ pub fn aggregate_status(handle: &TaskHandle, transfers: &[&SlskdTransfer]) -> Ta
             // 'aborted' (a "Completed, Aborted" transfer) is
             // terminal-failed, not active: without it the file never reaches
             // a terminal count and the task waits out the full queued timeout
-            // instead of failing over on the next poll (v2).
+            // instead of failing over on the next poll.
             failed += 1;
         } else if flags.contains("inprogress") || flags.contains("initializing") {
             has_active_transfer = true;
@@ -840,7 +834,7 @@ pub fn aggregate_status(handle: &TaskHandle, transfers: &[&SlskdTransfer]) -> Ta
 
     // Terminal only once every enqueued file has a terminal matched
     // transfer, so a not-yet-materialised record can't trigger a premature
-    // terminal state (v2).
+    // terminal state.
     let latest_count = latest_transfer_per_file(transfers).len();
     let all_terminal = !transfers.is_empty()
         && (completed + failed) == latest_count
@@ -875,7 +869,7 @@ pub fn aggregate_status(handle: &TaskHandle, transfers: &[&SlskdTransfer]) -> Ta
     }
 }
 
-/// Whether the downloads mount holds any file (v2 `_mount_has_any_file`):
+/// Whether the downloads mount holds any file:
 /// bounded DFS, stops at the first hit. An unreadable or wrong-path mount
 /// returns false; that is the signal. Sync filesystem I/O; the caller
 /// offloads it off the async runtime.
@@ -905,7 +899,7 @@ fn mount_has_any_file(mount: &std::path::Path) -> bool {
         for entry in entries.flatten() {
             seen += 1;
             if seen > 5000 {
-                return true; // clearly not empty (v2)
+                return true; // clearly not empty
             }
             let resolved = match entry.path().canonicalize() {
                 Ok(resolved) => resolved,

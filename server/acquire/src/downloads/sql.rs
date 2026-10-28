@@ -370,7 +370,7 @@ pub(super) fn tasks_in(statuses: ListLen) -> String {
     format!("{TASK_ROW} WHERE status IN ({})", marks(statuses))
 }
 
-/// Per task: attempts that reached a client, and v2's cleanup summary.
+/// Per task: attempts that reached a client, and the cleanup summary.
 pub(super) fn attempt_facts(tasks: ListLen) -> String {
     format!(
         "SELECT task_id, SUM(handle_json != ''), \

@@ -13,10 +13,10 @@ use crate::requests::models::{
 use crate::requests::sqlite::WatchChange;
 use droppedneedle_auth::{Admin, Principal};
 
-/// History page-size cap (v2 `page_size` query `le=100`).
+/// History page-size cap.
 const HISTORY_MAX_PAGE_SIZE: u32 = 100;
 
-/// Map a guarded watch change to the action reply (v2 `_owned_watch`).
+/// Map a guarded watch change to the action reply.
 fn watch_action(change: WatchChange) -> Result<WantedActionResponse, RequestsError> {
     match change {
         WatchChange::Done(watch) => Ok(WantedActionResponse {
@@ -72,8 +72,8 @@ impl From<&RequestRecord> for RequestItem {
 }
 
 impl RequestsService {
-    /// Live rows. Admins see every row; anyone else sees their own (v2
-    /// `user_id=None`-for-admin quirk). A read never writes: rows follow
+    /// Live rows. Admins see every row; anyone else sees their own.
+    /// A read never writes: rows follow
     /// their tasks when the tasks settle.
     pub async fn active(
         &self,
@@ -153,7 +153,7 @@ impl RequestsService {
         })
     }
 
-    /// Rows waiting for review (admin only in v2).
+    /// Rows waiting for review.
     pub async fn pending_approvals(
         &self,
         _admin: &Admin,
@@ -167,7 +167,7 @@ impl RequestsService {
     }
 
     /// Pending-review badge count: album/track rows plus auto-download units
-    /// plus personal-mix rows (v2 sums all three sources).
+    /// plus personal-mix rows.
     pub async fn pending_approval_count(
         &self,
         _admin: &Admin,
@@ -215,8 +215,8 @@ impl RequestsService {
     }
 
     /// Failed or short album asks still inside their auto-retry ladder:
-    /// the wanted view's read-only "still hunting" rows (v2
-    /// `list_retrying_for`). A row graduates into a real watch the sweep
+    /// the wanted view's read-only "still hunting" rows. A row
+    /// graduates into a real watch the sweep
     /// after its ladder runs out.
     async fn retrying(
         &self,
@@ -372,7 +372,7 @@ impl RequestsService {
             Ok(None) => {}
             Err(error) => tracing::warn!(task_id, ?error, "task progress read failed"),
         }
-        // v2 history quirk: only failed rows offer the admin reimport, and
+        // Only failed rows offer the admin reimport, and
         // only when the task still has its candidate linked.
         if record.status == RequestStatus::Failed {
             match self.dispatch.reimportable(task_id).await {

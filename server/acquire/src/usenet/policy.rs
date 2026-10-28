@@ -1,9 +1,8 @@
 //! Usenet policy: quality tiers, timeouts, retention.
 //!
-//! Ported from v2's `DownloadPolicySettings` and quality tiers. This struct
-//! holds the subset the Usenet clients consume, with v2's defaults; the
-//! acquisition clients fill it from the download policy settings
-//! ([`UsenetPolicy::from_saved`]).
+//! [`UsenetPolicy`] holds the subset of the download policy the Usenet
+//! clients consume, with the shipped defaults; the acquisition clients fill it
+//! from the download policy settings ([`UsenetPolicy::from_saved`]).
 
 use std::time::Duration;
 
@@ -12,7 +11,7 @@ use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 
 /// Audio quality tiers, best first.
 ///
-/// Ported from v2 `TIER_KEYS` (`quality_tiers.py`): a single linear axis,
+/// A single linear axis,
 /// lossless at the top, then codec-agnostic lossy bitrate bands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum QualityTier {
@@ -22,14 +21,14 @@ pub enum QualityTier {
     Mp3_192,
     /// 256-319kbps band.
     Mp3_256,
-    /// 320kbps+ band (V0 included, like v2).
+    /// 320kbps+ band (V0 included).
     Mp3_320,
     /// FLAC/ALAC/WAV/APE/WavPack.
     Lossless,
 }
 
 impl QualityTier {
-    /// v2 wire key (`quality_min`/`quality_max`/`quality_cutoff` values).
+    /// Wire key (`quality_min`/`quality_max`/`quality_cutoff` values).
     pub fn key(self) -> &'static str {
         match self {
             QualityTier::Low => "low",
@@ -40,7 +39,7 @@ impl QualityTier {
         }
     }
 
-    /// Parse a v2 wire key. Unknown keys are the caller's bug; `None` lets
+    /// Parse a wire key. Unknown keys are the caller's bug; `None` lets
     /// the caller fall back to a default instead of panicking.
     pub fn parse(key: &str) -> Option<QualityTier> {
         match key.trim().to_ascii_lowercase().as_str() {
@@ -53,7 +52,7 @@ impl QualityTier {
         }
     }
 
-    /// Higher is better, mirroring v2 `tier_rank` (low=0 .. lossless=4).
+    /// Higher is better (low=0 .. lossless=4).
     pub fn rank(self) -> u8 {
         match self {
             QualityTier::Low => 0,
@@ -67,7 +66,7 @@ impl QualityTier {
 
 /// Accepted quality range plus the Usenet timeout/retention knobs.
 ///
-/// Defaults are v2's: `quality_min "mp3_320"`, `quality_max "lossless"`,
+/// Shipped defaults: `quality_min "mp3_320"`, `quality_max "lossless"`,
 /// `flac_mp3_only` on, 30-minute stall / 2-hour queued watchdogs,
 /// 30-minute minimum release age, unbounded retention/size.
 #[derive(Debug, Clone)]
@@ -76,15 +75,15 @@ pub struct UsenetPolicy {
     pub quality_min: QualityTier,
     /// Ceiling of the accepted contiguous tier band.
     pub quality_max: QualityTier,
-    /// Restrict acceptable formats to FLAC + MP3 (v2 default on).
+    /// Restrict acceptable formats to FLAC + MP3 (default on).
     pub flac_mp3_only: bool,
     /// Stop upgrading once the worst held track reaches this tier.
     pub quality_cutoff: QualityTier,
-    /// Per-indexer HTTP call budget (v2 `per_indexer_timeout`).
+    /// Per-indexer HTTP call budget.
     pub indexer_timeout: Duration,
-    /// NZB fetch + SABnzbd add budget (v2 `fetch_nzb`/add 60s).
+    /// NZB fetch + SABnzbd add budget.
     pub enqueue_timeout: Duration,
-    /// Queue/history poll budget (v2 30s).
+    /// Queue/history poll budget.
     pub poll_timeout: Duration,
     /// Watchdog: an active transfer moving no bytes this long fails over.
     pub stall_timeout: Duration,
@@ -92,7 +91,7 @@ pub struct UsenetPolicy {
     pub queued_timeout: Duration,
     /// Reject a release older than this many days (0 = no limit). Past a
     /// provider's retention the articles are gone, so the grab would only
-    /// partially download and fail (v2 `usenet_retention_days`).
+    /// partially download and fail.
     pub retention_days: u32,
     /// Hard upper bound on one album's total size in MB (0 = unbounded).
     pub max_size_mb: u64,
@@ -117,9 +116,9 @@ impl Default for UsenetPolicy {
 }
 
 impl UsenetPolicy {
-    /// v2's shipped default band is `mp3_320..=lossless`; `Default` keeps
-    /// min==max until the coordinator binds real settings, so call this
-    /// for the v2 behavior.
+    /// The shipped default band, `mp3_320..=lossless`. `Default` keeps
+    /// min==max until real settings are bound, so the saved policy starts
+    /// from this.
     pub fn v2_defaults() -> Self {
         UsenetPolicy {
             quality_max: QualityTier::Lossless,

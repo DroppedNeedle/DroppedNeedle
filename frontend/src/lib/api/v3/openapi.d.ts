@@ -86,8 +86,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Test submitted Lidarr credentials against `system/status` (v2 Test
-         *     route): the submitted url/key are probed so Test works before the first
+         * Test submitted Lidarr credentials against `system/status`: the
+         *     submitted url/key are probed so Test works before the first
          *     save, a masked key resolves to the stored one, and reachable/bad-key
          *     verdicts travel in the body, never as a leaked 5xx, never echoing the
          *     URL or host.
@@ -106,7 +106,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Live SABnzbd status against the saved config (v2: admin-only). */
+        /** Live SABnzbd status against the saved config (admin only). */
         get: operations["get_sabnzbd_status"];
         put?: never;
         post?: never;
@@ -123,7 +123,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Live slskd client status (v2: any authenticated user may read it). */
+        /** Live slskd client status (any signed-in user may read it). */
         get: operations["get_slskd_status"];
         put?: never;
         post?: never;
@@ -141,10 +141,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Spotify OAuth callback (v2 `spotify_auth_callback`). State-identified,
-         *     so it sits outside the session gate like v2's ungated route: every
-         *     outcome redirects to the profile page with the v2 query contract
-         *     (`spotify=connected`, or `spotify=error` with an optional `reason`).
+         * Spotify OAuth callback. State-identified, so it sits outside the
+         *     session gate: every outcome redirects to the profile page with
+         *     `spotify=connected` or `spotify=error` with an optional `reason`.
          */
         get: operations["spotify_callback"];
         put?: never;
@@ -164,7 +163,7 @@ export interface paths {
         };
         /**
          * Authorize URL for the caller's Spotify link flow. Requires the admin
-         *     app to be enabled and complete (v2 400 text kept).
+         *     app to be enabled and complete.
          */
         get: operations["get_spotify_auth_url"];
         put?: never;
@@ -200,8 +199,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The caller's owned Spotify playlists. Unlinked reads as the v2 400;
-         *     upstream failures as the v2 502.
+         * The caller's owned Spotify playlists. Unlinked reads as a 400,
+         *     upstream failures as a 502.
          */
         get: operations["list_spotify_playlists"];
         put?: never;
@@ -240,7 +239,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The computed OAuth redirect URI (v2 admin display endpoint). */
+        /** The computed OAuth redirect URI, for the admin to register. */
         get: operations["get_spotify_redirect_uri"];
         put?: never;
         post?: never;
@@ -261,7 +260,7 @@ export interface paths {
         get: operations["get_spotify_settings"];
         /**
          * Save the Spotify app settings. A masked secret preserves the stored
-         *     one; a non-absolute redirect origin is a 400 (v2 text kept).
+         *     one; a non-absolute redirect origin is a 400.
          */
         put: operations["put_spotify_settings"];
         post?: never;
@@ -5978,7 +5977,7 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Unlink the caller's Spotify account (v2 `DELETE /me/connections/spotify`).
+         * Unlink the caller's Spotify account.
          *     Idempotent: no link reads as done too.
          */
         delete: operations["disconnect_spotify"];
@@ -9725,7 +9724,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
-         * @description Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`
+         * @description Acquisition health smoke. `ready`
          *     says whether a download source is on; the gates unpack per source.
          */
         AcquireHealth: {
@@ -10216,7 +10215,7 @@ export interface components {
         /**
          * @description Album intake body. Names may be omitted only when they resolve; intake
          *     has no catalog lookup, so blank or literal-"Unknown" names are
-         *     rejected (v2 `request_service._meaningful_name` quirk).
+         *     rejected.
          */
         AlbumIntake: {
             /** @description Album title. */
@@ -11410,7 +11409,7 @@ export interface components {
             /** @description Whether anything was cancelled. */
             success: boolean;
         };
-        /** @description Batch intake body (v2 caps batches at 500 rows). */
+        /** @description Batch intake body (at most 500 rows). */
         BatchIntake: {
             /** @description Auto-download future releases (approval-gated for users). */
             auto_download_artist?: boolean;
@@ -13182,10 +13181,7 @@ export interface components {
             /** @description What happened, in one sentence. */
             text: string;
         };
-        /**
-         * @description One download task as the queue shows it. Field names match v2's
-         *     `DownloadTaskResponse`, so the web UI reads them unchanged.
-         */
+        /** @description One download task as the queue shows it. */
         DownloadTaskResponse: {
             /**
              * @description `not_tracked`, `in_use`, `pending`, `complete`, `preserved` or
@@ -16478,10 +16474,7 @@ export interface components {
              */
             current_tier: string;
         };
-        /**
-         * @description One monitored Lidarr artist annotated for the requesting user (v2
-         *     `LidarrArtistCandidate`).
-         */
+        /** @description One monitored Lidarr artist annotated for the requesting user. */
         LidarrArtistCandidate: {
             /** @description True when the user already follows this MBID. */
             already_following: boolean;
@@ -16494,7 +16487,7 @@ export interface components {
             /** @description True when importing would arm auto-download (`all`). */
             would_auto_download: boolean;
         };
-        /** @description Candidate list (v2 `LidarrArtistListResponse`). */
+        /** @description Candidate list. */
         LidarrArtistListResponse: {
             /** @description Monitored artists with valid MBIDs. */
             artists: components["schemas"]["LidarrArtistCandidate"][];
@@ -16505,8 +16498,8 @@ export interface components {
             total: number;
         };
         /**
-         * @description Admin-configured read-only Lidarr import connection (v2
-         *     `LidarrImportConnectionSettings`). Not a management integration.
+         * @description Admin-configured read-only Lidarr import connection. Not a management
+         *     integration.
          */
         LidarrConnectionSettings: {
             /** @description API key, Fernet-encrypted at rest, masked on read. */
@@ -16514,13 +16507,13 @@ export interface components {
             /** @description Lidarr base URL, normalised to a bare origin. */
             url: string;
         };
-        /** @description Import selection (v2 `LidarrImportRequest`). */
+        /** @description Import selection. */
         LidarrImportRequest: {
             /** @description MBIDs to import; unknown or unmonitored entries are ignored. */
             selected_mbids: string[];
         };
         /**
-         * @description Import summary (v2 `LidarrImportResponse`). `imported` counts brand-new
+         * @description Import summary. `imported` counts brand-new
          *     follows only; `already_following` is the disjoint pre-existing subset;
          *     `auto_download_enabled` counts brand-new auto-download follows only.
          */
@@ -16548,7 +16541,7 @@ export interface components {
              */
             skipped_invalid: number;
         };
-        /** @description Result of testing submitted Lidarr credentials (v2 `LidarrTestResponse`). */
+        /** @description Result of testing submitted Lidarr credentials. */
         LidarrTestResponse: {
             /** @description User-safe summary. Never echoes the URL or host. */
             message: string;
@@ -19472,7 +19465,7 @@ export interface components {
         };
         /** @description One blocklisted release. */
         QuarantineEntry: {
-            /** @description v2's client label: `slskd`, `sabnzbd`, or the source for plugins. */
+            /** @description The client label: `slskd`, `sabnzbd`, or the source for plugins. */
             client_id: string;
             /** @description The blocked file (soulseek) or job (usenet). */
             filename: string;
@@ -20606,7 +20599,7 @@ export interface components {
             completed_at?: number | null;
             /**
              * @description Custom artwork URL override. None: artwork resolves client-side
-             *     from the MBID, which is what v2's built cover URL did anyway.
+             *     from the MBID.
              */
             cover_url?: string | null;
             /**
@@ -20619,7 +20612,7 @@ export interface components {
             /**
              * Format: int64
              * @description Epoch seconds when the transfer should finish. None: no live ETA
-             *     source exists (v2 never sent one either).
+             *     source exists.
              */
             eta?: number | null;
             /**
@@ -20681,7 +20674,7 @@ export interface components {
             status: string;
             /**
              * @description Task status detail groups behind the card's expander. None until a
-             *     producer exists (v2 never sent these either).
+             *     producer exists.
              */
             status_messages?: components["schemas"]["RequestStatusMessage"][] | null;
             /** @description Linked download task. */
@@ -20712,8 +20705,7 @@ export interface components {
         RequestPriority: "user_initiated" | "image_fetch" | "prefetch_visible" | "background_sync" | "opportunistic";
         /**
          * @description One grouped status detail behind the request card's expander. Intake
-         *     has no producer for these yet (v2 never sent them
-         *     either), so views answer None until one exists.
+         *     has no producer for these yet, so views answer None until one exists.
          */
         RequestStatusMessage: {
             /** @description Detail lines. */
@@ -21224,10 +21216,7 @@ export interface components {
              */
             url: string;
         };
-        /**
-         * @description Live SABnzbd status against the saved config (v2 `SabnzbdTestResponse`,
-         *     status half).
-         */
+        /** @description Live SABnzbd status against the saved config. */
         SabnzbdStatusResponse: {
             /** @description Category list, when the probe reached it. */
             categories: string[];
@@ -22245,8 +22234,8 @@ export interface components {
             url: string;
         };
         /**
-         * @description Live slskd client status (v2 `DownloadClientStatusResponse`, trimmed to
-         *     the client half; the mount half belongs to the downloads module).
+         * @description Live slskd client status. The mount check belongs to the downloads
+         *     module.
          */
         SlskdStatusResponse: {
             /** @description Credentials/URL present. */
@@ -22328,21 +22317,18 @@ export interface components {
          * @enum {string}
          */
         SourceStatus: "degraded" | "error";
-        /**
-         * @description Authorize URL for the caller's Spotify link flow (v2
-         *     `SpotifyAuthUrlResponse`).
-         */
+        /** @description Authorize URL for the caller's Spotify link flow. */
         SpotifyAuthUrlResponse: {
             /** @description `accounts.spotify.com/authorize` URL with state. */
             auth_url: string;
         };
-        /** @description Import start (v2 `SpotifyImportRequest`). */
+        /** @description Import start. */
         SpotifyImportRequest: {
             /** @description Name for the internal playlist record. */
             name: string;
         };
         /**
-         * @description Import acknowledgement (v2 `SpotifyImportResponse`). The populate runs
+         * @description Import acknowledgement. The populate runs
          *     as the `spotify:import` durable job; the id is usable immediately.
          */
         SpotifyImportResponse: {
@@ -22363,7 +22349,7 @@ export interface components {
              */
             track_count?: number | null;
         };
-        /** @description One owned Spotify playlist (v2 `SpotifyPlaylistItem`). */
+        /** @description One owned Spotify playlist. */
         SpotifyPlaylistItem: {
             /** @description Picked cover URL, smallest image at least 250 wide. */
             cover_url?: string | null;
@@ -22383,17 +22369,17 @@ export interface components {
              */
             track_count: number;
         };
-        /** @description Owned playlists (v2 `SpotifyPlaylistListResponse`). */
+        /** @description Owned playlists. */
         SpotifyPlaylistListResponse: {
             /** @description Playlists owned by the caller's Spotify account. */
             playlists: components["schemas"]["SpotifyPlaylistItem"][];
         };
-        /** @description The computed OAuth redirect URI (v2 `GET /spotify/redirect-uri`). */
+        /** @description The computed OAuth redirect URI. */
         SpotifyRedirectUri: {
             /** @description Byte-exact URI registered in the Spotify dashboard. */
             redirect_uri: string;
         };
-        /** @description Admin Spotify app settings (v2 `SpotifySettings`, GH-298). */
+        /** @description Admin Spotify app settings (issue #298). */
         SpotifySettings: {
             /** @description Spotify app client id, returned unmasked. */
             client_id: string;
@@ -22718,7 +22704,7 @@ export interface components {
             source: string;
         };
         /**
-         * @description Persisted download-task status. Wire strings match v2 byte for byte.
+         * @description Persisted download-task status.
          * @enum {string}
          */
         TaskStatus: "queued" | "downloading" | "processing" | "completed" | "partial" | "failed" | "cancelled";

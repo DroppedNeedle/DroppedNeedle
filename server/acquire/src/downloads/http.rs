@@ -5,9 +5,9 @@
 //! dismiss, cancel), and the quality-upgrade worklist and asks. Held files
 //! are in [`crate::held`].
 //!
-//! Every route sits inside the session gate. Tasks follow v2's ownership:
-//! admins see and act on every task, everyone else on their own (another
-//! user's task answers 403). Reimport and quarantine are admin only. Live
+//! Every route sits inside the session gate. Admins see and act on every
+//! task, everyone else on their own (another user's task answers 403).
+//! Reimport and quarantine are admin only. Live
 //! updates come over the shared event stream (`downloads.changed` and
 //! `download_progress`), not a per-task stream.
 
@@ -107,8 +107,7 @@ pub struct ImportDecisionView {
     pub decided_at: f64,
 }
 
-/// One download task as the queue shows it. Field names match v2's
-/// `DownloadTaskResponse`, so the web UI reads them unchanged.
+/// One download task as the queue shows it.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DownloadTaskResponse {
     pub id: String,
@@ -382,7 +381,7 @@ pub struct QuarantineEntry {
     pub id: i64,
     /// `soulseek`, `usenet` or `plugin:<key>`.
     pub source: String,
-    /// v2's client label: `slskd`, `sabnzbd`, or the source for plugins.
+    /// The client label: `slskd`, `sabnzbd`, or the source for plugins.
     pub client_id: String,
     /// Soulseek peer, empty for other sources.
     pub username: String,

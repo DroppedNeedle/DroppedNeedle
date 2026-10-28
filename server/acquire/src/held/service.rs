@@ -43,8 +43,8 @@ use droppedneedle_library::matching::Release;
 /// actions a restart cut off and retries files our side could not take.
 pub const PRUNE_JOB: &str = "acquire-held-prune";
 
-/// Fingerprint checks one bulk re-check runs at most (v2
-/// `HELD_REVERIFY_BULK_LIMIT`). Skipped files do not count.
+/// Fingerprint checks one bulk re-check runs at most. Skipped files do
+/// not count.
 pub const BULK_RECHECK_LIMIT: usize = 25;
 
 /// Entries one prune pass expires at most; the rest wait for the next.

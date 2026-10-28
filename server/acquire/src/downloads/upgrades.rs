@@ -1,6 +1,5 @@
 //! Quality upgrades: the albums below the quality cutoff, and asking for a
-//! better copy of an album or a single track (v2 `cutoff-unmet` and
-//! `upgrade/{album,track}`).
+//! better copy of an album or a single track.
 //!
 //! An upgrade is an ordinary download with origin `upgrade`. When it lands,
 //! a file replaces the library's copy only when it is strictly better, and

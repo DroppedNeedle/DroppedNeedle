@@ -1,4 +1,4 @@
-//! SABnzbd wire models (v2 `sabnzbd_models.py`): stringly-typed queue
+//! SABnzbd wire models: stringly-typed queue
 //! numbers, real-number history bytes, opaque `nzo_id`. Every reply the
 //! client reads decodes into one of these; a job row without its
 //! `nzo_id` or name, or a category without its name, fails decoding

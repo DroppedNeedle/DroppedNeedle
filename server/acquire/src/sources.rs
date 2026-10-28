@@ -270,7 +270,7 @@ impl SlskdSource {
             }
         }
         // After a short landing, the next peer is asked only for the tracks
-        // still missing (v2 per-file failover). With the edition's tracklist
+        // still missing. With the edition's tracklist
         // the folder ranker pairs files to those positions; without one,
         // files are kept by the position their name gives, or kept when it
         // gives none.
@@ -529,7 +529,7 @@ impl SabnzbdSource {
             self.indexers.iter().map(|indexer| indexer.search(query)),
         )
         .await;
-        // The first copy of a release wins (v2's composite indexer rule).
+        // The first copy of a release wins.
         let mut seen = std::collections::HashSet::new();
         let now = self.journal.db().now_unix_f64();
         let hits = found
@@ -751,7 +751,7 @@ impl SabnzbdSource {
             }
         };
         let category = self.category.as_deref().filter(|cat| *cat != "*");
-        // Worker-built job name (v2 strategy): the counter keeps failover
+        // Worker-built job name: the counter keeps failover
         // attempts distinct on the client and matches the orphan shape.
         let handle = if task.download_type == "track" {
             self.queue

@@ -1,14 +1,12 @@
 //! Wire shapes for the imports and health routes.
 //!
-//! One shape per concept, all snake_case, mirroring the v2 schemas
-//! (lidarr_import, me_connections, download, settings). Handlers render
-//! these as-is.
+//! One shape per concept, all snake_case. Handlers render these as-is.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// Admin-configured read-only Lidarr import connection (v2
-/// `LidarrImportConnectionSettings`). Not a management integration.
+/// Admin-configured read-only Lidarr import connection. Not a management
+/// integration.
 // Debug is hand-written below: the API key never appears in debug output.
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LidarrConnectionSettings {
@@ -27,7 +25,7 @@ impl std::fmt::Debug for LidarrConnectionSettings {
     }
 }
 
-/// Result of testing submitted Lidarr credentials (v2 `LidarrTestResponse`).
+/// Result of testing submitted Lidarr credentials.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LidarrTestResponse {
     /// True when the probe authenticated.
@@ -38,8 +36,7 @@ pub struct LidarrTestResponse {
     pub message: String,
 }
 
-/// One monitored Lidarr artist annotated for the requesting user (v2
-/// `LidarrArtistCandidate`).
+/// One monitored Lidarr artist annotated for the requesting user.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LidarrArtistCandidate {
     /// MusicBrainz artist MBID (`foreignArtistId`).
@@ -54,7 +51,7 @@ pub struct LidarrArtistCandidate {
     pub would_auto_download: bool,
 }
 
-/// Candidate list (v2 `LidarrArtistListResponse`).
+/// Candidate list.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LidarrArtistListResponse {
     /// Monitored artists with valid MBIDs.
@@ -63,14 +60,14 @@ pub struct LidarrArtistListResponse {
     pub total: i64,
 }
 
-/// Import selection (v2 `LidarrImportRequest`).
+/// Import selection.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LidarrImportRequest {
     /// MBIDs to import; unknown or unmonitored entries are ignored.
     pub selected_mbids: Vec<String>,
 }
 
-/// Import summary (v2 `LidarrImportResponse`). `imported` counts brand-new
+/// Import summary. `imported` counts brand-new
 /// follows only; `already_following` is the disjoint pre-existing subset;
 /// `auto_download_enabled` counts brand-new auto-download follows only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -87,7 +84,7 @@ pub struct LidarrImportResponse {
     pub approval_batch_id: Option<String>,
 }
 
-/// Admin Spotify app settings (v2 `SpotifySettings`, GH-298).
+/// Admin Spotify app settings (issue #298).
 // Debug is hand-written below: the client secret never appears in debug output.
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SpotifySettings {
@@ -112,22 +109,21 @@ impl std::fmt::Debug for SpotifySettings {
     }
 }
 
-/// The computed OAuth redirect URI (v2 `GET /spotify/redirect-uri`).
+/// The computed OAuth redirect URI.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SpotifyRedirectUri {
     /// Byte-exact URI registered in the Spotify dashboard.
     pub redirect_uri: String,
 }
 
-/// Authorize URL for the caller's Spotify link flow (v2
-/// `SpotifyAuthUrlResponse`).
+/// Authorize URL for the caller's Spotify link flow.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SpotifyAuthUrlResponse {
     /// `accounts.spotify.com/authorize` URL with state.
     pub auth_url: String,
 }
 
-/// One owned Spotify playlist (v2 `SpotifyPlaylistItem`).
+/// One owned Spotify playlist.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SpotifyPlaylistItem {
     /// Spotify playlist id.
@@ -146,21 +142,21 @@ pub struct SpotifyPlaylistItem {
     pub imported_playlist_id: Option<String>,
 }
 
-/// Owned playlists (v2 `SpotifyPlaylistListResponse`).
+/// Owned playlists.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SpotifyPlaylistListResponse {
     /// Playlists owned by the caller's Spotify account.
     pub playlists: Vec<SpotifyPlaylistItem>,
 }
 
-/// Import start (v2 `SpotifyImportRequest`).
+/// Import start.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SpotifyImportRequest {
     /// Name for the internal playlist record.
     pub name: String,
 }
 
-/// Import acknowledgement (v2 `SpotifyImportResponse`). The populate runs
+/// Import acknowledgement. The populate runs
 /// as the `spotify:import` durable job; the id is usable immediately.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SpotifyImportResponse {
@@ -199,7 +195,7 @@ pub struct SourceGate {
     pub message: String,
 }
 
-/// Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`
+/// Acquisition health smoke. `ready`
 /// says whether a download source is on; the gates unpack per source.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AcquireHealth {
@@ -215,8 +211,8 @@ pub struct AcquireHealth {
     pub gates: Vec<SourceGate>,
 }
 
-/// Live slskd client status (v2 `DownloadClientStatusResponse`, trimmed to
-/// the client half; the mount half belongs to the downloads module).
+/// Live slskd client status. The mount check belongs to the downloads
+/// module.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SlskdStatusResponse {
     /// Credentials/URL present.
@@ -255,8 +251,7 @@ pub struct DownloadsMountView {
     pub path: String,
 }
 
-/// Live SABnzbd status against the saved config (v2 `SabnzbdTestResponse`,
-/// status half).
+/// Live SABnzbd status against the saved config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SabnzbdStatusResponse {
     /// True when the saved config probes clean.

@@ -1,7 +1,7 @@
 //! Search review: what the automatic downloader does with a search's
 //! candidates before it grabs one.
 //!
-//! Ported from v2's automatic path. The worker searches every source for
+//! The worker searches every source for
 //! the album, ranks the results the way a manual search does, and then:
 //! takes the first recommended candidate in source order (the album looks
 //! complete and in an accepted quality), or, when nothing is recommended,
@@ -53,7 +53,7 @@ pub enum Verdict {
 
 /// Judge the candidates, listed source by source in try order with each
 /// source's best first. The first recommended one wins, so an earlier
-/// source's good copy beats a later source's (v2's source-first order).
+/// source's good copy beats a later source's.
 /// Candidates outside the download settings count for nothing: when only
 /// those were found, the download searches as usual rather than waiting
 /// for a person.

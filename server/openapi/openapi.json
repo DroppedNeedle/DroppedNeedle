@@ -173,7 +173,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "Test submitted Lidarr credentials against `system/status` (v2 Test\nroute): the submitted url/key are probed so Test works before the first\nsave, a masked key resolves to the stored one, and reachable/bad-key\nverdicts travel in the body, never as a leaked 5xx, never echoing the\nURL or host.",
+        "summary": "Test submitted Lidarr credentials against `system/status`: the\nsubmitted url/key are probed so Test works before the first\nsave, a masked key resolves to the stored one, and reachable/bad-key\nverdicts travel in the body, never as a leaked 5xx, never echoing the\nURL or host.",
         "operationId": "test_lidarr",
         "requestBody": {
           "content": {
@@ -211,7 +211,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "Live SABnzbd status against the saved config (v2: admin-only).",
+        "summary": "Live SABnzbd status against the saved config (admin only).",
         "operationId": "get_sabnzbd_status",
         "responses": {
           "200": {
@@ -239,7 +239,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "Live slskd client status (v2: any authenticated user may read it).",
+        "summary": "Live slskd client status (any signed-in user may read it).",
         "operationId": "get_slskd_status",
         "responses": {
           "200": {
@@ -267,7 +267,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "Spotify OAuth callback (v2 `spotify_auth_callback`). State-identified,\nso it sits outside the session gate like v2's ungated route: every\noutcome redirects to the profile page with the v2 query contract\n(`spotify=connected`, or `spotify=error` with an optional `reason`).",
+        "summary": "Spotify OAuth callback. State-identified, so it sits outside the\nsession gate: every outcome redirects to the profile page with\n`spotify=connected` or `spotify=error` with an optional `reason`.",
         "operationId": "spotify_callback",
         "parameters": [
           {
@@ -313,7 +313,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "Authorize URL for the caller's Spotify link flow. Requires the admin\napp to be enabled and complete (v2 400 text kept).",
+        "summary": "Authorize URL for the caller's Spotify link flow. Requires the admin\napp to be enabled and complete.",
         "operationId": "get_spotify_auth_url",
         "responses": {
           "200": {
@@ -390,7 +390,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "The caller's owned Spotify playlists. Unlinked reads as the v2 400;\nupstream failures as the v2 502.",
+        "summary": "The caller's owned Spotify playlists. Unlinked reads as a 400,\nupstream failures as a 502.",
         "operationId": "list_spotify_playlists",
         "responses": {
           "200": {
@@ -467,7 +467,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "The computed OAuth redirect URI (v2 admin display endpoint).",
+        "summary": "The computed OAuth redirect URI, for the admin to register.",
         "operationId": "get_spotify_redirect_uri",
         "responses": {
           "200": {
@@ -531,7 +531,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "Save the Spotify app settings. A masked secret preserves the stored\none; a non-absolute redirect origin is a 400 (v2 text kept).",
+        "summary": "Save the Spotify app settings. A masked secret preserves the stored\none; a non-absolute redirect origin is a 400.",
         "operationId": "put_spotify_settings",
         "requestBody": {
           "content": {
@@ -22731,7 +22731,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "Unlink the caller's Spotify account (v2 `DELETE /me/connections/spotify`).\nIdempotent: no link reads as done too.",
+        "summary": "Unlink the caller's Spotify account.\nIdempotent: no link reads as done too.",
         "operationId": "disconnect_spotify",
         "responses": {
           "204": {
@@ -35197,7 +35197,7 @@
     "schemas": {
       "AcquireHealth": {
         "type": "object",
-        "description": "Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`\nsays whether a download source is on; the gates unpack per source.",
+        "description": "Acquisition health smoke. `ready`\nsays whether a download source is on; the gates unpack per source.",
         "required": [
           "status",
           "ready",
@@ -36306,7 +36306,7 @@
       },
       "AlbumIntake": {
         "type": "object",
-        "description": "Album intake body. Names may be omitted only when they resolve; intake\nhas no catalog lookup, so blank or literal-\"Unknown\" names are\nrejected (v2 `request_service._meaningful_name` quirk).",
+        "description": "Album intake body. Names may be omitted only when they resolve; intake\nhas no catalog lookup, so blank or literal-\"Unknown\" names are\nrejected.",
         "required": [
           "musicbrainz_id"
         ],
@@ -39066,7 +39066,7 @@
       },
       "BatchIntake": {
         "type": "object",
-        "description": "Batch intake body (v2 caps batches at 500 rows).",
+        "description": "Batch intake body (at most 500 rows).",
         "required": [
           "items"
         ],
@@ -42858,7 +42858,7 @@
       },
       "DownloadTaskResponse": {
         "type": "object",
-        "description": "One download task as the queue shows it. Field names match v2's\n`DownloadTaskResponse`, so the web UI reads them unchanged.",
+        "description": "One download task as the queue shows it.",
         "required": [
           "id",
           "user_id",
@@ -50008,7 +50008,7 @@
       },
       "LidarrArtistCandidate": {
         "type": "object",
-        "description": "One monitored Lidarr artist annotated for the requesting user (v2\n`LidarrArtistCandidate`).",
+        "description": "One monitored Lidarr artist annotated for the requesting user.",
         "required": [
           "mbid",
           "name",
@@ -50041,7 +50041,7 @@
       },
       "LidarrArtistListResponse": {
         "type": "object",
-        "description": "Candidate list (v2 `LidarrArtistListResponse`).",
+        "description": "Candidate list.",
         "required": [
           "artists",
           "total"
@@ -50063,7 +50063,7 @@
       },
       "LidarrConnectionSettings": {
         "type": "object",
-        "description": "Admin-configured read-only Lidarr import connection (v2\n`LidarrImportConnectionSettings`). Not a management integration.",
+        "description": "Admin-configured read-only Lidarr import connection. Not a management\nintegration.",
         "required": [
           "url",
           "api_key"
@@ -50081,7 +50081,7 @@
       },
       "LidarrImportRequest": {
         "type": "object",
-        "description": "Import selection (v2 `LidarrImportRequest`).",
+        "description": "Import selection.",
         "required": [
           "selected_mbids"
         ],
@@ -50097,7 +50097,7 @@
       },
       "LidarrImportResponse": {
         "type": "object",
-        "description": "Import summary (v2 `LidarrImportResponse`). `imported` counts brand-new\nfollows only; `already_following` is the disjoint pre-existing subset;\n`auto_download_enabled` counts brand-new auto-download follows only.",
+        "description": "Import summary. `imported` counts brand-new\nfollows only; `already_following` is the disjoint pre-existing subset;\n`auto_download_enabled` counts brand-new auto-download follows only.",
         "required": [
           "imported",
           "already_following",
@@ -50136,7 +50136,7 @@
       },
       "LidarrTestResponse": {
         "type": "object",
-        "description": "Result of testing submitted Lidarr credentials (v2 `LidarrTestResponse`).",
+        "description": "Result of testing submitted Lidarr credentials.",
         "required": [
           "valid",
           "message"
@@ -56704,7 +56704,7 @@
         "properties": {
           "client_id": {
             "type": "string",
-            "description": "v2's client label: `slskd`, `sabnzbd`, or the source for plugins."
+            "description": "The client label: `slskd`, `sabnzbd`, or the source for plugins."
           },
           "filename": {
             "type": "string",
@@ -59478,7 +59478,7 @@
               "string",
               "null"
             ],
-            "description": "Custom artwork URL override. None: artwork resolves client-side\nfrom the MBID, which is what v2's built cover URL did anyway."
+            "description": "Custom artwork URL override. None: artwork resolves client-side\nfrom the MBID."
           },
           "duration_seconds": {
             "type": [
@@ -59501,7 +59501,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Epoch seconds when the transfer should finish. None: no live ETA\nsource exists (v2 never sent one either).",
+            "description": "Epoch seconds when the transfer should finish. None: no live ETA\nsource exists.",
             "minimum": 0
           },
           "in_library": {
@@ -59615,7 +59615,7 @@
             "items": {
               "$ref": "#/components/schemas/RequestStatusMessage"
             },
-            "description": "Task status detail groups behind the card's expander. None until a\nproducer exists (v2 never sent these either)."
+            "description": "Task status detail groups behind the card's expander. None until a\nproducer exists."
           },
           "task_id": {
             "type": [
@@ -59687,7 +59687,7 @@
       },
       "RequestStatusMessage": {
         "type": "object",
-        "description": "One grouped status detail behind the request card's expander. Intake\nhas no producer for these yet (v2 never sent them\neither), so views answer None until one exists.",
+        "description": "One grouped status detail behind the request card's expander. Intake\nhas no producer for these yet, so views answer None until one exists.",
         "required": [
           "messages"
         ],
@@ -60773,7 +60773,7 @@
       },
       "SabnzbdStatusResponse": {
         "type": "object",
-        "description": "Live SABnzbd status against the saved config (v2 `SabnzbdTestResponse`,\nstatus half).",
+        "description": "Live SABnzbd status against the saved config.",
         "required": [
           "valid",
           "message",
@@ -63260,7 +63260,7 @@
       },
       "SlskdStatusResponse": {
         "type": "object",
-        "description": "Live slskd client status (v2 `DownloadClientStatusResponse`, trimmed to\nthe client half; the mount half belongs to the downloads module).",
+        "description": "Live slskd client status. The mount check belongs to the downloads\nmodule.",
         "required": [
           "configured",
           "reachable",
@@ -63429,7 +63429,7 @@
       },
       "SpotifyAuthUrlResponse": {
         "type": "object",
-        "description": "Authorize URL for the caller's Spotify link flow (v2\n`SpotifyAuthUrlResponse`).",
+        "description": "Authorize URL for the caller's Spotify link flow.",
         "required": [
           "auth_url"
         ],
@@ -63442,7 +63442,7 @@
       },
       "SpotifyImportRequest": {
         "type": "object",
-        "description": "Import start (v2 `SpotifyImportRequest`).",
+        "description": "Import start.",
         "required": [
           "name"
         ],
@@ -63455,7 +63455,7 @@
       },
       "SpotifyImportResponse": {
         "type": "object",
-        "description": "Import acknowledgement (v2 `SpotifyImportResponse`). The populate runs\nas the `spotify:import` durable job; the id is usable immediately.",
+        "description": "Import acknowledgement. The populate runs\nas the `spotify:import` durable job; the id is usable immediately.",
         "required": [
           "playlist_id"
         ],
@@ -63501,7 +63501,7 @@
       },
       "SpotifyPlaylistItem": {
         "type": "object",
-        "description": "One owned Spotify playlist (v2 `SpotifyPlaylistItem`).",
+        "description": "One owned Spotify playlist.",
         "required": [
           "id",
           "name",
@@ -63549,7 +63549,7 @@
       },
       "SpotifyPlaylistListResponse": {
         "type": "object",
-        "description": "Owned playlists (v2 `SpotifyPlaylistListResponse`).",
+        "description": "Owned playlists.",
         "required": [
           "playlists"
         ],
@@ -63565,7 +63565,7 @@
       },
       "SpotifyRedirectUri": {
         "type": "object",
-        "description": "The computed OAuth redirect URI (v2 `GET /spotify/redirect-uri`).",
+        "description": "The computed OAuth redirect URI.",
         "required": [
           "redirect_uri"
         ],
@@ -63578,7 +63578,7 @@
       },
       "SpotifySettings": {
         "type": "object",
-        "description": "Admin Spotify app settings (v2 `SpotifySettings`, GH-298).",
+        "description": "Admin Spotify app settings (issue #298).",
         "required": [
           "client_id",
           "client_secret",
@@ -64389,7 +64389,7 @@
       },
       "TaskStatus": {
         "type": "string",
-        "description": "Persisted download-task status. Wire strings match v2 byte for byte.",
+        "description": "Persisted download-task status.",
         "enum": [
           "queued",
           "downloading",

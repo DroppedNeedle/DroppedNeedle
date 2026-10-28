@@ -3,8 +3,7 @@
 //! clear, stop every retry, retry every failure), plus the admin
 //! blocklist (quarantine) view.
 //!
-//! Ports the queue half of v2's `download_service.py` and the matching
-//! orchestrator actions. Ownership follows v2: admins see and act on every
+//! Admins see and act on every
 //! task, everyone else on their own; acting on someone else's task is
 //! refused. Retry timing comes from the live worker tuning on each call.
 

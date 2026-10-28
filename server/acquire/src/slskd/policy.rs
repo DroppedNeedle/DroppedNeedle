@@ -14,12 +14,12 @@ use droppedneedle_kernel::runtime_config::sections::{
 
 use crate::landing::quality::{in_range, tier_for};
 
-/// Known-unimportable audio containers (DSD families; v2
-/// `NOT_IMPORTABLE_EXTENSIONS`). A declared DSD release must not spend
+/// Known-unimportable audio containers (DSD families). A
+/// declared DSD release must not spend
 /// bandwidth even when a noisy title claims "lossless".
 pub const NOT_IMPORTABLE_EXTENSIONS: [&str; 3] = ["dsd", "dsf", "dff"];
 
-/// Fixed lossless detail ladder (v2 `LOSSLESS_DETAIL_STEPS`): 0 cd (at
+/// Fixed lossless detail ladder: 0 cd (at
 /// most 16-bit / 48 kHz), 1 24_48, 2 24_96, 3 24_192, 4 hi_res, 5 partial
 /// (resolution unknown).
 const LOSSLESS_DETAIL_STEPS: [&str; 6] = ["cd", "24_48", "24_96", "24_192", "hi_res", "partial"];
@@ -70,14 +70,14 @@ pub struct DownloadPolicy {
     /// The saved recipe, earlier entries preferred. Empty means the band's
     /// tiers, best first.
     pub quality_recipe: Vec<QualityRecipeEntry>,
-    /// Search window handed to slskd per query rung (v2 default 30s).
+    /// Search window handed to slskd per query rung.
     pub search_timeout: Duration,
     /// Extra poll time past the search window: slskd fills
     /// GET /searches/{id}/responses only after the search completes, which
     /// lands after the searchTimeout window (v2 observed ~12s later on
     /// 0.25.1; grace is 30s or every search returns 0 candidates).
     pub completion_grace: Duration,
-    /// Pause between search-state polls (v2: 0.5s).
+    /// Pause between search-state polls.
     pub poll_interval: Duration,
 }
 

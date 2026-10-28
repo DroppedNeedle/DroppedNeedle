@@ -3,16 +3,14 @@
 //! it in one step, and can slskd's finished downloads actually be found
 //! there.
 //!
-//! Ported from v2 (`check_downloads_mount`, `filesystem_mounts`, and the
-//! advisory text in the download client status route). The filesystem
-//! checks block, so callers run them off the async workers.
+//! The filesystem checks block, so callers run them off the async workers.
 
 use std::path::{Path, PathBuf};
 
 use crate::slskd::MountDiagnosis;
 
 /// Why the mount is or is not usable, and whether moves stay on one
-/// filesystem. The wire values match v2's.
+/// filesystem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MountReason {
     /// Usable; a move into a library root is a rename (or no root exists
@@ -104,7 +102,7 @@ pub fn check_downloads_mount(path: &Path, library_roots: &[PathBuf]) -> MountChe
     if boundaries.contains(&MountReason::Ok) {
         return verdict(true, true, MountReason::Ok);
     }
-    // The most specific reason wins, as in v2.
+    // The most specific reason wins.
     let reason = [
         MountReason::DifferentMount,
         MountReason::DifferentFilesystem,

@@ -1061,7 +1061,7 @@ async fn an_untagged_single_whose_remote_folder_names_the_artist_imports() {
 }
 
 /// A file whose own artist tag names someone else, and whose length is
-/// not the track's, is another song (v2's tag conflict): it is held with
+/// not the track's, is another song (a tag conflict): it is held with
 /// that reason and the rest of the album imports.
 #[tokio::test]
 async fn a_file_whose_artist_tag_names_someone_else_is_held() {

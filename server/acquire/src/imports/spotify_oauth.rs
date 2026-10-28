@@ -1,14 +1,14 @@
 //! Spotify OAuth: scopes, the redirect URI, the authorize URL, authorize
 //! states and the per-user link.
 //!
-//! Ports the v2 OAuth half: the exact scopes and the single-source redirect
-//! URI (GH-298). Links and states persist in SQLite (see
+//! The redirect URI has a single source (issue #298). Links and states persist
+//! in SQLite (see
 //! [`super::spotify_store`]); the admin app settings live in the
 //! `spotify_settings` section ([`crate::settings::ConfigSpotifySettings`]).
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
-/// OAuth scopes (v2 `_SPOTIFY_SCOPES`, verbatim).
+/// OAuth scopes.
 pub const SPOTIFY_SCOPES: &str =
     "playlist-read-private playlist-read-collaborative user-read-private";
 
@@ -22,7 +22,7 @@ pub const SPOTIFY_CALLBACK_PATH: &str = "/api/v3/acquire/spotify/auth/callback";
 /// import's legacy marker.
 pub const SPOTIFY_LEGACY_CALLBACK_PATH: &str = "/api/v1/me/connections/spotify/auth/callback";
 
-/// How long an authorize state stays valid (v2 `store_spotify_state`).
+/// How long an authorize state stays valid.
 pub const STATE_TTL_SECS: i64 = 600;
 
 /// Characters a query value or path segment keeps as they are (RFC 3986
@@ -33,8 +33,8 @@ pub(super) const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'.')
     .remove(b'~');
 
-/// Build the Spotify OAuth redirect URI, the single source of truth (v2
-/// `PreferencesService.spotify_redirect_uri`, GH-298). The authorize call,
+/// Build the Spotify OAuth redirect URI, the single source of truth
+/// (issue #298). The authorize call,
 /// the token exchange, and the admin display endpoint all derive through
 /// here so the value matches the dashboard byte-for-byte. An
 /// admin-configured origin wins; empty keeps the request-derived base. The
@@ -60,8 +60,7 @@ pub fn redirect_uri(
     }
 }
 
-/// The authorize URL for one app, redirect URI and state (v2
-/// `spotify_auth_url`).
+/// The authorize URL for one app, redirect URI and state.
 pub fn authorize_url(client_id: &str, redirect_uri: &str, state: &str) -> String {
     let query = [
         ("client_id", client_id),
@@ -77,7 +76,7 @@ pub fn authorize_url(client_id: &str, redirect_uri: &str, state: &str) -> String
     format!("{SPOTIFY_AUTHORIZE_URL}?{query}")
 }
 
-/// One stored per-user Spotify link (v2 `user_connections` spotify row).
+/// One stored per-user Spotify link.
 /// Debug is hand-written: the tokens never appear in debug output.
 #[derive(Clone, PartialEq)]
 pub struct SpotifyConnection {

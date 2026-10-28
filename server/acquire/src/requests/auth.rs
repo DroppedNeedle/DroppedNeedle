@@ -9,7 +9,7 @@
 use droppedneedle_auth::Role;
 
 /// Whether an ask skips the approval queue: trusted and admin asks
-/// auto-approve and dispatch, a user's wait for review (v2).
+/// auto-approve and dispatch, a user's wait for review.
 pub fn auto_approves(role: Role) -> bool {
     role.is_curator()
 }

@@ -1,12 +1,11 @@
 //! Acquisition health smoke and per-source release gates.
 //!
-//! Ports the v2 download-status halves (the download client `/status`,
-//! `/sabnzbd/status`, and the status service): saved-config probes whose verdicts
-//! travel in the body, never as leaked 5xx. The smoke answers one question,
-//! whether music can be acquired, from [`crate::readiness`], the answer
-//! requests and Discover read too. The four release gates (slskd,
-//! SABnzbd, Newznab, Lidarr import) each gate independently: one red gate
-//! never flips another.
+//! The download-client status reads are saved-config probes whose
+//! verdicts travel in the body, never as leaked 5xx. The smoke answers one
+//! question, whether music can be acquired, from [`crate::readiness`], the
+//! answer requests and Discover read too. The four release gates (slskd,
+//! SABnzbd, Newznab, Lidarr import) each gate independently: one red gate never
+//! flips another.
 //!
 //! Every probe is a minimal local trait. The live implementations sit over
 //! the slskd and SABnzbd clients and the Newznab indexers
@@ -46,7 +45,7 @@ pub struct IndexerProbe {
     pub reachable: bool,
 }
 
-/// slskd client probe (v2 `DownloadClientRepository` health half).
+/// slskd client probe.
 pub trait SlskdProbe: Send + Sync {
     /// Probe the saved slskd config.
     fn status(&self) -> ClientProbe;
@@ -56,7 +55,7 @@ pub trait SlskdProbe: Send + Sync {
     }
 }
 
-/// SABnzbd client probe (v2 `SabnzbdDownloadClient` health half).
+/// SABnzbd client probe.
 pub trait SabnzbdProbe: Send + Sync {
     /// Probe the saved SABnzbd config.
     fn status(&self) -> ClientProbe;
@@ -66,7 +65,7 @@ pub trait SabnzbdProbe: Send + Sync {
     fn complete_dir(&self) -> Option<String>;
 }
 
-/// Newznab indexer probes (v2 indexer health half).
+/// Newznab indexer probes.
 pub trait NewznabProbe: Send + Sync {
     /// Probe every configured indexer.
     fn indexers(&self) -> Vec<IndexerProbe>;
@@ -192,8 +191,8 @@ pub fn smoke(probes: &HealthProbes, readiness: &Readiness) -> AcquireHealth {
     }
 }
 
-/// Render the live slskd client status (v2 `/download-client/status`
-/// client half; any authenticated user may read it).
+/// Render the live slskd client status (any authenticated user may read
+/// it).
 pub fn slskd_status(probe: &dyn SlskdProbe) -> SlskdStatusResponse {
     let status = probe.status();
     let report = probe.mount();
@@ -214,8 +213,7 @@ pub fn slskd_status(probe: &dyn SlskdProbe) -> SlskdStatusResponse {
     }
 }
 
-/// Render the live SABnzbd status against the saved config (v2
-/// `/download-clients/sabnzbd/status`; admin-only there, admin-only here).
+/// Render the live SABnzbd status against the saved config (admin only).
 pub fn sabnzbd_status(probe: &dyn SabnzbdProbe) -> SabnzbdStatusResponse {
     let status = probe.status();
     if !status.configured {

@@ -1,7 +1,7 @@
 //! Reads a Newznab response into a small element tree.
 //!
-//! Newznab is XML-only (v2 `newznab_client.py`: neither Lidarr nor Prowlarr
-//! ever sends `o=json`). quick-xml does the tokenising. It fetches nothing,
+//! Newznab is XML-only (neither Lidarr nor Prowlarr ever sends
+//! `o=json`). quick-xml does the tokenising. It fetches nothing,
 //! hands a DOCTYPE over as one opaque event and knows only the five
 //! predefined entities and numeric character references, so a document
 //! cannot grow by entity expansion. The tree is built here with a stack
@@ -9,7 +9,7 @@
 //! indexer gets an error back and nothing else.
 //!
 //! Real feeds are not always well formed. [`strip_illegal`] and
-//! [`escape_bare_amps`] carry the v2 hardening (illegal-character strip,
+//! [`escape_bare_amps`] carry the hardening (illegal-character strip,
 //! bare-ampersand escape a la Prowlarr's `XmlCleaner`) that the caller
 //! applies around [`parse`].
 
@@ -113,7 +113,7 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// Strip the XML 1.0 illegal characters v2's `_ILLEGAL_XML` covers (C0
+/// Strip the XML 1.0 illegal characters (C0
 /// controls except tab/newline/CR, the C1 range, U+FFFE/U+FFFF).
 pub fn strip_illegal(text: &str) -> String {
     text.chars()
@@ -125,7 +125,7 @@ pub fn strip_illegal(text: &str) -> String {
 }
 
 /// Escape every `&` that does not start a reference the parser resolves:
-/// a bare one, `&nbsp;` and other undeclared names (v2 `_BARE_AMP`). They
+/// a bare one, `&nbsp;` and other undeclared names. They
 /// come out as literal text. CDATA sections are left as they are.
 pub fn escape_bare_amps(text: &str) -> String {
     let mut out = String::with_capacity(text.len());

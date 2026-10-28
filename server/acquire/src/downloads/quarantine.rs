@@ -1,6 +1,5 @@
 //! Release quarantine: blocklist plus sandboxed file holding.
 //!
-//! Ports the `download_quarantine` semantics from `download_store.py`.
 //! A release that fails verification is blocklisted by source identity so
 //! failover and future searches skip it; entries expire after 7 days and
 //! every write prunes the expired rows so the TTL self-heal lands on disk.
@@ -57,7 +56,7 @@ impl QuarantineReason {
 
 /// Canonicalize a soulseek identity for blocklist matching.
 ///
-/// Ports `canonical_soulseek_identity`: backslashes become forward
+/// Backslashes become forward
 /// slashes and the `username/file` halves split on the first slash, so
 /// rows written by older versions cannot evade a match.
 pub fn canonical_soulseek_identity(identity: &str) -> String {

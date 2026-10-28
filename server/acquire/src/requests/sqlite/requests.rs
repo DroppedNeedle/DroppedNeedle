@@ -42,7 +42,7 @@ impl HistoryOrder {
     }
 }
 
-/// Ledger key for one row (v2 `_request_key`).
+/// Ledger key for one row.
 fn row_key(kind: RequestKind, key: &str) -> String {
     let lower = key.trim().to_lowercase();
     match kind {
@@ -117,8 +117,7 @@ fn load_record_tx(tx: &Transaction, stored: &str) -> rusqlite::Result<Option<Req
     Ok(Some(record))
 }
 
-/// Asks one listener made since `since` (v2
-/// `async_count_user_requests_since`), on a pooled read or inside a write.
+/// Asks one listener made since `since`, on a pooled read or inside a write.
 /// A row still waiting for quota room has used none yet.
 fn count_asks_on(conn: &Connection, user_id: &str, since: u64) -> rusqlite::Result<u32> {
     let count: i64 = conn.query_row(
@@ -156,8 +155,8 @@ fn is_member_tx(tx: &Transaction, stored: &str, user_id: &str) -> rusqlite::Resu
     })
 }
 
-/// Claim one generation for a record inside a write transaction (v2
-/// `async_record_request`). A live or cancelling row wins over the
+/// Claim one generation for a record inside a write transaction. A
+/// live or cancelling row wins over the
 /// newcomer; a terminal row is replaced, and its listeners and dismissals
 /// go with it.
 fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<BeginOutcome> {
@@ -227,7 +226,7 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
     Ok(BeginOutcome::Won(record))
 }
 
-/// Attach a listener to a live row (v2 `async_add_requester`). Terminal
+/// Attach a listener to a live row. Terminal
 /// and cancelling rows refuse; the generation is untouched.
 fn attach_tx(
     tx: &Transaction,
@@ -329,8 +328,8 @@ impl RequestStore {
         .await
     }
 
-    /// Lowercased MBIDs with a live row of one kind (v2
-    /// `async_get_requested_mbids`, the batch dedupe read).
+    /// Lowercased MBIDs with a live row of one kind (the
+    /// batch dedupe read).
     pub async fn active_mbids(&self, kind: RequestKind) -> Result<HashSet<String>, RequestsError> {
         let rows: Vec<String> = read(&self.db, "requests.active_mbids", move |conn| {
             let mut statement = conn.prepare_cached(sql::ACTIVE_KEYS.text())?;
@@ -523,7 +522,7 @@ impl RequestStore {
         Ok(role.as_deref().map(Role::from_stored))
     }
 
-    /// Attach a listener to a live row (v2 `async_add_requester`). Terminal
+    /// Attach a listener to a live row. Terminal
     /// and cancelling rows refuse; the generation is untouched.
     pub async fn attach_requester(
         &self,
@@ -545,7 +544,7 @@ impl RequestStore {
 
     /// Attach a listener to a live album row with the follow its ask
     /// names, in one write: the row's monitoring flags widen (never
-    /// narrow, v2 batch/single quirk) and the listener follows the
+    /// narrow) and the listener follows the
     /// artist. A row that refuses the listener follows nobody.
     pub async fn attach_following(
         &self,
@@ -703,7 +702,7 @@ impl RequestStore {
     }
 
     /// Claim an approval: `awaiting_approval` becomes `pending` with the
-    /// reviewer stamped and dispatch authorized (v2 `async_claim_approval`).
+    /// reviewer stamped and dispatch authorized.
     pub async fn claim_approval(
         &self,
         kind: RequestKind,
@@ -765,7 +764,7 @@ impl RequestStore {
     }
 
     /// Claim a retry generation: only retryable rows move, and a non-admin
-    /// must already be a listener (v2 `async_claim_retry`).
+    /// must already be a listener.
     #[allow(clippy::too_many_arguments)]
     pub async fn claim_retry(
         &self,
@@ -831,8 +830,8 @@ impl RequestStore {
         .await
     }
 
-    /// The atomic requester-cancel decision (v2
-    /// `async_prepare_requester_cancel`): strangers are denied, listeners
+    /// The atomic requester-cancel decision:
+    /// strangers are denied, listeners
     /// detach, waiting rows cancel outright, and owners of task rows move
     /// through `cancelling` so a failed task-cancel can restore the prior
     /// status instead of stranding the row.
@@ -981,7 +980,7 @@ impl RequestStore {
     }
 
     /// One page of history rows with the status filter and sort, plus the
-    /// total row count (v2 history shape).
+    /// total row count.
     pub async fn history(
         &self,
         user_id: Option<&str>,
@@ -1050,8 +1049,7 @@ impl RequestStore {
 
     /// Delete terminal requests settled before `cutoff` (epoch seconds),
     /// keeping any a live wanted watch still points at; their requester
-    /// and dismissal rows go with them. Returns the requests deleted (v2
-    /// `prune_old_terminal_requests`).
+    /// and dismissal rows go with them. Returns the requests deleted.
     pub async fn prune_terminal(&self, cutoff: u64) -> Result<u64, RequestsError> {
         self.db
             .write_background("requests.prune", move |tx| {

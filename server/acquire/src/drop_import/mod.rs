@@ -52,11 +52,11 @@ use droppedneedle_kernel::events::{
     DropImportUpdated, EventHub, RequestImported, UserNotice, new_event_id,
 };
 
-/// Most files one upload may carry (v2 `_MAX_FILES_PER_DROP`).
+/// Most files one upload may carry.
 pub const MAX_FILES_PER_DROP: usize = 25;
 /// More audio than this in one folder is not one album.
 const MAX_FILES_PER_UNIT: usize = 60;
-/// Jobs listed per page (v2 `list_jobs` limit).
+/// Jobs listed per page.
 const LIST_LIMIT: i64 = 50;
 /// Where uploads stream before a job exists.
 const INCOMING_DIR: &str = "_incoming";
@@ -1083,7 +1083,7 @@ impl DropImports {
 
     /// After files reached the library: tell plugins, and when the album
     /// is now complete, resolve its request and wanted watch and tell
-    /// everyone else who asked for it (v2 `_after_import`).
+    /// everyone else who asked for it.
     async fn after_import(
         &self,
         job: &JobRecord,
@@ -1197,7 +1197,7 @@ impl DropImports {
 /// imports every paired file of a track the library lacks (their choice of
 /// album is the authority), but a far file never stands in for an owned
 /// track. With `extras`, files the release does not list go with the album
-/// (v2 kept bonus files alongside it). `None` when nothing was found.
+/// (bonus files stay beside it). `None` when nothing was found.
 pub(crate) fn album_pairing(
     summary: &MatchSummary,
     files: usize,
@@ -1297,7 +1297,7 @@ fn with_unreadable(detail: Option<String>, unreadable: usize) -> Option<String> 
     })
 }
 
-/// The settled item's summary (v2 `_finish_item` wording).
+/// The settled item's summary.
 fn describe(done: &Counts, unreadable: usize, complete: bool) -> String {
     let plural = |count: usize, one: &str, many: &str| {
         if count == 1 {

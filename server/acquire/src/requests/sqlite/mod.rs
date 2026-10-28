@@ -10,7 +10,7 @@
 //! compare-and-swap reads and writes the row under the write lock.
 //!
 //! Album rows key on the lowercased release-group MBID and track rows on
-//! `track:` plus the lowercased recording MBID (the v2 key scheme). Rows
+//! `track:` plus the lowercased recording MBID. Rows
 //! carry epoch seconds; the request, watch and approval tables store
 //! integer milliseconds, converted only by [`ms_from_secs`] and
 //! [`secs_from_ms`].

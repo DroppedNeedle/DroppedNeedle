@@ -7,7 +7,7 @@
 //! landing runs, and a reimport goes through the same path, so a reimport
 //! and a pass can never land one task twice.
 //!
-//! The outcome settles the task the way v2's failover loop did: a
+//! The outcome settles the task: a
 //! complete import completes it; held files, or tracks still missing,
 //! blocklist this source and fail over to the next candidate (which is
 //! asked only for the missing tracks); held or partial is the final word
@@ -265,7 +265,7 @@ impl DownloadWorker {
             {
                 // Short only for reasons on our side (a destination already
                 // taken, an upgrade waiting): the source did its job, so it
-                // is neither blocklisted nor replaced (v2's local faults).
+                // is neither blocklisted nor replaced.
                 // A task that imported anything before stays partial.
                 self.settle_short(task, attempt, &report.result, now).await;
             }
@@ -280,7 +280,7 @@ impl DownloadWorker {
             }
             LandingResult::Imported { complete: false } | LandingResult::Held { .. } => {
                 if origin == Origin::Poll && self.can_fail_over(task).await {
-                    // v2: a release that finished but did not deliver what
+                    // A release that finished but did not deliver what
                     // was asked is blocklisted before the failover, so the
                     // next candidate is a different source; held rows stay.
                     self.forget_landing(&task.id);
@@ -554,8 +554,8 @@ impl DownloadWorker {
         }
     }
 
-    /// Import a failed or short-landed task's files again, right away
-    /// (v2 `reimport_task`): the files its last attempt kept go through the
+    /// Import a failed or short-landed task's files again, right away:
+    /// the files its last attempt kept go through the
     /// same landing as a finished transfer, without a new search or
     /// download. `Ok(None)` when the task is missing, not reimportable, or
     /// already landing; the row is the task after the landing.

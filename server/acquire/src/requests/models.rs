@@ -1,7 +1,7 @@
 //! Clean-slate wire shapes for request intake.
 //!
 //! Times are epoch seconds; ids are MusicBrainz ids validated to the UUID
-//! shape v2 enforces (its `MBID_PATTERN` validator).
+//! shape.
 
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -37,7 +37,7 @@ impl RequestKind {
 
 /// Album intake body. Names may be omitted only when they resolve; intake
 /// has no catalog lookup, so blank or literal-"Unknown" names are
-/// rejected (v2 `request_service._meaningful_name` quirk).
+/// rejected.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct AlbumIntake {
     /// Release-group MBID.
@@ -99,7 +99,7 @@ pub struct BatchItem {
     pub artist_mbid: Option<String>,
 }
 
-/// Batch intake body (v2 caps batches at 500 rows).
+/// Batch intake body (at most 500 rows).
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct BatchIntake {
     /// Rows to request.
@@ -205,8 +205,7 @@ pub struct BatchCancelResponse {
 }
 
 /// One grouped status detail behind the request card's expander. Intake
-/// has no producer for these yet (v2 never sent them
-/// either), so views answer None until one exists.
+/// has no producer for these yet, so views answer None until one exists.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RequestStatusMessage {
     /// Group heading, when grouped.
@@ -232,7 +231,7 @@ pub struct RequestItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub year: Option<i32>,
     /// Custom artwork URL override. None: artwork resolves client-side
-    /// from the MBID, which is what v2's built cover URL did anyway.
+    /// from the MBID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cover_url: Option<String>,
     /// Epoch seconds when asked.
@@ -246,7 +245,7 @@ pub struct RequestItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress: Option<f64>,
     /// Epoch seconds when the transfer should finish. None: no live ETA
-    /// source exists (v2 never sent one either).
+    /// source exists.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eta: Option<u64>,
     /// Total transfer bytes from the linked task, once known.
@@ -256,7 +255,7 @@ pub struct RequestItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size_remaining: Option<f64>,
     /// Task status detail groups behind the card's expander. None until a
-    /// producer exists (v2 never sent these either).
+    /// producer exists.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_messages: Option<Vec<RequestStatusMessage>>,
     /// Why a live request has not started, when it waits.

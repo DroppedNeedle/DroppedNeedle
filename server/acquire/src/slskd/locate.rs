@@ -1,7 +1,5 @@
 //! On-disk locator for finished slskd transfers.
 //!
-//! Ported from v2's slskd repository (`_locate_file`, `_locate_partial`,
-//! `_walk_find`, `_fuzzy_file_key`).
 //! slskd already knows its filenames (from the search/handle), so each one
 //! resolves to its on-disk path via this locator; unresolved files are
 //! skipped. Exact spelling is always tried before a normalized alias, and a
@@ -16,12 +14,11 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::landing::DownloadsFolder;
 
-/// Shared cap for all normalized fallback directory entries (v2
-/// `_MAX_WALK_ENTRIES`).
+/// Shared cap for all normalized fallback directory entries.
 const MAX_WALK_ENTRIES: usize = 10_000;
 
 /// Locator bound to the configured mounts. Sync filesystem I/O only; the
-/// repository offloads every call off the async runtime (v2).
+/// repository offloads every call off the async runtime.
 #[derive(Debug, Clone)]
 pub struct Locator {
     downloads: DownloadsFolder,
@@ -38,11 +35,11 @@ impl Locator {
     }
 
     /// Resolve a finished transfer inside the mounted slskd downloads
-    /// directory (v2 `_locate_file`).
+    /// directory.
     ///
     /// When the expected size is known, an exact-named hit whose bytes
     /// mismatch is a stale file from another peer's folder, not this
-    /// transfer: steps 1/2/4 skip it (v2 #397) and the walk fallbacks refuse
+    /// transfer: steps 1/2/4 skip it (issue #397) and the walk fallbacks refuse
     /// it, falling through to the peer-scoped/size-aware steps or to `None`.
     /// A single non-exact normalized alias still resolves on a size mismatch
     /// (search-advertised sizes are unreliable across a Unicode drift);
@@ -83,7 +80,7 @@ impl Locator {
         };
         let direct_hit_usable = |candidate: &Path| -> bool {
             // With a known expected size a byte-mismatched same-named file
-            // is a stale leftover from another peer's folder (v2 #397).
+            // is a stale leftover from another peer's folder (issue #397).
             // Unknown size keeps the old name-only behavior, as does an
             // unreadable size (fail open; the verifier owns that file).
             match expected_size {
@@ -113,7 +110,7 @@ impl Locator {
             return Some(flat);
         }
         // 3. Peers that file by username: walk {mount}/{username}/ at any
-        // depth (v2; scoped so a same-named track from another peer cannot
+        // depth (scoped so a same-named track from another peer cannot
         // be picked up).
         let user_root = if username.is_empty() {
             None
@@ -126,7 +123,7 @@ impl Locator {
             return Some(hit);
         }
         // 4. slskd may have sanitised the folder name; scan one level down
-        // for it. A size-mismatched hit is skipped, not returned (v2 #397).
+        // for it. A size-mismatched hit is skipped, not returned (issue #397).
         if let Ok(children) = sorted_children(&mount) {
             for child in children {
                 let Some(child_root) = within_mount(&child) else {
@@ -144,7 +141,7 @@ impl Locator {
         }
         // 5. Last resort: slskd may have sanitised the filename. An exact
         // byte-size match under the peer's folder recovers it; this stays
-        // peer-scoped because a size-only walk across peers is unsafe (v2).
+        // peer-scoped because a size-only walk across peers is unsafe.
         if let (Some(want), Some(root)) = (expected_size, &user_root)
             && root.is_dir()
         {
@@ -159,7 +156,7 @@ impl Locator {
             }
         }
         // 6. Whole-mount exact-name fallback for a file nested deeper than
-        // the cheap steps look. Validates byte size when known (v2).
+        // the cheap steps look. Validates byte size when known.
         let hit = walk_find(&mount, &mount, &|entry| {
             if entry.file_name() != basename {
                 return false;
@@ -179,7 +176,7 @@ impl Locator {
         // 7. NFC alias fallback. Every normalized phase shares one budget.
         // The peer scope runs before the whole mount so an alias cannot
         // cross peers merely because an unrelated same-sized file happens to
-        // be encountered first (v2).
+        // be encountered first.
         let mut budget = EntryBudget::new(MAX_WALK_ENTRIES);
         if parts.len() >= 2 {
             match find_normalised_in_directory(
@@ -248,7 +245,7 @@ impl Locator {
 
         // 8-9. Fuzzy basename fallback for peers that advertise a flat
         // "Artist - Album - NN - Title" name while slskd files the download
-        // as "NN. Title" inside an album folder (v2 issue #229).
+        // as "NN. Title" inside an album folder (issue #229).
         // Fail-closed like the NFC phases: confined to the mount, regular
         // files only, sharing the same budget, a hit only when exactly one
         // candidate matches. The peer scope runs first; the mount-wide sweep
@@ -296,7 +293,7 @@ impl Locator {
     }
 
     /// Find stranded partial bytes by exact basename (then NFC alias at
-    /// most) inside the incomplete mount (v2 `_locate_partial`).
+    /// most) inside the incomplete mount.
     ///
     /// `username` is intentionally ignored: slskd's incomplete layout
     /// (`incomplete/<album>/<file>`) is not username-scoped, so the safe key
@@ -304,7 +301,7 @@ impl Locator {
     /// size-only phase. The expected size is recorded for the log line only:
     /// partial files are short by definition, so an equality gate would
     /// never hit. An unknown size still allows the direct probes but skips
-    /// the recursive sweep (the phase-9 require_size discipline, v2).
+    /// the recursive sweep.
     #[must_use]
     pub fn locate_partial(
         &self,
@@ -337,7 +334,7 @@ impl Locator {
         };
 
         // Direct probes: the flat file and the one-level album-dir layout
-        // (incomplete/<album>/<file>) slskd most commonly produces (v2).
+        // (incomplete/<album>/<file>) slskd most commonly produces.
         let mut direct: HashSet<PathBuf> = HashSet::new();
         if let Some(flat) = within_incomplete(&incomplete.join(basename))
             && flat.is_file()
@@ -377,7 +374,7 @@ impl Locator {
 
         // Recursive exact-then-NFC sweep with its own budget (never shared
         // with the complete-mount phases, which may already be exhausted).
-        // Exactly one basename match resolves; several fail closed (v2).
+        // Exactly one basename match resolves; several fail closed.
         let mut budget = EntryBudget::new(MAX_WALK_ENTRIES);
         let mut exact: HashSet<PathBuf> = HashSet::new();
         let mut aliased: HashSet<PathBuf> = HashSet::new();
@@ -457,7 +454,7 @@ fn sorted_children(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     Ok(children)
 }
 
-/// Shared cap for normalized fallback directory entries (v2 `_EntryBudget`).
+/// Shared cap for normalized fallback directory entries.
 struct EntryBudget {
     remaining: usize,
 }
@@ -489,7 +486,7 @@ enum AliasOutcome {
     NotFound,
 }
 
-/// Find the first matching regular file under `root` (v2 `_walk_find`).
+/// Find the first matching regular file under `root`.
 /// Bounded, confined to the resolved mount, and keyed by resolved directory
 /// paths so in-mount symlink loops cannot revisit forever.
 fn walk_find(
@@ -553,8 +550,7 @@ fn confined_file(mount: &Path, candidate: &Path) -> Option<PathBuf> {
     Some(resolved)
 }
 
-/// One immediate normalized alias in `directory`, or ambiguity/exhaustion
-/// (v2 `_find_normalised_in_directory`).
+/// One immediate normalized alias in `directory`, or ambiguity/exhaustion.
 fn find_normalised_in_directory(
     directory: &Path,
     mount: &Path,
@@ -597,14 +593,13 @@ fn find_normalised_in_directory(
     }
 }
 
-/// One normalized alias under `root`, confined and loop-safe (v2
-/// `_walk_find_normalised`). When the size-gated set is empty but the
-/// expected size is known, the already-collected in-memory alias set is
-/// retried without the size gate: exactly one alias resolves (size rejection
-/// is then the verifier's job), zero stays not-found, several fail closed as
-/// ambiguous. The ungated retry keeps non-exact aliases only: an
-/// exact-named file whose bytes mismatch is a stale file from another peer's
-/// folder (v2 #397), never a Unicode-drift alias.
+/// One normalized alias under `root`, confined and loop-safe. When the
+/// size-gated set is empty but the expected size is known, the
+/// already-collected in-memory alias set is retried without the size gate:
+/// exactly one alias resolves (size rejection is then the verifier's job), zero
+/// stays not-found, several fail closed as ambiguous. The ungated retry keeps
+/// non-exact aliases only: an exact-named file whose bytes mismatch is a stale
+/// file from another peer's folder (issue #397), never a Unicode-drift alias.
 fn walk_find_normalised(
     root: &Path,
     mount: &Path,
@@ -682,7 +677,7 @@ fn walk_find_normalised(
     AliasOutcome::NotFound
 }
 
-/// Log a fail-closed miss with the minimal shape (v2 `_log_unlocatable`):
+/// Log a fail-closed miss with the minimal shape:
 /// basename, size (or "unknown"), and the top-level entry count only.
 /// Never candidate paths, usernames, hosts, secrets, remote full paths, or
 /// exception text.
@@ -715,7 +710,7 @@ fn log_unlocatable(mount: &Path, basename: &str, size: Option<i64>, kind: FailKi
 }
 
 /// `(track_number, title_core, extension)` split of a download basename
-/// (v2 `_fuzzy_file_key`, issue #229).
+/// (issue #229).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FuzzyKey {
     track: Option<u32>,
@@ -733,7 +728,7 @@ fn fuzzy_file_key(basename: &str) -> FuzzyKey {
         _ => (normalised.clone(), String::new()),
     };
     // Split on dashes/underscores; strip an `Artist - Album` prefix up to a
-    // standalone track-number segment, else from the first NN token (v2).
+    // standalone track-number segment, else from the first NN token.
     let segments: Vec<&str> = stem
         .split(['-', '\u{2013}', '\u{2014}', '_'])
         .map(str::trim)
@@ -779,7 +774,7 @@ fn fuzzy_file_key(basename: &str) -> FuzzyKey {
         }
     }
     let remainder = remainder.trim().to_owned();
-    // Split a leading track token (`^\d{1,3}\b` over `[.-_\s]*`, v2).
+    // Split a leading track token (`^\d{1,3}\b` over `[.-_\s]*`).
     let mut track = None;
     let mut title_part = remainder.as_str();
     let leading: String = remainder
@@ -828,13 +823,12 @@ fn fuzzy_keys_match(expected: &FuzzyKey, candidate_name: &str) -> bool {
     } else {
         (&candidate.core, &expected.core)
     };
-    // Both cores non-trivial; the shorter contained in the longer (v2).
+    // Both cores non-trivial; the shorter contained in the longer.
     short.chars().count() >= 2 && long.contains(short)
 }
 
-/// Collect fuzzy basename matches under `root`, confined and loop-safe
-/// (v2 `_walk_find_fuzzy`). `require_size` gates the mount-wide sweep on a
-/// known expected size.
+/// Collect fuzzy basename matches under `root`, confined and loop-safe.
+/// `require_size` gates the mount-wide sweep on a known expected size.
 fn walk_find_fuzzy(
     root: &Path,
     mount: &Path,

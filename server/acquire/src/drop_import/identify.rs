@@ -4,7 +4,7 @@
 //! 1. Consistent MusicBrainz tags name the album: the files are scored
 //!    against that album's editions only. Tags that name an album the
 //!    files do not match go to review; they never fall through to a
-//!    guess (v2 `FORCED_MATCH_REJECTED`).
+//!    guess.
 //! 2. Otherwise the album and artist (tags, else the folder name) are
 //!    searched and every edition found is scored.
 //! 3. When that finds nothing close and an AcoustID key is set, the audio

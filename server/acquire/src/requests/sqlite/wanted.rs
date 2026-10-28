@@ -82,8 +82,8 @@ pub struct WatchCheck {
     pub new_candidates: Option<u32>,
 }
 
-/// Durable wanted watches, shared by the wanted view and the watcher loop
-/// (v2 `WantedStore`).
+/// Durable wanted watches, shared by the wanted view and the watcher
+/// loop.
 #[derive(Clone)]
 pub struct WantedStore {
     db: AcquireDb,
@@ -92,7 +92,7 @@ pub struct WantedStore {
 impl WantedStore {
     /// Delete stopped and fulfilled watches last touched before `cutoff`
     /// (epoch seconds); their seen candidates go with them. Returns the
-    /// watches deleted (v2 `WantedStore.prune`).
+    /// watches deleted.
     pub async fn prune(&self, cutoff: u64) -> Result<u64, RequestsError> {
         self.db
             .write_background("wanted.prune", move |tx| {
@@ -110,7 +110,7 @@ impl WantedStore {
     }
 
     /// Watches visible to one caller: own rows, or every row for admins,
-    /// newest first (v2 `list_watches`).
+    /// newest first.
     pub async fn watches_for(
         &self,
         user_id: &str,
@@ -152,8 +152,8 @@ impl WantedStore {
 
     /// Enrol a watch. A fulfilled watch re-arms with fresh counters (the
     /// album was re-requested and failed again); any other existing watch
-    /// stays untouched, so enrolment never overrides a human stop (v2
-    /// `create_watch` plus `rearm_watch`). Answers whether a watch armed.
+    /// stays untouched, so enrolment never overrides a human stop.
+    /// Answers whether a watch armed.
     pub async fn enrol(&self, watch: WantedWatch) -> Result<bool, RequestsError> {
         self.db
             .write_background("wanted.enrol", move |tx| {
@@ -261,7 +261,7 @@ impl WantedStore {
             .map_err(|error| lane_error("wanted.fulfilled", error))
     }
 
-    /// Stop one watch (v2 `stop_watch`): watching becomes stopped. Owners
+    /// Stop one watch: watching becomes stopped. Owners
     /// and admins only.
     pub async fn stop(
         &self,
@@ -286,7 +286,7 @@ impl WantedStore {
         .await
     }
 
-    /// Resume one watch (v2 `resume_watch`): stopped becomes watching and
+    /// Resume one watch: stopped becomes watching and
     /// due now with a fresh window; a watching row is simply due now; a
     /// fulfilled row refuses. Owners and admins only.
     pub async fn resume(
@@ -323,8 +323,8 @@ impl WantedStore {
     }
 
     /// Remember candidates a person turned down for this album, so the
-    /// watcher can tell them from copies that turn up later (v2
-    /// `add_seen`). Already-known ones keep their first-seen time.
+    /// watcher can tell them from copies that turn up later.
+    /// Already-known ones keep their first-seen time.
     pub async fn add_seen(
         &self,
         key: &str,
@@ -399,9 +399,8 @@ impl WantedStore {
 }
 
 /// After an admin removed the album at `removed_at` (unix seconds): stop a
-/// watching watch armed at or before then (v2
-/// `stop_after_library_removal`). A watch armed since, by a new request,
-/// is left alone. Answers whether it changed.
+/// watching watch armed at or before then. A watch armed since, by a new
+/// request, is left alone. Answers whether it changed.
 pub(crate) fn stop_after_removal(
     tx: &Transaction<'_>,
     key: &str,
@@ -421,7 +420,7 @@ pub(crate) fn stop_after_removal(
 
 /// After an admin removed the album at `removed_at` but wants a
 /// replacement: a watch fulfilled before then goes back to watching, due
-/// `now`, with fresh counters (v2 `continue_after_library_removal`).
+/// `now`, with fresh counters.
 /// Stopped watches keep the user's choice, and a watch armed
 /// since the removal is left alone; rearming stamps `created_at`, so a
 /// second run never rearms its own rearm.

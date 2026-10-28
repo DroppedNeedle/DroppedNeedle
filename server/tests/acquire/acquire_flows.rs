@@ -831,7 +831,7 @@ async fn until<F: Future<Output = bool>>(what: &str, mut done: impl FnMut() -> F
     }
 }
 
-// The wanted recheck table matches v2's age bands.
+// The wanted recheck table's age bands.
 #[test]
 fn recheck_bands() {
     let now = 1_716_720_000; // 2024-05-26 UTC

@@ -16,8 +16,7 @@
 //! from `preflight_score_manual_min` (0.50 by default) up to that, a person
 //! picks them. A blocklisted release is never offered; one that fails any
 //! other gate, or scores lower, is offered to a person only, after every
-//! release that passes, with the reasons it fails. Port of v2's
-//! `PluginReleaseScorer`.
+//! release that passes, with the reasons it fails.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -88,7 +87,7 @@ pub struct ReleasePolicy {
 }
 
 /// Quarantine identity for one plugin result: its payload, or the
-/// normalised title plus size in MB when it has none (v2's key).
+/// normalised title plus size in MB when it has none.
 pub fn release_identity(release: &PluginSearchResult) -> String {
     let payload = release.payload.trim();
     if !payload.is_empty() {

@@ -1,5 +1,5 @@
-//! Acquisition's side of an album removal (v2 `purge_album_downloads`
-//! plus the wanted follow-up), run as the library's `library.album_removed`
+//! Acquisition's side of an album removal (download cleanup plus the
+//! wanted follow-up), run as the library's `library.album_removed`
 //! job, which the removal queues in its own commit: the album's failed
 //! downloads stop retrying, its held downloads are discarded with their
 //! copies, its blocklist entries go, and its wanted watch stops or rearms.

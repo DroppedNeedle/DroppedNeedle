@@ -1,7 +1,5 @@
 //! Soulseek query construction: sanitizing, artist wildcards, ladders.
 //!
-//! Ported from v2's slskd repository (`_sanitize_query`, `_primary_artist`, `_stripped_album_title`,
-//! `_wildcard_artist`, `_album_query_ladder`, `_track_query_ladder`).
 //! Soulseek ANDs every query word, so a specific query sometimes returns
 //! nothing when a broader one returns thousands (verified live), so the
 //! ladders escalate from most-specific to broadest, and the scorer narrows
@@ -9,7 +7,7 @@
 
 /// Strip Soulseek operators (space-surrounded hyphens, parentheses) that
 /// confuse the search, while preserving hyphens inside names like `AC-DC` /
-/// `Jay-Z` (v2 `_sanitize_query`). Typographic apostrophes are normalised
+/// `Jay-Z`. Typographic apostrophes are normalised
 /// to the straight ASCII form: MusicBrainz metadata uses ' but shared files
 /// are almost always named with `'`.
 #[must_use]
@@ -43,18 +41,18 @@ pub fn sanitize_query(query: &str) -> String {
     collapsed.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// First credited artist of a joined credit string (v2 `_primary_artist`).
+/// First credited artist of a joined credit string.
 /// MusicBrainz joins multi-artist credits (`"YMO, ..."`) but Soulseek ANDs
 /// every query word, so each extra credit is another term no peer path
-/// contains (v2 issue #373). Query rungs use only the primary artist.
+/// contains (issue #373). Query rungs use only the primary artist.
 #[must_use]
 pub fn primary_artist(artist: &str) -> &str {
     let first = artist.split(',').next().unwrap_or(artist).trim();
     if first.is_empty() { artist } else { first }
 }
 
-/// Album title without edition parentheticals or a subtitle tail (v2
-/// `_stripped_album_title`). `Euphoria (International Edition)` -> `Euphoria`;
+/// Album title without edition parentheticals or a subtitle tail.
+/// `Euphoria (International Edition)` -> `Euphoria`;
 /// `Devil May Cry: Season 2 (Soundtrack ...)` -> `Devil May Cry`.
 /// Last-resort rungs only: the scorer still narrows the broader result set
 /// back down.
@@ -87,7 +85,7 @@ fn strip_balanced(text: &str, open: char, close: char) -> String {
     out
 }
 
-/// Blocked-artist workaround (v2 `_wildcard_artist`): Soulseek's server
+/// Blocked-artist workaround: Soulseek's server
 /// filters searches containing certain artist terms (DMCA), returning 0
 /// results no matter what else is in the query ("Enter Shikari" ->
 /// nothing). Replacing the first letter of each word with Soulseek's
@@ -116,7 +114,7 @@ fn wildcard_word(word: &str) -> String {
     if rest.starts_with('\'') || rest.starts_with('\u{2019}') {
         rest = rest.chars().skip(1).collect();
     }
-    // Keep short words exact: "*" plus a lone char matches far too much (v2).
+    // Keep short words exact: "*" plus a lone char matches far too much.
     if rest.chars().count() >= 2 {
         format!("*{rest}")
     } else {
@@ -151,13 +149,13 @@ fn build_track_query(artist: &str, track: &str, album: Option<&str>) -> String {
     sanitize_query(&parts.join(" - "))
 }
 
-/// Most-specific-first album queries (v2 `_album_query_ladder`):
+/// Most-specific-first album queries:
 /// artist+album+year -> artist+album -> edition-stripped title rungs ->
 /// artist. Every rung queries the primary credited artist only. Each rung
 /// is followed by a blocked-artist variant with the artist's first letters
 /// wildcarded: exact goes first because wildcards degrade matching on some
 /// clients; the wildcard sibling comes before broadening so a blocked artist
-/// still gets the most specific query that can return anything (v2).
+/// still gets the most specific query that can return anything.
 #[must_use]
 pub fn album_query_ladder(artist: &str, album: &str, year: Option<i32>) -> Vec<String> {
     let primary = primary_artist(artist);
@@ -181,7 +179,7 @@ pub fn album_query_ladder(artist: &str, album: &str, year: Option<i32>) -> Vec<S
     dedupe_queries(queries)
 }
 
-/// Most-specific-first track queries (v2 `_track_query_ladder`):
+/// Most-specific-first track queries:
 /// artist+track+album -> artist+track. Keeps the track title at every rung
 /// so the track matcher can match. Wildcard blocked-artist variants
 /// interleave as in [`album_query_ladder`].

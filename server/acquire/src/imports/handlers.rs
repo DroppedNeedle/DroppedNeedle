@@ -6,11 +6,10 @@
 //! bodies through [`ValidJson`] so malformed input stays inside the shared
 //! envelope. [`routes`] mounts every handler in the group of its caller
 //! extractor, so those routes 401 anonymously, and the Spotify OAuth
-//! callback in the public group (it is identified by its state token,
-//! exactly like v2). The callback also
-//! answers on its v2 path for Spotify apps registered against v2; either
-//! way it exchanges the code with the redirect URI stored next to the state
-//! at authorize time.
+//! callback in the public group (it is identified by its state token).
+//! The callback also answers on its v2 path for Spotify apps registered against
+//! v2; either way it exchanges the code with the redirect URI stored next to
+//! the state at authorize time.
 
 use std::sync::Arc;
 
@@ -129,7 +128,7 @@ pub fn imports_router(deps: ImportsDeps) -> axum::Router {
 
 /// The imports, health and Spotify routes, in the group of each handler's
 /// caller extractor. The Spotify OAuth callback is public: it is
-/// state-token identified, exactly like v2's ungated route.
+/// state-token identified.
 pub fn routes() -> Routes<ImportsDeps> {
     Routes::new()
         .admin(routes!(get_lidarr_config, put_lidarr_config))
@@ -202,8 +201,8 @@ pub async fn put_lidarr_config(
     Json(deps.lidarr_settings.get())
 }
 
-/// Test submitted Lidarr credentials against `system/status` (v2 Test
-/// route): the submitted url/key are probed so Test works before the first
+/// Test submitted Lidarr credentials against `system/status`: the
+/// submitted url/key are probed so Test works before the first
 /// save, a masked key resolves to the stored one, and reachable/bad-key
 /// verdicts travel in the body, never as a leaked 5xx, never echoing the
 /// URL or host.
@@ -292,7 +291,7 @@ pub async fn get_spotify_settings(
 }
 
 /// Save the Spotify app settings. A masked secret preserves the stored
-/// one; a non-absolute redirect origin is a 400 (v2 text kept).
+/// one; a non-absolute redirect origin is a 400.
 #[utoipa::path(put, tag = "imports", path = "/api/v3/acquire/spotify/settings",
     request_body = SpotifySettings,
     responses((status = 200, description = "Saved Spotify settings", body = SpotifySettings)))]
@@ -305,7 +304,7 @@ pub async fn put_spotify_settings(
     Ok(Json(deps.spotify_settings.get()))
 }
 
-/// The computed OAuth redirect URI (v2 admin display endpoint).
+/// The computed OAuth redirect URI, for the admin to register.
 #[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/redirect-uri",
     responses(
         (status = 200, description = "OAuth redirect URI", body = SpotifyRedirectUri),
@@ -351,7 +350,7 @@ fn callback_uri(deps: &ImportsDeps, request: &Request) -> Result<String, Imports
 }
 
 /// Authorize URL for the caller's Spotify link flow. Requires the admin
-/// app to be enabled and complete (v2 400 text kept).
+/// app to be enabled and complete.
 #[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/auth/url",
     responses(
         (status = 200, description = "Authorize URL", body = SpotifyAuthUrlResponse),
@@ -379,7 +378,7 @@ pub async fn get_spotify_auth_url(
     Ok(Json(response))
 }
 
-/// OAuth callback query (v2: `code`, `state`, `error`, all optional).
+/// OAuth callback query (`code`, `state`, `error`, all optional).
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct SpotifyCallbackQuery {
@@ -391,10 +390,9 @@ pub struct SpotifyCallbackQuery {
     pub error: Option<String>,
 }
 
-/// Spotify OAuth callback (v2 `spotify_auth_callback`). State-identified,
-/// so it sits outside the session gate like v2's ungated route: every
-/// outcome redirects to the profile page with the v2 query contract
-/// (`spotify=connected`, or `spotify=error` with an optional `reason`).
+/// Spotify OAuth callback. State-identified, so it sits outside the
+/// session gate: every outcome redirects to the profile page with
+/// `spotify=connected` or `spotify=error` with an optional `reason`.
 #[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/auth/callback",
     params(SpotifyCallbackQuery),
     responses((status = 307, description = "Redirect to the profile page")))]
@@ -481,7 +479,7 @@ async fn finish_spotify_link(deps: &ImportsDeps, query: SpotifyCallbackQuery) ->
     Redirect::temporary(&profile("/profile?spotify=connected")).into_response()
 }
 
-/// Unlink the caller's Spotify account (v2 `DELETE /me/connections/spotify`).
+/// Unlink the caller's Spotify account.
 /// Idempotent: no link reads as done too.
 #[utoipa::path(delete, tag = "imports", path = "/api/v3/me/connections/spotify",
     responses(
@@ -503,8 +501,8 @@ pub async fn disconnect_spotify(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The caller's owned Spotify playlists. Unlinked reads as the v2 400;
-/// upstream failures as the v2 502.
+/// The caller's owned Spotify playlists. Unlinked reads as a 400,
+/// upstream failures as a 502.
 #[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/playlists",
     responses((status = 200, description = "Owned playlists", body = SpotifyPlaylistListResponse)))]
 pub async fn list_spotify_playlists(
@@ -519,7 +517,7 @@ pub async fn list_spotify_playlists(
     Ok(Json(playlists))
 }
 
-/// Map a Spotify service failure to the wire (v2 400 not-linked, 502
+/// Map a Spotify service failure to the wire (400 not-linked, 502
 /// upstream); store failures are server faults.
 fn spotify_failed(error: SpotifyError) -> ImportsError {
     match error {
@@ -649,7 +647,7 @@ pub async fn get_health(State(deps): State<ImportsDeps>, _user: User) -> Json<Ac
     Json(super::health::smoke(&deps.probes, &deps.readiness.now()))
 }
 
-/// Live slskd client status (v2: any authenticated user may read it).
+/// Live slskd client status (any signed-in user may read it).
 #[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/slskd/status",
     responses((status = 200, description = "slskd status", body = SlskdStatusResponse)))]
 pub async fn get_slskd_status(
@@ -659,7 +657,7 @@ pub async fn get_slskd_status(
     Json(super::health::slskd_status(deps.probes.slskd.as_ref()))
 }
 
-/// Live SABnzbd status against the saved config (v2: admin-only).
+/// Live SABnzbd status against the saved config (admin only).
 #[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/sabnzbd/status",
     responses((status = 200, description = "SABnzbd status", body = SabnzbdStatusResponse)))]
 pub async fn get_sabnzbd_status(
@@ -669,8 +667,8 @@ pub async fn get_sabnzbd_status(
     Json(super::health::sabnzbd_status(deps.probes.sabnzbd.as_ref()))
 }
 
-/// Fresh OAuth state token: 32 random bytes, base64url, unpadded (v2
-/// `secrets.token_urlsafe(32)`). Falls back to a request id when the OS
+/// Fresh OAuth state token: 32 random bytes, base64url, unpadded.
+/// Falls back to a request id when the OS
 /// RNG is unavailable, so auth never hard-fails on entropy.
 fn fresh_state(deps: &ImportsDeps) -> String {
     let mut bytes = [0u8; 32];

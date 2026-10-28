@@ -736,7 +736,7 @@ fn quarantine_hold_rejects_escaping_stamps() {
 
 // Reimport needs a failed or partial task whose attempt still names its
 // files; starting one moves the task to processing with its error cleared
-// (v2 reimport guard, keyed on the attempt journal).
+// (the guard is keyed on the attempt journal).
 #[test]
 fn reimport_starts_tasks_whose_files_remain() {
     let dir = scratch_dir("reimport");
@@ -917,7 +917,7 @@ fn kept_files_go_to_cleanup_without_racing_a_reimport() {
 }
 
 // A download whose temporary files keep failing to clear shows on service
-// health with v2's warning once its retried cleanup has failed three
+// health with a warning once its retried cleanup has failed three
 // times, and the warning clears as soon as a cleanup succeeds.
 #[tokio::test]
 async fn failing_cleanup_shows_on_service_health_until_it_clears() {

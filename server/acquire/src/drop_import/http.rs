@@ -1,7 +1,7 @@
 //! Drop-import HTTP: upload, the job list and one job. Files an upload
 //! left waiting are acted on through the held list ([`crate::held`]).
 //!
-//! Curators only (admin or trusted), as in v2: importing writes into the
+//! Curators only (admin or trusted): importing writes into the
 //! shared library, the same trust as auto-acquiring. Plain users request
 //! an album and a curator imports it. Each curator sees their own jobs;
 //! admins may list everyone's with `all=true`. Live progress arrives as

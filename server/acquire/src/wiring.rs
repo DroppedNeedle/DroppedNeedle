@@ -8,7 +8,7 @@
 //! takes effect without a restart. `for_tests` binds the same shape over a
 //! scratch database and scratch settings. Routes are declared in posture
 //! groups through `routes()`; only the Spotify OAuth callback is public (it
-//! is state-token identified, like v2's ungated route).
+//! is state-token identified).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -82,7 +82,7 @@ use tokio::sync::watch;
 #[cfg(any(test, feature = "test-support"))]
 mod test_bundle;
 
-/// Spotify Web API root (v2 `spotify_client.py`).
+/// Spotify Web API root.
 pub const SPOTIFY_API_BASE: &str = "https://api.spotify.com/v1";
 /// Spotify accounts origin (token exchange).
 pub const SPOTIFY_ACCOUNTS_BASE: &str = "https://accounts.spotify.com";

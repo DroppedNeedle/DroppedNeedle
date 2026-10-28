@@ -125,8 +125,7 @@ pub enum ImportFailure {
     /// already waiting on recovery). The download stays for a reimport.
     LocalFault(String),
     /// A file already sits where the import would go and the catalog
-    /// cannot prove it is this track: hold for a person (v2
-    /// `target_occupied`).
+    /// cannot prove it is this track: hold for a person.
     Occupied(String),
     /// The library's import naming script gave no usable path for a file.
     /// The download stays for a reimport once the script is fixed.

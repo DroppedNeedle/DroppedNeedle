@@ -18,7 +18,7 @@
 //! grabs ([`review`]): a download parked on a job waits for its owner's
 //! pick, which resumes that download instead of starting another.
 //!
-//! Ownership follows v2: a job belongs to the person who started it.
+//! A job belongs to the person who started it.
 //! Only they may view, pick or cancel it; an admin may also dismiss it.
 
 pub mod candidates;
@@ -247,7 +247,7 @@ impl SearchJobs {
     }
 
     /// Start a search. An album the library already holds is not searched
-    /// for (v2's `already_in_library` answer).
+    /// for (the answer is `already_in_library`).
     pub async fn start(
         self: &Arc<Self>,
         principal: &Principal,

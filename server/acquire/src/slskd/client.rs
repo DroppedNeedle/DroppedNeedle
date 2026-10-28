@@ -1,9 +1,8 @@
 //! Raw wrapper around the slskd 0.25.1 REST API. No business logic.
 //!
-//! Ported from v2's slskd client. The transport is injected, never
-//! acquired here. Non-2xx responses map into [`ClientError`]. The discrete
-//! calls retry the 429 "only one concurrent operation" (v2 retries it
-//! because `RateLimitedError` is an `ExternalServiceError`), waiting out
+//! The transport is injected, never acquired here. Non-2xx responses map
+//! into [`ClientError`]. The discrete calls retry the 429 "only one
+//! concurrent operation", waiting out
 //! the server's `Retry-After` when it sends one; the search-poll helpers
 //! are not retried, because the repository's poll loop owns its own
 //! deadline.
@@ -62,7 +61,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
             .map_err(|err| ClientError::decode(Service::Slskd, err.to_string()))
     }
 
-    /// Run a discrete call, retrying 429s (v2 `with_retry`): after the
+    /// Run a discrete call, retrying 429s: after the
     /// server's `Retry-After` when it names one, else with doubling
     /// backoff. Transport faults are returned as-is; the caller owns
     /// broader policy.
@@ -98,7 +97,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
     }
 
     /// GET /api/v0/options; the repository reads `directories.downloads` to
-    /// tell the user the exact path slskd saves to (v2: for the
+    /// tell the user the exact path slskd saves to (for the
     /// downloads-mount diagnostic, not a hot path).
     pub async fn get_options(&self) -> Result<SlskdOptions, ClientError> {
         let reply = self
@@ -135,7 +134,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
     }
 
     /// GET /api/v0/transfers/downloads/{username}, flattened to transfers.
-    /// A 404 means "no such user bucket" and yields an empty list (v2).
+    /// A 404 means "no such user bucket" and yields an empty list.
     pub async fn get_downloads(&self, username: &str) -> Result<Vec<SlskdTransfer>, ClientError> {
         let path = format!("/transfers/downloads/{username}");
         let reply = self
@@ -151,7 +150,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
 
     /// GET /api/v0/transfers/downloads (every peer), username preserved per
     /// transfer: the flatten loses it, so it is carried down from the
-    /// per-user block (v2). For the downloads-mount diagnostic, not the
+    /// per-user block. For the downloads-mount diagnostic, not the
     /// per-task poll.
     pub async fn get_all_downloads(&self) -> Result<Vec<SlskdTransfer>, ClientError> {
         let reply = self
@@ -171,7 +170,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
     /// DELETE /api/v0/transfers/downloads/{username}/{id}?remove=true.
     /// Serves both cancellation of an in-flight transfer and post-import
     /// removal of a completed transfer record. A 404 means the
-    /// record is already gone and yields `false` (v2).
+    /// record is already gone and yields `false`.
     pub async fn cancel_transfer(
         &self,
         username: &str,
@@ -189,7 +188,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
     }
 
     // Search poll: no retry wrapper on the state/response reads, the
-    // repository owns the deadline (v2). The start keeps the 429 wrapper:
+    // repository owns the deadline. The start keeps the 429 wrapper:
     // slskd allows one concurrent search and answers 429 while another
     // client holds it, so an unretried start drops the whole rung.
 

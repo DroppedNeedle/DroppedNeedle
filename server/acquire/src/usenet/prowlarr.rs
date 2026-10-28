@@ -1,13 +1,13 @@
 //! Prowlarr indexer search: per-instance HTTP + JSON, ladder, cache.
 //!
 //! [`ProwlarrClient`] is the raw JSON wrapper around one Prowlarr
-//! instance, ported from v2 `prowlarr_client.py` and live-verified against
+//! instance, live-verified against
 //! Prowlarr 2.3.5.5327: auth rides an `X-Api-Key` header and is never
 //! logged, `downloadUrl` embeds `?apikey=` so it is self-contained for
 //! SABnzbd's server-side fetch (and must never be logged either),
 //! `publishDate` is ISO-8601 with `Z`, and `ReleaseResource` carries no
-//! password signal. [`ProwlarrIndexer`] is the `IndexerProtocol` shape
-//! (v2 `prowlarr_indexer.py`): query ladder, search cache, backoff-skip,
+//! password signal. [`ProwlarrIndexer`] is the `IndexerProtocol` shape:
+//! query ladder, search cache, backoff-skip,
 //! per-call timeout; every member error maps to `[]`, never a failure.
 
 use std::collections::HashMap;
@@ -28,7 +28,7 @@ use crate::downloads::source_tag::SourceTag;
 use droppedneedle_kernel::http_client::{BodyError, transport_error};
 
 // ---------------------------------------------------------------------------
-// Wire models (v2 `prowlarr_models.py`: devopsarr/prowlarr-py shapes).
+// Wire models (devopsarr/prowlarr-py shapes).
 //
 // Verified live against Prowlarr 2.3.5.5327 under v2 (that run's date is
 // not recorded). Each model was checked again on 2026-10-21 against the
@@ -320,7 +320,7 @@ fn decode<T: serde::de::DeserializeOwned>(content: &[u8]) -> Result<T, ClientErr
 
 /// `publishDate` (ISO-8601 when present) → unix time. ISO first, then the
 /// reused Newznab RFC-2822 parser (which returns `None` on garbage):
-/// never raises, never a new date parser (v2 `_parse_prowlarr_date`).
+/// never raises, never a new date parser.
 fn parse_prowlarr_date(value: &str) -> Option<f64> {
     let text = value.trim();
     if text.is_empty() {
@@ -380,12 +380,12 @@ fn split_zone(time_part: &str) -> Option<(&str, i64)> {
             return None;
         }
     }
-    // Naive timestamps are read as UTC (v2 attaches UTC when tz-naive).
+    // Naive timestamps are read as UTC.
     Some((time_part, 0))
 }
 
 // ---------------------------------------------------------------------------
-// Indexer (v2 `ProwlarrIndexer`).
+// Indexer.
 // ---------------------------------------------------------------------------
 
 /// Cap on cached search entries before opportunistic eviction.
@@ -393,7 +393,7 @@ const SEARCH_CACHE_CAP: usize = 256;
 
 /// One Prowlarr instance as an indexer: either/or with the native Newznab
 /// list (the `usenet_search_backend` selector picks the composite primary).
-/// Mirrors the Newznab shape: query ladder, `("prowlarr", query)` search
+/// Same shape as Newznab: query ladder, `("prowlarr", query)` search
 /// cache, rate-limit backoff-skip, per-call timeout. Every member error
 /// maps to `[]`: the fan-out never fails because of Prowlarr.
 pub struct ProwlarrIndexer {

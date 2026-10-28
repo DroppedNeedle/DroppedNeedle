@@ -1,6 +1,6 @@
 //! Orphan reconcile.
 //!
-//! Ports `reconcile_orphan_folders` (#131). A DN-named complete-dir
+//! See issue #131. A DN-named complete-dir
 //! folder is debris only when no attempt journal owns it, no live task or
 //! unsettled publisher bundle claims it, it is older than 6 hours, and
 //! the client confirms the job is not active. Every ambiguous answer

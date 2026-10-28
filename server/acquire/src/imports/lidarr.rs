@@ -1,6 +1,6 @@
 //! Read-only Lidarr import client and service.
 //!
-//! Ports v2's Lidarr import repository and service exactly: two GET endpoints
+//! Two GET endpoints
 //! (`/system/status`, `/artist`) under `{base}/api/v1` with the `X-Api-Key`
 //! header (verified against live Lidarr 3.1.3.4968), monitored artists only,
 //! the authoritative re-fetch, the pre-read counts, the auto-download rule
@@ -23,8 +23,7 @@ use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error}
 const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 /// True for a well-formed MusicBrainz id: `8-4-4-4-12` lowercase-or-upper
-/// hex, surrounding whitespace ignored, `unknown_` ids rejected (v2
-/// `infrastructure/validators.is_valid_mbid`).
+/// hex, surrounding whitespace ignored, `unknown_` ids rejected.
 pub fn is_valid_mbid(value: &str) -> bool {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.starts_with("unknown_") {
@@ -46,8 +45,7 @@ pub fn is_valid_mbid(value: &str) -> bool {
     true
 }
 
-/// Normalise a Lidarr base URL to a bare origin (v2
-/// `LidarrImportConnectionSettings.__post_init__`): trim, default a
+/// Normalise a Lidarr base URL to a bare origin: trim, default a
 /// schemeless host to `http://` (Lidarr is a plain-http LAN service, never
 /// the SABnzbd https-forcing), strip one trailing slash, then strip a
 /// pasted `/api/v1` or `/api` suffix. Silent, so Test needs no suggestion.
@@ -66,7 +64,7 @@ pub fn normalize_lidarr_url(raw: &str) -> String {
     url
 }
 
-/// One Lidarr artist row (v2 `LidarrArtist`, camelCase, tolerant defaults).
+/// One Lidarr artist row (camelCase, tolerant defaults).
 /// `foreign_artist_id` is the MBID join key; Lidarr's `mbId` is never
 /// populated live and is ignored entirely.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -80,11 +78,11 @@ pub struct LidarrArtist {
     pub monitored: bool,
     /// `none` or `all`.
     pub monitor_new_items: String,
-    /// `continuing`, `ended`, ... Imported regardless of status, like v2.
+    /// `continuing`, `ended`, ... Imported regardless of status.
     pub status: String,
 }
 
-/// `system/status` probe shape (v2 `LidarrSystemStatus`).
+/// `system/status` probe shape.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct LidarrSystemStatus {
@@ -93,7 +91,7 @@ pub struct LidarrSystemStatus {
 }
 
 /// Classified Lidarr failure. Transports and decodes collapse to
-/// unreachable; only 401/403 reads as auth (v2 `LidarrImportError(auth)`).
+/// unreachable; only 401/403 reads as auth.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LidarrError {
     /// Lidarr rejected the API key (HTTP 401/403).
@@ -176,14 +174,14 @@ impl LidarrClient {
     }
 }
 
-/// Read-only Lidarr-to-follows importer (v2 `LidarrImportService`).
+/// Read-only Lidarr-to-follows importer.
 pub struct LidarrImportService {
     client: LidarrClient,
     settings: std::sync::Arc<ConfigLidarrSettings>,
     follows: Follows,
 }
 
-/// Missing-connection failure. The message reaches the user (v2 400).
+/// Missing-connection failure. The message reaches the user as a 400.
 pub const LIDARR_NOT_CONNECTED: &str =
     "Lidarr is not connected. An admin must configure it in Settings first.";
 
@@ -252,7 +250,7 @@ impl LidarrImportService {
         })
     }
 
-    /// Import a selection into one user's follows (v2 `import_artists`).
+    /// Import a selection into one user's follows.
     /// The follows, the approval batch and the auto-download intents land
     /// in one transaction. Only brand-new follows of artists Lidarr
     /// monitors with `all` get auto-download, so a re-import never re-arms
@@ -264,7 +262,7 @@ impl LidarrImportService {
         selected_mbids: &[String],
     ) -> Result<LidarrImportResponse, ServiceError> {
         let monitored = self.monitored_artists().await?;
-        // Authoritative map from the re-fetch (as in v2): a selected MBID not
+        // Authoritative map from the re-fetch: a selected MBID not
         // currently monitored in Lidarr is silently ignored.
         let by_lower: HashMap<String, &LidarrArtist> = monitored
             .iter()

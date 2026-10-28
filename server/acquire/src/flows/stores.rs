@@ -139,8 +139,8 @@ fn tier_of(format: &str, bitrate: Option<i64>, depth: Option<i64>) -> &'static s
     )
 }
 
-/// The upgrade worklist, read from the library catalog on every call
-/// (v2 `list_cutoff_unmet`): an album is as good as its worst file.
+/// The upgrade worklist, read from the library catalog on every call:
+/// an album is as good as its worst file.
 #[derive(Clone)]
 pub struct UpgradeWorklist {
     db: AcquireDb,
@@ -231,7 +231,7 @@ impl UpgradeWorklist {
     }
 
     /// Whether the library's best copy of a recording already meets
-    /// `cutoff` (v2 per-recording floor). A recording it lacks does not.
+    /// `cutoff`. A recording it lacks does not.
     pub async fn recording_meets_cutoff(
         &self,
         recording_mbid: &str,
@@ -254,8 +254,8 @@ impl UpgradeWorklist {
         Ok(meets(best, cutoff))
     }
 
-    /// How many of these library tracks sit below `cutoff` (v2 counted the
-    /// edition's owned tracks it would upgrade).
+    /// How many of these library tracks sit below `cutoff`: the edition's
+    /// owned tracks an upgrade would replace.
     pub async fn tracks_below_cutoff(
         &self,
         track_ids: &[String],
@@ -348,18 +348,18 @@ impl CutoffList for UpgradeWorklist {
     }
 }
 
-/// Background-upgrade policy (v2 `download_policy` upgrade half).
+/// Background-upgrade policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpgradePolicy {
     /// Upgrades allowed at all.
     pub upgrade_allowed: bool,
     /// The tier an album must reach before it stops being upgraded.
     pub cutoff: String,
-    /// The background scan enabled (default off in v2).
+    /// The background scan enabled.
     pub scan_enabled: bool,
     /// Grabs per sweep, at most.
     pub max_per_run: usize,
-    /// Sweep cadence in hours (default 12 in v2).
+    /// Sweep cadence in hours.
     pub interval_hours: u64,
 }
 
@@ -436,9 +436,9 @@ impl LibraryPresence {
     }
 }
 
-/// Admin directory: upgrades are a curator action owned by the oldest admin
-/// (v2 `run_background_upgrade_sweep`). Read from the accounts on every
-/// call, so an admin created after boot owns the next sweep.
+/// Admin directory: upgrades are a curator action owned by the oldest
+/// admin. Read from the accounts on every call, so an admin created after boot
+/// owns the next sweep.
 #[derive(Clone)]
 pub struct AdminDirectory {
     db: AcquireDb,

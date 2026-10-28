@@ -164,8 +164,8 @@ fn requester_decided(
 
 impl RequestsService {
     /// Cancel a batch of asks. Non-admins detach from shared rows and
-    /// cancel their own; only an explicit admin cancels anything (v2
-    /// `cancel_batch`: a missing id must never mint admin rights).
+    /// cancel their own; only an explicit admin cancels anything (a
+    /// missing id must never mint admin rights).
     pub async fn cancel_batch(
         &self,
         principal: &Principal,
@@ -205,7 +205,7 @@ impl RequestsService {
         Ok(BatchCancelled { cancelled, failed })
     }
 
-    /// Approve one waiting ask and dispatch it (v2 `approve_request`). The
+    /// Approve one waiting ask and dispatch it. The
     /// claim moves the row out of the queue before dispatch so a second
     /// approval loses loudly instead of double-dispatching.
     pub async fn approve_request(
@@ -244,7 +244,7 @@ impl RequestsService {
             return Ok(Decided::NotWaiting { status });
         };
         // Shared approvals keep the immutable primary owner; only ownerless
-        // legacy rows fall back to the acting admin (v2 `_dispatch_record`).
+        // legacy rows fall back to the acting admin.
         let owner = claimed
             .user_id
             .clone()
@@ -288,7 +288,7 @@ impl RequestsService {
         }
     }
 
-    /// Reject one waiting ask (v2 `reject_request`).
+    /// Reject one waiting ask.
     pub async fn reject_request(
         &self,
         admin: &Admin,
@@ -329,7 +329,7 @@ impl RequestsService {
         })
     }
 
-    /// Cancel one ask (v2 `cancel_request`).
+    /// Cancel one ask.
     pub async fn cancel_one(
         &self,
         principal: &Principal,
@@ -362,7 +362,7 @@ impl RequestsService {
                 return Ok(Decided::Changed);
             }
             // Approval cancellation revokes the persisted capability after
-            // winning the generation CAS (v2 quirk).
+            // winning the generation CAS.
             self.store
                 .set_dispatch_authorized(kind, &mbid, false)
                 .await?;
@@ -426,7 +426,7 @@ impl RequestsService {
             .await
     }
 
-    /// Retry one terminal ask (v2 `retry_request`). An ordinary user may only
+    /// Retry one terminal ask. An ordinary user may only
     /// dispatch a generation that already carries approval provenance;
     /// anything else rejoins the queue.
     pub async fn retry_request(
@@ -589,7 +589,7 @@ impl RequestsService {
     }
 
     /// Clear one history row. Ownership reads before clearability so a
-    /// non-owner gets 403 rather than a misleading miss (v2 quirk); admins
+    /// non-owner gets 403 rather than a misleading miss; admins
     /// delete the row while users dismiss it from their own view.
     pub async fn clear_history_item(
         &self,
@@ -674,7 +674,7 @@ impl RequestsService {
     }
 
     /// A requester's cancel of one row. The task cancels under the
-    /// immutable primary owner, never the actor (v2 quirk: a co-requester
+    /// immutable primary owner, never the actor (a co-requester
     /// can never replace the attribution). A row whose download could not
     /// be stopped, or that changed meanwhile, is put back as it was.
     async fn requester_cancel(

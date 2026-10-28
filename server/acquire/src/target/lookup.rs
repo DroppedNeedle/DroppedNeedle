@@ -13,8 +13,8 @@ use droppedneedle_providers::musicbrainz::{
 /// Various Artists: a compilation credit that no Soulseek path carries.
 pub const VARIOUS_ARTISTS_MBID: &str = "89ad4ac3-39f7-470e-963a-56509c546377";
 
-/// Medium formats that carry video, not downloadable audio (v2
-/// `_VIDEO_MEDIUM_FORMATS`). DVD-Audio stays.
+/// Medium formats that carry video, not downloadable audio.
+/// DVD-Audio stays.
 const VIDEO_FORMATS: [&str; 12] = [
     "dvd",
     "dvd-video",

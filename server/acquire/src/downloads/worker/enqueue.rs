@@ -220,9 +220,9 @@ impl DownloadWorker {
 
     /// Settle a task no source can serve any more, keeping its last
     /// attempt. Earlier landings decide how: tracks imported along the way
-    /// make it partial, held files make it a failure held for review
-    /// (v2 `_settle_incomplete`), else the track's reason from the album
-    /// path or no source could serve it.
+    /// make it partial, held files make it a failure held for review,
+    /// else the track's reason from the album path or no source could
+    /// serve it.
     async fn fail_unserved(
         &self,
         task: &TaskRow,

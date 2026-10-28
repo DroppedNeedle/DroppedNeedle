@@ -65,7 +65,7 @@ pub struct FeedRelease {
     pub title: String,
     /// Primary type, when known.
     pub primary_type: Option<String>,
-    /// Secondary types, comma separated (v2 shape), when any.
+    /// Secondary types, comma separated, when any.
     pub secondary_types: Option<String>,
     /// First release date, when known.
     pub first_release_date: Option<String>,

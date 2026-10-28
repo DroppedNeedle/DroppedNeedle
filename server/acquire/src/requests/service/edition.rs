@@ -1,8 +1,7 @@
 //! "Get missing tracks": fetch what the album's chosen edition lacks and
 //! better copies of its tracks below the quality cutoff.
 //!
-//! v2 sent one track request per missing track and one upgrade per
-//! below-cutoff track. Here the library's edition plan names the positions,
+//! The library's edition plan names the positions,
 //! and one album download on the chosen release asks for exactly those:
 //! the missing tracks, plus the owned tracks below the cutoff, which the
 //! landing replaces only with a strictly better file. A track a file of
@@ -40,7 +39,7 @@ use droppedneedle_library::operations::models::OperationError;
 use droppedneedle_library::operations::plan::{EditionPlan, FileFate, PlanTrack};
 use rusqlite::OptionalExtension;
 
-/// Bytes a track takes in staging, at least (v2's acquisition floor).
+/// Bytes a track takes in staging, at least.
 const TRACK_FLOOR_BYTES: u64 = 8 * 1024 * 1024;
 /// Bytes per second of audio assumed for the estimate (lossless-ish).
 const BYTES_PER_SECOND: u64 = 32_000;
@@ -336,7 +335,7 @@ fn already_in_progress(task_id: String) -> EditionAcquireResponse {
 
 impl RequestsService {
     /// Fill the chosen edition's missing tracks and upgrade its owned
-    /// tracks below the cutoff (curator only, as in v2). `album_id` names
+    /// tracks below the cutoff (curator only). `album_id` names
     /// the library copy the edition picker planned, when it did. With
     /// `replace_versions`, also fetch this edition's version of each track
     /// a file of the copy is another version of, to replace that file.
@@ -640,8 +639,7 @@ impl RequestsService {
         }
     }
 
-    /// Refuse when the disk downloads land on lacks room for them (v2
-    /// checked the same before a conversion).
+    /// Refuse when the disk downloads land on lacks room for them.
     async fn check_disk(&self, estimate: u64) -> Result<(), RequestsError> {
         let Some(readiness) = &self.readiness else {
             return Ok(());

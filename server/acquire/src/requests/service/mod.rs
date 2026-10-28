@@ -1,11 +1,9 @@
-//! Request-intake domain logic, ported from v2 `request_service.py` and
-//! `requests_page_service.py`.
+//! Request-intake domain logic.
 //!
 //! The approval gate: a `user` ask waits for admin review while `trusted`
 //! and `admin` asks auto-approve and dispatch through the download seam
 //! immediately. Duplicate asks attach as co-requesters to the live row
 //! instead of spawning rivals; every mutation names the generation it won.
-//! Quirk citations name the v2 behavior each branch preserves.
 //!
 //! The service is one type over several files: `intake` records asks,
 //! `decisions` approves, rejects, cancels and retries them, `views` reads
@@ -158,7 +156,7 @@ fn fresh_record(
 }
 
 /// Display title for approval messages: the track title for exact-track
-/// rows, else the album title (v2 `_record_title`).
+/// rows, else the album title.
 fn record_title(record: &RequestRecord) -> String {
     if record.kind == RequestKind::Track
         && let Some(title) = record.track_title.as_deref()
@@ -169,7 +167,7 @@ fn record_title(record: &RequestRecord) -> String {
 }
 
 /// Build one stored row's dispatch call without widening exact-track
-/// identity (v2 `_dispatch_record`).
+/// identity.
 fn stored_dispatch(
     record: &RequestRecord,
     origin: DispatchOrigin,

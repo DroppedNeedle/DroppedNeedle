@@ -17,7 +17,7 @@ use crate::requests::models::{
 use crate::requests::quota::QuotaLedger;
 use droppedneedle_auth::Principal;
 
-/// Batch row cap (v2 `BatchAlbumRequest` schema `max_length=500`).
+/// Batch row cap.
 const BATCH_MAX_ITEMS: usize = 500;
 
 /// The follow an album ask names: its artist, when the ask says to follow
@@ -82,7 +82,7 @@ fn status_for_role(needs_approval: bool) -> RequestStatus {
 }
 
 /// Missing-names rejection. Intake has no catalog lookup, so names are
-/// required up front; v2 fills them from the album service instead.
+/// required up front.
 fn missing_names(mbid: &str) -> RequestsError {
     RequestsError::InvalidInput {
         message: format!(
@@ -91,7 +91,7 @@ fn missing_names(mbid: &str) -> RequestsError {
     }
 }
 
-/// Duplicate-track reply mirroring the winner (v2 `request_track`).
+/// Duplicate-track reply mirroring the winner.
 fn track_duplicate(existing: &RequestRecord) -> TrackIntakeResponse {
     let status = if existing.status == RequestStatus::AwaitingApproval {
         RequestStatus::AwaitingApproval
@@ -106,7 +106,7 @@ fn track_duplicate(existing: &RequestRecord) -> TrackIntakeResponse {
 
 impl RequestsService {
     /// Ask for one album. Winners record and maybe dispatch; duplicate asks
-    /// attach to the live row and report its status (v2 `request_album`).
+    /// attach to the live row and report its status.
     pub async fn request_album(
         &self,
         principal: &Principal,
@@ -354,9 +354,7 @@ impl RequestsService {
         let role = principal.role();
         let mbid = validate_mbid(&body.musicbrainz_id)?;
         let now = self.now_epoch();
-        // Seam note: v2 resolves provider ids and release aliases through
-        // the ownership and MBID stores, then fills missing names from the
-        // album service. Intake treats the submitted id as canonical and
+        // Intake treats the submitted id as canonical and
         // requires real names up front.
         let Some(artist_name) = meaningful_name(body.artist.as_deref()) else {
             return Err(missing_names(&mbid));
@@ -457,7 +455,7 @@ impl RequestsService {
         }
     }
 
-    /// Ask for one exact recording (v2 `request_track`).
+    /// Ask for one exact recording.
     pub async fn request_track(
         &self,
         principal: &Principal,
@@ -565,7 +563,7 @@ impl RequestsService {
         }
     }
 
-    /// Ask for a batch of albums (v2 `request_batch`): raw dupes and
+    /// Ask for a batch of albums: raw dupes and
     /// canonical dupes both skip, live rows attach, unresolvable rows skip,
     /// and each created row dispatches on its own (one failure never fails
     /// the batch).
@@ -595,8 +593,8 @@ impl RequestsService {
             }
         }
         // Dedupe pass two: canonical ids. Intake has no MBID-alias
-        // store, so canon equals the validated id; invalid ids skip the way
-        // unresolvable rows do in v2.
+        // store, so canon equals the validated id; invalid ids are
+        // skipped.
         let mut seen_canonical = std::collections::HashSet::new();
         let mut normalized = Vec::new();
         for item in raw_items {
@@ -728,7 +726,7 @@ impl RequestsService {
                 {
                     // Won by someone else between the live read and the
                     // bulk claim: a listener attachment, never a dispatch
-                    // candidate (v2 raced-items quirk).
+                    // candidate.
                     raced.push(winner.key);
                     skipped = skipped.saturating_add(1);
                 }
@@ -807,7 +805,7 @@ impl RequestsService {
     }
 
     /// Attach a duplicate album ask to its live row, with the follow it
-    /// names, and report the row's own status (v2: the duplicate reply
+    /// names, and report the row's own status (the duplicate reply
     /// mirrors the winner, including the awaiting-approval message). A
     /// curator asking for another edition switches the row to it while no
     /// download serves it; once one does, the row keeps its edition.
@@ -893,8 +891,8 @@ impl RequestsService {
         }
     }
 
-    /// Dispatch one won row and link its task (v2 dispatch-and-link with
-    /// orphan-cancel when the generation moved on). A dispatch that fails
+    /// Dispatch one won row and link its task, cancelling the
+    /// orphan when the generation moved on. A dispatch that fails
     /// marks the row failed. Answers the task.
     async fn dispatch_won(
         &self,
