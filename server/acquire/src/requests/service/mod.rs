@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use super::RequestsState;
 use super::error::RequestsError;
-use super::ledger::RequestRecord;
+use super::ledger::{RequestRecord, RequestStatus};
 use super::models::RequestKind;
 use super::quota::QuotaLedger;
 use super::sqlite::{EditionStore, PersonalMixStore, RequestStore, WantedStore};
@@ -37,6 +37,7 @@ use crate::dispatch::{
 };
 use crate::edition::chosen_edition;
 use crate::follows::Follows;
+use droppedneedle_auth::Principal;
 
 /// Domain service over the requests state. Every mutation is one durable
 /// write; nothing is held across an await.
@@ -100,6 +101,57 @@ async fn cancel_linked(dispatch: &DownloadDispatch, task_id: &str) -> bool {
 async fn cancel_started(dispatch: &DownloadDispatch, outcome: &DispatchOutcome) {
     if outcome.started() {
         cancel_linked(dispatch, outcome.task_id()).await;
+    }
+}
+
+/// What dispatching a claimed row and linking its task came to.
+enum Dispatched {
+    /// The row follows the task now.
+    Linked(String),
+    /// The row moved on before the link landed. A task this call started
+    /// was cancelled; one it found belongs to another ask and keeps running.
+    Stale,
+    /// The dispatch failed; the caller settles what the row reads.
+    Failed(DispatchError),
+}
+
+/// A new row for `principal`'s ask before its claim: no task, no
+/// co-requesters, generation zero, not reviewed, and authorized to
+/// dispatch unless it waits for approval. Callers fill in what the ask
+/// names.
+fn fresh_record(
+    kind: RequestKind,
+    key: String,
+    principal: &Principal,
+    origin: DispatchOrigin,
+    status: RequestStatus,
+    now: u64,
+) -> RequestRecord {
+    RequestRecord {
+        key,
+        kind,
+        status,
+        artist_name: String::new(),
+        album_title: String::new(),
+        artist_mbid: None,
+        year: None,
+        release_mbid: None,
+        track_title: None,
+        duration_seconds: None,
+        track_release_group_mbid: None,
+        user_id: Some(principal.user_id().to_owned()),
+        origin,
+        requested_by_name: Some(principal.username_display().to_owned()),
+        requesters: Vec::new(),
+        requested_at: now,
+        completed_at: None,
+        task_id: None,
+        generation: 0,
+        dispatch_authorized: status != RequestStatus::AwaitingApproval,
+        monitor_artist: false,
+        auto_download_artist: false,
+        reviewed_by_name: None,
+        reviewed_at: None,
     }
 }
 
@@ -212,5 +264,29 @@ impl RequestsService {
                 None
             }
         }
+    }
+
+    /// Dispatch `request` for the row `key` claimed at `generation`, and
+    /// link the task it gets behind the generation check.
+    async fn dispatch_and_link(
+        &self,
+        kind: RequestKind,
+        key: &str,
+        request: &DispatchRequest,
+        generation: u64,
+    ) -> Result<Dispatched, RequestsError> {
+        let outcome = match self.dispatch.dispatch(request).await {
+            Ok(outcome) => outcome,
+            Err(cause) => return Ok(Dispatched::Failed(cause)),
+        };
+        if !self
+            .store
+            .link_task(kind, key, outcome.task_id(), Some(generation))
+            .await?
+        {
+            cancel_started(&self.dispatch, &outcome).await;
+            return Ok(Dispatched::Stale);
+        }
+        Ok(Dispatched::Linked(outcome.task_id().to_owned()))
     }
 }

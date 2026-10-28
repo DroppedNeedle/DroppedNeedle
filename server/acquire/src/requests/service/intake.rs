@@ -1,7 +1,7 @@
 //! Intake: album, track, batch and follow asks. Winners record and
 //! maybe dispatch; duplicate asks attach to the live row.
 
-use super::{RequestsService, cancel_started, dispatch_fault, stored_dispatch};
+use super::{Dispatched, RequestsService, dispatch_fault, fresh_record, stored_dispatch};
 use crate::dispatch::DispatchOrigin;
 use crate::follows::FollowAsk;
 use crate::follows::cursors::Follower;
@@ -150,30 +150,18 @@ impl RequestsService {
         let gate = self.quota.request_gate(owner, principal.role(), 1)?;
         let hold = !self.storage_room(&principal).await?;
         let record = RequestRecord {
-            key: key.clone(),
-            kind: RequestKind::Album,
-            status: RequestStatus::Pending,
             artist_name: release.artist_name.clone(),
             album_title: release.title.clone(),
             artist_mbid: Some(release.artist_mbid.clone()),
-            year: None,
             release_mbid: self.chosen_release(&key).await,
-            track_title: None,
-            duration_seconds: None,
-            track_release_group_mbid: None,
-            user_id: Some(owner.to_owned()),
-            origin: DispatchOrigin::Follow,
-            requested_by_name: Some(principal.username_display().to_owned()),
-            requesters: Vec::new(),
-            requested_at: now,
-            completed_at: None,
-            task_id: None,
-            generation: 0,
-            dispatch_authorized: true,
-            monitor_artist: false,
-            auto_download_artist: false,
-            reviewed_by_name: None,
-            reviewed_at: None,
+            ..fresh_record(
+                RequestKind::Album,
+                key.clone(),
+                &principal,
+                DispatchOrigin::Follow,
+                RequestStatus::Pending,
+                now,
+            )
         };
         match self.store.begin_or_wait(record, owner, gate, hold).await? {
             BeginOutcome::Existing(_) => Ok(FollowIntake::Joined),
@@ -182,12 +170,10 @@ impl RequestsService {
                 if won.waits_for_quota() {
                     return Ok(FollowIntake::Waiting);
                 }
-                let started = self
-                    .dispatch_album(&won, DispatchOrigin::Follow, owner)
+                let task_id = self
+                    .dispatch_won(&won, DispatchOrigin::Follow, owner)
                     .await?;
-                Ok(FollowIntake::Started {
-                    task_id: started.task_id.unwrap_or_default(),
-                })
+                Ok(FollowIntake::Started { task_id })
             }
         }
     }
@@ -292,32 +278,27 @@ impl RequestsService {
         };
         let owner = admitted.user_id.clone().unwrap_or_default();
         let request = stored_dispatch(&admitted, admitted.origin, &owner);
-        let outcome = match self.dispatch.dispatch(&request).await {
-            Ok(outcome) => outcome,
-            Err(cause) => {
-                self.store
-                    .requeue_waiting(&admitted.key, admitted.generation)
-                    .await?;
-                return Err(dispatch_fault(cause));
-            }
-        };
-        if !self
-            .store
-            .link_task(
+        match self
+            .dispatch_and_link(
                 RequestKind::Album,
                 &admitted.key,
-                outcome.task_id(),
-                Some(admitted.generation),
+                &request,
+                admitted.generation,
             )
             .await?
         {
-            cancel_started(&self.dispatch, &outcome).await;
-            return Err(RequestsError::internal(&format_args!(
+            Dispatched::Linked(task_id) => Ok(Some(task_id)),
+            Dispatched::Stale => Err(RequestsError::internal(&format_args!(
                 "waiting request lost its generation for {}",
                 admitted.key
-            )));
+            ))),
+            Dispatched::Failed(cause) => {
+                self.store
+                    .requeue_waiting(&admitted.key, admitted.generation)
+                    .await?;
+                Err(dispatch_fault(cause))
+            }
         }
-        Ok(Some(outcome.task_id().to_owned()))
     }
 
     /// What keeps `principal` from one more ask now: the request count
@@ -421,16 +402,23 @@ impl RequestsService {
 
         let release_mbid = self.chosen_release(&mbid).await.or(asked.clone());
         let needs_approval = !granted && !auto_approves(role);
-        let record = self.new_album_record(
-            principal,
-            &mbid,
-            body,
-            &artist_name,
-            &album_title,
+        let record = RequestRecord {
+            artist_name,
+            album_title,
+            artist_mbid: body.artist_mbid.clone(),
+            year: body.year,
             release_mbid,
-            needs_approval,
-            now,
-        );
+            monitor_artist: body.monitor_artist,
+            auto_download_artist: body.auto_download_artist,
+            ..fresh_record(
+                RequestKind::Album,
+                mbid.to_lowercase(),
+                principal,
+                DispatchOrigin::User,
+                status_for_role(needs_approval),
+                now,
+            )
+        };
         let outcome = self
             .store
             .begin(record, principal.user_id(), gate, follow.clone())
@@ -461,8 +449,10 @@ impl RequestsService {
                         task_id: None,
                     });
                 }
-                self.dispatch_album(&won, DispatchOrigin::User, principal.user_id())
-                    .await
+                let task_id = self
+                    .dispatch_won(&won, DispatchOrigin::User, principal.user_id())
+                    .await?;
+                Ok(accepted(&won.key, task_id))
             }
         }
     }
@@ -517,30 +507,21 @@ impl RequestsService {
 
         let needs_approval = !auto_approves(role);
         let record = RequestRecord {
-            key: mbid.to_lowercase(),
-            kind: RequestKind::Track,
-            status: status_for_role(needs_approval),
             artist_name,
             album_title,
             artist_mbid: body.artist_mbid.clone(),
-            year: None,
             release_mbid: body.release_mbid.clone(),
             track_title: Some(track_title),
             duration_seconds: body.duration_seconds,
             track_release_group_mbid: body.release_group_mbid.clone(),
-            user_id: Some(principal.user_id().to_owned()),
-            origin: DispatchOrigin::User,
-            requested_by_name: Some(principal.username_display().to_owned()),
-            requesters: Vec::new(),
-            requested_at: now,
-            completed_at: None,
-            task_id: None,
-            generation: 0,
-            dispatch_authorized: !needs_approval,
-            monitor_artist: false,
-            auto_download_artist: false,
-            reviewed_by_name: None,
-            reviewed_at: None,
+            ..fresh_record(
+                RequestKind::Track,
+                mbid.to_lowercase(),
+                principal,
+                DispatchOrigin::User,
+                status_for_role(needs_approval),
+                now,
+            )
         };
         let outcome = self
             .store
@@ -574,7 +555,12 @@ impl RequestsService {
                         task_id: None,
                     });
                 }
-                self.dispatch_track(&won, DispatchOrigin::User).await
+                // A track row always has its owner, so no actor stands in.
+                let task_id = self.dispatch_won(&won, DispatchOrigin::User, "").await?;
+                Ok(TrackIntakeResponse {
+                    status: RequestStatus::Queued.as_str().to_owned(),
+                    task_id: Some(task_id),
+                })
             }
         }
     }
@@ -706,30 +692,21 @@ impl RequestsService {
         for (mbid, item, artist_name, album_title) in &resolvable {
             let release_mbid = self.chosen_release(mbid).await;
             let record = RequestRecord {
-                key: mbid.to_lowercase(),
-                kind: RequestKind::Album,
-                status: status_for_role(needs_approval),
                 artist_name: artist_name.clone(),
                 album_title: album_title.clone(),
                 artist_mbid: item.artist_mbid.clone(),
                 year: item.year,
                 release_mbid,
-                track_title: None,
-                duration_seconds: None,
-                track_release_group_mbid: None,
-                user_id: Some(user_id.to_owned()),
-                origin: DispatchOrigin::User,
-                requested_by_name: Some(name.clone()),
-                requesters: Vec::new(),
-                requested_at: now,
-                completed_at: None,
-                task_id: None,
-                generation: 0,
-                dispatch_authorized: !needs_approval,
                 monitor_artist: body.monitor_artist,
                 auto_download_artist: body.auto_download_artist,
-                reviewed_by_name: None,
-                reviewed_at: None,
+                ..fresh_record(
+                    RequestKind::Album,
+                    mbid.to_lowercase(),
+                    principal,
+                    DispatchOrigin::User,
+                    status_for_role(needs_approval),
+                    now,
+                )
             };
             records.push((record, follow_for(mbid)));
         }
@@ -802,10 +779,7 @@ impl RequestsService {
 
         let mut dispatched = 0_u32;
         for won in &created {
-            match self
-                .dispatch_album(won, DispatchOrigin::User, user_id)
-                .await
-            {
+            match self.dispatch_won(won, DispatchOrigin::User, user_id).await {
                 Ok(_) => {
                     dispatched = dispatched.saturating_add(1);
                 }
@@ -876,13 +850,7 @@ impl RequestsService {
                 .start_one(existing, principal, self.now_epoch())
                 .await?
         {
-            return Ok(IntakeResponse {
-                success: true,
-                message: "Request accepted".to_owned(),
-                musicbrainz_id: existing.key.clone(),
-                status: RequestStatus::Pending.as_str().to_owned(),
-                task_id: Some(task_id),
-            });
+            return Ok(accepted(&existing.key, task_id));
         }
         let message = if switch.is_some() {
             "The request now gets this edition"
@@ -925,63 +893,32 @@ impl RequestsService {
         }
     }
 
-    /// Build a fresh album row for the claim.
-    #[allow(clippy::too_many_arguments)]
-    fn new_album_record(
-        &self,
-        principal: &Principal,
-        mbid: &str,
-        body: &AlbumIntake,
-        artist_name: &str,
-        album_title: &str,
-        release_mbid: Option<String>,
-        needs_approval: bool,
-        now: u64,
-    ) -> RequestRecord {
-        RequestRecord {
-            key: mbid.to_lowercase(),
-            kind: RequestKind::Album,
-            status: status_for_role(needs_approval),
-            artist_name: artist_name.to_owned(),
-            album_title: album_title.to_owned(),
-            artist_mbid: body.artist_mbid.clone(),
-            year: body.year,
-            release_mbid,
-            track_title: None,
-            duration_seconds: None,
-            track_release_group_mbid: None,
-            user_id: Some(principal.user_id().to_owned()),
-            origin: DispatchOrigin::User,
-            requested_by_name: Some(principal.username_display().to_owned()),
-            requesters: Vec::new(),
-            requested_at: now,
-            completed_at: None,
-            task_id: None,
-            generation: 0,
-            dispatch_authorized: !needs_approval,
-            monitor_artist: body.monitor_artist,
-            auto_download_artist: body.auto_download_artist,
-            reviewed_by_name: None,
-            reviewed_at: None,
-        }
-    }
-
-    /// Dispatch one won album row and link its task (v2 dispatch-and-link
-    /// with orphan-cancel when the generation moved on).
-    async fn dispatch_album(
+    /// Dispatch one won row and link its task (v2 dispatch-and-link with
+    /// orphan-cancel when the generation moved on). A dispatch that fails
+    /// marks the row failed. Answers the task.
+    async fn dispatch_won(
         &self,
         won: &RequestRecord,
         origin: DispatchOrigin,
         actor_id: &str,
-    ) -> Result<IntakeResponse, RequestsError> {
+    ) -> Result<String, RequestsError> {
         let owner = won.user_id.clone().unwrap_or_else(|| actor_id.to_owned());
         let request = stored_dispatch(won, origin, &owner);
         let now = self.now_epoch();
-        match self.dispatch.dispatch(&request).await {
-            Err(cause) => {
+        let kind = won.kind.as_str();
+        match self
+            .dispatch_and_link(won.kind, &won.key, &request, won.generation)
+            .await?
+        {
+            Dispatched::Linked(task_id) => Ok(task_id),
+            Dispatched::Stale => Err(RequestsError::internal(&format_args!(
+                "{kind} link lost its generation for {}",
+                won.key
+            ))),
+            Dispatched::Failed(cause) => {
                 self.store
                     .update_status(
-                        RequestKind::Album,
+                        won.kind,
                         &won.key,
                         RequestStatus::Failed,
                         Some(now),
@@ -989,83 +926,20 @@ impl RequestsService {
                     )
                     .await?;
                 Err(RequestsError::internal(&format_args!(
-                    "album dispatch failed: {cause}"
+                    "{kind} dispatch failed: {cause}"
                 )))
-            }
-            Ok(outcome) => {
-                if !self
-                    .store
-                    .link_task(
-                        RequestKind::Album,
-                        &won.key,
-                        outcome.task_id(),
-                        Some(won.generation),
-                    )
-                    .await?
-                {
-                    cancel_started(&self.dispatch, &outcome).await;
-                    return Err(RequestsError::internal(&format_args!(
-                        "album link lost its generation for {}",
-                        won.key
-                    )));
-                }
-                Ok(IntakeResponse {
-                    success: true,
-                    message: "Request accepted".to_owned(),
-                    musicbrainz_id: won.key.clone(),
-                    status: RequestStatus::Pending.as_str().to_owned(),
-                    task_id: Some(outcome.task_id().to_owned()),
-                })
             }
         }
     }
+}
 
-    /// Dispatch one won track row and link its task.
-    async fn dispatch_track(
-        &self,
-        won: &RequestRecord,
-        origin: DispatchOrigin,
-    ) -> Result<TrackIntakeResponse, RequestsError> {
-        let owner = won.user_id.clone().unwrap_or_default();
-        let request = stored_dispatch(won, origin, &owner);
-        let now = self.now_epoch();
-        match self.dispatch.dispatch(&request).await {
-            Err(cause) => {
-                self.store
-                    .update_status(
-                        RequestKind::Track,
-                        &won.key,
-                        RequestStatus::Failed,
-                        Some(now),
-                        Some(won.generation),
-                    )
-                    .await?;
-                Err(RequestsError::internal(&format_args!(
-                    "track dispatch failed: {cause}"
-                )))
-            }
-            Ok(outcome) => {
-                if !self
-                    .store
-                    .link_task(
-                        RequestKind::Track,
-                        &won.key,
-                        outcome.task_id(),
-                        Some(won.generation),
-                    )
-                    .await?
-                {
-                    cancel_started(&self.dispatch, &outcome).await;
-                    return Err(RequestsError::internal(&format_args!(
-                        "track link lost its generation for {}",
-                        won.key
-                    )));
-                }
-                Ok(TrackIntakeResponse {
-                    status: RequestStatus::Queued.as_str().to_owned(),
-                    task_id: Some(outcome.task_id().to_owned()),
-                })
-            }
-        }
+/// The reply to an album ask whose download started.
+fn accepted(key: &str, task_id: String) -> IntakeResponse {
+    IntakeResponse {
+        success: true,
+        message: "Request accepted".to_owned(),
+        musicbrainz_id: key.to_owned(),
+        status: RequestStatus::Pending.as_str().to_owned(),
+        task_id: Some(task_id),
     }
 }

@@ -323,9 +323,6 @@ impl RequestsService {
         items
     }
 
-    /// One row plus its linked task's progress snapshot. Rows without a
-    /// task (waiting for approval) read exactly as the record maps; a task
-    /// read failure leaves the progress fields empty and logs why.
     /// Why a row waiting for quota room still waits, read from its
     /// owner's quota now. A read failure only loses the reason.
     async fn waiting_reason(&self, record: &RequestRecord) -> Option<WaitingReason> {
@@ -344,6 +341,9 @@ impl RequestsService {
         })
     }
 
+    /// One row plus its linked task's progress snapshot. Rows without a
+    /// task (waiting for approval) read exactly as the record maps; a task
+    /// read failure leaves the progress fields empty and logs why.
     async fn to_item(&self, record: &RequestRecord) -> RequestItem {
         let mut item = RequestItem::from(record);
         if record.waits_for_quota() {

@@ -1,16 +1,106 @@
 //! Decisions on recorded asks: approve, reject, cancel, retry and clear.
 
 use super::{
-    RequestsService, cancel_linked, cancel_started, dispatch_fault, record_title, stored_dispatch,
+    Dispatched, RequestsService, cancel_linked, dispatch_fault, record_title, stored_dispatch,
 };
 use crate::dispatch::{DispatchError, DispatchOrigin, DispatchTarget};
 use crate::requests::auth::auto_approves;
 use crate::requests::error::RequestsError;
-use crate::requests::ledger::{RequestRecord, RequestStatus, validate_mbid};
+use crate::requests::ledger::{CancelDecision, RequestRecord, RequestStatus, validate_mbid};
 use crate::requests::models::{
     ActionResponse, BatchCancelResponse, ClearHistoryResponse, RequestKind,
 };
 use droppedneedle_auth::{Admin, Principal};
+
+/// How an admin's stop of one row's download ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdminStop {
+    /// The download could not be stopped; the row is untouched.
+    StopFailed,
+    /// The row changed meanwhile and was left as it is.
+    Changed,
+    /// The row reads cancelled.
+    Cancelled,
+}
+
+/// How a requester's cancel of one row ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequesterCancel {
+    /// No row for the id.
+    NotFound,
+    /// The caller is not on the row; its status at the time.
+    Denied(RequestStatus),
+    /// A co-requester left the row, which goes on for the others.
+    Detached,
+    /// A row with no download was cancelled.
+    CancelledDirect,
+    /// The download could not be stopped; the row is put back.
+    StopFailed,
+    /// The row changed meanwhile; it is put back.
+    Changed,
+    /// The download was stopped and the row reads cancelled.
+    CancelledTask,
+}
+
+/// The reply to a requester's cancel, worded as v2 did.
+fn requester_reply(
+    outcome: RequesterCancel,
+    record: &RequestRecord,
+) -> Result<ActionResponse, RequestsError> {
+    Ok(match outcome {
+        RequesterCancel::NotFound => not_found(),
+        RequesterCancel::Denied(prior_status) => {
+            if prior_status.is_cancellable() || prior_status == RequestStatus::AwaitingApproval {
+                return Err(RequestsError::Forbidden {
+                    message: "Cannot cancel another user's request".to_owned(),
+                });
+            }
+            ActionResponse {
+                success: false,
+                message: format!("Cannot cancel request with status '{prior_status}'"),
+            }
+        }
+        RequesterCancel::Detached => ActionResponse {
+            success: true,
+            message: "Removed from your requests. The shared server request continues for another listener."
+                .to_owned(),
+        },
+        RequesterCancel::CancelledDirect => ActionResponse {
+            success: true,
+            message: format!("Cancelled request for {}", record_title(record)),
+        },
+        RequesterCancel::StopFailed => stop_failed(),
+        RequesterCancel::Changed => changed(),
+        RequesterCancel::CancelledTask => ActionResponse {
+            success: true,
+            message: format!("Cancelled download of {}", record_title(record)),
+        },
+    })
+}
+
+/// No row for the id.
+fn not_found() -> ActionResponse {
+    ActionResponse {
+        success: false,
+        message: "Request not found".to_owned(),
+    }
+}
+
+/// A download that would not stop.
+fn stop_failed() -> ActionResponse {
+    ActionResponse {
+        success: false,
+        message: "Could not stop the download; try again".to_owned(),
+    }
+}
+
+/// A row that moved on during a cancel.
+fn changed() -> ActionResponse {
+    ActionResponse {
+        success: false,
+        message: "Request changed while cancelling".to_owned(),
+    }
+}
 
 /// Not-waiting rejection for approve/reject.
 fn not_waiting(status: &str) -> ActionResponse {
@@ -46,8 +136,13 @@ impl RequestsService {
             let outcome = if is_admin {
                 self.admin_cancel_one(kind, &mbid, now).await?
             } else {
-                self.requester_cancel_one(kind, &mbid, principal.user_id(), now)
-                    .await?
+                matches!(
+                    self.requester_cancel(kind, &mbid, principal.user_id(), now)
+                        .await?,
+                    RequesterCancel::Detached
+                        | RequesterCancel::CancelledDirect
+                        | RequesterCancel::CancelledTask
+                )
             };
             if outcome {
                 cancelled = cancelled.saturating_add(1);
@@ -79,10 +174,7 @@ impl RequestsService {
         let mbid = validate_mbid(mbid)?;
         let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
-            return Ok(ActionResponse {
-                success: false,
-                message: "Request not found".to_owned(),
-            });
+            return Ok(not_found());
         };
         if record.status != RequestStatus::AwaitingApproval {
             return Ok(not_waiting(record.status.as_str()));
@@ -113,8 +205,11 @@ impl RequestsService {
             .clone()
             .unwrap_or_else(|| admin.user_id().to_owned());
         let request = stored_dispatch(&claimed, DispatchOrigin::Approval, &owner);
-        match self.dispatch.dispatch(&request).await {
-            Err(DispatchError::Busy { operation }) => {
+        match self
+            .dispatch_and_link(kind, &mbid, &request, claimed.generation)
+            .await?
+        {
+            Dispatched::Failed(DispatchError::Busy { operation }) => {
                 self.store
                     .restore_status(
                         kind,
@@ -126,7 +221,7 @@ impl RequestsService {
                     .await?;
                 Err(RequestsError::Busy { operation })
             }
-            Err(DispatchError::Failed(cause)) => {
+            Dispatched::Failed(DispatchError::Failed(cause)) => {
                 tracing::error!(%cause, "approved dispatch failed");
                 self.store
                     .update_status(
@@ -142,23 +237,14 @@ impl RequestsService {
                     message: format!("Approved but failed to start: {}", record_title(&record)),
                 })
             }
-            Ok(outcome) => {
-                if !self
-                    .store
-                    .link_task(kind, &mbid, outcome.task_id(), Some(claimed.generation))
-                    .await?
-                {
-                    cancel_started(&self.dispatch, &outcome).await;
-                    return Ok(ActionResponse {
-                        success: false,
-                        message: "Approved request became stale".to_owned(),
-                    });
-                }
-                Ok(ActionResponse {
-                    success: true,
-                    message: format!("Approved: {}", record_title(&record)),
-                })
-            }
+            Dispatched::Stale => Ok(ActionResponse {
+                success: false,
+                message: "Approved request became stale".to_owned(),
+            }),
+            Dispatched::Linked(_) => Ok(ActionResponse {
+                success: true,
+                message: format!("Approved: {}", record_title(&record)),
+            }),
         }
     }
 
@@ -172,10 +258,7 @@ impl RequestsService {
         let mbid = validate_mbid(mbid)?;
         let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
-            return Ok(ActionResponse {
-                success: false,
-                message: "Request not found".to_owned(),
-            });
+            return Ok(not_found());
         };
         if record.status != RequestStatus::AwaitingApproval {
             return Ok(not_waiting(record.status.as_str()));
@@ -215,15 +298,13 @@ impl RequestsService {
         let mbid = validate_mbid(mbid)?;
         let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
-            return Ok(ActionResponse {
-                success: false,
-                message: "Request not found".to_owned(),
-            });
+            return Ok(not_found());
         };
         if !principal.is_admin() {
-            return self
-                .requester_cancel_verbose(kind, &mbid, &record, principal.user_id(), now)
-                .await;
+            let outcome = self
+                .requester_cancel(kind, &mbid, principal.user_id(), now)
+                .await?;
+            return requester_reply(outcome, &record);
         }
         if record.status == RequestStatus::AwaitingApproval {
             if !self
@@ -237,10 +318,7 @@ impl RequestsService {
                 )
                 .await?
             {
-                return Ok(ActionResponse {
-                    success: false,
-                    message: "Request changed while cancelling".to_owned(),
-                });
+                return Ok(changed());
             }
             // Approval cancellation revokes the persisted capability after
             // winning the generation CAS (v2 quirk).
@@ -258,27 +336,16 @@ impl RequestsService {
                 message: format!("Cannot cancel request with status '{}'", record.status),
             });
         }
-        if let Some(task_id) = record.task_id.as_deref()
-            && !cancel_linked(&self.dispatch, task_id).await
-        {
-            return Ok(ActionResponse {
-                success: false,
-                message: "Could not stop the download; try again".to_owned(),
-            });
-        }
-        if !self
-            .land_admin_cancel(kind, &mbid, record.task_id.as_deref(), now, false)
-            .await?
-        {
-            return Ok(ActionResponse {
-                success: false,
-                message: "Request changed while cancelling".to_owned(),
-            });
-        }
-        Ok(ActionResponse {
-            success: true,
-            message: format!("Cancelled download of {}", record_title(&record)),
-        })
+        Ok(
+            match self.admin_stop(kind, &mbid, &record, now, false).await? {
+                AdminStop::StopFailed => stop_failed(),
+                AdminStop::Changed => changed(),
+                AdminStop::Cancelled => ActionResponse {
+                    success: true,
+                    message: format!("Cancelled download of {}", record_title(&record)),
+                },
+            },
+        )
     }
 
     /// After an admin stopped a row's download, make the row read
@@ -394,10 +461,7 @@ impl RequestsService {
         let mbid = mbid.to_owned();
         let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
-            return Ok(ActionResponse {
-                success: false,
-                message: "Request not found".to_owned(),
-            });
+            return Ok(not_found());
         };
         if !record.status.is_retryable() {
             return Ok(ActionResponse {
@@ -469,14 +533,17 @@ impl RequestsService {
         {
             *from_album = album_version;
         }
-        match self.dispatch.dispatch(&request).await {
-            Err(DispatchError::Busy { operation }) => {
+        match self
+            .dispatch_and_link(kind, &mbid, &request, generation)
+            .await?
+        {
+            Dispatched::Failed(DispatchError::Busy { operation }) => {
                 self.store
                     .update_status(kind, &mbid, prior_status, None, Some(generation))
                     .await?;
                 Err(RequestsError::Busy { operation })
             }
-            Err(DispatchError::Failed(cause)) => {
+            Dispatched::Failed(DispatchError::Failed(cause)) => {
                 tracing::error!(%cause, "retry dispatch failed");
                 self.store
                     .update_status(kind, &mbid, prior_status, None, Some(generation))
@@ -486,23 +553,14 @@ impl RequestsService {
                     message: "Retry failed to start download".to_owned(),
                 })
             }
-            Ok(outcome) => {
-                if !self
-                    .store
-                    .link_task(kind, &mbid, outcome.task_id(), Some(generation))
-                    .await?
-                {
-                    cancel_started(&self.dispatch, &outcome).await;
-                    return Ok(ActionResponse {
-                        success: false,
-                        message: "Retry request became stale".to_owned(),
-                    });
-                }
-                Ok(ActionResponse {
-                    success: true,
-                    message: format!("Re-requested {}", record_title(&record)),
-                })
-            }
+            Dispatched::Stale => Ok(ActionResponse {
+                success: false,
+                message: "Retry request became stale".to_owned(),
+            }),
+            Dispatched::Linked(_) => Ok(ActionResponse {
+                success: true,
+                message: format!("Re-requested {}", record_title(&record)),
+            }),
         }
     }
 
@@ -556,15 +614,7 @@ impl RequestsService {
         if !record.status.is_active() {
             return Ok(false);
         }
-        if let Some(task_id) = record.task_id.as_deref()
-            && !cancel_linked(&self.dispatch, task_id).await
-        {
-            return Ok(false);
-        }
-        if !self
-            .land_admin_cancel(kind, mbid, record.task_id.as_deref(), now, true)
-            .await?
-        {
+        if self.admin_stop(kind, mbid, &record, now, true).await? != AdminStop::Cancelled {
             return Ok(false);
         }
         if record.status == RequestStatus::AwaitingApproval {
@@ -575,147 +625,89 @@ impl RequestsService {
         Ok(true)
     }
 
-    /// Quiet requester cancel of one row for batch-cancel. The task
-    /// cancels under the immutable primary owner, never the actor (v2
-    /// quirk: a co-requester can never replace the attribution).
-    async fn requester_cancel_one(
-        &self,
-        kind: RequestKind,
-        mbid: &str,
-        user_id: &str,
-        now: u64,
-    ) -> Result<bool, RequestsError> {
-        if self.store.get(kind, mbid).await?.is_none() {
-            return Ok(false);
-        }
-        let decision = self
-            .store
-            .prepare_requester_cancel(kind, mbid, user_id, now)
-            .await?;
-        match decision {
-            None => Ok(false),
-            Some(crate::requests::ledger::CancelDecision::Denied { .. }) => Ok(false),
-            Some(crate::requests::ledger::CancelDecision::Detached) => Ok(true),
-            Some(crate::requests::ledger::CancelDecision::CancelledDirect) => Ok(true),
-            Some(crate::requests::ledger::CancelDecision::CancelTask {
-                prior_status,
-                task_id,
-                generation,
-                ..
-            }) => {
-                if let Some(task_id) = task_id.as_deref()
-                    && !cancel_linked(&self.dispatch, task_id).await
-                {
-                    self.store
-                        .restore_status(
-                            kind,
-                            mbid,
-                            prior_status,
-                            RequestStatus::Cancelling,
-                            generation,
-                        )
-                        .await?;
-                    return Ok(false);
-                }
-                if !self
-                    .store
-                    .update_status(
-                        kind,
-                        mbid,
-                        RequestStatus::Cancelled,
-                        Some(now),
-                        Some(generation),
-                    )
-                    .await?
-                {
-                    return Ok(false);
-                }
-                Ok(true)
-            }
-        }
-    }
-
-    /// Verbose requester cancel of one row with v2's messages.
-    async fn requester_cancel_verbose(
+    /// Stop a row's linked download for an admin, then make the row read
+    /// cancelled ([`Self::land_admin_cancel`]).
+    async fn admin_stop(
         &self,
         kind: RequestKind,
         mbid: &str,
         record: &RequestRecord,
+        now: u64,
+        waiting: bool,
+    ) -> Result<AdminStop, RequestsError> {
+        if let Some(task_id) = record.task_id.as_deref()
+            && !cancel_linked(&self.dispatch, task_id).await
+        {
+            return Ok(AdminStop::StopFailed);
+        }
+        if !self
+            .land_admin_cancel(kind, mbid, record.task_id.as_deref(), now, waiting)
+            .await?
+        {
+            return Ok(AdminStop::Changed);
+        }
+        Ok(AdminStop::Cancelled)
+    }
+
+    /// A requester's cancel of one row. The task cancels under the
+    /// immutable primary owner, never the actor (v2 quirk: a co-requester
+    /// can never replace the attribution). A row whose download could not
+    /// be stopped, or that changed meanwhile, is put back as it was.
+    async fn requester_cancel(
+        &self,
+        kind: RequestKind,
+        mbid: &str,
         user_id: &str,
         now: u64,
-    ) -> Result<ActionResponse, RequestsError> {
+    ) -> Result<RequesterCancel, RequestsError> {
         let decision = self
             .store
             .prepare_requester_cancel(kind, mbid, user_id, now)
             .await?;
-        match decision {
-            None => Ok(ActionResponse {
-                success: false,
-                message: "Request not found".to_owned(),
-            }),
-            Some(crate::requests::ledger::CancelDecision::Denied { prior_status }) => {
-                if prior_status.is_cancellable()
-                    || prior_status == RequestStatus::AwaitingApproval
-                {
-                    return Err(RequestsError::Forbidden {
-                        message: "Cannot cancel another user's request".to_owned(),
-                    });
-                }
-                Ok(ActionResponse {
-                    success: false,
-                    message: format!("Cannot cancel request with status '{prior_status}'"),
-                })
+        let Some(decision) = decision else {
+            return Ok(RequesterCancel::NotFound);
+        };
+        let (prior_status, task_id, generation) = match decision {
+            CancelDecision::Denied { prior_status } => {
+                return Ok(RequesterCancel::Denied(prior_status));
             }
-            Some(crate::requests::ledger::CancelDecision::Detached) => Ok(ActionResponse {
-                success: true,
-                message: "Removed from your requests. The shared server request continues for another listener."
-                    .to_owned(),
-            }),
-            Some(crate::requests::ledger::CancelDecision::CancelledDirect) => Ok(ActionResponse {
-                success: true,
-                message: format!("Cancelled request for {}", record_title(record)),
-            }),
-            Some(crate::requests::ledger::CancelDecision::CancelTask {
+            CancelDecision::Detached => return Ok(RequesterCancel::Detached),
+            CancelDecision::CancelledDirect => return Ok(RequesterCancel::CancelledDirect),
+            CancelDecision::CancelTask {
                 prior_status,
                 task_id,
                 generation,
                 ..
-            }) => {
-                if let Some(task_id) = task_id.as_deref()
-                    && !cancel_linked(&self.dispatch, task_id).await
-                {
-                    self.store
-                        .restore_status(kind, mbid, prior_status, RequestStatus::Cancelling, generation)
-                        .await?;
-                    return Ok(ActionResponse {
-                        success: false,
-                        message: "Could not stop the download; try again".to_owned(),
-                    });
-                }
-                if !self.store.update_status(
-                    kind,
-                    mbid,
-                    RequestStatus::Cancelled,
-                    Some(now),
-                    Some(generation),
-                ).await? {
-                    self.store.restore_status(
-                        kind,
-                        mbid,
-                        prior_status,
-                        RequestStatus::Cancelling,
-                        generation,
-                    ).await?;
-                    return Ok(ActionResponse {
-                        success: false,
-                        message: "Request changed while cancelling".to_owned(),
-                    });
-                }
-                Ok(ActionResponse {
-                    success: true,
-                    message: format!("Cancelled download of {}", record_title(record)),
-                })
-            }
-        }
+            } => (prior_status, task_id, generation),
+        };
+        let outcome = if let Some(task_id) = task_id.as_deref()
+            && !cancel_linked(&self.dispatch, task_id).await
+        {
+            RequesterCancel::StopFailed
+        } else if !self
+            .store
+            .update_status(
+                kind,
+                mbid,
+                RequestStatus::Cancelled,
+                Some(now),
+                Some(generation),
+            )
+            .await?
+        {
+            RequesterCancel::Changed
+        } else {
+            return Ok(RequesterCancel::CancelledTask);
+        };
+        self.store
+            .restore_status(
+                kind,
+                mbid,
+                prior_status,
+                RequestStatus::Cancelling,
+                generation,
+            )
+            .await?;
+        Ok(outcome)
     }
 }
