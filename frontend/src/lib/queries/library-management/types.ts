@@ -249,8 +249,7 @@ export interface LibraryManagementPlanItem {
 
 export interface LibraryManagementPlanItemPageResponse {
 	items: LibraryManagementPlanItem[];
-	next_after_ordinal: number | null;
-	has_more: boolean;
+	next_cursor: string | null;
 }
 
 export type LibraryManagementProfileMutationResponse =
@@ -407,8 +406,7 @@ export interface LibraryManagementResultItem {
 
 export interface LibraryManagementResultPageResponse {
 	items: LibraryManagementResultItem[];
-	next_after_ordinal: number | null;
-	has_more: boolean;
+	next_cursor: string | null;
 }
 
 export interface LibraryManagementOperationHistoryItem {
@@ -484,7 +482,7 @@ export interface LibraryManagementHistoryParams {
 }
 
 export interface LibraryManagementPlanItemParams {
-	afterOrdinal?: number;
+	cursor?: string;
 	limit?: number;
 	eligibility?: ManagementEligibility;
 	reasonCode?: string;

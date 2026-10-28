@@ -7,7 +7,7 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 
-export type BinRemoval = components['schemas']['BinRemovalView'];
+export type BinRemoval = components['schemas']['Page_BinRemovalView']['items'][number];
 export type RecycleBinPage = components['schemas']['RecycleBinPage'];
 export type RecycleBinSummary = components['schemas']['RecycleBinSummary'];
 export type RecycleBinStatus = components['schemas']['RecycleBinStatus'];

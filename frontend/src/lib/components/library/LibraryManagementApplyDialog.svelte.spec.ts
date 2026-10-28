@@ -67,8 +67,7 @@ describe('LibraryManagementApplyDialog', () => {
 								]
 							}
 						],
-						has_more: false,
-						next_after_ordinal: null
+						next_cursor: null
 					}
 				]
 			}

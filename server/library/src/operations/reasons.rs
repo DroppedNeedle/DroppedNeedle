@@ -61,7 +61,7 @@ pub const SEARCH_NEEDS_TITLE: Reason = reason(
 );
 pub const SEARCH_TOO_LONG: Reason = reason(
     "SEARCH_TOO_LONG",
-    "Titles and artists can be at most 250 characters, and a page holds 1 to 12 releases.",
+    "Titles and artists can be at most 250 characters.",
     "Shorten the search and try again.",
 );
 pub const CONTROL_KEY_EMPTY: Reason = reason(

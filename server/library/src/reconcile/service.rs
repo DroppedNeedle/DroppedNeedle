@@ -50,14 +50,16 @@ impl Reconcile {
         })
     }
 
+    /// One page of groups by name, after the `(name, id)` the last page
+    /// ended on. `limit` is 1 to [`groups::PAGE_MAX`].
     pub fn list(
         &self,
         limit: usize,
-        cursor: Option<&str>,
+        after: Option<(String, String)>,
         state: Option<GroupState>,
         search: Option<&str>,
     ) -> Result<GroupPage, ReconcileError> {
-        groups::page(self.groups()?, limit, cursor, state, search)
+        Ok(groups::page(self.groups()?, limit, after, state, search))
     }
 
     pub fn detail(&self, group_id: &str) -> Result<GroupDetail, ReconcileError> {

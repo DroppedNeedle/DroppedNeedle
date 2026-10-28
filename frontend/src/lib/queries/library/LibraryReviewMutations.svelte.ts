@@ -101,7 +101,7 @@ export function retryPendingLibraryReviews() {
 	return createMutation(() => ({
 		mutationFn: (input: {
 			confirmLocalMetadata: boolean;
-			filter?: Omit<LibraryReviewParams, 'limit' | 'offset'>;
+			filter?: Omit<LibraryReviewParams, 'limit'>;
 			rootIds?: string[];
 			preview?: boolean;
 		}) =>
@@ -123,7 +123,7 @@ export type BulkReviewAction = 'keep_tagged' | 'exclude' | 'accept';
 export interface BulkReviewSelection {
 	action: BulkReviewAction;
 	reviewIds: string[];
-	filter: Omit<LibraryReviewParams, 'limit' | 'offset'>;
+	filter: Omit<LibraryReviewParams, 'limit'>;
 	candidateKey?: string;
 }
 

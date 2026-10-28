@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use droppedneedle_kernel::jobs::CancellationToken;
+use droppedneedle_kernel::page::TimeKey;
 
 use super::models::{
     Counter, Counters, Disposition, Event, FailureCode, Outcome, Phase, RunState,
@@ -138,7 +139,6 @@ pub enum ScanRequestError {
     EmptyScopes,
     StalePolicy,
     UnknownRoots,
-    BadCursor,
     /// The store could not record the request.
     Store(ScanStoreError),
 }
@@ -156,9 +156,6 @@ impl std::fmt::Display for ScanRequestError {
             }
             ScanRequestError::UnknownRoots => {
                 write!(f, "One or more selected library scopes no longer exist.")
-            }
-            ScanRequestError::BadCursor => {
-                write!(f, "The scan history cursor is invalid.")
             }
             ScanRequestError::Store(error) => write!(f, "The scan store failed: {error}"),
         }
@@ -495,35 +492,26 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         self.store.latest_filesystem_terminal()
     }
 
-    /// One history page; cursor is `terminal_at:run_id` (v2 `history_page`).
+    /// One history page, after the `(terminal_at, run_id)` the last page
+    /// ended on, and the key the next page starts after (v2
+    /// `history_page`).
     pub fn history_page(
         &self,
         limit: usize,
-        cursor: Option<&str>,
-    ) -> Result<(Vec<ScanRun>, Option<String>), ScanRequestError> {
-        let mut before: Option<(f64, String)> = None;
-        if let Some(cursor) = cursor {
-            let (terminal, id) = cursor.split_once(':').ok_or(ScanRequestError::BadCursor)?;
-            let terminal_at: f64 = terminal.parse().map_err(|_| ScanRequestError::BadCursor)?;
-            before = Some((terminal_at, id.to_owned()));
-        }
-        let mut items = self
-            .store
-            .list_history(
-                limit + 1,
-                before.as_ref().map(|(at, id)| (*at, id.as_str())),
-            )
-            .map_err(ScanRequestError::Store)?;
-        let mut next_cursor = None;
+        before: Option<TimeKey>,
+    ) -> Result<(Vec<ScanRun>, Option<TimeKey>), ScanStoreError> {
+        let mut items = self.store.list_history(
+            limit + 1,
+            before.as_ref().map(|(at, id)| (*at, id.as_str())),
+        )?;
+        let mut next = None;
         if items.len() > limit {
             items.truncate(limit);
             if let Some(last) = items.last() {
-                next_cursor = last
-                    .terminal_at
-                    .map(|terminal| format!("{terminal}:{}", last.id));
+                next = last.terminal_at.map(|terminal| (terminal, last.id.clone()));
             }
         }
-        Ok((items, next_cursor))
+        Ok((items, next))
     }
 
     /// One page of a run's failures (v2 `scan_run_failures`). An unknown
@@ -1773,9 +1761,8 @@ mod tests {
         let (items, next) = coordinator.history_page(50, None).expect("page");
         assert_eq!(items.len(), 1);
         assert_eq!(next, None);
-        let cursor = format!("{}:{}", items[0].terminal_at.unwrap_or(0.0), items[0].id);
-        let (items, _) = coordinator.history_page(50, Some(&cursor)).expect("page 2");
+        let after = (items[0].terminal_at.unwrap_or(0.0), items[0].id.clone());
+        let (items, _) = coordinator.history_page(50, Some(after)).expect("page 2");
         assert!(items.is_empty());
-        assert!(coordinator.history_page(50, Some("bogus")).is_err());
     }
 }

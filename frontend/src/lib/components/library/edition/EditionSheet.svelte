@@ -187,7 +187,6 @@
 		() => copyId,
 		() => searchArgs?.title ?? '',
 		() => searchArgs?.artist ?? '',
-		() => 0,
 		() => open && canEdit && Boolean(searchArgs)
 	);
 

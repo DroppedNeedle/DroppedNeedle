@@ -163,20 +163,20 @@ export const getLibraryManagementPlanItemsQuery = (
 		return {
 			enabled: Boolean(jobId),
 			queryKey: LibraryManagementQueryKeyFactory.previewItems(getUserId(), jobId ?? '', params),
-			initialPageParam: -1,
+			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
 				toPlanItemPage(
 					await api.global.v3.GET(
 						LIBRARY_MANAGEMENT_ENDPOINTS.previewItems(jobId ?? '', {
 							...params,
-							afterOrdinal: pageParam,
+							cursor: pageParam,
 							limit
 						}),
 						{ signal }
 					)
 				),
 			getNextPageParam: (lastPage: LibraryManagementPlanItemPageResponse) =>
-				lastPage.has_more ? (lastPage.next_after_ordinal ?? undefined) : undefined
+				lastPage.next_cursor ?? undefined
 		};
 	});
 
@@ -234,7 +234,7 @@ export const getLibraryManagementOperationResultsQuery = (
 			refetchInterval: (query: ResultsQuery) =>
 				activeResultsRefetchInterval(jobId, getOperationState(), query),
 			queryKey: LibraryManagementQueryKeyFactory.operationResults(getUserId(), jobId ?? '', limit),
-			initialPageParam: -1,
+			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
 				toResultPage(
 					await api.global.v3.GET(
@@ -243,7 +243,7 @@ export const getLibraryManagementOperationResultsQuery = (
 					)
 				),
 			getNextPageParam: (lastPage: LibraryManagementResultPageResponse) =>
-				lastPage.has_more ? (lastPage.next_after_ordinal ?? undefined) : undefined
+				lastPage.next_cursor ?? undefined
 		};
 	});
 

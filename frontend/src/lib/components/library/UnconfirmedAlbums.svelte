@@ -20,21 +20,18 @@
 	const PAGE = 50;
 	// svelte-ignore state_referenced_locally
 	let view = $state<'unconfirmed' | 'unmatched'>(initialView);
-	let offset = $state(0);
 
 	const query = getWaitingAlbumsQuery(
 		() => authStore.user?.id,
 		() => view,
-		() => offset,
 		PAGE
 	);
 	const confirm = confirmAlbumEdition();
-	const items = $derived(query.data?.items ?? []);
-	const total = $derived(query.data?.total ?? 0);
+	const items = $derived(query.data?.pages.flatMap((page) => page.items) ?? []);
+	const total = $derived(query.data?.pages[0]?.total ?? 0);
 
 	function show(next: 'unconfirmed' | 'unmatched'): void {
 		view = next;
-		offset = 0;
 	}
 
 	async function looksRight(albumId: string): Promise<void> {
@@ -131,23 +128,14 @@
 		</ul>
 		{#if total > PAGE}
 			<div class="flex items-center justify-between text-sm">
-				<span class="text-base-content/60"
-					>{offset + 1}–{Math.min(offset + PAGE, total)} of {total}</span
-				>
-				<div class="join">
+				<span class="text-base-content/60">{items.length} of {total}</span>
+				{#if query.hasNextPage}
 					<Button
 						size="sm"
-						class="join-item"
-						disabled={offset === 0}
-						onclick={() => (offset = Math.max(0, offset - PAGE))}>Previous</Button
+						loading={query.isFetchingNextPage}
+						onclick={() => void query.fetchNextPage()}>Load more</Button
 					>
-					<Button
-						size="sm"
-						class="join-item"
-						disabled={offset + PAGE >= total}
-						onclick={() => (offset += PAGE)}>Next</Button
-					>
-				</div>
+				{/if}
 			</div>
 		{/if}
 	{/if}

@@ -150,7 +150,6 @@ vi.mock('$lib/queries/artist-reconciliation/ArtistReconciliationQueries.svelte',
 						{
 							items: h.groups,
 							next_cursor: null,
-							has_more: false,
 							total: h.groups.length,
 							counts: {}
 						}

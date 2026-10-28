@@ -23,6 +23,7 @@ use crate::jobs::{
     OperationState, WorkState,
 };
 use crate::publish::snapshots::sha256_hex;
+use droppedneedle_kernel::page::TimeKey;
 
 pub use crate::jobs::live_job_sql;
 
@@ -855,7 +856,7 @@ pub fn external_refreshes(
 pub fn history(
     conn: &Connection,
     filter: &HistoryFilter,
-) -> rusqlite::Result<(Vec<HistoryItem>, Option<String>)> {
+) -> rusqlite::Result<(Vec<HistoryItem>, Option<TimeKey>)> {
     let (cursor_at, cursor_id) = filter
         .cursor
         .clone()
@@ -909,7 +910,7 @@ pub fn history(
     let next = if more {
         items
             .last()
-            .map(|item| format!("{}|{}", item.job.created_at, item.job.id))
+            .map(|item| (item.job.created_at, item.job.id.clone()))
     } else {
         None
     };

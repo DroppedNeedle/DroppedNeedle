@@ -20,6 +20,7 @@ pub mod ids;
 pub mod jobs;
 pub mod mount;
 pub mod observability;
+pub mod page;
 pub mod platform;
 pub mod runtime_config;
 pub mod schema;

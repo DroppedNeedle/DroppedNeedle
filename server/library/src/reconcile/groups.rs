@@ -4,9 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use sha2::{Digest as _, Sha256};
 
-use super::models::{
-    Candidate, Dismissal, Group, GroupInputs, GroupPage, GroupState, Member, ReconcileError,
-};
+use super::models::{Candidate, Dismissal, Group, GroupInputs, GroupPage, GroupState, Member};
 use super::reasons;
 
 /// Largest page of groups, as in v2.
@@ -231,32 +229,17 @@ fn sort_key(group: &Group) -> (String, &str) {
     (group.display_name.to_lowercase(), group.id.as_str())
 }
 
-/// The cursor after `group`: its sort key, so a page boundary survives
-/// groups disappearing between reads.
-fn cursor_for(group: &Group) -> String {
-    let (name, id) = sort_key(group);
-    format!("{name}|{id}")
-}
-
-/// One page of groups. The state counts cover every group, before the
-/// state and search filters, as in v2.
+/// One page of groups after `after`, the sort key the last page ended
+/// on, so a page boundary survives groups disappearing between reads. The
+/// state counts cover every group, before the state and search filters,
+/// as in v2.
 pub fn page(
     groups: Vec<Group>,
     limit: usize,
-    cursor: Option<&str>,
+    after: Option<(String, String)>,
     state: Option<GroupState>,
     search: Option<&str>,
-) -> Result<GroupPage, ReconcileError> {
-    if !(1..=PAGE_MAX).contains(&limit) {
-        return Err(ReconcileError::Invalid(reasons::LIMIT_INVALID));
-    }
-    let after = cursor
-        .map(|raw| {
-            raw.rsplit_once('|')
-                .map(|(name, id)| (name.to_owned(), id.to_owned()))
-                .ok_or(ReconcileError::Invalid(reasons::CURSOR_INVALID))
-        })
-        .transpose()?;
+) -> GroupPage {
     let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
     for group in &groups {
         *counts.entry(group.state.as_str()).or_default() += 1;
@@ -288,20 +271,22 @@ pub fn page(
             })
         })
         .collect();
-    let has_more = rest.len() > limit;
+    let more = rest.len() > limit;
     rest.truncate(limit);
-    let next_cursor = if has_more {
-        rest.last().map(cursor_for)
+    let next = if more {
+        rest.last().map(|group| {
+            let (name, id) = sort_key(group);
+            (name, id.to_owned())
+        })
     } else {
         None
     };
-    Ok(GroupPage {
+    GroupPage {
         items: rest,
-        next_cursor,
-        has_more,
+        next,
         total,
         counts,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -397,11 +382,10 @@ mod tests {
                 })
                 .collect()
         };
-        let first = page(groups(&["a", "b", "c"]), 1, None, None, None).unwrap();
-        let cursor = first.next_cursor.unwrap();
+        let first = page(groups(&["a", "b", "c"]), 1, None, None, None);
         // "b" went away between reads; the next page starts at "c".
-        let next = page(groups(&["a", "c"]), 1, Some(&cursor), None, None).unwrap();
+        let next = page(groups(&["a", "c"]), 1, first.next, None, None);
         assert_eq!(next.items[0].display_name, "c");
-        assert!(!next.has_more);
+        assert!(next.next.is_none());
     }
 }

@@ -13,12 +13,14 @@ use axum::{
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::page::{Page, PageRequest};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::blocking;
 use super::error::refused;
 use super::operations::ReasonView;
+use crate::reconcile::groups::PAGE_MAX;
 use crate::reconcile::models::{
     CreditEvidence, Group, GroupDetail, GroupState, Member, MergeBasisLabel, OwnedReference,
     ReconcileError,
@@ -207,14 +209,12 @@ impl From<&Group> for ArtistDuplicateGroupSummary {
     }
 }
 
-/// One page of duplicate artist groups.
+/// One page of duplicate artist groups, with the groups matching the
+/// filters as its total.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ArtistDuplicateGroupListResponse {
-    pub items: Vec<ArtistDuplicateGroupSummary>,
-    pub next_cursor: Option<String>,
-    pub has_more: bool,
-    /// Groups matching the filters.
-    pub total: usize,
+    #[serde(flatten)]
+    pub page: Page<ArtistDuplicateGroupSummary>,
     /// Every group by state, before the filters.
     pub counts: BTreeMap<String, usize>,
 }
@@ -352,8 +352,8 @@ impl From<GroupDetail> for ArtistDuplicateGroupDetail {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ArtistGroupListQuery {
-    /// Page size, 1 to 100 (default 50).
-    pub limit: Option<usize>,
+    /// Page size, 1 to 100 (default 50); more is read as 100.
+    pub limit: Option<u32>,
     /// `next_cursor` from the previous page.
     pub cursor: Option<String>,
     pub state: Option<ArtistGroupState>,
@@ -413,7 +413,7 @@ pub async fn artist_reconciliation(
     params(ArtistGroupListQuery),
     responses(
         (status = 200, description = "One page of groups", body = ArtistDuplicateGroupListResponse),
-        (status = 400, description = "Bad page size or cursor"),
+        (status = 400, description = "Bad cursor"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
     )
@@ -423,20 +423,19 @@ pub async fn list_artist_duplicate_groups(
     _caller: Admin,
     ValidQuery(query): ValidQuery<ArtistGroupListQuery>,
 ) -> Result<Json<ArtistDuplicateGroupListResponse>, ApiError> {
+    let paging = PageRequest::read(query.limit, query.cursor.as_deref(), 50, PAGE_MAX)?;
     let page = blocking(move || {
         service.list(
-            query.limit.unwrap_or(50),
-            query.cursor.as_deref(),
+            paging.limit,
+            paging.after,
             query.state.map(Into::into),
             query.search.as_deref(),
         )
     })
     .await?;
     Ok(Json(ArtistDuplicateGroupListResponse {
-        items: page.items.iter().map(Into::into).collect(),
-        next_cursor: page.next_cursor,
-        has_more: page.has_more,
-        total: page.total,
+        page: Page::new(page.items.iter().map(Into::into).collect(), page.next)
+            .with_total(page.total as u64),
         counts: page
             .counts
             .into_iter()

@@ -167,7 +167,7 @@ export function resetPreviewMocks(): void {
 	sessionStorage.clear();
 	h.preview = { data: detail(), isLoading: false, isError: false };
 	h.items = {
-		data: { pages: [{ items: [collisionItem], has_more: false, next_after_ordinal: null }] },
+		data: { pages: [{ items: [collisionItem], next_cursor: null }] },
 		isLoading: false,
 		isError: false,
 		hasNextPage: false,

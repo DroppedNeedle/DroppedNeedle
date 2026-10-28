@@ -28,6 +28,7 @@ use crate::publish::publisher::read_revision;
 use crate::publish::{JournalStore, snapshots::sha256_hex};
 use crate::scan::roots::RootRegistry;
 use crate::wiring::LibrarySetup;
+use droppedneedle_kernel::page::TimeKey;
 use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagement, LibraryManagementRootOverrides,
 };
@@ -907,7 +908,7 @@ impl Management {
     pub fn history(
         &self,
         mut filter: HistoryFilter,
-    ) -> Result<(Vec<HistoryItem>, Option<String>), ManagementError> {
+    ) -> Result<(Vec<HistoryItem>, Option<TimeKey>), ManagementError> {
         // No limit means a full page.
         filter.limit = if filter.limit <= 0 {
             HISTORY_MAX

@@ -10762,7 +10762,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1 to 12 (default 12).",
+            "description": "Page size, 1 to 12 (default 12); more is read as 12.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -10771,14 +10771,12 @@
             }
           },
           {
-            "name": "offset",
+            "name": "cursor",
             "in": "query",
-            "description": "Page offset (default 0).",
+            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
+              "type": "string"
             }
           }
         ],
@@ -10794,7 +10792,7 @@
             }
           },
           "400": {
-            "description": "Missing title or bad paging",
+            "description": "Missing title or bad cursor",
             "content": {
               "application/json": {
                 "schema": {
@@ -12326,10 +12324,11 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1 to 100 (default 50).",
+            "description": "Page size, 1 to 100 (default 50); more is read as 100.",
             "required": false,
             "schema": {
               "type": "integer",
+              "format": "int32",
               "minimum": 0
             }
           },
@@ -12372,7 +12371,7 @@
             }
           },
           "400": {
-            "description": "Bad page size or cursor",
+            "description": "Bad cursor",
             "content": {
               "application/json": {
                 "schema": {
@@ -14739,15 +14738,18 @@
           {
             "name": "limit",
             "in": "query",
+            "description": "Page size, at most 50; more is read as 50.",
             "required": false,
             "schema": {
               "type": "integer",
+              "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "cursor",
             "in": "query",
+            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
               "type": "string"
@@ -14760,13 +14762,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperationListView"
+                  "$ref": "#/components/schemas/Page_OperationView"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad page size or cursor",
+            "description": "Bad cursor",
             "content": {
               "application/json": {
                 "schema": {
@@ -15127,15 +15129,18 @@
           {
             "name": "limit",
             "in": "query",
+            "description": "Page size, 1 to 200 (default 100); more is read as 200.",
             "required": false,
             "schema": {
               "type": "integer",
+              "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "cursor",
             "in": "query",
+            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
               "type": "string"
@@ -15163,7 +15168,7 @@
             }
           },
           "400": {
-            "description": "Bad page size, cursor or category",
+            "description": "Bad cursor or category",
             "content": {
               "application/json": {
                 "schema": {
@@ -15662,7 +15667,7 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "Cursor from the previous page.",
+            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
               "type": "string"
@@ -15671,7 +15676,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Files per page, 1 to 100 (default 50).",
+            "description": "Files per page, 1 to 100 (default 50); more is read as 100.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -15686,13 +15691,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PluginFilesPage"
+                  "$ref": "#/components/schemas/Page_PluginFileView"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad cursor or limit",
+            "description": "Bad cursor",
             "content": {
               "application/json": {
                 "schema": {
@@ -16295,15 +16300,18 @@
           {
             "name": "limit",
             "in": "query",
+            "description": "Page size, at most 50; more is read as 50.",
             "required": false,
             "schema": {
               "type": "integer",
+              "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "cursor",
             "in": "query",
+            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
               "type": "string"
@@ -16316,13 +16324,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperationListView"
+                  "$ref": "#/components/schemas/Page_OperationView"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad page size or cursor",
+            "description": "Bad cursor",
             "content": {
               "application/json": {
                 "schema": {
@@ -16771,15 +16779,18 @@
           {
             "name": "limit",
             "in": "query",
+            "description": "Page size, 1 to 200 (default 100); more is read as 200.",
             "required": false,
             "schema": {
               "type": "integer",
+              "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "cursor",
             "in": "query",
+            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
               "type": "string"
@@ -16807,7 +16818,7 @@
             }
           },
           "400": {
-            "description": "Bad page size, cursor or category",
+            "description": "Bad cursor or category",
             "content": {
               "application/json": {
                 "schema": {
@@ -16867,17 +16878,18 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Rows per page, 1 to 50 (default 50).",
+            "description": "Rows per page, 1 to 50 (default 50); more is read as 50.",
             "required": false,
             "schema": {
               "type": "integer",
-              "format": "int64"
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
             "name": "cursor",
             "in": "query",
-            "description": "Cursor from the previous page.",
+            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
               "type": "string"
@@ -16944,11 +16956,11 @@
         ],
         "responses": {
           "200": {
-            "description": "History page",
+            "description": "History page, newest first",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ManagementHistoryPage"
+                  "$ref": "#/components/schemas/Page_ManagementHistoryItemView"
                 }
               }
             }
@@ -17080,21 +17092,23 @@
             }
           },
           {
-            "name": "after_ordinal",
+            "name": "cursor",
             "in": "query",
+            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string"
             }
           },
           {
             "name": "limit",
             "in": "query",
+            "description": "Files per page, 1 to 200 (default 100); more is read as 200.",
             "required": false,
             "schema": {
               "type": "integer",
-              "format": "int64"
+              "format": "int32",
+              "minimum": 0
             }
           }
         ],
@@ -17104,7 +17118,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ManagementResultPage"
+                  "$ref": "#/components/schemas/Page_ManagementResultItemView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -17611,23 +17635,23 @@
             }
           },
           {
-            "name": "after_ordinal",
+            "name": "cursor",
             "in": "query",
-            "description": "Return files after this ordinal (-1 for the first page).",
+            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string"
             }
           },
           {
             "name": "limit",
             "in": "query",
-            "description": "Files per page, 1 to 200 (default 100).",
+            "description": "Files per page, 1 to 200 (default 100); more is read as 200.",
             "required": false,
             "schema": {
               "type": "integer",
-              "format": "int64"
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -17693,13 +17717,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ManagementPlanItemPage"
+                  "$ref": "#/components/schemas/Page_ManagementPlanItemView"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad filter",
+            "description": "Bad filter or cursor",
             "content": {
               "application/json": {
                 "schema": {
@@ -18795,7 +18819,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Items per page, 1 to 100 (50 by default).",
+            "description": "Items per page, 1 to 100 (50 by default); more is read as 100.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -18816,7 +18840,7 @@
             }
           },
           "400": {
-            "description": "Bad cursor or limit",
+            "description": "Bad cursor",
             "content": {
               "application/json": {
                 "schema": {
@@ -19492,7 +19516,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1 to 200 (default 50).",
+            "description": "Page size, 1 to 200 (default 50); more is read as 200.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -19501,13 +19525,12 @@
             }
           },
           {
-            "name": "offset",
+            "name": "cursor",
             "in": "query",
+            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
+              "type": "string"
             }
           }
         ],
@@ -20846,17 +20869,18 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Runs per page, 1 to 50",
+            "description": "Runs per page, 1 to 50; more is read as 50",
             "required": false,
             "schema": {
               "type": "integer",
+              "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "cursor",
             "in": "query",
-            "description": "Cursor from the previous page",
+            "description": "`next_cursor` from the previous page",
             "required": false,
             "schema": {
               "type": "string"
@@ -20865,11 +20889,11 @@
         ],
         "responses": {
           "200": {
-            "description": "History page",
+            "description": "History page, newest first",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScanRunHistoryResponse"
+                  "$ref": "#/components/schemas/Page_ScanRunView"
                 }
               }
             }
@@ -21071,31 +21095,41 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Rows per page, 1 to 200",
+            "description": "Rows per page, 1 to 200; more is read as 200",
             "required": false,
             "schema": {
               "type": "integer",
+              "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "cursor",
             "in": "query",
-            "description": "Cursor from the previous page",
+            "description": "`next_cursor` from the previous page",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Failed paths",
+            "description": "Failed paths, oldest first",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScanRunFailuresResponse"
+                  "$ref": "#/components/schemas/Page_ScanRunFailureItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -22132,6 +22166,7 @@
           {
             "name": "limit",
             "in": "query",
+            "description": "Page size, 1 to 200 (default 50); more is read as 200.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -22140,13 +22175,12 @@
             }
           },
           {
-            "name": "offset",
+            "name": "cursor",
             "in": "query",
+            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
+              "type": "string"
             }
           }
         ],
@@ -22156,13 +22190,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WaitingAlbumsResponse"
+                  "$ref": "#/components/schemas/Page_WaitingAlbumView"
                 }
               }
             }
           },
           "400": {
-            "description": "Unknown state",
+            "description": "Unknown state or bad cursor",
             "content": {
               "application/json": {
                 "schema": {
@@ -37314,47 +37348,31 @@
         }
       },
       "ArtistDuplicateGroupListResponse": {
-        "type": "object",
-        "description": "One page of duplicate artist groups.",
-        "required": [
-          "items",
-          "has_more",
-          "total",
-          "counts"
-        ],
-        "properties": {
-          "counts": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Page_ArtistDuplicateGroupSummary"
+          },
+          {
             "type": "object",
-            "description": "Every group by state, before the filters.",
-            "additionalProperties": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "propertyNames": {
-              "type": "string"
+            "required": [
+              "counts"
+            ],
+            "properties": {
+              "counts": {
+                "type": "object",
+                "description": "Every group by state, before the filters.",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              }
             }
-          },
-          "has_more": {
-            "type": "boolean"
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ArtistDuplicateGroupSummary"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "total": {
-            "type": "integer",
-            "description": "Groups matching the filters.",
-            "minimum": 0
           }
-        }
+        ],
+        "description": "One page of duplicate artist groups, with the groups matching the\nfilters as its total."
       },
       "ArtistDuplicateGroupSummary": {
         "type": "object",
@@ -39283,87 +39301,6 @@
           "replaced",
           "removed"
         ]
-      },
-      "BinRemovalView": {
-        "type": "object",
-        "description": "One removal or change whose files are in the recycle bin.",
-        "required": [
-          "id",
-          "kind",
-          "removed_at",
-          "files",
-          "bytes",
-          "not_found",
-          "unchecked",
-          "held",
-          "can_put_back"
-        ],
-        "properties": {
-          "album": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/BinAlbumView"
-              }
-            ]
-          },
-          "bytes": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Bytes of the copies found.",
-            "minimum": 0
-          },
-          "can_put_back": {
-            "type": "boolean",
-            "description": "Put back is offered."
-          },
-          "expires_at": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "When the bin's expiry deletes its first copy, unix milliseconds;\nabsent while the retention can't be read."
-          },
-          "files": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Files in the bin.",
-            "minimum": 0
-          },
-          "held": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Files waiting for an admin under \"Some file writes need you\".",
-            "minimum": 0
-          },
-          "id": {
-            "type": "string",
-            "description": "The removal's id, which Put back names."
-          },
-          "kind": {
-            "$ref": "#/components/schemas/BinKind"
-          },
-          "not_found": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Copies not found where they should be.",
-            "minimum": 0
-          },
-          "removed_at": {
-            "type": "integer",
-            "format": "int64",
-            "description": "When it was made, unix milliseconds."
-          },
-          "unchecked": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Copies that can't be checked: in a bin no longer set, behind a\nlink, or while the bins can't be told.",
-            "minimum": 0
-          }
-        }
       },
       "BrainzmashActiveBinding": {
         "type": "object",
@@ -51151,28 +51088,6 @@
           }
         }
       },
-      "ManagementHistoryPage": {
-        "type": "object",
-        "description": "One page of history, newest first.",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ManagementHistoryItemView"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Pass back as `cursor` for the next page; null on the last."
-          }
-        }
-      },
       "ManagementHoldView": {
         "type": "object",
         "description": "Why library management leaves an album's files alone.",
@@ -51518,32 +51433,6 @@
             "items": {
               "$ref": "#/components/schemas/ManagementRootPlacementView"
             }
-          }
-        }
-      },
-      "ManagementPlanItemPage": {
-        "type": "object",
-        "description": "One page of planned files.",
-        "required": [
-          "items",
-          "has_more"
-        ],
-        "properties": {
-          "has_more": {
-            "type": "boolean"
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ManagementPlanItemView"
-            }
-          },
-          "next_after_ordinal": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
           }
         }
       },
@@ -52045,32 +51934,6 @@
           },
           "work_state": {
             "$ref": "#/components/schemas/ResultState"
-          }
-        }
-      },
-      "ManagementResultPage": {
-        "type": "object",
-        "description": "One page of results.",
-        "required": [
-          "items",
-          "has_more"
-        ],
-        "properties": {
-          "has_more": {
-            "type": "boolean"
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ManagementResultItemView"
-            }
-          },
-          "next_after_ordinal": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
           }
         }
       },
@@ -53773,27 +53636,6 @@
           }
         }
       },
-      "OperationListView": {
-        "type": "object",
-        "description": "One page of repair or preparation jobs, newest first.",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/OperationView"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
       "OperationResult": {
         "type": "object",
         "description": "Bare success acknowledgement.",
@@ -54205,6 +54047,1425 @@
           "zone": {
             "$ref": "#/components/schemas/SectionZone",
             "description": "The zone it is shown in."
+          }
+        }
+      },
+      "Page_ArtistDuplicateGroupSummary": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One duplicate artist group.",
+              "required": [
+                "id",
+                "display_name",
+                "state",
+                "member_count",
+                "members",
+                "provider_mbids",
+                "affected_reference_count",
+                "reason_code",
+                "reason"
+              ],
+              "properties": {
+                "affected_reference_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Credits, favorites and plays a merge would move."
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "description": "Stable for the same set of records."
+                },
+                "member_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "members": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ArtistReconciliationMember"
+                  }
+                },
+                "merge_basis": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ArtistMergeBasis",
+                      "description": "What that merge rested on."
+                    }
+                  ]
+                },
+                "provider_mbids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "reason": {
+                  "$ref": "#/components/schemas/ReasonView",
+                  "description": "Why the group is listed and what to do about it."
+                },
+                "reason_code": {
+                  "type": "string"
+                },
+                "recommended_survivor_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The record a merge would keep, when the evidence names one."
+                },
+                "resolved_at": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "format": "double",
+                  "description": "When an automatic merge resolved the group (unix seconds)."
+                },
+                "state": {
+                  "$ref": "#/components/schemas/ArtistGroupState"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_BinRemovalView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One removal or change whose files are in the recycle bin.",
+              "required": [
+                "id",
+                "kind",
+                "removed_at",
+                "files",
+                "bytes",
+                "not_found",
+                "unchecked",
+                "held",
+                "can_put_back"
+              ],
+              "properties": {
+                "album": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BinAlbumView"
+                    }
+                  ]
+                },
+                "bytes": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Bytes of the copies found.",
+                  "minimum": 0
+                },
+                "can_put_back": {
+                  "type": "boolean",
+                  "description": "Put back is offered."
+                },
+                "expires_at": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64",
+                  "description": "When the bin's expiry deletes its first copy, unix milliseconds;\nabsent while the retention can't be read."
+                },
+                "files": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Files in the bin.",
+                  "minimum": 0
+                },
+                "held": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Files waiting for an admin under \"Some file writes need you\".",
+                  "minimum": 0
+                },
+                "id": {
+                  "type": "string",
+                  "description": "The removal's id, which Put back names."
+                },
+                "kind": {
+                  "$ref": "#/components/schemas/BinKind"
+                },
+                "not_found": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Copies not found where they should be.",
+                  "minimum": 0
+                },
+                "removed_at": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "When it was made, unix milliseconds."
+                },
+                "unchecked": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Copies that can't be checked: in a bin no longer set, behind a\nlink, or while the bins can't be told.",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_ManagementHistoryItemView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One row of management history.",
+              "required": [
+                "operation",
+                "mode",
+                "origin",
+                "phase",
+                "profile_id",
+                "profile_name",
+                "profile_revision",
+                "activation_preview",
+                "selection",
+                "eligible_count",
+                "warning_count",
+                "blocked_count"
+              ],
+              "properties": {
+                "activation_preview": {
+                  "type": "boolean"
+                },
+                "blocked_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "eligible_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "expires_at": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "format": "double"
+                },
+                "mode": {
+                  "type": "string"
+                },
+                "operation": {
+                  "$ref": "#/components/schemas/OperationView"
+                },
+                "origin": {
+                  "type": "string"
+                },
+                "phase": {
+                  "$ref": "#/components/schemas/ManagementPhase"
+                },
+                "profile_id": {
+                  "type": "string"
+                },
+                "profile_name": {
+                  "type": "string"
+                },
+                "profile_revision": {
+                  "type": "string"
+                },
+                "selection": {
+                  "type": "object"
+                },
+                "target_root_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "warning_count": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_ManagementPlanItemView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One planned file.",
+              "required": [
+                "ordinal",
+                "bundle_ordinal",
+                "eligibility",
+                "estimated_temporary_bytes",
+                "desired_document",
+                "artwork_choices",
+                "diff",
+                "capability",
+                "collisions"
+              ],
+              "properties": {
+                "artwork_choices": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                },
+                "bundle_ordinal": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "The album this file is planned with; albums apply as a whole."
+                },
+                "capability": {
+                  "type": "object",
+                  "description": "`audio_format`, `warnings`, `blockers`, and catalog facts."
+                },
+                "collisions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                },
+                "desired_document": {
+                  "type": "object",
+                  "description": "`fields`: the tags the file ends up with, `[{name, value}]`."
+                },
+                "destination_relative_path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "destination_root_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "diff": {
+                  "type": "object",
+                  "description": "`field_mutations` (`{name, operation, before, after}`),\n`tags_changed`, `path_changed`, `sidecars`."
+                },
+                "eligibility": {
+                  "$ref": "#/components/schemas/Eligibility"
+                },
+                "estimated_temporary_bytes": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "local_album_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "local_track_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "ordinal": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "reason": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ManagementReasonView",
+                      "description": "The reason in words, with what to do about it."
+                    }
+                  ]
+                },
+                "reason_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source_relative_path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source_root_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_ManagementResultItemView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One file after apply.",
+              "required": [
+                "plan",
+                "work_state",
+                "result",
+                "journal_states"
+              ],
+              "properties": {
+                "failure_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "failure_reason": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ManagementReasonView",
+                      "description": "Why the file failed or was not written, with what to do about it."
+                    }
+                  ]
+                },
+                "journal_states": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "plan": {
+                  "$ref": "#/components/schemas/ManagementPlanItemView"
+                },
+                "result": {
+                  "type": "object"
+                },
+                "work_state": {
+                  "$ref": "#/components/schemas/ResultState"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_OperationView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One operation job.",
+              "required": [
+                "id",
+                "kind",
+                "state",
+                "expected_work_count",
+                "completed_count",
+                "succeeded_count",
+                "failed_count",
+                "skipped_count",
+                "control_request",
+                "row_revision",
+                "event_revision",
+                "created_at",
+                "updated_at",
+                "results",
+                "results_truncated",
+                "reidentification_candidates"
+              ],
+              "properties": {
+                "completed_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "control_request": {
+                  "$ref": "#/components/schemas/ControlRequest",
+                  "description": "A control the worker has not acted on yet."
+                },
+                "created_at": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "event_revision": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "expected_work_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "failed_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "`explicit_reidentification`, `bulk_review_apply`, `repair`, or\n`library_management`."
+                },
+                "reidentification_candidates": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReidentificationCandidateView"
+                  },
+                  "description": "Candidates a re-identification waits on, best first."
+                },
+                "repair_summary": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RepairSummaryView",
+                      "description": "An identity repair or preparation's report, once its check is done."
+                    }
+                  ]
+                },
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OperationWorkResultView"
+                  },
+                  "description": "The first 100 work results."
+                },
+                "results_truncated": {
+                  "type": "boolean"
+                },
+                "row_revision": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Echo this on every control and choice."
+                },
+                "selected_reidentification_candidate_key": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "skipped_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "state": {
+                  "$ref": "#/components/schemas/OperationState",
+                  "description": "Where the job is in its life."
+                },
+                "succeeded_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "terminal_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "terminal_reason": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ReasonView",
+                      "description": "What `terminal_code` means and what to do about it."
+                    }
+                  ]
+                },
+                "updated_at": {
+                  "type": "number",
+                  "format": "double"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_PluginFileView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One file a plugin added to the library.",
+              "required": [
+                "bundle_id",
+                "root_id",
+                "relative_path",
+                "size",
+                "added_at",
+                "state"
+              ],
+              "properties": {
+                "added_at": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "When it was added, in unix milliseconds."
+                },
+                "bundle_id": {
+                  "type": "string",
+                  "description": "The change that added it; undo it to take the file back."
+                },
+                "relative_path": {
+                  "type": "string",
+                  "description": "Path under the library folder."
+                },
+                "root_id": {
+                  "type": "string",
+                  "description": "Library folder id."
+                },
+                "size": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Size in bytes.",
+                  "minimum": 0
+                },
+                "state": {
+                  "$ref": "#/components/schemas/PluginFileState"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_ReleaseEditionView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One MusicBrainz release in the edition finder.",
+              "required": [
+                "release_mbid",
+                "release_group_mbid",
+                "artist_name",
+                "title",
+                "media_formats",
+                "disc_count",
+                "track_count",
+                "musicbrainz_url",
+                "score",
+                "belongs_to_current_release_group",
+                "is_current_release"
+              ],
+              "properties": {
+                "artist_name": {
+                  "type": "string"
+                },
+                "barcode": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "belongs_to_current_release_group": {
+                  "type": "boolean"
+                },
+                "catalogue_number": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "country": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "disambiguation": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "disc_count": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                },
+                "is_current_release": {
+                  "type": "boolean"
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "media_formats": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "musicbrainz_url": {
+                  "type": "string"
+                },
+                "packaging": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "release_group_mbid": {
+                  "type": "string"
+                },
+                "release_mbid": {
+                  "type": "string"
+                },
+                "score": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "MusicBrainz search score, 0 to 100."
+                },
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "track_count": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_RepairFindingView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/FindingRow"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "reason"
+                  ],
+                  "properties": {
+                    "automatic_undo": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/AutomaticEditionUndoInfoView"
+                        }
+                      ]
+                    },
+                    "reason": {
+                      "$ref": "#/components/schemas/ReasonView",
+                      "description": "What the finding means and what to do about it."
+                    },
+                    "suggested_edition": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/SuggestedEditionView"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "One album's finding."
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_ReviewView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One identification review and the album it is about.",
+              "required": [
+                "id",
+                "album_id",
+                "album_title",
+                "artist_name",
+                "reason_code",
+                "reason",
+                "state",
+                "candidates",
+                "created_ms",
+                "updated_ms",
+                "manual_identity"
+              ],
+              "properties": {
+                "album_id": {
+                  "type": "string",
+                  "description": "Local album id."
+                },
+                "album_title": {
+                  "type": "string",
+                  "description": "Album title, as the library shows it."
+                },
+                "artist_name": {
+                  "type": "string",
+                  "description": "Album artist, as the library shows it."
+                },
+                "candidates": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CandidateView"
+                  },
+                  "description": "Scored candidates, best first."
+                },
+                "created_ms": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "When the review was filed (Unix milliseconds)."
+                },
+                "id": {
+                  "type": "string",
+                  "description": "Review id."
+                },
+                "manual_identity": {
+                  "type": "boolean",
+                  "description": "The album's current match was picked by a person."
+                },
+                "reason": {
+                  "$ref": "#/components/schemas/ReasonView",
+                  "description": "Why the review exists and what to do, in plain words."
+                },
+                "reason_code": {
+                  "type": "string",
+                  "description": "Reason code the review was filed with."
+                },
+                "resolved_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Resolving user, once settled."
+                },
+                "selected_candidate_key": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Selected candidate key, once approved."
+                },
+                "state": {
+                  "$ref": "#/components/schemas/ReviewState",
+                  "description": "Review state."
+                },
+                "updated_ms": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "When it last changed (Unix milliseconds)."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_ScanRunFailureItem": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One path a scan could not read or index.",
+              "required": [
+                "root_id",
+                "relative_path",
+                "failure_code",
+                "message",
+                "action",
+                "failure_detail",
+                "phase",
+                "recorded_at"
+              ],
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "description": "What to do about it."
+                },
+                "failure_code": {
+                  "$ref": "#/components/schemas/FailureCode",
+                  "description": "Stable machine code, for example `TAG_READ_FAILED`."
+                },
+                "failure_detail": {
+                  "type": "string",
+                  "description": "Technical detail for diagnostics; not meant for display."
+                },
+                "message": {
+                  "type": "string",
+                  "description": "What happened, in plain words."
+                },
+                "phase": {
+                  "$ref": "#/components/schemas/ScanPhase",
+                  "description": "Phase the file failed in."
+                },
+                "recorded_at": {
+                  "type": "number",
+                  "format": "double",
+                  "description": "Unix seconds."
+                },
+                "relative_path": {
+                  "type": "string"
+                },
+                "root_id": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_ScanRunView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One scan run.",
+              "required": [
+                "id",
+                "kind",
+                "trigger",
+                "state",
+                "phase",
+                "aggregate_scope",
+                "counters",
+                "queued_at",
+                "updated_at",
+                "requested_control",
+                "coalesced_request_count",
+                "row_revision",
+                "event_revision",
+                "phase_timings"
+              ],
+              "properties": {
+                "aggregate_scope": {
+                  "$ref": "#/components/schemas/AggregateScope"
+                },
+                "coalesced_request_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Requests folded into this run."
+                },
+                "counters": {
+                  "$ref": "#/components/schemas/Counters",
+                  "description": "Progress counters."
+                },
+                "event_revision": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Event revision.",
+                  "minimum": 0
+                },
+                "id": {
+                  "type": "string",
+                  "description": "Run id."
+                },
+                "kind": {
+                  "$ref": "#/components/schemas/ScanKind",
+                  "description": "Run kind."
+                },
+                "phase": {
+                  "$ref": "#/components/schemas/ScanPhase",
+                  "description": "Current phase."
+                },
+                "phase_timings": {
+                  "type": "object",
+                  "description": "Seconds spent per phase.",
+                  "additionalProperties": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  }
+                },
+                "queued_at": {
+                  "type": "number",
+                  "format": "double",
+                  "description": "Queue time (unix seconds)."
+                },
+                "requested_by_user_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Who asked for the run, when someone did."
+                },
+                "requested_control": {
+                  "$ref": "#/components/schemas/RequestedControl",
+                  "description": "Pending control."
+                },
+                "resume_phase": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ScanPhase",
+                      "description": "Phase a paused run picks up from."
+                    }
+                  ]
+                },
+                "row_revision": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Row revision; pause, resume and stop send it back.",
+                  "minimum": 0
+                },
+                "started_at": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "format": "double",
+                  "description": "Start time, when started."
+                },
+                "state": {
+                  "$ref": "#/components/schemas/ScanState",
+                  "description": "Run state."
+                },
+                "terminal_action": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "What to do about the terminal code."
+                },
+                "terminal_at": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "format": "double",
+                  "description": "Terminal time, when terminal."
+                },
+                "terminal_code": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FailureCode",
+                      "description": "Terminal code, when terminal."
+                    }
+                  ]
+                },
+                "terminal_message": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "What the terminal code means, in plain words."
+                },
+                "trigger": {
+                  "$ref": "#/components/schemas/ScanTrigger",
+                  "description": "What triggered the run."
+                },
+                "updated_at": {
+                  "type": "number",
+                  "format": "double",
+                  "description": "Last update time."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_WaitingAlbumView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One album whose match waits for a look.",
+              "required": [
+                "album_id",
+                "title",
+                "artist_name",
+                "state",
+                "reason",
+                "updated_at"
+              ],
+              "properties": {
+                "album_id": {
+                  "type": "string"
+                },
+                "artist_name": {
+                  "type": "string"
+                },
+                "reason": {
+                  "$ref": "#/components/schemas/ReasonView"
+                },
+                "release_group_mbid": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "release_mbid": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "state": {
+                  "$ref": "#/components/schemas/EditionState",
+                  "description": "`unconfirmed` or `unmatched`."
+                },
+                "title": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "number",
+                  "format": "double"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
           }
         }
       },
@@ -55508,28 +56769,6 @@
           },
           "state": {
             "$ref": "#/components/schemas/PluginFileState"
-          }
-        }
-      },
-      "PluginFilesPage": {
-        "type": "object",
-        "description": "A page of a plugin's files, newest first.",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PluginFileView"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Cursor for the next page, when there is one."
           }
         }
       },
@@ -57699,39 +58938,32 @@
         }
       },
       "RecycleBinPage": {
-        "type": "object",
-        "description": "One page of the recycle bin, newest first.",
-        "required": [
-          "items",
-          "bins_known"
-        ],
-        "properties": {
-          "bins_known": {
-            "type": "boolean",
-            "description": "The bins can be looked at now."
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Page_BinRemovalView"
           },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BinRemovalView"
+          {
+            "type": "object",
+            "required": [
+              "bins_known"
+            ],
+            "properties": {
+              "bins_known": {
+                "type": "boolean",
+                "description": "The bins can be looked at now."
+              },
+              "retention_days": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Days a copy stays in the bin; absent while it can't be read."
+              }
             }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Pass back as `cursor` for the next page; absent on the last."
-          },
-          "retention_days": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Days a copy stays in the bin; absent while it can't be read."
           }
-        }
+        ],
+        "description": "One page of the recycle bin, newest first."
       },
       "RecycleBinStatus": {
         "type": "object",
@@ -58010,168 +59242,41 @@
         }
       },
       "ReleaseEditionSearchResponse": {
-        "type": "object",
-        "description": "One page of the edition finder.",
-        "required": [
-          "title_query",
-          "artist_query",
-          "items",
-          "total",
-          "offset",
-          "limit"
-        ],
-        "properties": {
-          "artist_query": {
-            "type": "string"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Page_ReleaseEditionView"
           },
-          "current_release_group_mbid": {
-            "type": [
-              "string",
-              "null"
+          {
+            "type": "object",
+            "required": [
+              "title_query",
+              "artist_query"
             ],
-            "description": "The album's current release group, for \"every edition of this\nalbum\"."
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReleaseEditionView"
+            "properties": {
+              "artist_query": {
+                "type": "string"
+              },
+              "current_release_group_mbid": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The album's current release group, for \"every edition of this\nalbum\"."
+              },
+              "release_group_query": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The release group whose editions are listed, when the page is a\nrelease group listing rather than a search."
+              },
+              "title_query": {
+                "type": "string"
+              }
             }
-          },
-          "limit": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "offset": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "release_group_query": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The release group whose editions are listed, when the page is a\nrelease group listing rather than a search."
-          },
-          "title_query": {
-            "type": "string"
-          },
-          "total": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
           }
-        }
-      },
-      "ReleaseEditionView": {
-        "type": "object",
-        "description": "One MusicBrainz release in the edition finder.",
-        "required": [
-          "release_mbid",
-          "release_group_mbid",
-          "artist_name",
-          "title",
-          "media_formats",
-          "disc_count",
-          "track_count",
-          "musicbrainz_url",
-          "score",
-          "belongs_to_current_release_group",
-          "is_current_release"
         ],
-        "properties": {
-          "artist_name": {
-            "type": "string"
-          },
-          "barcode": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "belongs_to_current_release_group": {
-            "type": "boolean"
-          },
-          "catalogue_number": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "country": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "date": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "disambiguation": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "disc_count": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "is_current_release": {
-            "type": "boolean"
-          },
-          "label": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "media_formats": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "musicbrainz_url": {
-            "type": "string"
-          },
-          "packaging": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "release_group_mbid": {
-            "type": "string"
-          },
-          "release_mbid": {
-            "type": "string"
-          },
-          "score": {
-            "type": "integer",
-            "format": "int64",
-            "description": "MusicBrainz search score, 0 to 100."
-          },
-          "status": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "track_count": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          }
-        }
+        "description": "One page of the edition finder, with MusicBrainz's count of matches as\nits total."
       },
       "ReleaseItem": {
         "type": "object",
@@ -59163,86 +60268,36 @@
         }
       },
       "RepairFindingListView": {
-        "type": "object",
-        "description": "One page of findings.",
-        "required": [
-          "items",
-          "has_more",
-          "current_counts_by_finding",
-          "refresh_required"
-        ],
-        "properties": {
-          "current_counts_by_finding": {
-            "type": "object",
-            "description": "Findings per code that still describe their album.",
-            "additionalProperties": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          },
-          "has_more": {
-            "type": "boolean"
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RepairFindingView"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "refresh_required": {
-            "type": "boolean",
-            "description": "The report used older rules; run a fresh check before applying."
-          }
-        }
-      },
-      "RepairFindingView": {
         "allOf": [
           {
-            "$ref": "#/components/schemas/FindingRow"
+            "$ref": "#/components/schemas/Page_RepairFindingView"
           },
           {
             "type": "object",
             "required": [
-              "reason"
+              "current_counts_by_finding",
+              "refresh_required"
             ],
             "properties": {
-              "automatic_undo": {
-                "oneOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "$ref": "#/components/schemas/AutomaticEditionUndoInfoView"
-                  }
-                ]
+              "current_counts_by_finding": {
+                "type": "object",
+                "description": "Findings per code that still describe their album.",
+                "additionalProperties": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
               },
-              "reason": {
-                "$ref": "#/components/schemas/ReasonView",
-                "description": "What the finding means and what to do about it."
-              },
-              "suggested_edition": {
-                "oneOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "$ref": "#/components/schemas/SuggestedEditionView"
-                  }
-                ]
+              "refresh_required": {
+                "type": "boolean",
+                "description": "The report used older rules; run a fresh check before applying."
               }
             }
           }
         ],
-        "description": "One album's finding."
+        "description": "One page of findings."
       },
       "RepairSummaryView": {
         "type": "object",
@@ -60487,6 +61542,13 @@
             "format": "int64",
             "description": "Filed at or before this time (Unix milliseconds)."
           },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`next_cursor` from the previous page."
+          },
           "exclude_active_jobs": {
             "type": [
               "boolean",
@@ -60507,15 +61569,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "Page size, 1 to 200 (default 50).",
-            "minimum": 0
-          },
-          "offset": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
+            "description": "Page size, 1 to 200 (default 50); more is read as 200.",
             "minimum": 0
           },
           "policy": {
@@ -60586,47 +61640,27 @@
         }
       },
       "ReviewsResponse": {
-        "type": "object",
-        "description": "One page of reviews.",
-        "required": [
-          "reviews",
-          "total",
-          "reason_counts",
-          "limit",
-          "offset"
-        ],
-        "properties": {
-          "limit": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Page_ReviewView"
           },
-          "offset": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "reason_counts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReasonCount"
-            },
-            "description": "Reviews matching the filter apart from its reason, by reason."
-          },
-          "reviews": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReviewView"
-            },
-            "description": "Reviews on this page, most recently changed first."
-          },
-          "total": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Reviews matching the filter.",
-            "minimum": 0
+          {
+            "type": "object",
+            "required": [
+              "reason_counts"
+            ],
+            "properties": {
+              "reason_counts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReasonCount"
+                },
+                "description": "Reviews matching the filter apart from its reason, by reason."
+              }
+            }
           }
-        }
+        ],
+        "description": "One page of reviews, with the reviews matching the filter as its\ntotal."
       },
       "Role": {
         "type": "string",
@@ -61168,53 +62202,6 @@
           },
           "root_id": {
             "type": "string"
-          }
-        }
-      },
-      "ScanRunFailuresResponse": {
-        "type": "object",
-        "description": "One page of a run's failed paths, oldest first.",
-        "required": [
-          "items",
-          "next_cursor"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ScanRunFailureItem"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Pass back as `cursor` for the next page; null on the last."
-          }
-        }
-      },
-      "ScanRunHistoryResponse": {
-        "type": "object",
-        "description": "One page of finished runs, newest first.",
-        "required": [
-          "items",
-          "next_cursor"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ScanRunView"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Pass back as `cursor` for the next page; null on the last."
           }
         }
       },
@@ -65991,39 +66978,6 @@
           "updated_at": {
             "type": "number",
             "format": "double"
-          }
-        }
-      },
-      "WaitingAlbumsResponse": {
-        "type": "object",
-        "description": "One page of albums waiting for a look.",
-        "required": [
-          "items",
-          "total",
-          "limit",
-          "offset"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WaitingAlbumView"
-            }
-          },
-          "limit": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "offset": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "total": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
           }
         }
       },

@@ -9,4 +9,4 @@ export type PluginListResponse = components['schemas']['PluginListResponse'];
 
 export type PluginFileView = components['schemas']['PluginFileView'];
 
-export type PluginFilesPage = components['schemas']['PluginFilesPage'];
+export type PluginFilesPage = components['schemas']['Page_PluginFileView'];

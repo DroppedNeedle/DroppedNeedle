@@ -24,6 +24,7 @@ use super::scan::watcher::WatcherState;
 use super::service::ServiceError;
 use super::settings::LibrarySettings;
 use super::wiring::{LibraryCore, ScanCoordinator};
+use droppedneedle_kernel::page::TimeKey;
 use droppedneedle_kernel::runtime_config::Plain;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 
@@ -73,9 +74,7 @@ fn request_error(error: ScanRequestError) -> ServiceError {
         ScanRequestError::Disabled
         | ScanRequestError::StalePolicy
         | ScanRequestError::UnknownRoots => ServiceError::Conflict { message },
-        ScanRequestError::EmptyScopes | ScanRequestError::BadCursor => {
-            ServiceError::InvalidInput { message }
-        }
+        ScanRequestError::EmptyScopes => ServiceError::InvalidInput { message },
         ScanRequestError::Store(cause) => store_error(cause),
     }
 }
@@ -203,11 +202,11 @@ impl Scans {
     pub fn scan_history_page(
         &self,
         limit: usize,
-        cursor: Option<&str>,
-    ) -> Result<(Vec<ScanRun>, Option<String>), ServiceError> {
+        before: Option<TimeKey>,
+    ) -> Result<(Vec<ScanRun>, Option<TimeKey>), ServiceError> {
         self.coordinator
-            .history_page(limit.clamp(1, MAX_PAGE), cursor)
-            .map_err(request_error)
+            .history_page(limit.clamp(1, MAX_PAGE), before)
+            .map_err(store_error)
     }
 
     /// One page of a run's failed paths, oldest first. Blocking.
@@ -332,11 +331,6 @@ impl Scans {
                 super::scan::coordinator::ScanRequestError::StalePolicy
                 | super::scan::coordinator::ScanRequestError::UnknownRoots => {
                     ServiceError::Conflict {
-                        message: error.to_string(),
-                    }
-                }
-                super::scan::coordinator::ScanRequestError::BadCursor => {
-                    ServiceError::InvalidInput {
                         message: error.to_string(),
                     }
                 }

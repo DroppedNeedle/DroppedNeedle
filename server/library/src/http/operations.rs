@@ -14,6 +14,7 @@ use axum::{
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::page::{Page, PageRequest};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -244,10 +245,10 @@ pub struct ReleaseSearchQuery {
     /// List every release of this release group instead of searching by
     /// title, so any edition of the album can be chosen.
     pub release_group_mbid: Option<String>,
-    /// Page size, 1 to 12 (default 12).
+    /// Page size, 1 to 12 (default 12); more is read as 12.
     pub limit: Option<u32>,
-    /// Page offset (default 0).
-    pub offset: Option<u32>,
+    /// `next_cursor` from the previous page.
+    pub cursor: Option<String>,
 }
 
 /// One MusicBrainz release in the edition finder.
@@ -275,9 +276,12 @@ pub struct ReleaseEditionView {
     pub is_current_release: bool,
 }
 
-/// One page of the edition finder.
+/// One page of the edition finder, with MusicBrainz's count of matches as
+/// its total.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ReleaseEditionSearchResponse {
+    #[serde(flatten)]
+    pub page: Page<ReleaseEditionView>,
     pub title_query: String,
     pub artist_query: String,
     /// The release group whose editions are listed, when the page is a
@@ -286,10 +290,6 @@ pub struct ReleaseEditionSearchResponse {
     /// The album's current release group, for "every edition of this
     /// album".
     pub current_release_group_mbid: Option<String>,
-    pub items: Vec<ReleaseEditionView>,
-    pub total: u64,
-    pub offset: u64,
-    pub limit: u32,
 }
 
 fn candidate_view(
@@ -546,7 +546,7 @@ pub async fn stop_operation(
     params(("album_id" = String, Path, description = "Local album id"), ReleaseSearchQuery),
     responses(
         (status = 200, description = "One page of releases", body = ReleaseEditionSearchResponse),
-        (status = 400, description = "Missing title or bad paging"),
+        (status = 400, description = "Missing title or bad cursor"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown album"),
@@ -559,11 +559,9 @@ pub async fn search_reidentification_releases(
     Path(album_id): Path<String>,
     ValidQuery(query): ValidQuery<ReleaseSearchQuery>,
 ) -> Result<Json<ReleaseEditionSearchResponse>, ApiError> {
-    let limit = query.limit.unwrap_or(RELEASE_PAGE_MAX);
-    if !(1..=RELEASE_PAGE_MAX).contains(&limit)
-        || query.title.chars().count() > 250
-        || query.artist.chars().count() > 250
-    {
+    let max = RELEASE_PAGE_MAX as usize;
+    let paging = PageRequest::<u32>::read(query.limit, query.cursor.as_deref(), max, max)?;
+    if query.title.chars().count() > 250 || query.artist.chars().count() > 250 {
         return Err(OperationError::Invalid(reasons::SEARCH_TOO_LONG).into());
     }
     let release_group = query
@@ -576,50 +574,53 @@ pub async fn search_reidentification_releases(
             &query.title,
             &query.artist,
             release_group,
-            limit,
-            query.offset.unwrap_or(0),
+            paging.limit as u32,
+            paging.after.unwrap_or(0),
         )
         .await?;
     let same = |left: &str, right: Option<&String>| {
         right.is_some_and(|right| left.eq_ignore_ascii_case(right))
     };
+    let items = search
+        .page
+        .items
+        .iter()
+        .map(|item| ReleaseEditionView {
+            musicbrainz_url: format!("https://musicbrainz.org/release/{}", item.release_mbid),
+            belongs_to_current_release_group: same(
+                &item.release_group_mbid,
+                search.current_release_group_mbid.as_ref(),
+            ),
+            is_current_release: same(&item.release_mbid, search.current_release_mbid.as_ref()),
+            release_mbid: item.release_mbid.clone(),
+            release_group_mbid: item.release_group_mbid.clone(),
+            artist_name: item.artist_name.clone(),
+            title: item.title.clone(),
+            date: item.date.clone(),
+            country: item.country.clone(),
+            status: item.status.clone(),
+            packaging: item.packaging.clone(),
+            media_formats: item.media_formats.clone(),
+            disc_count: item.disc_count,
+            track_count: item.track_count,
+            label: item.label.clone(),
+            catalogue_number: item.catalogue_number.clone(),
+            barcode: item.barcode.clone(),
+            disambiguation: item.disambiguation.clone(),
+            score: item.score,
+        })
+        .collect();
     Ok(Json(ReleaseEditionSearchResponse {
-        items: search
-            .page
-            .items
-            .iter()
-            .map(|item| ReleaseEditionView {
-                musicbrainz_url: format!("https://musicbrainz.org/release/{}", item.release_mbid),
-                belongs_to_current_release_group: same(
-                    &item.release_group_mbid,
-                    search.current_release_group_mbid.as_ref(),
-                ),
-                is_current_release: same(&item.release_mbid, search.current_release_mbid.as_ref()),
-                release_mbid: item.release_mbid.clone(),
-                release_group_mbid: item.release_group_mbid.clone(),
-                artist_name: item.artist_name.clone(),
-                title: item.title.clone(),
-                date: item.date.clone(),
-                country: item.country.clone(),
-                status: item.status.clone(),
-                packaging: item.packaging.clone(),
-                media_formats: item.media_formats.clone(),
-                disc_count: item.disc_count,
-                track_count: item.track_count,
-                label: item.label.clone(),
-                catalogue_number: item.catalogue_number.clone(),
-                barcode: item.barcode.clone(),
-                disambiguation: item.disambiguation.clone(),
-                score: item.score,
-            })
-            .collect(),
+        page: Page::at_offset(
+            items,
+            search.page.offset,
+            search.limit.into(),
+            search.page.total,
+        ),
         title_query: search.title_query,
         artist_query: search.artist_query,
         release_group_query: search.release_group_query,
         current_release_group_mbid: search.current_release_group_mbid,
-        total: search.page.total,
-        offset: search.page.offset,
-        limit: search.limit,
     }))
 }
 

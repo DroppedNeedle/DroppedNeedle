@@ -10641,17 +10641,15 @@ export interface components {
             dismissed_pairs: number;
             group_id: string;
         };
-        /** @description One page of duplicate artist groups. */
-        ArtistDuplicateGroupListResponse: {
+        /**
+         * @description One page of duplicate artist groups, with the groups matching the
+         *     filters as its total.
+         */
+        ArtistDuplicateGroupListResponse: components["schemas"]["Page_ArtistDuplicateGroupSummary"] & {
             /** @description Every group by state, before the filters. */
             counts: {
                 [key: string]: number;
             };
-            has_more: boolean;
-            items: components["schemas"]["ArtistDuplicateGroupSummary"][];
-            next_cursor?: string | null;
-            /** @description Groups matching the filters. */
-            total: number;
         };
         /** @description One duplicate artist group. */
         ArtistDuplicateGroupSummary: {
@@ -11506,52 +11504,6 @@ export interface components {
          * @enum {string}
          */
         BinKind: "album" | "track" | "extras" | "replaced" | "removed";
-        /** @description One removal or change whose files are in the recycle bin. */
-        BinRemovalView: {
-            album?: null | components["schemas"]["BinAlbumView"];
-            /**
-             * Format: int64
-             * @description Bytes of the copies found.
-             */
-            bytes: number;
-            /** @description Put back is offered. */
-            can_put_back: boolean;
-            /**
-             * Format: int64
-             * @description When the bin's expiry deletes its first copy, unix milliseconds;
-             *     absent while the retention can't be read.
-             */
-            expires_at?: number | null;
-            /**
-             * Format: int32
-             * @description Files in the bin.
-             */
-            files: number;
-            /**
-             * Format: int32
-             * @description Files waiting for an admin under "Some file writes need you".
-             */
-            held: number;
-            /** @description The removal's id, which Put back names. */
-            id: string;
-            kind: components["schemas"]["BinKind"];
-            /**
-             * Format: int32
-             * @description Copies not found where they should be.
-             */
-            not_found: number;
-            /**
-             * Format: int64
-             * @description When it was made, unix milliseconds.
-             */
-            removed_at: number;
-            /**
-             * Format: int32
-             * @description Copies that can't be checked: in a bin no longer set, behind a
-             *     link, or while the bins can't be told.
-             */
-            unchecked: number;
-        };
         /** @description Active BrainzMash binding (kept; the pending proposal is transient). */
         BrainzmashActiveBinding: {
             /**
@@ -16983,12 +16935,6 @@ export interface components {
             /** Format: int64 */
             warning_count: number;
         };
-        /** @description One page of history, newest first. */
-        ManagementHistoryPage: {
-            items: components["schemas"]["ManagementHistoryItemView"][];
-            /** @description Pass back as `cursor` for the next page; null on the last. */
-            next_cursor?: string | null;
-        };
         /** @description Why library management leaves an album's files alone. */
         ManagementHoldView: {
             /**
@@ -17129,13 +17075,6 @@ export interface components {
          */
         ManagementPlacementView: {
             roots: components["schemas"]["ManagementRootPlacementView"][];
-        };
-        /** @description One page of planned files. */
-        ManagementPlanItemPage: {
-            has_more: boolean;
-            items: components["schemas"]["ManagementPlanItemView"][];
-            /** Format: int64 */
-            next_after_ordinal?: number | null;
         };
         /** @description One planned file. */
         ManagementPlanItemView: {
@@ -17311,13 +17250,6 @@ export interface components {
             plan: components["schemas"]["ManagementPlanItemView"];
             result: Record<string, never>;
             work_state: components["schemas"]["ResultState"];
-        };
-        /** @description One page of results. */
-        ManagementResultPage: {
-            has_more: boolean;
-            items: components["schemas"]["ManagementResultItemView"][];
-            /** Format: int64 */
-            next_after_ordinal?: number | null;
         };
         /** @description One library folder and how files can be added to it. */
         ManagementRootPlacementView: {
@@ -18110,11 +18042,6 @@ export interface components {
             /** @description Makes a retried control a no-op. */
             idempotency_key?: string | null;
         };
-        /** @description One page of repair or preparation jobs, newest first. */
-        OperationListView: {
-            items: components["schemas"]["OperationView"][];
-            next_cursor?: string | null;
-        };
         /** @description Bare success acknowledgement. */
         OperationResult: {
             /** @description Whether the operation succeeded. */
@@ -18296,6 +18223,488 @@ export interface components {
             key: components["schemas"]["SectionKey"];
             /** @description The zone it is shown in. */
             zone: components["schemas"]["SectionZone"];
+        };
+        /** @description One page of a list. */
+        Page_ArtistDuplicateGroupSummary: {
+            items: {
+                /**
+                 * Format: int64
+                 * @description Credits, favorites and plays a merge would move.
+                 */
+                affected_reference_count: number;
+                display_name: string;
+                /** @description Stable for the same set of records. */
+                id: string;
+                member_count: number;
+                members: components["schemas"]["ArtistReconciliationMember"][];
+                merge_basis?: null | components["schemas"]["ArtistMergeBasis"];
+                provider_mbids: string[];
+                /** @description Why the group is listed and what to do about it. */
+                reason: components["schemas"]["ReasonView"];
+                reason_code: string;
+                /** @description The record a merge would keep, when the evidence names one. */
+                recommended_survivor_id?: string | null;
+                /**
+                 * Format: double
+                 * @description When an automatic merge resolved the group (unix seconds).
+                 */
+                resolved_at?: number | null;
+                state: components["schemas"]["ArtistGroupState"];
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_BinRemovalView: {
+            items: {
+                album?: null | components["schemas"]["BinAlbumView"];
+                /**
+                 * Format: int64
+                 * @description Bytes of the copies found.
+                 */
+                bytes: number;
+                /** @description Put back is offered. */
+                can_put_back: boolean;
+                /**
+                 * Format: int64
+                 * @description When the bin's expiry deletes its first copy, unix milliseconds;
+                 *     absent while the retention can't be read.
+                 */
+                expires_at?: number | null;
+                /**
+                 * Format: int32
+                 * @description Files in the bin.
+                 */
+                files: number;
+                /**
+                 * Format: int32
+                 * @description Files waiting for an admin under "Some file writes need you".
+                 */
+                held: number;
+                /** @description The removal's id, which Put back names. */
+                id: string;
+                kind: components["schemas"]["BinKind"];
+                /**
+                 * Format: int32
+                 * @description Copies not found where they should be.
+                 */
+                not_found: number;
+                /**
+                 * Format: int64
+                 * @description When it was made, unix milliseconds.
+                 */
+                removed_at: number;
+                /**
+                 * Format: int32
+                 * @description Copies that can't be checked: in a bin no longer set, behind a
+                 *     link, or while the bins can't be told.
+                 */
+                unchecked: number;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_ManagementHistoryItemView: {
+            items: {
+                activation_preview: boolean;
+                /** Format: int64 */
+                blocked_count: number;
+                /** Format: int64 */
+                eligible_count: number;
+                /** Format: double */
+                expires_at?: number | null;
+                mode: string;
+                operation: components["schemas"]["OperationView"];
+                origin: string;
+                phase: components["schemas"]["ManagementPhase"];
+                profile_id: string;
+                profile_name: string;
+                profile_revision: string;
+                selection: Record<string, never>;
+                target_root_id?: string | null;
+                /** Format: int64 */
+                warning_count: number;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_ManagementPlanItemView: {
+            items: {
+                artwork_choices: Record<string, never>[];
+                /**
+                 * Format: int64
+                 * @description The album this file is planned with; albums apply as a whole.
+                 */
+                bundle_ordinal: number;
+                /** @description `audio_format`, `warnings`, `blockers`, and catalog facts. */
+                capability: Record<string, never>;
+                collisions: Record<string, never>[];
+                /** @description `fields`: the tags the file ends up with, `[{name, value}]`. */
+                desired_document: Record<string, never>;
+                destination_relative_path?: string | null;
+                destination_root_id?: string | null;
+                /**
+                 * @description `field_mutations` (`{name, operation, before, after}`),
+                 *     `tags_changed`, `path_changed`, `sidecars`.
+                 */
+                diff: Record<string, never>;
+                eligibility: components["schemas"]["Eligibility"];
+                /** Format: int64 */
+                estimated_temporary_bytes: number;
+                local_album_id?: string | null;
+                local_track_id?: string | null;
+                /** Format: int64 */
+                ordinal: number;
+                reason?: null | components["schemas"]["ManagementReasonView"];
+                reason_code?: string | null;
+                source_relative_path?: string | null;
+                source_root_id?: string | null;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_ManagementResultItemView: {
+            items: {
+                failure_code?: string | null;
+                failure_reason?: null | components["schemas"]["ManagementReasonView"];
+                journal_states: string[];
+                plan: components["schemas"]["ManagementPlanItemView"];
+                result: Record<string, never>;
+                work_state: components["schemas"]["ResultState"];
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_OperationView: {
+            items: {
+                /** Format: int64 */
+                completed_count: number;
+                /** @description A control the worker has not acted on yet. */
+                control_request: components["schemas"]["ControlRequest"];
+                /** Format: double */
+                created_at: number;
+                /** Format: int64 */
+                event_revision: number;
+                /** Format: int64 */
+                expected_work_count: number;
+                /** Format: int64 */
+                failed_count: number;
+                id: string;
+                /**
+                 * @description `explicit_reidentification`, `bulk_review_apply`, `repair`, or
+                 *     `library_management`.
+                 */
+                kind: string;
+                /** @description Candidates a re-identification waits on, best first. */
+                reidentification_candidates: components["schemas"]["ReidentificationCandidateView"][];
+                repair_summary?: null | components["schemas"]["RepairSummaryView"];
+                /** @description The first 100 work results. */
+                results: components["schemas"]["OperationWorkResultView"][];
+                results_truncated: boolean;
+                /**
+                 * Format: int64
+                 * @description Echo this on every control and choice.
+                 */
+                row_revision: number;
+                selected_reidentification_candidate_key?: string | null;
+                /** Format: int64 */
+                skipped_count: number;
+                /** @description Where the job is in its life. */
+                state: components["schemas"]["OperationState"];
+                /** Format: int64 */
+                succeeded_count: number;
+                terminal_code?: string | null;
+                terminal_reason?: null | components["schemas"]["ReasonView"];
+                /** Format: double */
+                updated_at: number;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_PluginFileView: {
+            items: {
+                /**
+                 * Format: int64
+                 * @description When it was added, in unix milliseconds.
+                 */
+                added_at: number;
+                /** @description The change that added it; undo it to take the file back. */
+                bundle_id: string;
+                /** @description Path under the library folder. */
+                relative_path: string;
+                /** @description Library folder id. */
+                root_id: string;
+                /**
+                 * Format: int64
+                 * @description Size in bytes.
+                 */
+                size: number;
+                state: components["schemas"]["PluginFileState"];
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_ReleaseEditionView: {
+            items: {
+                artist_name: string;
+                barcode?: string | null;
+                belongs_to_current_release_group: boolean;
+                catalogue_number?: string | null;
+                country?: string | null;
+                date?: string | null;
+                disambiguation?: string | null;
+                /** Format: int32 */
+                disc_count: number;
+                is_current_release: boolean;
+                label?: string | null;
+                media_formats: string[];
+                musicbrainz_url: string;
+                packaging?: string | null;
+                release_group_mbid: string;
+                release_mbid: string;
+                /**
+                 * Format: int64
+                 * @description MusicBrainz search score, 0 to 100.
+                 */
+                score: number;
+                status?: string | null;
+                title: string;
+                /** Format: int32 */
+                track_count: number;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_RepairFindingView: {
+            items: (components["schemas"]["FindingRow"] & {
+                automatic_undo?: null | components["schemas"]["AutomaticEditionUndoInfoView"];
+                /** @description What the finding means and what to do about it. */
+                reason: components["schemas"]["ReasonView"];
+                suggested_edition?: null | components["schemas"]["SuggestedEditionView"];
+            })[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_ReviewView: {
+            items: {
+                /** @description Local album id. */
+                album_id: string;
+                /** @description Album title, as the library shows it. */
+                album_title: string;
+                /** @description Album artist, as the library shows it. */
+                artist_name: string;
+                /** @description Scored candidates, best first. */
+                candidates: components["schemas"]["CandidateView"][];
+                /**
+                 * Format: int64
+                 * @description When the review was filed (Unix milliseconds).
+                 */
+                created_ms: number;
+                /** @description Review id. */
+                id: string;
+                /** @description The album's current match was picked by a person. */
+                manual_identity: boolean;
+                /** @description Why the review exists and what to do, in plain words. */
+                reason: components["schemas"]["ReasonView"];
+                /** @description Reason code the review was filed with. */
+                reason_code: string;
+                /** @description Resolving user, once settled. */
+                resolved_by?: string | null;
+                /** @description Selected candidate key, once approved. */
+                selected_candidate_key?: string | null;
+                /** @description Review state. */
+                state: components["schemas"]["ReviewState"];
+                /**
+                 * Format: int64
+                 * @description When it last changed (Unix milliseconds).
+                 */
+                updated_ms: number;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_ScanRunFailureItem: {
+            items: {
+                /** @description What to do about it. */
+                action: string;
+                /** @description Stable machine code, for example `TAG_READ_FAILED`. */
+                failure_code: components["schemas"]["FailureCode"];
+                /** @description Technical detail for diagnostics; not meant for display. */
+                failure_detail: string;
+                /** @description What happened, in plain words. */
+                message: string;
+                /** @description Phase the file failed in. */
+                phase: components["schemas"]["ScanPhase"];
+                /**
+                 * Format: double
+                 * @description Unix seconds.
+                 */
+                recorded_at: number;
+                relative_path: string;
+                root_id: string;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_ScanRunView: {
+            items: {
+                aggregate_scope: components["schemas"]["AggregateScope"];
+                /**
+                 * Format: int64
+                 * @description Requests folded into this run.
+                 */
+                coalesced_request_count: number;
+                /** @description Progress counters. */
+                counters: components["schemas"]["Counters"];
+                /**
+                 * Format: int64
+                 * @description Event revision.
+                 */
+                event_revision: number;
+                /** @description Run id. */
+                id: string;
+                /** @description Run kind. */
+                kind: components["schemas"]["ScanKind"];
+                /** @description Current phase. */
+                phase: components["schemas"]["ScanPhase"];
+                /** @description Seconds spent per phase. */
+                phase_timings: {
+                    [key: string]: number;
+                };
+                /**
+                 * Format: double
+                 * @description Queue time (unix seconds).
+                 */
+                queued_at: number;
+                /** @description Who asked for the run, when someone did. */
+                requested_by_user_id?: string | null;
+                /** @description Pending control. */
+                requested_control: components["schemas"]["RequestedControl"];
+                resume_phase?: null | components["schemas"]["ScanPhase"];
+                /**
+                 * Format: int64
+                 * @description Row revision; pause, resume and stop send it back.
+                 */
+                row_revision: number;
+                /**
+                 * Format: double
+                 * @description Start time, when started.
+                 */
+                started_at?: number | null;
+                /** @description Run state. */
+                state: components["schemas"]["ScanState"];
+                /** @description What to do about the terminal code. */
+                terminal_action?: string | null;
+                /**
+                 * Format: double
+                 * @description Terminal time, when terminal.
+                 */
+                terminal_at?: number | null;
+                terminal_code?: null | components["schemas"]["FailureCode"];
+                /** @description What the terminal code means, in plain words. */
+                terminal_message?: string | null;
+                /** @description What triggered the run. */
+                trigger: components["schemas"]["ScanTrigger"];
+                /**
+                 * Format: double
+                 * @description Last update time.
+                 */
+                updated_at: number;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_WaitingAlbumView: {
+            items: {
+                album_id: string;
+                artist_name: string;
+                reason: components["schemas"]["ReasonView"];
+                release_group_mbid?: string | null;
+                release_mbid?: string | null;
+                /** @description `unconfirmed` or `unmatched`. */
+                state: components["schemas"]["EditionState"];
+                title: string;
+                /** Format: double */
+                updated_at: number;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
         };
         /** @description Change password on an account that already has one. */
         PasswordChange: {
@@ -18903,12 +19312,6 @@ export interface components {
              */
             size: number;
             state: components["schemas"]["PluginFileState"];
-        };
-        /** @description A page of a plugin's files, newest first. */
-        PluginFilesPage: {
-            items: components["schemas"]["PluginFileView"][];
-            /** @description Cursor for the next page, when there is one. */
-            next_cursor?: string | null;
         };
         /** @description One plugin's answer to `plugin.health`. */
         PluginHealth: {
@@ -19873,12 +20276,9 @@ export interface components {
             recovery_code: string;
         };
         /** @description One page of the recycle bin, newest first. */
-        RecycleBinPage: {
+        RecycleBinPage: components["schemas"]["Page_BinRemovalView"] & {
             /** @description The bins can be looked at now. */
             bins_known: boolean;
-            items: components["schemas"]["BinRemovalView"][];
-            /** @description Pass back as `cursor` for the next page; absent on the last. */
-            next_cursor?: string | null;
             /**
              * Format: int64
              * @description Days a copy stays in the bin; absent while it can't be read.
@@ -20014,55 +20414,23 @@ export interface components {
             schema_version?: number;
             title?: components["schemas"]["ReleaseTextField"];
         };
-        /** @description One page of the edition finder. */
-        ReleaseEditionSearchResponse: {
+        /**
+         * @description One page of the edition finder, with MusicBrainz's count of matches as
+         *     its total.
+         */
+        ReleaseEditionSearchResponse: components["schemas"]["Page_ReleaseEditionView"] & {
             artist_query: string;
             /**
              * @description The album's current release group, for "every edition of this
              *     album".
              */
             current_release_group_mbid?: string | null;
-            items: components["schemas"]["ReleaseEditionView"][];
-            /** Format: int32 */
-            limit: number;
-            /** Format: int64 */
-            offset: number;
             /**
              * @description The release group whose editions are listed, when the page is a
              *     release group listing rather than a search.
              */
             release_group_query?: string | null;
             title_query: string;
-            /** Format: int64 */
-            total: number;
-        };
-        /** @description One MusicBrainz release in the edition finder. */
-        ReleaseEditionView: {
-            artist_name: string;
-            barcode?: string | null;
-            belongs_to_current_release_group: boolean;
-            catalogue_number?: string | null;
-            country?: string | null;
-            date?: string | null;
-            disambiguation?: string | null;
-            /** Format: int32 */
-            disc_count: number;
-            is_current_release: boolean;
-            label?: string | null;
-            media_formats: string[];
-            musicbrainz_url: string;
-            packaging?: string | null;
-            release_group_mbid: string;
-            release_mbid: string;
-            /**
-             * Format: int64
-             * @description MusicBrainz search score, 0 to 100.
-             */
-            score: number;
-            status?: string | null;
-            title: string;
-            /** Format: int32 */
-            track_count: number;
         };
         /** @description One release group on an artist page. */
         ReleaseItem: {
@@ -20472,23 +20840,13 @@ export interface components {
             selected_root_count: number;
         };
         /** @description One page of findings. */
-        RepairFindingListView: {
+        RepairFindingListView: components["schemas"]["Page_RepairFindingView"] & {
             /** @description Findings per code that still describe their album. */
             current_counts_by_finding: {
                 [key: string]: number;
             };
-            has_more: boolean;
-            items: components["schemas"]["RepairFindingView"][];
-            next_cursor?: string | null;
             /** @description The report used older rules; run a fresh check before applying. */
             refresh_required: boolean;
-        };
-        /** @description One album's finding. */
-        RepairFindingView: components["schemas"]["FindingRow"] & {
-            automatic_undo?: null | components["schemas"]["AutomaticEditionUndoInfoView"];
-            /** @description What the finding means and what to do about it. */
-            reason: components["schemas"]["ReasonView"];
-            suggested_edition?: null | components["schemas"]["SuggestedEditionView"];
         };
         /** @description What a finished check found. */
         RepairSummaryView: {
@@ -21068,6 +21426,8 @@ export interface components {
              * @description Filed at or before this time (Unix milliseconds).
              */
             created_to?: number | null;
+            /** @description `next_cursor` from the previous page. */
+            cursor?: string | null;
             /** @description Leave out albums whose identification is still queued or running. */
             exclude_active_jobs?: boolean | null;
             /**
@@ -21077,11 +21437,9 @@ export interface components {
             job_state?: string | null;
             /**
              * Format: int32
-             * @description Page size, 1 to 200 (default 50).
+             * @description Page size, 1 to 200 (default 50); more is read as 200.
              */
             limit?: number | null;
-            /** Format: int32 */
-            offset?: number | null;
             /**
              * @description Albums with a file under this folder policy: `automatic`,
              *     `local_metadata` or `excluded`.
@@ -21116,21 +21474,13 @@ export interface components {
             /** @description Only reviews that list at least one release. */
             with_candidates?: boolean | null;
         };
-        /** @description One page of reviews. */
-        ReviewsResponse: {
-            /** Format: int32 */
-            limit: number;
-            /** Format: int32 */
-            offset: number;
+        /**
+         * @description One page of reviews, with the reviews matching the filter as its
+         *     total.
+         */
+        ReviewsResponse: components["schemas"]["Page_ReviewView"] & {
             /** @description Reviews matching the filter apart from its reason, by reason. */
             reason_counts: components["schemas"]["ReasonCount"][];
-            /** @description Reviews on this page, most recently changed first. */
-            reviews: components["schemas"]["ReviewView"][];
-            /**
-             * Format: int64
-             * @description Reviews matching the filter.
-             */
-            total: number;
         };
         /**
          * @description Account role. Meanings are unchanged from v2: `user` requests await
@@ -21371,21 +21721,6 @@ export interface components {
             recorded_at: number;
             relative_path: string;
             root_id: string;
-        };
-        /** @description One page of a run's failed paths, oldest first. */
-        ScanRunFailuresResponse: {
-            items: components["schemas"]["ScanRunFailureItem"][];
-            /**
-             * Format: int64
-             * @description Pass back as `cursor` for the next page; null on the last.
-             */
-            next_cursor: number | null;
-        };
-        /** @description One page of finished runs, newest first. */
-        ScanRunHistoryResponse: {
-            items: components["schemas"]["ScanRunView"][];
-            /** @description Pass back as `cursor` for the next page; null on the last. */
-            next_cursor: string | null;
         };
         /** @description A scan request. */
         ScanRunRequestBody: {
@@ -23330,16 +23665,6 @@ export interface components {
             title: string;
             /** Format: double */
             updated_at: number;
-        };
-        /** @description One page of albums waiting for a look. */
-        WaitingAlbumsResponse: {
-            items: components["schemas"]["WaitingAlbumView"][];
-            /** Format: int32 */
-            limit: number;
-            /** Format: int32 */
-            offset: number;
-            /** Format: int64 */
-            total: number;
         };
         /**
          * @description Why a live request waits. It starts by itself once the cause clears.
@@ -31325,10 +31650,10 @@ export interface operations {
                  *     title, so any edition of the album can be chosen.
                  */
                 release_group_mbid?: string;
-                /** @description Page size, 1 to 12 (default 12). */
+                /** @description Page size, 1 to 12 (default 12); more is read as 12. */
                 limit?: number;
-                /** @description Page offset (default 0). */
-                offset?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
             };
             header?: never;
             path: {
@@ -31348,7 +31673,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReleaseEditionSearchResponse"];
                 };
             };
-            /** @description Missing title or bad paging */
+            /** @description Missing title or bad cursor */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -32436,7 +32761,7 @@ export interface operations {
     list_artist_duplicate_groups: {
         parameters: {
             query?: {
-                /** @description Page size, 1 to 100 (default 50). */
+                /** @description Page size, 1 to 100 (default 50); more is read as 100. */
                 limit?: number;
                 /** @description `next_cursor` from the previous page. */
                 cursor?: string;
@@ -32459,7 +32784,7 @@ export interface operations {
                     "application/json": components["schemas"]["ArtistDuplicateGroupListResponse"];
                 };
             };
-            /** @description Bad page size or cursor */
+            /** @description Bad cursor */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -34168,7 +34493,9 @@ export interface operations {
     list_repairs: {
         parameters: {
             query?: {
+                /** @description Page size, at most 50; more is read as 50. */
                 limit?: number;
+                /** @description `next_cursor` from the previous page. */
                 cursor?: string;
             };
             header?: never;
@@ -34183,10 +34510,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OperationListView"];
+                    "application/json": components["schemas"]["Page_OperationView"];
                 };
             };
-            /** @description Bad page size or cursor */
+            /** @description Bad cursor */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -34441,7 +34768,9 @@ export interface operations {
     repair_findings: {
         parameters: {
             query?: {
+                /** @description Page size, 1 to 200 (default 100); more is read as 200. */
                 limit?: number;
+                /** @description `next_cursor` from the previous page. */
                 cursor?: string;
                 /**
                  * @description Repairs: `valid`, `safe_detach`, `needs_review`, `unverifiable`,
@@ -34469,7 +34798,7 @@ export interface operations {
                     "application/json": components["schemas"]["RepairFindingListView"];
                 };
             };
-            /** @description Bad page size, cursor or category */
+            /** @description Bad cursor or category */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -34830,9 +35159,9 @@ export interface operations {
             query: {
                 /** @description Plugin name. */
                 plugin: string;
-                /** @description Cursor from the previous page. */
+                /** @description `next_cursor` from the previous page. */
                 cursor?: string;
-                /** @description Files per page, 1 to 100 (default 50). */
+                /** @description Files per page, 1 to 100 (default 50); more is read as 100. */
                 limit?: number;
             };
             header?: never;
@@ -34847,10 +35176,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PluginFilesPage"];
+                    "application/json": components["schemas"]["Page_PluginFileView"];
                 };
             };
-            /** @description Bad cursor or limit */
+            /** @description Bad cursor */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -35314,7 +35643,9 @@ export interface operations {
     list_preparations: {
         parameters: {
             query?: {
+                /** @description Page size, at most 50; more is read as 50. */
                 limit?: number;
+                /** @description `next_cursor` from the previous page. */
                 cursor?: string;
             };
             header?: never;
@@ -35329,10 +35660,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OperationListView"];
+                    "application/json": components["schemas"]["Page_OperationView"];
                 };
             };
-            /** @description Bad page size or cursor */
+            /** @description Bad cursor */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -35650,7 +35981,9 @@ export interface operations {
     preparation_findings: {
         parameters: {
             query?: {
+                /** @description Page size, 1 to 200 (default 100); more is read as 200. */
                 limit?: number;
+                /** @description `next_cursor` from the previous page. */
                 cursor?: string;
                 /**
                  * @description Repairs: `valid`, `safe_detach`, `needs_review`, `unverifiable`,
@@ -35678,7 +36011,7 @@ export interface operations {
                     "application/json": components["schemas"]["RepairFindingListView"];
                 };
             };
-            /** @description Bad page size, cursor or category */
+            /** @description Bad cursor or category */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -35719,9 +36052,9 @@ export interface operations {
     list_management_operations: {
         parameters: {
             query?: {
-                /** @description Rows per page, 1 to 50 (default 50). */
+                /** @description Rows per page, 1 to 50 (default 50); more is read as 50. */
                 limit?: number;
-                /** @description Cursor from the previous page. */
+                /** @description `next_cursor` from the previous page. */
                 cursor?: string;
                 origin?: string;
                 profile_id?: string;
@@ -35737,13 +36070,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description History page */
+            /** @description History page, newest first */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagementHistoryPage"];
+                    "application/json": components["schemas"]["Page_ManagementHistoryItemView"];
                 };
             };
             /** @description Bad cursor */
@@ -35828,7 +36161,9 @@ export interface operations {
     list_management_operation_results: {
         parameters: {
             query?: {
-                after_ordinal?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+                /** @description Files per page, 1 to 200 (default 100); more is read as 200. */
                 limit?: number;
             };
             header?: never;
@@ -35846,7 +36181,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagementResultPage"];
+                    "application/json": components["schemas"]["Page_ManagementResultItemView"];
+                };
+            };
+            /** @description Bad cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */
@@ -36207,9 +36551,9 @@ export interface operations {
     list_management_preview_items: {
         parameters: {
             query?: {
-                /** @description Return files after this ordinal (-1 for the first page). */
-                after_ordinal?: number;
-                /** @description Files per page, 1 to 200 (default 100). */
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+                /** @description Files per page, 1 to 200 (default 100); more is read as 200. */
                 limit?: number;
                 eligibility?: components["schemas"]["Eligibility"];
                 reason_code?: string;
@@ -36233,10 +36577,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagementPlanItemPage"];
+                    "application/json": components["schemas"]["Page_ManagementPlanItemView"];
                 };
             };
-            /** @description Bad filter */
+            /** @description Bad filter or cursor */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -37033,7 +37377,7 @@ export interface operations {
             query?: {
                 /** @description The previous page's `next_cursor`. */
                 cursor?: string;
-                /** @description Items per page, 1 to 100 (50 by default). */
+                /** @description Items per page, 1 to 100 (50 by default); more is read as 100. */
                 limit?: number;
             };
             header?: never;
@@ -37051,7 +37395,7 @@ export interface operations {
                     "application/json": components["schemas"]["RecycleBinPage"];
                 };
             };
-            /** @description Bad cursor or limit */
+            /** @description Bad cursor */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -37492,9 +37836,10 @@ export interface operations {
                  *     albums with the most files first.
                  */
                 sort?: string;
-                /** @description Page size, 1 to 200 (default 50). */
+                /** @description Page size, 1 to 200 (default 50); more is read as 200. */
                 limit?: number;
-                offset?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -38493,9 +38838,9 @@ export interface operations {
     scan_run_history: {
         parameters: {
             query?: {
-                /** @description Runs per page, 1 to 50 */
+                /** @description Runs per page, 1 to 50; more is read as 50 */
                 limit?: number;
-                /** @description Cursor from the previous page */
+                /** @description `next_cursor` from the previous page */
                 cursor?: string;
             };
             header?: never;
@@ -38504,13 +38849,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description History page */
+            /** @description History page, newest first */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScanRunHistoryResponse"];
+                    "application/json": components["schemas"]["Page_ScanRunView"];
                 };
             };
             /** @description Bad cursor */
@@ -38645,10 +38990,10 @@ export interface operations {
     scan_run_failures: {
         parameters: {
             query?: {
-                /** @description Rows per page, 1 to 200 */
+                /** @description Rows per page, 1 to 200; more is read as 200 */
                 limit?: number;
-                /** @description Cursor from the previous page */
-                cursor?: number;
+                /** @description `next_cursor` from the previous page */
+                cursor?: string;
             };
             header?: never;
             path: {
@@ -38659,13 +39004,22 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Failed paths */
+            /** @description Failed paths, oldest first */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScanRunFailuresResponse"];
+                    "application/json": components["schemas"]["Page_ScanRunFailureItem"];
+                };
+            };
+            /** @description Bad cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */
@@ -39378,8 +39732,10 @@ export interface operations {
             query?: {
                 /** @description Default: `unconfirmed`. */
                 state?: "unconfirmed" | "unmatched";
+                /** @description Page size, 1 to 200 (default 50); more is read as 200. */
                 limit?: number;
-                offset?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -39393,10 +39749,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WaitingAlbumsResponse"];
+                    "application/json": components["schemas"]["Page_WaitingAlbumView"];
                 };
             };
-            /** @description Unknown state */
+            /** @description Unknown state or bad cursor */
             400: {
                 headers: {
                     [name: string]: unknown;

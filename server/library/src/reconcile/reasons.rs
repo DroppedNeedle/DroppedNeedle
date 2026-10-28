@@ -64,16 +64,6 @@ pub const GROUP_STALE: Reason = reason(
     "The artist records in this group changed since you opened it.",
     "Reload the group and check it again.",
 );
-pub const CURSOR_INVALID: Reason = reason(
-    "ARTIST_GROUP_CURSOR_INVALID",
-    "The page cursor is not valid.",
-    "Reload the list from the start.",
-);
-pub const LIMIT_INVALID: Reason = reason(
-    "ARTIST_GROUP_LIMIT_INVALID",
-    "The page size must be between 1 and 100.",
-    "Ask for a smaller page.",
-);
 
 /// The listed reason for a stored code. Unknown codes from an automatic
 /// merge read as the generic automatic merge.

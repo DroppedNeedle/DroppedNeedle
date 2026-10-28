@@ -70,7 +70,7 @@ export const LIBRARY_MANAGEMENT_ENDPOINTS = {
 		v3('/api/v3/library/management/previews/{job_id}/items', {
 			...job(jobId),
 			query: {
-				after_ordinal: params.afterOrdinal,
+				cursor: params.cursor,
 				limit: params.limit,
 				eligibility: params.eligibility,
 				reason_code: params.reasonCode,
@@ -101,10 +101,10 @@ export const LIBRARY_MANAGEMENT_ENDPOINTS = {
 			}
 		}),
 	operation: (jobId: string) => v3('/api/v3/library/management/operations/{job_id}', job(jobId)),
-	operationResults: (jobId: string, afterOrdinal?: number, limit?: number) =>
+	operationResults: (jobId: string, cursor?: string, limit?: number) =>
 		v3('/api/v3/library/management/operations/{job_id}/results', {
 			...job(jobId),
-			query: { after_ordinal: afterOrdinal, limit }
+			query: { cursor, limit }
 		}),
 	undoPreview: (jobId: string) =>
 		v3('/api/v3/library/management/operations/{job_id}/undo-preview', job(jobId))

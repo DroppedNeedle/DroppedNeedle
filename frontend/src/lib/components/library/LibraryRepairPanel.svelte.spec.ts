@@ -95,7 +95,7 @@ const h = vi.hoisted(() => ({
 						}
 					],
 					next_cursor: null,
-					has_more: false
+					total: null
 				}
 			]
 		},

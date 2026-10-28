@@ -9,7 +9,7 @@ import type {
 } from './LibraryQueryKeyFactory';
 
 /** A review list filter as the server's query fields (paging aside). */
-export function reviewFilterQuery(params: Omit<LibraryReviewParams, 'limit' | 'offset'>) {
+export function reviewFilterQuery(params: Omit<LibraryReviewParams, 'limit'>) {
 	return {
 		...(params.search ? { search: params.search } : {}),
 		...(params.reasonCode ? { reason_code: params.reasonCode } : {}),
@@ -137,8 +137,10 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/albums/{album_id}/edition/tags/{job_id}/undo', {
 			path: { album_id: albumId, job_id: jobId }
 		}),
-	unconfirmed: (state: 'unconfirmed' | 'unmatched', limit: number, offset: number) =>
-		v3('/api/v3/library/unconfirmed', { query: { state, limit, offset } }),
+	unconfirmed: (state: 'unconfirmed' | 'unmatched', limit: number, cursor?: string) =>
+		v3('/api/v3/library/unconfirmed', {
+			query: { state, limit, ...(cursor ? { cursor } : {}) }
+		}),
 	managePreview: () => v3('/api/v3/library/manage/preview'),
 	manageApply: () => v3('/api/v3/library/manage/apply'),
 	manageUndo: () => v3('/api/v3/library/manage/undo'),
@@ -201,12 +203,12 @@ export const LibraryV3Api = {
 			}
 		}),
 	// Identification reviews: list, read, and every way to settle one.
-	reviews: (params: LibraryReviewParams) =>
+	reviews: (params: LibraryReviewParams, cursor?: string) =>
 		v3('/api/v3/library/reviews', {
 			query: {
 				state: params.state ?? 'pending',
 				limit: params.limit,
-				offset: params.offset,
+				...(cursor ? { cursor } : {}),
 				...reviewFilterQuery(params)
 			}
 		}),
@@ -243,7 +245,6 @@ export const LibraryV3Api = {
 			artist: string;
 			release_group_mbid?: string;
 			limit: number;
-			offset: number;
 		}
 	) =>
 		v3('/api/v3/library/albums/{album_id}/reidentification/releases', {
@@ -294,10 +295,10 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/scan/runs/estimate', {
 			query: scopeIds.length ? { scope_ids: scopeIds } : {}
 		}),
-	scanRunFailures: (runId: string, limit: number, cursor?: number) =>
+	scanRunFailures: (runId: string, limit: number, cursor?: string) =>
 		v3('/api/v3/library/scan/runs/{id}/failures', {
 			path: { id: runId },
-			query: { limit, ...(cursor !== undefined ? { cursor } : {}) }
+			query: { limit, ...(cursor ? { cursor } : {}) }
 		}),
 	scanDiagnostics: (runId: string) =>
 		v3('/api/v3/library/scan/runs/{id}/diagnostics', { path: { id: runId } }),

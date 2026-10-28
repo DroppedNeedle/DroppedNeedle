@@ -489,7 +489,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let reviews = body["reviews"].as_array().expect("reviews");
+    let reviews = body["items"].as_array().expect("reviews");
     assert_eq!(reviews.len(), 1);
     assert_eq!(reviews[0]["reason_code"], json!("EDITION_CLEARED_CONFLICT"));
     assert_eq!(
@@ -666,10 +666,7 @@ async fn library_journey_retag_apply_baseline_restore() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let review_id = body["reviews"][0]["id"]
-        .as_str()
-        .expect("review")
-        .to_owned();
+    let review_id = body["items"][0]["id"].as_str().expect("review").to_owned();
     let (status, _) = app
         .call(
             "POST",
@@ -2099,6 +2096,30 @@ async fn library_journey_scan_controls_and_activity() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["items"][0]["id"], json!(queued_id));
+    // Paging, as every paged list does it: only a cursor the list handed
+    // out reads, a limit out of range is clamped, and the last page has no
+    // cursor.
+    let hand_made = format!("cursor=1.5:{run_id}");
+    for (query, status, has_next) in [
+        ("cursor=not-a-cursor", StatusCode::BAD_REQUEST, None),
+        (hand_made.as_str(), StatusCode::BAD_REQUEST, None),
+        ("limit=0", StatusCode::OK, Some(true)),
+        ("limit=100000", StatusCode::OK, Some(false)),
+    ] {
+        let (got, body) = get(format!("/api/v3/library/scan/runs/history?{query}")).await;
+        assert_eq!(got, status, "{query}: {body}");
+        if status == StatusCode::BAD_REQUEST {
+            assert_eq!(body["error"]["code"], json!("INVALID_INPUT"), "{query}");
+            continue;
+        }
+        let items = body["items"].as_array().expect("items");
+        assert_eq!(items.len() == 1, has_next == Some(true), "{query}: {body}");
+        assert_eq!(
+            body["next_cursor"].is_string(),
+            has_next == Some(true),
+            "{query}: {body}"
+        );
+    }
     // The folder's first scan could not read one file.
     let (status, body) = get(format!("/api/v3/library/scan/runs/{first_scan}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -3855,10 +3876,10 @@ async fn library_journey_undo_automatic_edition() {
     let reviews = format!("/api/v3/library/reviews?album_id={album}");
     let (_, body) = app.call("GET", &reviews, &headers, None).await;
     assert_eq!(
-        body["reviews"][0]["reason_code"],
+        body["items"][0]["reason_code"],
         json!("AUTOMATIC_EDITION_CLEARED_TO_REVIEW")
     );
-    let review = body["reviews"][0]["id"]
+    let review = body["items"][0]["id"]
         .as_str()
         .expect("review id")
         .to_owned();
@@ -13460,8 +13481,8 @@ async fn library_journey_review_exclude_restore_dismiss() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["total"], json!(1));
-    assert_eq!(body["reviews"][0]["id"], json!("rev-1"));
-    assert!(body["reviews"][0]["reason"]["action"].as_str().is_some());
+    assert_eq!(body["items"][0]["id"], json!("rev-1"));
+    assert!(body["items"][0]["reason"]["action"].as_str().is_some());
     let (status, body) = app
         .call("GET", "/api/v3/library/reviews/rev-1", &headers, None)
         .await;
@@ -13640,10 +13661,7 @@ async fn manage_preview_waits_while_the_chosen_edition_is_placed() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let review_id = body["reviews"][0]["id"]
-        .as_str()
-        .expect("review")
-        .to_owned();
+    let review_id = body["items"][0]["id"].as_str().expect("review").to_owned();
     let (status, body) = app
         .call(
             "POST",

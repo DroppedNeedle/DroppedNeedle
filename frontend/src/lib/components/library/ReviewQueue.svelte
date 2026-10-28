@@ -45,7 +45,6 @@
 	let reasonCode = $state(initialReason);
 	let searchInput = $state('');
 	let search = $state('');
-	let offset = $state(0);
 	// svelte-ignore state_referenced_locally
 	let expanded = $state<string | null>(focusReviewId);
 	let confirmLocalMetadata = $state(false);
@@ -69,7 +68,7 @@
 		return Number.isFinite(time) ? time : undefined;
 	}
 
-	const filter = $derived<Omit<LibraryReviewParams, 'limit' | 'offset'>>({
+	const filter = $derived<Omit<LibraryReviewParams, 'limit'>>({
 		state: reviewState,
 		search: search || undefined,
 		reasonCode: reasonCode || undefined,
@@ -82,18 +81,18 @@
 		createdTo: filedTo ? (dayStart(filedTo) ?? 0) + 86_399_999 : undefined,
 		sort
 	});
-	const query = getLibraryReviewsQuery(() => ({ ...filter, limit: PAGE, offset }));
+	const query = getLibraryReviewsQuery(() => ({ ...filter, limit: PAGE }));
+	const firstPage = $derived(query.data?.pages[0]);
 	const tree = getLibraryPolicyTreeQuery(() => authStore.isAdmin);
 	const roots = $derived(tree.data?.roots ?? []);
 	const preview = previewBulkLibraryReviews();
 	const applyBulk = applyBulkLibraryReviews();
 	const canSelect = $derived(authStore.isTrusted && reviewState === 'pending');
-	const selectionCount = $derived(allMatching ? (query.data?.total ?? 0) : selected.length);
+	const selectionCount = $derived(allMatching ? (firstPage?.total ?? 0) : selected.length);
 
-	// A changed filter starts the page and the selection over.
+	// A changed filter starts the selection over.
 	$effect(() => {
 		void JSON.stringify(filter);
-		offset = 0;
 		selected = [];
 		allMatching = false;
 	});
@@ -150,12 +149,12 @@
 	const retryAll = retryPendingLibraryReviews();
 
 	const reviews = $derived.by(() => {
-		const page = query.data?.reviews ?? [];
+		const loaded = query.data?.pages.flatMap((page) => page.items) ?? [];
 		const pinned = focused.data;
-		if (!pinned || offset > 0 || page.some((review) => review.id === pinned.id)) return page;
-		return [pinned, ...page];
+		if (!pinned || loaded.some((review) => review.id === pinned.id)) return loaded;
+		return [pinned, ...loaded];
 	});
-	const total = $derived(query.data?.total ?? 0);
+	const total = $derived(firstPage?.total ?? 0);
 	const busy = $derived(act.isPending || accept.isPending || retry.isPending);
 
 	function setState(next: LibraryReviewState): void {
@@ -342,12 +341,12 @@
 		</label>
 	</div>
 
-	{#if (query.data?.reason_counts.length ?? 0) > 1 || reasonCode}
+	{#if (firstPage?.reason_counts.length ?? 0) > 1 || reasonCode}
 		<div class="flex flex-wrap gap-2" role="group" aria-label="Reasons">
 			<Button size="xs" variant={reasonCode ? 'ghost' : 'primary'} onclick={() => (reasonCode = '')}
 				>All reasons</Button
 			>
-			{#each query.data?.reason_counts ?? [] as bucket (bucket.reason_code)}
+			{#each firstPage?.reason_counts ?? [] as bucket (bucket.reason_code)}
 				<Button
 					size="xs"
 					variant={reasonCode === bucket.reason_code ? 'primary' : 'ghost'}
@@ -586,23 +585,14 @@
 		</ul>
 		{#if total > PAGE}
 			<div class="flex items-center justify-between text-sm">
-				<span class="text-base-content/60"
-					>{offset + 1}–{Math.min(offset + PAGE, total)} of {total}</span
-				>
-				<div class="join">
+				<span class="text-base-content/60">{reviews.length} of {total}</span>
+				{#if query.hasNextPage}
 					<Button
 						size="sm"
-						class="join-item"
-						disabled={offset === 0}
-						onclick={() => (offset = Math.max(0, offset - PAGE))}>Previous</Button
+						loading={query.isFetchingNextPage}
+						onclick={() => void query.fetchNextPage()}>Load more</Button
 					>
-					<Button
-						size="sm"
-						class="join-item"
-						disabled={offset + PAGE >= total}
-						onclick={() => (offset += PAGE)}>Next</Button
-					>
-				</div>
+				{/if}
 			</div>
 		{/if}
 	{/if}

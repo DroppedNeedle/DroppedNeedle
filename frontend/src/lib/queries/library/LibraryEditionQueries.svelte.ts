@@ -36,9 +36,8 @@ export interface ReleaseEditionSearchResponse {
 	release_group_query: string | null;
 	current_release_group_mbid: string | null;
 	items: ReleaseEditionResult[];
-	total: number;
-	offset: number;
-	limit: number;
+	total: number | null;
+	next_cursor: string | null;
 }
 
 type ReleaseEditionSearchView = components['schemas']['ReleaseEditionSearchResponse'];
@@ -48,6 +47,8 @@ function toReleaseEditionSearch(view: ReleaseEditionSearchView): ReleaseEditionS
 		...view,
 		release_group_query: view.release_group_query ?? null,
 		current_release_group_mbid: view.current_release_group_mbid ?? null,
+		total: view.total ?? null,
+		next_cursor: view.next_cursor ?? null,
 		items: view.items.map((item) => ({
 			...item,
 			date: item.date ?? null,
@@ -67,7 +68,6 @@ export function getReleaseEditionSearchQuery(
 	getAlbumId: Getter<string>,
 	getTitle: Getter<string>,
 	getArtist: Getter<string>,
-	getOffset: Getter<number>,
 	getEnabled: Getter<boolean> = () => true,
 	/** List every release of this release group instead of searching. */
 	getReleaseGroup: Getter<string | null> = () => null
@@ -77,7 +77,6 @@ export function getReleaseEditionSearchQuery(
 		const albumId = getAlbumId();
 		const title = getTitle();
 		const artist = getArtist();
-		const offset = getOffset();
 		const releaseGroup = getReleaseGroup();
 		return {
 			enabled: getEnabled() && Boolean(albumId && (releaseGroup || title.trim())),
@@ -85,8 +84,7 @@ export function getReleaseEditionSearchQuery(
 				userId,
 				albumId,
 				releaseGroup ? `group:${releaseGroup}` : title,
-				releaseGroup ? '' : artist,
-				offset
+				releaseGroup ? '' : artist
 			),
 			queryFn: async ({ signal }): Promise<ReleaseEditionSearchResponse> =>
 				toReleaseEditionSearch(
@@ -94,8 +92,8 @@ export function getReleaseEditionSearchQuery(
 						LibraryV3Api.reidentificationReleases(
 							albumId,
 							releaseGroup
-								? { title: '', artist: '', release_group_mbid: releaseGroup, limit: 12, offset }
-								: { title, artist, limit: 12, offset }
+								? { title: '', artist: '', release_group_mbid: releaseGroup, limit: 12 }
+								: { title, artist, limit: 12 }
 						),
 						{ signal }
 					)

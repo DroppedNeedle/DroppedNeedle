@@ -16,6 +16,7 @@ use axum::{
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::page::{Page, PageRequest};
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
@@ -36,8 +37,9 @@ use crate::operations::service::Operations;
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator, User};
 
+const PAGE_DEFAULT: usize = 50;
 /// Largest review page.
-const PAGE_MAX: u32 = 200;
+const PAGE_MAX: usize = 200;
 
 /// Review routes.
 pub fn routes() -> Routes<LibraryServices> {
@@ -92,9 +94,10 @@ pub struct ReviewsQuery {
     /// `newest` (default) or `oldest` change first, or `tracks` for the
     /// albums with the most files first.
     pub sort: Option<String>,
-    /// Page size, 1 to 200 (default 50).
+    /// Page size, 1 to 200 (default 50); more is read as 200.
     pub limit: Option<u32>,
-    pub offset: Option<u32>,
+    /// `next_cursor` from the previous page.
+    pub cursor: Option<String>,
 }
 
 fn candidate_view(candidate: &CandidateEvidence) -> CandidateView {
@@ -198,12 +201,16 @@ pub async fn list_reviews(
     _caller: User,
     ValidQuery(query): ValidQuery<ReviewsQuery>,
 ) -> Result<Json<ReviewsResponse>, ApiError> {
-    let filter = review_filter(query, Vec::new())?;
-    let (limit, offset) = (filter.limit, filter.offset);
+    let paging =
+        PageRequest::<u32>::read(query.limit, query.cursor.as_deref(), PAGE_DEFAULT, PAGE_MAX)?;
+    let mut filter = review_filter(query, Vec::new())?;
+    filter.limit = paging.limit as u32;
+    filter.offset = paging.after.unwrap_or(0);
+    let (offset, limit) = (filter.offset, filter.limit);
     let (rows, total, counts) = blocking(move || ops.reviews(&filter)).await?;
+    let reviews = rows.iter().map(review_view).collect();
     Ok(Json(ReviewsResponse {
-        reviews: rows.iter().map(review_view).collect(),
-        total,
+        page: Page::at_offset(reviews, offset.into(), limit.into(), total),
         reason_counts: counts
             .into_iter()
             .map(|(code, count)| ReasonCount {
@@ -212,8 +219,6 @@ pub async fn list_reviews(
                 count,
             })
             .collect(),
-        limit,
-        offset,
     }))
 }
 
@@ -272,8 +277,8 @@ fn review_filter(
         updated_to: query.updated_to,
         with_candidates: query.with_candidates.unwrap_or(false),
         order,
-        limit: query.limit.unwrap_or(50).clamp(1, PAGE_MAX),
-        offset: query.offset.unwrap_or(0),
+        limit: PAGE_DEFAULT as u32,
+        offset: 0,
     })
 }
 

@@ -57,7 +57,7 @@ export const getLibraryRunFailuresQuery = (getRunId: Getter<string | null>) =>
 		return {
 			enabled: Boolean(runId),
 			queryKey: LibraryQueryKeyFactory.runFailures(runId ?? ''),
-			initialPageParam: undefined as number | undefined,
+			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }): Promise<ScanRunFailuresResponse> => {
 				const page = await api.global.v3.GET(
 					LibraryV3Api.scanRunFailures(runId ?? '', FAILURES_PAGE, pageParam),

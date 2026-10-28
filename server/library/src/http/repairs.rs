@@ -14,6 +14,7 @@ use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::page::{Page, PageRequest};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -24,7 +25,7 @@ use crate::repairs::models::{
     FindingRow, FindingState, MANAGEMENT_MAPPING_VERSION, Purpose, REPAIR_TARGET_VERSION,
 };
 use crate::repairs::reasons;
-use crate::repairs::service::{RepairDetail, Repairs};
+use crate::repairs::service::{FINDINGS_MAX, HISTORY_MAX, RepairDetail, Repairs};
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::Admin;
 
@@ -50,13 +51,6 @@ pub fn routes() -> Routes<LibraryServices> {
 // ---------------------------------------------------------------------------
 // DTOs.
 // ---------------------------------------------------------------------------
-
-/// One page of repair or preparation jobs, newest first.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct OperationListView {
-    pub items: Vec<OperationView>,
-    pub next_cursor: Option<String>,
-}
 
 /// Start an identity repair.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
@@ -118,7 +112,9 @@ pub struct PreparationEstimateView {
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct HistoryQuery {
-    pub limit: Option<usize>,
+    /// Page size, at most 50; more is read as 50.
+    pub limit: Option<u32>,
+    /// `next_cursor` from the previous page.
     pub cursor: Option<String>,
 }
 
@@ -126,7 +122,9 @@ pub struct HistoryQuery {
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct FindingsQuery {
-    pub limit: Option<usize>,
+    /// Page size, 1 to 200 (default 100); more is read as 200.
+    pub limit: Option<u32>,
+    /// `next_cursor` from the previous page.
     pub cursor: Option<String>,
     /// Repairs: `valid`, `safe_detach`, `needs_review`, `unverifiable`,
     /// `manual_identity`. Preparations: `ready`, `mapping_ready`,
@@ -173,9 +171,8 @@ pub struct RepairFindingView {
 /// One page of findings.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RepairFindingListView {
-    pub items: Vec<RepairFindingView>,
-    pub next_cursor: Option<String>,
-    pub has_more: bool,
+    #[serde(flatten)]
+    pub page: Page<RepairFindingView>,
     /// Findings per code that still describe their album.
     pub current_counts_by_finding: BTreeMap<String, i64>,
     /// The report used older rules; run a fresh check before applying.
@@ -253,19 +250,19 @@ async fn list_jobs(
     query: HistoryQuery,
     purpose: Purpose,
     default_limit: usize,
-) -> Result<Json<OperationListView>, ApiError> {
-    let (items, next_cursor) = blocking(move || {
-        repairs.history(
-            purpose,
-            query.limit.unwrap_or(default_limit),
-            query.cursor.as_deref(),
-        )
-    })
-    .await?;
-    Ok(Json(OperationListView {
-        items: items.iter().map(repair_view).collect(),
-        next_cursor,
-    }))
+) -> Result<Json<Page<OperationView>>, ApiError> {
+    let paging = PageRequest::read(
+        query.limit,
+        query.cursor.as_deref(),
+        default_limit,
+        HISTORY_MAX,
+    )?;
+    let (items, next) =
+        blocking(move || repairs.history(purpose, paging.limit, paging.after)).await?;
+    Ok(Json(Page::new(
+        items.iter().map(repair_view).collect(),
+        next,
+    )))
 }
 
 async fn findings(
@@ -274,20 +271,22 @@ async fn findings(
     query: FindingsQuery,
     purpose: Purpose,
 ) -> Result<Json<RepairFindingListView>, ApiError> {
+    let paging = PageRequest::read(query.limit, query.cursor.as_deref(), 100, FINDINGS_MAX)?;
     let page = blocking(move || {
         repairs.findings(
             &job_id,
             purpose,
-            query.limit.unwrap_or(100),
-            query.cursor.as_deref(),
+            paging.limit,
+            paging.after,
             query.finding_category.as_deref(),
         )
     })
     .await?;
     Ok(Json(RepairFindingListView {
-        items: page.items.into_iter().map(finding_view).collect(),
-        next_cursor: page.next_cursor,
-        has_more: page.has_more,
+        page: Page::new(
+            page.items.into_iter().map(finding_view).collect(),
+            page.next,
+        ),
         current_counts_by_finding: page.current_counts_by_finding,
         refresh_required: page.refresh_required,
     }))
@@ -377,8 +376,8 @@ pub async fn create_repair(
     path = "/api/v3/library/identity-repairs",
     params(HistoryQuery),
     responses(
-        (status = 200, description = "Repair jobs, newest first", body = OperationListView),
-        (status = 400, description = "Bad page size or cursor"),
+        (status = 200, description = "Repair jobs, newest first", body = Page<OperationView>),
+        (status = 400, description = "Bad cursor"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
     )
@@ -387,7 +386,7 @@ pub async fn list_repairs(
     State(repairs): State<Repairs>,
     _caller: Admin,
     ValidQuery(query): ValidQuery<HistoryQuery>,
-) -> Result<Json<OperationListView>, ApiError> {
+) -> Result<Json<Page<OperationView>>, ApiError> {
     list_jobs(repairs, query, Purpose::ExistingMatches, 50).await
 }
 
@@ -444,7 +443,7 @@ pub async fn get_repair(
     params(("job_id" = String, Path, description = "Repair job id"), FindingsQuery),
     responses(
         (status = 200, description = "Findings, newest change first", body = RepairFindingListView),
-        (status = 400, description = "Bad page size, cursor or category"),
+        (status = 400, description = "Bad cursor or category"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown repair job"),
@@ -595,8 +594,8 @@ pub async fn create_preparation(
     path = "/api/v3/library/management/identity-preparations",
     params(HistoryQuery),
     responses(
-        (status = 200, description = "Preparation jobs, newest first", body = OperationListView),
-        (status = 400, description = "Bad page size or cursor"),
+        (status = 200, description = "Preparation jobs, newest first", body = Page<OperationView>),
+        (status = 400, description = "Bad cursor"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
     )
@@ -605,7 +604,7 @@ pub async fn list_preparations(
     State(repairs): State<Repairs>,
     _caller: Admin,
     ValidQuery(query): ValidQuery<HistoryQuery>,
-) -> Result<Json<OperationListView>, ApiError> {
+) -> Result<Json<Page<OperationView>>, ApiError> {
     list_jobs(repairs, query, Purpose::ManagementReadiness, 20).await
 }
 
@@ -665,7 +664,7 @@ pub async fn get_preparation(
     params(("job_id" = String, Path, description = "Preparation job id"), FindingsQuery),
     responses(
         (status = 200, description = "Findings that still describe their album", body = RepairFindingListView),
-        (status = 400, description = "Bad page size, cursor or category"),
+        (status = 400, description = "Bad cursor or category"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown preparation job"),

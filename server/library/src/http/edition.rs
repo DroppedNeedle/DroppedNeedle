@@ -35,6 +35,7 @@ use axum::{
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::page::{Page, PageRequest};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -58,7 +59,7 @@ use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator, User};
 
 /// Largest page of the unconfirmed list.
-const PAGE_MAX: u32 = 200;
+const PAGE_MAX: usize = 200;
 
 /// Edition routes.
 pub fn routes() -> Routes<LibraryServices> {
@@ -421,8 +422,10 @@ pub struct UnconfirmedQuery {
     /// Default: `unconfirmed`.
     #[param(inline)]
     pub state: Option<WaitingState>,
+    /// Page size, 1 to 200 (default 50); more is read as 200.
     pub limit: Option<u32>,
-    pub offset: Option<u32>,
+    /// `next_cursor` from the previous page.
+    pub cursor: Option<String>,
 }
 
 /// One album whose match waits for a look.
@@ -452,15 +455,6 @@ impl From<WaitingAlbum> for WaitingAlbumView {
             updated_at: album.updated_at,
         }
     }
-}
-
-/// One page of albums waiting for a look.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct WaitingAlbumsResponse {
-    pub items: Vec<WaitingAlbumView>,
-    pub total: u64,
-    pub limit: u32,
-    pub offset: u32,
 }
 
 fn read_status(
@@ -894,8 +888,8 @@ pub async fn remove_extras(
     path = "/api/v3/library/unconfirmed",
     params(UnconfirmedQuery),
     responses(
-        (status = 200, description = "One page of albums", body = WaitingAlbumsResponse),
-        (status = 400, description = "Unknown state"),
+        (status = 200, description = "One page of albums", body = Page<WaitingAlbumView>),
+        (status = 400, description = "Unknown state or bad cursor"),
         (status = 401, description = "Not authenticated"),
     )
 )]
@@ -903,17 +897,18 @@ pub async fn list_unconfirmed(
     State(ops): State<Operations>,
     _caller: User,
     ValidQuery(query): ValidQuery<UnconfirmedQuery>,
-) -> Result<Json<WaitingAlbumsResponse>, ApiError> {
+) -> Result<Json<Page<WaitingAlbumView>>, ApiError> {
     let unmatched = query.state == Some(WaitingState::Unmatched);
-    let limit = query.limit.unwrap_or(50).clamp(1, PAGE_MAX);
-    let offset = query.offset.unwrap_or(0);
+    let paging = PageRequest::<u32>::read(query.limit, query.cursor.as_deref(), 50, PAGE_MAX)?;
+    let (limit, offset) = (paging.limit as u32, paging.after.unwrap_or(0));
     let (items, total) = blocking(move || ops.waiting_albums(unmatched, limit, offset)).await?;
-    Ok(Json(WaitingAlbumsResponse {
-        items: items.into_iter().map(Into::into).collect(),
+    let items = items.into_iter().map(Into::into).collect();
+    Ok(Json(Page::at_offset(
+        items,
+        offset.into(),
+        limit.into(),
         total,
-        limit,
-        offset,
-    }))
+    )))
 }
 
 // ---------------------------------------------------------------------------

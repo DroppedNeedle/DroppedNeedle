@@ -1,4 +1,4 @@
-import { createMutation, createQuery } from '@tanstack/svelte-query';
+import { createInfiniteQuery, createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
@@ -188,7 +188,7 @@ export const getEditionFetchQuery = (
 // library's one edition operation, which accepts any MusicBrainz release.
 export type EditionStatus = components['schemas']['EditionStatusView'];
 export type EditionChoice = components['schemas']['EditionChoiceView'];
-export type WaitingAlbums = components['schemas']['WaitingAlbumsResponse'];
+export type WaitingAlbums = components['schemas']['Page_WaitingAlbumView'];
 
 const editionKey = LibraryQueryKeyFactory.catalog.edition;
 const editionPlanKey = LibraryQueryKeyFactory.catalog.editionPlan;
@@ -327,15 +327,19 @@ export function unmatchEditionFile() {
 export const getWaitingAlbumsQuery = (
 	getUserId: Getter<EditionUserId>,
 	getState: Getter<'unconfirmed' | 'unmatched'>,
-	getOffset: Getter<number>,
 	limit = 50
 ) =>
-	createQuery(() => ({
-		queryKey: LibraryQueryKeyFactory.catalog.unconfirmed(getUserId(), getState(), getOffset()),
-		enabled: !!getUserId(),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(LibraryV3Api.unconfirmed(getState(), limit, getOffset()), { signal })
-	}));
+	createInfiniteQuery(() => {
+		const state = getState();
+		return {
+			queryKey: LibraryQueryKeyFactory.catalog.unconfirmed(getUserId(), state),
+			enabled: !!getUserId(),
+			initialPageParam: undefined as string | undefined,
+			queryFn: ({ pageParam, signal }): Promise<WaitingAlbums> =>
+				api.global.v3.GET(LibraryV3Api.unconfirmed(state, limit, pageParam), { signal }),
+			getNextPageParam: (lastPage: WaitingAlbums) => lastPage.next_cursor ?? undefined
+		};
+	});
 
 type EditionTarget = { userId: EditionUserId; localId: string; rgMbid?: string };
 

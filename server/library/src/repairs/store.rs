@@ -1619,17 +1619,12 @@ pub fn findings_page(
             ))
         })?
         .collect::<rusqlite::Result<BTreeMap<String, i64>>>()?;
-    let next_cursor = has_more
-        .then(|| {
-            items
-                .last()
-                .map(|last| format!("{}:{}", last.updated_at, last.id))
-        })
+    let next = has_more
+        .then(|| items.last().map(|last| (last.updated_at, last.id.clone())))
         .flatten();
     Ok(FindingPage {
         items,
-        next_cursor,
-        has_more,
+        next,
         current_counts_by_finding,
         refresh_required: false,
     })

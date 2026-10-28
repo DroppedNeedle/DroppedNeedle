@@ -168,8 +168,8 @@ pub struct Group {
 #[derive(Debug, Clone)]
 pub struct GroupPage {
     pub items: Vec<Group>,
-    pub next_cursor: Option<String>,
-    pub has_more: bool,
+    /// The sort key the next page starts after.
+    pub next: Option<(String, String)>,
     pub total: usize,
     pub counts: BTreeMap<&'static str, usize>,
 }

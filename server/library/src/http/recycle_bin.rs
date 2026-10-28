@@ -10,6 +10,7 @@ use droppedneedle_auth::Admin;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::page::{Page, PageRequest};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -73,9 +74,8 @@ pub struct BinRemovalView {
 /// One page of the recycle bin, newest first.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RecycleBinPage {
-    pub items: Vec<BinRemovalView>,
-    /// Pass back as `cursor` for the next page; absent on the last.
-    pub next_cursor: Option<String>,
+    #[serde(flatten)]
+    pub page: Page<BinRemovalView>,
     /// Days a copy stays in the bin; absent while it can't be read.
     pub retention_days: Option<i64>,
     /// The bins can be looked at now.
@@ -88,7 +88,7 @@ pub struct RecycleBinPage {
 pub struct RecycleBinQuery {
     /// The previous page's `next_cursor`.
     pub cursor: Option<String>,
-    /// Items per page, 1 to 100 (50 by default).
+    /// Items per page, 1 to 100 (50 by default); more is read as 100.
     pub limit: Option<u32>,
 }
 
@@ -139,7 +139,7 @@ pub struct EmptyRecycleBinView {
     params(RecycleBinQuery),
     responses(
         (status = 200, description = "A page of the recycle bin", body = RecycleBinPage),
-        (status = 400, description = "Bad cursor or limit"),
+        (status = 400, description = "Bad cursor"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 503, description = "The server is busy; try again"),
@@ -150,20 +150,7 @@ pub async fn list_recycle_bin(
     _caller: Admin,
     ValidQuery(query): ValidQuery<RecycleBinQuery>,
 ) -> Result<Json<RecycleBinPage>, ApiError> {
-    let limit = query.limit.unwrap_or(50);
-    if !(1..=100).contains(&limit) {
-        return Err(ApiError::invalid_input("Limit must be 1 to 100"));
-    }
-    let cursor = match query.cursor.as_deref().filter(|raw| !raw.is_empty()) {
-        None => None,
-        Some(raw) => Some(
-            raw.split_once('|')
-                .and_then(|(at, id)| Some((at.parse::<i64>().ok()?, id.to_owned())))
-                .ok_or_else(|| {
-                    ApiError::invalid_input("That cursor is not valid; start from the first page.")
-                })?,
-        ),
-    };
+    let paging = PageRequest::read(query.limit, query.cursor.as_deref(), 50, 100)?;
     let retention_days = state
         .settings
         .download_policy
@@ -171,19 +158,19 @@ pub async fn list_recycle_bin(
         .map(|policy| policy.recycle_retention_days.max(0));
     let (page, bins_known) = blocking(move || {
         let sandbox = state.expiry_sandbox();
-        bin_contents::page(&state.db, sandbox.as_ref(), cursor, limit as usize)
+        bin_contents::page(&state.db, sandbox.as_ref(), paging.after, paging.limit)
             .map(|page| (page, sandbox.is_some()))
             .map_err(publish_error)
     })
     .await?;
-    let next_cursor = page.next.map(|(at, id)| format!("{at}|{id}"));
     Ok(Json(RecycleBinPage {
-        items: page
-            .items
-            .into_iter()
-            .map(|group| view(group, retention_days))
-            .collect(),
-        next_cursor,
+        page: Page::new(
+            page.items
+                .into_iter()
+                .map(|group| view(group, retention_days))
+                .collect(),
+            page.next,
+        ),
         retention_days,
         bins_known,
     }))

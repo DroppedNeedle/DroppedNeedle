@@ -38,6 +38,7 @@ use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
+use droppedneedle_kernel::page::TimeKey;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 use droppedneedle_providers::RequestPriority;
@@ -48,9 +49,9 @@ const BUSY_RETRY: Duration = Duration::from_secs(5);
 /// Wait before an album MusicBrainz could not answer for is tried again.
 const PROVIDER_RETRY_SECS: f64 = 120.0;
 /// Largest history page.
-const HISTORY_MAX: usize = 50;
+pub const HISTORY_MAX: usize = 50;
 /// Largest findings page.
-const FINDINGS_MAX: usize = 200;
+pub const FINDINGS_MAX: usize = 200;
 
 /// A repair job with its report summary.
 #[derive(Debug, Clone)]
@@ -185,17 +186,14 @@ impl Repairs {
         })
     }
 
-    /// A page of a purpose's jobs, newest first, and the next cursor.
+    /// A page of a purpose's jobs, newest first, and the `(created_at, id)`
+    /// the next page starts after. `limit` is 1 to [`HISTORY_MAX`].
     pub fn history(
         &self,
         purpose: Purpose,
         limit: usize,
-        cursor: Option<&str>,
-    ) -> Result<(Vec<RepairDetail>, Option<String>), OperationError> {
-        if !(1..=HISTORY_MAX).contains(&limit) {
-            return Err(OperationError::Invalid(reasons::PAGE_SIZE_INVALID));
-        }
-        let before = cursor.map(parse_cursor).transpose()?;
+        before: Option<TimeKey>,
+    ) -> Result<(Vec<RepairDetail>, Option<TimeKey>), OperationError> {
         // One read: the page, its snapshots, then each job's detail.
         let (items, more) = self.db.read_blocking("repairs.history", |conn| {
             let page = store::history(conn, purpose, limit + 1, before)?;
@@ -215,29 +213,26 @@ impl Repairs {
         let next = more
             .then(|| items.last())
             .flatten()
-            .map(|last| format!("{}:{}", last.detail.job.created_at, last.detail.job.id));
+            .map(|last| (last.detail.job.created_at, last.detail.job.id.clone()));
         Ok((items, next))
     }
 
-    /// One page of a job's findings.
+    /// One page of a job's findings, after the `(updated_at, id)` the
+    /// last page ended on. `limit` is 1 to [`FINDINGS_MAX`].
     pub fn findings(
         &self,
         job_id: &str,
         purpose: Purpose,
         limit: usize,
-        cursor: Option<&str>,
+        cursor: Option<TimeKey>,
         category: Option<&str>,
     ) -> Result<FindingPage, OperationError> {
-        if !(1..=FINDINGS_MAX).contains(&limit) {
-            return Err(OperationError::Invalid(reasons::PAGE_SIZE_INVALID));
-        }
         let codes = category
             .map(|category| {
                 store::category_codes(purpose, category)
                     .ok_or(OperationError::Invalid(reasons::CATEGORY_INVALID))
             })
             .transpose()?;
-        let cursor = cursor.map(parse_cursor).transpose()?;
         self.db.read_blocking("repairs.findings", |conn| {
             let (_, snap) = store::repair_job(conn, job_id, purpose)?;
             let mut page = store::findings_page(conn, job_id, purpose, codes, cursor, limit)?;
@@ -1226,12 +1221,4 @@ fn dedupe(ids: Vec<String>) -> Vec<String> {
         .map(|id| id.trim().to_owned())
         .filter(|id| !id.is_empty() && seen.insert(id.clone()))
         .collect()
-}
-
-/// A `"<float>:<id>"` page cursor.
-fn parse_cursor(raw: &str) -> Result<(f64, String), OperationError> {
-    raw.split_once(':')
-        .and_then(|(at, id)| Some((at.parse::<f64>().ok()?, id.to_owned())))
-        .filter(|(at, id)| at.is_finite() && !id.is_empty())
-        .ok_or(OperationError::Invalid(reasons::CURSOR_INVALID))
 }

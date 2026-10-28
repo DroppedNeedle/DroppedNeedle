@@ -181,7 +181,7 @@ export interface ScanRunFailureItem {
 
 export interface ScanRunFailuresResponse {
 	items: ScanRunFailureItem[];
-	next_cursor: number | null;
+	next_cursor: string | null;
 }
 
 export interface ScanEstimateResponse {
@@ -332,7 +332,8 @@ export type CatalogCorrectionResponse = components['schemas']['CatalogCorrection
 export type EditionChange = components['schemas']['EditionChangeView'];
 
 export type SuggestedEditionSummary = components['schemas']['SuggestedEditionView'];
-export type RepairFindingResponse = components['schemas']['RepairFindingView'];
+export type RepairFindingResponse =
+	components['schemas']['Page_RepairFindingView']['items'][number];
 export type AutomaticEditionUndoInfo = components['schemas']['AutomaticEditionUndoInfoView'];
 export type AutomaticEditionUndoResponse = components['schemas']['AutomaticEditionUndoResponse'];
 export type RepairFindingListResponse = components['schemas']['RepairFindingListView'];

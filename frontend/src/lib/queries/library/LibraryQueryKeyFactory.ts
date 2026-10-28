@@ -36,7 +36,6 @@ export type LibraryReviewState =
 
 export interface LibraryReviewParams {
 	limit: number;
-	offset: number;
 	state?: LibraryReviewState;
 	search?: string;
 	reasonCode?: string;
@@ -143,8 +142,8 @@ export const LibraryQueryKeyFactory = {
 			[...LibraryQueryKeyFactory.catalog.recycleBinPrefix(userId), 'summary'] as const,
 		recycleBinStatus: (userId: LibraryV3UserId) =>
 			[...LibraryQueryKeyFactory.catalog.recycleBinPrefix(userId), 'status'] as const,
-		unconfirmed: (userId: LibraryV3UserId, state: string, offset: number) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'unconfirmed', state, offset] as const
+		unconfirmed: (userId: LibraryV3UserId, state: string) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'unconfirmed', state] as const
 	},
 	activityPrefix: () => [...LibraryQueryKeyFactory.all, 'activity'] as const,
 	activity: (userId: LibraryV3UserId) =>
@@ -167,6 +166,8 @@ export const LibraryQueryKeyFactory = {
 		[...LibraryQueryKeyFactory.operationsPrefix(), 'estimate', [...scopeIds].sort()] as const,
 	reviewsPrefix: () => [...LibraryQueryKeyFactory.all, 'reviews'] as const,
 	reviews: (params: object) => [...LibraryQueryKeyFactory.reviewsPrefix(), params] as const,
+	reviewCount: (params: object) =>
+		[...LibraryQueryKeyFactory.reviewsPrefix(), 'count', params] as const,
 	review: (reviewId: string) =>
 		[...LibraryQueryKeyFactory.reviewsPrefix(), 'detail', reviewId] as const,
 	policyPrefix: () => [...LibraryQueryKeyFactory.all, 'policy'] as const,
@@ -225,8 +226,7 @@ export const LibraryQueryKeyFactory = {
 		userId: LibraryV3UserId,
 		albumId: string,
 		title: string,
-		artist: string,
-		offset: number
+		artist: string
 	) =>
 		[
 			...LibraryQueryKeyFactory.all,
@@ -234,8 +234,7 @@ export const LibraryQueryKeyFactory = {
 			userIdSegment(userId),
 			albumId,
 			title,
-			artist,
-			offset
+			artist
 		] as const,
 	scanSchedule: () => [...LibraryQueryKeyFactory.all, 'scan-schedule'] as const,
 	// Admin-only and the same for every admin, so no user segment.

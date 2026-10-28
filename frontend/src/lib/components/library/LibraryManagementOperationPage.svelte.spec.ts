@@ -81,7 +81,7 @@ beforeEach(() => {
 	sessionStorage.clear();
 	h.operation = { data: operation(), isLoading: false, isError: false };
 	h.results = {
-		data: { pages: [{ items: [], has_more: false, next_after_ordinal: null }] },
+		data: { pages: [{ items: [], next_cursor: null }] },
 		isLoading: false,
 		isError: false,
 		hasNextPage: false,

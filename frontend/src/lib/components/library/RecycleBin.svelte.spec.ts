@@ -52,6 +52,7 @@ function binApi(summary: Partial<RouteData<'GET /api/v3/library/recycle-bin/summ
 		'GET /api/v3/library/recycle-bin': {
 			items: [removed],
 			next_cursor: null,
+			total: null,
 			retention_days: 30,
 			bins_known: true
 		},

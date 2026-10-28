@@ -303,8 +303,8 @@ pub struct FindingRow {
 #[derive(Debug, Clone, Default)]
 pub struct FindingPage {
     pub items: Vec<FindingRow>,
-    pub next_cursor: Option<String>,
-    pub has_more: bool,
+    /// The `(updated_at, id)` the next page starts after.
+    pub next: Option<(f64, String)>,
     pub current_counts_by_finding: BTreeMap<String, i64>,
     pub refresh_required: bool,
 }

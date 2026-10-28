@@ -42,16 +42,6 @@ pub const IDEMPOTENCY_KEY_REUSED: Reason = reason(
     "That idempotency key already started a different kind of job.",
     "Send a new idempotency key.",
 );
-pub const PAGE_SIZE_INVALID: Reason = reason(
-    "INVALID_INPUT",
-    "The page size is out of range.",
-    "Ask for between 1 and 50 jobs, or 1 and 200 findings.",
-);
-pub const CURSOR_INVALID: Reason = reason(
-    "INVALID_INPUT",
-    "The page cursor is not one this list handed out.",
-    "Start again from the first page.",
-);
 pub const CATEGORY_INVALID: Reason = reason(
     "INVALID_INPUT",
     "That finding category does not exist for this report.",

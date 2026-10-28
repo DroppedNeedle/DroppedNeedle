@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use droppedneedle_kernel::page::Page;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -299,17 +300,14 @@ pub struct ReviewView {
     pub manual_identity: bool,
 }
 
-/// One page of reviews.
+/// One page of reviews, with the reviews matching the filter as its
+/// total.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ReviewsResponse {
-    /// Reviews on this page, most recently changed first.
-    pub reviews: Vec<ReviewView>,
-    /// Reviews matching the filter.
-    pub total: u64,
+    #[serde(flatten)]
+    pub page: Page<ReviewView>,
     /// Reviews matching the filter apart from its reason, by reason.
     pub reason_counts: Vec<ReasonCount>,
-    pub limit: u32,
-    pub offset: u32,
 }
 
 /// What a "retry all" started.
@@ -543,9 +541,9 @@ pub struct ManageUndoResponse {
 pub struct PluginFilesQuery {
     /// Plugin name.
     pub plugin: String,
-    /// Cursor from the previous page.
+    /// `next_cursor` from the previous page.
     pub cursor: Option<String>,
-    /// Files per page, 1 to 100 (default 50).
+    /// Files per page, 1 to 100 (default 50); more is read as 100.
     pub limit: Option<u32>,
 }
 
@@ -573,14 +571,6 @@ pub struct PluginFileView {
     /// When it was added, in unix milliseconds.
     pub added_at: i64,
     pub state: PluginFileState,
-}
-
-/// A page of a plugin's files, newest first.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct PluginFilesPage {
-    pub items: Vec<PluginFileView>,
-    /// Cursor for the next page, when there is one.
-    pub next_cursor: Option<String>,
 }
 
 /// Restore tracks to their immutable first-management baselines.

@@ -19,9 +19,9 @@ type JobView = components['schemas']['ManagementJobView'];
 type TagEditorView = components['schemas']['ManagementTagEditorView'];
 type RecoveryView = components['schemas']['ManagementRecoveryView'];
 type PlanItemView = components['schemas']['ManagementPlanItemView'];
-type PlanItemPage = components['schemas']['ManagementPlanItemPage'];
-type ResultPage = components['schemas']['ManagementResultPage'];
-type HistoryPage = components['schemas']['ManagementHistoryPage'];
+type PlanItemPage = components['schemas']['Page_ManagementPlanItemView'];
+type ResultPage = components['schemas']['Page_ManagementResultItemView'];
+type HistoryPage = components['schemas']['Page_ManagementHistoryItemView'];
 type ReasonView = components['schemas']['ManagementReasonView'];
 
 const ELIGIBILITY: ManagementEligibility[] = ['eligible', 'warning', 'blocked', 'stale'];
@@ -65,8 +65,7 @@ export function toPlanItem(view: PlanItemView): LibraryManagementPlanItem {
 export function toPlanItemPage(page: PlanItemPage): LibraryManagementPlanItemPageResponse {
 	return {
 		items: (page.items ?? []).map(toPlanItem),
-		next_after_ordinal: page.next_after_ordinal ?? null,
-		has_more: Boolean(page.has_more)
+		next_cursor: page.next_cursor ?? null
 	};
 }
 
@@ -80,8 +79,7 @@ export function toResultPage(page: ResultPage): LibraryManagementResultPageRespo
 			result: record(item.result),
 			journal_states: item.journal_states ?? []
 		})),
-		next_after_ordinal: page.next_after_ordinal ?? null,
-		has_more: Boolean(page.has_more)
+		next_cursor: page.next_cursor ?? null
 	};
 }
 
