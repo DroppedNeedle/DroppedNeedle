@@ -9835,6 +9835,12 @@ export interface components {
              */
             direct_remote_images_enabled: boolean;
             /**
+             * @description Whether Discover blends Last.fm and ListenBrainz for a user who
+             *     links both, instead of following only their primary service.
+             * @default true
+             */
+            discover_blend_listening_services: boolean;
+            /**
              * Format: int64
              * @description Discover picks count.
              * @default 12
@@ -22276,7 +22282,7 @@ export interface components {
          * @description Where a shelf's rows came from.
          * @enum {string}
          */
-        ShelfSource: "listenbrainz" | "lastfm" | "jellyfin" | "musicbrainz" | "library" | "local";
+        ShelfSource: "listenbrainz" | "lastfm" | "blended" | "jellyfin" | "musicbrainz" | "library" | "local";
         /** @description `GET /albums/{album_id}/similar`. */
         SimilarAlbumsResponse: {
             /** @description Albums by similar artists. */

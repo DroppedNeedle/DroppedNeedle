@@ -22,7 +22,7 @@ use super::select::{self, Shuffler};
 use super::store::QueueDb;
 use crate::reads::discover::listening::{
     AlbumRow, ArtistRow, Ask, JellyfinList, LastFmAlbum, ListenSource, ListenedAlbum,
-    ListeningData, StatsRange, TagAlbum, UserMusic,
+    ListeningData, StatsRange, TagAlbum, UserMusic, blend,
 };
 use crate::reads::discover::models::QueueItemLight;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
@@ -182,7 +182,10 @@ fn lower_ids(items: &[QueueItemLight]) -> HashSet<String> {
 
 /// Seed artists from the user's listening: Last.fm top artists for a
 /// Last.fm user, else ListenBrainz top artists over widening windows,
-/// else Jellyfin's most played and favorite artists.
+/// else Jellyfin's most played and favorite artists. A user with both
+/// services linked, where the server allows it, gets both lists blended
+/// (artists both name first, then the two alternating, the primary's
+/// first).
 pub(in crate::reads::discover) async fn seed_artists(
     ctx: &BuildContext<'_>,
     user_id: &str,
@@ -190,71 +193,122 @@ pub(in crate::reads::discover) async fn seed_artists(
     source: ListenSource,
 ) -> Vec<ArtistRow> {
     let wanted = ctx.settings.seed_artists.max(1);
-    let mut seeds: Vec<ArtistRow> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut take = |rows: Vec<ArtistRow>, seeds: &mut Vec<ArtistRow>| {
-        for row in rows {
-            if seeds.len() >= wanted {
-                break;
-            }
-            if let Some(mbid) = normalize(row.mbid.as_deref())
-                && seen.insert(mbid.clone())
-            {
-                seeds.push(ArtistRow {
-                    mbid: Some(mbid),
-                    ..row
-                });
-            }
-        }
-    };
-    if source == ListenSource::Lastfm
-        && user.lastfm
-        && let Some(username) = &user.lastfm_username
+    let mut seeds = if ctx
+        .listening
+        .policy_for(user)
+        .blends(ctx.settings.blend_services)
     {
-        let rows = or_empty(
-            "lastfm top artists",
-            ctx.listening
-                .lastfm_user_artists(user_id, username, 10.max(wanted as u32), &ctx.ask)
-                .await,
+        // Each read answers at least ten rows; keeping them all finds more
+        // artists both services name, at no extra read.
+        let keep = wanted.max(10);
+        let (lastfm, listenbrainz) = tokio::join!(
+            lastfm_seeds(ctx, user_id, user, keep),
+            listenbrainz_seeds(ctx, user, wanted, keep),
         );
-        take(rows, &mut seeds);
-    }
-    if source == ListenSource::Lastfm {
+        let (first, second) = match source {
+            ListenSource::Lastfm => (lastfm, listenbrainz),
+            ListenSource::Listenbrainz => (listenbrainz, lastfm),
+        };
+        let mut seeds = blend(first, second, |row| row.mbid.clone(), |kept, _| kept);
+        seeds.truncate(wanted);
+        seeds
+    } else if source == ListenSource::Lastfm {
+        lastfm_seeds(ctx, user_id, user, wanted).await
+    } else {
+        listenbrainz_seeds(ctx, user, wanted, wanted).await
+    };
+    if source == ListenSource::Lastfm || !user.jellyfin {
         return seeds;
     }
-    if let Some(username) = &user.listenbrainz {
-        // Recent listening first, wider windows for quiet but real history.
-        for range in [
-            StatsRange::ThisWeek,
-            StatsRange::ThisMonth,
-            StatsRange::ThisYear,
-            StatsRange::AllTime,
-        ] {
-            if seeds.len() >= wanted {
-                break;
-            }
-            let rows = or_empty(
-                "listenbrainz top artists",
-                ctx.listening
-                    .user_artists(username, range, 10.max(wanted as u32), &ctx.ask)
-                    .await,
-            );
-            take(rows, &mut seeds);
+    let mut seen: HashSet<String> = seeds.iter().filter_map(|row| row.mbid.clone()).collect();
+    for list in [JellyfinList::MostPlayed, JellyfinList::Favorites] {
+        if seeds.len() >= wanted {
+            break;
+        }
+        let rows = or_empty(
+            "jellyfin artists",
+            ctx.listening
+                .jellyfin_artists(user_id, list, 10.max(wanted as u32), &ctx.ask)
+                .await,
+        );
+        take_seeds(rows, &mut seeds, &mut seen, wanted);
+    }
+    seeds
+}
+
+/// Add `rows` with a MusicBrainz id not yet `seen` to `seeds`, up to
+/// `keep`, ids lowercased.
+fn take_seeds(
+    rows: Vec<ArtistRow>,
+    seeds: &mut Vec<ArtistRow>,
+    seen: &mut HashSet<String>,
+    keep: usize,
+) {
+    for row in rows {
+        if seeds.len() >= keep {
+            break;
+        }
+        if let Some(mbid) = normalize(row.mbid.as_deref())
+            && seen.insert(mbid.clone())
+        {
+            seeds.push(ArtistRow {
+                mbid: Some(mbid),
+                ..row
+            });
         }
     }
-    if user.jellyfin {
-        for list in [JellyfinList::MostPlayed, JellyfinList::Favorites] {
-            if seeds.len() >= wanted {
-                break;
-            }
-            let rows = or_empty(
-                "jellyfin artists",
-                ctx.listening
-                    .jellyfin_artists(user_id, list, 10.max(wanted as u32), &ctx.ask)
-                    .await,
-            );
-            take(rows, &mut seeds);
+}
+
+/// Up to `keep` of the user's Last.fm top artists.
+async fn lastfm_seeds(
+    ctx: &BuildContext<'_>,
+    user_id: &str,
+    user: &UserMusic,
+    keep: usize,
+) -> Vec<ArtistRow> {
+    let mut seeds = Vec::new();
+    let Some(username) = user.lastfm_username.as_deref().filter(|_| user.lastfm) else {
+        return seeds;
+    };
+    let rows = or_empty(
+        "lastfm top artists",
+        ctx.listening
+            .lastfm_user_artists(user_id, username, 10.max(keep as u32), &ctx.ask)
+            .await,
+    );
+    take_seeds(rows, &mut seeds, &mut HashSet::new(), keep);
+    seeds
+}
+
+/// The user's ListenBrainz top artists, recent listening first, widening
+/// the window until `wanted` are found; up to `keep` are kept.
+async fn listenbrainz_seeds(
+    ctx: &BuildContext<'_>,
+    user: &UserMusic,
+    wanted: usize,
+    keep: usize,
+) -> Vec<ArtistRow> {
+    let mut seeds = Vec::new();
+    let Some(username) = &user.listenbrainz else {
+        return seeds;
+    };
+    let mut seen = HashSet::new();
+    for range in [
+        StatsRange::ThisWeek,
+        StatsRange::ThisMonth,
+        StatsRange::ThisYear,
+        StatsRange::AllTime,
+    ] {
+        if seeds.len() >= wanted {
+            break;
         }
+        let rows = or_empty(
+            "listenbrainz top artists",
+            ctx.listening
+                .user_artists(username, range, 10.max(wanted as u32), &ctx.ask)
+                .await,
+        );
+        take_seeds(rows, &mut seeds, &mut seen, keep);
     }
     seeds
 }

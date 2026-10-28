@@ -1,7 +1,9 @@
 //! The discover page end to end over a real database: the first visit
 //! starts a background build and answers `loading`, the built page carries
 //! its shelves and is saved, a restart serves the saved page at once,
-//! activity is recorded for the warm cycle, and refresh is accepted.
+//! activity is recorded for the warm cycle, and refresh is accepted. A
+//! user with Last.fm and ListenBrainz both linked gets shelves grown from
+//! both, unless the server turns the blend off.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,6 +20,8 @@ use droppedneedle_catalog::reads::discover::listening::{
     AlbumRow, ArtistRow, ListenedAlbum, RankedAlbum, ScoredArtist, SourceContext, UserMusic,
 };
 use droppedneedle_kernel::db::Lane;
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -377,4 +381,123 @@ async fn a_page_in_an_old_shape_is_dropped() {
         .await
         .expect("rows counted");
     assert_eq!(rows, 0, "the old row is gone");
+}
+
+fn scored(prefix: char, n: u8, score: f64) -> ScoredArtist {
+    ScoredArtist {
+        artist: ArtistRow {
+            name: format!("Artist {prefix}{n}"),
+            mbid: Some(mbid(prefix, n)),
+            listen_count: 0,
+        },
+        score,
+    }
+}
+
+fn seed(name: &str, n: u8) -> ArtistRow {
+    ArtistRow {
+        name: name.to_owned(),
+        mbid: Some(mbid('e', n)),
+        listen_count: 10,
+    }
+}
+
+/// The Because You Listen To entries of a page built for a user who
+/// listens on ListenBrainz (primary) and Last.fm, with the blend `on` or
+/// off: (seed, badge, first similar artist) per entry.
+async fn because_entries(on: bool) -> Vec<(String, String, String)> {
+    let dir = crate::common::ScratchDir::new("discover-blend");
+    let rig = AuthRig::new("discover-blend").await;
+    seed_user(&rig.platform.db).await;
+    rig.config
+        .save_secret_blocking(AdvancedSettings {
+            discover_blend_listening_services: on,
+            ..AdvancedSettings::default()
+        })
+        .expect("advanced settings save");
+    let (lb_only, both, lastfm_only) =
+        (seed("LB Only", 1), seed("Both", 2), seed("Last.fm Only", 3));
+    let script = Script {
+        user: UserMusic {
+            listenbrainz: Some("listener".to_owned()),
+            lastfm_username: Some("scrobbler".to_owned()),
+            lastfm: true,
+            primary: ListenSource::Listenbrainz,
+            ..UserMusic::default()
+        },
+        user_artists: vec![lb_only.clone(), both.clone()],
+        lastfm_user_artists: vec![both.clone(), lastfm_only.clone()],
+        similar: HashMap::from([
+            (
+                lb_only.mbid.clone().unwrap_or_default(),
+                (1..=3).map(|n| scored('b', n, 90.0)).collect(),
+            ),
+            (
+                both.mbid.clone().unwrap_or_default(),
+                (4..=6).map(|n| scored('b', n, 90.0)).collect(),
+            ),
+            (
+                lastfm_only.mbid.clone().unwrap_or_default(),
+                (7..=9).map(|n| scored('b', n, 90.0)).collect(),
+            ),
+        ]),
+        // Last.fm's last pick for "Both" is ListenBrainz's last one too.
+        lastfm_similar: HashMap::from([(
+            both.mbid.clone().unwrap_or_default(),
+            vec![
+                scored('c', 1, 0.9),
+                scored('c', 2, 0.8),
+                scored('b', 6, 0.7),
+            ],
+        )]),
+        ..Script::default()
+    };
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
+        *network = Arc::new(script);
+    }));
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let page = after_commits(&rig.platform.db, "the blended page was built", || async {
+        let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
+        (page["refreshing"] == false).then_some(page)
+    })
+    .await;
+    content(&page, "because_you_listen_to")["entries"]
+        .as_array()
+        .expect("because entries")
+        .iter()
+        .map(|entry| {
+            let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
+            (
+                text(&entry["seed_artist"]),
+                text(&entry["section"]["source"]),
+                text(&entry["section"]["items"][0]["name"]),
+            )
+        })
+        .collect()
+}
+
+/// Blended, the seeds come from both histories with the artist both name
+/// first, its similar artists lead with the one both services suggest,
+/// and the shelves carry the blended badge. Turned off, only the primary
+/// service is read.
+#[tokio::test]
+async fn both_services_blend_unless_the_server_turns_it_off() {
+    let entry = |seed: &str, source: &str, first: &str| {
+        (seed.to_owned(), source.to_owned(), first.to_owned())
+    };
+    assert_eq!(
+        because_entries(true).await,
+        vec![
+            entry("Both", "blended", "Artist b6"),
+            entry("LB Only", "blended", "Artist b1"),
+            entry("Last.fm Only", "blended", "Artist b7"),
+        ]
+    );
+    assert_eq!(
+        because_entries(false).await,
+        vec![
+            entry("LB Only", "listenbrainz", "Artist b1"),
+            entry("Both", "listenbrainz", "Artist b4"),
+        ]
+    );
 }

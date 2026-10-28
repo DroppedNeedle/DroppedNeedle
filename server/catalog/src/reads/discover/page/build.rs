@@ -27,7 +27,7 @@ use super::shelves::{self, RowMut, SHELF_SIZE, album, artist, genre, one, shelf}
 use crate::reads::discover::cache::Variant;
 use crate::reads::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData,
-    PlayedArtist, ScoredArtist, StatsRange, TAG_PAGE, UserMusic,
+    PlayedArtist, ScoredArtist, StatsRange, TAG_PAGE, UserMusic, blend_similar,
 };
 use crate::reads::discover::models::{
     AlbumRef, BecauseYouListenTo, ChartSection, DiscoverResponse, RadioSeedKind, SectionContent,
@@ -242,6 +242,8 @@ struct Ctx<'c> {
     user_id: &'c str,
     user: &'c UserMusic,
     primary: ListenSource,
+    /// The badge of shelves grown from the seed and similar artists.
+    seed_source: ShelfSource,
     seeds: &'c [ArtistRow],
     shared: &'c Shared,
     library_groups: &'c HashSet<String>,
@@ -304,6 +306,24 @@ impl Builder<'_> {
         self.listening.policy_for(user).lastfm_stands_in()
     }
 
+    /// Whether this build blends both services' seed and similar artists
+    /// for the user.
+    fn blends(&self, user: &UserMusic) -> bool {
+        self.listening
+            .policy_for(user)
+            .blends(self.settings.queue.blend_services)
+    }
+
+    /// The badge of shelves grown from the seed and similar artists:
+    /// both services when they are blended, else the primary.
+    fn seed_source(&self, user: &UserMusic, primary: ListenSource) -> ShelfSource {
+        if self.blends(user) {
+            ShelfSource::Blended
+        } else {
+            primary.into()
+        }
+    }
+
     /// Build the page's `wanted` sections, in page order.
     pub async fn build(&self, user_id: &str, wanted: &[&'static SectionDef]) -> Built {
         let policy = self.listening.policy(user_id).await;
@@ -349,6 +369,7 @@ impl Builder<'_> {
             user_id,
             user: &user,
             primary,
+            seed_source: self.seed_source(&user, primary),
             seeds: &seeds,
             shared: &shared,
             library_groups: &library_groups,
@@ -477,11 +498,13 @@ impl Builder<'_> {
         let shared = ctx.shared;
         match key {
             SectionKey::BecauseYouListenTo => Some(SectionContent::Because {
-                entries: because_sections(ctx.seeds, &shared.similar, seen, ctx.primary),
+                entries: because_sections(ctx.seeds, &shared.similar, seen, ctx.seed_source),
             }),
-            SectionKey::ArtistsYouMightLike => {
-                one(artists_you_might_like(&shared.similar, seen, ctx.primary))
-            }
+            SectionKey::ArtistsYouMightLike => one(artists_you_might_like(
+                &shared.similar,
+                seen,
+                ctx.seed_source,
+            )),
             SectionKey::PopularInYourGenres => one(self
                 .popular_in_genres(ctx.user_id, ctx.primary, shared, seen)
                 .await),
@@ -512,12 +535,21 @@ impl Builder<'_> {
         self.library.pool()
     }
 
-    fn memo_key<'k>(&'k self, user_id: &'k str, primary: ListenSource) -> MemoKey<'k> {
+    fn memo_key<'k>(
+        &'k self,
+        user_id: &'k str,
+        user: &UserMusic,
+        primary: ListenSource,
+    ) -> MemoKey<'k> {
         MemoKey {
             user_id,
             variant: self.variant,
             generation: self.generation,
-            listening: primary.as_str(),
+            listening: if self.blends(user) {
+                "blended"
+            } else {
+                primary.as_str()
+            },
             today: &self.today,
         }
     }
@@ -541,6 +573,9 @@ impl Builder<'_> {
         // empty in a popularity outage; Last.fm stands in then, and always
         // for users who chose Last.fm.
         let lastfm_similar = policy.popularity() == ListenSource::Lastfm;
+        // Blended, both services answer and their lists merge; in a
+        // popularity outage Last.fm answers alone, as above.
+        let blend = policy.blends(self.settings.queue.blend_services) && !policy.popularity_down();
         const SIMILAR_KEYS: [&str; SEEDS] = ["similar_0", "similar_1", "similar_2"];
         let similar_seeds = if needs(Input::Similar) { SEEDS } else { 0 };
         let similar = join_all(seeds.iter().take(similar_seeds).enumerate().map(
@@ -551,7 +586,23 @@ impl Builder<'_> {
                         return Vec::new();
                     };
                     let read = async {
-                        if lastfm_similar {
+                        if blend {
+                            let (lastfm, listenbrainz) = tokio::join!(
+                                listening.lastfm_similar(user_id, seed, 20, ask),
+                                listening.similar_artists(user_id, mbid, 20, ask),
+                            );
+                            let (first, second) = match primary {
+                                ListenSource::Lastfm => (lastfm, listenbrainz),
+                                ListenSource::Listenbrainz => (listenbrainz, lastfm),
+                            };
+                            match (first, second) {
+                                (Err(cause), Err(_)) => Err(cause),
+                                (first, second) => Ok(blend_similar(
+                                    or_empty("similar artists", first),
+                                    or_empty("similar artists", second),
+                                )),
+                            }
+                        } else if lastfm_similar {
                             listening.lastfm_similar(user_id, seed, 20, ask).await
                         } else {
                             listening.similar_artists(user_id, mbid, 20, ask).await
@@ -879,7 +930,7 @@ impl Builder<'_> {
         shared: &Shared,
         library_groups: &HashSet<String>,
     ) -> Vec<ChartSection> {
-        let key = self.memo_key(user_id, primary);
+        let key = self.memo_key(user_id, user, primary);
         if let Some(mixes) = self.memo.mixes(&key).await {
             return mixes;
         }
@@ -1117,6 +1168,7 @@ impl Builder<'_> {
         seeds: &[ArtistRow],
         library_groups: &HashSet<String>,
     ) -> Vec<ChartSection> {
+        let source = self.seed_source(user, primary);
         let built = join_all(seeds.iter().take(SEEDS).filter(|s| s.mbid.is_some()).map(
             |seed| async move {
                 let seed_mbid = seed.mbid.clone().unwrap_or_default();
@@ -1158,7 +1210,7 @@ impl Builder<'_> {
                     title: format!("Radio: {}", seed.name),
                     kind: SectionKind::Albums,
                     items,
-                    source: Some(primary.into()),
+                    source: Some(source),
                     fallback_message: None,
                     connect_service: None,
                     radio_seed_type: Some(RadioSeedKind::Artist),
@@ -1183,7 +1235,7 @@ impl Builder<'_> {
         seeds: &[ArtistRow],
         shared: &Shared,
     ) -> Option<TopPicksSection> {
-        let key = self.memo_key(user_id, primary);
+        let key = self.memo_key(user_id, user, primary);
         if let Some(picks) = self.memo.picks(&key).await {
             return picks;
         }
@@ -1406,7 +1458,7 @@ impl Builder<'_> {
                     }
                 })
                 .collect(),
-            source: Some(primary.into()),
+            source: Some(self.seed_source(user, primary)),
             personalizing: degraded,
         };
         (Some(section), degraded)
@@ -1894,7 +1946,7 @@ fn because_sections(
     seeds: &[ArtistRow],
     similar: &[Vec<ScoredArtist>],
     seen: &mut HashSet<String>,
-    primary: ListenSource,
+    source: ShelfSource,
 ) -> Vec<BecauseYouListenTo> {
     let mut sections = Vec::new();
     for (seed, rows) in seeds.iter().zip(similar) {
@@ -1920,7 +1972,7 @@ fn because_sections(
             &format!("Because You Listen To {}", seed.name),
             SectionKind::Artists,
             items,
-            Some(primary.into()),
+            Some(source),
         ) else {
             continue;
         };
@@ -1941,7 +1993,7 @@ fn because_sections(
 fn artists_you_might_like(
     similar: &[Vec<ScoredArtist>],
     seen: &mut HashSet<String>,
-    primary: ListenSource,
+    source: ShelfSource,
 ) -> Option<ChartSection> {
     let mut rows: Vec<&ArtistRow> = Vec::new();
     for scored in similar.iter().flatten() {
@@ -1962,7 +2014,7 @@ fn artists_you_might_like(
         "Artists You Might Like",
         SectionKind::Artists,
         items,
-        Some(primary.into()),
+        Some(source),
     )
 }
 

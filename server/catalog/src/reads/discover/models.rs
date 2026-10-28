@@ -97,6 +97,8 @@ pub enum ShelfSource {
     Listenbrainz,
     /// Last.fm.
     Lastfm,
+    /// Last.fm and ListenBrainz blended, for a user who links both.
+    Blended,
     /// The user's Jellyfin server.
     Jellyfin,
     /// MusicBrainz.

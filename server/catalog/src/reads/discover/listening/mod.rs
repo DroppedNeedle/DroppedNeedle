@@ -27,7 +27,7 @@ mod rows;
 
 pub use live::LiveNetwork;
 pub use network::{ListeningNetwork, Read};
-pub use policy::SourcePolicy;
+pub use policy::{SourcePolicy, blend, blend_similar};
 pub use rows::*;
 
 use std::collections::HashMap;

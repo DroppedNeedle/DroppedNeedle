@@ -92,3 +92,12 @@
 		step={0.1}
 	/>
 </div>
+<div class="divider my-4"></div>
+<h4 class="font-medium text-sm text-base-content/70 mb-3">Listening Services</h4>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+	<ToggleRow
+		label="Blend Last.fm and ListenBrainz"
+		description="Use both when a user links both"
+		bind:checked={data.discover_blend_listening_services}
+	/>
+</div>

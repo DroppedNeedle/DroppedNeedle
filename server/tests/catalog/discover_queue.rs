@@ -52,6 +52,10 @@ pub(crate) struct Script {
     pub lastfm_users: Vec<String>,
     /// The Last.fm chart, answered to users who can read Last.fm.
     pub lastfm_chart: Vec<ArtistRow>,
+    /// The user's Last.fm top artists.
+    pub lastfm_user_artists: Vec<ArtistRow>,
+    /// Last.fm's similar artists, by the asked artist's MBID.
+    pub lastfm_similar: HashMap<String, Vec<ScoredArtist>>,
     pub source: Option<SourceContext>,
     pub user_artists: Vec<ArtistRow>,
     pub user_albums: Vec<ListenedAlbum>,
@@ -231,7 +235,7 @@ impl ListeningNetwork for Script {
         _l: u32,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<ArtistRow>> {
-        ok(Vec::new())
+        ok(self.lastfm_user_artists.clone())
     }
     fn lastfm_user_albums<'a>(
         &'a self,
@@ -246,11 +250,17 @@ impl ListeningNetwork for Script {
     fn lastfm_similar<'a>(
         &'a self,
         _id: &'a str,
-        _a: &'a ArtistRow,
+        artist: &'a ArtistRow,
         _l: u32,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<ScoredArtist>> {
-        ok(Vec::new())
+        let rows = artist
+            .mbid
+            .as_ref()
+            .and_then(|mbid| self.lastfm_similar.get(mbid))
+            .cloned()
+            .unwrap_or_default();
+        ok(rows)
     }
     fn lastfm_artist_albums<'a>(
         &'a self,

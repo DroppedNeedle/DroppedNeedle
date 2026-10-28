@@ -35374,6 +35374,11 @@
             "description": "Direct remote images.",
             "default": true
           },
+          "discover_blend_listening_services": {
+            "type": "boolean",
+            "description": "Whether Discover blends Last.fm and ListenBrainz for a user who\nlinks both, instead of following only their primary service.",
+            "default": true
+          },
           "discover_picks_count": {
             "type": "integer",
             "format": "int64",
@@ -63412,6 +63417,7 @@
         "enum": [
           "listenbrainz",
           "lastfm",
+          "blended",
           "jellyfin",
           "musicbrainz",
           "library",
