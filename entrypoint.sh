@@ -86,8 +86,11 @@ if [ "$(id -g droppedneedle)" != "$PGID" ]; then
         echo "[init] WARNING: Could not set droppedneedle group to GID=$PGID."
     fi
 fi
-if [ "$(id -u droppedneedle)" != "$PUID" ]; then
-    if ! usermod -o -u "$PUID" droppedneedle 2>/dev/null; then
+PREVIOUS_UID=$(id -u droppedneedle)
+if [ "$PREVIOUS_UID" != "$PUID" ]; then
+    # -d /nonexistent keeps usermod from chowning its home tree; a home of
+    # /app would copy the whole application up into the container layer.
+    if ! usermod -o -u "$PUID" -d /nonexistent droppedneedle 2>/dev/null; then
         echo "[init] WARNING: Could not set droppedneedle user to UID=$PUID."
     fi
 fi
@@ -95,6 +98,17 @@ fi
 TARGET_UID=$(id -u droppedneedle)
 TARGET_GID=$(id -g droppedneedle)
 echo "[init] Runtime user: droppedneedle (uid=$TARGET_UID gid=$TARGET_GID)"
+
+# Hand the data directories over to the new UID ourselves, touching only
+# files the previous UID still owns, so an already migrated tree is just read.
+if [ "$TARGET_UID" != "$PREVIOUS_UID" ]; then
+    for dir in /app/config /app/cache /app/plugins /app/imports; do
+        [ -d "$dir" ] || continue
+        if ! find "$dir" -user "$PREVIOUS_UID" -exec chown -h "$TARGET_UID:$TARGET_GID" {} + 2>/dev/null; then
+            echo "[init] WARNING: Could not hand $dir over to uid=$TARGET_UID (mount may not support ownership changes)."
+        fi
+    done
+fi
 
 if [ "$TARGET_UID" != "$PUID" ]; then
     echo "[init] WARNING: Requested PUID=$PUID but running as uid=$TARGET_UID (usermod may have failed)."
