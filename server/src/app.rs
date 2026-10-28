@@ -230,7 +230,7 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
         .optional_area(reads::catalog::routes(), |state| {
             state.reads.catalog.clone()
         })
-        .optional_area(
+        .area(
             droppedneedle_catalog::concerts::handlers::routes(),
             |state| state.concerts.service(),
         )

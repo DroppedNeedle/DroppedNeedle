@@ -44305,7 +44305,7 @@
       },
       "EventCity": {
         "type": "object",
-        "description": "One saved city.",
+        "description": "One saved city. Its coordinates are in range and its radius is\nwithin 1-500 km.",
         "required": [
           "city_name",
           "latitude",

@@ -44,11 +44,6 @@ pub use sweep::ConcertsSweep;
 /// bundle runs.
 #[derive(Clone)]
 pub struct ConcertsSetup {
-    live: Option<Live>,
-}
-
-#[derive(Clone)]
-struct Live {
     store: store::ConcertsStore,
     settings: LiveSettings<EventsSettings>,
     sources: Arc<sources::Sources>,
@@ -79,40 +74,33 @@ impl ConcertsSetup {
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
-            live: Some(Live {
-                store: store::ConcertsStore::new(db),
-                settings,
-                sources: Arc::new(sources::Sources::new(providers)),
-                events,
-                clock,
-            }),
+            store: store::ConcertsStore::new(db),
+            settings,
+            sources: Arc::new(sources::Sources::new(providers)),
+            events,
+            clock,
         }
     }
 
-    /// The sweep the events watcher and the settings kick run; `None` when
-    /// unwired.
-    pub fn sweep(&self) -> Option<ConcertsSweep> {
-        self.live.as_ref().map(|live| {
-            ConcertsSweep::new(
-                live.store.clone(),
-                live.settings.clone(),
-                Arc::clone(&live.sources),
-                Arc::clone(&live.events),
-                Arc::clone(&live.clock),
-            )
-        })
+    /// The sweep the events watcher and the settings kick run.
+    pub fn sweep(&self) -> ConcertsSweep {
+        ConcertsSweep::new(
+            self.store.clone(),
+            self.settings.clone(),
+            Arc::clone(&self.sources),
+            Arc::clone(&self.events),
+            Arc::clone(&self.clock),
+        )
     }
 
-    /// The service the concerts routes run on; `None` when unwired.
-    pub fn service(&self) -> Option<ConcertsService> {
-        self.live.as_ref().map(|live| {
-            ConcertsService::new(
-                live.store.clone(),
-                live.settings.clone(),
-                Arc::clone(&live.sources),
-                Arc::clone(&live.clock),
-            )
-        })
+    /// The service the concerts routes run on.
+    pub fn service(&self) -> ConcertsService {
+        ConcertsService::new(
+            self.store.clone(),
+            self.settings.clone(),
+            Arc::clone(&self.sources),
+            Arc::clone(&self.clock),
+        )
     }
 }
 

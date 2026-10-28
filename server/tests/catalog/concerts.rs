@@ -245,12 +245,12 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
     );
     let app = with_test_principal(
         droppedneedle_catalog::concerts::handlers::routes()
-            .with_state(setup.service().expect("wired concerts"))
+            .with_state(setup.service())
             .into_router(),
         test_principal("u1", Role::User, "s1", SessionKind::Standard),
     );
     let stop = droppedneedle_kernel::jobs::CancellationToken::new();
-    let sweep = setup.sweep().expect("wired concerts sweep").without_delay();
+    let sweep = setup.sweep().without_delay();
 
     let (_, first) = sweep.run(None, &stop).await.unwrap();
     assert_eq!(

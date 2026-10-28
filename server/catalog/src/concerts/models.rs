@@ -115,19 +115,70 @@ pub struct ConcertsResponse {
     pub total: usize,
 }
 
-/// One saved city.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+/// Cities kept per user, from v2.
+pub const MAX_CITIES: usize = 50;
+/// Radius clamp in km, from v2.
+pub const MIN_RADIUS_KM: f64 = 1.0;
+/// Radius clamp in km, from v2.
+pub const MAX_RADIUS_KM: f64 = 500.0;
+
+/// One saved city. Its coordinates are in range and its radius is
+/// within 1-500 km.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct EventCity {
     /// Display name.
-    pub city_name: String,
+    pub(super) city_name: String,
     /// Latitude in degrees.
-    pub latitude: f64,
+    pub(super) latitude: f64,
     /// Longitude in degrees.
-    pub longitude: f64,
+    pub(super) longitude: f64,
     /// Match radius in km.
-    pub radius_km: f64,
+    pub(super) radius_km: f64,
     /// Country code, when known.
-    pub country_code: Option<String>,
+    pub(super) country_code: Option<String>,
+}
+
+/// Why a city cannot be saved. The text is user-facing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum InvalidCity {
+    /// Latitude outside -90 to 90.
+    #[error("latitude must be between -90 and 90")]
+    Latitude,
+    /// Longitude outside -180 to 180.
+    #[error("longitude must be between -180 and 180")]
+    Longitude,
+    /// Radius not a finite number.
+    #[error("radius_km must be a number")]
+    Radius,
+}
+
+impl EventCity {
+    /// A city with its radius clamped to [`MIN_RADIUS_KM`]-[`MAX_RADIUS_KM`].
+    /// Coordinates out of range or a radius that is not a number refuse.
+    pub fn new(
+        city_name: String,
+        latitude: f64,
+        longitude: f64,
+        radius_km: f64,
+        country_code: Option<String>,
+    ) -> Result<Self, InvalidCity> {
+        if !(-90.0..=90.0).contains(&latitude) {
+            return Err(InvalidCity::Latitude);
+        }
+        if !(-180.0..=180.0).contains(&longitude) {
+            return Err(InvalidCity::Longitude);
+        }
+        if !radius_km.is_finite() {
+            return Err(InvalidCity::Radius);
+        }
+        Ok(Self {
+            city_name,
+            latitude,
+            longitude,
+            radius_km: radius_km.clamp(MIN_RADIUS_KM, MAX_RADIUS_KM),
+            country_code,
+        })
+    }
 }
 
 /// One city as the picker submits it.
@@ -153,7 +204,7 @@ fn default_radius_km() -> f64 {
 }
 
 /// The caller's saved cities, in picker order.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct EventCitiesResponse {
     /// Cities in order.
     pub items: Vec<EventCity>,

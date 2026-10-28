@@ -13865,7 +13865,10 @@ export interface components {
             /** @description Cities in order. At most 50 are kept. */
             items: components["schemas"]["EventCityInput"][];
         };
-        /** @description One saved city. */
+        /**
+         * @description One saved city. Its coordinates are in range and its radius is
+         *     within 1-500 km.
+         */
         EventCity: {
             /** @description Display name. */
             city_name: string;

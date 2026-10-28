@@ -12,7 +12,7 @@ use std::sync::Arc;
 use super::matching::{MatchedConcert, filter_to_cities};
 use super::models::{
     CitySearchResponse, CitySearchResult, Concert, ConcertsResponse, EventCitiesResponse,
-    EventCity, EventCityInput,
+    EventCity, EventCityInput, MAX_CITIES,
 };
 use super::sources::Sources;
 use super::store::{ConcertsStore, StoreError};
@@ -23,12 +23,6 @@ use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, Even
 use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::error::ProviderError;
 
-/// Cities kept per user, from v2.
-pub const MAX_CITIES: usize = 50;
-/// Radius clamp in km, from v2.
-pub const MIN_RADIUS_KM: f64 = 1.0;
-/// Radius clamp in km, from v2.
-pub const MAX_RADIUS_KM: f64 = 500.0;
 /// City search length bounds in characters, from v2.
 const SEARCH_CHARS: std::ops::RangeInclusive<usize> = 2..=100;
 
@@ -157,37 +151,20 @@ impl ConcertsService {
         user_id: &str,
         items: Vec<EventCityInput>,
     ) -> Result<EventCitiesResponse, ConcertsError> {
-        for item in &items {
-            if !(-90.0..=90.0).contains(&item.latitude) {
-                return Err(ConcertsError::InvalidInput(
-                    "latitude must be between -90 and 90".to_owned(),
-                ));
-            }
-            if !(-180.0..=180.0).contains(&item.longitude) {
-                return Err(ConcertsError::InvalidInput(
-                    "longitude must be between -180 and 180".to_owned(),
-                ));
-            }
-            if !item.radius_km.is_finite() {
-                return Err(ConcertsError::InvalidInput(
-                    "radius_km must be a number".to_owned(),
-                ));
+        let mut cities = Vec::with_capacity(items.len().min(MAX_CITIES));
+        for item in items {
+            let city = EventCity::new(
+                item.city_name.trim().to_owned(),
+                item.latitude,
+                item.longitude,
+                item.radius_km,
+                item.country_code,
+            )
+            .map_err(|invalid| ConcertsError::InvalidInput(invalid.to_string()))?;
+            if !city.city_name.is_empty() && cities.len() < MAX_CITIES {
+                cities.push(city);
             }
         }
-        let cities: Vec<EventCity> = items
-            .into_iter()
-            .filter_map(|item| {
-                let city_name = item.city_name.trim().to_owned();
-                (!city_name.is_empty()).then(|| EventCity {
-                    city_name,
-                    latitude: item.latitude,
-                    longitude: item.longitude,
-                    radius_km: item.radius_km.clamp(MIN_RADIUS_KM, MAX_RADIUS_KM),
-                    country_code: item.country_code,
-                })
-            })
-            .take(MAX_CITIES)
-            .collect();
         self.store.replace_cities(user_id, cities).await?;
         self.cities(user_id).await
     }

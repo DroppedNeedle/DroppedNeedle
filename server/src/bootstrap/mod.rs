@@ -439,7 +439,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         p,
         runtime.checkpoint().clone(),
         media.jobs(p),
-        concerts.sweep(),
+        Some(concerts.sweep()),
         scans.clone(),
     )
     .with_queue(queues)
