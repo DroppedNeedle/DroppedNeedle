@@ -193,23 +193,37 @@ impl CompatApp {
         rig
     }
 
-    /// Wait until the stored Jellyfin ids are loaded and hold every item
-    /// written so far, so a picture request without sign-in finds them.
+    /// Make the stored Jellyfin ids hold every item written so far and load
+    /// them, so a picture request without sign-in finds them and a signed-in
+    /// one never waits on the fill.
+    ///
+    /// The rig runs one fill pass itself, as the fill loop would. Waiting on
+    /// the loop instead needs a whole pass to start and end inside one
+    /// lookup wait while other loops keep committing, which a loaded host
+    /// can starve; the loop's own pacing is tested on its own.
+    /// A pass stores only what is missing, so running one beside the loop
+    /// is safe.
     pub async fn jellyfin_ids_caught_up(&self) {
+        use droppedneedle_compat::adapters::jellyfin_ids::IdsError;
         let ids = self.app.state().compat.jellyfin_ids().clone();
-        self.app
-            .until("the stored jellyfin ids caught up", || {
-                let ids = ids.clone();
-                async move { (ids.ready() && ids.caught_up().await).then_some(()) }
-            })
-            .await;
+        let deadline = std::time::Instant::now() + super::PATIENCE;
+        loop {
+            match ids.fill().pass().await {
+                Ok(_) => break,
+                Err(IdsError::Busy) if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+                Err(error) => panic!("the jellyfin ids fill: {error}"),
+            }
+        }
+        assert!(ids.ready(), "a finished pass loads the ids");
     }
 
     /// A new app password for the account signed in as `authorization`.
     pub async fn app_password(&self, authorization: &str) -> String {
         let (status, created) = self
             .app
-            .call(
+            .call_through_busy(
                 "POST",
                 "/api/v3/me/app-passwords",
                 &[("authorization", authorization)],
@@ -227,7 +241,7 @@ impl CompatApp {
         let admin = [("authorization", admin.as_str())];
         let (status, mut apps) = self
             .app
-            .call("GET", "/api/v3/settings/connect-apps", &admin, None)
+            .call_through_busy("GET", "/api/v3/settings/connect-apps", &admin, None)
             .await;
         assert_eq!(status, StatusCode::OK, "{apps}");
         for (key, value) in patch.as_object().expect("patch is an object") {
@@ -235,7 +249,7 @@ impl CompatApp {
         }
         let (status, saved) = self
             .app
-            .call("PUT", "/api/v3/settings/connect-apps", &admin, Some(apps))
+            .call_through_busy("PUT", "/api/v3/settings/connect-apps", &admin, Some(apps))
             .await;
         assert_eq!(status, StatusCode::OK, "{saved}");
     }
@@ -264,7 +278,7 @@ impl CompatApp {
         let admin = self.app.login_admin().await;
         let (status, body) = self
             .app
-            .call(
+            .call_through_busy(
                 "PUT",
                 &format!("/api/v3/admin/users/{}/role", login.user_id),
                 &[("authorization", admin.as_str())],
@@ -280,7 +294,7 @@ impl CompatApp {
         let admin = self.app.login_admin().await;
         let (status, body) = self
             .app
-            .call(
+            .call_through_busy(
                 "PUT",
                 "/api/v3/settings/lyrics",
                 &[("authorization", admin.as_str())],
@@ -299,7 +313,7 @@ impl CompatApp {
             .until("the lyrics mark", || async {
                 let (status, tracks) = self
                     .app
-                    .call(
+                    .call_through_busy(
                         "GET",
                         "/jellyfin/Items?Recursive=true&IncludeItemTypes=Audio",
                         &headers,

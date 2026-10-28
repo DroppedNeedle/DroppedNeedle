@@ -1001,7 +1001,8 @@ async fn jellyfin_answers_busy_until_its_ids_load_and_waits_once_per_request() {
     assert_ne!(status, StatusCode::SERVICE_UNAVAILABLE);
 
     write_catalog(&rig, "").await;
-    let unseen = (1..=3)
+    const MISSES: u32 = 10;
+    let unseen = (1..=MISSES)
         .map(|n| format!("{n:032x}"))
         .collect::<Vec<_>>()
         .join(",");
@@ -1016,7 +1017,7 @@ async fn jellyfin_answers_busy_until_its_ids_load_and_waits_once_per_request() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["TotalRecordCount"], 0, "{body}");
     assert!(took >= wait, "the misses waited for the fill: {took:?}");
-    // One wait for all three misses; a wait per miss would take at least
-    // three times as long.
-    assert!(took < wait * 3, "three misses waited once: {took:?}");
+    // One wait for all the misses; a wait per miss would take at least ten
+    // times as long, which leaves a loaded host most of that to answer in.
+    assert!(took < wait * MISSES, "the misses waited once: {took:?}");
 }

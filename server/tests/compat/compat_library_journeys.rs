@@ -170,6 +170,7 @@ async fn finamp_browse_stream_favorite_playlist_progress() {
         )
         .await;
     let playlist_id = created["Id"].as_str().expect("playlist id").to_owned();
+    rig.jellyfin_ids_caught_up().await;
     let entries = trace
         .get(&format!("/jellyfin/Playlists/{playlist_id}/Items"), &auth)
         .await;
@@ -451,6 +452,7 @@ async fn jellyfin_pinned_reference_shapes() {
         )
         .await;
     let playlist_id = created["Id"].as_str().expect("playlist id");
+    rig.jellyfin_ids_caught_up().await;
     trace
         .get(&format!("/jellyfin/Playlists/{playlist_id}/Items"), &auth)
         .await;

@@ -1423,6 +1423,7 @@ async fn playlists_create_add_move_remove() {
         .as_str()
         .expect("playlist id")
         .to_owned();
+    rig.jellyfin_ids_caught_up().await;
     let detail = json(&rig, &format!("/jellyfin/Playlists/{pid}"), &auth).await;
     assert_eq!(detail["Name"], "Road");
     assert_eq!(detail["ItemIds"], json!([airbag]));
@@ -1469,6 +1470,7 @@ async fn playlists_create_add_move_remove() {
         .as_str()
         .expect("playlist id")
         .to_owned();
+    rig.jellyfin_ids_caught_up().await;
     let detail = json(&rig, &format!("/jellyfin/Playlists/{pid2}"), &auth).await;
     assert_eq!(detail["Name"], "Playlist");
 
@@ -1820,6 +1822,7 @@ async fn a_private_playlist_answers_only_its_owner() {
         .as_str()
         .expect("playlist id")
         .to_owned();
+    rig.jellyfin_ids_caught_up().await;
     let uri = format!("/jellyfin/Playlists/{pid}");
     let carol = rig.app.login_user("carol").await;
     let carol = finamp(&rig.app_password(&carol.authorization).await);
