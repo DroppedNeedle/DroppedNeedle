@@ -5,11 +5,12 @@
 //! on a person: an undone automatic edition with nothing to go back to,
 //! editions dropped when albums were combined, and repair findings.
 //!
-//! Choosing a candidate and keeping the album as tagged live with the
-//! identify service. This module adds the rest of what v2 offered:
-//! dismiss (close without a decision), detach (take the match off and keep
-//! the tags), exclude (take the files out of the library) and restore
-//! (put them back). Each runs inside the caller's transaction.
+//! Choosing a candidate seals through the identify service. This module
+//! settles the rest of what v2 offered: keep as tagged, dismiss (close
+//! without a decision), detach (take the match off and keep the tags),
+//! exclude (take the files out of the library) and restore (put them
+//! back). Each runs inside the caller's transaction, and only while the
+//! review is still at the revision the person saw.
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
@@ -81,26 +82,32 @@ pub struct ReviewRow {
     pub manual_identity: bool,
     /// The album's files as (track id, title), for the evidence list.
     pub tracks: Vec<(String, String)>,
+    /// Goes up whenever the review's state, candidates, reason or album
+    /// changes; an action names the revision it was decided on.
+    pub row_revision: i64,
 }
 
-/// What a person does with a review besides choosing or keeping tags.
+/// What a person does with a review besides choosing a release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewAction {
+    /// The album keeps its tags; nothing seals.
+    KeepTagged,
     Dismiss,
     Detach,
     Exclude,
     Restore,
 }
 
-/// A review row's columns; the last says whether a person's choice, made
-/// now or carried over from v2, holds the album.
+/// A review row's columns; the one before the revision says whether a
+/// person's choice, made now or carried over from v2, holds the album.
 fn row_columns() -> String {
     format!(
         "r.id, r.local_album_id, r.reason_code, r.candidates_json, r.state, \
          r.resolved_by_user_id, r.selected_candidate_key, COALESCE(a.title, ''), \
          COALESCE(a.album_artist_name, ''), r.created_ms, r.updated_ms, \
          EXISTS (SELECT 1 FROM local_album_external_identities e \
-                 WHERE e.local_album_id = r.local_album_id AND e.decision_source IN {})",
+                 WHERE e.local_album_id = r.local_album_id AND e.decision_source IN {}), \
+         r.row_revision",
         crate::identity::sql::PERSONS
     )
 }
@@ -117,6 +124,7 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewRow>> {
         updated_ms: row.get(10)?,
         manual_identity: row.get(11)?,
         tracks: Vec::new(),
+        row_revision: row.get(12)?,
     }))
 }
 
@@ -295,7 +303,8 @@ impl Tally {
 }
 
 /// What a bulk action does to each selected review.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum BulkAction {
     /// Keep the album as tagged.
     KeepTagged,
@@ -319,19 +328,22 @@ impl BulkAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BulkItem {
     pub review_id: String,
+    /// The review's revision when the plan was made.
+    pub revision: i64,
     /// The release an accept uses.
     pub candidate_key: Option<String>,
 }
 
-/// A bulk action's preview.
+/// A bulk action's plan.
 #[derive(Debug, Clone)]
 pub struct BulkPlan {
     /// Reviews the selection matched.
     pub matched: u64,
     pub items: Vec<BulkItem>,
     pub skipped: Vec<(reasons::Reason, u32)>,
-    /// Names exactly this action over exactly these reviews.
-    pub token: String,
+    /// Names exactly this action over exactly these reviews at these
+    /// revisions; the preview token covers it.
+    pub material: String,
 }
 
 /// Work out which selected reviews a bulk action changes. Only pending
@@ -343,8 +355,6 @@ pub fn plan_bulk(
     action: BulkAction,
     candidate_key: Option<&str>,
 ) -> BulkPlan {
-    use sha2::Digest as _;
-
     let mut tally = Tally::default();
     let mut items = Vec::new();
     for row in rows {
@@ -393,27 +403,23 @@ pub fn plan_bulk(
         };
         items.push(BulkItem {
             review_id: review.id.clone(),
+            revision: row.row_revision,
             candidate_key: candidate,
         });
     }
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(action.name());
-    for item in &items {
-        hasher.update(b"\n");
-        hasher.update(&item.review_id);
-        hasher.update(b"=");
-        hasher.update(item.candidate_key.as_deref().unwrap_or_default());
-    }
-    let token = hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let material = serde_json::json!({
+        "action": action.name(),
+        "items": items
+            .iter()
+            .map(|item| (&item.review_id, item.revision, &item.candidate_key))
+            .collect::<Vec<_>>(),
+    })
+    .to_string();
     BulkPlan {
         matched,
         items,
         skipped: tally.skipped,
-        token,
+        material,
     }
 }
 
@@ -439,38 +445,53 @@ pub fn get(conn: &Connection, review_id: &str) -> rusqlite::Result<Option<Review
     .transpose()
 }
 
-/// Settle a review with `action`. Dismiss, detach and exclude need a
-/// pending review; restore needs an excluded one.
+/// The album of a review that is still at `expected_revision` and in
+/// state `needed`. A review that changed since is `STALE_REVISION`; one
+/// at that revision in another state is `settled`.
+pub fn guard(
+    tx: &Transaction<'_>,
+    review_id: &str,
+    expected_revision: i64,
+    needed: ReviewState,
+    settled: reasons::Reason,
+) -> Result<String, OperationError> {
+    let (album_id, state, revision): (String, String, i64) = tx
+        .query_row(
+            "SELECT local_album_id, state, row_revision FROM library_identify_reviews \
+             WHERE id = ?1",
+            [review_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?
+        .ok_or(OperationError::NotFound(reasons::REVIEW_NOT_FOUND))?;
+    if revision != expected_revision {
+        return Err(OperationError::Conflict(reasons::REVIEW_STALE));
+    }
+    if state != state_name(needed) {
+        return Err(OperationError::Conflict(settled));
+    }
+    Ok(album_id)
+}
+
+/// Settle a review with `action`, decided on its `expected_revision`.
+/// Every action but restore needs a pending review; restore needs an
+/// excluded one.
 pub fn settle(
     tx: &Transaction<'_>,
     review_id: &str,
     action: ReviewAction,
+    expected_revision: i64,
     actor: &str,
     now: f64,
 ) -> Result<(), OperationError> {
-    let (album_id, state): (String, String) = tx
-        .query_row(
-            "SELECT local_album_id, state FROM library_identify_reviews WHERE id = ?1",
-            [review_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?
-        .ok_or(OperationError::NotFound(reasons::REVIEW_NOT_FOUND))?;
-    let needed = if action == ReviewAction::Restore {
-        "excluded"
+    let (needed, settled) = if action == ReviewAction::Restore {
+        (ReviewState::Excluded, reasons::REVIEW_NOT_EXCLUDED)
     } else {
-        "pending"
+        (ReviewState::Pending, reasons::REVIEW_SETTLED)
     };
-    if state != needed {
-        return Err(OperationError::Conflict(
-            if action == ReviewAction::Restore {
-                reasons::REVIEW_NOT_EXCLUDED
-            } else {
-                reasons::REVIEW_SETTLED
-            },
-        ));
-    }
+    let album_id = guard(tx, review_id, expected_revision, needed, settled)?;
     let next = match action {
+        ReviewAction::KeepTagged => ReviewState::Rejected,
         ReviewAction::Dismiss => ReviewState::Dismissed,
         ReviewAction::Detach => {
             choice::detach_by_person(tx, &album_id, DETACHED, actor, now)?;
@@ -485,7 +506,7 @@ pub fn settle(
             ReviewState::Dismissed
         }
     };
-    if !mark(tx, review_id, needed, next, actor, now)? {
+    if !mark(tx, review_id, state_name(needed), next, actor, now)? {
         return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
     }
     Ok(())

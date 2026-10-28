@@ -1,5 +1,6 @@
 import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
+import type { components } from '$lib/api/v3/openapi';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 import { searchStore } from '$lib/stores/search';
@@ -30,6 +31,11 @@ async function invalidateReviewState(options?: { catalog?: boolean }): Promise<v
 	]);
 }
 
+// A refused single action usually means the review changed under the
+// person: the list reloads so they decide on what it shows now.
+const reloadReviews = () =>
+	invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.reviewsPrefix() });
+
 export type ReviewAction = 'keep_tagged' | 'dismiss' | 'detach' | 'exclude' | 'restore';
 
 const ACTION_TOAST: Record<ReviewAction, string> = {
@@ -40,59 +46,72 @@ const ACTION_TOAST: Record<ReviewAction, string> = {
 	restore: 'Album is back in the library'
 };
 
-function post(action: ReviewAction, reviewId: string) {
+/** One review action, decided on the review's `row_revision` as it was read. */
+export interface ReviewActionInput {
+	reviewId: string;
+	revision: number;
+	action: ReviewAction;
+}
+
+function post({ reviewId, revision, action }: ReviewActionInput) {
+	const body = { expected_revision: revision };
 	switch (action) {
 		case 'keep_tagged':
-			return api.global.v3.POST(LibraryV3Api.rejectReview(reviewId));
+			return api.global.v3.POST(LibraryV3Api.keepTaggedReview(reviewId), body);
 		case 'dismiss':
-			return api.global.v3.POST(LibraryV3Api.dismissReview(reviewId));
+			return api.global.v3.POST(LibraryV3Api.dismissReview(reviewId), body);
 		case 'detach':
-			return api.global.v3.POST(LibraryV3Api.detachReview(reviewId));
+			return api.global.v3.POST(LibraryV3Api.detachReview(reviewId), body);
 		case 'exclude':
-			return api.global.v3.POST(LibraryV3Api.excludeReview(reviewId));
+			return api.global.v3.POST(LibraryV3Api.excludeReview(reviewId), body);
 		case 'restore':
-			return api.global.v3.POST(LibraryV3Api.restoreReview(reviewId));
+			return api.global.v3.POST(LibraryV3Api.restoreReview(reviewId), body);
 	}
 }
 
 /** Settle one review. `keep_tagged` and `dismiss` leave the catalog as it is. */
 export function actOnLibraryReview() {
 	return createMutation(() => ({
-		mutationFn: async (input: { reviewId: string; action: ReviewAction }) => {
-			await post(input.action, input.reviewId);
+		mutationFn: async (input: ReviewActionInput) => {
+			await post(input);
 		},
 		onSuccess: async (_result, input) => {
 			const catalog = input.action !== 'dismiss' && input.action !== 'keep_tagged';
 			await invalidateReviewState({ catalog });
 			toastStore.show({ message: ACTION_TOAST[input.action], type: 'success' });
-		}
+		},
+		onError: reloadReviews
 	}));
 }
 
 export function acceptLibraryReviewCandidate() {
 	return createMutation(() => ({
-		mutationFn: async (input: { reviewId: string; candidateKey: string }) => {
+		mutationFn: async (input: { reviewId: string; revision: number; candidateKey: string }) => {
 			await api.global.v3.POST(LibraryV3Api.approveReview(input.reviewId), {
-				candidate_key: input.candidateKey
+				candidate_key: input.candidateKey,
+				expected_revision: input.revision
 			});
 		},
 		onSuccess: async () => {
 			await invalidateReviewState({ catalog: true });
 			toastStore.show({ message: 'Release selected', type: 'success' });
-		}
+		},
+		onError: reloadReviews
 	}));
 }
 
 export function retryLibraryReview() {
 	return createMutation(() => ({
-		mutationFn: (input: { reviewId: string; confirmLocalMetadata?: boolean }) =>
+		mutationFn: (input: { reviewId: string; revision: number; confirmLocalMetadata?: boolean }) =>
 			api.global.v3.POST(LibraryV3Api.retryReview(input.reviewId), {
+				expected_revision: input.revision,
 				confirm_local_metadata: input.confirmLocalMetadata ?? false
 			}),
 		onSuccess: async () => {
 			await invalidateReviewState();
 			toastStore.show({ message: 'Identification started again', type: 'success' });
-		}
+		},
+		onError: reloadReviews
 	}));
 }
 
@@ -117,7 +136,7 @@ export function retryPendingLibraryReviews() {
 	}));
 }
 
-export type BulkReviewAction = 'keep_tagged' | 'exclude' | 'accept';
+export type BulkReviewAction = components['schemas']['BulkAction'];
 
 /** Which reviews a bulk change takes: picked by hand, or every match of a filter. */
 export interface BulkReviewSelection {

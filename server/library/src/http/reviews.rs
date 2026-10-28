@@ -1,14 +1,16 @@
 //! Identification review routes: list and read reviews, and settle one by
 //! choosing a candidate, keeping the album as tagged, dismissing it,
 //! taking the match off, taking the files out (and back), or starting
-//! identification again.
+//! identification again. Each action sends the review's `row_revision`
+//! as the caller read it, and a review that changed since is refused with
+//! `STALE_REVISION`. Bulk changes are previewed first and applied with
+//! the preview's token, which only the person who previewed can use.
 //!
 //! Reading is open to every signed-in user, as before. Choosing, keeping
 //! tags, dismissing and detaching are curator work, like other identity
 //! decisions. Excluding, restoring and retrying change what the library
 //! holds or start a job, so they are admin-only, as in v2.
 
-use crate::service::Identification;
 use axum::{
     Json,
     extract::{Path, State},
@@ -22,9 +24,9 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::blocking;
 use super::models::{
-    ApproveBody, CandidateView, IdentityView, PenaltyView, ReasonCount, ReviewBulkPreviewResponse,
-    ReviewBulkResponse, ReviewResolveResponse, ReviewRetryAllResponse, ReviewRetryBody, ReviewView,
-    ReviewsResponse, SkippedReviews, TrackEvidenceView,
+    ApproveBody, CandidateView, IdentityView, PenaltyView, ReasonCount, ReviewActionBody,
+    ReviewBulkPreviewResponse, ReviewBulkResponse, ReviewResolveResponse, ReviewRetryAllResponse,
+    ReviewRetryBody, ReviewView, ReviewsResponse, SkippedReviews, TrackEvidenceView,
 };
 use super::operations::{OperationView, job_view};
 use crate::identify::models::{AlbumIdentity, CandidateEvidence};
@@ -50,7 +52,7 @@ pub fn routes() -> Routes<LibraryServices> {
         .curator(routes!(apply_bulk_reviews))
         .user(routes!(get_review))
         .curator(routes!(approve_review))
-        .curator(routes!(reject_review))
+        .curator(routes!(keep_tagged_review))
         .curator(routes!(dismiss_review))
         .curator(routes!(detach_review))
         .admin(routes!(exclude_review))
@@ -167,6 +169,7 @@ fn review_view(row: &ReviewRow) -> ReviewView {
         created_ms: row.created_ms,
         updated_ms: row.updated_ms,
         manual_identity: row.manual_identity,
+        row_revision: row.row_revision,
     }
 }
 
@@ -176,12 +179,6 @@ fn identity_view(identity: &AlbumIdentity) -> IdentityView {
         release_group_mbid: identity.release_group_mbid.clone(),
         decision_source: identity.decision_source,
     }
-}
-
-/// Read one review back after a change.
-async fn settled(ops: Operations, id: String) -> Result<ReviewView, ApiError> {
-    let row = blocking(move || ops.review(&id)).await?;
-    Ok(review_view(&row))
 }
 
 /// Identification reviews, most recently changed first.
@@ -299,7 +296,8 @@ pub async fn get_review(
     _caller: User,
     Path(id): Path<String>,
 ) -> Result<Json<ReviewView>, ApiError> {
-    Ok(Json(settled(ops, id).await?))
+    let row = blocking(move || ops.review(&id)).await?;
+    Ok(Json(review_view(&row)))
 }
 
 /// Approve a review with the curator's chosen candidate.
@@ -315,11 +313,10 @@ pub async fn get_review(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown review or candidate"),
-        (status = 409, description = "Review already settled"),
+        (status = 409, description = "Review already settled, or changed since it was read (STALE_REVISION)"),
     )
 )]
 pub async fn approve_review(
-    State(service): State<Identification>,
     State(ops): State<Operations>,
     caller: Curator,
     Path(id): Path<String>,
@@ -328,42 +325,14 @@ pub async fn approve_review(
     if body.candidate_key.is_empty() {
         return Err(ApiError::invalid_input("Candidate key must not be empty"));
     }
-    let user_id = caller.user_id().to_owned();
-    let review_id = id.clone();
-    let (_, identity) =
-        blocking(move || service.approve_review(&review_id, &user_id, &body.candidate_key)).await?;
+    let actor = caller.user_id().to_owned();
+    let (row, identity) = blocking(move || {
+        ops.approve_review(&id, body.expected_revision, &body.candidate_key, &actor)
+    })
+    .await?;
     Ok(Json(ReviewResolveResponse {
-        review: settled(ops, id).await?,
+        review: review_view(&row),
         identity: identity.as_ref().map(identity_view),
-    }))
-}
-
-/// Reject a review: the album keeps its tags, nothing seals.
-#[utoipa::path(
-    post,
-    tag = "library management",
-    path = "/api/v3/library/reviews/{id}/reject",
-    params(("id" = String, Path, description = "Review id")),
-    responses(
-        (status = 200, description = "Settled review", body = ReviewResolveResponse),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Curator role required"),
-        (status = 404, description = "Unknown review id"),
-        (status = 409, description = "Review already settled"),
-    )
-)]
-pub async fn reject_review(
-    State(service): State<Identification>,
-    State(ops): State<Operations>,
-    caller: Curator,
-    Path(id): Path<String>,
-) -> Result<Json<ReviewResolveResponse>, ApiError> {
-    let user_id = caller.user_id().to_owned();
-    let review_id = id.clone();
-    blocking(move || service.reject_review(&review_id, &user_id)).await?;
-    Ok(Json(ReviewResolveResponse {
-        review: settled(ops, id).await?,
-        identity: None,
     }))
 }
 
@@ -371,10 +340,37 @@ async fn act(
     ops: Operations,
     id: String,
     action: ReviewAction,
+    body: ReviewActionBody,
     actor: String,
 ) -> Result<Json<ReviewView>, ApiError> {
-    let row = blocking(move || ops.settle_review(&id, action, &actor)).await?;
+    let row =
+        blocking(move || ops.settle_review(&id, action, body.expected_revision, &actor)).await?;
     Ok(Json(review_view(&row)))
+}
+
+/// Keep the album as tagged: nothing seals, and the review settles.
+#[utoipa::path(
+    post,
+    tag = "library management",
+    path = "/api/v3/library/reviews/{id}/keep-tagged",
+    params(("id" = String, Path, description = "Review id")),
+    request_body = ReviewActionBody,
+    responses(
+        (status = 200, description = "Settled review", body = ReviewView),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown review id"),
+        (status = 409, description = "Review already settled, or changed since it was read (STALE_REVISION)"),
+    )
+)]
+pub async fn keep_tagged_review(
+    State(ops): State<Operations>,
+    caller: Curator,
+    Path(id): Path<String>,
+    ValidJson(body): ValidJson<ReviewActionBody>,
+) -> Result<Json<ReviewView>, ApiError> {
+    let actor = caller.user_id().to_owned();
+    act(ops, id, ReviewAction::KeepTagged, body, actor).await
 }
 
 /// Close a review without a decision. The album stays as it is.
@@ -383,20 +379,23 @@ async fn act(
     tag = "library management",
     path = "/api/v3/library/reviews/{id}/dismiss",
     params(("id" = String, Path, description = "Review id")),
+    request_body = ReviewActionBody,
     responses(
         (status = 200, description = "Settled review", body = ReviewView),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown review id"),
-        (status = 409, description = "Review already settled"),
+        (status = 409, description = "Review already settled, or changed since it was read (STALE_REVISION)"),
     )
 )]
 pub async fn dismiss_review(
     State(ops): State<Operations>,
     caller: Curator,
     Path(id): Path<String>,
+    ValidJson(body): ValidJson<ReviewActionBody>,
 ) -> Result<Json<ReviewView>, ApiError> {
-    act(ops, id, ReviewAction::Dismiss, caller.user_id().to_owned()).await
+    let actor = caller.user_id().to_owned();
+    act(ops, id, ReviewAction::Dismiss, body, actor).await
 }
 
 /// Take the album's MusicBrainz match off and keep its own tags. The
@@ -407,20 +406,23 @@ pub async fn dismiss_review(
     tag = "library management",
     path = "/api/v3/library/reviews/{id}/detach",
     params(("id" = String, Path, description = "Review id")),
+    request_body = ReviewActionBody,
     responses(
         (status = 200, description = "Settled review", body = ReviewView),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown review id"),
-        (status = 409, description = "Review already settled"),
+        (status = 409, description = "Review already settled, or changed since it was read (STALE_REVISION)"),
     )
 )]
 pub async fn detach_review(
     State(ops): State<Operations>,
     caller: Curator,
     Path(id): Path<String>,
+    ValidJson(body): ValidJson<ReviewActionBody>,
 ) -> Result<Json<ReviewView>, ApiError> {
-    act(ops, id, ReviewAction::Detach, caller.user_id().to_owned()).await
+    let actor = caller.user_id().to_owned();
+    act(ops, id, ReviewAction::Detach, body, actor).await
 }
 
 /// Take the album's files out of the library. Nothing is deleted; scans
@@ -430,20 +432,23 @@ pub async fn detach_review(
     tag = "library management",
     path = "/api/v3/library/reviews/{id}/exclude",
     params(("id" = String, Path, description = "Review id")),
+    request_body = ReviewActionBody,
     responses(
         (status = 200, description = "Settled review", body = ReviewView),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown review id"),
-        (status = 409, description = "Review already settled"),
+        (status = 409, description = "Review already settled, or changed since it was read (STALE_REVISION)"),
     )
 )]
 pub async fn exclude_review(
     State(ops): State<Operations>,
     caller: Admin,
     Path(id): Path<String>,
+    ValidJson(body): ValidJson<ReviewActionBody>,
 ) -> Result<Json<ReviewView>, ApiError> {
-    act(ops, id, ReviewAction::Exclude, caller.user_id().to_owned()).await
+    let actor = caller.user_id().to_owned();
+    act(ops, id, ReviewAction::Exclude, body, actor).await
 }
 
 /// Put an excluded album's files back into the library.
@@ -452,20 +457,23 @@ pub async fn exclude_review(
     tag = "library management",
     path = "/api/v3/library/reviews/{id}/restore",
     params(("id" = String, Path, description = "Review id")),
+    request_body = ReviewActionBody,
     responses(
         (status = 200, description = "Settled review", body = ReviewView),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown review id"),
-        (status = 409, description = "The review's album was not excluded"),
+        (status = 409, description = "The review's album was not excluded, or the review changed since it was read (STALE_REVISION)"),
     )
 )]
 pub async fn restore_review(
     State(ops): State<Operations>,
     caller: Admin,
     Path(id): Path<String>,
+    ValidJson(body): ValidJson<ReviewActionBody>,
 ) -> Result<Json<ReviewView>, ApiError> {
-    act(ops, id, ReviewAction::Restore, caller.user_id().to_owned()).await
+    let actor = caller.user_id().to_owned();
+    act(ops, id, ReviewAction::Restore, body, actor).await
 }
 
 /// Start identification again for the review's album. The new job
@@ -481,7 +489,7 @@ pub async fn restore_review(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown review id, or the album has no files"),
-        (status = 409, description = "Review already settled, album excluded, or needs the Local metadata confirmation"),
+        (status = 409, description = "Review already settled or changed since it was read (STALE_REVISION), album excluded, or needs the Local metadata confirmation"),
     )
 )]
 pub async fn retry_review(
@@ -492,8 +500,16 @@ pub async fn retry_review(
 ) -> Result<Json<OperationView>, ApiError> {
     let actor = caller.user_id().to_owned();
     let key = body.idempotency_key.filter(|key| !key.trim().is_empty());
-    let job =
-        blocking(move || ops.retry_review(&id, &actor, key, body.confirm_local_metadata)).await?;
+    let job = blocking(move || {
+        ops.retry_review(
+            &id,
+            body.expected_revision,
+            &actor,
+            key,
+            body.confirm_local_metadata,
+        )
+    })
+    .await?;
     Ok(Json(job_view(&job)))
 }
 
@@ -560,8 +576,7 @@ pub struct ReviewRetryAllBody {
 /// A bulk review change: what to do, and to which reviews.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct ReviewBulkBody {
-    /// `keep_tagged`, `exclude` or `accept`.
-    pub action: String,
+    pub action: BulkAction,
     /// Reviews picked by hand. Combined with `filter` when both are given.
     #[serde(default)]
     pub review_ids: Vec<String>,
@@ -575,15 +590,6 @@ pub struct ReviewBulkBody {
     /// Apply only: the token the preview returned.
     #[serde(default)]
     pub preview_token: Option<String>,
-}
-
-fn bulk_action(raw: &str) -> Result<BulkAction, OperationError> {
-    match raw {
-        "keep_tagged" => Ok(BulkAction::KeepTagged),
-        "exclude" => Ok(BulkAction::Exclude),
-        "accept" => Ok(BulkAction::Accept),
-        _ => Err(OperationError::Invalid(reasons::REVIEW_BULK_ACTION_INVALID)),
-    }
 }
 
 fn skipped_view(skipped: Vec<(reasons::Reason, u32)>) -> Vec<SkippedReviews> {
@@ -601,7 +607,7 @@ fn bulk_request(
     body: ReviewBulkBody,
     caller: &Curator,
 ) -> Result<(BulkAction, ReviewFilter, Option<String>, Option<String>), ApiError> {
-    let action = bulk_action(&body.action)?;
+    let action = body.action;
     if action == BulkAction::Exclude {
         Admin::try_from(caller.principal().clone())?;
     }
@@ -611,7 +617,8 @@ fn bulk_request(
 }
 
 /// Preview a bulk change: how many reviews it changes, which it skips and
-/// why, and the token that applies exactly this change.
+/// why, and the token that applies exactly this change. The token is good
+/// for 15 minutes, and only for the person who previewed.
 #[utoipa::path(
     post,
     tag = "library management",
@@ -629,18 +636,20 @@ pub async fn preview_bulk_reviews(
     caller: Curator,
     ValidJson(body): ValidJson<ReviewBulkBody>,
 ) -> Result<Json<ReviewBulkPreviewResponse>, ApiError> {
+    let actor = caller.user_id().to_owned();
     let (action, filter, key, _) = bulk_request(body, &caller)?;
-    let plan = blocking(move || ops.preview_bulk_reviews(action, &filter, key.as_deref())).await?;
+    let (plan, token) =
+        blocking(move || ops.preview_bulk_reviews(action, &filter, key.as_deref(), &actor)).await?;
     Ok(Json(ReviewBulkPreviewResponse {
         matched: plan.matched,
         eligible: u32::try_from(plan.items.len()).unwrap_or(u32::MAX),
         skipped: skipped_view(plan.skipped),
-        preview_token: plan.token,
+        preview_token: token,
     }))
 }
 
-/// Apply a previewed bulk change. Refused when the selection changed
-/// since the preview.
+/// Apply a previewed bulk change. Refused when the token is not the
+/// caller's or is too old, or the selection changed since the preview.
 #[utoipa::path(
     post,
     tag = "library management",
@@ -648,10 +657,10 @@ pub async fn preview_bulk_reviews(
     request_body = ReviewBulkBody,
     responses(
         (status = 200, description = "What changed and what did not", body = ReviewBulkResponse),
-        (status = 400, description = "Unknown action or filter value, or no preview token"),
+        (status = 400, description = "Unknown action or filter value, or no readable preview token"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required (admin to exclude)"),
-        (status = 409, description = "The selection changed since the preview"),
+        (status = 409, description = "The preview is too old or another person's, or the selection changed since"),
     )
 )]
 pub async fn apply_bulk_reviews(

@@ -754,7 +754,11 @@ const EXACT_EXEMPTIONS: &[(&str, &str, &str)] = &[
         "/api/v3/library/reviews/{id}/dismiss",
         SHARED_REVIEW,
     ),
-    ("POST", "/api/v3/library/reviews/{id}/reject", SHARED_REVIEW),
+    (
+        "POST",
+        "/api/v3/library/reviews/{id}/keep-tagged",
+        SHARED_REVIEW,
+    ),
     (
         "DELETE",
         "/api/v3/library/tracks/{id}",

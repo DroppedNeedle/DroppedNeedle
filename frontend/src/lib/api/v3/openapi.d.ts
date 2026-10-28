@@ -5242,8 +5242,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Apply a previewed bulk change. Refused when the selection changed
-         *     since the preview.
+         * Apply a previewed bulk change. Refused when the token is not the
+         *     caller's or is too old, or the selection changed since the preview.
          */
         post: operations["apply_bulk_reviews"];
         delete?: never;
@@ -5263,7 +5263,8 @@ export interface paths {
         put?: never;
         /**
          * Preview a bulk change: how many reviews it changes, which it skips and
-         *     why, and the token that applies exactly this change.
+         *     why, and the token that applies exactly this change. The token is good
+         *     for 15 minutes, and only for the person who previewed.
          */
         post: operations["preview_bulk_reviews"];
         delete?: never;
@@ -5385,7 +5386,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/library/reviews/{id}/reject": {
+    "/api/v3/library/reviews/{id}/keep-tagged": {
         parameters: {
             query?: never;
             header?: never;
@@ -5394,8 +5395,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Reject a review: the album keeps its tags, nothing seals. */
-        post: operations["reject_review"];
+        /** Keep the album as tagged: nothing seals, and the review settles. */
+        post: operations["keep_tagged_review"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10579,6 +10580,11 @@ export interface components {
         ApproveBody: {
             /** @description Candidate key from the review. */
             candidate_key: string;
+            /**
+             * Format: int64
+             * @description The review's `row_revision` when it was read.
+             */
+            expected_revision: number;
         };
         /** @description A MusicBrainz credit proof behind one record's credit. */
         ArtistCreditEvidence: {
@@ -11585,6 +11591,11 @@ export interface components {
              */
             verified: boolean;
         };
+        /**
+         * @description What a bulk action does to each selected review.
+         * @enum {string}
+         */
+        BulkAction: "keep_tagged" | "exclude" | "accept";
         /** @description Cache-clear request. No scope clears everything. */
         CacheClearBody: {
             /** @description What to clear. */
@@ -18563,6 +18574,13 @@ export interface components {
                 reason_code: string;
                 /** @description Resolving user, once settled. */
                 resolved_by?: string | null;
+                /**
+                 * Format: int64
+                 * @description Goes up whenever the review's state, candidates, reason or album
+                 *     changes. Every action on the review sends the one it was decided
+                 *     on.
+                 */
+                row_revision: number;
                 /** @description Selected candidate key, once approved. */
                 selected_candidate_key?: string | null;
                 /** @description Review state. */
@@ -21290,10 +21308,18 @@ export interface components {
             success: boolean;
             task_id: string;
         };
+        /** @description An action on one review, decided on the revision the caller read. */
+        ReviewActionBody: {
+            /**
+             * Format: int64
+             * @description The review's `row_revision` when it was read. A review that changed
+             *     since is refused with `STALE_REVISION`.
+             */
+            expected_revision: number;
+        };
         /** @description A bulk review change: what to do, and to which reviews. */
         ReviewBulkBody: {
-            /** @description `keep_tagged`, `exclude` or `accept`. */
-            action: string;
+            action: components["schemas"]["BulkAction"];
             /**
              * @description Accept only: the release to use. Each review's best release when
              *     empty.
@@ -21372,6 +21398,11 @@ export interface components {
              *     metadata policy.
              */
             confirm_local_metadata?: boolean;
+            /**
+             * Format: int64
+             * @description The review's `row_revision` when it was read.
+             */
+            expected_revision: number;
             /** @description Makes a retried request return the same job (single review only). */
             idempotency_key?: string | null;
         };
@@ -21402,6 +21433,13 @@ export interface components {
             reason_code: string;
             /** @description Resolving user, once settled. */
             resolved_by?: string | null;
+            /**
+             * Format: int64
+             * @description Goes up whenever the review's state, candidates, reason or album
+             *     changes. Every action on the review sends the one it was decided
+             *     on.
+             */
+            row_revision: number;
             /** @description Selected candidate key, once approved. */
             selected_candidate_key?: string | null;
             /** @description Review state. */
@@ -37898,7 +37936,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReviewBulkResponse"];
                 };
             };
-            /** @description Unknown action or filter value, or no preview token */
+            /** @description Unknown action or filter value, or no readable preview token */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -37925,7 +37963,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The selection changed since the preview */
+            /** @description The preview is too old or another person's, or the selection changed since */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -38131,7 +38169,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Review already settled */
+            /** @description Review already settled, or changed since it was read (STALE_REVISION) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -38152,7 +38190,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewActionBody"];
+            };
+        };
         responses: {
             /** @description Settled review */
             200: {
@@ -38190,7 +38232,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Review already settled */
+            /** @description Review already settled, or changed since it was read (STALE_REVISION) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -38211,7 +38253,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewActionBody"];
+            };
+        };
         responses: {
             /** @description Settled review */
             200: {
@@ -38249,7 +38295,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Review already settled */
+            /** @description Review already settled, or changed since it was read (STALE_REVISION) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -38270,7 +38316,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewActionBody"];
+            };
+        };
         responses: {
             /** @description Settled review */
             200: {
@@ -38308,7 +38358,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Review already settled */
+            /** @description Review already settled, or changed since it was read (STALE_REVISION) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -38319,7 +38369,7 @@ export interface operations {
             };
         };
     };
-    reject_review: {
+    keep_tagged_review: {
         parameters: {
             query?: never;
             header?: never;
@@ -38329,7 +38379,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewActionBody"];
+            };
+        };
         responses: {
             /** @description Settled review */
             200: {
@@ -38337,7 +38391,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReviewResolveResponse"];
+                    "application/json": components["schemas"]["ReviewView"];
                 };
             };
             /** @description Not authenticated */
@@ -38367,7 +38421,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Review already settled */
+            /** @description Review already settled, or changed since it was read (STALE_REVISION) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -38388,7 +38442,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewActionBody"];
+            };
+        };
         responses: {
             /** @description Settled review */
             200: {
@@ -38426,7 +38484,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The review's album was not excluded */
+            /** @description The review's album was not excluded, or the review changed since it was read (STALE_REVISION) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -38489,7 +38547,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Review already settled, album excluded, or needs the Local metadata confirmation */
+            /** @description Review already settled or changed since it was read (STALE_REVISION), album excluded, or needs the Local metadata confirmation */
             409: {
                 headers: {
                     [name: string]: unknown;

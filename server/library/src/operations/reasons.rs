@@ -284,6 +284,16 @@ pub const REVIEW_SETTLED: Reason = reason(
     "Someone already settled this review.",
     "Reload the list to see what was decided.",
 );
+pub const REVIEW_STALE: Reason = reason(
+    STALE,
+    "This review changed after you opened it.",
+    "Look at the review again and decide on what it shows now.",
+);
+pub const REVIEW_CANDIDATE_NOT_FOUND: Reason = reason(
+    "REVIEW_CANDIDATE_NOT_FOUND",
+    "This review does not list that release.",
+    "Reload the review and pick one of its releases.",
+);
 pub const REVIEW_NOT_EXCLUDED: Reason = reason(
     "REVIEW_NOT_EXCLUDED",
     "This album's files were not taken out from its review, so there is nothing to put back.",
@@ -323,11 +333,6 @@ pub const REVIEW_FILTER_INVALID: Reason = reason(
     "REVIEW_FILTER_INVALID",
     "One of the review filters has a value this version does not know.",
     "Reload the page and pick the filter again.",
-);
-pub const REVIEW_BULK_ACTION_INVALID: Reason = reason(
-    "REVIEW_BULK_ACTION_INVALID",
-    "That is not something a bulk review change can do.",
-    "Use keep_tagged, exclude or accept.",
 );
 pub const REVIEW_STATE_INVALID: Reason = reason(
     "REVIEW_STATE_INVALID",

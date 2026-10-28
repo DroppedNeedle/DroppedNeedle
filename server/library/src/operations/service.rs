@@ -20,7 +20,7 @@ use super::reidentify::evaluation;
 use super::store::{self, NewReidentification};
 use super::{choice, decisions, hand_match, history, reviews};
 use crate::clock::LibraryClock as _;
-use crate::identify::models::LocalAlbumFacts;
+use crate::identify::models::{AlbumIdentity, LocalAlbumFacts, ReviewState};
 use crate::identify::providers::RELEASE_UNREADABLE;
 use crate::identify::queue::queue_retry;
 use crate::identify::service::IdentifyService;
@@ -29,7 +29,9 @@ use crate::identify::sqlite::SqliteIdentifyStore;
 use crate::identity::reads::album_identity_row;
 use crate::jobs::{self, OperationKind};
 use crate::matching::model::Release;
+use crate::preview::{self, TokenFault};
 use crate::scan::watcher::WorkWakeups;
+use crate::settings::LibrarySettings;
 use droppedneedle_kernel::db::{Db, Lane, savepoint};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::Live;
@@ -52,6 +54,8 @@ pub struct Operations {
     management: Live<LibraryManagement>,
     wakeups: WorkWakeups,
     clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    /// Signs bulk review previews with the server's data key.
+    signer: LibrarySettings,
 }
 
 impl Operations {
@@ -60,7 +64,7 @@ impl Operations {
         store: Arc<SqliteIdentifyStore>,
         identify: Arc<IdentifyService>,
         ids: Arc<dyn IdGenerator>,
-        management: Live<LibraryManagement>,
+        settings: &LibrarySettings,
         wakeups: WorkWakeups,
         clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     ) -> Self {
@@ -69,9 +73,10 @@ impl Operations {
             store,
             identify,
             ids,
-            management,
+            management: settings.management.clone(),
             wakeups,
             clock,
+            signer: settings.clone(),
         }
     }
 
@@ -180,29 +185,85 @@ impl Operations {
             .ok_or(OperationError::NotFound(reasons::REVIEW_NOT_FOUND))
     }
 
-    /// Dismiss, detach, exclude or restore from a review, then return the
-    /// settled review. Blocking.
+    /// Keep as tagged, dismiss, detach, exclude or restore from a review
+    /// decided on `expected_revision`, then return the settled review. A
+    /// review that changed since is refused with `STALE_REVISION`.
+    /// Blocking.
     pub fn settle_review(
         &self,
         review_id: &str,
         action: reviews::ReviewAction,
+        expected_revision: i64,
         actor: &str,
     ) -> Result<reviews::ReviewRow, OperationError> {
         self.db
             .write_blocking(Lane::Foreground, "operations.settle_review", |tx| {
-                reviews::settle(tx, review_id, action, actor, self.clock.now_secs())
+                reviews::settle(
+                    tx,
+                    review_id,
+                    action,
+                    expected_revision,
+                    actor,
+                    self.clock.now_secs(),
+                )
             })?;
         self.review(review_id)
     }
 
-    /// Identify a pending review's album again. The job hands the album to
-    /// identification, which settles it by its usual rules, so the review
-    /// is dismissed in the same write. A review someone settled meanwhile,
-    /// or an album that may not be retried, is refused and the review
-    /// stays open. Blocking.
+    /// Approve a pending review decided on `expected_revision` with one of
+    /// its releases: the release becomes the album's match as the
+    /// person's choice, and the review settles with it. Returns the
+    /// settled review and the album's identity. Blocking.
+    pub fn approve_review(
+        &self,
+        review_id: &str,
+        expected_revision: i64,
+        candidate_key: &str,
+        actor: &str,
+    ) -> Result<(reviews::ReviewRow, Option<AlbumIdentity>), OperationError> {
+        let row = self.review(review_id)?;
+        if row.row_revision != expected_revision {
+            return Err(OperationError::Conflict(reasons::REVIEW_STALE));
+        }
+        if row.review.state != ReviewState::Pending {
+            return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
+        }
+        if !row
+            .review
+            .candidates
+            .iter()
+            .any(|candidate| candidate.candidate_key == candidate_key)
+        {
+            return Err(OperationError::NotFound(
+                reasons::REVIEW_CANDIDATE_NOT_FOUND,
+            ));
+        }
+        // The approval's own write settles the review only while it is
+        // still at this revision, so a change since this read is refused
+        // there.
+        if !self.identify.approve_candidate_at(
+            review_id,
+            actor,
+            candidate_key,
+            Some(expected_revision),
+        )? {
+            return Err(OperationError::Conflict(reasons::REVIEW_STALE));
+        }
+        let settled = self.review(review_id)?;
+        let identity = self.store.album_identity(&settled.review.local_album_id)?;
+        Ok((settled, identity))
+    }
+
+    /// Identify a pending review's album again, decided on
+    /// `expected_revision`. The job hands the album to identification,
+    /// which settles it by its usual rules, so the review is dismissed in
+    /// the same write. A review someone changed meanwhile, or an album
+    /// that may not be retried, is refused and the review stays open.
+    /// Blocking.
     pub fn retry_review(
         &self,
         review_id: &str,
+        expected_revision: i64,
         actor: &str,
         idempotency_key: Option<String>,
         one_off_local_metadata: bool,
@@ -217,11 +278,18 @@ impl Operations {
         let job = self
             .db
             .write_blocking(Lane::Foreground, "operations.retry_review", |tx| {
+                reviews::guard(
+                    tx,
+                    review_id,
+                    expected_revision,
+                    ReviewState::Pending,
+                    reasons::REVIEW_SETTLED,
+                )?;
                 if !reviews::mark(
                     tx,
                     review_id,
                     "pending",
-                    crate::identify::models::ReviewState::Dismissed,
+                    ReviewState::Dismissed,
                     actor,
                     self.clock.now_secs(),
                 )? {
@@ -248,7 +316,7 @@ impl Operations {
         preview: bool,
     ) -> Result<reviews::Tally, OperationError> {
         let filter = reviews::ReviewFilter {
-            state: Some(crate::identify::models::ReviewState::Pending),
+            state: Some(ReviewState::Pending),
             limit: BULK_MAX,
             offset: 0,
             ..filter.clone()
@@ -284,8 +352,14 @@ impl Operations {
                     },
                 )?
             } else {
-                self.retry_review(&row.review.id, actor, None, one_off_local_metadata)
-                    .map(|_| ())
+                self.retry_review(
+                    &row.review.id,
+                    row.row_revision,
+                    actor,
+                    None,
+                    one_off_local_metadata,
+                )
+                .map(|_| ())
             };
             match started {
                 Ok(()) => outcome.done += 1,
@@ -300,10 +374,8 @@ impl Operations {
         Ok(outcome)
     }
 
-    /// What a bulk action would do to the reviews `filter` selects: the
-    /// reviews it changes, the ones it skips by reason, and the token that
-    /// apply needs. Blocking.
-    pub fn preview_bulk_reviews(
+    /// What a bulk action would do to the reviews `filter` selects.
+    fn plan_bulk_reviews(
         &self,
         action: reviews::BulkAction,
         filter: &reviews::ReviewFilter,
@@ -318,8 +390,31 @@ impl Operations {
         Ok(reviews::plan_bulk(&rows, matched, action, candidate_key))
     }
 
-    /// Apply a previewed bulk action. Refused when the selection changed
-    /// since the preview (the token no longer matches). Blocking.
+    /// What a bulk action would do to the reviews `filter` selects: the
+    /// reviews it changes, the ones it skips by reason, and the token
+    /// `actor` applies it with. Blocking.
+    pub fn preview_bulk_reviews(
+        &self,
+        action: reviews::BulkAction,
+        filter: &reviews::ReviewFilter,
+        candidate_key: Option<&str>,
+        actor: &str,
+    ) -> Result<(reviews::BulkPlan, String), OperationError> {
+        let plan = self.plan_bulk_reviews(action, filter, candidate_key)?;
+        let token = preview::issue(
+            &self.signer,
+            preview::REVIEW_BULK,
+            actor,
+            &plan.material,
+            self.clock.now_secs() as i64,
+        );
+        Ok((plan, token))
+    }
+
+    /// Apply a bulk action `actor` previewed. Refused when the token is
+    /// not theirs, is too old, or the selection changed since the
+    /// preview. Each review is checked again at its previewed revision as
+    /// it changes. Blocking.
     pub fn apply_bulk_reviews(
         &self,
         action: reviews::BulkAction,
@@ -328,55 +423,58 @@ impl Operations {
         preview_token: &str,
         actor: &str,
     ) -> Result<reviews::Tally, OperationError> {
-        let plan = self.preview_bulk_reviews(action, filter, candidate_key)?;
-        if plan.token != preview_token {
-            return Err(OperationError::Conflict(reasons::REVIEW_SELECTION_CHANGED));
-        }
+        let plan = self.plan_bulk_reviews(action, filter, candidate_key)?;
+        preview::verify(
+            &self.signer,
+            preview::REVIEW_BULK,
+            actor,
+            preview_token,
+            &plan.material,
+            self.clock.now_secs() as i64,
+        )
+        .map_err(|fault| {
+            let reason = fault.reason(reasons::REVIEW_SELECTION_CHANGED);
+            match fault {
+                TokenFault::Invalid => OperationError::Invalid(reason),
+                TokenFault::Expired | TokenFault::Stale => OperationError::Conflict(reason),
+            }
+        })?;
         let mut outcome = reviews::Tally {
             done: 0,
             skipped: plan.skipped.clone(),
         };
         for item in &plan.items {
             let applied = match (action, item.candidate_key.as_deref()) {
-                (reviews::BulkAction::KeepTagged, _) => self
-                    .identify
-                    .reject_candidates(&item.review_id, actor)
-                    .map_err(|error| error.to_string()),
                 (reviews::BulkAction::Accept, Some(key)) => self
-                    .identify
-                    .approve_candidate(&item.review_id, actor, key)
-                    .map_err(|error| error.to_string()),
-                (reviews::BulkAction::Accept, None) => Ok(false),
-                (reviews::BulkAction::Exclude, _) => {
-                    match self.db.write_blocking(
-                        Lane::Foreground,
-                        "operations.apply_bulk_reviews",
-                        |tx| {
-                            reviews::settle(
-                                tx,
-                                &item.review_id,
-                                reviews::ReviewAction::Exclude,
-                                actor,
-                                self.clock.now_secs(),
-                            )
-                        },
-                    ) {
-                        Ok(()) => Ok(true),
-                        Err(
-                            OperationError::NotFound(reason)
-                            | OperationError::Invalid(reason)
-                            | OperationError::Conflict(reason),
-                        ) => {
-                            outcome.skip(reason);
-                            continue;
-                        }
-                        Err(other) => Err(other.to_string()),
-                    }
+                    .approve_review(&item.review_id, item.revision, key, actor)
+                    .map(|_| ()),
+                (reviews::BulkAction::Accept, None) => {
+                    Err(OperationError::Conflict(reasons::REVIEW_NO_CANDIDATE))
                 }
+                (reviews::BulkAction::KeepTagged, _) => self
+                    .settle_review(
+                        &item.review_id,
+                        reviews::ReviewAction::KeepTagged,
+                        item.revision,
+                        actor,
+                    )
+                    .map(|_| ()),
+                (reviews::BulkAction::Exclude, _) => self
+                    .settle_review(
+                        &item.review_id,
+                        reviews::ReviewAction::Exclude,
+                        item.revision,
+                        actor,
+                    )
+                    .map(|_| ()),
             };
             match applied {
-                Ok(true) => outcome.done += 1,
-                Ok(false) => outcome.skip(reasons::REVIEW_SETTLED),
+                Ok(()) => outcome.done += 1,
+                Err(
+                    OperationError::NotFound(reason)
+                    | OperationError::Invalid(reason)
+                    | OperationError::Conflict(reason),
+                ) => outcome.skip(reason),
                 Err(cause) => {
                     tracing::warn!(review = item.review_id, %cause, "bulk review action failed");
                     outcome.skip(reasons::REVIEW_ACTION_FAILED);

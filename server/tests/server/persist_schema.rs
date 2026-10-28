@@ -74,7 +74,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(triggers, 67);
+    assert_eq!(triggers, 68);
 
     let catalog: (i64, i64) =
         sqlx::query_as("SELECT singleton, value FROM library_catalog_revision")
@@ -7743,4 +7743,52 @@ async fn discovery_batches_move_to_acquire_with_their_rows() {
     .await
     .unwrap();
     assert_eq!(left, 0, "a batch and its albums go with their user");
+}
+
+/// Migration 0100 gives identification reviews a revision. A review filed
+/// before it arrives at revision 1, and from then on a change to its
+/// state or candidates moves it on, while a write that only touches the
+/// time, or sets a state it already has, does not.
+#[tokio::test]
+async fn reviews_gain_a_revision_on_upgrade() {
+    let pool = scratch_pool().await;
+    migrator_through(99).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('ar1', 'A', 'a', 'person', 0, 0); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, album_artist_name, grouping_source, created_at, updated_at) \
+         VALUES ('al1', 'r1', 'al1', 'T', 't', 'ar1', 'A', 'automatic', 0, 0); \
+         INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+             candidates_json, state, created_ms, updated_ms) \
+         VALUES ('rev-1', 'al1', 'WEAK_MATCH', '[]', 'pending', 5, 5);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let revision = || async {
+        sqlx::query_as::<_, (String, i64)>(
+            "SELECT state, row_revision FROM library_identify_reviews WHERE id = 'rev-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(revision().await, ("pending".to_owned(), 1));
+    for (change, expected) in [
+        ("UPDATE library_identify_reviews SET updated_ms = 9", 1),
+        ("UPDATE library_identify_reviews SET state = 'pending'", 1),
+        (
+            "UPDATE library_identify_reviews SET candidates_json = '[1]'",
+            2,
+        ),
+        ("UPDATE library_identify_reviews SET state = 'dismissed'", 3),
+    ] {
+        sqlx::query(change).execute(&pool).await.unwrap();
+        assert_eq!(revision().await.1, expected, "{change}");
+    }
 }

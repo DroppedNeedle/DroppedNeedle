@@ -881,6 +881,18 @@ impl IdentifyService {
         by_user_id: &str,
         candidate_key: &str,
     ) -> Result<bool, StoreError> {
+        self.approve_candidate_at(review_id, by_user_id, candidate_key, None)
+    }
+
+    /// [`Self::approve_candidate`], settling the review only while it is
+    /// still at `expected_revision` when one is given.
+    pub fn approve_candidate_at(
+        &self,
+        review_id: &str,
+        by_user_id: &str,
+        candidate_key: &str,
+        expected_revision: Option<i64>,
+    ) -> Result<bool, StoreError> {
         let Some(review) = self.deps.store.get(review_id)? else {
             return Ok(false);
         };
@@ -906,6 +918,7 @@ impl IdentifyService {
                 decision_source: DecisionSource::Manual,
                 row_revision: 1,
             },
+            expected_revision,
         })
     }
 

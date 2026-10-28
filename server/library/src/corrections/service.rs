@@ -15,10 +15,11 @@ use super::models::{
     MembershipKind, MembershipOutcome, MembershipRequest, PairJoinRequest, Previewed,
     RetagPairList,
 };
+use super::reasons;
 use super::reset;
 use super::retag_pairs;
-use super::token::{self, TokenFault};
 use crate::clock::LibraryClock as _;
+use crate::preview::{self, TokenFault};
 use crate::settings::LibrarySettings;
 use droppedneedle_auth::Admin;
 use droppedneedle_kernel::db::{Db, Lane, savepoint};
@@ -53,7 +54,13 @@ impl Corrections {
                 rolled_back(tx, || {
                     let run = run_membership(tx, request, now)?;
                     Ok(Previewed {
-                        token: token::issue(&self.signer, actor, &run.material, now as i64),
+                        token: preview::issue(
+                            &self.signer,
+                            preview::CORRECTION,
+                            actor,
+                            &run.material,
+                            now as i64,
+                        ),
                         outcome: run.outcome,
                     })
                 })
@@ -126,8 +133,9 @@ impl Corrections {
                 rolled_back(tx, || {
                     let run = artists::merge(tx, admin, request, now)?;
                     Ok(Previewed {
-                        token: token::issue(
+                        token: preview::issue(
                             &self.signer,
+                            preview::CORRECTION,
                             admin.user_id(),
                             &run.material,
                             now as i64,
@@ -236,16 +244,20 @@ impl Corrections {
         material: &str,
         now: f64,
     ) -> Result<(), CorrectionError> {
-        token::verify(
+        preview::verify(
             &self.signer,
+            preview::CORRECTION,
             &meta.actor,
             &meta.preview_token,
             material,
             now as i64,
         )
-        .map_err(|fault| match fault {
-            TokenFault::Invalid => CorrectionError::Invalid(fault.reason()),
-            TokenFault::Expired | TokenFault::Stale => CorrectionError::Conflict(fault.reason()),
+        .map_err(|fault| {
+            let reason = fault.reason(reasons::PREVIEW_STALE);
+            match fault {
+                TokenFault::Invalid => CorrectionError::Invalid(reason),
+                TokenFault::Expired | TokenFault::Stale => CorrectionError::Conflict(reason),
+            }
         })
     }
 }

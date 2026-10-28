@@ -228,8 +228,8 @@ export const LibraryV3Api = {
 	bulkReviewApply: () => v3('/api/v3/library/reviews/bulk-apply'),
 	approveReview: (reviewId: string) =>
 		v3('/api/v3/library/reviews/{id}/approve', { path: { id: reviewId } }),
-	rejectReview: (reviewId: string) =>
-		v3('/api/v3/library/reviews/{id}/reject', { path: { id: reviewId } }),
+	keepTaggedReview: (reviewId: string) =>
+		v3('/api/v3/library/reviews/{id}/keep-tagged', { path: { id: reviewId } }),
 	operation: (jobId: string) =>
 		v3('/api/v3/library/operations/{job_id}', { path: { job_id: jobId } }),
 	pauseOperation: (jobId: string) =>

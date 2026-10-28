@@ -298,6 +298,10 @@ pub struct ReviewView {
     pub updated_ms: i64,
     /// The album's current match was picked by a person.
     pub manual_identity: bool,
+    /// Goes up whenever the review's state, candidates, reason or album
+    /// changes. Every action on the review sends the one it was decided
+    /// on.
+    pub row_revision: i64,
 }
 
 /// One page of reviews, with the reviews matching the filter as its
@@ -350,9 +354,19 @@ pub struct SkippedReviews {
     pub count: u32,
 }
 
+/// An action on one review, decided on the revision the caller read.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct ReviewActionBody {
+    /// The review's `row_revision` when it was read. A review that changed
+    /// since is refused with `STALE_REVISION`.
+    pub expected_revision: i64,
+}
+
 /// Start identification again from a review.
-#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct ReviewRetryBody {
+    /// The review's `row_revision` when it was read.
+    pub expected_revision: i64,
     /// Makes a retried request return the same job (single review only).
     #[serde(default)]
     pub idempotency_key: Option<String>,
@@ -367,6 +381,8 @@ pub struct ReviewRetryBody {
 pub struct ApproveBody {
     /// Candidate key from the review.
     pub candidate_key: String,
+    /// The review's `row_revision` when it was read.
+    pub expected_revision: i64,
 }
 
 /// Sealed identity after a review resolves.

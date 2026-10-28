@@ -682,7 +682,7 @@ pub(crate) fn operations(setup: &LibrarySetup) -> Operations {
         setup.identify_store.clone(),
         setup.identify.clone(),
         setup.ids.clone(),
-        setup.settings.management.clone(),
+        &setup.settings,
         setup.wakeups.clone(),
         setup.clock.clone(),
     )

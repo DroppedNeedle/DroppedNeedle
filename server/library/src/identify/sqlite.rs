@@ -1602,7 +1602,8 @@ impl SqliteIdentifyStore {
 
     /// Settle a pending review as approved and make its candidate the
     /// album's match ([`identity::approve`]), all or nothing. `Ok(false)`
-    /// when the review is no longer pending; nothing is written then.
+    /// when the review is no longer pending, or no longer at the expected
+    /// revision; nothing is written then.
     pub fn approve(&self, approval: &Approval) -> Result<bool, StoreError> {
         let approved = self
             .db
@@ -1633,16 +1634,18 @@ fn approve_tx(
             approval.review_id
         )));
     };
-    // Only this review settles, and only while it is still pending.
+    // Only this review settles, only while it is still pending, and only
+    // at the revision the person decided on.
     let settled = tx.execute(
         "UPDATE library_identify_reviews SET state = 'approved', \
          resolved_by_user_id = ?1, selected_candidate_key = ?2, updated_ms = ?3 \
-         WHERE id = ?4 AND state = 'pending'",
+         WHERE id = ?4 AND state = 'pending' AND (?5 IS NULL OR row_revision = ?5)",
         params![
             approval.by_user_id,
             approval.candidate_key,
             clock.now_ms(),
-            approval.review_id
+            approval.review_id,
+            approval.expected_revision
         ],
     )?;
     if settled != 1 {

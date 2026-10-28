@@ -500,6 +500,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
         2
     );
     let review_id = reviews[0]["id"].as_str().expect("review id").to_owned();
+    let revision = reviews[0]["row_revision"].clone();
 
     // A manual re-enqueue is accepted (job queued); it runs against an
     // empty recall, so it ends without touching the review.
@@ -524,7 +525,10 @@ async fn library_journey_scan_identify_review_organize_undo() {
             "POST",
             &format!("/api/v3/library/reviews/{review_id}/approve"),
             &headers,
-            Some(json!({"candidate_key": format!("rg-1:{REL_1}")})),
+            Some(json!({
+                "candidate_key": format!("rg-1:{REL_1}"),
+                "expected_revision": revision,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -667,12 +671,16 @@ async fn library_journey_retag_apply_baseline_restore() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let review_id = body["items"][0]["id"].as_str().expect("review").to_owned();
+    let revision = body["items"][0]["row_revision"].clone();
     let (status, _) = app
         .call(
             "POST",
             &format!("/api/v3/library/reviews/{review_id}/approve"),
             &headers,
-            Some(json!({"candidate_key": format!("rg-1:{REL_1}")})),
+            Some(json!({
+                "candidate_key": format!("rg-1:{REL_1}"),
+                "expected_revision": revision,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::OK);
@@ -2815,7 +2823,7 @@ async fn automatic_write_keeps_a_manual_identity() {
 /// caller gets the error and the review stays pending.
 #[tokio::test]
 async fn failed_approval_leaves_the_review_pending() {
-    use droppedneedle_library::service::ServiceError;
+    use droppedneedle_library::operations::models::OperationError;
 
     let (scratch, library, music) = bare_library("lib-approve-fail").await;
     plant(&music, "album/01.flac", "flac_full_01.flac");
@@ -2846,12 +2854,14 @@ async fn failed_approval_leaves_the_review_pending() {
         )
         .expect("trigger installs");
 
-    let refused =
-        library
-            .identification
-            .approve_review(&review[0].id, "curator", &format!("rg-1:{REL_1}"));
+    let refused = crate::common::library::operations(&library).approve_review(
+        &review[0].id,
+        1,
+        &format!("rg-1:{REL_1}"),
+        "curator",
+    );
     assert!(
-        matches!(refused, Err(ServiceError::Internal { .. })),
+        matches!(refused, Err(OperationError::Store(_))),
         "a store failure is an error, not an approval"
     );
     assert_eq!(
@@ -3883,6 +3893,7 @@ async fn library_journey_undo_automatic_edition() {
         .as_str()
         .expect("review id")
         .to_owned();
+    let revision = body["items"][0]["row_revision"].clone();
     let (status, _) = app.call("POST", &undo, &headers, Some(fresh)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "an undo is used once");
 
@@ -3893,7 +3904,7 @@ async fn library_journey_undo_automatic_edition() {
             "POST",
             &format!("/api/v3/library/reviews/{review}/retry"),
             &headers,
-            Some(json!({})),
+            Some(json!({"expected_revision": revision})),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{job}");
@@ -3979,7 +3990,12 @@ async fn library_journey_undo_automatic_edition() {
     assert_eq!(tally["skipped"][0]["count"], json!(1));
     let retry_chosen = "/api/v3/library/reviews/rev-chosen/retry";
     let (status, body) = app
-        .call("POST", retry_chosen, &headers, Some(json!({})))
+        .call(
+            "POST",
+            retry_chosen,
+            &headers,
+            Some(json!({"expected_revision": 1})),
+        )
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], json!("EDITION_IS_CHOSEN"));
@@ -4022,7 +4038,7 @@ async fn library_journey_undo_automatic_edition() {
             "POST",
             retry_chosen,
             &headers,
-            Some(json!({"confirm_local_metadata": true})),
+            Some(json!({"confirm_local_metadata": true, "expected_revision": 1})),
         )
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
@@ -13488,6 +13504,7 @@ async fn library_journey_review_exclude_restore_dismiss() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["album_id"], json!(album));
+    assert_eq!(body["row_revision"], json!(1));
 
     // Exclude takes the files out; nothing is deleted.
     let (status, body) = app
@@ -13495,11 +13512,12 @@ async fn library_journey_review_exclude_restore_dismiss() {
             "POST",
             "/api/v3/library/reviews/rev-1/exclude",
             &headers,
-            None,
+            Some(json!({"expected_revision": 1})),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], json!("excluded"));
+    assert_eq!(body["row_revision"], json!(2));
     assert!(availability(&conn).iter().all(|value| value == "excluded"));
     assert!(music.join("album-v/01.flac").exists());
 
@@ -13509,7 +13527,7 @@ async fn library_journey_review_exclude_restore_dismiss() {
             "POST",
             "/api/v3/library/reviews/rev-1/dismiss",
             &headers,
-            None,
+            Some(json!({"expected_revision": 2})),
         )
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
@@ -13521,7 +13539,7 @@ async fn library_journey_review_exclude_restore_dismiss() {
             "POST",
             "/api/v3/library/reviews/rev-1/restore",
             &headers,
-            None,
+            Some(json!({"expected_revision": 2})),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -13555,17 +13573,45 @@ async fn library_journey_review_exclude_restore_dismiss() {
         .await;
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert_eq!(preview["eligible"], json!(1));
-    let mut stale = selection.clone();
-    stale["preview_token"] = json!("not-the-preview");
-    let (status, _) = app
+    // A token is good only for the person who previewed, and only as it
+    // was issued: another curator's preview of the same change, or the
+    // admin's own token altered, does not apply.
+    let curator = app.login_user("cura").await;
+    let (status, body) = app
         .call(
-            "POST",
-            "/api/v3/library/reviews/bulk-apply",
+            "PUT",
+            &format!("/api/v3/admin/users/{}/role", curator.user_id),
             &headers,
-            Some(stale),
+            Some(json!({"role": "trusted"})),
         )
         .await;
-    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, theirs) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/bulk-preview",
+            &[("authorization", curator.authorization.as_str())],
+            Some(selection.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{theirs}");
+    let token = preview["preview_token"].as_str().expect("token");
+    let last = if token.ends_with('0') { "1" } else { "0" };
+    let altered = format!("{}{last}", &token[..token.len() - 1]);
+    for refused in [theirs["preview_token"].clone(), json!(altered)] {
+        let mut stale = selection.clone();
+        stale["preview_token"] = refused;
+        let (status, body) = app
+            .call(
+                "POST",
+                "/api/v3/library/reviews/bulk-apply",
+                &headers,
+                Some(stale),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], json!("REVIEW_SELECTION_CHANGED"));
+    }
     let mut apply = selection;
     apply["preview_token"] = preview["preview_token"].clone();
     let (status, body) = app
@@ -13620,6 +13666,99 @@ async fn library_journey_review_exclude_restore_dismiss() {
     rig.stop().await;
 }
 
+/// Two people read the same review. Once one has acted on it, every
+/// action the other sends with the revision they read is refused as
+/// stale, and the review stays as the first person left it.
+#[tokio::test]
+async fn a_review_action_on_a_stale_revision_is_refused() {
+    let rig = Rig::start("lib-review-stale").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let admin = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "album-s/01.flac", "flac_full_01.flac");
+    rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "album-s/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    app.db()
+        .execute(
+            "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+             candidates_json, state, created_ms, updated_ms) \
+             VALUES ('rev-s', ?1, 'WEAK_MATCH', '[]', 'pending', 1, 1)",
+            [&album],
+        )
+        .expect("review filed");
+    let curator = app.login_user("cora").await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &format!("/api/v3/admin/users/{}/role", curator.user_id),
+            &admin,
+            Some(json!({"role": "trusted"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let curator = [("authorization", curator.authorization.as_str())];
+
+    // Both read the review at its first revision.
+    let (status, read) = app
+        .call("GET", "/api/v3/library/reviews/rev-s", &admin, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    let seen = read["row_revision"].clone();
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/rev-s/dismiss",
+            &curator,
+            Some(json!({"expected_revision": seen})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    for (action, body) in [
+        ("keep-tagged", json!({"expected_revision": seen})),
+        ("dismiss", json!({"expected_revision": seen})),
+        ("detach", json!({"expected_revision": seen})),
+        ("exclude", json!({"expected_revision": seen})),
+        ("restore", json!({"expected_revision": seen})),
+        ("retry", json!({"expected_revision": seen})),
+        (
+            "approve",
+            json!({"candidate_key": "rg:rel", "expected_revision": seen}),
+        ),
+    ] {
+        let (status, answer) = app
+            .call(
+                "POST",
+                &format!("/api/v3/library/reviews/rev-s/{action}"),
+                &admin,
+                Some(body),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{action}: {answer}");
+        assert_eq!(
+            answer["error"]["code"],
+            json!("STALE_REVISION"),
+            "{action}: {answer}"
+        );
+    }
+    let (_, after) = app
+        .call("GET", "/api/v3/library/reviews/rev-s", &admin, None)
+        .await;
+    assert_eq!(after["state"], json!("dismissed"));
+    rig.stop().await;
+}
+
 /// Approving an edition that names only a release queues the placing of
 /// the album's files. Until that is done a manage preview of the album is
 /// refused with a message that says so; once the queue is clear it goes
@@ -13662,12 +13801,16 @@ async fn manage_preview_waits_while_the_chosen_edition_is_placed() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let review_id = body["items"][0]["id"].as_str().expect("review").to_owned();
+    let revision = body["items"][0]["row_revision"].clone();
     let (status, body) = app
         .call(
             "POST",
             &format!("/api/v3/library/reviews/{review_id}/approve"),
             &headers,
-            Some(json!({"candidate_key": format!("rg-1:{REL_1}")})),
+            Some(json!({
+                "candidate_key": format!("rg-1:{REL_1}"),
+                "expected_revision": revision,
+            })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -14517,10 +14660,7 @@ async fn an_approved_release_is_placed_and_its_undo_survives() {
     )
     .unwrap();
 
-    library
-        .identification
-        .approve_review("rev-approved", "curator", &format!("rg-2:{REL_2}"))
-        .expect("approved");
+    approve(&library, "rev-approved", &format!("rg-2:{REL_2}"));
     assert_eq!(remap_row(&db, &album), Some(("album_pin".to_owned(), 0)));
     let after: Vec<_> = tracks.iter().map(|track| placement(&db, track)).collect();
     assert_eq!(after, files, "the approval leaves the files");
@@ -15509,10 +15649,7 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
         }],
     )
     .unwrap();
-    library
-        .identification
-        .approve_review("rev-join", "curator", &key)
-        .expect("approved");
+    approve(&library, "rev-join", &key);
     assert_eq!(retired_into(&db, &album), Some(own_row.clone()));
     assert_eq!(
         (holdings(&db, &old[0])[1], holdings(&db, &new[0])[1]),
@@ -17313,10 +17450,7 @@ async fn an_approval_continues_a_track_once_its_files_are_placed() {
         }],
     )
     .unwrap();
-    library
-        .identification
-        .approve_review("rev-approve", "curator", &key)
-        .expect("approved");
+    approve(&library, "rev-approve", &key);
     remap_once(
         &library,
         &scratch.identify,
@@ -23036,4 +23170,13 @@ async fn a_carried_library_fetches_its_release_documents_and_keeps_its_links() {
         "{asked:?}"
     );
     rig.stop().await;
+}
+
+/// Approve a review at the revision it is at now, as the review list does.
+fn approve(library: &LibrarySetup, review_id: &str, candidate_key: &str) {
+    let operations = crate::common::library::operations(library);
+    let revision = operations.review(review_id).expect("review").row_revision;
+    operations
+        .approve_review(review_id, revision, candidate_key, "curator")
+        .expect("approved");
 }

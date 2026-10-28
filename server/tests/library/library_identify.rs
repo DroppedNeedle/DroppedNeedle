@@ -1429,6 +1429,7 @@ fn an_approval_without_its_document_waits_and_the_sweep_links_later() {
                 decision_source: DecisionSource::Manual,
                 row_revision: 1,
             },
+            expected_revision: None,
         })
         .expect("approval commits");
     assert!(approved);

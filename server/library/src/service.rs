@@ -7,7 +7,7 @@ use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::ids::IdGenerator;
 
 use super::clock::LibraryClock as _;
-use super::identify::models::{AlbumIdentity, IdentifyJob, IdentifyKind};
+use super::identify::models::{IdentifyJob, IdentifyKind};
 use super::identify::service::IdentifyService;
 use super::identify::sqlite::SqliteIdentifyStore;
 use super::settings::LibrarySettings;
@@ -114,66 +114,5 @@ impl Identification {
         album_id: &str,
     ) -> Result<Vec<super::identify::models::ReviewItem>, ServiceError> {
         Ok(self.identify.pending_reviews(album_id)?)
-    }
-
-    /// Approve a pending review with the curator's chosen candidate,
-    /// sealing a manual identity. Unknown reviews and unknown
-    /// candidates are 404s; settled reviews are 409s.
-    pub fn approve_review(
-        &self,
-        review_id: &str,
-        user_id: &str,
-        candidate_key: &str,
-    ) -> Result<(super::identify::models::ReviewItem, Option<AlbumIdentity>), ServiceError> {
-        let Some(review) = self.identify_store.get(review_id)? else {
-            return Err(ServiceError::NotFound);
-        };
-        if review.state != super::identify::models::ReviewState::Pending {
-            return Err(ServiceError::Conflict {
-                message: "Review is already settled".to_owned(),
-            });
-        }
-        if !review
-            .candidates
-            .iter()
-            .any(|candidate| candidate.candidate_key == candidate_key)
-        {
-            return Err(ServiceError::NotFound);
-        }
-        let approved = self
-            .identify
-            .approve_candidate(review_id, user_id, candidate_key)?;
-        if !approved {
-            return Err(ServiceError::Conflict {
-                message: "Review could not be approved".to_owned(),
-            });
-        }
-        let settled = self.identify_store.get(review_id)?.unwrap_or(review);
-        let identity = self
-            .identify_store
-            .album_identity(&settled.local_album_id)?;
-        Ok((settled, identity))
-    }
-
-    /// Reject a pending review: the album keeps its tags, nothing seals.
-    pub fn reject_review(
-        &self,
-        review_id: &str,
-        user_id: &str,
-    ) -> Result<super::identify::models::ReviewItem, ServiceError> {
-        let Some(review) = self.identify_store.get(review_id)? else {
-            return Err(ServiceError::NotFound);
-        };
-        if review.state != super::identify::models::ReviewState::Pending {
-            return Err(ServiceError::Conflict {
-                message: "Review is already settled".to_owned(),
-            });
-        }
-        if !self.identify.reject_candidates(review_id, user_id)? {
-            return Err(ServiceError::Conflict {
-                message: "Review could not be rejected".to_owned(),
-            });
-        }
-        Ok(self.identify_store.get(review_id)?.unwrap_or(review))
     }
 }

@@ -136,6 +136,9 @@ pub struct Approval {
     pub by_user_id: String,
     pub candidate_key: String,
     pub album: AlbumIdentity,
+    /// The review's revision the person decided on; `None` takes the
+    /// review at whatever revision it is.
+    pub expected_revision: Option<i64>,
 }
 
 /// States a claimed job can land in after one attempt.

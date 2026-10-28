@@ -74,18 +74,8 @@ pub const RESERVED_ARTIST: Reason = reason(
     "Various Artists and Unknown Artist cannot be merged away.",
     "Keep that artist as the survivor, or leave it out of the merge.",
 );
-pub const TOKEN_INVALID: Reason = reason(
-    "PREVIEW_TOKEN_INVALID",
-    "This change was not previewed, or the preview could not be read.",
-    "Preview the change, then apply it.",
-);
 
 // Stale.
-pub const PREVIEW_EXPIRED: Reason = reason(
-    "PREVIEW_EXPIRED",
-    "The preview is more than 15 minutes old.",
-    "Preview the change again, then apply it.",
-);
 pub const PREVIEW_STALE: Reason = reason(
     "STALE_REVISION",
     "The albums or tracks changed after the preview, so the result would differ.",

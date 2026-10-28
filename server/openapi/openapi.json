@@ -19580,7 +19580,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "Apply a previewed bulk change. Refused when the selection changed\nsince the preview.",
+        "summary": "Apply a previewed bulk change. Refused when the token is not the\ncaller's or is too old, or the selection changed since the preview.",
         "operationId": "apply_bulk_reviews",
         "requestBody": {
           "content": {
@@ -19604,7 +19604,7 @@
             }
           },
           "400": {
-            "description": "Unknown action or filter value, or no preview token",
+            "description": "Unknown action or filter value, or no readable preview token",
             "content": {
               "application/json": {
                 "schema": {
@@ -19634,7 +19634,7 @@
             }
           },
           "409": {
-            "description": "The selection changed since the preview",
+            "description": "The preview is too old or another person's, or the selection changed since",
             "content": {
               "application/json": {
                 "schema": {
@@ -19658,7 +19658,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "Preview a bulk change: how many reviews it changes, which it skips and\nwhy, and the token that applies exactly this change.",
+        "summary": "Preview a bulk change: how many reviews it changes, which it skips and\nwhy, and the token that applies exactly this change. The token is good\nfor 15 minutes, and only for the person who previewed.",
         "operationId": "preview_bulk_reviews",
         "requestBody": {
           "content": {
@@ -19918,7 +19918,7 @@
             }
           },
           "409": {
-            "description": "Review already settled",
+            "description": "Review already settled, or changed since it was read (STALE_REVISION)",
             "content": {
               "application/json": {
                 "schema": {
@@ -19955,6 +19955,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewActionBody"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Settled review",
@@ -19997,7 +20007,7 @@
             }
           },
           "409": {
-            "description": "Review already settled",
+            "description": "Review already settled, or changed since it was read (STALE_REVISION)",
             "content": {
               "application/json": {
                 "schema": {
@@ -20034,6 +20044,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewActionBody"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Settled review",
@@ -20076,7 +20096,7 @@
             }
           },
           "409": {
-            "description": "Review already settled",
+            "description": "Review already settled, or changed since it was read (STALE_REVISION)",
             "content": {
               "application/json": {
                 "schema": {
@@ -20113,6 +20133,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewActionBody"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Settled review",
@@ -20155,7 +20185,7 @@
             }
           },
           "409": {
-            "description": "Review already settled",
+            "description": "Review already settled, or changed since it was read (STALE_REVISION)",
             "content": {
               "application/json": {
                 "schema": {
@@ -20174,13 +20204,13 @@
         ]
       }
     },
-    "/api/v3/library/reviews/{id}/reject": {
+    "/api/v3/library/reviews/{id}/keep-tagged": {
       "post": {
         "tags": [
           "library management"
         ],
-        "summary": "Reject a review: the album keeps its tags, nothing seals.",
-        "operationId": "reject_review",
+        "summary": "Keep the album as tagged: nothing seals, and the review settles.",
+        "operationId": "keep_tagged_review",
         "parameters": [
           {
             "name": "id",
@@ -20192,13 +20222,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewActionBody"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Settled review",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReviewResolveResponse"
+                  "$ref": "#/components/schemas/ReviewView"
                 }
               }
             }
@@ -20234,7 +20274,7 @@
             }
           },
           "409": {
-            "description": "Review already settled",
+            "description": "Review already settled, or changed since it was read (STALE_REVISION)",
             "content": {
               "application/json": {
                 "schema": {
@@ -20271,6 +20311,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewActionBody"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Settled review",
@@ -20313,7 +20363,7 @@
             }
           },
           "409": {
-            "description": "The review's album was not excluded",
+            "description": "The review's album was not excluded, or the review changed since it was read (STALE_REVISION)",
             "content": {
               "application/json": {
                 "schema": {
@@ -20402,7 +20452,7 @@
             }
           },
           "409": {
-            "description": "Review already settled, album excluded, or needs the Local metadata confirmation",
+            "description": "Review already settled or changed since it was read (STALE_REVISION), album excluded, or needs the Local metadata confirmation",
             "content": {
               "application/json": {
                 "schema": {
@@ -37140,12 +37190,18 @@
         "type": "object",
         "description": "Approve a review with the curator's chosen candidate.",
         "required": [
-          "candidate_key"
+          "candidate_key",
+          "expected_revision"
         ],
         "properties": {
           "candidate_key": {
             "type": "string",
             "description": "Candidate key from the review."
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The review's `row_revision` when it was read."
           }
         }
       },
@@ -39385,6 +39441,15 @@
             "default": false
           }
         }
+      },
+      "BulkAction": {
+        "type": "string",
+        "description": "What a bulk action does to each selected review.",
+        "enum": [
+          "keep_tagged",
+          "exclude",
+          "accept"
+        ]
       },
       "CacheClearBody": {
         "type": "object",
@@ -55049,7 +55114,8 @@
                 "candidates",
                 "created_ms",
                 "updated_ms",
-                "manual_identity"
+                "manual_identity",
+                "row_revision"
               ],
               "properties": {
                 "album_id": {
@@ -55098,6 +55164,11 @@
                     "null"
                   ],
                   "description": "Resolving user, once settled."
+                },
+                "row_revision": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Goes up whenever the review's state, candidates, reason or album\nchanges. Every action on the review sends the one it was decided\non."
                 },
                 "selected_candidate_key": {
                   "type": [
@@ -61233,6 +61304,20 @@
           }
         }
       },
+      "ReviewActionBody": {
+        "type": "object",
+        "description": "An action on one review, decided on the revision the caller read.",
+        "required": [
+          "expected_revision"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The review's `row_revision` when it was read. A review that changed\nsince is refused with `STALE_REVISION`."
+          }
+        }
+      },
       "ReviewBulkBody": {
         "type": "object",
         "description": "A bulk review change: what to do, and to which reviews.",
@@ -61241,8 +61326,7 @@
         ],
         "properties": {
           "action": {
-            "type": "string",
-            "description": "`keep_tagged`, `exclude` or `accept`."
+            "$ref": "#/components/schemas/BulkAction"
           },
           "candidate_key": {
             "type": [
@@ -61409,10 +61493,18 @@
       "ReviewRetryBody": {
         "type": "object",
         "description": "Start identification again from a review.",
+        "required": [
+          "expected_revision"
+        ],
         "properties": {
           "confirm_local_metadata": {
             "type": "boolean",
             "description": "Confirms a one-off MusicBrainz lookup for files under a Local\nmetadata policy."
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The review's `row_revision` when it was read."
           },
           "idempotency_key": {
             "type": [
@@ -61447,7 +61539,8 @@
           "candidates",
           "created_ms",
           "updated_ms",
-          "manual_identity"
+          "manual_identity",
+          "row_revision"
         ],
         "properties": {
           "album_id": {
@@ -61496,6 +61589,11 @@
               "null"
             ],
             "description": "Resolving user, once settled."
+          },
+          "row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Goes up whenever the review's state, candidates, reason or album\nchanges. Every action on the review sends the one it was decided\non."
           },
           "selected_candidate_key": {
             "type": [

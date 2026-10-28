@@ -190,7 +190,7 @@
 		const question = confirmation(review, action);
 		if (question && !confirm(question)) return;
 		try {
-			await act.mutateAsync({ reviewId: review.id, action });
+			await act.mutateAsync({ reviewId: review.id, revision: review.row_revision, action });
 		} catch (error) {
 			failure(error, 'Could not save the decision.');
 		}
@@ -198,7 +198,11 @@
 
 	async function choose(review: LibraryReview, candidateKey: string): Promise<void> {
 		try {
-			await accept.mutateAsync({ reviewId: review.id, candidateKey });
+			await accept.mutateAsync({
+				reviewId: review.id,
+				revision: review.row_revision,
+				candidateKey
+			});
 		} catch (error) {
 			failure(error, 'Could not use this release.');
 		}
@@ -206,7 +210,11 @@
 
 	async function retryOne(review: LibraryReview): Promise<void> {
 		try {
-			await retry.mutateAsync({ reviewId: review.id, confirmLocalMetadata });
+			await retry.mutateAsync({
+				reviewId: review.id,
+				revision: review.row_revision,
+				confirmLocalMetadata
+			});
 		} catch (error) {
 			failure(error, 'Could not start identification again.');
 		}
