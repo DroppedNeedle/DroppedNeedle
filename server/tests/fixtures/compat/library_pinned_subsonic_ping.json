@@ -1,7 +1,7 @@
 {
   "subsonic-response": {
     "openSubsonic": true,
-    "serverVersion": "10.10.6",
+    "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
     "status": "ok",
     "type": "DroppedNeedle",
     "version": "1.16.1"

@@ -136,11 +136,8 @@ impl CompatSetup {
         );
         let verifier = SubsonicVerifier::new(passwords.clone(), deps.users);
         // Rate limits key the client behind these proxies (`TRUSTED_PROXY_IPS`).
-        let limits = CompatLimits::new(
-            crate::http::StoreLabels::new(passwords),
-            deps.settings.clone(),
-        )
-        .with_trusted_proxies(deps.listener.trusted_proxies.clone());
+        let limits = CompatLimits::new(passwords, deps.settings.clone())
+            .with_trusted_proxies(deps.listener.trusted_proxies.clone());
         let audio = CompatAudio::new(deps.engine);
         let (router, templates) = Self::assemble(
             &verifier,

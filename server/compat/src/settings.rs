@@ -15,6 +15,11 @@ use droppedneedle_kernel::runtime_config::sections::{
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 
+/// The version Subsonic apps are told (`serverVersion`): DroppedNeedle's
+/// own. Jellyfin apps are told the advertised Jellyfin version instead,
+/// as they expect a Jellyfin server.
+pub const SUBSONIC_SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Live handles on the sections compat reads.
 #[derive(Clone)]
 pub struct LiveSettings {
@@ -67,7 +72,7 @@ impl LiveSettings {
         Settings {
             enabled: apps.subsonic_enabled,
             server_name: apps.advertise_server_name,
-            server_version: apps.advertise_server_version,
+            server_version: SUBSONIC_SERVER_VERSION.to_owned(),
             transcoding_enabled: apps.transcoding_enabled,
             transcode_default_format: output_format(apps.transcode_default_format),
             transcode_max_bitrate_kbps: apps.transcode_max_bitrate_kbps,

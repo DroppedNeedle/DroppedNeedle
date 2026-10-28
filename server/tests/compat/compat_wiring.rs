@@ -158,6 +158,42 @@ async fn layered_limits_reject_in_each_protocol_shape() {
     }
 }
 
+/// An IPv6 client is keyed by its /64, as the native limiter keys it:
+/// another address in the same /64 gets no fresh public bucket and no
+/// fresh sign-in backoff, while another /64 is another client. The
+/// addresses come through the trusted loopback proxy.
+#[tokio::test]
+async fn ipv6_clients_share_limits_across_their_64() {
+    let app = enabled("compat-ipv6").await;
+    let ask = |uri: &'static str, client: &'static str| {
+        let app = &app;
+        async move {
+            let (_, headers, body) =
+                oneshot(app, "GET", uri, &[("x-forwarded-for", client)], b"").await;
+            (subsonic_code(&body), headers.get("retry-after").is_some())
+        }
+    };
+    let public = "/subsonic/rest/getOpenSubsonicExtensions?f=json";
+    let limited = (Value::from(0), true);
+    let mut drained = false;
+    for _ in 0..100 {
+        if ask(public, "2001:db8:1:2::a").await == limited {
+            drained = true;
+            break;
+        }
+    }
+    assert!(drained, "the public bucket never tripped");
+    assert_eq!(ask(public, "2001:db8:1:2::b").await, limited);
+    assert_eq!(ask(public, "2001:db8:1:3::a").await, (Value::Null, false));
+
+    let ping = "/subsonic/rest/ping?f=json";
+    for _ in 0..5 {
+        assert_eq!(ask(ping, "2001:db8:5:6::1").await, (Value::from(10), false));
+    }
+    assert_eq!(ask(ping, "2001:db8:5:6::2").await, limited);
+    assert_eq!(ask(ping, "2001:db8:5:7::1").await, (Value::from(10), false));
+}
+
 #[tokio::test]
 async fn api_bodies_compress_when_the_client_accepts() {
     let app = enabled("compat-gzip").await;

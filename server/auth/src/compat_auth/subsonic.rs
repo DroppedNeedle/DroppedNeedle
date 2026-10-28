@@ -12,11 +12,6 @@ use sha2::{Digest, Sha256};
 
 use super::prod::ProdCompatPasswords;
 
-/// Advertised protocol version, in every envelope.
-pub const API_VERSION: &str = "1.16.1";
-/// Envelope namespace.
-pub const NAMESPACE: &str = "http://subsonic.org/restapi";
-
 /// Generic error.
 pub const GENERIC: u8 = 0;
 /// Required parameter missing.
@@ -27,11 +22,6 @@ pub const WRONG_CREDENTIALS: u8 = 40;
 pub const CONFLICTING_AUTH: u8 = 43;
 /// Invalid apiKey.
 pub const INVALID_APIKEY: u8 = 44;
-/// User not authorized for the operation.
-pub const NOT_AUTHORIZED: u8 = 50;
-/// Requested data not found.
-pub const NOT_FOUND: u8 = 70;
-
 /// v2 length caps, kept verbatim.
 pub const MAX_USERNAME_LENGTH: usize = 256;
 /// v2 length caps, kept verbatim.
@@ -44,194 +34,6 @@ pub const MAX_SALT_LENGTH: usize = 128;
 pub const MAX_TOKEN_LENGTH: usize = 128;
 /// v2 length caps, kept verbatim.
 pub const MAX_CLIENT_NAME_LENGTH: usize = 256;
-
-/// getAvatar refusal for a non-self username, v2 message verbatim.
-pub const AVATAR_FORBIDDEN_MESSAGE: &str = "Avatar access is limited to the authenticated user";
-
-/// Default message per code, v2 `errors.py` verbatim.
-pub fn default_message(code: u8) -> &'static str {
-    match code {
-        PARAM_MISSING => "Required parameter is missing.",
-        WRONG_CREDENTIALS => "Wrong username or password.",
-        CONFLICTING_AUTH => "Multiple conflicting authentication mechanisms provided.",
-        INVALID_APIKEY => "Invalid API key.",
-        NOT_AUTHORIZED => "User is not authorized for the given operation.",
-        NOT_FOUND => "The requested data was not found.",
-        _ => "An error occurred.",
-    }
-}
-
-/// Normalize an endpoint name: casefold, strip one `.view` suffix.
-pub fn normalize_endpoint(raw: &str) -> String {
-    let folded = raw.to_lowercase();
-    folded.strip_suffix(".view").unwrap_or(&folded).to_owned()
-}
-
-/// Response format from the `f` param (default XML). Anything else is
-/// code 10 (v2 raises `SubsonicError(10)` on an invalid `f`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubsonicFormat {
-    /// XML (default).
-    Xml,
-    /// JSON.
-    Json,
-    /// JSONP (falls back to JSON on a missing/unsafe callback).
-    Jsonp,
-}
-
-/// Parse the `f` param; `None` (absent) means XML.
-pub fn parse_format(value: Option<&str>) -> Result<SubsonicFormat, SubsonicDenied> {
-    match value {
-        None => Ok(SubsonicFormat::Xml),
-        Some("xml") => Ok(SubsonicFormat::Xml),
-        Some("json") => Ok(SubsonicFormat::Json),
-        Some("jsonp") => Ok(SubsonicFormat::Jsonp),
-        Some(_) => Err(SubsonicDenied::new(PARAM_MISSING)),
-    }
-}
-
-/// A callback is safe only as a bare identifier path, else the response
-/// falls back to JSON (v2 `_CALLBACK_RE` parity:
-/// `^[A-Za-z_$][\w$.]{0,127}$` with Unicode `\w` and a 128-char cap).
-pub fn callback_is_safe(callback: &str) -> bool {
-    let mut chars = callback.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
-        return false;
-    }
-    if callback.chars().count() > 128 {
-        return false;
-    }
-    chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '.')
-}
-
-/// One rendered failure: status, content type, and exact body bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenderedError {
-    /// HTTP status (200 for envelopes, 403/404 for binary text).
-    pub status: u16,
-    /// Content type without charset suffix.
-    pub content_type: &'static str,
-    /// Exact body bytes.
-    pub body: Vec<u8>,
-}
-
-impl RenderedError {
-    /// Body as UTF-8 (all our bodies are ASCII-safe by construction).
-    pub fn body_text(&self) -> String {
-        String::from_utf8_lossy(&self.body).into_owned()
-    }
-}
-
-/// Render a failed envelope (HTTP 200) in the requested format.
-pub fn render_error(
-    code: u8,
-    message: &str,
-    format: SubsonicFormat,
-    callback: Option<&str>,
-    server_name: &str,
-    server_version: &str,
-) -> RenderedError {
-    let safe_callback = callback.filter(|cb| callback_is_safe(cb));
-    match format {
-        SubsonicFormat::Xml => RenderedError {
-            status: 200,
-            content_type: "application/xml",
-            body: render_xml(code, message, server_name, server_version).into_bytes(),
-        },
-        SubsonicFormat::Json => RenderedError {
-            status: 200,
-            content_type: "application/json",
-            body: render_json(code, message, server_name, server_version).into_bytes(),
-        },
-        SubsonicFormat::Jsonp => match safe_callback {
-            Some(cb) => RenderedError {
-                status: 200,
-                content_type: "application/javascript",
-                body: format!(
-                    "{cb}({});",
-                    render_json(code, message, server_name, server_version)
-                )
-                .into_bytes(),
-            },
-            None => RenderedError {
-                status: 200,
-                content_type: "application/json",
-                body: render_json(code, message, server_name, server_version).into_bytes(),
-            },
-        },
-    }
-}
-
-/// Render a binary-path failure as `text/plain`: 70 maps to 404, 50 maps
-/// to 403, anything else maps to 404 (v2 `_binary_error` parity).
-pub fn render_binary_error(code: u8, message: &str) -> RenderedError {
-    let status = match code {
-        NOT_FOUND => 404,
-        NOT_AUTHORIZED => 403,
-        _ => 404,
-    };
-    RenderedError {
-        status,
-        content_type: "text/plain",
-        body: message.as_bytes().to_vec(),
-    }
-}
-
-fn render_json(code: u8, message: &str, server_name: &str, server_version: &str) -> String {
-    format!(
-        "{{\"subsonic-response\":{{\"status\":\"failed\",\"version\":\"{API_VERSION}\",\"type\":\"{}\",\"serverVersion\":\"{}\",\"openSubsonic\":true,\"error\":{{\"code\":{code},\"message\":\"{}\"}}}}}}",
-        json_escape(server_name),
-        json_escape(server_version),
-        json_escape(message),
-    )
-}
-
-fn render_xml(code: u8, message: &str, server_name: &str, server_version: &str) -> String {
-    format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><subsonic-response xmlns=\"{NAMESPACE}\" status=\"failed\" version=\"{API_VERSION}\" type=\"{}\" serverVersion=\"{}\" openSubsonic=\"true\"><error code=\"{code}\" message=\"{}\"/></subsonic-response>",
-        xml_escape_attr(server_name),
-        xml_escape_attr(server_version),
-        xml_escape_attr(message),
-    )
-}
-
-fn json_escape(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-fn xml_escape_attr(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for c in value.chars() {
-        if matches!(c, '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}') {
-            continue;
-        }
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-// --- auth ---
 
 /// Query-plus-form params, repeats preserved (duplicates are an error).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -265,8 +67,8 @@ impl SubsonicParams {
     }
 }
 
-/// Auth denial: a code plus its default message. Auth paths raise bare
-/// codes in v2, so the message is always [`default_message`].
+/// Auth denial: the Subsonic error code. Auth paths raise bare codes in
+/// v2, so compat answers each with its default message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubsonicDenied {
     /// The Subsonic error code.
@@ -277,29 +79,6 @@ impl SubsonicDenied {
     /// Deny with a code.
     pub fn new(code: u8) -> Self {
         Self { code }
-    }
-
-    /// The wire message for this denial.
-    pub fn message(&self) -> &'static str {
-        default_message(self.code)
-    }
-
-    /// Render as an envelope failure.
-    pub fn render(
-        &self,
-        format: SubsonicFormat,
-        callback: Option<&str>,
-        server_name: &str,
-        server_version: &str,
-    ) -> RenderedError {
-        render_error(
-            self.code,
-            self.message(),
-            format,
-            callback,
-            server_name,
-            server_version,
-        )
     }
 }
 
@@ -439,19 +218,6 @@ pub async fn authenticate(
     }
 
     Err(SubsonicDenied::new(PARAM_MISSING))
-}
-
-/// getAvatar rule: the requested username must be one of the caller's own
-/// names (username, display casing, or display name), case-insensitively.
-/// Anything else renders [`render_binary_error`] with 50 (403-as-text).
-pub fn avatar_is_self(caller_names: &[&str], requested: Option<&str>) -> bool {
-    let Some(requested) = requested else {
-        return false;
-    };
-    let wanted = requested.to_lowercase();
-    caller_names
-        .iter()
-        .any(|name| name.to_lowercase() == wanted)
 }
 
 /// Decode the `p` param: `enc:<hex>` decodes to UTF-8, anything else

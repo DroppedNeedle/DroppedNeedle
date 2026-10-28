@@ -31,6 +31,7 @@ use crate::body::AudioBody;
 use crate::settings::LiveSettings;
 use crate::setup::CompatAudio;
 use crate::shared::address::{ListenerConfig, base_address};
+use crate::shared::percent::{self, Malformed, Plus};
 
 use super::audio::*;
 use super::browse::*;
@@ -446,48 +447,14 @@ fn query_exact<'a>(raw: Option<&'a str>, key: &str) -> Option<&'a str> {
     None
 }
 
-/// A query token that is not valid percent-encoding.
-#[derive(Debug)]
-pub(crate) struct MalformedToken;
-
 /// Undo the percent-encoding of a query token, once: `%3D` is `=`, and
 /// `%253D` is the text `%3D`. An app password ends in `=`, which a player
 /// may send either way. Nothing else changes: a `+` stays a `+` and is
 /// never a space (app passwords are URL-safe base64 and hold neither),
 /// nothing is trimmed and case is kept. A `%` without two hex digits, or
 /// bytes that are not UTF-8, refuse the token.
-///
-/// Written here because no decoder among the dependencies is strict
-/// enough for a credential: `percent-encoding` keeps a bad escape as
-/// text, and the form decoders turn `+` into a space and replace bytes
-/// that are not UTF-8.
-fn decode_token(raw: &str) -> Result<String, MalformedToken> {
-    fn hex(byte: u8) -> Option<u8> {
-        match byte {
-            b'0'..=b'9' => Some(byte - b'0'),
-            b'a'..=b'f' => Some(byte - b'a' + 10),
-            b'A'..=b'F' => Some(byte - b'A' + 10),
-            _ => None,
-        }
-    }
-    let mut out = Vec::with_capacity(raw.len());
-    let mut rest = raw.as_bytes();
-    while let Some((&byte, tail)) = rest.split_first() {
-        if byte != b'%' {
-            out.push(byte);
-            rest = tail;
-            continue;
-        }
-        let [hi, lo, tail @ ..] = tail else {
-            return Err(MalformedToken);
-        };
-        let (Some(hi), Some(lo)) = (hex(*hi), hex(*lo)) else {
-            return Err(MalformedToken);
-        };
-        out.push(hi << 4 | lo);
-        rest = tail;
-    }
-    String::from_utf8(out).map_err(|_| MalformedToken)
+fn decode_token(raw: &str) -> Result<String, Malformed> {
+    percent::strict(raw, Plus::Literal)
 }
 
 /// The tokens a request carries in its query, decoded. The handlers and
@@ -500,7 +467,7 @@ pub(crate) struct QueryTokens {
 impl QueryTokens {
     /// Fails when either value is malformed, even if a header token or the
     /// other value would have been used: such a request is refused.
-    pub(crate) fn read(raw_query: Option<&str>) -> Result<Self, MalformedToken> {
+    pub(crate) fn read(raw_query: Option<&str>) -> Result<Self, Malformed> {
         let token = |key| query_exact(raw_query, key).map(decode_token).transpose();
         Ok(Self {
             apikey: token("ApiKey")?,

@@ -1,6 +1,6 @@
-//! Compat-auth goldens: every Subsonic code, the binary split
-//! with the getAvatar 403-as-text exception, Jellyfin 401s with the login
-//! echo, and account-password rejection on both protocols.
+//! Compat-auth goldens: every Subsonic code in the envelope compat serves,
+//! the binary split with the getAvatar 403-as-text message, Jellyfin 401s
+//! with the login echo, and account-password rejection on both protocols.
 
 use droppedneedle_auth::compat_auth::jellyfin::{
     JellyfinRequest, JellyfinUser, MAX_AUTH_VALUE_LENGTH, PolicyFacts, SessionFacts, UNAUTHORIZED,
@@ -9,14 +9,22 @@ use droppedneedle_auth::compat_auth::jellyfin::{
 };
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::compat_auth::subsonic::{
-    API_VERSION, AVATAR_FORBIDDEN_MESSAGE, CONFLICTING_AUTH, GENERIC, INVALID_APIKEY,
-    MAX_CLIENT_NAME_LENGTH, MAX_ENCODED_PASSWORD_LENGTH, NAMESPACE, NOT_AUTHORIZED, NOT_FOUND,
-    PARAM_MISSING, SubsonicDenied, SubsonicFormat, SubsonicParams, WRONG_CREDENTIALS, authenticate,
-    avatar_is_self, callback_is_safe, decode_subsonic_password, default_message, hex_encode,
-    md5_hex, normalize_endpoint, parse_format, render_binary_error, render_error, sha256_hex,
+    MAX_CLIENT_NAME_LENGTH, MAX_ENCODED_PASSWORD_LENGTH, SubsonicDenied, SubsonicParams,
+    authenticate, decode_subsonic_password, hex_encode, md5_hex, sha256_hex,
 };
 use droppedneedle_auth::users::roles::Role;
-use droppedneedle_compat::subsonic::{AUTH_CODES, ENDPOINTS, dispatch_uses_envelope, endpoint};
+use droppedneedle_compat::subsonic::error::{
+    CONFLICTING_AUTH, GENERIC, INVALID_APIKEY, NOT_AUTHORIZED, NOT_FOUND, PARAM_MISSING,
+    SubsonicError, WRONG_CREDENTIALS, default_message,
+};
+use droppedneedle_compat::subsonic::value::{
+    API_VERSION, NAMESPACE, SubsonicFormat, callback_is_safe, parse_format, render_binary_error,
+    render_error,
+};
+use droppedneedle_compat::subsonic::{
+    AUTH_CODES, AVATAR_FORBIDDEN_MESSAGE, ENDPOINTS, Settings, dispatch_uses_envelope, endpoint,
+    failure, normalize_endpoint,
+};
 
 use crate::common::auth::{AuthRig, PASSWORD};
 
@@ -155,8 +163,8 @@ fn error_envelope_escapes_and_jsonp_falls_back() {
     assert!(!callback_is_safe("a-b"));
     assert_eq!(parse_format(None), Ok(SubsonicFormat::Xml));
     assert_eq!(
-        parse_format(Some("yaml")),
-        Err(SubsonicDenied::new(PARAM_MISSING))
+        parse_format(Some("yaml")).map_err(|err| err.code),
+        Err(PARAM_MISSING)
     );
 }
 
@@ -185,7 +193,10 @@ fn dispatch_split_keeps_50_enveloped_and_sends_the_rest_to_text() {
     assert!(dispatch_uses_envelope(NOT_AUTHORIZED, "getartists"));
 
     let text = render_binary_error(NOT_FOUND, "missing");
-    assert_eq!((text.status, text.content_type), (404, "text/plain"));
+    assert_eq!(
+        (text.status, text.content_type.as_str()),
+        (404, "text/plain")
+    );
     assert_eq!(text.body_text(), "missing");
     assert_eq!(render_binary_error(NOT_AUTHORIZED, "no").status, 403);
     assert_eq!(render_binary_error(GENERIC, "boom").status, 404);
@@ -194,15 +205,6 @@ fn dispatch_split_keeps_50_enveloped_and_sends_the_rest_to_text() {
         AVATAR_FORBIDDEN_MESSAGE,
         "Avatar access is limited to the authenticated user"
     );
-    assert!(avatar_is_self(
-        &["alice", "Alice", "Alice Liddell"],
-        Some("ALICE")
-    ));
-    assert!(!avatar_is_self(
-        &["alice", "Alice", "Alice Liddell"],
-        Some("bob")
-    ));
-    assert!(!avatar_is_self(&["alice"], None));
 }
 
 #[tokio::test]
@@ -388,9 +390,13 @@ async fn store_failure_is_generic_never_an_auth_code() {
 
 #[test]
 fn denial_renders_through_the_envelope() {
-    let denied = SubsonicDenied::new(NOT_FOUND);
-    assert_eq!(denied.message(), "The requested data was not found.");
-    let rendered = denied.render(SubsonicFormat::Json, None, "DroppedNeedle", "3.0.0");
+    let denied = SubsonicError::code_only(NOT_FOUND);
+    assert_eq!(denied.message, "The requested data was not found.");
+    let settings = Settings {
+        server_version: "3.0.0".to_owned(),
+        ..Settings::default()
+    };
+    let (rendered, _) = failure(denied, "getsong", SubsonicFormat::Json, None, &settings);
     assert!(rendered.body_text().contains("\"code\":70"));
     assert_eq!(
         sha256_hex("abc"),

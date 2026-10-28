@@ -420,7 +420,7 @@ impl RateLimiter {
 
 /// Bucket key for one client address: an IPv4 address, or the /64 an IPv6
 /// address sits in.
-fn address_key(ip: IpAddr) -> String {
+pub fn address_key(ip: IpAddr) -> String {
     match ip {
         IpAddr::V4(ip) => format!("ip:{ip}"),
         IpAddr::V6(ip) => {

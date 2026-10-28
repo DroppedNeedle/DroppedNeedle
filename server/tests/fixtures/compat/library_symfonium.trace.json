@@ -4,7 +4,7 @@
       "body": {
         "subsonic-response": {
           "openSubsonic": true,
-          "serverVersion": "10.10.6",
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
           "status": "ok",
           "type": "DroppedNeedle",
           "version": "1.16.1"
@@ -201,7 +201,7 @@
             ]
           },
           "openSubsonic": true,
-          "serverVersion": "10.10.6",
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
           "status": "ok",
           "type": "DroppedNeedle",
           "version": "1.16.1"
@@ -314,7 +314,7 @@
             "year": 1991
           },
           "openSubsonic": true,
-          "serverVersion": "10.10.6",
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
           "status": "ok",
           "type": "DroppedNeedle",
           "version": "1.16.1"
@@ -375,7 +375,7 @@
       "body": {
         "subsonic-response": {
           "openSubsonic": true,
-          "serverVersion": "10.10.6",
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
           "status": "ok",
           "type": "DroppedNeedle",
           "version": "1.16.1"
@@ -391,7 +391,7 @@
       "body": {
         "subsonic-response": {
           "openSubsonic": true,
-          "serverVersion": "10.10.6",
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
           "starred2": {
             "album": [],
             "artist": [],
@@ -543,7 +543,7 @@
             "readonly": false,
             "songCount": 1
           },
-          "serverVersion": "10.10.6",
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
           "status": "ok",
           "type": "DroppedNeedle",
           "version": "1.16.1"
@@ -631,7 +631,7 @@
             "readonly": false,
             "songCount": 1
           },
-          "serverVersion": "10.10.6",
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
           "status": "ok",
           "type": "DroppedNeedle",
           "version": "1.16.1"
@@ -647,7 +647,7 @@
       "body": {
         "subsonic-response": {
           "openSubsonic": true,
-          "serverVersion": "10.10.6",
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
           "status": "ok",
           "type": "DroppedNeedle",
           "version": "1.16.1"
@@ -729,7 +729,7 @@
             ]
           },
           "openSubsonic": true,
-          "serverVersion": "10.10.6",
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
           "status": "ok",
           "type": "DroppedNeedle",
           "version": "1.16.1"
@@ -745,7 +745,7 @@
       "body": {
         "subsonic-response": {
           "openSubsonic": true,
-          "serverVersion": "10.10.6",
+          "serverVersion": "re:\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?",
           "status": "ok",
           "type": "DroppedNeedle",
           "version": "1.16.1"

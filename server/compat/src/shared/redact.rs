@@ -7,6 +7,8 @@
 //! percent-decoded key name, repeats are preserved, and non-secret pairs
 //! pass through untouched.
 
+use super::percent::lossy;
+
 /// Query keys whose values are secrets (v2 `_SECRET_QS_KEYS`, plus the
 /// signature of an open picture link).
 pub const SECRET_KEYS: [&str; 10] = [
@@ -50,43 +52,18 @@ pub fn redact_request_target(target: &str) -> String {
             Some(eq) => (&pair[..eq], Some(&pair[eq + 1..])),
             None => (pair, None),
         };
-        let key = form_decode(raw_key);
+        let key = lossy(raw_key);
         out.push_str(&form_encode(raw_key, &key));
         if let Some(value) = raw_value {
             out.push('=');
             if is_secret_key(&key) {
                 out.push_str(MASK);
             } else {
-                out.push_str(&form_encode(value, &form_decode(value)));
+                out.push_str(&form_encode(value, &lossy(value)));
             }
         }
     }
     out
-}
-
-/// `application/x-www-form-urlencoded` decoding (what v2 `parse_qsl`
-/// does): `+` becomes space, `%XX` becomes the byte.
-fn form_decode(raw: &str) -> String {
-    let mut bytes = Vec::with_capacity(raw.len());
-    let mut chars = raw.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '+' => bytes.push(b' '),
-            '%' => {
-                let hex: String = chars.by_ref().take(2).collect();
-                if hex.len() == 2
-                    && let Ok(byte) = u8::from_str_radix(&hex, 16)
-                {
-                    bytes.push(byte);
-                } else {
-                    bytes.push(b'%');
-                    bytes.extend_from_slice(hex.as_bytes());
-                }
-            }
-            _ => bytes.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
-        }
-    }
-    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Re-encode a decoded pair member the way v2 `urlencode` does,

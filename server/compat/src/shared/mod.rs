@@ -1,7 +1,7 @@
 //! Shared compat infrastructure: the policy both protocol shims inherit.
 //!
 //! Everything here is protocol-agnostic on purpose: CORS,
-//! case-insensitive paths, rate limits plus auth backoff, log redaction,
+//! case-insensitive paths, rate limits plus auth backoff, log redaction, percent-decoding,
 //! auth posture, and the advertised extension set. The Subsonic and
 //! Jellyfin routers consume these; they never fork them. Kill switches
 //! and per-endpoint guards live in each protocol module (a single copy
@@ -16,5 +16,6 @@ pub mod auth;
 pub mod cors;
 pub mod extensions;
 pub mod path_case;
+pub mod percent;
 pub mod ratelimit;
 pub mod redact;

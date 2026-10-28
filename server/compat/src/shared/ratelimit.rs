@@ -9,12 +9,17 @@
 //! carries `Retry-After`. Buckets and the bounded TTL maps are the native
 //! limiter's ([`droppedneedle_auth::session::rate_limit`]).
 //!
+//! Clients are keyed as the native limiter keys them ([`client_key`]), so
+//! an IPv6 client hopping addresses inside its /64 gets no fresh bucket
+//! and no fresh backoff.
+//!
 //! Time is an explicit `now` (monotonic seconds) so tests pin behavior
 //! without sleeping; production passes its monotonic clock.
 
 use std::collections::VecDeque;
+use std::net::IpAddr;
 
-use droppedneedle_auth::session::rate_limit::{BoundedMap, TokenBucket};
+use droppedneedle_auth::session::rate_limit::{BoundedMap, TokenBucket, address_key};
 
 /// Failures inside the window that trigger a lockout.
 pub const AUTH_FAILURE_LIMIT: usize = 5;
@@ -63,6 +68,13 @@ fn acquire(
     } else {
         Some(bucket.retry_after(now))
     }
+}
+
+/// The bucket and backoff key for the client at `ip`: an IPv4 address or
+/// the /64 an IPv6 address sits in, as the native limiter keys it.
+/// `unknown` when served without connect info.
+pub fn client_key(ip: Option<IpAddr>) -> String {
+    ip.map_or_else(|| "unknown".to_owned(), address_key)
 }
 
 /// The three bucket families plus auth-failure state (v2

@@ -100,31 +100,8 @@ pub async fn cors_layer(request: Request, next: Next) -> Response {
     response
 }
 
-/// Token → user lookup over the app-password store, for limit labeling.
-#[derive(Clone)]
-pub struct StoreLabels {
-    passwords: ProdCompatPasswords,
-}
-
-impl StoreLabels {
-    /// Wrap the store.
-    pub fn new(passwords: ProdCompatPasswords) -> Self {
-        Self { passwords }
-    }
-
-    /// User id for a token, or `None` when unknown or the store fails.
-    pub async fn user_for_token(&self, token: &str) -> Option<String> {
-        self.passwords
-            .user_for_token(token)
-            .await
-            .ok()
-            .flatten()
-            .map(|user| user.id)
-    }
-}
-
 /// Rate-limit layer state: the shared buckets, a monotonic clock origin,
-/// the token lookup for principal labeling, and the Subsonic settings for
+/// the app passwords for principal labeling, and the Subsonic settings for
 /// shaped rejects.
 #[derive(Clone)]
 pub struct CompatLimits {
@@ -132,8 +109,9 @@ pub struct CompatLimits {
     pub limits: Arc<Mutex<ratelimit::CompatRateLimits>>,
     /// Clock origin for bucket timestamps.
     pub started: Arc<Instant>,
-    /// Token → user lookup for Jellyfin principal buckets.
-    pub labels: StoreLabels,
+    /// App passwords, to find the user behind a Jellyfin token for its
+    /// principal bucket.
+    pub passwords: ProdCompatPasswords,
     /// Server name/version for Subsonic limit envelopes, read per request.
     pub settings: LiveSettings,
     /// Peers whose `X-Forwarded-For` names the client; loopback by default.
@@ -141,12 +119,12 @@ pub struct CompatLimits {
 }
 
 impl CompatLimits {
-    /// Wrap the buckets, the label lookup, and the settings.
-    pub fn new(labels: StoreLabels, settings: LiveSettings) -> Self {
+    /// Wrap the buckets, the app passwords, and the settings.
+    pub fn new(passwords: ProdCompatPasswords, settings: LiveSettings) -> Self {
         Self {
             limits: Arc::new(Mutex::new(ratelimit::CompatRateLimits::new())),
             started: Arc::new(Instant::now()),
-            labels,
+            passwords,
             settings,
             trusted_proxies: TrustedProxies::default(),
         }
@@ -162,6 +140,17 @@ impl CompatLimits {
 
     fn now(&self) -> f64 {
         self.started.elapsed().as_secs_f64()
+    }
+
+    /// The user behind a Jellyfin token, or `None` when it is unknown or
+    /// the store fails (the request then signs in or fails on its own).
+    async fn user_for_token(&self, token: &str) -> Option<String> {
+        self.passwords
+            .user_for_token(token)
+            .await
+            .ok()
+            .flatten()
+            .map(|user| user.id)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ratelimit::CompatRateLimits> {
@@ -297,7 +286,7 @@ pub async fn limits_layer(
     if let Some(client) = client {
         request.extensions_mut().insert(ClientIp(client));
     }
-    let ip = client.map_or_else(|| "unknown".to_owned(), |client| client.to_string());
+    let ip = ratelimit::client_key(client);
     let now = state.now();
     let raw_query = request.uri().query().map(str::to_owned);
     let reject = |retry_after: u64| {
@@ -329,7 +318,7 @@ pub async fn limits_layer(
             }
         } else if is_jellyfin
             && let Some(token) = label_token(&request)
-            && let Some(user_id) = state.labels.user_for_token(&token).await
+            && let Some(user_id) = state.user_for_token(&token).await
         {
             let principal = auth::principal_label(Some(&user_id), &ip);
             let mutation = ratelimit::is_mutation_request(&method, &path);
@@ -619,11 +608,7 @@ async fn subsonic_dispatch(
         Err(err) => return envelope(err.code, &err.message),
     };
     let method_entry = endpoint(&name);
-    let ip = parts
-        .extensions
-        .get::<ClientIp>()
-        .map(|client| client.0.to_string())
-        .unwrap_or_else(|| "unknown".to_owned());
+    let ip = ratelimit::client_key(parts.extensions.get::<ClientIp>().map(|client| client.0));
     let now = state.now();
     let record_denial = || {
         let _ = auth::record_auth_denial(

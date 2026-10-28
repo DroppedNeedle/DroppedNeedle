@@ -1,15 +1,14 @@
 //! Compat-auth contracts: byte-locked Subsonic and Jellyfin auth.
 //!
-//! The compat routers live in the server's `compat` area; the auth contracts live
-//! here as a tested module: Subsonic codes 10/40/43/44/50/70 with the binary-vs-
-//! envelope split (including the getAvatar 403-as-text exception),
-//! Jellyfin 401s with the login echo, and account-password rejection on
-//! both protocols (app passwords only on compat paths, never native
-//! tokens, never account passwords).
+//! The compat routers live in the `compat` crate; the auth contracts live
+//! here: the three Subsonic schemes and their codes (10/40/43/44), Jellyfin
+//! 401s with the login echo, and account-password rejection on both
+//! protocols (app passwords only on compat paths, never native tokens,
+//! never account passwords). Compat answers a Subsonic denial in its own
+//! envelope.
 //!
-//! Ported from v2's Subsonic and Jellyfin compat auth, errors, routers
-//! (`_dispatch`, `_binary_error`, `getAvatar`, `_user_dto`,
-//! `_authenticate`), serialization, and the app password service.
+//! Ported from v2's Subsonic and Jellyfin compat auth (`_user_dto`,
+//! `_authenticate`) and the app password service.
 //!
 //! Store: [`prod::ProdCompatPasswords`] reads `connect_app_passwords`
 //! (decrypting `secret_encrypted` for the Subsonic token scheme) and

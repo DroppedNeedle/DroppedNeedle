@@ -227,9 +227,12 @@ async fn set_subsonic(rig: &CompatApp, enabled: bool) {
 }
 
 const XML_HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><subsonic-response xmlns=\"http://subsonic.org/restapi\"";
-/// `serverVersion` is the version v3 gives Jellyfin apps.
-const ATTRS: &str =
-    "version=\"1.16.1\" type=\"DroppedNeedle\" serverVersion=\"10.10.6\" openSubsonic=\"true\"";
+/// `serverVersion` is DroppedNeedle's own version.
+const ATTRS: &str = concat!(
+    "version=\"1.16.1\" type=\"DroppedNeedle\" serverVersion=\"",
+    env!("CARGO_PKG_VERSION"),
+    "\" openSubsonic=\"true\""
+);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn envelopes_are_byte_exact() {
@@ -245,7 +248,12 @@ async fn envelopes_are_byte_exact() {
         (
             client.get("ping", &[("f", "json")]).await,
             "application/json",
-            "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"DroppedNeedle\",\"serverVersion\":\"10.10.6\",\"openSubsonic\":true}}".to_owned(),
+            concat!(
+                "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"DroppedNeedle\",\"serverVersion\":\"",
+                env!("CARGO_PKG_VERSION"),
+                "\",\"openSubsonic\":true}}"
+            )
+            .to_owned(),
         ),
         // Endpoint names casefold and drop `.view`.
         (

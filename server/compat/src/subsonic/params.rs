@@ -2,6 +2,7 @@
 //! v2: the Subsonic parameter parser (all caps verbatim).
 
 use super::error::{PARAM_MISSING, SubsonicError};
+use crate::shared::percent::{self, Plus};
 
 /// Max raw bytes of query string or POST body.
 pub const MAX_REQUEST_PARAMETER_BYTES: usize = 64 * 1024;
@@ -163,86 +164,20 @@ fn is_integer(raw: &str) -> bool {
 
 /// Decode one `application/x-www-form-urlencoded` blob into pairs.
 /// Malformed percent escapes and non-UTF-8 are code 10
-/// (v2 `_decode_pairs`).
+/// (v2 `_decode_pairs`, `parse_qsl` semantics).
 pub fn decode_pairs(raw: &[u8]) -> Result<Vec<(String, String)>, SubsonicError> {
-    let text = std::str::from_utf8(raw)
-        .map_err(|_| SubsonicError::new(PARAM_MISSING, "Invalid request parameter encoding"))?;
-    if has_malformed_percent(text) {
-        return Err(SubsonicError::new(
-            PARAM_MISSING,
-            "Invalid request parameter encoding",
-        ));
-    }
+    let bad = || SubsonicError::new(PARAM_MISSING, "Invalid request parameter encoding");
+    let text = std::str::from_utf8(raw).map_err(|_| bad())?;
+    let decode = |part| percent::strict(part, Plus::Space).map_err(|_| bad());
     let mut pairs = Vec::new();
     for pair in text.split('&') {
         if pair.is_empty() {
             continue;
         }
-        let (key, value) = match pair.split_once('=') {
-            Some((key, value)) => (key, value),
-            None => (pair, ""),
-        };
-        pairs.push((form_decode(key)?, form_decode(value)?));
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        pairs.push((decode(key)?, decode(value)?));
     }
     Ok(pairs)
-}
-
-/// `%` not followed by two hex digits (v2 `_MALFORMED_PERCENT`).
-fn has_malformed_percent(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            let followed_by_hex_pair = i + 2 < bytes.len()
-                && bytes[i + 1].is_ascii_hexdigit()
-                && bytes[i + 2].is_ascii_hexdigit();
-            if !followed_by_hex_pair {
-                return true;
-            }
-            i += 3;
-        } else {
-            i += 1;
-        }
-    }
-    false
-}
-
-/// `+` becomes space, `%XX` becomes the byte; the result must be UTF-8.
-/// (`parse_qsl` semantics; invalid UTF-8 is code 10.)
-fn form_decode(part: &str) -> Result<String, SubsonicError> {
-    let mut bytes = Vec::with_capacity(part.len());
-    let raw = part.as_bytes();
-    let mut i = 0;
-    while i < raw.len() {
-        match raw[i] {
-            b'+' => {
-                bytes.push(b' ');
-                i += 1;
-            }
-            b'%' => {
-                let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
-                let pair = (i + 2 < raw.len()).then(|| (hex(raw[i + 1]), hex(raw[i + 2])));
-                match pair {
-                    Some((Some(hi), Some(lo))) => {
-                        bytes.push(hi * 16 + lo);
-                        i += 3;
-                    }
-                    _ => {
-                        return Err(SubsonicError::new(
-                            PARAM_MISSING,
-                            "Invalid request parameter encoding",
-                        ));
-                    }
-                }
-            }
-            b => {
-                bytes.push(b);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8(bytes)
-        .map_err(|_| SubsonicError::new(PARAM_MISSING, "Invalid request parameter encoding"))
 }
 
 /// Validate pair counts and lengths (v2 `parse_request_parameters` tail).

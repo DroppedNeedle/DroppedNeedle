@@ -3,6 +3,8 @@
 //! case-insensitively, so clients send mixed casing (`parentId` vs
 //! `ParentId`).
 
+use crate::shared::percent::lossy;
+
 /// Query params keyed case-insensitively, preserving repeats (v2 `_CIParams`).
 #[derive(Debug, Clone, Default)]
 pub struct CiParams {
@@ -22,7 +24,7 @@ impl CiParams {
                 Some(i) => (&pair[..i], &pair[i + 1..]),
                 None => (pair, ""),
             };
-            multi.push((decode(name).to_lowercase(), decode(value)));
+            multi.push((lossy(name).to_lowercase(), lossy(value)));
         }
         Self { multi }
     }
@@ -214,42 +216,4 @@ pub fn browse_sort(params: &CiParams) -> (Option<SortKey>, bool) {
         return (Some(key), false);
     }
     (Some(key), key.desc_default())
-}
-
-/// Minimal percent-decoder (`+` to space; malformed escapes pass through).
-fn decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            b'%' if i + 2 < bytes.len() + 1 => {
-                if let (Some(h), Some(l)) = (hex(bytes.get(i + 1)), hex(bytes.get(i + 2))) {
-                    out.push(h << 4 | l);
-                    i += 3;
-                } else {
-                    out.push(b'%');
-                    i += 1;
-                }
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex(byte: Option<&u8>) -> Option<u8> {
-    match byte.copied()? {
-        b'0'..=b'9' => Some(byte.copied()? - b'0'),
-        b'a'..=b'f' => Some(byte.copied()? - b'a' + 10),
-        b'A'..=b'F' => Some(byte.copied()? - b'A' + 10),
-        _ => None,
-    }
 }

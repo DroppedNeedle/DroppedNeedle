@@ -13,22 +13,11 @@
 
 use super::ratelimit::CompatRateLimits;
 
-/// Subsonic public endpoint (normalized: casefolded, one `.view`
-/// stripped). The only endpoint that skips auth; binary
-/// stream/download/cover included, everything else needs it (v2
-/// `_PUBLIC`).
-pub const SUBSONIC_PUBLIC_ENDPOINT: &str = "getopensubsonicextensions";
-
-/// Normalize an endpoint the way v2 `_dispatch` does: casefold, strip
-/// one trailing `.view`.
-pub fn normalize_subsonic_endpoint(raw: &str) -> String {
-    let folded = raw.to_lowercase();
-    folded.strip_suffix(".view").unwrap_or(&folded).to_owned()
-}
-
-/// Whether a raw endpoint name is the public one.
+/// Whether a raw endpoint name (any case, one `.view` allowed) is a
+/// public method in the Subsonic method table.
 pub fn subsonic_is_public(raw_endpoint: &str) -> bool {
-    normalize_subsonic_endpoint(raw_endpoint) == SUBSONIC_PUBLIC_ENDPOINT
+    let name = crate::subsonic::normalize_endpoint(raw_endpoint);
+    crate::subsonic::endpoint(&name).is_some_and(|endpoint| endpoint.public)
 }
 
 /// Whether `method` on the Jellyfin route axum matched as `template` skips
@@ -54,13 +43,14 @@ pub(crate) fn is_image_route(low: &str) -> bool {
 }
 
 /// Rate-limit principal label (v2 `_media_principal`): the authed user
-/// when one verified, else `ip:<trusted-ip>`. The IP must be the one
-/// the trusted-proxy layer established, never a client header (v2
-/// `trusted_client_ip`).
-pub fn principal_label(authed_user_id: Option<&str>, trusted_ip: &str) -> String {
+/// when one verified, else the client's key
+/// ([`client_key`](super::ratelimit::client_key)). The key must come from
+/// the address the trusted-proxy layer established, never a client header
+/// (v2 `trusted_client_ip`).
+pub fn principal_label(authed_user_id: Option<&str>, client_key: &str) -> String {
     match authed_user_id {
         Some(id) if !id.is_empty() => format!("user:{id}"),
-        _ => format!("ip:{trusted_ip}"),
+        _ => client_key.to_owned(),
     }
 }
 
