@@ -253,7 +253,7 @@ pub fn plugin_files(
         .map(|(bundle_id, added_at, json, taken_back)| {
             let bundle: PlanBundle = serde_json::from_str(&json)?;
             let added = bundle.added.ok_or_else(|| {
-                PublishError::Journal(format!("operation {bundle_id} added no file"))
+                PublishError::Journal(format!("operation {bundle_id} added no file").into())
             })?;
             Ok(PluginFile {
                 bundle_id,

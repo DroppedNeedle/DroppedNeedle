@@ -5,7 +5,7 @@ droppedneedle_kernel::sql! {
     /// One journal row with the file it replaces, if any.
     pub(super) fragment JOURNAL_ROWS = "SELECT j.id, j.bundle_id, j.kind, j.source_root, \
              j.source_rel, j.dest_root, j.dest_rel, j.staged, j.backup, j.source_sha256, \
-             j.staged_sha256, j.track_id, j.mgmt_state, j.state, j.seq, \
+             j.staged_sha256, j.track_id, j.commit_as, j.state, j.seq, \
              r.replaced_rel, r.replaced_sha256, r.replaced_track_id, r.recycle_to \
              FROM library_publish_journal j \
              LEFT JOIN library_publish_replacements r ON r.journal_id = j.id";
@@ -18,7 +18,7 @@ droppedneedle_kernel::sql! {
     /// A fresh intent.
     pub(super) JOURNAL_INSERT = "INSERT INTO library_publish_journal \
              (id, bundle_id, kind, source_root, source_rel, dest_root, dest_rel, staged, backup, \
-             source_sha256, staged_sha256, track_id, mgmt_state, state, seq) \
+             source_sha256, staged_sha256, track_id, commit_as, state, seq) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 0)";
     /// The file a fresh intent replaces.
     pub(super) REPLACEMENT_INSERT = "INSERT INTO library_publish_replacements \
@@ -282,6 +282,18 @@ droppedneedle_kernel::sql! {
     /// One recorded bundle's JSON (`?1`).
     pub(super) OPERATION_JSON = "SELECT bundle_json FROM library_publish_operations \
              WHERE bundle_id = ?1";
+    /// The generated files publishes placed for one track (`?1`), oldest
+    /// publish first, in plan order within each.
+    pub(super) OUTPUTS_FOR_TRACK = "SELECT p.dest_root, p.dest_rel, p.sha256, p.size, p.kind \
+             FROM library_publish_outputs p \
+             JOIN library_publish_operations o ON o.bundle_id = p.bundle_id \
+             WHERE p.track_id = ?1 \
+             ORDER BY o.created_day, o.rowid, p.item_index, p.output_index";
+    /// The generated files one publish (`?1`) placed, each with its track,
+    /// in plan order.
+    pub(super) OUTPUTS_OF_BUNDLE = "SELECT track_id, dest_root, dest_rel, sha256, size, kind \
+             FROM library_publish_outputs WHERE bundle_id = ?1 \
+             ORDER BY item_index, output_index";
     /// Bundles holding a snapshot expired by day `?1`.
     pub(super) EXPIRED_SNAPSHOT_BUNDLES = "SELECT DISTINCT bundle_id \
              FROM library_publish_snapshots WHERE expires_day <= ?1 ORDER BY bundle_id";

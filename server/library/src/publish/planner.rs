@@ -16,6 +16,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use super::PublishError;
 use super::paths::{CollisionKey, Sandbox, collision_key};
+use super::tags_seam::TagUpdates;
+use crate::tags::AudioFormat;
 
 /// Content fingerprint pinned on a plan item.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -116,12 +118,10 @@ pub struct PlanItem {
     pub override_revision: u64,
     /// Capabilities this item exercises.
     pub capabilities: Vec<Capability>,
-    /// Audio container, lowercased (flac, mp3, ogg, opus, m4a, aac,
-    /// wav). WMA is cut everywhere: plans naming it block in the
-    /// capability gate before any mutation.
-    pub format: String,
+    /// Audio container. WMA has no reader, so no plan names it.
+    pub format: AudioFormat,
     /// Managed-field updates for the staged writer.
-    pub managed_updates: BTreeMap<String, Vec<String>>,
+    pub managed_updates: TagUpdates,
     /// Sidecars rebased to the destination directory.
     pub sidecars: Vec<SidecarPlan>,
     /// Estimated staged bytes for disk preflight.
@@ -161,8 +161,38 @@ pub struct GeneratedOutput {
     /// The bytes, and their key in the blob store.
     pub sha256: String,
     pub size: u64,
-    /// `artwork` or `lyrics`, for the pages.
-    pub kind: String,
+    pub kind: OutputKind,
+}
+
+/// What a generated file is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputKind {
+    /// A cover image beside the album.
+    Artwork,
+    /// An `.lrc` beside the track.
+    Lyrics,
+}
+
+impl OutputKind {
+    /// The stored name, for the pages.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Artwork => "artwork",
+            Self::Lyrics => "lyrics",
+        }
+    }
+
+    /// Parse [`Self::as_str`].
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "artwork" => Some(Self::Artwork),
+            "lyrics" => Some(Self::Lyrics),
+            _ => None,
+        }
+    }
 }
 
 /// A file a plan item replaces at its destination.
@@ -624,7 +654,9 @@ pub fn seal_rows(
     })?;
     for item in bundle.items.iter_mut().filter(|item| item.adopt.is_none()) {
         let changed = || {
-            PublishError::Validation(format!("Track {} changed under the preview", item.track_id))
+            PublishError::Validation(
+                format!("Track {} changed under the preview", item.track_id).into(),
+            )
         };
         let row = current.get(&item.track_id).ok_or_else(changed)?;
         if row.root_id != item.source_root
@@ -685,22 +717,28 @@ pub(crate) fn first_moved<'a>(
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityGate {
     /// Formats the staged writer can handle.
-    pub writable_formats: HashSet<String>,
+    pub writable_formats: HashSet<AudioFormat>,
     /// Formats that can embed artwork.
-    pub artwork_formats: HashSet<String>,
+    pub artwork_formats: HashSet<AudioFormat>,
 }
 
 impl CapabilityGate {
     /// Production gate: every admitted format with the
-    /// known artwork restriction that raw AAC cannot embed art. WMA
-    /// stays out of both sets: no staged writer, no artwork path.
+    /// known artwork restriction that raw AAC cannot embed art.
     pub fn production() -> Self {
-        let writable: HashSet<String> = ["flac", "mp3", "ogg", "opus", "m4a", "aac", "wav"]
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect();
+        let writable: HashSet<AudioFormat> = [
+            AudioFormat::Flac,
+            AudioFormat::Mp3,
+            AudioFormat::Ogg,
+            AudioFormat::Opus,
+            AudioFormat::M4a,
+            AudioFormat::Aac,
+            AudioFormat::Wav,
+        ]
+        .into_iter()
+        .collect();
         let mut artwork = writable.clone();
-        artwork.remove("aac");
+        artwork.remove(&AudioFormat::Aac);
         Self {
             writable_formats: writable,
             artwork_formats: artwork,
@@ -714,26 +752,29 @@ impl CapabilityGate {
         // loudly here, never as a silent half-manage downstream.
         for capability in [Capability::Genre, Capability::Rename, Capability::Scrub] {
             if item.capabilities.contains(&capability) {
-                return Err(PublishError::Capability(format!(
-                    "capability {} is not supported by the staged writer",
-                    capability.as_str()
-                )));
+                return Err(PublishError::Capability(
+                    format!(
+                        "capability {} is not supported by the staged writer",
+                        capability.as_str()
+                    )
+                    .into(),
+                ));
             }
         }
-        let format = item.format.to_lowercase();
+        let format = item.format;
         if item.capabilities.contains(&Capability::Metadata)
             && !self.writable_formats.contains(&format)
         {
-            return Err(PublishError::Capability(format!(
-                "format {format} has no staged writer"
-            )));
+            return Err(PublishError::Capability(
+                format!("format {} has no staged writer", format.as_str()).into(),
+            ));
         }
         if item.capabilities.contains(&Capability::Artwork)
             && !self.artwork_formats.contains(&format)
         {
-            return Err(PublishError::Capability(format!(
-                "format {format} cannot embed artwork"
-            )));
+            return Err(PublishError::Capability(
+                format!("format {} cannot embed artwork", format.as_str()).into(),
+            ));
         }
         if item.kind == PlanKind::Move
             && item.source_root != item.dest_root
@@ -814,7 +855,7 @@ impl CollisionGate {
                     &freed,
                     &mut seen,
                     &mut blockers,
-                    &output.kind,
+                    output.kind.as_str(),
                     &output.dest_root,
                     &output.dest_rel,
                     SamePathSelf::absent(),
@@ -846,10 +887,9 @@ impl CollisionGate {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        Err(PublishError::Collision(format!(
-            "{} occupied destination(s): {summary}",
-            blockers.len()
-        )))
+        Err(PublishError::Collision(
+            format!("{} occupied destination(s): {summary}", blockers.len()).into(),
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -877,9 +917,9 @@ impl CollisionGate {
         match std::fs::symlink_metadata(&dest) {
             Ok(meta) => {
                 if meta.file_type().is_symlink() {
-                    return Err(PublishError::UnsafePath(format!(
-                        "destination is a symlink: {dest_root}:{dest_rel}"
-                    )));
+                    return Err(PublishError::UnsafePath(
+                        format!("destination is a symlink: {dest_root}:{dest_rel}").into(),
+                    ));
                 }
                 if freed.contains(&dest)
                     || same_path_self.is_self_destination(dest_root, dest_rel)
@@ -909,7 +949,7 @@ impl CollisionGate {
                 )?;
                 Ok(())
             }
-            Err(err) => Err(PublishError::Io(err.to_string())),
+            Err(err) => Err(PublishError::Io(err.to_string().into())),
         }
     }
 
@@ -1077,9 +1117,11 @@ impl DiskPreflight {
         for (root, needed) in per_root {
             let free = probe.free_bytes(root)?;
             if free < needed {
-                return Err(PublishError::Space(format!(
-                    "root {root} needs {needed} bytes but has {free} free"
-                )));
+                return Err(PublishError::Space {
+                    root_id: root.to_owned(),
+                    needed,
+                    free,
+                });
             }
         }
         Ok(())

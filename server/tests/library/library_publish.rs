@@ -28,13 +28,14 @@ use publish::add::{Added, AddedFile, Origin, TakeBackRefusal};
 use publish::paths::Root;
 use publish::place::{PlacementMode, Seams};
 use publish::planner::{
-    Capability, CapabilityGate, CollisionGate, FileFingerprint, PlanBundle, PlanItem, PlanKind,
-    ReleaseIdentity, SealError, SealRecheck, SealedPreview, SealedRow, SidecarPlan, SpaceProbe,
+    Capability, CapabilityGate, CollisionGate, FileFingerprint, OutputKind, PlanBundle, PlanItem,
+    PlanKind, ReleaseIdentity, SealError, SealRecheck, SealedPreview, SealedRow, SidecarPlan,
+    SpaceProbe,
 };
 use publish::publisher::{locate, read_revision};
 use publish::remove;
 use publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
-use publish::tags_seam::TagDocument;
+use publish::tags_seam::{TagDocument, TagTarget, TagUpdates};
 use publish::undo::{
     BaselineBlock, BaselineInput, BeforeState, UndoBlock, UndoInput, UndoLive,
     confirm_baseline_purge, plan_baseline_restore, plan_undo,
@@ -44,6 +45,8 @@ use publish::{
     PublishOutcome, Publisher, Sandbox, validate_archive,
 };
 use rusqlite::Connection;
+use tags::AudioFormat;
+use tags::TagField;
 
 /// Tracks the bundles in these tests publish, seeded into the catalog
 /// at their source paths.
@@ -78,7 +81,13 @@ fn start_revision() -> u64 {
 fn scratch_db(dir: &std::path::Path) -> PathBuf {
     let db_path = dir.join("app.db");
     crate::common::migrated_db(&db_path);
-    let conn = droppedneedle_kernel::db::open_connection(&db_path).unwrap();
+    seed_catalog(&db_path);
+    db_path
+}
+
+/// The test tracks, album and identities of [`scratch_db`].
+fn seed_catalog(db_path: &std::path::Path) {
+    let conn = droppedneedle_kernel::db::open_connection(db_path).unwrap();
     conn.execute_batch(
         "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
          album_artist_id, grouping_source, created_at, updated_at) VALUES ('album', 'music', \
@@ -110,7 +119,6 @@ fn scratch_db(dir: &std::path::Path) -> PathBuf {
          VALUES ('album', 'musicbrainz', 'rg-1', 'release-1', 'manual', 0, 9);",
     )
     .unwrap();
-    db_path
 }
 
 /// Another track of the album in the catalog at `rel`, with no file.
@@ -260,8 +268,11 @@ fn plan_item(
     fingerprint: FileFingerprint,
     kind: PlanKind,
 ) -> PlanItem {
-    let mut managed_updates = BTreeMap::new();
-    managed_updates.insert("title".to_string(), vec![format!("Title {track}")]);
+    let mut managed_updates = TagUpdates::new();
+    managed_updates.insert(
+        TagTarget::Field(TagField::Title),
+        vec![format!("Title {track}")],
+    );
     PlanItem {
         track_id: track.to_string(),
         source_root: "music".to_string(),
@@ -273,7 +284,7 @@ fn plan_item(
         identity: test_identity(),
         override_revision: 2,
         capabilities: vec![Capability::Metadata, Capability::SameRootMove],
-        format: "flac".to_string(),
+        format: AudioFormat::Flac,
         managed_updates,
         sidecars: Vec::new(),
         staged_bytes_estimate: 1024,
@@ -533,8 +544,8 @@ fn move_bundle_commits_atomically() {
     // transaction, and its revision bump invalidates read caches.
     assert_eq!(read_revision(&open_db(&fix)).unwrap(), start_revision() + 1);
     let located = locate(&open_db(&fix), "track-a").unwrap().unwrap();
-    assert_eq!(located.0, "music");
-    assert_eq!(located.1, "organized/a.flac");
+    assert_eq!(located.root_id, "music");
+    assert_eq!(located.rel_path, "organized/a.flac");
     let at_dest: i64 = open_db(&fix)
         .query_row(
             "SELECT COUNT(*) FROM local_tracks WHERE id = 'track-a' \
@@ -754,9 +765,10 @@ fn a_bundle_waits_for_its_missing_folder_and_then_finishes() {
 fn a_refused_file_unwinds_the_files_staged_before_it() {
     let fix = fixture("refused-second-file");
     let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
-    bundle.items[1]
-        .managed_updates
-        .insert("not_a_field".to_string(), vec!["x".to_string()]);
+    bundle.items[1].managed_updates.insert(
+        TagTarget::Native("id3:TXXX:X".to_string()),
+        vec!["x".to_string()],
+    );
     let path_a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
     let original_a = std::fs::read(&path_a).unwrap();
     let (sealed, live) = seal(&bundle);
@@ -876,7 +888,7 @@ fn an_unwind_keeps_an_identical_file_it_never_replaced() {
     let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
     bundle.items.truncate(1);
     bundle.items[0].sidecars.clear();
-    bundle.items[0].managed_updates.clear();
+    bundle.items[0].managed_updates = TagUpdates::new();
     let source = std::fs::read(fix.sandbox.resolve("music", "staging/a.flac").unwrap()).unwrap();
     let occupier = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
     std::fs::create_dir_all(occupier.parent().unwrap()).unwrap();
@@ -1675,7 +1687,7 @@ fn unwind_keeps_an_original_that_was_never_set_aside() {
     let fix = fixture("unwind-unchanged");
     let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
     for item in bundle.items.iter_mut() {
-        item.managed_updates.clear();
+        item.managed_updates = TagUpdates::new();
     }
     let (sealed, live) = seal(&bundle);
     let first = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
@@ -1710,7 +1722,7 @@ fn a_same_path_write_with_unchanged_tags_resumes_after_a_crash() {
     let fix = fixture("resume-unchanged");
     let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
     for item in bundle.items.iter_mut() {
-        item.managed_updates.clear();
+        item.managed_updates = TagUpdates::new();
     }
     let (sealed, live) = seal(&bundle);
     let mut publisher = open_publisher(&fix);
@@ -1792,7 +1804,7 @@ fn check_then_rename_needs_a_check_root() {
         }
         let err = outcome.unwrap_err();
         assert!(
-            matches!(&err, PublishError::NoSafePlacement(text) if text == publish::place::NO_SAFE_METHOD),
+            matches!(&err, PublishError::NoSafePlacement(text) if text.message == publish::place::NO_SAFE_METHOD),
             "got {err:?}"
         );
         for rel in ["staging/a.flac", "staging/b.flac"] {
@@ -1902,7 +1914,7 @@ fn a_file_that_could_not_come_back_is_never_set_aside() {
         );
         assert!(hidden_leftovers(&fix.dir).is_empty(), "{mode:?}");
         assert!(
-            matches!(&err, PublishError::NotLinkable(text) if text.contains("\"staging/a.flac\"")),
+            matches!(&err, PublishError::NotLinkable(text) if text.message.contains("\"staging/a.flac\"")),
             "{mode:?}: got {err:?}"
         );
         let journals = JournalStore::new(&open_db(&fix))
@@ -2025,7 +2037,7 @@ fn generated_files_land_and_go_away_journaled() {
         dest_rel: "staging/cover.jpg".to_string(),
         sha256: sha.clone(),
         size: cover.len() as u64,
-        kind: "artwork".to_string(),
+        kind: OutputKind::Artwork,
     };
     let fp = write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
     let mut item = plan_item(
@@ -2053,6 +2065,11 @@ fn generated_files_land_and_go_away_journaled() {
     publisher.publish(&sealed, &live, &docs).unwrap();
     let path = fix.sandbox.resolve("music", "staging/cover.jpg").unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), cover);
+    assert_eq!(
+        outputs_follow_the_rule(&open_db(&fix)),
+        1,
+        "kept at the commit"
+    );
 
     // Taking it away: a crash after it was set aside unwinds or finishes,
     // never loses it half way.
@@ -2071,7 +2088,7 @@ fn generated_files_land_and_go_away_journaled() {
         fp,
         PlanKind::SamePath,
     );
-    item.managed_updates.clear();
+    item.managed_updates = TagUpdates::new();
     item.removals.push(output);
     let bundle = PlanBundle {
         id: "bundle-undo".to_string(),
@@ -2090,6 +2107,11 @@ fn generated_files_land_and_go_away_journaled() {
     let results = reconcile(&db, &fix.sandbox).unwrap();
     assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
     assert!(!path.exists(), "gone after the commit");
+    assert_eq!(
+        outputs_follow_the_rule(&open_db(&fix)),
+        1,
+        "taking a file away keeps the run that made it"
+    );
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
@@ -2115,13 +2137,13 @@ fn interrupted_generated_put_back_is_finished_by_recovery() {
         fp,
         PlanKind::SamePath,
     );
-    item.managed_updates.clear();
+    item.managed_updates = TagUpdates::new();
     item.removals.push(publish::GeneratedOutput {
         dest_root: "music".to_string(),
         dest_rel: "staging/cover.jpg".to_string(),
         sha256: sha,
         size: cover.len() as u64,
-        kind: "artwork".to_string(),
+        kind: OutputKind::Artwork,
     });
     let bundle = PlanBundle {
         id: "bundle-undo".to_string(),
@@ -3151,7 +3173,7 @@ fn unknown_empty_and_multivalued_tags_survive_apply() {
         .custom
         .insert("empty_note".to_string(), vec!["".to_string()]);
     before.managed.insert(
-        "genre".to_string(),
+        TagTarget::Field(TagField::Genre),
         vec!["Rock".to_string(), "Indie".to_string()],
     );
     before
@@ -3161,8 +3183,11 @@ fn unknown_empty_and_multivalued_tags_survive_apply() {
         .unknown_frames
         .insert("APIC:odd".to_string(), vec![9, 9, 9]);
 
-    let mut updates = BTreeMap::new();
-    updates.insert("title".to_string(), vec!["New Title".to_string()]);
+    let mut updates = TagUpdates::new();
+    updates.insert(
+        TagTarget::Field(TagField::Title),
+        vec!["New Title".to_string()],
+    );
 
     let fix = fixture("preserve-apply");
     let fp = write_fixture_source(&fix, "music", "staging/s.flac", "management_full.flac");
@@ -3283,8 +3308,10 @@ fn sandbox_rejects_escapes_and_symlinks() {
 
 fn undo_input(published_sha: &str) -> UndoInput {
     let mut doc = TagDocument::empty();
-    doc.managed
-        .insert("title".to_string(), vec!["Before".to_string()]);
+    doc.managed.insert(
+        TagTarget::Field(TagField::Title),
+        vec!["Before".to_string()],
+    );
     UndoInput {
         track_id: "track-a".to_string(),
         before: BeforeState {
@@ -3393,8 +3420,10 @@ fn undo_blocks_occupied_restore_paths() {
 
 fn baseline_input() -> BaselineInput {
     let mut doc = TagDocument::empty();
-    doc.managed
-        .insert("title".to_string(), vec!["Original".to_string()]);
+    doc.managed.insert(
+        TagTarget::Field(TagField::Title),
+        vec!["Original".to_string()],
+    );
     BaselineInput {
         track_id: "track-a".to_string(),
         baseline: Some(BeforeState {
@@ -3414,8 +3443,8 @@ fn baseline_input() -> BaselineInput {
         },
         identity: test_identity(),
         pinned_identity: test_identity(),
-        format: "flac".to_string(),
-        pinned_format: "flac".to_string(),
+        format: AudioFormat::Flac,
+        pinned_format: AudioFormat::Flac,
     }
 }
 
@@ -3449,7 +3478,7 @@ fn baseline_restore_blocks_missing_changed_and_occupied() {
     assert_eq!(plan.blocked[0].1, BaselineBlock::CurrentChanged);
 
     let reformatted = BaselineInput {
-        format: "mp3".to_string(),
+        format: AudioFormat::Mp3,
         ..input
     };
     let plan = plan_baseline_restore(std::slice::from_ref(&reformatted), &|_, _| Some(false));
@@ -3678,19 +3707,25 @@ fn capability_gate_rejects_wma_and_unhandled_capabilities() {
         size: 1,
         sha256: "x".to_string(),
     };
-    // WMA has no staged writer and no artwork path.
-    let mut wma = plan_item("t", "s.flac", "d.flac", fp.clone(), PlanKind::SamePath);
-    wma.format = "wma".to_string();
-    let err = gate.check(&wma).unwrap_err();
+    // WMA has no reader, so no plan can name it: a stored one that does
+    // never decodes.
+    let mut stored = serde_json::to_value(plan_item(
+        "t",
+        "s.flac",
+        "d.flac",
+        fp.clone(),
+        PlanKind::SamePath,
+    ))
+    .unwrap();
+    stored["format"] = "wma".into();
+    assert!(serde_json::from_value::<PlanItem>(stored).is_err());
+    // Raw AAC has no artwork path.
+    let mut aac_art = plan_item("t", "s.flac", "d.flac", fp.clone(), PlanKind::SamePath);
+    aac_art.format = AudioFormat::Aac;
+    aac_art.capabilities = vec![Capability::Artwork];
+    let err = gate.check(&aac_art).unwrap_err();
     assert!(matches!(err, PublishError::Capability(_)), "got {err:?}");
-    assert!(err.to_string().contains("wma"), "{err}");
-    let mut wma_art = plan_item("t", "s.flac", "d.flac", fp.clone(), PlanKind::SamePath);
-    wma_art.format = "WMA".to_string();
-    wma_art.capabilities = vec![Capability::Artwork];
-    assert!(matches!(
-        gate.check(&wma_art),
-        Err(PublishError::Capability(_))
-    ));
+    assert!(err.to_string().contains("aac"), "{err}");
     // Capabilities staging cannot express fail loudly, never as a
     // silent half-manage downstream.
     for capability in [Capability::Genre, Capability::Rename, Capability::Scrub] {
@@ -3734,8 +3769,8 @@ fn error_messages_name_files_not_server_paths() {
         assert!(!err.to_string().contains(&root_text), "{err}");
     }
     // Tag staging on garbage bytes: the hidden temp path stays home.
-    let mut updates = BTreeMap::new();
-    updates.insert("title".to_string(), vec!["X".to_string()]);
+    let mut updates = TagUpdates::new();
+    updates.insert(TagTarget::Field(TagField::Title), vec!["X".to_string()]);
     let temp = fix.dir.join("w.tmp.flac");
     std::fs::write(&temp, [0u8; 64]).unwrap();
     let err = publish::staging::stage_tags(&temp, &updates, None).unwrap_err();
@@ -4033,7 +4068,7 @@ fn retag_bundle(
     };
     let mut item = plan_item("track-s", rel, rel, fingerprint, PlanKind::SamePath);
     item.managed_updates
-        .insert("title".to_string(), vec![title.to_string()]);
+        .insert(TagTarget::Field(TagField::Title), vec![title.to_string()]);
     let bundle = PlanBundle {
         id: id.to_string(),
         items: vec![item],
@@ -4280,7 +4315,7 @@ fn mp3_unknown_frames_survive_publish_staging() {
         fp,
         PlanKind::SamePath,
     );
-    item.format = "mp3".to_string();
+    item.format = AudioFormat::Mp3;
     let bundle = PlanBundle {
         id: "bundle-mp3".to_string(),
         items: vec![item],
@@ -5177,7 +5212,7 @@ fn an_edit_that_kept_size_and_time_is_never_deleted() {
     let fix = fixture("kept-edit");
     let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
     bundle.items.truncate(1);
-    bundle.items[0].managed_updates.clear();
+    bundle.items[0].managed_updates = TagUpdates::new();
     let (sealed, live) = seal(&bundle);
     let source = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
     let original = std::fs::read(&source).unwrap();
@@ -5208,7 +5243,7 @@ fn an_unchanged_write_in_place_that_stopped_at_its_temp_unwinds() {
     let fix = fixture("unchanged-temp");
     let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
     for item in bundle.items.iter_mut() {
-        item.managed_updates.clear();
+        item.managed_updates = TagUpdates::new();
     }
     let (sealed, live) = seal(&bundle);
     let mut publisher = open_publisher(&fix);
@@ -5223,4 +5258,403 @@ fn an_unchanged_write_in_place_that_stopped_at_its_temp_unwinds() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
     let path = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+// --- Stored shapes across the typed seams. ---
+
+/// Bundles, before-states and in-flight states stored before tag updates,
+/// formats and management states were typed. The publisher wrote them at
+/// 1e0545d1, from the library journeys and the in-flight scenarios below,
+/// except `before_v2.json`, built by hand in the version 2 shape. Paths
+/// in the in-flight states read `{root}` for the scratch folder.
+fn stored(name: &str) -> String {
+    let path = fixtures_dir().join("publish").join(name);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{name}: {error}"))
+}
+
+/// Every stored bundle and before-state reads back as typed values and
+/// writes out byte for byte as it was stored. Names, formats, output kinds
+/// and picture records that do not read are refused.
+#[test]
+fn stored_bundles_and_before_states_read_back_unchanged() {
+    for name in [
+        "bundle_management.json",
+        "bundle_undo.json",
+        "bundle_spellings.json",
+        "bundle_import.json",
+    ] {
+        let text = stored(name);
+        let bundle: PlanBundle =
+            serde_json::from_str(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(serde_json::to_string(&bundle).unwrap(), text, "{name}");
+    }
+    for name in [
+        "before_v6.json",
+        "before_v6_spellings.json",
+        "before_v2.json",
+    ] {
+        let text = stored(name);
+        let before =
+            BeforeState::from_bytes(text.as_bytes()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(before.to_bytes().unwrap(), text.as_bytes(), "{name}");
+    }
+
+    let management: PlanBundle = serde_json::from_str(&stored("bundle_management.json")).unwrap();
+    let item = &management.items[0];
+    assert_eq!(
+        (item.kind, item.format),
+        (PlanKind::Move, AudioFormat::Flac)
+    );
+    assert_eq!(
+        item.managed_updates
+            .get(&TagTarget::Native("vorbis:MOOD".to_owned())),
+        Some(&Vec::new()),
+        "a scrubbed native item"
+    );
+    let pictures = item.managed_updates.pictures().expect("a pictures update");
+    assert_eq!(
+        (pictures[0].kind, pictures[0].mime.as_str()),
+        (3, "image/jpeg")
+    );
+    let kinds: Vec<OutputKind> = item.outputs.iter().map(|output| output.kind).collect();
+    assert_eq!(kinds, [OutputKind::Lyrics, OutputKind::Artwork]);
+
+    let undo: PlanBundle = serde_json::from_str(&stored("bundle_undo.json")).unwrap();
+    let kinds: Vec<OutputKind> = undo.items[0]
+        .removals
+        .iter()
+        .map(|output| output.kind)
+        .collect();
+    assert_eq!(kinds, [OutputKind::Lyrics, OutputKind::Artwork]);
+    assert!(undo.items[0].managed_updates.pictures().is_some());
+
+    let spellings: PlanBundle = serde_json::from_str(&stored("bundle_spellings.json")).unwrap();
+    assert_eq!(
+        spellings.items[0]
+            .managed_updates
+            .get(&TagTarget::Spelling(TagField::TrackTotal, "TRACKTOTAL")),
+        Some(&vec!["09".to_owned()])
+    );
+
+    let import: PlanBundle = serde_json::from_str(&stored("bundle_import.json")).unwrap();
+    assert!(import.items[0].adopt.is_some());
+
+    let v2 = BeforeState::from_bytes(stored("before_v2.json").as_bytes()).unwrap();
+    assert_eq!((v2.doc.version, v2.doc.pictures.is_none()), (2, true));
+    assert_eq!(
+        v2.doc
+            .managed
+            .get(&TagTarget::Spelling(TagField::TrackTotal, "TRACKTOTAL")),
+        Some(&vec!["09".to_owned()])
+    );
+
+    let refused = |edit: &dyn Fn(&mut serde_json::Value)| {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&stored("bundle_management.json")).unwrap();
+        edit(&mut value["items"][0]);
+        serde_json::from_value::<PlanBundle>(value).is_err()
+    };
+    assert!(refused(&|item| item["format"] = "wma".into()));
+    assert!(refused(&|item| item["outputs"][0]["kind"] = "video".into()));
+    assert!(refused(
+        &|item| item["managed_updates"]["not_a_field"] = serde_json::json!(["x"])
+    ));
+    assert!(refused(
+        &|item| item["managed_updates"]["title:TITLE_NOT"] = serde_json::json!(["x"])
+    ));
+    assert!(refused(
+        &|item| item["managed_updates"]["pictures"] = serde_json::json!(["3\timage/jpeg"])
+    ));
+}
+
+/// The rows the publisher keeps for generated files equal the rule worked
+/// out from the journal and the bundles. Returns how many there are.
+fn outputs_follow_the_rule(conn: &Connection) -> usize {
+    type Row = (
+        String,
+        String,
+        i64,
+        i64,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        String,
+    );
+    let read = |sql: &str| -> Vec<Row> {
+        conn.prepare(sql)
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let columns = "journal_id, bundle_id, item_index, output_index, track_id, dest_root, \
+                   dest_rel, sha256, size, kind";
+    let kept = read(&format!(
+        "SELECT {columns} FROM library_publish_outputs ORDER BY journal_id"
+    ));
+    let rule = read(&format!(
+        "SELECT {columns} FROM library_publish_outputs_rule ORDER BY journal_id"
+    ));
+    assert_eq!(kept, rule, "the kept outputs follow the rule");
+    kept.len()
+}
+
+/// A scratch folder holding a publish state stored before migration 0097,
+/// on a database migrated up to it, then upgraded: what a server finds on
+/// its first start after the upgrade.
+fn upgraded_from_stored(tag: &str, name: &str) -> Fixture {
+    use base64::Engine as _;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    let scratch = ScratchDir::new(&format!("publish-{tag}"));
+    let dir = scratch.to_path_buf();
+    let db_path = dir.join("app.db");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let pool = runtime.block_on(async {
+        let options = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        let before = sqlx::migrate::Migrator {
+            migrations: std::borrow::Cow::Owned(
+                droppedneedle_kernel::schema::MIGRATOR
+                    .migrations
+                    .iter()
+                    .filter(|migration| migration.version < 97)
+                    .cloned()
+                    .collect(),
+            ),
+            ignore_missing: false,
+            locking: true,
+            no_tx: false,
+        };
+        before.run(&pool).await.unwrap();
+        pool
+    });
+    seed_catalog(&db_path);
+
+    let root = dir.to_string_lossy().into_owned();
+    let state: serde_json::Value = serde_json::from_str(&stored(name)).unwrap();
+    let conn = droppedneedle_kernel::db::open_connection(&db_path).unwrap();
+    // Parents first.
+    for table in [
+        "library_publish_operations",
+        "library_publish_journal",
+        "library_publish_replacements",
+        "library_publish_created_folders",
+        "library_publish_snapshots",
+        "library_publish_baselines",
+        "library_track_management_state",
+    ] {
+        for row in state["tables"][table].as_array().unwrap() {
+            let row = row.as_object().unwrap();
+            let names: Vec<&str> = row.keys().map(String::as_str).collect();
+            let values: Vec<rusqlite::types::Value> = row
+                .values()
+                .map(|value| match value {
+                    serde_json::Value::Null => rusqlite::types::Value::Null,
+                    serde_json::Value::Number(number) => match number.as_i64() {
+                        Some(int) => rusqlite::types::Value::Integer(int),
+                        None => rusqlite::types::Value::Real(number.as_f64().unwrap()),
+                    },
+                    serde_json::Value::String(text) => {
+                        rusqlite::types::Value::Text(text.replace("{root}", &root))
+                    }
+                    other => panic!("{table}: {other}"),
+                })
+                .collect();
+            let marks = vec!["?"; names.len()].join(", ");
+            conn.execute(
+                &format!(
+                    "INSERT INTO {table} ({}) VALUES ({marks})",
+                    names.join(", ")
+                ),
+                rusqlite::params_from_iter(values),
+            )
+            .unwrap_or_else(|error| panic!("{table}: {error}"));
+        }
+    }
+    drop(conn);
+    for (rel, bytes) in state["files"].as_object().unwrap() {
+        let path = dir.join(rel);
+        match bytes.as_str() {
+            None => std::fs::create_dir_all(&path).unwrap(),
+            Some(encoded) => {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .unwrap();
+                std::fs::write(&path, bytes).unwrap();
+            }
+        }
+    }
+
+    runtime.block_on(async {
+        droppedneedle_kernel::schema::apply_migrations(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    });
+    let sandbox = Sandbox::new(vec![
+        Root::library("music", dir.join("music")),
+        Root::library("incoming", dir.join("incoming")),
+        Root::bin("bin", dir.join("bin")),
+    ])
+    .unwrap();
+    Fixture {
+        dir,
+        sandbox,
+        db_path,
+        _scratch: scratch,
+    }
+}
+
+/// A move with a generated `.lrc`, stopped before its catalog commit by
+/// the publisher from before the upgrade, after an earlier publish placed
+/// a cover: recovery after the upgrade commits it exactly once, and undo
+/// and baseline restore find both generated files.
+#[test]
+fn a_publish_stopped_before_the_upgrade_commits_once_after_it() {
+    let fix = upgraded_from_stored("inflight-management", "inflight_management.json");
+    let conn = open_db(&fix);
+    let state = |id: &str| -> (String, Option<String>) {
+        conn.query_row(
+            "SELECT state, commit_as FROM library_publish_journal WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        state("bundle-move-000-audio"),
+        ("published".to_owned(), Some("managed".to_owned()))
+    );
+    assert_eq!(
+        outputs_follow_the_rule(&conn),
+        1,
+        "the earlier cover is found; the stopped .lrc is not yet"
+    );
+    let revision = read_revision(&conn).unwrap();
+
+    let db = restart(&fix);
+    let results = reconcile(&db, &fix.sandbox).unwrap();
+    assert_eq!(results.len(), 1, "{results:?}");
+    assert_eq!(results[0].bundle_id, "bundle-move");
+    assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
+    assert_eq!(read_revision(&conn).unwrap(), revision + 1, "one commit");
+    assert!(reconcile(&db, &fix.sandbox).unwrap().is_empty());
+
+    let moved = fix.sandbox.resolve("music", "organized/b.flac").unwrap();
+    assert_eq!(
+        sha256_hex(&std::fs::read(&moved).unwrap()),
+        JournalStore::new(&conn)
+            .get("bundle-move-000-audio")
+            .unwrap()
+            .unwrap()
+            .staged_sha256
+    );
+    assert!(
+        !fix.sandbox
+            .resolve("music", "staging/b.flac")
+            .unwrap()
+            .exists()
+    );
+    assert!(
+        fix.sandbox
+            .resolve("music", "organized/b.lrc")
+            .unwrap()
+            .exists()
+    );
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    assert_eq!(track_row(&conn, "track-b").0, "organized/b.flac");
+    assert_eq!(state("bundle-move-000-audio").0, "cleaned");
+    let outcomes: Vec<String> = conn
+        .prepare("SELECT last_outcome FROM library_track_management_state ORDER BY local_track_id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(outcomes, ["managed", "managed"]);
+
+    assert_eq!(outputs_follow_the_rule(&conn), 2);
+    let cover = publish::operations::generated_for_track(&conn, "track-a").unwrap();
+    assert_eq!(cover.len(), 1);
+    assert_eq!(
+        (cover[0].dest_rel.as_str(), cover[0].kind),
+        ("staging/cover.jpg", OutputKind::Artwork)
+    );
+    let undone = publish::operations::outputs_of(&conn, "bundle-cover").unwrap();
+    assert_eq!(
+        undone["track-a"], cover,
+        "undo of the earlier run finds its cover"
+    );
+    let lyrics = publish::operations::outputs_of(&conn, "bundle-move").unwrap();
+    assert_eq!(lyrics["track-b"][0].dest_rel, "organized/b.lrc");
+    assert_eq!(lyrics["track-b"][0].kind, OutputKind::Lyrics);
+}
+
+/// An import stopped before its catalog commit by the publisher from
+/// before the upgrade is added to the catalog by recovery after it, as
+/// an import: its file is indexed as a new track, not moved as one.
+#[test]
+fn an_import_stopped_before_the_upgrade_is_added_after_it() {
+    let fix = upgraded_from_stored("inflight-import", "inflight_import.json");
+    let conn = open_db(&fix);
+    let commit_as: Option<String> = conn
+        .query_row(
+            "SELECT commit_as FROM library_publish_journal WHERE id = 'bundle-import-000-audio'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(commit_as.as_deref(), Some("imported"));
+
+    let db = restart(&fix);
+    let results = reconcile(&db, &fix.sandbox).unwrap();
+    assert_eq!(results.len(), 1, "{results:?}");
+    assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
+    let (rel, availability, _) = track_row(&conn, "track-new");
+    assert_eq!(
+        (rel.as_str(), availability.as_str()),
+        ("Imported/new.flac", "indexed")
+    );
+    let outcome: String = conn
+        .query_row(
+            "SELECT last_outcome FROM library_track_management_state \
+             WHERE local_track_id = 'track-new'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(outcome, "imported");
+    assert!(
+        fix.sandbox
+            .resolve("music", "Imported/new.flac")
+            .unwrap()
+            .exists()
+    );
+    assert!(hidden_leftovers(&fix.dir).is_empty());
 }

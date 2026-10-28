@@ -71,7 +71,6 @@ use droppedneedle_kernel::db::{Db, Lane};
 
 use super::clock::LibraryClock as _;
 use super::matching::Release;
-use super::publish::PublishError;
 use super::publish::import_staging::{copy_in, remove_staging, staging_rel, staging_settled};
 use super::publish::paths::{ResolvedRoot, left_out};
 use super::publish::planner::{
@@ -81,9 +80,11 @@ use super::publish::planner::{
 use super::publish::publisher::{JoinedAlbum, joined_album};
 use super::publish::remove::{self, Probe, Refusal, Target};
 use super::publish::snapshots::sha256_hex;
+use super::publish::{PublishError, TagUpdates};
 use super::scan::models::EffectivePolicy;
 use super::scan::roots::{LibraryRoot, RootRegistry};
 use super::settings::LibrarySettings;
+use super::tags::AudioFormat;
 use super::wiring::LibraryCore;
 
 /// Revisions the seal pins while profiles and naming have no store (the
@@ -205,8 +206,8 @@ struct Placement {
     track: super::matching::ReleaseTrack,
     staged_rel: String,
     dest_rel: String,
-    format: String,
-    tags: BTreeMap<String, Vec<String>>,
+    format: AudioFormat,
+    tags: TagUpdates,
     /// The policy covering the final destination, set under the publish
     /// lock once a joined file's folder is known.
     policy: EffectivePolicy,
@@ -306,9 +307,7 @@ impl Imports {
         for (path, _, _) in &sources {
             formats.push(
                 super::tags::format_for_path(path)
-                    .map_err(|error| fault(format!("unsupported file: {error}")))?
-                    .as_str()
-                    .to_owned(),
+                    .map_err(|error| fault(format!("unsupported file: {error}")))?,
             );
         }
         let render = |root: &LibraryRoot| -> Result<Vec<String>, ImportError> {
@@ -323,7 +322,7 @@ impl Imports {
                     };
                     naming::render(
                         &script,
-                        &naming::variables(&import.release, &named, format),
+                        &naming::variables(&import.release, &named, format.as_str()),
                         &root_path,
                     )
                     .map_err(|error| ImportError::NamingScript(error.to_string()))
@@ -404,17 +403,16 @@ impl Imports {
                     super::tags::save::accepts(&super::tags::TagEdit::new(field, values.clone()))
                 })
             });
-            if !super::tags::save::writable(
-                super::tags::format_for_path(path)
-                    .map_err(|error| fault(format!("unsupported file: {error}")))?,
-            ) {
+            if !super::tags::save::writable(format) {
                 tags.clear();
             }
+            let tags = TagUpdates::from_fields(tags)
+                .map_err(|error| fault(format!("release tags: {error}")))?;
             placements.push(Placement {
                 index: ordinal,
                 source: path.clone(),
                 track: track.clone(),
-                staged_rel: format!("{task_dir}/{ordinal:03}.{format}"),
+                staged_rel: format!("{task_dir}/{ordinal:03}.{}", format.as_str()),
                 dest_rel,
                 format,
                 tags,
@@ -504,7 +502,7 @@ impl Imports {
         for placement in &mut placements {
             placement.policy = root.policy_for(&root.path.join(&placement.dest_rel));
             if placement.policy == EffectivePolicy::LocalMetadata {
-                placement.tags.clear();
+                placement.tags = TagUpdates::new();
             }
         }
         let bundle_id = self.core.ids.new_id();
@@ -708,7 +706,7 @@ impl Imports {
                     } else {
                         vec![Capability::Metadata, Capability::SameRootMove]
                     },
-                    format: placement.format.clone(),
+                    format: placement.format,
                     managed_updates: placement.tags.clone(),
                     sidecars: Vec::new(),
                     adopt: Some(super::publish::planner::Adoption {
@@ -773,7 +771,7 @@ impl Imports {
             open.publisher
                 .publish(&sealed, &live, &BTreeMap::new())
                 .map_err(|error| match error {
-                    PublishError::Collision(message) => ImportError::Occupied(message),
+                    PublishError::Collision(detail) => ImportError::Occupied(detail.message),
                     other => fault(other.to_string()),
                 })?;
             Ok(sealed.bundle)

@@ -304,8 +304,9 @@ pub(super) fn set_aside(
     {
         return Ok(());
     }
-    let replaced =
-        || PublishError::Collision(format!("{root}:{rel} changed while it was being removed"));
+    let replaced = || {
+        PublishError::Collision(format!("{root}:{rel} changed while it was being removed").into())
+    };
     if known.is_some_and(|known| FileStat::read(dest).ok() != Some(known)) {
         return Err(replaced());
     }
@@ -378,7 +379,7 @@ pub(super) fn put_back(
         }
         Err(PlaceError::Collision) => Ok(PutBack::Kept("another file took its name")),
         Err(PlaceError::Unavailable(_) | PlaceError::CrossDevice) => Ok(PutBack::NoSafeWay),
-        Err(error) => Err(PublishError::Io(error.to_string())),
+        Err(error) => Err(PublishError::Io(error.to_string().into())),
     }
 }
 
@@ -393,9 +394,9 @@ pub(super) fn commit(
     now: f64,
 ) -> Result<(), PublishError> {
     if let Some(moved) = removal_moved(conn, &removal.items)? {
-        return Err(PublishError::Catalog(format!(
-            "track {moved} changed under bundle {bundle_id}"
-        )));
+        return Err(PublishError::Catalog(
+            format!("track {moved} changed under bundle {bundle_id}").into(),
+        ));
     }
     for item in &removal.items {
         let marked = mark_removed(
@@ -407,10 +408,9 @@ pub(super) fn commit(
             now,
         )?;
         if !marked {
-            return Err(PublishError::Catalog(format!(
-                "track {} is no longer listed",
-                item.track_id
-            )));
+            return Err(PublishError::Catalog(
+                format!("track {} is no longer listed", item.track_id).into(),
+            ));
         }
     }
     if let Some(undo) = &removal.undo

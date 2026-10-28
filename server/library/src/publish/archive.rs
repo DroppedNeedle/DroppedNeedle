@@ -196,5 +196,5 @@ fn block(block: ArchiveBlock) -> PublishError {
         ArchiveBlock::TooDeep(name) => format!("entry too deep: {name}"),
         ArchiveBlock::EmptyName => "empty entry name".to_string(),
     };
-    PublishError::Archive(text)
+    PublishError::Archive(text.into())
 }

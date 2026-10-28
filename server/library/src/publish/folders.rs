@@ -55,16 +55,19 @@ pub(super) fn make(
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     let meta = std::fs::symlink_metadata(&cursor).map_err(PublishError::from)?;
                     if meta.file_type().is_symlink() {
-                        return Err(PublishError::UnsafePath(format!(
-                            "refusing to follow symlink: {}",
-                            name.to_string_lossy()
-                        )));
+                        return Err(PublishError::UnsafePath(
+                            format!("refusing to follow symlink: {}", name.to_string_lossy())
+                                .into(),
+                        ));
                     }
                     if !meta.is_dir() {
-                        return Err(PublishError::Collision(format!(
-                            "a file holds the place of folder {}",
-                            name.to_string_lossy()
-                        )));
+                        return Err(PublishError::Collision(
+                            format!(
+                                "a file holds the place of folder {}",
+                                name.to_string_lossy()
+                            )
+                            .into(),
+                        ));
                     }
                 }
                 Err(error) => return Err(PublishError::from(error)),

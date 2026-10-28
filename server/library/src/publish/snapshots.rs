@@ -84,8 +84,9 @@ impl BlobStore {
     /// Read and hash-verify one blob. A missing or damaged one fails
     /// closed instead of being trusted.
     pub fn get(&self, conn: &Connection, sha256: &str) -> Result<Vec<u8>, PublishError> {
-        self.fetch(conn, sha256)?
-            .ok_or_else(|| PublishError::Snapshot(format!("blob {sha256} is missing or damaged")))
+        self.fetch(conn, sha256)?.ok_or_else(|| {
+            PublishError::Snapshot(format!("blob {sha256} is missing or damaged").into())
+        })
     }
 
     /// Read and hash-verify one blob; `None` when it is missing or its
@@ -205,9 +206,9 @@ impl BlobStore {
                 }
                 self.dir.put(&hold, &bytes)?;
                 if self.dir.read(&sha256)? != Stored::Found(bytes) {
-                    return Err(PublishError::Snapshot(format!(
-                        "blob {sha256} did not read back from the undo folder"
-                    )));
+                    return Err(PublishError::Snapshot(
+                        format!("blob {sha256} did not read back from the undo folder").into(),
+                    ));
                 }
                 done.push(sha256);
             }
@@ -436,9 +437,9 @@ impl<'a> BaselineStore<'a> {
             ],
         )?;
         if changed == 0 {
-            return Err(PublishError::Snapshot(format!(
-                "baseline for track {track_id} already exists and is immutable"
-            )));
+            return Err(PublishError::Snapshot(
+                format!("baseline for track {track_id} already exists and is immutable").into(),
+            ));
         }
         self.conn.execute(
             "INSERT OR IGNORE INTO library_publish_blob_refs (sha256, owner_kind, owner_id)

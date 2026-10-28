@@ -261,9 +261,9 @@ fn gate(db: &Db) -> Result<(), PublishError> {
             .query_row([], |row| row.get(0))?)
     })?;
     if precommit > super::STARTUP_RECOVERY_LIMIT as i64 {
-        return Err(PublishError::Journal(format!(
-            "refusing startup with {precommit} recoverable bundles"
-        )));
+        return Err(PublishError::Journal(
+            format!("refusing startup with {precommit} recoverable bundles").into(),
+        ));
     }
     Ok(())
 }

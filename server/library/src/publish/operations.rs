@@ -6,10 +6,12 @@
 //! before the first byte stages; rows for failed operations linger
 //! harmlessly (undo finds no snapshots for them and stays put).
 
+use std::collections::HashMap;
+
 use rusqlite::{Connection, OptionalExtension};
 
 use super::PublishError;
-use super::planner::PlanBundle;
+use super::planner::{GeneratedOutput, OutputKind, PlanBundle};
 
 /// Record one sealed bundle, made at `now_ms` (unix milliseconds) on
 /// `today_day`, with the account that applied it when a person did.
@@ -29,57 +31,70 @@ pub fn record_operation(
             bundle.id, json, today_day, now_ms, applied_by
         ])?;
     if changed == 0 {
-        return Err(PublishError::Journal(format!(
-            "operation {} already recorded",
-            bundle.id
-        )));
+        return Err(PublishError::Journal(
+            format!("operation {} already recorded", bundle.id).into(),
+        ));
     }
     Ok(())
 }
 
 /// Every file a committed operation generated for `track_id` (a cover,
-/// an `.lrc`), oldest first, one entry per path. Whether each still
-/// holds those bytes is the caller's check.
+/// an `.lrc`), oldest first, one entry per path: the latest write to a
+/// path wins. Whether each still holds those bytes is the caller's check.
 pub fn generated_for_track(
     conn: &Connection,
     track_id: &str,
-) -> Result<Vec<super::planner::GeneratedOutput>, PublishError> {
-    let mut statement = conn.prepare(
-        "SELECT bundle_id, bundle_json FROM library_publish_operations
-         WHERE instr(bundle_json, '\"outputs\":[{') > 0 AND instr(bundle_json, ?1) > 0
-         ORDER BY created_day, rowid",
-    )?;
-    let rows: Vec<(String, String)> = statement
-        .query_map(rusqlite::params![track_id], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
-        .collect::<Result<_, _>>()?;
-    let mut out: Vec<super::planner::GeneratedOutput> = Vec::new();
-    for (bundle_id, json) in rows {
-        let bundle: PlanBundle = serde_json::from_str(&json).map_err(PublishError::from)?;
-        for item in bundle.items.iter().filter(|item| item.track_id == track_id) {
-            for output in &item.outputs {
-                // Only a write the operation finished counts: a failed
-                // one may never have put its file there.
-                let landed: bool = conn.query_row(
-                    "SELECT EXISTS (SELECT 1 FROM library_publish_journal
-                     WHERE bundle_id = ?1 AND kind = 'output' AND dest_root = ?2
-                       AND dest_rel = ?3 AND staged_sha256 = ?4
-                       AND state IN ('committed', 'cleaned'))",
-                    rusqlite::params![bundle_id, output.dest_root, output.dest_rel, output.sha256],
-                    |row| row.get(0),
-                )?;
-                if !landed {
-                    continue;
-                }
-                out.retain(|known| {
-                    known.dest_root != output.dest_root || known.dest_rel != output.dest_rel
-                });
-                out.push(output.clone());
-            }
-        }
+) -> Result<Vec<GeneratedOutput>, PublishError> {
+    let rows = conn
+        .prepare_cached(super::sql::OUTPUTS_FOR_TRACK.text())?
+        .query_map(rusqlite::params![track_id], |row| read_output(row, 0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut out: Vec<GeneratedOutput> = Vec::new();
+    for output in rows {
+        out.retain(|known| {
+            known.dest_root != output.dest_root || known.dest_rel != output.dest_rel
+        });
+        out.push(output);
     }
     Ok(out)
+}
+
+/// The files one committed operation generated, by track, in plan order.
+/// Empty for an operation that never committed.
+pub fn outputs_of(
+    conn: &Connection,
+    bundle_id: &str,
+) -> Result<HashMap<String, Vec<GeneratedOutput>>, PublishError> {
+    let mut out: HashMap<String, Vec<GeneratedOutput>> = HashMap::new();
+    let rows = conn
+        .prepare_cached(super::sql::OUTPUTS_OF_BUNDLE.text())?
+        .query_map(rusqlite::params![bundle_id], |row| {
+            Ok((row.get::<_, String>(0)?, read_output(row, 1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (track_id, output) in rows {
+        out.entry(track_id).or_default().push(output);
+    }
+    Ok(out)
+}
+
+/// One output row from column `at` on: root, path, hash, size and kind.
+fn read_output(row: &rusqlite::Row<'_>, at: usize) -> Result<GeneratedOutput, rusqlite::Error> {
+    let kind: String = row.get(at + 4)?;
+    let kind = OutputKind::parse(&kind).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            at + 4,
+            rusqlite::types::Type::Text,
+            format!("unknown output kind {kind}").into(),
+        )
+    })?;
+    Ok(GeneratedOutput {
+        dest_root: row.get(at)?,
+        dest_rel: row.get(at + 1)?,
+        sha256: row.get(at + 2)?,
+        size: row.get(at + 3)?,
+        kind,
+    })
 }
 
 /// One recorded bundle as stored, undecoded, or `None` when the id is

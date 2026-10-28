@@ -63,9 +63,9 @@ impl JournalState {
             "compensated" => Ok(Self::Compensated),
             "needs_attention" => Ok(Self::NeedsAttention),
             "cleanup_pending" => Ok(Self::CleanupPending),
-            other => Err(PublishError::Journal(format!(
-                "unknown journal state {other}"
-            ))),
+            other => Err(PublishError::Journal(
+                format!("unknown journal state {other}").into(),
+            )),
         }
     }
 
@@ -103,6 +103,37 @@ impl JournalState {
             (Self::Prepared | Self::Staged | Self::Published, Self::Compensated) => true,
             (_, Self::NeedsAttention) => true,
             _ => next.rank() > self.rank(),
+        }
+    }
+}
+
+/// How the catalog commit records an audio row's track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MgmtState {
+    /// A library track the publish moved or retagged: its row moves.
+    Managed,
+    /// A file the commit adds to the catalog (an import), so a commit
+    /// resumed after a crash adds it too.
+    Imported,
+}
+
+impl MgmtState {
+    /// Text form stored in SQLite.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Managed => "managed",
+            Self::Imported => "imported",
+        }
+    }
+
+    /// Parse the stored text form.
+    pub fn parse(text: &str) -> Result<Self, PublishError> {
+        match text {
+            "managed" => Ok(Self::Managed),
+            "imported" => Ok(Self::Imported),
+            other => Err(PublishError::Journal(
+                format!("unknown management state {other}").into(),
+            )),
         }
     }
 }
@@ -161,9 +192,9 @@ impl JournalKind {
             "remove" => Ok(Self::Remove),
             "put_back" => Ok(Self::PutBack),
             "add" => Ok(Self::Add),
-            other => Err(PublishError::Journal(format!(
-                "unknown journal kind {other}"
-            ))),
+            other => Err(PublishError::Journal(
+                format!("unknown journal kind {other}").into(),
+            )),
         }
     }
 }
@@ -193,8 +224,9 @@ pub struct FileJournal {
     pub staged_sha256: String,
     /// Stable local track id, so recovery can rebuild the catalog commit.
     pub track_id: Option<String>,
-    /// Management state the catalog commit records.
-    pub mgmt_state: Option<String>,
+    /// How the catalog commit records the row's track; `None` for rows
+    /// that carry no track.
+    pub commit_as: Option<MgmtState>,
     /// Current protocol state.
     pub state: JournalState,
     /// Monotonic per-file sequence, bumped on every transition.
@@ -313,7 +345,7 @@ impl<'a> JournalWriter<'a> {
                 journal.source_sha256.as_deref(),
                 journal.staged_sha256,
                 journal.track_id.as_deref(),
-                journal.mgmt_state.as_deref(),
+                journal.commit_as.map(MgmtState::as_str),
                 JournalState::Prepared.as_str(),
             ])?;
         if let Some(replaced) = &journal.replaces {
@@ -372,14 +404,17 @@ impl<'a> JournalWriter<'a> {
             .prepare_cached(sql::JOURNAL_STATE.text())?
             .query_row(rusqlite::params![id], |row| row.get(0))
             .optional()?;
-        Err(PublishError::Journal(match state {
-            Some(state) => format!(
-                "journal {id} is {state}, not {} or {}",
-                expected.as_str(),
-                next.as_str()
-            ),
-            None => format!("missing journal {id}"),
-        }))
+        Err(PublishError::Journal(
+            match state {
+                Some(state) => format!(
+                    "journal {id} is {state}, not {} or {}",
+                    expected.as_str(),
+                    next.as_str()
+                ),
+                None => format!("missing journal {id}"),
+            }
+            .into(),
+        ))
     }
 
     /// Compare-and-swap transition: moves only when the row still holds
@@ -414,9 +449,9 @@ impl<'a> JournalWriter<'a> {
                     staged_sha256
                 ])?;
         if changed != 1 {
-            return Err(PublishError::Journal(format!(
-                "journal {id} is not prepared, or is missing"
-            )));
+            return Err(PublishError::Journal(
+                format!("journal {id} is not prepared, or is missing").into(),
+            ));
         }
         Ok(())
     }
@@ -430,9 +465,9 @@ impl<'a> JournalWriter<'a> {
             .prepare_cached(sql::JOURNAL_SET_BACKUP.text())?
             .execute(rusqlite::params![backup, id])?;
         if changed != 1 {
-            return Err(PublishError::Journal(format!(
-                "journal {id} names another backup, or is missing"
-            )));
+            return Err(PublishError::Journal(
+                format!("journal {id} names another backup, or is missing").into(),
+            ));
         }
         Ok(())
     }
@@ -442,11 +477,14 @@ fn legal(expected: JournalState, next: JournalState) -> Result<(), PublishError>
     if expected.can_transition_to(next) {
         return Ok(());
     }
-    Err(PublishError::Journal(format!(
-        "illegal transition {} -> {}",
-        expected.as_str(),
-        next.as_str()
-    )))
+    Err(PublishError::Journal(
+        format!(
+            "illegal transition {} -> {}",
+            expected.as_str(),
+            next.as_str()
+        )
+        .into(),
+    ))
 }
 
 fn read_journal(row: &rusqlite::Row<'_>) -> Result<FileJournal, rusqlite::Error> {
@@ -458,6 +496,17 @@ fn read_journal(row: &rusqlite::Row<'_>) -> Result<FileJournal, rusqlite::Error>
     let kind = JournalKind::parse(&kind_text).map_err(|err| {
         rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(err))
     })?;
+    let commit_as = row
+        .get::<_, Option<String>>(12)?
+        .map(|text| MgmtState::parse(&text))
+        .transpose()
+        .map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(
+                12,
+                rusqlite::types::Type::Text,
+                Box::new(err),
+            )
+        })?;
     let source_root: Option<String> = row.get(3)?;
     let source_rel: Option<String> = row.get(4)?;
     let replaced_rel: Option<String> = row.get(15)?;
@@ -484,7 +533,7 @@ fn read_journal(row: &rusqlite::Row<'_>) -> Result<FileJournal, rusqlite::Error>
         source_sha256: row.get(9)?,
         staged_sha256: row.get(10)?,
         track_id: row.get(11)?,
-        mgmt_state: row.get(12)?,
+        commit_as,
         state,
         seq: row.get(14)?,
         replaces,

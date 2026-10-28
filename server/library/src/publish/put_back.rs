@@ -614,10 +614,9 @@ pub(super) fn copy_into(
         if let Err(error) = std::fs::remove_file(temp) {
             tracing::warn!(%error, "a put-back temp with other bytes was not removed");
         }
-        return Err(PublishError::Validation(format!(
-            "the removed copy of {} changed",
-            item.relative_path
-        )));
+        return Err(PublishError::Validation(
+            format!("the removed copy of {} changed", item.relative_path).into(),
+        ));
     }
     if let Some(parent) = temp.parent() {
         super::journal::fsync_dir(parent)?;
@@ -682,23 +681,23 @@ pub(super) fn place(
             return if super::remove::holds(&home, sha, known) {
                 Ok(())
             } else {
-                Err(PublishError::Validation(format!(
-                    "the copy for {root}:{rel} is gone"
-                )))
+                Err(PublishError::Validation(
+                    format!("the copy for {root}:{rel} is gone").into(),
+                ))
             };
         }
         Err(error) => return Err(PublishError::from(error)),
     }
     if !paths::same_file(temp, &home) {
         if !super::remove::holds(temp, sha, known) {
-            return Err(PublishError::Validation(format!(
-                "the copy for {root}:{rel} changed"
-            )));
+            return Err(PublishError::Validation(
+                format!("the copy for {root}:{rel} changed").into(),
+            ));
         }
         if std::fs::symlink_metadata(&home).is_ok() {
-            return Err(PublishError::Collision(format!(
-                "late occupier at {root}:{rel}"
-            )));
+            return Err(PublishError::Collision(
+                format!("late occupier at {root}:{rel}").into(),
+            ));
         }
         if let Some(hook) = before_place {
             hook(&home);
@@ -846,17 +845,15 @@ pub(super) fn commit(
 ) -> Result<(), PublishError> {
     let put_back = &commit.put_back;
     if spent(conn, &put_back.removal_bundle)? {
-        return Err(PublishError::Catalog(format!(
-            "removal {} was already put back",
-            put_back.removal_bundle
-        )));
+        return Err(PublishError::Catalog(
+            format!("removal {} was already put back", put_back.removal_bundle).into(),
+        ));
     }
     for (item, indexed) in put_back.items.iter().zip(&commit.indexed) {
         let changed = || {
-            PublishError::Catalog(format!(
-                "track {} changed under bundle {bundle_id}",
-                item.track_id
-            ))
+            PublishError::Catalog(
+                format!("track {} changed under bundle {bundle_id}", item.track_id).into(),
+            )
         };
         let place: Option<(String, String, String)> = conn
             .prepare_cached(sql::TRACK_PLACE.text())?
@@ -882,10 +879,13 @@ pub(super) fn commit(
                 .optional()?;
             if let Some((occupant, availability)) = occupant {
                 if availability == "indexed" {
-                    return Err(PublishError::Catalog(format!(
-                        "track {occupant} is still listed where track {} goes back",
-                        item.track_id
-                    )));
+                    return Err(PublishError::Catalog(
+                        format!(
+                            "track {occupant} is still listed where track {} goes back",
+                            item.track_id
+                        )
+                        .into(),
+                    ));
                 }
                 super::publisher::give_up(
                     conn,
@@ -911,10 +911,13 @@ pub(super) fn commit(
             },
         )?;
         if adopted != item.track_id {
-            return Err(PublishError::Catalog(format!(
-                "the file put back took track {adopted}, not {}",
-                item.track_id
-            )));
+            return Err(PublishError::Catalog(
+                format!(
+                    "the file put back took track {adopted}, not {}",
+                    item.track_id
+                )
+                .into(),
+            ));
         }
     }
     let track_ids: Vec<&str> = put_back

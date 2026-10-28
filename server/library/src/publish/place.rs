@@ -87,14 +87,17 @@ impl PlaceError {
     /// `root:rel`.
     pub(super) fn into_publish(self, root: &str, rel: &str) -> super::PublishError {
         use super::PublishError;
-        match self {
-            Self::Collision => PublishError::Collision(format!("late occupier at {root}:{rel}")),
-            Self::CrossDevice | Self::Unavailable(_) => {
-                PublishError::NoSafePlacement(NO_SAFE_METHOD.to_owned())
+        let error = match self {
+            Self::Collision => {
+                PublishError::Collision(format!("late occupier at {root}:{rel}").into())
             }
-            Self::Interrupted => PublishError::InjectedCrash("after-link".to_owned()),
-            Self::Unsynced(error) | Self::Io(error) => PublishError::Io(error.to_string()),
-        }
+            Self::CrossDevice | Self::Unavailable(_) => {
+                PublishError::NoSafePlacement(NO_SAFE_METHOD.into())
+            }
+            Self::Interrupted => PublishError::InjectedCrash(super::CrashPoint::AfterLink),
+            Self::Unsynced(error) | Self::Io(error) => PublishError::Io(error.to_string().into()),
+        };
+        error.file(root, rel)
     }
 }
 
@@ -284,29 +287,36 @@ impl SetAsideError {
     /// aside.
     pub(super) fn into_publish(self, root: &str, rel: &str) -> super::PublishError {
         use super::PublishError;
-        match self {
+        let error = match self {
             Self::NotLinkable {
                 links_work: true, ..
-            } => PublishError::NotLinkable(format!(
-                "DroppedNeedle can't safely change \"{rel}\": it does not own the file and \
+            } => PublishError::NotLinkable(
+                format!(
+                    "DroppedNeedle can't safely change \"{rel}\": it does not own the file and \
                  cannot write to it, or the file is locked against changes."
-            )),
+                )
+                .into(),
+            ),
             Self::NotLinkable {
                 links_work: false, ..
-            } => PublishError::NotLinkable(format!(
-                "DroppedNeedle can't safely change \"{rel}\": it does not own the file and \
+            } => PublishError::NotLinkable(
+                format!(
+                    "DroppedNeedle can't safely change \"{rel}\": it does not own the file and \
                  cannot write to it, the file is locked against changes, or the disk it is on \
                  does not support hard links."
-            )),
-            Self::Unavailable(_) => PublishError::NoSafePlacement(NO_SAFE_METHOD.to_owned()),
-            Self::HiddenTaken => PublishError::Journal(format!(
-                "an earlier change left a set-aside copy of {root}:{rel} behind"
-            )),
-            Self::Replaced | Self::ReplacedKept(_) => PublishError::Collision(format!(
-                "{root}:{rel} was replaced while it was being changed"
-            )),
-            Self::Io(error) => PublishError::Io(error.to_string()),
-        }
+                )
+                .into(),
+            ),
+            Self::Unavailable(_) => PublishError::NoSafePlacement(NO_SAFE_METHOD.into()),
+            Self::HiddenTaken => PublishError::Journal(
+                format!("an earlier change left a set-aside copy of {root}:{rel} behind").into(),
+            ),
+            Self::Replaced | Self::ReplacedKept(_) => PublishError::Collision(
+                format!("{root}:{rel} was replaced while it was being changed").into(),
+            ),
+            Self::Io(error) => PublishError::Io(error.to_string().into()),
+        };
+        error.file(root, rel)
     }
 }
 

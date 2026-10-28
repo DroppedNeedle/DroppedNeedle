@@ -200,6 +200,7 @@ library_publish_blobs
 library_publish_created_folders
 library_publish_journal
 library_publish_operations
+library_publish_outputs
 library_publish_replacements
 library_publish_resolutions
 library_publish_snapshots

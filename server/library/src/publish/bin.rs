@@ -502,10 +502,13 @@ pub(super) fn recycle_replaced(
     match journal.kind {
         JournalKind::Remove => sandbox.ensure_under_removal_roots(backup)?,
         JournalKind::PutBack => {
-            return Err(PublishError::Journal(format!(
-                "journal {} puts a file back; it sends nothing to a bin",
-                journal.id
-            )));
+            return Err(PublishError::Journal(
+                format!(
+                    "journal {} puts a file back; it sends nothing to a bin",
+                    journal.id
+                )
+                .into(),
+            ));
         }
         JournalKind::Audio
         | JournalKind::Sidecar

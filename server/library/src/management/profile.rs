@@ -9,7 +9,7 @@ use super::reasons::{self, ItemReason};
 use super::script::{self, Statement, Value, Variables};
 use crate::management::settings;
 use crate::matching::model::{Release, ReleaseTrack};
-use crate::publish::TagDocument;
+use crate::publish::{TagDocument, TagTarget, TagUpdate, TagUpdates};
 use crate::tags::{TagEdit, TagField, picard, save};
 use droppedneedle_kernel::runtime_config::sections::{
     FieldMode, LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
@@ -271,14 +271,9 @@ pub fn tag_field(name: &str) -> Option<TagField> {
 
 /// A field's current values: the plain name, or its first Vorbis spelling.
 fn current(doc: &TagDocument, field: TagField) -> Vec<String> {
-    if let Some(values) = doc.managed.get(field.name()) {
-        return values.clone();
-    }
-    let prefix = format!("{}:", field.name());
     doc.managed
-        .iter()
-        .find(|(name, _)| name.starts_with(&prefix))
-        .map(|(_, values)| values.clone())
+        .field_or_spelling(field)
+        .cloned()
         .unwrap_or_default()
 }
 
@@ -361,7 +356,7 @@ pub fn field_variables(fields: &BTreeMap<String, Vec<String>>) -> Variables {
 /// The tags one file should end up with.
 pub struct TagPlan {
     /// What to write: changed fields only.
-    pub updates: BTreeMap<String, Vec<String>>,
+    pub updates: TagUpdates,
     /// Every tag field after the plan, for display and naming.
     pub desired: BTreeMap<String, Vec<String>>,
     pub mutations: Vec<FieldMutation>,
@@ -710,7 +705,7 @@ pub fn plan_tags(
             }
         }
     }
-    let mut updates = BTreeMap::new();
+    let mut updates = TagUpdates::new();
     let mut mutations = Vec::new();
     let names: BTreeSet<&String> = before.keys().chain(desired.keys()).collect();
     for name in names {
@@ -744,7 +739,7 @@ pub fn plan_tags(
             before: json_value(&old),
             after: json_value(&new),
         });
-        updates.insert(name.clone(), new);
+        updates.insert(TagTarget::Field(field), new);
     }
     // Scrubbing (v2's rule): every native item outside the managed
     // fields goes, except the ones the profile preserves and v2's other
@@ -763,14 +758,14 @@ pub fn plan_tags(
             if preserved.contains(&folded) || scrub_keeps(&folded) {
                 continue;
             }
-            let name = format!("{}{key}", crate::publish::staging::NATIVE_PREFIX);
+            let target = TagTarget::Native(key.clone());
             mutations.push(FieldMutation {
-                name: name.clone(),
+                name: target.name(),
                 operation: "clear".to_owned(),
                 before: json_value(values),
                 after: serde_json::Value::Null,
             });
-            updates.insert(name, Vec::new());
+            updates.insert(target, Vec::new());
             scrubbed.push((key.clone(), values.clone()));
         }
     }
@@ -779,17 +774,19 @@ pub fn plan_tags(
             "Tags cannot be written to {} files, so only the file's path is managed.",
             format.to_uppercase()
         ));
-        updates.clear();
+        updates = TagUpdates::new();
         mutations.clear();
         scrubbed.clear();
     }
     // What the file holds after the write: skipped fields keep their value.
     let mut desired = before;
-    for (name, values) in &updates {
-        if values.is_empty() {
-            desired.remove(name);
-        } else {
-            desired.insert(name.clone(), values.clone());
+    for update in updates.iter() {
+        if let TagUpdate::Field { field, values } = update {
+            if values.is_empty() {
+                desired.remove(field.name());
+            } else {
+                desired.insert(field.name().to_owned(), values.to_vec());
+            }
         }
     }
     Ok(TagPlan {
@@ -1779,17 +1776,19 @@ mod tests {
                 "pass {pass}"
             );
             assert_eq!(plan.desired["producer"], vec!["AC/DC"], "pass {pass}");
-            let credits_changed = plan
-                .updates
-                .keys()
-                .any(|name| matches!(name.as_str(), "composer" | "producer"));
+            let credits_changed = plan.updates.targets().any(|target| {
+                matches!(
+                    target,
+                    TagTarget::Field(TagField::Composer | TagField::Producer)
+                )
+            });
             assert_eq!(
                 credits_changed,
                 pass == 0,
                 "pass {pass}: {:?}",
                 plan.updates
             );
-            doc.managed = plan.desired.clone();
+            doc.managed = TagUpdates::from_fields(plan.desired.clone()).expect("fields");
         }
     }
 

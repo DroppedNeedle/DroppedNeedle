@@ -123,10 +123,9 @@ impl Sandbox {
     pub fn new(roots: Vec<Root>) -> Result<Self, PublishError> {
         for root in &roots {
             if !root.dir.is_absolute() {
-                return Err(PublishError::UnsafePath(format!(
-                    "root {} is not absolute",
-                    root.id
-                )));
+                return Err(PublishError::UnsafePath(
+                    format!("root {} is not absolute", root.id).into(),
+                ));
             }
         }
         let (bins, roots): (Vec<Root>, Vec<Root>) = roots.into_iter().partition(Root::is_bin);
@@ -267,7 +266,7 @@ impl Sandbox {
             .iter()
             .find(|root| root.id == id)
             .map(|root| root.dir.as_path())
-            .ok_or_else(|| PublishError::UnsafePath(format!("unknown root {id}")))
+            .ok_or_else(|| PublishError::UnsafePath(format!("unknown root {id}").into()))
     }
 
     /// Resolve a root-relative path to an absolute path, rejecting
@@ -292,9 +291,9 @@ impl Sandbox {
                 Component::Normal(part) => clean.push(part),
                 Component::CurDir => {}
                 Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                    return Err(PublishError::UnsafePath(format!(
-                        "path escapes root: {relative}"
-                    )));
+                    return Err(PublishError::UnsafePath(
+                        format!("path escapes root: {relative}").into(),
+                    ));
                 }
             }
         }
@@ -305,9 +304,9 @@ impl Sandbox {
         }
         let path = root_dir.join(clean);
         if self.in_a_bin(&path) {
-            return Err(PublishError::UnsafePath(format!(
-                "path is inside the recycle bin: {relative}"
-            )));
+            return Err(PublishError::UnsafePath(
+                format!("path is inside the recycle bin: {relative}").into(),
+            ));
         }
         Ok(path)
     }
@@ -349,7 +348,7 @@ impl Sandbox {
             .chain(&self.remove_only)
             .find(|root| root.id == id)
             .map(|root| root.dir.as_path())
-            .ok_or_else(|| PublishError::UnsafePath(format!("unknown root {id}")))
+            .ok_or_else(|| PublishError::UnsafePath(format!("unknown root {id}").into()))
     }
 
     /// [`Self::resolve_no_symlink`] for a file a removal takes away or its
@@ -368,7 +367,7 @@ impl Sandbox {
     pub fn ensure_under_removal_roots(&self, path: &Path) -> Result<(), PublishError> {
         if self.in_a_bin(path) {
             return Err(PublishError::UnsafePath(
-                "path is inside the recycle bin".to_owned(),
+                "path is inside the recycle bin".to_owned().into(),
             ));
         }
         if self
@@ -380,7 +379,7 @@ impl Sandbox {
             return Ok(());
         }
         Err(PublishError::UnsafePath(
-            "path escapes all sandbox roots".to_owned(),
+            "path escapes all sandbox roots".to_owned().into(),
         ))
     }
 
@@ -407,7 +406,7 @@ impl Sandbox {
     /// The session's bins, or a refusal while they are unknown.
     pub fn bins(&self) -> Result<&[Root], PublishError> {
         self.bins.as_deref().map_err(|cause| {
-            PublishError::Cleanup(format!("no recycle bin is known while {cause}"))
+            PublishError::Cleanup(format!("no recycle bin is known while {cause}").into())
         })
     }
 
@@ -416,7 +415,9 @@ impl Sandbox {
     /// `.recycle` failed its checks has none, and its files wait.
     pub fn bin_for(&self, root_id: &str) -> Result<&Root, PublishError> {
         super::bin::serving(self.bins()?, root_id).ok_or_else(|| {
-            PublishError::Cleanup(format!("library root {root_id} has no usable recycle bin"))
+            PublishError::Cleanup(
+                format!("library root {root_id} has no usable recycle bin").into(),
+            )
         })
     }
 
@@ -441,7 +442,7 @@ impl Sandbox {
             )),
             Ok(_) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(PublishError::Io(error.to_string())),
+            Err(error) => Err(PublishError::Io(error.to_string().into())),
         }
     }
 
@@ -482,14 +483,17 @@ impl Sandbox {
             cursor.push(component.as_os_str());
             match std::fs::symlink_metadata(&cursor) {
                 Ok(meta) if meta.file_type().is_symlink() => {
-                    return Err(PublishError::UnsafePath(format!(
-                        "refusing to follow symlink in the recycle bin: {}",
-                        message_name(&cursor)
-                    )));
+                    return Err(PublishError::UnsafePath(
+                        format!(
+                            "refusing to follow symlink in the recycle bin: {}",
+                            message_name(&cursor)
+                        )
+                        .into(),
+                    ));
                 }
                 Ok(_) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-                Err(error) => return Err(PublishError::Io(error.to_string())),
+                Err(error) => return Err(PublishError::Io(error.to_string().into())),
             }
         }
         Ok(bin)
@@ -527,7 +531,7 @@ impl Sandbox {
     pub fn ensure_under_roots(&self, path: &Path) -> Result<(), PublishError> {
         if self.in_a_bin(path) {
             return Err(PublishError::UnsafePath(
-                "path is inside the recycle bin".to_owned(),
+                "path is inside the recycle bin".to_owned().into(),
             ));
         }
         for root in &self.roots {
@@ -537,7 +541,7 @@ impl Sandbox {
         }
         // 4xx-safe: the absolute server path never leaves the server.
         Err(PublishError::UnsafePath(
-            "path escapes all sandbox roots".to_owned(),
+            "path escapes all sandbox roots".to_owned().into(),
         ))
     }
 }
@@ -632,7 +636,7 @@ pub(crate) fn ensure_library_dir(root: &Path) -> Result<(), PublishError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Err(PublishError::FolderMissing)
         }
-        Err(error) => Err(PublishError::Io(error.to_string())),
+        Err(error) => Err(PublishError::Io(error.to_string().into())),
     }
 }
 
@@ -667,14 +671,13 @@ pub(crate) fn no_symlink_below(root: &Path, path: &Path) -> Result<(), PublishEr
         cursor.push(component.as_os_str());
         match std::fs::symlink_metadata(&cursor) {
             Ok(meta) if meta.file_type().is_symlink() => {
-                return Err(PublishError::UnsafePath(format!(
-                    "refusing to follow symlink: {}",
-                    message_name(&cursor)
-                )));
+                return Err(PublishError::UnsafePath(
+                    format!("refusing to follow symlink: {}", message_name(&cursor)).into(),
+                ));
             }
             Ok(_) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(err) => return Err(PublishError::Io(err.to_string())),
+            Err(err) => return Err(PublishError::Io(err.to_string().into())),
         }
     }
     Ok(())
@@ -689,14 +692,13 @@ fn ensure_no_symlink(path: &Path) -> Result<(), PublishError> {
         match std::fs::symlink_metadata(&cursor) {
             Ok(meta) => {
                 if meta.file_type().is_symlink() {
-                    return Err(PublishError::UnsafePath(format!(
-                        "refusing to follow symlink: {}",
-                        message_name(&cursor)
-                    )));
+                    return Err(PublishError::UnsafePath(
+                        format!("refusing to follow symlink: {}", message_name(&cursor)).into(),
+                    ));
                 }
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(err) => return Err(PublishError::Io(err.to_string())),
+            Err(err) => return Err(PublishError::Io(err.to_string().into())),
         }
     }
     Ok(())
@@ -719,10 +721,9 @@ const CHUNK: usize = 1 << 17;
 fn open_regular(path: &Path) -> Result<(std::fs::File, FileStat), PublishError> {
     use std::os::unix::fs::OpenOptionsExt as _;
     let unsafe_path = || {
-        PublishError::UnsafePath(format!(
-            "refusing to read through symlink: {}",
-            message_name(path)
-        ))
+        PublishError::UnsafePath(
+            format!("refusing to read through symlink: {}", message_name(path)).into(),
+        )
     };
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -730,17 +731,16 @@ fn open_regular(path: &Path) -> Result<(std::fs::File, FileStat), PublishError> 
         .open(path)
         .map_err(|err| match err.kind() {
             std::io::ErrorKind::NotFound => {
-                PublishError::Validation(format!("missing file: {}", message_name(path)))
+                PublishError::Validation(format!("missing file: {}", message_name(path)).into())
             }
             _ if err.raw_os_error() == Some(libc::ELOOP) => unsafe_path(),
-            _ => PublishError::Io(err.to_string()),
+            _ => PublishError::Io(err.to_string().into()),
         })?;
     let meta = file.metadata().map_err(PublishError::from)?;
     if !meta.file_type().is_file() {
-        return Err(PublishError::Validation(format!(
-            "not a regular file: {}",
-            message_name(path)
-        )));
+        return Err(PublishError::Validation(
+            format!("not a regular file: {}", message_name(path)).into(),
+        ));
     }
     Ok((file, FileStat::of(&meta)))
 }
@@ -771,10 +771,9 @@ fn stream(
     }
     let after = FileStat::of(&file.metadata().map_err(PublishError::from)?);
     if after != stat || size != stat.size {
-        return Err(PublishError::Validation(format!(
-            "{} changed while it was read",
-            message_name(path)
-        )));
+        return Err(PublishError::Validation(
+            format!("{} changed while it was read", message_name(path)).into(),
+        ));
     }
     Ok(Hashed {
         sha256: super::snapshots::hex_digest(&hasher.finalize()),
@@ -1016,17 +1015,20 @@ pub fn recycle_backup(
 ) -> Result<bool, PublishError> {
     let hash_of = |path: &Path| hash_regular_file(path).ok().map(|hashed| hashed.sha256);
     let changed = || {
-        PublishError::Validation(format!(
-            "set-aside file {} changed; it stays where it is",
-            message_name(backup)
-        ))
+        PublishError::Validation(
+            format!(
+                "set-aside file {} changed; it stays where it is",
+                message_name(backup)
+            )
+            .into(),
+        )
     };
     let backup_meta = match std::fs::symlink_metadata(backup) {
         Ok(meta) => meta,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(hash_of(recycle_to).as_deref() == Some(sha256));
         }
-        Err(error) => return Err(PublishError::Io(error.to_string())),
+        Err(error) => return Err(PublishError::Io(error.to_string().into())),
     };
     if !backup_meta.file_type().is_file() {
         return Err(changed());
@@ -1097,20 +1099,22 @@ pub fn recycle_backup(
 }
 
 fn taken(recycle_to: &Path) -> PublishError {
-    PublishError::Collision(format!(
-        "recycle bin entry {} is taken",
-        message_name(recycle_to)
-    ))
+    PublishError::Collision(
+        format!("recycle bin entry {} is taken", message_name(recycle_to)).into(),
+    )
 }
 
 fn refused(error: PlaceError, recycle_to: &Path) -> PublishError {
     match error {
         PlaceError::Collision => taken(recycle_to),
-        PlaceError::Unavailable(_) | PlaceError::CrossDevice => PublishError::Cleanup(format!(
-            "the recycle bin folder has no safe way to add {} without risking an overwrite",
-            message_name(recycle_to)
-        )),
-        other => PublishError::Io(other.to_string()),
+        PlaceError::Unavailable(_) | PlaceError::CrossDevice => PublishError::Cleanup(
+            format!(
+                "the recycle bin folder has no safe way to add {} without risking an overwrite",
+                message_name(recycle_to)
+            )
+            .into(),
+        ),
+        other => PublishError::Io(other.to_string().into()),
     }
 }
 
@@ -1140,10 +1144,13 @@ fn copy_verified(
         }
         check(&read.sha256)?;
         if hash_regular_file(&temp)?.sha256 != read.sha256 {
-            return Err(PublishError::Cleanup(format!(
-                "the copy of {} did not read back the same",
-                message_name(recycle_to)
-            )));
+            return Err(PublishError::Cleanup(
+                format!(
+                    "the copy of {} did not read back the same",
+                    message_name(recycle_to)
+                )
+                .into(),
+            ));
         }
         let within = Seams {
             cross_device: false,

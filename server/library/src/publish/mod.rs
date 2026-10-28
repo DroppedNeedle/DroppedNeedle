@@ -124,18 +124,19 @@ pub mod v2_baseline;
 pub use archive::{ArchiveBlock, ArchiveEntry, ArchivePolicy, ArchiveReport, validate_archive};
 pub use journal::{
     FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore, JournalWriter,
-    fsync_dir,
+    MgmtState, fsync_dir,
 };
 pub use paths::{CollisionKey, Sandbox, collision_key};
 pub use place::{PlaceError, Placed, PlacementMode, place_from_hidden};
 pub use planner::{
-    Capability, CapabilityGate, DiskPreflight, FileFingerprint, GeneratedOutput, PlanBundle,
-    PlanItem, PlanKind, ReleaseIdentity, Replacement, SealError, SealedPreview, SpaceProbe,
+    Capability, CapabilityGate, DiskPreflight, FileFingerprint, GeneratedOutput, OutputKind,
+    PlanBundle, PlanItem, PlanKind, ReleaseIdentity, Replacement, SealError, SealedPreview,
+    SpaceProbe,
 };
 pub use publisher::{CrashPoint, PublishOutcome, Publisher};
 pub use recovery::{BundleRecovery, RecoveryAction, reconcile, startup_gate};
 pub use snapshots::{BaselineStore, BlobStore, SnapshotStore};
-pub use tags_seam::{PICTURES_KEY, PictureRef, TagDocument};
+pub use tags_seam::{PictureRef, TagDocument, TagTarget, TagUpdate, TagUpdates};
 pub use undo::{BaselineRestorePlan, UndoItem, UndoPlan, plan_baseline_restore, plan_undo};
 
 /// Reserved hidden namespace for staging and backup artifacts.
@@ -154,6 +155,44 @@ pub const STARTUP_RECOVERY_LIMIT: usize = 500;
 /// Default per-operation undo retention in days.
 pub const DEFAULT_UNDO_RETENTION_DAYS: u32 = 90;
 
+/// What a publisher gate refused: the sentence a person reads, and the
+/// track and file it was about when the gate knew them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Detail {
+    pub message: String,
+    pub track_id: Option<String>,
+    pub file: Option<FileAt>,
+}
+
+/// A file inside a library folder or bin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileAt {
+    pub root_id: String,
+    pub rel: String,
+}
+
+impl std::fmt::Display for Detail {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl From<String> for Detail {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            track_id: None,
+            file: None,
+        }
+    }
+}
+
+impl From<&str> for Detail {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_owned())
+    }
+}
+
 /// Publisher errors. Variants name the gate that failed
 /// so callers can tell a durable skip (stale input, late collision)
 /// from a deterministic failure.
@@ -162,57 +201,62 @@ pub enum PublishError {
     /// Capability gate: the format or field combination cannot be
     /// managed, so the bundle is blocked before any mutation.
     #[error("capability blocked: {0}")]
-    Capability(String),
+    Capability(Detail),
     /// Collision gate: an occupied or fold-colliding destination.
     #[error("collision: {0}")]
-    Collision(String),
+    Collision(Detail),
     /// Snapshot gate: a required snapshot or baseline is missing,
     /// expired, or unverifiable.
     #[error("snapshot: {0}")]
-    Snapshot(String),
+    Snapshot(Detail),
     /// Journal gate: the durable intent is missing, out of order, or
     /// disagrees with the filesystem.
     #[error("journal: {0}")]
-    Journal(String),
+    Journal(Detail),
     /// Validation gate: re-read bytes, fingerprints, identity, or
     /// policy no longer match the sealed preview.
     #[error("validation: {0}")]
-    Validation(String),
+    Validation(Detail),
     /// Catalog-commit gate: the bundle's own rows moved since its seal,
     /// or the commit transaction refused a row.
     #[error("catalog commit: {0}")]
-    Catalog(String),
+    Catalog(Detail),
     /// Cleanup gate: post-commit source/backup removal failed. The
     /// commit stands; cleanup stays pending and retryable.
     #[error("cleanup pending: {0}")]
-    Cleanup(String),
+    Cleanup(Detail),
     /// Path safety: traversal, escape, symlink, or out-of-sandbox path.
     #[error("unsafe path: {0}")]
-    UnsafePath(String),
+    UnsafePath(Detail),
     /// The library folder is not there now (a share not mounted, a link
     /// to nothing), so nothing under it is touched until it is back.
     #[error("the library folder is not there")]
     FolderMissing,
     /// Archive safety: zip-slip, traversal, symlink, size, or bomb limit.
     #[error("archive blocked: {0}")]
-    Archive(String),
-    /// Disk preflight: insufficient destination space.
-    #[error("insufficient space: {0}")]
-    Space(String),
+    Archive(Detail),
+    /// Disk preflight: a folder has less free space than the bundle
+    /// needs there.
+    #[error("insufficient space: root {root_id} needs {needed} bytes but has {free} free")]
+    Space {
+        root_id: String,
+        needed: u64,
+        free: u64,
+    },
     /// Placement gate: this folder offers no way to put the file on its
     /// name that cannot replace another file. The text is the sentence the
     /// user reads.
     #[error("{0}")]
-    NoSafePlacement(String),
+    NoSafePlacement(Detail),
     /// Placement gate: the file could be moved out of the way but not put
     /// back safely, so it was not touched. The text is the sentence the
     /// user reads, and it names the file.
     #[error("{0}")]
-    NotLinkable(String),
+    NotLinkable(Detail),
     /// Injected crash for the crash-matrix tests. Production never
     /// constructs this; tests use it to prove resume-or-compensate.
     #[error("injected crash at {0}")]
-    InjectedCrash(String),
+    InjectedCrash(CrashPoint),
     /// SQLite or serialization failure inside the publisher stores.
     #[error("store: {0}")]
     Store(String),
@@ -227,7 +271,7 @@ pub enum PublishError {
     TimedOut(String),
     /// Filesystem I/O failure.
     #[error("io: {0}")]
-    Io(String),
+    Io(Detail),
 }
 
 impl From<rusqlite::Error> for PublishError {
@@ -259,11 +303,81 @@ impl PublishError {
     pub fn wrote_nothing(&self) -> bool {
         matches!(self, Self::Interrupted(_) | Self::TimedOut(_))
     }
+
+    /// The gate's detail, for the variants that carry one.
+    pub fn detail(&self) -> Option<&Detail> {
+        match self {
+            Self::Capability(detail)
+            | Self::Collision(detail)
+            | Self::Snapshot(detail)
+            | Self::Journal(detail)
+            | Self::Validation(detail)
+            | Self::Catalog(detail)
+            | Self::Cleanup(detail)
+            | Self::UnsafePath(detail)
+            | Self::Archive(detail)
+            | Self::NoSafePlacement(detail)
+            | Self::NotLinkable(detail)
+            | Self::Io(detail) => Some(detail),
+            Self::FolderMissing
+            | Self::Space { .. }
+            | Self::InjectedCrash(_)
+            | Self::Store(_)
+            | Self::Interrupted(_)
+            | Self::TimedOut(_) => None,
+        }
+    }
+
+    fn detail_mut(&mut self) -> Option<&mut Detail> {
+        match self {
+            Self::Capability(detail)
+            | Self::Collision(detail)
+            | Self::Snapshot(detail)
+            | Self::Journal(detail)
+            | Self::Validation(detail)
+            | Self::Catalog(detail)
+            | Self::Cleanup(detail)
+            | Self::UnsafePath(detail)
+            | Self::Archive(detail)
+            | Self::NoSafePlacement(detail)
+            | Self::NotLinkable(detail)
+            | Self::Io(detail) => Some(detail),
+            Self::FolderMissing
+            | Self::Space { .. }
+            | Self::InjectedCrash(_)
+            | Self::Store(_)
+            | Self::Interrupted(_)
+            | Self::TimedOut(_) => None,
+        }
+    }
+
+    /// The same error, naming the track it was about unless it names one
+    /// already.
+    #[must_use]
+    pub fn track(mut self, track_id: &str) -> Self {
+        if let Some(detail) = self.detail_mut() {
+            detail.track_id.get_or_insert_with(|| track_id.to_owned());
+        }
+        self
+    }
+
+    /// The same error, naming the file it was about unless it names one
+    /// already.
+    #[must_use]
+    pub fn file(mut self, root_id: &str, rel: &str) -> Self {
+        if let Some(detail) = self.detail_mut() {
+            detail.file.get_or_insert_with(|| FileAt {
+                root_id: root_id.to_owned(),
+                rel: rel.to_owned(),
+            });
+        }
+        self
+    }
 }
 
 impl From<std::io::Error> for PublishError {
     fn from(err: std::io::Error) -> Self {
-        Self::Io(err.to_string())
+        Self::Io(err.to_string().into())
     }
 }
 

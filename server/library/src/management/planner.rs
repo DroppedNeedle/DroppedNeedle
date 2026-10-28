@@ -23,8 +23,8 @@ use super::selection::{AlbumScope, CatalogTrack};
 use super::{automatic, takeover};
 use crate::matching::model::Release;
 use crate::publish::planner::{
-    Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
-    ReleaseIdentity, STAGED_HEADROOM_BYTES,
+    Capability, CollisionGate, DiskPreflight, FileFingerprint, OutputKind, PlanBundle, PlanItem,
+    PlanKind, ReleaseIdentity, STAGED_HEADROOM_BYTES,
 };
 use crate::publish::snapshots::sha256_hex;
 use crate::publish::{MAX_PLAN_SUBJECTS, PublishError, Sandbox, collision_key};
@@ -707,7 +707,13 @@ fn plan_file(
                     .push(format!("{lrc_rel} already exists, so its lyrics are kept."));
             }
         } else {
-            let output = generated_output(ctx, &dest_root, &lrc_rel, "lyrics", synced.as_bytes())?;
+            let output = generated_output(
+                ctx,
+                &dest_root,
+                &lrc_rel,
+                OutputKind::Lyrics,
+                synced.as_bytes(),
+            )?;
             outputs.push(output);
         }
     }
@@ -733,7 +739,7 @@ fn plan_file(
     item.diff.generated = outputs
         .iter()
         .map(|output| super::models::GeneratedFile {
-            kind: output.kind.clone(),
+            kind: output.kind.as_str().to_owned(),
             destination_relative_path: output.dest_rel.clone(),
         })
         .collect();
@@ -782,7 +788,7 @@ fn plan_file(
         },
         override_revision: overrides.revision,
         capabilities,
-        format: format_name,
+        format,
         managed_updates: tag_plan.updates,
         sidecars: Vec::new(),
         staged_bytes_estimate: item.estimated_bytes,
@@ -801,7 +807,7 @@ fn generated_output(
     ctx: &PlanContext<'_>,
     root: &str,
     rel: &str,
-    kind: &str,
+    kind: OutputKind,
     bytes: &[u8],
 ) -> Result<crate::publish::GeneratedOutput, ItemReason> {
     let sha256 = keep_bytes(ctx, "management.generated_output", bytes).map_err(|error| {
@@ -813,7 +819,7 @@ fn generated_output(
         dest_rel: rel.to_owned(),
         sha256,
         size: bytes.len() as u64,
-        kind: kind.to_owned(),
+        kind,
     })
 }
 
@@ -919,7 +925,7 @@ fn plan_pictures(
     doc: &crate::publish::TagDocument,
     tag_plan: &mut profile::TagPlan,
 ) -> Result<(), ItemReason> {
-    use crate::publish::{PICTURES_KEY, PictureRef};
+    use crate::publish::PictureRef;
     let art = &ctx.pinned.profile.artwork;
     let metadata = &ctx.pinned.profile.metadata;
     let scrub = metadata.enabled
@@ -962,13 +968,7 @@ fn plan_pictures(
                             });
                     if !holds_it && !larger {
                         new_cover = Some((
-                            PictureRef {
-                                kind: 3,
-                                mime: rendered.mime.clone(),
-                                description: String::new(),
-                                sha256: new_sha,
-                                info: None,
-                            },
+                            PictureRef::new(3, rendered.mime.clone(), "", new_sha, None),
                             rendered,
                         ));
                     }
@@ -1003,6 +1003,13 @@ fn plan_pictures(
     if unchanged {
         return Ok(());
     }
+    // Undo puts the file's pictures back from their stored records, so a
+    // picture none can hold is never replaced.
+    if !existing.iter().chain(&pictures).all(PictureRef::recordable) {
+        return Err(reasons::tags_not_kept(
+            "An embedded picture has a MIME type undo could not restore.",
+        ));
+    }
     for picture in &pictures {
         match &new_cover {
             Some((cover, rendered)) if cover.sha256 == picture.sha256 => {
@@ -1025,15 +1032,12 @@ fn plan_pictures(
         )
     };
     tag_plan.mutations.push(FieldMutation {
-        name: PICTURES_KEY.to_owned(),
+        name: "pictures".to_owned(),
         operation: if pictures.is_empty() { "clear" } else { "set" }.to_owned(),
         before: describe(&existing),
         after: describe(&pictures),
     });
-    tag_plan.updates.insert(
-        PICTURES_KEY.to_owned(),
-        pictures.iter().map(PictureRef::encode).collect(),
-    );
+    tag_plan.updates.set_pictures(pictures);
     item.diff.artwork_changed = true;
     if let Some((picture, rendered)) = new_cover {
         item.desired.artwork.push(ArtworkChoice {
@@ -1121,7 +1125,7 @@ fn cover_file(
     } else {
         format!("{dest_folder}/cover.{extension}")
     };
-    let output = generated_output(ctx, dest_root, &rel, "artwork", &rendered.bytes)?;
+    let output = generated_output(ctx, dest_root, &rel, OutputKind::Artwork, &rendered.bytes)?;
     item.desired.artwork.push(ArtworkChoice {
         output_kind: "external_art".to_owned(),
         image_type: "front".to_owned(),
@@ -1204,14 +1208,18 @@ fn measure_replaygain(
         })
         .collect();
     if settings.mode == ReplayGainMode::FillMissing {
-        let mut needed = vec!["replaygain_track_gain", "replaygain_track_peak"];
+        let mut needed = vec![TagField::ReplayGainTrackGain, TagField::ReplayGainTrackPeak];
         if settings.album_aware && whole_album {
-            needed.extend(["replaygain_album_gain", "replaygain_album_peak"]);
+            needed.extend([TagField::ReplayGainAlbumGain, TagField::ReplayGainAlbumPeak]);
         }
         let complete = paths.iter().all(|(_, path)| {
             path.as_deref()
                 .and_then(|path| crate::publish::staging::document_from_file(path).ok())
-                .is_some_and(|doc| needed.iter().all(|name| doc.managed.contains_key(*name)))
+                .is_some_and(|doc| {
+                    needed
+                        .iter()
+                        .all(|field| doc.managed.field(*field).is_some())
+                })
         });
         if complete {
             return;
@@ -1408,7 +1416,7 @@ pub(crate) fn acoustid_values(
         };
         let held = |field: TagField| {
             doc.managed
-                .get(field.name())
+                .field(field)
                 .is_some_and(|values| !values.is_empty())
         };
         let want_print = !ids_only

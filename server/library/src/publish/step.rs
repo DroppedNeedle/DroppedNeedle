@@ -22,15 +22,17 @@ use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::jobs::queue::JobQueue;
 
 use super::PublishError;
-use super::journal::{FileJournal, JournalKind, JournalState, JournalStore, JournalWriter};
+use super::journal::{
+    FileJournal, JournalKind, JournalState, JournalStore, JournalWriter, MgmtState,
+};
 use super::paths::{self, FileStat, Sandbox};
 use super::place::{
     Original, PlaceError, Seams, SetAsideError, place_from_hidden, place_with, set_aside_with,
 };
 use super::planner::PlanBundle;
 use super::publisher::{
-    ADOPTED_STATE, BundleCommit, CrashPoint, TrackCommit, commit_bundle, durable,
-    enqueue_after_commit, locate, long_read, mark_missing, probe_root, read_adopted,
+    BundleCommit, CrashPoint, TrackCommit, commit_bundle, durable, enqueue_after_commit, locate,
+    long_read, mark_missing, probe_root, read_adopted,
 };
 use super::recovery::{
     compensate_bundle, flag_attention, flag_rows, placements_first, removals_first, remove_folders,
@@ -331,7 +333,9 @@ pub(super) fn decide(
             reason.clone(),
             Some(Refused {
                 reason: format!("bundle {bundle_id} cannot commit: {reason}"),
-                error: PublishError::Journal(format!("bundle {bundle_id} cannot commit: {reason}")),
+                error: PublishError::Journal(
+                    format!("bundle {bundle_id} cannot commit: {reason}").into(),
+                ),
             }),
         );
     }
@@ -359,14 +363,9 @@ fn staged_in_full(plan: &PlanBundle, journals: &[FileJournal]) -> bool {
 /// nothing to commit, or a track it moves has no seal to check the catalog
 /// against.
 fn commit_shape(journals: &[FileJournal], plan: &PlanBundle) -> Option<String> {
-    let tracks: Vec<(&str, &str)> = journals
+    let tracks: Vec<(&str, MgmtState)> = journals
         .iter()
-        .filter_map(|journal| {
-            journal
-                .track_id
-                .as_deref()
-                .zip(journal.mgmt_state.as_deref())
-        })
+        .filter_map(|journal| journal.track_id.as_deref().zip(journal.commit_as))
         .collect();
     if tracks.is_empty()
         && plan.removal.is_none()
@@ -378,7 +377,7 @@ fn commit_shape(journals: &[FileJournal], plan: &PlanBundle) -> Option<String> {
     tracks
         .iter()
         .find(|(track_id, mgmt)| {
-            !mgmt.starts_with(ADOPTED_STATE)
+            *mgmt != MgmtState::Imported
                 && plan
                     .items
                     .iter()
@@ -399,10 +398,13 @@ fn unplaced_destination_taken(journal: &FileJournal) -> RowStep {
             "another file holds the destination of journal {}",
             journal.id
         ),
-        error: PublishError::Collision(format!(
-            "late occupier at {}:{}",
-            journal.dest_root, journal.dest_rel
-        )),
+        error: PublishError::Collision(
+            format!(
+                "late occupier at {}:{}",
+                journal.dest_root, journal.dest_rel
+            )
+            .into(),
+        ),
     })
 }
 
@@ -415,10 +417,9 @@ fn taken_or_changed(journal: &FileJournal, what: &str) -> RowStep {
             "journal {}: {}:{} {what}",
             journal.id, journal.dest_root, journal.dest_rel
         ),
-        error: PublishError::Collision(format!(
-            "{}:{} {what}",
-            journal.dest_root, journal.dest_rel
-        )),
+        error: PublishError::Collision(
+            format!("{}:{} {what}", journal.dest_root, journal.dest_rel).into(),
+        ),
     })
 }
 
@@ -683,9 +684,9 @@ impl Run<'_> {
             }
             BundleStep::Resume(steps) => {
                 let Some(plan) = plan else {
-                    return Err(PublishError::Journal(format!(
-                        "bundle {bundle_id} has no recorded plan"
-                    )));
+                    return Err(PublishError::Journal(
+                        format!("bundle {bundle_id} has no recorded plan").into(),
+                    ));
                 };
                 self.resume(plan, &journals, steps)
             }
@@ -707,7 +708,7 @@ impl Run<'_> {
 
     fn crash(&self, point: CrashPoint) -> Result<(), PublishError> {
         if self.hooks.crash == Some(point) {
-            return Err(PublishError::InjectedCrash(point.as_str().to_string()));
+            return Err(PublishError::InjectedCrash(point));
         }
         Ok(())
     }
@@ -812,7 +813,7 @@ impl Run<'_> {
             )));
         };
         sandbox.ensure_under_roots(&dest).map_err(|_| {
-            PublishError::Journal(format!("journal {} escapes sandbox", journal.id))
+            PublishError::Journal(format!("journal {} escapes sandbox", journal.id).into())
         })?;
         let staged = Path::new(&journal.staged);
         if sandbox.ensure_under_roots(staged).is_err() {
@@ -1059,10 +1060,9 @@ impl Run<'_> {
                 }
             }
             RowStep::Unwind | RowStep::Refuse(_) | RowStep::Attention(_) => {
-                return Err(PublishError::Journal(format!(
-                    "journal {} has no step to finish it",
-                    journal.id
-                )));
+                return Err(PublishError::Journal(
+                    format!("journal {} has no step to finish it", journal.id).into(),
+                ));
             }
         }
         durable(self.db, "publish.journal_published", |tx| {
@@ -1161,13 +1161,12 @@ impl Run<'_> {
         let bundle_id = plan.id.as_str();
         let mut tracks = Vec::new();
         for journal in journals {
-            let (Some(track_id), Some(mgmt)) =
-                (journal.track_id.as_deref(), journal.mgmt_state.as_deref())
+            let (Some(track_id), Some(mgmt)) = (journal.track_id.as_deref(), journal.commit_as)
             else {
                 continue;
             };
             let item = plan.items.iter().find(|item| item.track_id == track_id);
-            let adopted = mgmt.starts_with(ADOPTED_STATE);
+            let adopted = mgmt == MgmtState::Imported;
             let dest = self
                 .sandbox
                 .resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
@@ -1201,7 +1200,7 @@ impl Run<'_> {
                 fingerprint: journal.staged_sha256.clone(),
                 source: journal.source.clone(),
                 source_sha256: journal.source_sha256.clone(),
-                mgmt_state: mgmt.to_string(),
+                mgmt_state: mgmt,
                 adopt,
                 replaces: journal.replaces.as_ref().and_then(|replaced| {
                     replaced
@@ -1239,11 +1238,14 @@ impl Run<'_> {
             let writer = JournalWriter::new(tx);
             for journal in JournalStore::new(tx).bundle(&commit.bundle_id)? {
                 if journal.state != JournalState::Published {
-                    return Err(PublishError::Journal(format!(
-                        "journal {} is {} at commit",
-                        journal.id,
-                        journal.state.as_str()
-                    )));
+                    return Err(PublishError::Journal(
+                        format!(
+                            "journal {} is {} at commit",
+                            journal.id,
+                            journal.state.as_str()
+                        )
+                        .into(),
+                    ));
                 }
                 writer.advance(
                     &journal.id,
@@ -1386,10 +1388,10 @@ impl Run<'_> {
             }
             if let Some(track_id) = journal.track_id.as_deref() {
                 match long_read(db, "publish.locate", |conn| locate(conn, track_id))? {
-                    Some((root, rel, fingerprint, _)) => {
-                        if root != journal.dest_root
-                            || rel != journal.dest_rel
-                            || fingerprint != journal.staged_sha256
+                    Some(located) => {
+                        if located.root_id != journal.dest_root
+                            || located.rel_path != journal.dest_rel
+                            || located.published_sha256 != journal.staged_sha256
                         {
                             flag_attention(db, journals)?;
                             return Ok(Advanced::Attention(format!(
@@ -1485,7 +1487,7 @@ impl Run<'_> {
             // A removed file goes to its bin, never away.
             JournalKind::Remove => {
                 let replaced = journal.replaces.as_ref().ok_or_else(|| {
-                    PublishError::Journal(format!("journal {} has no bin entry", journal.id))
+                    PublishError::Journal(format!("journal {} has no bin entry", journal.id).into())
                 })?;
                 let moved = super::bin::recycle_replaced(
                     self.db,

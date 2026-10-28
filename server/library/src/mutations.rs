@@ -1001,7 +1001,7 @@ fn refusal(refused: Refusal) -> MutationError {
             }
             PublishError::NoSafePlacement(_)
             | PublishError::Cleanup(_)
-            | PublishError::Space(_)
+            | PublishError::Space { .. }
             | PublishError::Capability(_)
             | PublishError::Snapshot(_)
             | PublishError::Archive(_)
@@ -1056,7 +1056,7 @@ fn put_back_refusal(refused: PutBackRefusal) -> MutationError {
             PublishError::NoSafePlacement(_)
             | PublishError::NotLinkable(_)
             | PublishError::Cleanup(_)
-            | PublishError::Space(_)
+            | PublishError::Space { .. }
             | PublishError::Capability(_)
             | PublishError::Snapshot(_)
             | PublishError::Archive(_)

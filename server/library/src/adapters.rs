@@ -71,7 +71,7 @@ impl SpaceProbe for FsSpaceProbe {
         let dirs = (self.root_dirs)();
         let dir = dirs
             .get(root_id)
-            .ok_or_else(|| PublishError::UnsafePath(format!("unknown root {root_id}")))?;
+            .ok_or_else(|| PublishError::UnsafePath(format!("unknown root {root_id}").into()))?;
         free_bytes_for(dir)
     }
 }
@@ -84,10 +84,9 @@ pub fn free_bytes_for(dir: &Path) -> Result<u64, PublishError> {
     // statvfs only reads filesystem metadata; the path is already sandbox-checked.
     let status = unsafe { libc::statvfs(cstr.as_ptr(), &mut stat) };
     if status != 0 {
-        return Err(PublishError::Io(format!(
-            "cannot stat free space under {}",
-            dir.display()
-        )));
+        return Err(PublishError::Io(
+            format!("cannot stat free space under {}", dir.display()).into(),
+        ));
     }
     // The field widths differ by platform (u32 blocks on macOS).
     #[allow(clippy::unnecessary_cast)]

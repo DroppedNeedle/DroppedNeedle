@@ -16,11 +16,12 @@ use super::publish::planner::{
 use super::publish::publisher::{PublishOutcome, Publisher, locate};
 use super::publish::recovery::LeftoverReport;
 use super::publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
-use super::publish::tags_seam::TagDocument;
+use super::publish::tags_seam::{TagDocument, TagUpdates};
 use super::publish::{PlacementMode, PublishError, Sandbox};
 use super::scan::models::EffectivePolicy;
 use super::scan::roots::RootRegistry;
 use super::service::ServiceError;
+use super::tags::AudioFormat;
 use super::wiring::RootDirs;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{CancelFlag, Db, DbError};
@@ -197,10 +198,10 @@ impl HeldBundles {
                     let Some(track_id) = journal.track_id.as_deref() else {
                         continue;
                     };
-                    if let Some((root, rel, published, _)) = locate(conn, track_id)?
-                        && root == journal.dest_root
-                        && rel == journal.dest_rel
-                        && published == journal.staged_sha256
+                    if let Some(located) = locate(conn, track_id)?
+                        && located.root_id == journal.dest_root
+                        && located.rel_path == journal.dest_rel
+                        && located.published_sha256 == journal.staged_sha256
                     {
                         return Ok(true);
                     }
@@ -811,6 +812,7 @@ pub(crate) enum UndoSkip {
 #[derive(Debug, Clone)]
 pub(crate) struct UndoFile {
     pub plan: PlanItem,
+    /// The file's tags now, by stored name.
     pub current: BTreeMap<String, Vec<String>>,
     /// Sidecars that changed or whose old path is taken: they stay put.
     pub sidecars_left: Vec<String>,
@@ -848,7 +850,7 @@ pub struct PreviewItemInput {
     pub rel_path: String,
     /// Destination rel path (organize only).
     pub dest_rel: Option<String>,
-    /// Managed-field updates.
+    /// Managed-field updates, as the request names them.
     pub managed_updates: BTreeMap<String, Vec<String>>,
 }
 
@@ -992,28 +994,39 @@ pub struct AppliedBundle {
 /// state); unsafe paths are 400s; store and I/O faults are 5xx.
 pub(crate) fn publish_error(error: PublishError) -> ServiceError {
     match error {
-        PublishError::Collision(message)
-        | PublishError::Validation(message)
-        | PublishError::Snapshot(message)
-        | PublishError::Journal(message)
-        | PublishError::Catalog(message)
-        | PublishError::Space(message)
-        | PublishError::Capability(message)
-        | PublishError::NoSafePlacement(message)
-        | PublishError::NotLinkable(message)
-        | PublishError::Cleanup(message) => ServiceError::Conflict { message },
-        PublishError::UnsafePath(message) | PublishError::Archive(message) => {
-            ServiceError::InvalidInput { message }
+        PublishError::Collision(detail)
+        | PublishError::Validation(detail)
+        | PublishError::Snapshot(detail)
+        | PublishError::Journal(detail)
+        | PublishError::Catalog(detail)
+        | PublishError::Capability(detail)
+        | PublishError::NoSafePlacement(detail)
+        | PublishError::NotLinkable(detail)
+        | PublishError::Cleanup(detail) => ServiceError::Conflict {
+            message: detail.message,
+        },
+        PublishError::Space {
+            root_id,
+            needed,
+            free,
+        } => ServiceError::Conflict {
+            message: format!("root {root_id} needs {needed} bytes but has {free} free"),
+        },
+        PublishError::UnsafePath(detail) | PublishError::Archive(detail) => {
+            ServiceError::InvalidInput {
+                message: detail.message,
+            }
         }
         PublishError::FolderMissing => ServiceError::Conflict {
             message: "The library folder isn't there. Check that its drive or share is mounted."
                 .to_owned(),
         },
         PublishError::Interrupted(cause) => ServiceError::Busy { cause },
-        PublishError::Store(message)
-        | PublishError::TimedOut(message)
-        | PublishError::Io(message)
-        | PublishError::InjectedCrash(message) => ServiceError::internal(&message),
+        PublishError::Store(message) | PublishError::TimedOut(message) => {
+            ServiceError::internal(&message)
+        }
+        PublishError::Io(detail) => ServiceError::internal(&detail.message),
+        PublishError::InjectedCrash(point) => ServiceError::internal(&point),
     }
 }
 
@@ -1296,7 +1309,9 @@ impl Publishing {
             .map_err(publish_error)?;
         let hashed =
             super::publish::paths::hash_regular_file(&path).map_err(|error| match error {
-                PublishError::Validation(message) => ServiceError::Conflict { message },
+                PublishError::Validation(detail) => ServiceError::Conflict {
+                    message: detail.message,
+                },
                 other => publish_error(other),
             })?;
         Ok(FileFingerprint {
@@ -1323,7 +1338,7 @@ impl Publishing {
         sandbox: &Sandbox,
         root_id: &str,
         rel_path: &str,
-        managed_updates: &BTreeMap<String, Vec<String>>,
+        managed_updates: &TagUpdates,
     ) -> Result<TagDocument, ServiceError> {
         let path = sandbox
             .resolve_no_symlink(root_id, rel_path)
@@ -1339,8 +1354,8 @@ impl Publishing {
         &self,
         identity: &ReleaseIdentity,
         rel_path: &str,
-        explicit: &BTreeMap<String, Vec<String>>,
-    ) -> Result<BTreeMap<String, Vec<String>>, ServiceError> {
+        explicit: &TagUpdates,
+    ) -> Result<TagUpdates, ServiceError> {
         let writable = super::tags::format_for_path(PathBuf::from(rel_path).as_path())
             .is_ok_and(super::tags::save::writable);
         if !writable {
@@ -1373,21 +1388,18 @@ impl Publishing {
                 super::tags::save::accepts(&super::tags::TagEdit::new(field, values.clone()))
             })
         });
-        tags.extend(
-            explicit
-                .iter()
-                .map(|(name, values)| (name.clone(), values.clone())),
-        );
+        let mut tags = TagUpdates::from_fields(tags).map_err(publish_error)?;
+        tags.extend(explicit.clone());
         Ok(tags)
     }
 
     /// Lowercase container format for one rel path.
-    fn live_format(rel_path: &str) -> Result<String, ServiceError> {
-        super::tags::format_for_path(PathBuf::from(rel_path).as_path())
-            .map(|format| format.as_str().to_owned())
-            .map_err(|_| ServiceError::InvalidInput {
+    fn live_format(rel_path: &str) -> Result<AudioFormat, ServiceError> {
+        super::tags::format_for_path(PathBuf::from(rel_path).as_path()).map_err(|_| {
+            ServiceError::InvalidInput {
                 message: format!("Unsupported audio format for {rel_path}"),
-            })
+            }
+        })
     }
 
     /// Build and seal a management preview: retag writes in place,
@@ -1449,7 +1461,7 @@ impl Publishing {
                     message: "Preview items need a root and a relative path".to_owned(),
                 });
             }
-            super::publish::staging::check_new_values(&item.managed_updates)
+            let requested = super::publish::staging::from_request(&item.managed_updates)
                 .map_err(publish_error)?;
             let track_id = self.scan_track(&item.root_id, &item.rel_path)?;
             if self.track_album(&track_id)? != album_id {
@@ -1467,9 +1479,9 @@ impl Publishing {
             // updates win over it. Organize moves keep their tags.
             let managed_updates = match kind {
                 PlanKind::SamePath => {
-                    self.with_release_tags(&identity, &item.rel_path, &item.managed_updates)?
+                    self.with_release_tags(&identity, &item.rel_path, &requested)?
                 }
-                PlanKind::Move => item.managed_updates.clone(),
+                PlanKind::Move => requested,
             };
             let (dest_root, dest_rel, item_kind) = match kind {
                 PlanKind::SamePath => (
@@ -1534,7 +1546,7 @@ impl Publishing {
             // The before-state the seal keeps is the file's tags now, so
             // the changes come from it with no extra read.
             let changes = match item_kind {
-                PlanKind::SamePath => tag_changes(&doc.managed, &managed_updates),
+                PlanKind::SamePath => tag_changes(&doc.managed.named(), &managed_updates.named()),
                 PlanKind::Move => Vec::new(),
             };
             docs.insert(track_id.clone(), doc);
@@ -1670,7 +1682,9 @@ impl Publishing {
             PINNED_OVERRIDE
         })
         .map_err(|error| match error {
-            PublishError::Validation(message) => ServiceError::Conflict { message },
+            PublishError::Validation(detail) => ServiceError::Conflict {
+                message: detail.message,
+            },
             other => publish_error(other),
         })
     }
@@ -1691,10 +1705,9 @@ impl Publishing {
         let mut overrides = BTreeMap::new();
         for item in &bundle.items {
             let changed = || {
-                PublishError::Validation(format!(
-                    "Track {} changed under the preview",
-                    item.track_id
-                ))
+                PublishError::Validation(
+                    format!("Track {} changed under the preview", item.track_id).into(),
+                )
             };
             fingerprints.insert(
                 item.track_id.clone(),
@@ -1706,10 +1719,9 @@ impl Publishing {
                 item.track_id.clone(),
                 self.resolve_identity(&album_id, &item.track_id)
                     .map_err(|_| {
-                        PublishError::Validation(format!(
-                            "Identity for track {} changed",
-                            item.track_id
-                        ))
+                        PublishError::Validation(
+                            format!("Identity for track {} changed", item.track_id).into(),
+                        )
                     })?,
             );
             overrides.insert(item.track_id.clone(), override_of(&item.track_id));
@@ -2368,7 +2380,7 @@ impl Publishing {
 
         // Everything the undo reads from the database, in one read that
         // ends before any file is looked at.
-        let sources = self
+        let (sources, outputs) = self
             .db
             .read_blocking("publish.undo_sources", |conn| {
                 let Some(source) = super::publish::operations::load_operation(conn, bundle_id)?
@@ -2401,7 +2413,8 @@ impl Publishing {
                         located,
                     ));
                 }
-                Ok::<_, PublishError>(Some(rows))
+                let outputs = super::publish::operations::outputs_of(conn, bundle_id)?;
+                Ok::<_, PublishError>(Some((rows, outputs)))
             })
             .map_err(publish_error)?
             .ok_or(ServiceError::NotFound)?;
@@ -2454,14 +2467,14 @@ impl Publishing {
         for input in inputs {
             let located = locations_read.remove(&input.track_id).flatten();
             let live = match located {
-                Some((root_id, rel_path, _, _)) => {
-                    match Self::live_fingerprint(&open.sandbox, &root_id, &rel_path) {
-                        Ok(fingerprint) => self
-                            .live_identity(&input.track_id)?
-                            .map(|identity| (root_id, rel_path, fingerprint, identity)),
-                        Err(_) => None,
-                    }
-                }
+                Some(super::publish::publisher::Located {
+                    root_id, rel_path, ..
+                }) => match Self::live_fingerprint(&open.sandbox, &root_id, &rel_path) {
+                    Ok(fingerprint) => self
+                        .live_identity(&input.track_id)?
+                        .map(|identity| (root_id, rel_path, fingerprint, identity)),
+                    Err(_) => None,
+                },
                 None => None,
             };
             let Some((root_id, rel_path, fingerprint, identity)) = live else {
@@ -2530,7 +2543,7 @@ impl Publishing {
                 });
             }
             let current = Self::live_doc(&open.sandbox, &live_loc.0, &live_loc.1)
-                .map(|doc| doc.managed)
+                .map(|doc| doc.managed.named())
                 .unwrap_or_default();
             let (sidecars, mut left) = by_track
                 .get(item.track_id.as_str())
@@ -2541,9 +2554,9 @@ impl Publishing {
             }
             // Files the run generated go away, while they are still what it wrote.
             let mut removals = Vec::new();
-            for output in by_track
+            for output in outputs
                 .get(item.track_id.as_str())
-                .map(|source| source.outputs.as_slice())
+                .map(Vec::as_slice)
                 .unwrap_or_default()
             {
                 let unchanged = open
@@ -2692,7 +2705,8 @@ impl Publishing {
         let mut files = BaselineFiles::default();
         let mut inputs = Vec::new();
         let mut current_locs: HashMap<String, (String, String)> = HashMap::new();
-        let mut live: HashMap<String, (FileFingerprint, String, ReleaseIdentity)> = HashMap::new();
+        let mut live: HashMap<String, (FileFingerprint, AudioFormat, ReleaseIdentity)> =
+            HashMap::new();
         for (track_id, (bytes, located)) in track_ids.iter().zip(sources) {
             let baseline = match bytes {
                 Some(Some(bytes)) => Some(
@@ -2707,7 +2721,9 @@ impl Publishing {
                 None => None,
             };
             let state = match located {
-                Some((root_id, rel_path, _, _)) => {
+                Some(super::publish::publisher::Located {
+                    root_id, rel_path, ..
+                }) => {
                     match (
                         Self::live_fingerprint(&open.sandbox, &root_id, &rel_path),
                         Self::live_format(&rel_path),
@@ -2727,7 +2743,7 @@ impl Publishing {
             current_locs.insert(track_id.clone(), (root_id, rel_path));
             live.insert(
                 track_id.clone(),
-                (current.clone(), format.clone(), identity.clone()),
+                (current.clone(), format, identity.clone()),
             );
             inputs.push(BaselineInput {
                 track_id: track_id.clone(),
@@ -2736,7 +2752,7 @@ impl Publishing {
                 pinned_current: current,
                 identity: identity.clone(),
                 pinned_identity: identity,
-                format: format.clone(),
+                format,
                 pinned_format: format,
             });
         }
@@ -2808,7 +2824,7 @@ impl Publishing {
                 });
             }
             files.eligible.push(UndoFile {
-                current: current.managed,
+                current: current.managed.named(),
                 sidecars_left: Vec::new(),
                 plan: PlanItem {
                     track_id: track_id.clone(),
@@ -2825,7 +2841,7 @@ impl Publishing {
                     identity: identity.clone(),
                     override_revision: override_of(&track_id),
                     capabilities,
-                    format: format.clone(),
+                    format: *format,
                     managed_updates: updates,
                     sidecars: Vec::new(),
                     staged_bytes_estimate: fingerprint.size + STAGED_HEADROOM_BYTES,

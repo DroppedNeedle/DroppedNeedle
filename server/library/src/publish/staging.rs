@@ -10,7 +10,7 @@
 //!
 //! * Managed-field names outside the save wrapper's fields (Picard's
 //!   tag set, see `tags::fields`) block at preview time
-//!   ([`check_managed_updates`]), never mid-publish.
+//!   ([`from_request`]), never mid-publish.
 //! * Items with no managed updates stage byte-identical without
 //!   touching the tag stack, so pure moves never trip tag refusals
 //!   (read-only formats, mixed ID3) on files whose tags they keep.
@@ -20,110 +20,69 @@ use std::path::Path;
 
 use super::super::tags::save::{accepts, check_writable, writable};
 
-use super::super::tags::{Refusal, TagEdit, TagField, TagsError, format_for_path, read_document};
+use super::super::tags::{
+    AudioFormat, Refusal, TagEdit, TagField, TagsError, format_for_path, read_document,
+};
 use super::PublishError;
 use super::tags_seam::{
-    FULL_FIELDS_VERSION, PICTURES_KEY, PictureRef, RICH_FIELDS_VERSION, TAG_DOCUMENT_VERSION,
-    TagDocument, recorded_since,
+    FULL_FIELDS_VERSION, PictureRef, RICH_FIELDS_VERSION, TAG_DOCUMENT_VERSION, TagDocument,
+    TagTarget, TagUpdate, TagUpdates, recorded_since,
 };
 
 /// Map managed updates onto save-wrapper edits. An empty value list
 /// removes the field (undo uses that for fields an edit added). Values
 /// are written as given: new values are checked at preview
-/// ([`check_new_values`]), and values replayed from a file go back
-/// exactly as they were. Unknown names block loudly.
-pub fn check_managed_updates(
-    managed_updates: &BTreeMap<String, Vec<String>>,
-) -> Result<Vec<TagEdit>, PublishError> {
-    let mut edits = Vec::with_capacity(managed_updates.len());
-    for (name, values) in managed_updates {
-        if let Some(key) = name.strip_prefix(NATIVE_PREFIX) {
-            edits.push(TagEdit::native(key, values.clone()));
-            continue;
-        }
-        if name == PICTURES_KEY {
-            // Pictures ride beside the tag edits (see `pictures_update`).
-            continue;
-        }
-        match TagField::from_managed_name(name) {
-            Some((field, None)) => edits.push(TagEdit::verbatim(field, values.clone())),
-            Some((field, Some(spelling))) => {
-                edits.push(TagEdit::verbatim_spelling(field, spelling, values.clone()));
-            }
-            None => {
-                return Err(PublishError::Capability(format!(
-                    "field {name} is outside the staged writer's surface"
-                )));
-            }
-        }
-    }
-    Ok(edits)
+/// ([`from_request`]), and values replayed from a file go back exactly
+/// as they were. Pictures ride beside the edits (see `stage_tags`).
+pub fn tag_edits(updates: &TagUpdates) -> Vec<TagEdit> {
+    updates
+        .iter()
+        .filter_map(|update| match update {
+            TagUpdate::Field { field, values } => Some(TagEdit::verbatim(field, values.to_vec())),
+            TagUpdate::Spelling {
+                field,
+                spelling,
+                values,
+            } => Some(TagEdit::verbatim_spelling(field, spelling, values.to_vec())),
+            TagUpdate::Native { key, values } => Some(TagEdit::native(key, values.to_vec())),
+            TagUpdate::Pictures(_) => None,
+        })
+        .collect()
 }
 
-/// Check values a caller asks to write: known names, and values each
-/// field can hold (dates parse, counts are numbers, one value where the
-/// field holds one). Runs at preview, so Apply never meets them.
-pub fn check_new_values(
-    managed_updates: &BTreeMap<String, Vec<String>>,
-) -> Result<(), PublishError> {
-    for (name, values) in managed_updates {
-        // Native items outside the fields are only ever removed (a scrub).
-        if name.starts_with(NATIVE_PREFIX) && values.is_empty() {
-            continue;
-        }
-        if name == PICTURES_KEY
-            && values
-                .iter()
-                .all(|value| PictureRef::decode(value).is_some())
-        {
+/// The updates a caller asks to write, checked: known field names, and
+/// values each field can hold (dates parse, counts are numbers, one value
+/// where the field holds one). A native item outside the fields may only
+/// be removed, and pictures must read. Runs at preview, so Apply never
+/// meets a bad value.
+pub fn from_request(requested: &BTreeMap<String, Vec<String>>) -> Result<TagUpdates, PublishError> {
+    let mut updates = TagUpdates::new();
+    for (name, values) in requested {
+        if updates.insert_requested_extra(name, values) {
             continue;
         }
         let field = TagField::from_name(name).ok_or_else(|| {
-            PublishError::Capability(format!(
-                "field {name} is outside the staged writer's surface"
-            ))
+            PublishError::Capability(
+                format!("field {name} is outside the staged writer's surface").into(),
+            )
         })?;
         if !accepts(&TagEdit::new(field, values.clone())) {
-            return Err(PublishError::Capability(format!(
-                "field {name} cannot hold {values:?}"
-            )));
+            return Err(PublishError::Capability(
+                format!("field {name} cannot hold {values:?}").into(),
+            ));
         }
+        updates.insert(TagTarget::Field(field), values.clone());
     }
-    Ok(())
-}
-
-/// Managed-update names for native items outside the writable fields
-/// (`native:vorbis:COMPOSER`): a scrub removes them, and undo or a
-/// baseline restore writes them back.
-pub const NATIVE_PREFIX: &str = "native:";
-
-/// Audio extensions the staged writer routes. Anything else (WMA
-/// included) has no staged writer and blocks before any mutation.
-fn staged_extension(format: &str) -> Result<&'static str, PublishError> {
-    match format.to_lowercase().as_str() {
-        "flac" => Ok("flac"),
-        "mp3" => Ok("mp3"),
-        "ogg" => Ok("ogg"),
-        "opus" => Ok("opus"),
-        "m4a" => Ok("m4a"),
-        "aac" => Ok("aac"),
-        "wav" => Ok("wav"),
-        other => Err(PublishError::Capability(format!(
-            "format {other} has no staged writer"
-        ))),
-    }
+    Ok(updates)
 }
 
 /// The extension of a tag write's temp, which names its container to the
 /// save wrapper. A container the wrapper only reads is refused here,
 /// before anything is journaled.
-pub fn writable_extension(format: &str) -> Result<&'static str, PublishError> {
-    let extension = staged_extension(format)?;
-    let format = format_for_path(&Path::new("staged").with_extension(extension)).map_err(|_| {
-        PublishError::Capability(format!("format {extension} has no staged writer"))
-    })?;
-    check_writable(format).map_err(|refusal| PublishError::Capability(refusal.to_string()))?;
-    Ok(extension)
+pub fn writable_extension(format: AudioFormat) -> Result<&'static str, PublishError> {
+    check_writable(format)
+        .map_err(|refusal| PublishError::Capability(refusal.to_string().into()))?;
+    Ok(format.as_str())
 }
 
 /// Write one plan item's tags into its journal temp, which already holds
@@ -132,10 +91,10 @@ pub fn writable_extension(format: &str) -> Result<&'static str, PublishError> {
 /// A refusal leaves the temp for its row's unwind to remove.
 pub fn stage_tags(
     temp: &Path,
-    managed_updates: &BTreeMap<String, Vec<String>>,
+    managed_updates: &TagUpdates,
     pictures: Option<&[super::super::tags::save::PictureSpec]>,
 ) -> Result<String, PublishError> {
-    let edits = check_managed_updates(managed_updates)?;
+    let edits = tag_edits(managed_updates);
     super::super::tags::save::save_in_place(temp, &edits, pictures)
         .map(|saved| saved.sha256)
         .map_err(|error| map_tags_error(temp, error))
@@ -150,9 +109,9 @@ pub fn document_from_file(path: &Path) -> Result<TagDocument, PublishError> {
     let name = message_name_path(path);
     let fields = read_document(path).map_err(|error| match error {
         TagsError::UnrecognizedExtension { extension } => {
-            PublishError::Capability(format!("format {extension} has no staged writer"))
+            PublishError::Capability(format!("format {extension} has no staged writer").into())
         }
-        other => PublishError::Validation(sanitize_tags_message(&name, other)),
+        other => PublishError::Validation(sanitize_tags_message(&name, other).into()),
     })?;
     Ok(document_from_fields(fields))
 }
@@ -161,15 +120,14 @@ pub fn document_from_file(path: &Path) -> Result<TagDocument, PublishError> {
 /// (from the file itself, or from tags captured before an earlier
 /// version of DroppedNeedle changed it).
 pub fn document_from_fields(fields: super::super::tags::FieldDocument) -> TagDocument {
-    let mut managed: BTreeMap<String, Vec<String>> = fields
-        .values
-        .into_iter()
-        .map(|(field, values)| (field.name().to_owned(), values))
-        .collect();
+    let mut managed = TagUpdates::new();
+    for (field, values) in fields.values {
+        managed.insert(TagTarget::Field(field), values);
+    }
     // Each spelling's own values sort after the field's own entry, so on
     // replay they override what the field entry wrote to every spelling.
     for ((field, spelling), values) in fields.spellings {
-        managed.insert(field.spelling_name(spelling), values);
+        managed.insert(TagTarget::Spelling(field, spelling), values);
     }
     let mut picture_bytes = BTreeMap::new();
     let pictures = fields
@@ -178,13 +136,13 @@ pub fn document_from_fields(fields: super::super::tags::FieldDocument) -> TagDoc
         .map(|picture| {
             let sha256 = super::snapshots::sha256_hex(&picture.data);
             picture_bytes.insert(sha256.clone(), picture.data);
-            PictureRef {
-                kind: picture.kind,
-                mime: picture.mime,
-                description: picture.description,
+            PictureRef::new(
+                picture.kind,
+                picture.mime,
+                &picture.description,
                 sha256,
-                info: picture.info,
-            }
+                picture.info,
+            )
         })
         .collect();
     TagDocument {
@@ -207,38 +165,47 @@ pub fn document_from_fields(fields: super::super::tags::FieldDocument) -> TagDoc
 /// undo removes what the write put there. A write that would overwrite
 /// a field the file holds in a shape undo cannot put back is refused
 /// here, before anything is staged.
-pub fn document_for_write(
-    path: &Path,
-    managed_updates: &BTreeMap<String, Vec<String>>,
-) -> Result<TagDocument, PublishError> {
+pub fn document_for_write(path: &Path, updates: &TagUpdates) -> Result<TagDocument, PublishError> {
     let mut document = document_from_file(path)?;
-    if let Some(name) = managed_updates
-        .keys()
-        .find(|name| document.opaque.contains(name))
-    {
-        return Err(PublishError::Capability(format!(
-            "field {name} of '{}' holds a value undo could not restore",
-            message_name_path(path)
-        )));
+    let opaque = updates.targets().find_map(|target| match target {
+        TagTarget::Field(field) if document.opaque.iter().any(|name| name == field.name()) => {
+            Some(field.name())
+        }
+        _ => None,
+    });
+    if let Some(name) = opaque {
+        return Err(PublishError::Capability(
+            format!(
+                "field {name} of '{}' holds a value undo could not restore",
+                message_name_path(path)
+            )
+            .into(),
+        ));
     }
-    for name in managed_updates.keys() {
-        // A scrubbed native item's before-state is its values now, and
-        // replaced pictures are the ones the file holds now, so undo
-        // writes them back.
-        let before = if name == PICTURES_KEY {
-            document
-                .pictures
-                .iter()
-                .flatten()
-                .map(PictureRef::encode)
-                .collect()
-        } else {
-            name.strip_prefix(NATIVE_PREFIX)
-                .and_then(|key| document.custom.get(key))
-                .cloned()
-                .unwrap_or_default()
+    for target in updates.targets() {
+        // A scrubbed native item's before-state is its values now.
+        let before = match target {
+            TagTarget::Native(key) => document.custom.get(key).cloned().unwrap_or_default(),
+            _ => Vec::new(),
         };
-        document.managed.entry(name.clone()).or_insert(before);
+        document.managed.insert_missing(target.clone(), before);
+    }
+    // Replaced pictures are the ones the file holds now, so undo writes
+    // them back. One the before-state cannot record blocks the write.
+    if updates.pictures().is_some() {
+        let held = document.pictures.clone().unwrap_or_default();
+        if !held.iter().all(PictureRef::recordable) {
+            return Err(PublishError::Capability(
+                format!(
+                    "a picture in '{}' has a MIME type undo could not restore",
+                    message_name_path(path)
+                )
+                .into(),
+            ));
+        }
+        if document.managed.pictures().is_none() {
+            document.managed.set_pictures(held);
+        }
     }
     Ok(document)
 }
@@ -255,7 +222,7 @@ pub fn restore_updates(
     baseline: &TagDocument,
     current: &TagDocument,
     rel_path: &str,
-) -> BTreeMap<String, Vec<String>> {
+) -> TagUpdates {
     let writable_format = format_for_path(Path::new(rel_path)).is_ok_and(writable);
     if !writable_format || baseline.version < FULL_FIELDS_VERSION {
         return baseline.managed.clone();
@@ -263,24 +230,26 @@ pub fn restore_updates(
     let mut updates = baseline.managed.clone();
     // The baseline's pictures go back when the file's differ (a later
     // run embedded art), when the baseline's shape recorded them.
+    // A baseline stored before records refused tabs may hold one in a
+    // description; it reads back as the file now reads it, with a space.
     if let (Some(original), Some(now)) = (&baseline.pictures, &current.pictures)
         && baseline.version >= RICH_FIELDS_VERSION
-        && (original.len() != now.len()
+    {
+        let original: Vec<PictureRef> = original.iter().map(PictureRef::normalised).collect();
+        if original.len() != now.len()
             || original
                 .iter()
                 .zip(now)
-                .any(|(original, now)| !original.same_picture(now)))
-    {
-        updates.insert(
-            PICTURES_KEY.to_owned(),
-            original.iter().map(PictureRef::encode).collect(),
-        );
+                .any(|(original, now)| !original.same_picture(now))
+        {
+            updates.set_pictures(original);
+        }
     }
     // Native items the baseline held and the file no longer holds as it
     // did (a later scrub) go back. Items added since are left alone.
     for (key, values) in &baseline.custom {
         if current.custom.get(key) != Some(values) {
-            updates.insert(format!("{NATIVE_PREFIX}{key}"), values.clone());
+            updates.insert(TagTarget::Native(key.clone()), values.clone());
         }
     }
     for field in TagField::ALL {
@@ -290,7 +259,7 @@ pub fn restore_updates(
         let name = field.name();
         let opaque = |document: &TagDocument| document.opaque.iter().any(|kept| kept == name);
         if !opaque(baseline) && !opaque(current) {
-            updates.entry(name.to_owned()).or_default();
+            updates.insert_missing(TagTarget::Field(field), Vec::new());
         }
     }
     updates
@@ -303,26 +272,28 @@ pub fn restore_updates(
 fn map_tags_error(work: &Path, error: TagsError) -> PublishError {
     match error {
         TagsError::UnrecognizedExtension { extension } => {
-            PublishError::Capability(format!("format {extension} has no staged writer"))
+            PublishError::Capability(format!("format {extension} has no staged writer").into())
         }
         TagsError::Io { path, source } => {
-            PublishError::Io(format!("io error on '{}': {source}", message_name(&path)))
+            PublishError::Io(format!("io error on '{}': {source}", message_name(&path)).into())
         }
         TagsError::TagRead { path, reason }
         | TagsError::Probe { path, reason }
         | TagsError::Decode { path, reason }
-        | TagsError::Fingerprint { path, reason } => PublishError::Validation(format!(
-            "unreadable audio '{}': {reason}",
-            message_name(&path)
-        )),
+        | TagsError::Fingerprint { path, reason } => PublishError::Validation(
+            format!("unreadable audio '{}': {reason}", message_name(&path)).into(),
+        ),
         TagsError::SaveRefused { refusal, .. } => match refusal {
             Refusal::VerifyMismatch { .. } | Refusal::SaveFailed { .. } => {
-                PublishError::Validation(format!(
-                    "staged write failed for '{}': {refusal}",
-                    message_name_path(work)
-                ))
+                PublishError::Validation(
+                    format!(
+                        "staged write failed for '{}': {refusal}",
+                        message_name_path(work)
+                    )
+                    .into(),
+                )
             }
-            other => PublishError::Capability(other.to_string()),
+            other => PublishError::Capability(other.to_string().into()),
         },
     }
 }

@@ -302,7 +302,7 @@ impl Management {
                     cardinality: cardinality(field),
                     current_value: shown(
                         field,
-                        doc.managed.get(field.name()).map_or(&[], Vec::as_slice),
+                        doc.managed.field(field).map_or(&[], Vec::as_slice),
                     ),
                     override_id: saved.map(|(id, _, _)| id.clone()),
                     override_mode: saved.map(|(_, mode, _)| mode.clone()),

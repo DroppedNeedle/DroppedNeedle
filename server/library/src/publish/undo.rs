@@ -220,10 +220,10 @@ pub struct BaselineInput {
     pub identity: ReleaseIdentity,
     /// Identity pinned at preview time.
     pub pinned_identity: ReleaseIdentity,
-    /// Current container format, lowercased.
-    pub format: String,
+    /// Current container format.
+    pub format: crate::tags::AudioFormat,
     /// Format pinned at preview time.
-    pub pinned_format: String,
+    pub pinned_format: crate::tags::AudioFormat,
 }
 
 /// Why one baseline restore is blocked.

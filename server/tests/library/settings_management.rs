@@ -806,7 +806,7 @@ mod fields {
         }
         assert_eq!(modes(&settings), expected);
 
-        let mut expected = file().managed;
+        let mut expected = file().managed.named();
         expected.extend(picard::release_tags(&release(), &release().tracks[0]));
         assert!(expected.contains_key("isrc") && expected.contains_key("album_artists"));
         assert_eq!(plan(&settings), expected);

@@ -264,7 +264,7 @@ mod tests {
                 {"key":"tracktotal","values":[{"kind":"text","text":"09"}],"container":"list"}
             ]}}"#;
         let before = translate(json, "flac", "music", "In/song.flac").expect("translates");
-        let managed = &before.doc.managed;
+        let managed = before.doc.managed.named();
         assert_eq!(managed["artist"], vec!["A".to_owned(), "B".to_owned()]);
         assert_eq!(managed["title"], vec!["Song".to_owned()]);
         assert_eq!(managed["total_tracks:TOTALTRACKS"], vec!["9".to_owned()]);
@@ -291,7 +291,7 @@ mod tests {
                  "values":[{"kind":"binary","binary":"cmVsLTE="}]}
             ]}}"#;
         let before = translate(json, "m4a", "music", "a.m4a").expect("translates");
-        let managed = &before.doc.managed;
+        let managed = before.doc.managed.named();
         assert_eq!(managed["title"], vec!["Song".to_owned()]);
         assert_eq!(managed["track_number"], vec!["3".to_owned()]);
         assert_eq!(managed["total_tracks"], vec!["12".to_owned()]);

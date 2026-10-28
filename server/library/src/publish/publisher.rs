@@ -23,6 +23,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::journal::{
     FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore, JournalWriter,
+    MgmtState,
 };
 use super::paths::Sandbox;
 use super::planner::{
@@ -54,10 +55,10 @@ pub struct TrackCommit {
     /// them (see [`super::record::written_after`]).
     pub source: Option<(String, String)>,
     pub source_sha256: Option<String>,
-    /// Management state after commit.
-    pub mgmt_state: String,
+    /// How the commit records the track, kept as its last outcome.
+    pub mgmt_state: MgmtState,
     /// The track is new to the catalog: index the published file instead
-    /// of moving an existing row (see [`ADOPTED_STATE`]).
+    /// of moving an existing row (see [`MgmtState::Imported`]).
     pub adopt: Option<super::planner::Adoption>,
     /// The track whose file this one replaced at its destination, retired
     /// in the same commit, and where in the recycle bin that file goes.
@@ -72,19 +73,6 @@ pub struct TrackCommit {
     /// journaled it: what the commit seals as the file's identity. Set only
     /// with `adopt`.
     pub identity: Option<ReleaseIdentity>,
-}
-
-/// Management-state prefix journals carry for files a commit adds to the
-/// catalog, so a resumed commit after a crash adopts them too.
-pub const ADOPTED_STATE: &str = "imported:";
-
-/// The management state a commit records for one plan item.
-fn mgmt_state_for(adopt: bool, profile_revision: u64) -> String {
-    if adopt {
-        format!("{ADOPTED_STATE}{profile_revision}")
-    } else {
-        format!("managed:{profile_revision}")
-    }
 }
 
 /// The single-transaction catalog bundle commit.
@@ -134,27 +122,37 @@ pub fn read_revision(conn: &Connection) -> Result<u64, PublishError> {
     Ok(rev as u64)
 }
 
-/// Locate a track in `local_tracks`: (root id, relative path, last published
-/// SHA-256, management state from `library_track_management_state`). The last
-/// two are empty for a track the publisher never wrote.
-pub fn locate(
-    conn: &Connection,
-    track_id: &str,
-) -> Result<Option<(String, String, String, String)>, PublishError> {
+/// Where a track is, and what the publisher last wrote to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Located {
+    pub root_id: String,
+    pub rel_path: String,
+    /// The SHA-256 the publisher last wrote; empty for a track it never
+    /// wrote.
+    pub published_sha256: String,
+    /// The track's last management outcome, when it has one.
+    pub last_outcome: Option<String>,
+}
+
+/// Locate a track in `local_tracks`, with its management state from
+/// `library_track_management_state`.
+pub fn locate(conn: &Connection, track_id: &str) -> Result<Option<Located>, PublishError> {
     conn.query_row(
         "SELECT t.root_id, t.relative_path, COALESCE(m.applied_projection_hash, ''), \
-             COALESCE(m.last_outcome, '') \
+             m.last_outcome \
              FROM local_tracks t \
              LEFT JOIN library_track_management_state m ON m.local_track_id = t.id \
              WHERE t.id = ?1",
         rusqlite::params![track_id],
         |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
+            Ok(Located {
+                root_id: row.get(0)?,
+                rel_path: row.get(1)?,
+                published_sha256: row.get(2)?,
+                last_outcome: row
+                    .get::<_, Option<String>>(3)?
+                    .filter(|outcome| !outcome.is_empty()),
+            })
         },
     )
     .optional()
@@ -197,10 +195,9 @@ pub(super) fn commit_bundle(
         .map(|track| (track.track_id.as_str(), track.sealed.as_ref()))
         .collect();
     if let Some(moved) = super::planner::first_moved(conn, &sealed)? {
-        return Err(PublishError::Catalog(format!(
-            "track {moved} changed under bundle {}",
-            commit.bundle_id
-        )));
+        return Err(PublishError::Catalog(
+            format!("track {moved} changed under bundle {}", commit.bundle_id).into(),
+        ));
     }
     crate::catalog_revision::bump_catalog(conn)?;
     let now = clock.now_secs();
@@ -270,7 +267,7 @@ pub(super) fn commit_bundle(
                 track.track_id,
                 track.root_id,
                 track.fingerprint,
-                track.mgmt_state,
+                track.mgmt_state.as_str(),
                 now,
                 written
             ],
@@ -368,10 +365,13 @@ fn give_up_destination(conn: &Connection, track: &TrackCommit) -> Result<(), Pub
         return Ok(());
     };
     if availability == "indexed" {
-        return Err(PublishError::Catalog(format!(
-            "track {occupant} is still listed at the destination of track {}",
-            track.track_id
-        )));
+        return Err(PublishError::Catalog(
+            format!(
+                "track {occupant} is still listed at the destination of track {}",
+                track.track_id
+            )
+            .into(),
+        ));
     }
     give_up(conn, &occupant, &track.rel_path, &track.file_path)?;
     tracing::info!(
@@ -399,7 +399,7 @@ pub(super) fn give_up(
     let root_dir = Path::new(file_path)
         .ancestors()
         .nth(depth)
-        .ok_or_else(|| PublishError::Catalog(format!("{rel_path} has no root")))?;
+        .ok_or_else(|| PublishError::Catalog(format!("{rel_path} has no root").into()))?;
     let hidden_path = root_dir.join(&hidden).to_string_lossy().into_owned();
     conn.prepare_cached(super::sql::TRACK_SET_PATH.text())?
         .execute(rusqlite::params![
@@ -427,10 +427,9 @@ fn move_track(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError
         ],
     )?;
     if moved != 1 {
-        return Err(PublishError::Catalog(format!(
-            "track {} is not in the catalog",
-            track.track_id
-        )));
+        return Err(PublishError::Catalog(
+            format!("track {} is not in the catalog", track.track_id).into(),
+        ));
     }
     conn.execute(
         "UPDATE local_albums SET root_id = ?2, row_revision = row_revision + 1 \
@@ -528,9 +527,9 @@ fn adopt_track(
                     .as_ref()
                     .is_none_or(|joined| joined.album_id != album)
                 {
-                    return Err(PublishError::Catalog(format!(
-                        "track {id} is no longer on the album it was fetched for"
-                    )));
+                    return Err(PublishError::Catalog(
+                        format!("track {id} is no longer on the album it was fetched for").into(),
+                    ));
                 }
                 // It described the file this one replaced.
                 crate::identity::release_track(conn, &id)?;
@@ -541,10 +540,9 @@ fn adopt_track(
     }
 
     let item = track.indexed.as_ref().ok_or_else(|| {
-        PublishError::Catalog(format!(
-            "track {} was not read before its commit",
-            track.track_id
-        ))
+        PublishError::Catalog(
+            format!("track {} was not read before its commit", track.track_id).into(),
+        )
     })?;
     let adopted = crate::scan::sqlite_store::adopt_file(
         conn,
@@ -555,10 +553,13 @@ fn adopt_track(
         },
     )?;
     if adopted != track.track_id {
-        return Err(PublishError::Catalog(format!(
-            "imported file took track {adopted}, not the planned {}",
-            track.track_id
-        )));
+        return Err(PublishError::Catalog(
+            format!(
+                "imported file took track {adopted}, not the planned {}",
+                track.track_id
+            )
+            .into(),
+        ));
     }
     if joined.is_some() {
         conn.execute(
@@ -623,9 +624,10 @@ pub(super) fn index_file(
     // made after this point is still caught.
     let meta = std::fs::symlink_metadata(path).map_err(PublishError::from)?;
     let format = crate::tags::format_for_path(path)
-        .map_err(|error| PublishError::Catalog(error.to_string()))?;
-    let (tag, header) = crate::tags::read::read_scan_metadata(path, format)
-        .map_err(|error| PublishError::Catalog(format!("published file unreadable: {error}")))?;
+        .map_err(|error| PublishError::Catalog(error.to_string().into()))?;
+    let (tag, header) = crate::tags::read::read_scan_metadata(path, format).map_err(|error| {
+        PublishError::Catalog(format!("published file unreadable: {error}").into())
+    })?;
     Ok(CommitIndexedItem {
         root_id: root_id.to_owned(),
         relative_path: rel_path.to_owned(),
@@ -673,6 +675,16 @@ pub enum CrashPoint {
     /// captured. Recovery must unwind such a bundle, so not in
     /// [`CrashPoint::all`].
     AfterTempWritten,
+    /// Between linking a placed file onto its name and removing its hidden
+    /// name. Raised by the placement test seam, never armed, so not in
+    /// [`CrashPoint::all`].
+    AfterLink,
+}
+
+impl std::fmt::Display for CrashPoint {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 impl CrashPoint {
@@ -689,6 +701,7 @@ impl CrashPoint {
             Self::BeforeFolderRemoval => "before-folder-removal",
             Self::AfterFirstFileStaged => "after-first-file-staged",
             Self::AfterTempWritten => "after-temp-written",
+            Self::AfterLink => "after-link",
         }
     }
 
@@ -817,9 +830,7 @@ pub(super) fn durable<R>(
 /// The management state a track's before-state records: `None` when it
 /// has none.
 fn management_state(conn: &Connection, track_id: &str) -> Result<Option<String>, PublishError> {
-    Ok(locate(conn, track_id)?
-        .map(|(_, _, _, state)| state)
-        .filter(|state| !state.is_empty()))
+    Ok(locate(conn, track_id)?.and_then(|located| located.last_outcome))
 }
 
 impl<P: SpaceProbe> Publisher<P> {
@@ -1016,23 +1027,25 @@ impl<P: SpaceProbe> Publisher<P> {
                 // committed, and the bundle was put back as it was.
                 refused.map_or_else(
                     || {
-                        PublishError::Validation(format!(
-                            "bundle {} changed while it was being written and was put back",
-                            bundle.id
-                        ))
+                        PublishError::Validation(
+                            format!(
+                                "bundle {} changed while it was being written and was put back",
+                                bundle.id
+                            )
+                            .into(),
+                        )
                     },
                     |refused| refused.error,
                 ),
                 kept.is_some(),
             ),
             Ok(Advanced::CommitRefused(err)) => (err, false),
-            Ok(Advanced::Attention(reason)) => return Err(PublishError::Journal(reason)),
+            Ok(Advanced::Attention(reason)) => return Err(PublishError::Journal(reason.into())),
             Ok(Advanced::Waiting(_)) => return Err(PublishError::FolderMissing),
             Ok(Advanced::Noop | Advanced::FoldersWait | Advanced::CleanupFinished) => {
-                return Err(PublishError::Journal(format!(
-                    "bundle {} was not published",
-                    bundle.id
-                )));
+                return Err(PublishError::Journal(
+                    format!("bundle {} was not published", bundle.id).into(),
+                ));
             }
             Err(err) => {
                 if !Self::compensatable(&err) {
@@ -1046,7 +1059,7 @@ impl<P: SpaceProbe> Publisher<P> {
         // so the sentence is chosen after it.
         if backup_kept && matches!(err, PublishError::NoSafePlacement(_)) {
             return Err(PublishError::NoSafePlacement(
-                NO_SAFE_METHOD_ORIGINAL_ASIDE.to_owned(),
+                NO_SAFE_METHOD_ORIGINAL_ASIDE.to_owned().into(),
             ));
         }
         Err(err)
@@ -1101,10 +1114,10 @@ impl<P: SpaceProbe> Publisher<P> {
         }
         sealed.recheck(live).map_err(|err| match err {
             SealError::StaleFile(text) | SealError::StaleIdentity(text) => {
-                PublishError::Validation(text)
+                PublishError::Validation(text.into())
             }
             SealError::StaleProfile(text) | SealError::StalePolicy(text) => {
-                PublishError::Validation(text)
+                PublishError::Validation(text.into())
             }
             SealError::BadToken => PublishError::Validation("bad confirmation token".into()),
             SealError::Expired => PublishError::Validation("preview expired".into()),
@@ -1117,92 +1130,98 @@ impl<P: SpaceProbe> Publisher<P> {
             .filter(|(item, _)| item.adopt.is_none())
             .map(|(item, seal)| (item.track_id.as_str(), seal.as_ref()))
             .collect();
-        let facts = self.db.read_blocking("publish.pregates", |conn| {
-            if let Some(moved) = super::planner::first_moved(conn, &checked)? {
-                return Err(PublishError::Validation(format!(
-                    "track {moved} changed under the preview"
-                )));
-            }
-            let journals = JournalStore::new(conn);
-            if let Some(removal) = removal {
-                if let Some(moved) = super::planner::removal_moved(conn, &removal.items)? {
-                    return Err(PublishError::Validation(format!(
-                        "track {moved} changed under the preview"
-                    )));
-                }
-                for item in &removal.items {
-                    if let Some(held) =
-                        journals.unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?
-                    {
-                        return Err(PublishError::Journal(format!(
-                            "track {} has an unfinished managed write (bundle {held}) waiting \
-                             for recovery",
-                            item.track_id
-                        )));
-                    }
-                }
-            }
-            if let Some(put_back) = put_back {
-                if super::put_back::spent(conn, &put_back.removal_bundle)? {
+        let facts =
+            self.db.read_blocking("publish.pregates", |conn| {
+                if let Some(moved) = super::planner::first_moved(conn, &checked)? {
                     return Err(PublishError::Validation(
-                        "the removal was already put back".into(),
+                        format!("track {moved} changed under the preview").into(),
                     ));
                 }
-                for item in &put_back.items {
-                    let place: Option<(String, String, String)> = conn
-                        .prepare_cached(super::sql::TRACK_PLACE.text())?
-                        .query_row(rusqlite::params![item.track_id], |row| {
-                            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                        })
-                        .optional()?;
-                    let ready = place.is_some_and(|(root, rel, availability)| {
-                        root == item.root_id
-                            && rel == item.track_rel
-                            && super::put_back::ready(&availability, &rel, &item.relative_path)
-                    });
-                    if !ready {
-                        return Err(PublishError::Validation(format!(
-                            "track {} changed under the preview",
-                            item.track_id
-                        )));
+                let journals = JournalStore::new(conn);
+                if let Some(removal) = removal {
+                    if let Some(moved) = super::planner::removal_moved(conn, &removal.items)? {
+                        return Err(PublishError::Validation(
+                            format!("track {moved} changed under the preview").into(),
+                        ));
                     }
-                    if let Some(held) =
-                        journals.unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?
-                    {
-                        return Err(PublishError::Journal(format!(
+                    for item in &removal.items {
+                        if let Some(held) = journals
+                            .unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?
+                        {
+                            return Err(PublishError::Journal(format!(
                             "track {} has an unfinished managed write (bundle {held}) waiting \
                              for recovery",
                             item.track_id
-                        )));
+                        ).into()));
+                        }
                     }
                 }
-            }
-            let baselines = super::snapshots::BaselineStore::new(conn);
-            items
-                .iter()
-                .map(|item| {
-                    Ok((
-                        baselines.v2_original_missing(&item.track_id)?,
-                        journals.unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?,
-                    ))
-                })
-                .collect::<Result<Vec<_>, PublishError>>()
-        })?;
+                if let Some(put_back) = put_back {
+                    if super::put_back::spent(conn, &put_back.removal_bundle)? {
+                        return Err(PublishError::Validation(
+                            "the removal was already put back".into(),
+                        ));
+                    }
+                    for item in &put_back.items {
+                        let place: Option<(String, String, String)> = conn
+                            .prepare_cached(super::sql::TRACK_PLACE.text())?
+                            .query_row(rusqlite::params![item.track_id], |row| {
+                                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                            })
+                            .optional()?;
+                        let ready = place.is_some_and(|(root, rel, availability)| {
+                            root == item.root_id
+                                && rel == item.track_rel
+                                && super::put_back::ready(&availability, &rel, &item.relative_path)
+                        });
+                        if !ready {
+                            return Err(PublishError::Validation(
+                                format!("track {} changed under the preview", item.track_id).into(),
+                            ));
+                        }
+                        if let Some(held) = journals
+                            .unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?
+                        {
+                            return Err(PublishError::Journal(format!(
+                            "track {} has an unfinished managed write (bundle {held}) waiting \
+                             for recovery",
+                            item.track_id
+                        ).into()));
+                        }
+                    }
+                }
+                let baselines = super::snapshots::BaselineStore::new(conn);
+                items
+                    .iter()
+                    .map(|item| {
+                        Ok((
+                            baselines.v2_original_missing(&item.track_id)?,
+                            journals
+                                .unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, PublishError>>()
+            })?;
         for (item, (v2_missing, held)) in items.iter().zip(facts) {
-            self.gate.check(item)?;
+            self.gate
+                .check(item)
+                .map_err(|error| error.track(&item.track_id))?;
             if v2_missing {
-                return Err(PublishError::Snapshot(format!(
-                    "track {} has an original-file baseline from v2 that did not come across; \
+                return Err(PublishError::Snapshot(
+                    format!(
+                        "track {} has an original-file baseline from v2 that did not come across; \
                      restore V2_ROOT/cache/library-management from your backup, export from v2 \
                      again, and import into an empty V3_ROOT before managing it",
-                    item.track_id
-                )));
+                        item.track_id
+                    )
+                    .into(),
+                ));
             }
             if let Some(held) = held {
                 return Err(PublishError::Journal(format!(
                     "track {} has an unfinished managed write (bundle {held}) waiting for recovery",
                     item.track_id
-                )));
+                ).into()));
             }
         }
         // A replaced file's bin entry is checked before anything moves.
@@ -1322,20 +1341,26 @@ impl<P: SpaceProbe> Publisher<P> {
                     .ok()
                     .filter(|hashed| hashed.sha256 == replaced.sha256);
                 let Some(holds) = holds else {
-                    return Err(PublishError::Validation(format!(
-                        "the file this one replaces at {} changed after planning",
-                        item.dest_rel
-                    )));
+                    return Err(PublishError::Validation(
+                        format!(
+                            "the file this one replaces at {} changed after planning",
+                            item.dest_rel
+                        )
+                        .into(),
+                    ));
                 };
                 self.known.record(holds.stat, &holds.sha256);
             }
             // A tag write saves in the temp itself, so its name carries the
             // container's extension. A write with no tag change stages the
             // source's own bytes, known before the copy.
-            let pictures = self.planned_pictures(item)?;
+            let pictures = self
+                .planned_pictures(item)
+                .map_err(|error| error.track(&item.track_id))?;
             let tags_change = !item.managed_updates.is_empty() || pictures.is_some();
             let temp = if tags_change {
-                let extension = super::staging::writable_extension(&item.format)?;
+                let extension = super::staging::writable_extension(item.format)
+                    .map_err(|error| error.track(&item.track_id))?;
                 self.sandbox
                     .audio_temp_path_for(&dest, &journal_id, extension)?
             } else {
@@ -1360,10 +1385,11 @@ impl<P: SpaceProbe> Publisher<P> {
                     item.fingerprint.sha256.clone()
                 },
                 track_id: Some(item.track_id.clone()),
-                mgmt_state: Some(mgmt_state_for(
-                    item.adopt.is_some(),
-                    bundle.profile_revision,
-                )),
+                commit_as: Some(if item.adopt.is_some() {
+                    MgmtState::Imported
+                } else {
+                    MgmtState::Managed
+                }),
                 state: JournalState::Prepared,
                 seq: 0,
                 replaces: item.replaces.as_ref().map(|replaced| JournalReplacement {
@@ -1389,14 +1415,18 @@ impl<P: SpaceProbe> Publisher<P> {
             // One read of the source: hashed while it is copied.
             let read = paths::copy_hashed(&source, &temp, mode)?;
             if read.size != item.fingerprint.size || read.sha256 != item.fingerprint.sha256 {
-                return Err(PublishError::Validation(format!(
-                    "source for track {} changed after planning",
-                    item.track_id
-                )));
+                return Err(PublishError::Validation(
+                    format!("source for track {} changed after planning", item.track_id).into(),
+                ));
             }
             self.known.record(read.stat, &read.sha256);
             let staged_sha = if tags_change {
-                super::staging::stage_tags(&temp, &item.managed_updates, pictures.as_deref())?
+                super::staging::stage_tags(&temp, &item.managed_updates, pictures.as_deref())
+                    .map_err(|error| {
+                        error
+                            .track(&item.track_id)
+                            .file(&item.source_root, &item.source_rel)
+                    })?
             } else {
                 read.sha256
             };
@@ -1451,14 +1481,11 @@ impl<P: SpaceProbe> Publisher<P> {
         &self,
         item: &super::planner::PlanItem,
     ) -> Result<Option<Vec<crate::tags::save::PictureSpec>>, PublishError> {
-        let Some(values) = item.managed_updates.get(super::PICTURES_KEY) else {
+        let Some(pictures) = item.managed_updates.pictures() else {
             return Ok(None);
         };
-        let mut specs = Vec::with_capacity(values.len());
-        for value in values {
-            let picture = super::PictureRef::decode(value).ok_or_else(|| {
-                PublishError::Validation(format!("picture entry {value} is malformed"))
-            })?;
+        let mut specs = Vec::with_capacity(pictures.len());
+        for picture in pictures {
             let data = self.blob(&picture.sha256)?;
             if sha256_hex(&data) != picture.sha256 {
                 return Err(PublishError::Validation(
@@ -1467,8 +1494,8 @@ impl<P: SpaceProbe> Publisher<P> {
             }
             specs.push(crate::tags::save::PictureSpec {
                 kind: picture.kind,
-                mime: picture.mime,
-                description: picture.description,
+                mime: picture.mime.clone(),
+                description: picture.description.clone(),
                 data,
                 info: picture.info,
             });
@@ -1508,10 +1535,13 @@ impl<P: SpaceProbe> Publisher<P> {
             &blobs,
             |tx, hashes| {
                 if management_state(tx, &item.track_id)? != prior_mgmt {
-                    return Err(PublishError::Snapshot(format!(
-                        "track {} changed while its before-state was kept",
-                        item.track_id
-                    )));
+                    return Err(PublishError::Snapshot(
+                        format!(
+                            "track {} changed while its before-state was kept",
+                            item.track_id
+                        )
+                        .into(),
+                    ));
                 }
                 if !pictures.keys().eq(hashes.iter().skip(1)) {
                     return Err(PublishError::Snapshot("picture bytes hash mismatch".into()));
@@ -1596,7 +1626,7 @@ impl<P: SpaceProbe> Publisher<P> {
             source_sha256: Some(sidecar.fingerprint.sha256.clone()),
             staged_sha256: sidecar.fingerprint.sha256.clone(),
             track_id: None,
-            mgmt_state: None,
+            commit_as: None,
             state: JournalState::Prepared,
             seq: 0,
             replaces: None,
@@ -1606,10 +1636,9 @@ impl<P: SpaceProbe> Publisher<P> {
             .transpose()?;
         let read = paths::copy_hashed(&source, &temp, mode)?;
         if read.size != sidecar.fingerprint.size || read.sha256 != sidecar.fingerprint.sha256 {
-            return Err(PublishError::Validation(format!(
-                "sidecar {} changed after planning",
-                sidecar.source_rel
-            )));
+            return Err(PublishError::Validation(
+                format!("sidecar {} changed after planning", sidecar.source_rel).into(),
+            ));
         }
         self.known.record(read.stat, &read.sha256);
         self.known
@@ -1630,10 +1659,14 @@ impl<P: SpaceProbe> Publisher<P> {
     ) -> Result<(), PublishError> {
         let bytes = self.blob(&output.sha256)?;
         if sha256_hex(&bytes) != output.sha256 {
-            return Err(PublishError::Validation(format!(
-                "generated {} for {} is not the planned file",
-                output.kind, output.dest_rel
-            )));
+            return Err(PublishError::Validation(
+                format!(
+                    "generated {} for {} is not the planned file",
+                    output.kind.as_str(),
+                    output.dest_rel
+                )
+                .into(),
+            ));
         }
         let journal_id = output_journal_id(audio_journal_id, index);
         let dest = self
@@ -1663,7 +1696,7 @@ impl<P: SpaceProbe> Publisher<P> {
             source_sha256: None,
             staged_sha256: output.sha256.clone(),
             track_id: None,
-            mgmt_state: None,
+            commit_as: None,
             state: JournalState::Prepared,
             seq: 0,
             replaces: None,
@@ -1702,7 +1735,7 @@ impl<P: SpaceProbe> Publisher<P> {
             source_sha256: Some(removal.sha256.clone()),
             staged_sha256: removal.sha256.clone(),
             track_id: None,
-            mgmt_state: None,
+            commit_as: None,
             state: JournalState::Prepared,
             seq: 0,
             replaces: None,
@@ -1741,7 +1774,7 @@ impl<P: SpaceProbe> Publisher<P> {
             source_sha256: Some(file.fingerprint.sha256.clone()),
             staged_sha256: file.fingerprint.sha256.clone(),
             track_id: None,
-            mgmt_state: None,
+            commit_as: None,
             state: JournalState::Prepared,
             seq: 0,
             replaces: Some(JournalReplacement {
@@ -1787,7 +1820,7 @@ impl<P: SpaceProbe> Publisher<P> {
             source_sha256: None,
             staged_sha256: file.sha256.clone(),
             track_id: None,
-            mgmt_state: None,
+            commit_as: None,
             state: JournalState::Prepared,
             seq: 0,
             replaces: None,
@@ -1853,7 +1886,7 @@ impl<P: SpaceProbe> Publisher<P> {
             source_sha256: Some(item.fingerprint.sha256.clone()),
             staged_sha256: item.fingerprint.sha256.clone(),
             track_id: Some(item.track_id.clone()),
-            mgmt_state: None,
+            commit_as: None,
             state: JournalState::Prepared,
             seq: 0,
             replaces: None,
@@ -1912,7 +1945,7 @@ impl<P: SpaceProbe> Publisher<P> {
     /// Fail with the armed crash point, if it matches.
     fn maybe_crash(&self, point: CrashPoint) -> Result<(), PublishError> {
         if self.injector == Some(point) {
-            return Err(PublishError::InjectedCrash(point.as_str().to_string()));
+            return Err(PublishError::InjectedCrash(point));
         }
         Ok(())
     }

@@ -220,7 +220,7 @@ impl Management {
                     item.estimated_bytes = plan.staged_bytes_estimate;
                     item.diff.path_changed =
                         plan.source_root != plan.dest_root || plan.source_rel != plan.dest_rel;
-                    for (name, after) in &plan.managed_updates {
+                    for (name, after) in &plan.managed_updates.named() {
                         let before = file.current.get(name).cloned().unwrap_or_default();
                         if &before == after {
                             continue;

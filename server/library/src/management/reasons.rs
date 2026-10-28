@@ -395,7 +395,7 @@ pub fn from_publish(error: &PublishError) -> ItemReason {
         ),
         PublishError::Collision(_) => path_collision(false),
         PublishError::Validation(_) => file_changed(),
-        PublishError::Space(_) => insufficient_space(),
+        PublishError::Space { .. } => insufficient_space(),
         PublishError::Catalog(_) => catalog_changed(),
         PublishError::Journal(_) => recovery_needs_attention(),
         PublishError::Snapshot(_) => ItemReason::new(
@@ -405,8 +405,8 @@ pub fn from_publish(error: &PublishError) -> ItemReason {
         ),
         PublishError::UnsafePath(_) => symlink_unsupported(),
         PublishError::FolderMissing => root_unavailable(),
-        PublishError::NoSafePlacement(message) => no_safe_placement(message),
-        PublishError::NotLinkable(message) => file_not_linkable(message),
+        PublishError::NoSafePlacement(detail) => no_safe_placement(&detail.message),
+        PublishError::NotLinkable(detail) => file_not_linkable(&detail.message),
         PublishError::Cleanup(_)
         | PublishError::Archive(_)
         | PublishError::Store(_)

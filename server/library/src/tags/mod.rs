@@ -38,7 +38,8 @@ use std::path::Path;
 use thiserror::Error;
 
 /// Audio container the tag code understands, routed by file extension.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum AudioFormat {
     Flac,
     Mp3,

@@ -68,13 +68,13 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 172);
+    assert_eq!(table_names(&pool).await.len(), 173);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(triggers, 65);
+    assert_eq!(triggers, 67);
 
     let catalog: (i64, i64) =
         sqlx::query_as("SELECT singleton, value FROM library_catalog_revision")
@@ -7381,4 +7381,201 @@ async fn acquire_rows_carry_onto_strict_tables_on_upgrade() {
         AttemptState::CleanupPending
     );
     assert!(revision() > before, "the activity triggers still fire");
+}
+
+/// Migration 0097 replaces the journal's `mgmt_state` text with a checked
+/// `commit_as`, read as it always was (only an `imported:` value is an
+/// import), shortens the stored outcomes, and adds the generated-files
+/// table: backfilled with every output of a bundle that reached its
+/// commit, and none of one that did not or whose text does not read. No
+/// row's state, sequence or scan fence moves.
+#[tokio::test]
+async fn publish_journal_states_are_typed_and_outputs_backfilled() {
+    let pool = scratch_pool().await;
+    migrator_through(96).run(&pool).await.unwrap();
+    let bundle = |id: &str, track: &str, rel: &str, kind: &str| {
+        serde_json::json!({"id": id, "items": [{"track_id": track, "outputs": [
+            {"dest_root": "music", "dest_rel": rel, "sha256": format!("{id}-sha"),
+             "size": 3, "kind": kind}]}]})
+        .to_string()
+    };
+    let journal = |id: &str,
+                   bundle: &str,
+                   kind: &str,
+                   rel: &str,
+                   sha: &str,
+                   mgmt: Option<&str>,
+                   state: &str| {
+        format!(
+            "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+             staged, staged_sha256, mgmt_state, state, seq) VALUES ('{id}', '{bundle}', \
+             '{kind}', 'music', '{rel}', '/t', '{sha}', {}, '{state}', 5);",
+            mgmt.map_or("NULL".to_owned(), |mgmt| format!("'{mgmt}'"))
+        )
+    };
+    let mut setup = String::from("PRAGMA foreign_keys = OFF;");
+    for (id, rel, kind) in [
+        ("done", "a/cover.jpg", "artwork"),
+        ("flagged", "b/b.lrc", "lyrics"),
+        ("open", "c/cover.jpg", "artwork"),
+    ] {
+        setup.push_str(&format!(
+            "INSERT INTO library_publish_operations (bundle_id, bundle_json, created_day) \
+             VALUES ('{id}', '{}', 1);",
+            bundle(id, &format!("t-{id}"), rel, kind)
+        ));
+    }
+    setup.push_str(
+        "INSERT INTO library_publish_operations (bundle_id, bundle_json, created_day) \
+         VALUES ('damaged', '{\"items\": [', 1);",
+    );
+    for statement in [
+        journal(
+            "done-a",
+            "done",
+            "audio",
+            "a/a.flac",
+            "x",
+            Some("managed:6"),
+            "cleaned",
+        ),
+        journal(
+            "done-o",
+            "done",
+            "output",
+            "a/cover.jpg",
+            "done-sha",
+            None,
+            "cleaned",
+        ),
+        journal(
+            "flagged-a",
+            "flagged",
+            "audio",
+            "b/b.flac",
+            "x",
+            Some("imported:3"),
+            "committed",
+        ),
+        journal(
+            "flagged-o",
+            "flagged",
+            "output",
+            "b/b.lrc",
+            "flagged-sha",
+            None,
+            "needs_attention",
+        ),
+        journal(
+            "open-a",
+            "open",
+            "audio",
+            "c/c.flac",
+            "x",
+            Some("odd"),
+            "published",
+        ),
+        journal(
+            "open-o",
+            "open",
+            "output",
+            "c/cover.jpg",
+            "open-sha",
+            None,
+            "published",
+        ),
+        journal(
+            "damaged-o",
+            "damaged",
+            "output",
+            "d/cover.jpg",
+            "d",
+            None,
+            "cleaned",
+        ),
+    ] {
+        setup.push_str(&statement);
+    }
+    setup.push_str(
+        "INSERT INTO library_track_management_state (local_track_id, last_outcome) \
+         VALUES ('t1', 'managed:6'), ('t2', 'imported:3'), ('t3', 'succeeded');",
+    );
+    sqlx::raw_sql(&setup).execute(&pool).await.unwrap();
+    type Kept = Vec<(String, String, i64, Option<i64>)>;
+    let kept = || async {
+        sqlx::query_as::<_, (String, String, i64, Option<i64>)>(
+            "SELECT id, state, seq, fence_revision FROM library_publish_journal ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+    };
+    let before: Kept = kept().await;
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    assert_eq!(kept().await, before, "no state, sequence or fence moves");
+    let columns = column_names(&pool, "library_publish_journal").await;
+    assert!(columns.contains(&"commit_as".to_owned()), "{columns:?}");
+    assert!(!columns.contains(&"mgmt_state".to_owned()), "{columns:?}");
+    let commit_as: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, commit_as FROM library_publish_journal ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let commit_as: BTreeMap<String, Option<String>> = commit_as.into_iter().collect();
+    assert_eq!(commit_as["done-a"].as_deref(), Some("managed"));
+    assert_eq!(commit_as["flagged-a"].as_deref(), Some("imported"));
+    assert_eq!(
+        commit_as["open-a"].as_deref(),
+        Some("managed"),
+        "read as before"
+    );
+    assert_eq!(commit_as["done-o"], None);
+    let refused =
+        sqlx::raw_sql("UPDATE library_publish_journal SET commit_as = 'other' WHERE id = 'done-a'")
+            .execute(&pool)
+            .await;
+    assert!(refused.is_err(), "the check lists the two states");
+
+    let outcomes: Vec<String> = sqlx::query_scalar(
+        "SELECT last_outcome FROM library_track_management_state ORDER BY local_track_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(outcomes, ["managed", "imported", "succeeded"]);
+
+    let sql: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'library_publish_outputs'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(sql.trim_end().ends_with("STRICT"), "{sql}");
+    let outputs: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT journal_id, track_id, dest_rel, kind FROM library_publish_outputs \
+         ORDER BY journal_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let row = |journal: &str, track: &str, rel: &str, kind: &str| {
+        (
+            journal.to_owned(),
+            track.to_owned(),
+            rel.to_owned(),
+            kind.to_owned(),
+        )
+    };
+    assert_eq!(
+        outputs,
+        [
+            row("done-o", "t-done", "a/cover.jpg", "artwork"),
+            row("flagged-o", "t-flagged", "b/b.lrc", "lyrics"),
+        ],
+        "a committed bundle's outputs, flagged ones included; none of an open \
+         bundle or of one whose text does not read"
+    );
 }

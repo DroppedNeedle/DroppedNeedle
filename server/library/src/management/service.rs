@@ -1594,7 +1594,7 @@ impl Management {
             item.estimated_bytes = file.plan.staged_bytes_estimate;
             item.diff.path_changed = file.plan.source_root != file.plan.dest_root
                 || file.plan.source_rel != file.plan.dest_rel;
-            for (name, after) in &file.plan.managed_updates {
+            for (name, after) in &file.plan.managed_updates.named() {
                 let before = file.current.get(name).cloned().unwrap_or_default();
                 if &before == after {
                     continue;
@@ -1612,11 +1612,12 @@ impl Management {
             item.desired.fields = file
                 .plan
                 .managed_updates
-                .iter()
+                .named()
+                .into_iter()
                 .filter(|(_, values)| !values.is_empty())
                 .map(|(name, values)| super::models::DesiredField {
-                    name: name.clone(),
-                    value: profile::json_value(values),
+                    name,
+                    value: profile::json_value(&values),
                 })
                 .collect();
             item.diff.sidecars = file
@@ -2094,10 +2095,27 @@ impl Management {
                     return Refused::Busy(ManagementError::Busy(cause.clone()));
                 }
                 let reason = reasons::from_publish(&error);
+                let detail = error.detail();
+                let track_id = detail.and_then(|detail| detail.track_id.as_deref());
+                let path = detail
+                    .and_then(|detail| detail.file.as_ref())
+                    .map(|file| format!("{}:{}", file.root_id, file.rel));
                 if reason.code == "WRITE_FAILED" || reason.code == "BASELINE_UNAVAILABLE" {
-                    tracing::error!(%error, job_id = snapshot.job.id, "management publish failed");
+                    tracing::error!(
+                        %error,
+                        job_id = snapshot.job.id,
+                        track_id,
+                        path,
+                        "management publish failed"
+                    );
                 } else {
-                    tracing::info!(%error, job_id = snapshot.job.id, "management publish refused");
+                    tracing::info!(
+                        %error,
+                        job_id = snapshot.job.id,
+                        track_id,
+                        path,
+                        "management publish refused"
+                    );
                 }
                 Refused::Reason(reason)
             })
