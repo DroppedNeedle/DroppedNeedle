@@ -1517,6 +1517,7 @@ async fn restore_round_trips_and_refuses() {
     // The binary restores into an empty directory.
     let target = root.join("restored");
     let status = Command::new(tool())
+        .env_remove("LIBRARY_DB_PATH")
         .args(["restore", "--backup"])
         .arg(&taken.path)
         .args(["--target-dir"])
@@ -1551,8 +1552,12 @@ async fn restore_round_trips_and_refuses() {
     let occupied = root.join("occupied");
     std::fs::create_dir_all(&occupied).expect("occupied dir");
     std::fs::write(occupied.join("something.db"), b"junk").expect("junk writes");
-    let refused =
-        droppedneedle_tool::tooling::restore::restore_backup(&taken.path, &occupied, false);
+    let refused = droppedneedle_tool::tooling::restore::restore_backup(
+        &taken.path,
+        &occupied,
+        "library.db",
+        false,
+    );
     assert!(
         matches!(
             refused,
@@ -1566,7 +1571,7 @@ async fn restore_round_trips_and_refuses() {
     let locked = root.join("locked");
     std::fs::create_dir_all(&locked).expect("locked dir");
     std::fs::write(locked.join("library.db.server.lock"), b"").expect("lock writes");
-    droppedneedle_tool::tooling::restore::restore_backup(&taken.path, &locked, false)
+    droppedneedle_tool::tooling::restore::restore_backup(&taken.path, &locked, "library.db", false)
         .expect("restores beside a server lock file");
 
     // A backup newer than the binary refuses without --allow-downgrade.
@@ -1582,8 +1587,12 @@ async fn restore_round_trips_and_refuses() {
         .await
         .expect("stamp writes");
     stamp.close().await;
-    let too_new =
-        droppedneedle_tool::tooling::restore::restore_backup(&future, &root.join("new1"), false);
+    let too_new = droppedneedle_tool::tooling::restore::restore_backup(
+        &future,
+        &root.join("new1"),
+        "library.db",
+        false,
+    );
     assert!(
         matches!(
             too_new,
@@ -1594,9 +1603,13 @@ async fn restore_round_trips_and_refuses() {
         ),
         "newer backup refuses: {too_new:?}"
     );
-    let allowed =
-        droppedneedle_tool::tooling::restore::restore_backup(&future, &root.join("new2"), true)
-            .expect("allow-downgrade restores");
+    let allowed = droppedneedle_tool::tooling::restore::restore_backup(
+        &future,
+        &root.join("new2"),
+        "library.db",
+        true,
+    )
+    .expect("allow-downgrade restores");
     assert_eq!(allowed.user_version, 9999);
 }
 

@@ -122,6 +122,28 @@ pub enum DbError {
         /// The target that was refused.
         path: PathBuf,
     },
+    /// A file or folder a backup or restore must judge could not be read,
+    /// so it is never taken for empty or absent.
+    #[error("cannot read {path:?}: {reason}; check its permissions")]
+    Unreadable {
+        /// What could not be read.
+        path: PathBuf,
+        /// OS reason.
+        reason: std::io::Error,
+    },
+    /// The backup has writes in its `-wal` file, which a restore would
+    /// leave out: it copies the main file only.
+    #[error(
+        "backup has unmerged writes in {path:?}; open the backup once with sqlite3 and close it \
+         so they merge, or restore another backup"
+    )]
+    BackupWalPresent {
+        /// The backup's `-wal` file.
+        path: PathBuf,
+    },
+    /// The restore could not take the target's exclusive data lock.
+    #[error(transparent)]
+    DataLock(#[from] super::datalock::DataLockError),
     /// The backup is newer than this binary and downgrade was not allowed.
     #[error("backup schema version {found} is newer than binary version {expected}")]
     BackupTooNew {

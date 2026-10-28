@@ -2,9 +2,9 @@
 //!
 //! The mechanism is [`BackupService::restore`](droppedneedle_kernel::db::BackupService):
 //! verify the backup (integrity plus schema stamp), copy it into an empty
-//! directory as `library.db`, verify the copy, and put the undo copies it
-//! names back beside it in `undo`, from the `undo` folder beside the
-//! backup. This module adds the
+//! directory under the server's database file name, verify the copy, and
+//! put the undo copies it names back beside it in `undo`, from the `undo`
+//! folder beside the backup. This module adds the
 //! operator face: a read-only preflight over the backup restore report
 //! (manifest identity when a sidecar exists), fail-closed refusals with
 //! plain messages, and a small JSON summary on success.
@@ -20,6 +20,8 @@ use thiserror::Error;
 
 use droppedneedle::admin::backups::{UNDO_COPIES_CHECK, restore_report};
 use droppedneedle_kernel::db::BackupService;
+use droppedneedle_kernel::db::backup::Placement;
+use droppedneedle_kernel::db::datalock::DataLockError;
 
 /// Restore failures. Messages name the fix, never file contents.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -67,16 +69,24 @@ pub struct RestoreSummary {
     pub undo_missing: Vec<String>,
     /// Preflight check names that passed.
     pub checks_passed: Vec<String>,
+    /// How the database was put in place, when the target folder's
+    /// filesystem has no hard links.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
-/// Restore `backup_db` into `target_dir` as `library.db`.
+/// Restore `backup_db` into `target_dir` as `db_name`, the file name the
+/// server opens (`LIBRARY_DB_PATH`).
 ///
 /// Runs the read-only preflight first (manifest identity, integrity,
-/// schema stamp), then the verified copy. Refuses occupied targets and,
-/// unless `allow_downgrade`, backups newer than this binary.
+/// schema stamp), then the verified copy, which holds the target's
+/// exclusive data lock for its run: a server on that folder refuses to
+/// start, and a running one makes the restore refuse. Refuses occupied
+/// targets and, unless `allow_downgrade`, backups newer than this binary.
 pub fn restore_backup(
     backup_db: &Path,
     target_dir: &Path,
+    db_name: &str,
     allow_downgrade: bool,
 ) -> Result<RestoreSummary, RestoreError> {
     if !backup_db.is_file() {
@@ -84,11 +94,6 @@ pub fn restore_backup(
             backup_db.display().to_string(),
         ));
     }
-    // Held for the run: a server on this directory refuses to start, and a
-    // running one makes the restore refuse.
-    let _lock =
-        droppedneedle_kernel::db::datalock::DataLock::exclusive(&target_dir.join("library.db"))
-            .map_err(|error| RestoreError::Refused(format!("{error}; stop the server first")))?;
     let mut checks_passed = preflight(backup_db, allow_downgrade)?;
     let parent = backup_db
         .parent()
@@ -100,8 +105,22 @@ pub fn restore_backup(
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
     let restored = service
-        .restore(backup_db, target_dir, allow_downgrade)
+        .restore(backup_db, target_dir, db_name, allow_downgrade)
         .map_err(|error| map_db_error(&error, target_dir))?;
+    let note = match restored.placement {
+        Placement::HardLink => None,
+        Placement::RenameNoReplace => Some(
+            "the target folder's filesystem has no hard links; the database was renamed into \
+             place by a call that cannot replace a file"
+                .to_owned(),
+        ),
+        Placement::RenameAfterCheck => Some(
+            "the target folder's filesystem has no hard links or no-replace rename; the \
+             database was renamed into place after checking, under the restore lock, that \
+             its name was free"
+                .to_owned(),
+        ),
+    };
     checks_passed.push("restore-copy-verified".to_owned());
     Ok(RestoreSummary {
         backup: backup_db.display().to_string(),
@@ -111,6 +130,7 @@ pub fn restore_backup(
         undo_copies: restored.undo_blobs,
         undo_missing: restored.undo_missing,
         checks_passed,
+        note,
     })
 }
 
@@ -185,6 +205,14 @@ fn map_db_error(error: &droppedneedle_kernel::db::DbError, target_dir: &Path) ->
                 expected: *expected,
             }
         }
+        droppedneedle_kernel::db::DbError::DataLock(DataLockError::Held { .. }) => {
+            RestoreError::Refused(format!("{error}; stop the server first"))
+        }
+        droppedneedle_kernel::db::DbError::Unreadable { .. }
+        | droppedneedle_kernel::db::DbError::BackupWalPresent { .. }
+        | droppedneedle_kernel::db::DbError::NonLocalFilesystem { .. } => {
+            RestoreError::Refused(error.to_string())
+        }
         other => RestoreError::Failed(other.to_string()),
     }
 }
@@ -203,7 +231,7 @@ mod tests {
             "droppedneedle-restore-{}-target",
             std::process::id()
         ));
-        let error = restore_backup(&missing, &target, false).unwrap_err();
+        let error = restore_backup(&missing, &target, "library.db", false).unwrap_err();
         assert!(matches!(error, RestoreError::BackupUnreadable(_)));
     }
 
@@ -213,7 +241,7 @@ mod tests {
         let backup = dir.join("backup.sqlite");
         std::fs::write(&backup, b"not checked").unwrap();
         std::fs::write(dir.join("backup.sqlite.manifest.json"), b"{}").unwrap();
-        let error = restore_backup(&backup, &dir.join("target"), false).unwrap_err();
+        let error = restore_backup(&backup, &dir.join("target"), "library.db", false).unwrap_err();
         assert!(matches!(error, RestoreError::Refused(_)), "{error:?}");
     }
 }

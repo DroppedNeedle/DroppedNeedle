@@ -77,10 +77,12 @@ environment says otherwise). upgrade --undo --yes deletes everything in
 the two folders except the v2-backup folders, then puts the v2 files back.
 remove-v2-backup deletes the kept v2 files.
 
-restore copies a server backup into an empty folder as library.db, with
-the undo copies it names in undo/ beside it (read from the undo folder
-next to the backup). The settings come with the database. Keep the
-instance's config/data_enc.key with it: without that key, stored
+restore copies a server backup into an empty folder under the database
+file name the server uses (library.db, or the name LIBRARY_DB_PATH gives),
+with the undo copies it names in undo/ beside it (read from the undo
+folder next to the backup). It never replaces a file, and refuses a folder
+holding anything it cannot read. The settings come with the database.
+Keep the instance's config/data_enc.key with it: without that key, stored
 passwords and API keys cannot be read.
 
 The passphrase comes from --passphrase-file or stdin, never from argv.
@@ -753,9 +755,15 @@ fn run_restore(args: &[String]) -> Result<(), String> {
     )?;
     let backup = required_flag(args, "--backup")?;
     let target = required_flag(args, "--target-dir")?;
+    let db_path = data_dirs()?.db_path;
+    let db_name = db_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("{} has no usable file name", db_path.display()))?;
     let summary = droppedneedle_tool::tooling::restore::restore_backup(
         PathBuf::from(&backup).as_path(),
         PathBuf::from(&target).as_path(),
+        db_name,
         has_flag(args, "--allow-downgrade"),
     )
     .map_err(|error| error.to_string())?;

@@ -68,7 +68,7 @@ use droppedneedle_catalog::reads::{
 use droppedneedle_compat::{CompatSetup, setup::CompatDeps};
 use droppedneedle_kernel::{
     config::AppConfig,
-    db::{BOOT_WAIT, BackupService, datalock::DataLockError, error::DbError},
+    db::{BOOT_WAIT, datalock::DataLockError, error::DbError},
     http_client::HttpClientError,
     platform::Platform,
     runtime_config::crypto::CryptoError,
@@ -427,11 +427,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         providers.clone(),
     )
     .with_db(AdminDb::new(db.clone()))
-    .with_backups(BackupService::new(
-        &config.library_db_path,
-        runtime.backups().backup_dir(),
-        platform.clock.clone(),
-    ))
+    .with_backups(runtime.backups().clone())
     .with_checkpoint(runtime.checkpoint().clone());
     // Durable quota overrides back into the live ledger. A failure warns
     // instead of stopping the boot; the admin can re-save.

@@ -54,6 +54,15 @@ pub enum ExportError {
         /// The `-wal` file.
         path: PathBuf,
     },
+    /// The v2 database's `-wal` file cannot be read, so whether it holds
+    /// writes is unknown.
+    #[error("cannot read {}: {reason}; check its permissions, then export again", .path.display())]
+    V2WalUnreadable {
+        /// The `-wal` file.
+        path: PathBuf,
+        /// OS reason.
+        reason: String,
+    },
     /// The v2 config file cannot be read.
     #[error("cannot read v2 config {}: {reason}", .path.display())]
     V2ConfigUnreadable {
@@ -110,7 +119,7 @@ impl ExportError {
             Self::V2KeyNotFound { .. } => "V2_KEY_NOT_FOUND",
             Self::V2KeyInvalid => "V2_KEY_INVALID",
             Self::V2KeyMismatch { .. } => "V2_KEY_MISMATCH",
-            Self::V2WalPresent { .. } => "V2_WAL_PRESENT",
+            Self::V2WalPresent { .. } | Self::V2WalUnreadable { .. } => "V2_WAL_PRESENT",
             Self::V2ConfigUnreadable { .. } => "V2_CONFIG_UNREADABLE",
             Self::V2ConfigInvalid => "V2_CONFIG_INVALID",
             Self::InstanceIdMissing => "MISSING_INSTANCE_ID",

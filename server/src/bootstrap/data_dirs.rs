@@ -14,6 +14,7 @@ use rusqlite::{Connection, OpenFlags};
 use thiserror::Error;
 
 use droppedneedle_kernel::config::AppConfig;
+use droppedneedle_kernel::db::backup::{WalState, wal_path, wal_state};
 use droppedneedle_kernel::db::factory::sqlite_uri_path;
 use droppedneedle_kernel::runtime_config::crypto::{KEY_FILE_NAME, NEW_KEY_FILE_NAME};
 use droppedneedle_kernel::runtime_config::ingest::LEGACY_CONFIG_FILE_NAME;
@@ -317,7 +318,7 @@ fn probe_database(db_path: &Path) -> Database {
         Ok((stamp, _)) if stamp > 0 => Database::V3,
         Ok((_, 0)) => Database::Absent,
         Ok(_) => Database::V2,
-        Err(error) => Database::Unreadable(error.to_string()),
+        Err(reason) => Database::Unreadable(reason),
     }
 }
 
@@ -326,50 +327,50 @@ fn probe_database(db_path: &Path) -> Database {
 /// A cleanly closed database is opened immutable, which reads the file
 /// alone and creates nothing beside it. A database with writes still in
 /// its `-wal` file has to be read through that file, so it gets a normal
-/// read-only connection.
-fn read_stamp(db_path: &Path) -> rusqlite::Result<(i64, i64)> {
+/// read-only connection. One whose `-wal` file cannot be read is
+/// unreadable.
+fn read_stamp(db_path: &Path) -> Result<(i64, i64), String> {
     let db = open_read_only(db_path)?;
-    let stamp: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let stamp: i64 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
     if stamp > 0 {
         return Ok((stamp, 0));
     }
     // sqlx creates its bookkeeping table before the first migration runs,
     // so on its own that table is still an empty database.
-    let tables = db.query_row(
-        "SELECT count(*) FROM sqlite_master WHERE type = 'table' \
+    let tables = db
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' \
          AND name NOT LIKE 'sqlite_%' AND name <> '_sqlx_migrations'",
-        [],
-        |row| row.get(0),
-    )?;
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
     Ok((stamp, tables))
 }
 
 /// A read-only connection that creates nothing beside the database: a
 /// cleanly closed one is opened immutable, one with writes still in its
-/// `-wal` file is read through it.
-fn open_read_only(db_path: &Path) -> rusqlite::Result<Connection> {
-    if wal_bytes(db_path) > 0 {
-        Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-    } else {
-        Connection::open_with_flags(
+/// `-wal` file is read through it. One whose `-wal` file cannot be read
+/// is refused, since an immutable open would miss what it holds.
+fn open_read_only(db_path: &Path) -> Result<Connection, String> {
+    let opened = match wal_state(db_path) {
+        WalState::Unreadable(error) => {
+            return Err(format!(
+                "cannot read {}: {error}; check its permissions",
+                wal_path(db_path).display()
+            ));
+        }
+        WalState::HoldsData(_) => {
+            Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        }
+        WalState::Absent | WalState::Empty => Connection::open_with_flags(
             format!("file:{}?immutable=1", sqlite_uri_path(db_path)),
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-        )
-    }
-}
-
-/// The `-wal` file beside a database.
-#[must_use]
-pub fn wal_path(db_path: &Path) -> PathBuf {
-    let mut name = db_path.as_os_str().to_owned();
-    name.push("-wal");
-    PathBuf::from(name)
-}
-
-/// Bytes still waiting in the `-wal` file beside a database.
-#[must_use]
-pub fn wal_bytes(db_path: &Path) -> u64 {
-    std::fs::metadata(wal_path(db_path)).map_or(0, |meta| meta.len())
+        ),
+    };
+    opened.map_err(|error| error.to_string())
 }
 
 /// Expected v2 key-file path, for errors and refusal tests.
@@ -533,7 +534,7 @@ mod tests {
         writer.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
         writer.execute_batch(V2_TABLES).unwrap();
         writer.pragma_update(None, "user_version", 1).unwrap();
-        assert!(wal_bytes(&dirs.db_path) > 0);
+        assert!(matches!(wal_state(&dirs.db_path), WalState::HoldsData(_)));
         assert_eq!(detect(&dirs), Layout::V3);
     }
 

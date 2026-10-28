@@ -58,10 +58,12 @@ impl Rig {
         let backup_dir = dir.join("backups");
         let admin = AdminSetup::new(rig.deps.clone(), quota, cache, providers)
             .with_db(AdminDb::new(runtime.db().clone()))
-            .with_backups(droppedneedle_kernel::db::BackupService::new(
-                &dir.join("app.db"),
-                &backup_dir,
-                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+            .with_backups(std::sync::Arc::new(
+                droppedneedle_kernel::db::BackupService::new(
+                    &dir.join("app.db"),
+                    &backup_dir,
+                    std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+                ),
             ))
             .with_checkpoint(runtime.checkpoint().clone());
         Self {
@@ -318,7 +320,9 @@ async fn a_backup_carries_the_undo_copies_its_database_names() {
         &backups,
         Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
-    let restored = service.restore(&backup, &target, false).unwrap();
+    let restored = service
+        .restore(&backup, &target, "library.db", false)
+        .unwrap();
     assert_eq!(restored.undo_blobs, 1);
     assert_eq!(restored.undo_missing, vec![lost.clone()]);
     assert_eq!(
@@ -332,7 +336,7 @@ async fn a_backup_carries_the_undo_copies_its_database_names() {
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     left.sort();
-    assert_eq!(left, vec!["library.db", UNDO_DIR_NAME]);
+    assert_eq!(left, vec!["library.db", "library.db.lock", UNDO_DIR_NAME]);
 
     std::fs::remove_dir(pool.file_path(&lost).unwrap()).unwrap();
     conn.execute("DELETE FROM library_publish_blob_refs", [])

@@ -52,8 +52,9 @@ use crate::import::{
 };
 use droppedneedle::bootstrap::data_dirs::{
     BACKUP_DIR_NAME, BootRefusal, DataDirs, Layout, MARKER_FILE_NAME, UnknownLayout, detect,
-    key_refusal, refuse_lost_key, wal_bytes, wal_path,
+    key_refusal, refuse_lost_key,
 };
+use droppedneedle_kernel::db::backup::{WalState, wal_path, wal_state};
 use droppedneedle_kernel::db::datalock::{DataLock, DataLockError, lock_path, server_lock_path};
 use droppedneedle_kernel::db::{DbConfig, open_runtime};
 use droppedneedle_kernel::runtime_config::crypto::{CryptoError, KEY_FILE_NAME};
@@ -236,6 +237,15 @@ pub enum UpgradeError {
     WalPresent {
         /// The `-wal` file.
         path: PathBuf,
+    },
+    /// The v2 database's `-wal` file cannot be read, so whether it holds
+    /// writes is unknown.
+    #[error("V2_WAL_PRESENT: cannot read {}: {reason}; check its permissions", .path.display())]
+    WalUnreadable {
+        /// The `-wal` file.
+        path: PathBuf,
+        /// OS reason.
+        reason: String,
     },
     /// The export refused. The cause keeps its own code.
     #[error("{code}: {0}", code = .0.code())]
@@ -512,10 +522,19 @@ fn preflight(dirs: &DataDirs) -> Result<(), UpgradeError> {
     }
     // The export reads the database file alone, so writes still sitting in
     // the -wal file would be left out.
-    if wal_bytes(&dirs.db_path) > 0 {
-        return Err(UpgradeError::WalPresent {
-            path: wal_path(&dirs.db_path),
-        });
+    match wal_state(&dirs.db_path) {
+        WalState::Absent | WalState::Empty => {}
+        WalState::HoldsData(_) => {
+            return Err(UpgradeError::WalPresent {
+                path: wal_path(&dirs.db_path),
+            });
+        }
+        WalState::Unreadable(error) => {
+            return Err(UpgradeError::WalUnreadable {
+                path: wal_path(&dirs.db_path),
+                reason: error.to_string(),
+            });
+        }
     }
     // The two files every export needs. Checked here so a missing one is
     // reported at its real path, with nothing moved.

@@ -173,7 +173,7 @@ pub struct DbRuntime {
     watch: LaneWatch,
     shutdown_grace: Duration,
     checkpoint: CheckpointService,
-    backups: BackupService,
+    backups: Arc<BackupService>,
 }
 
 /// Open the runtime against one database file, running every boot check.
@@ -192,7 +192,11 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         .parent()
         .map(|parent| parent.join("backups"))
         .unwrap_or_else(|| PathBuf::from("backups"));
-    let backups = BackupService::new(&path, &backup_dir, Arc::clone(&config.clock));
+    let backups = Arc::new(BackupService::new(
+        &path,
+        &backup_dir,
+        Arc::clone(&config.clock),
+    ));
     backup_before_upgrade(&path, &backups).await?;
 
     // Migrations run on a writable pool of their own, closed before the
@@ -347,8 +351,10 @@ impl DbRuntime {
         &self.checkpoint
     }
 
-    /// Backup and restore service.
-    pub fn backups(&self) -> &BackupService {
+    /// The one backup and restore service: boot's pre-upgrade backup and
+    /// the admin route share it, so their runs take distinct names and
+    /// never sweep each other's staging files.
+    pub fn backups(&self) -> &Arc<BackupService> {
         &self.backups
     }
 

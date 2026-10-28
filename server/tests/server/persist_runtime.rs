@@ -584,7 +584,7 @@ async fn backup_restore_round_trip_with_refusals() {
     let target = scratch_dir("restore-empty");
     let restored = runtime
         .backups()
-        .restore(&report.path, &target, false)
+        .restore(&report.path, &target, "library.db", false)
         .unwrap();
     assert_eq!(restored.user_version, latest_version());
     let connection = rusqlite::Connection::open_with_flags(
@@ -605,7 +605,10 @@ async fn backup_restore_round_trip_with_refusals() {
     drop(connection);
 
     std::fs::write(target.join("squat.txt"), b"x").unwrap();
-    match runtime.backups().restore(&report.path, &target, false) {
+    match runtime
+        .backups()
+        .restore(&report.path, &target, "library.db", false)
+    {
         Err(DbError::RestoreTargetNotEmpty { .. }) => {}
         other => panic!("occupied target must refuse, got {other:?}"),
     }
@@ -617,7 +620,10 @@ async fn backup_restore_round_trip_with_refusals() {
         .execute("PRAGMA user_version = 9999", [])
         .unwrap();
     let newer_dir = scratch_dir("restore-newer");
-    match runtime.backups().restore(&newer, &newer_dir, false) {
+    match runtime
+        .backups()
+        .restore(&newer, &newer_dir, "library.db", false)
+    {
         Err(DbError::BackupTooNew { found, expected }) => {
             assert_eq!((found, expected), (9999, latest_version()));
         }
@@ -626,7 +632,7 @@ async fn backup_restore_round_trip_with_refusals() {
     let allowed_dir = scratch_dir("restore-allowed");
     let allowed = runtime
         .backups()
-        .restore(&newer, &allowed_dir, true)
+        .restore(&newer, &allowed_dir, "library.db", true)
         .unwrap();
     assert_eq!(allowed.user_version, 9999);
 

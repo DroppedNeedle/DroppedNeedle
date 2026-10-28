@@ -106,10 +106,10 @@ impl AdminSetup {
         self
     }
 
-    /// Attach the backup service.
+    /// Attach the backup service: the runtime's, which boot also uses.
     #[must_use]
-    pub fn with_backups(mut self, backups: BackupService) -> Self {
-        self.backups = Some(Arc::new(backups));
+    pub fn with_backups(mut self, backups: Arc<BackupService>) -> Self {
+        self.backups = Some(backups);
         self
     }
 

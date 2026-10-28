@@ -81,10 +81,12 @@ impl Rig {
         }
         let admin = AdminSetup::new(rig.deps.clone(), quota.clone(), cache.clone(), providers)
             .with_db(AdminDb::new(runtime.db().clone()))
-            .with_backups(droppedneedle_kernel::db::BackupService::new(
-                &dir.join("app.db"),
-                &dir.join("backups"),
-                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+            .with_backups(std::sync::Arc::new(
+                droppedneedle_kernel::db::BackupService::new(
+                    &dir.join("app.db"),
+                    &dir.join("backups"),
+                    std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+                ),
             ))
             .with_checkpoint(runtime.checkpoint().clone())
             .with_precache(jobs.precache_trigger());

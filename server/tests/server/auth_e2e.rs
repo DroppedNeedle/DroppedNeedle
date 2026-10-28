@@ -252,10 +252,12 @@ impl E2e {
             providers.clone(),
         )
         .with_db(droppedneedle::admin::AdminDb::new(p.db.clone()))
-        .with_backups(droppedneedle_kernel::db::BackupService::new(
-            &self.db_path,
-            &backup_dir,
-            p.clock.clone(),
+        .with_backups(std::sync::Arc::new(
+            droppedneedle_kernel::db::BackupService::new(
+                &self.db_path,
+                &backup_dir,
+                p.clock.clone(),
+            ),
         ))
         .with_checkpoint(self.runtime.checkpoint().clone())
         .with_precache(jobs.precache_trigger());

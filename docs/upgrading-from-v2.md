@@ -651,6 +651,22 @@ folder next to the backup and puts them back beside the restored
 database. A copy that is missing there does not stop the restore; it is
 listed, and Undo then leaves out only the file that needed it.
 
+`droppedneedle-tool restore --backup <file> --target-dir <dir>` writes the
+database under the name the server uses: `library.db`, or the file name
+`LIBRARY_DB_PATH` gives, so run it with the same environment as the
+server. The target folder must be empty apart from the server's lock
+files. The restore refuses a folder holding anything it cannot read,
+saying which folder and why, so fix its permissions or pick a new folder.
+It never replaces a file: the database takes its name through a hard
+link, and on a filesystem without hard links (vfat, exFAT) through a
+rename that checks the name is free first; the report then has a `note`
+saying so. A restore that stops before the database is in place leaves
+its own marker and temporary files, which the next restore into that
+folder clears; once the database is in place, a later restore into that
+folder refuses. It also
+refuses a target folder on a network filesystem, as the server does, and
+a backup whose `-wal` file holds writes the copy would leave out.
+
 Backups leave out `metadata-cache.db` on purpose: it holds only provider
 answers that are fetched again when needed.
 

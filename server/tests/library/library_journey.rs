@@ -3130,7 +3130,7 @@ async fn a_restored_backup_still_undoes_and_restores_originals() {
     };
     let target = restored.join("data");
     let outcome = service
-        .restore(&report.path, &target, false)
+        .restore(&report.path, &target, "library.db", false)
         .expect("restore runs");
     assert_eq!(outcome.undo_missing, vec![lost]);
     // Move the restored database and its undo folder to where the

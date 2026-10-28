@@ -315,7 +315,7 @@ fn create_temp(shard: &Path, sha256: &str) -> io::Result<(PathBuf, File)> {
 
 /// Make `dir` if it is not there, syncing its parent when it was made so
 /// the new folder's name survives a power cut.
-fn ensure_dir(dir: &Path) -> io::Result<()> {
+pub(crate) fn ensure_dir(dir: &Path) -> io::Result<()> {
     match std::fs::create_dir(dir) {
         Ok(()) => match dir.parent().filter(|parent| !parent.as_os_str().is_empty()) {
             Some(parent) => sync_dir(parent),

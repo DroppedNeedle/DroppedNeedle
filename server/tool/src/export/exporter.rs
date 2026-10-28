@@ -35,6 +35,7 @@ use crate::export::sql::{
 };
 use crate::export::v2dir::V2Dirs;
 use crate::export::{EXPORT_FORMAT, FORMAT_VERSION};
+use droppedneedle_kernel::db::backup::{WalState, wal_path, wal_state};
 use droppedneedle_kernel::runtime_config::Secret;
 
 /// Sections exported verbatim (secret positions sealed where present).
@@ -427,11 +428,19 @@ fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
     }
     // An immutable open ignores the write-ahead log, so committed writes
     // still sitting in it would be silently missing from the export.
-    let mut wal = path.as_os_str().to_owned();
-    wal.push("-wal");
-    let wal = PathBuf::from(wal);
-    if std::fs::metadata(&wal).is_ok_and(|meta| meta.len() > 0) {
-        return Err(ExportError::V2WalPresent { path: wal });
+    match wal_state(path) {
+        WalState::Absent | WalState::Empty => {}
+        WalState::HoldsData(_) => {
+            return Err(ExportError::V2WalPresent {
+                path: wal_path(path),
+            });
+        }
+        WalState::Unreadable(error) => {
+            return Err(ExportError::V2WalUnreadable {
+                path: wal_path(path),
+                reason: error.to_string(),
+            });
+        }
     }
     let uri = format!(
         "file:{}?immutable=1",
