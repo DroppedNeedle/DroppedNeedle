@@ -89,6 +89,20 @@ def test_entrypoint_skips_shadow_check_when_app_missing(tmp_path: Path) -> None:
     assert "does not contain the DroppedNeedle application code" not in result.stdout
 
 
+def test_puid_remap_does_not_chown_the_application_tree() -> None:
+    """`usermod -u` chowns everything under the user's home. With /app as the
+    home that copied the whole application into the container layer and
+    stalled startup for minutes on every recreate with a non-default PUID."""
+    dockerfile = (REPOSITORY_ROOT / "Dockerfile").read_text()
+    entrypoint = (REPOSITORY_ROOT / "entrypoint.sh").read_text()
+
+    assert "-d /nonexistent" in dockerfile
+    assert "-d /app" not in dockerfile
+    assert 'usermod -o -u "$PUID" -d /nonexistent droppedneedle' in entrypoint
+    for data_dir in ("/app/config", "/app/cache", "/app/plugins", "/app/imports"):
+        assert data_dir in dockerfile
+
+
 def test_unraid_template_uses_the_secure_default() -> None:
     root = ElementTree.parse(REPOSITORY_ROOT / "templates/droppedneedle.xml").getroot()
     setting = next(

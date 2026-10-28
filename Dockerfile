@@ -63,8 +63,10 @@ COPY --from=python-deps /install /usr/local
 
 # Bake the user at the entrypoint's default PUID/PGID (1000) so the common
 # deployment needs no runtime usermod/groupmod remap (which can stall startup).
+# The home stays outside /app: `usermod -u` chowns the whole home tree, which
+# copies every application file up into the container's writable layer.
 RUN groupadd -r -g 1000 droppedneedle \
-    && useradd -r -u 1000 -g droppedneedle -d /app -s /sbin/nologin droppedneedle
+    && useradd -r -u 1000 -g droppedneedle -d /nonexistent -s /sbin/nologin droppedneedle
 
 COPY backend/ .
 # Pristine, never-served input for entrypoint.sh, which writes the resolved
@@ -79,7 +81,7 @@ RUN find /app -type f -print0 \
       | cut -d' ' -f1 > /app/.droppedneedle-source-revision \
     && test -s /app/.droppedneedle-source-revision
 
-RUN mkdir -p /app/cache /app/config \
+RUN mkdir -p /app/cache /app/config /app/plugins /app/imports \
     && chown -R droppedneedle:droppedneedle /app \
     && chmod +x /entrypoint.sh
 
