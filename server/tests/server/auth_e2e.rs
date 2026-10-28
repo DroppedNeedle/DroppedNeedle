@@ -483,6 +483,7 @@ pub(crate) async fn setup_admin(
     password: &str,
     transport: &str,
 ) -> (Value, Value) {
+    let app_again = app.clone();
     let (status, body, headers) = call(
         app,
         "POST",
@@ -496,6 +497,20 @@ pub(crate) async fn setup_admin(
         })),
     )
     .await;
+    // Setup makes the account before it signs the owner in, so on a loaded
+    // host a setup that answered a failure, or a retry that answered 409,
+    // may still have made it: then signing in is how the owner gets in.
+    let (status, body, headers) = if status.is_server_error() || status == StatusCode::CONFLICT {
+        let (signed, session, headers) = login(app_again, username, password, transport).await;
+        assert_eq!(
+            signed,
+            StatusCode::OK,
+            "setup must succeed: {status} {body}; sign-in: {session}"
+        );
+        (StatusCode::CREATED, session, headers)
+    } else {
+        (status, body, headers)
+    };
     assert_eq!(status, StatusCode::CREATED, "setup must succeed: {body}");
     let credential = if transport == "bearer" {
         body["token"].clone()
@@ -1943,10 +1958,11 @@ async fn rate_limits_key_by_client_and_username() {
 #[tokio::test]
 async fn login_guesses_from_fresh_addresses_meet_the_username_wall() {
     let e2e = E2e::open("username-wall").await;
-    let app = e2e.router();
+    let app = held_clock_router(&e2e);
 
     // No address repeats, so no per-client bucket ever fills: only the
-    // username's own budget (burst 50) can refuse these.
+    // username's own budget (burst 50) can refuse these, and with the
+    // clock held it never refills.
     let peers: Vec<String> = (0..60).map(|n| format!("203.0.113.{n}:1")).collect();
     let attempts = peers.iter().map(|peer| {
         call_from(
@@ -1957,13 +1973,13 @@ async fn login_guesses_from_fresh_addresses_meet_the_username_wall() {
         )
     });
     let statuses = futures_util::future::join_all(attempts).await;
-    // The budget refills on the real clock, so the count of refusals moves
-    // with how fast the attempts land. The wall is that some are refused.
     let limited = statuses
         .iter()
         .filter(|status| **status == StatusCode::TOO_MANY_REQUESTS)
         .count();
-    assert!(limited >= 5, "{statuses:?}");
+    // At least every attempt past the burst; a busy answer asked again
+    // spends one more token.
+    assert!(limited >= peers.len() - 50, "{statuses:?}");
     assert!(
         statuses.iter().all(|status| matches!(
             *status,
@@ -1997,20 +2013,11 @@ async fn failed_authentications_are_throttled_per_client() {
 async fn login_store_failure_is_a_500_not_bad_credentials() {
     let e2e = E2e::open("login-store-down").await;
     setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
-    e2e.runtime
-        .db()
-        // A rename re-parses the whole schema, which outruns the request
-        // budget on a busy host; the job budget fits it.
-        .write(
-            droppedneedle_kernel::db::Lane::Background,
-            "test.break",
-            |tx| {
-                tx.execute_batch("ALTER TABLE auth_providers RENAME TO auth_providers_gone")?;
-                Ok::<_, droppedneedle_kernel::db::DbError>(())
-            },
-        )
-        .await
-        .expect("table renames");
+    crate::common::break_schema(
+        e2e.runtime.db(),
+        "ALTER TABLE auth_providers RENAME TO auth_providers_gone",
+    )
+    .await;
     let (status, body, _) =
         login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");

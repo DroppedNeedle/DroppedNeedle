@@ -1502,21 +1502,40 @@ async fn provider_answers_survive_a_restart() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["title"], "OK Computer");
     assert_eq!(*hits.lock().unwrap(), 1);
-    app.until("the answer is in the cache file", || async {
-        let (_, stats) = app
-            .call("GET", "/api/v3/admin/cache/stats", &auth, None)
-            .await;
-        (stats["entries"].as_u64().unwrap_or(0) > 0).then_some(())
+    // The release group's own entry, not just any: the page stores others
+    // too, and the cache file is written behind the answer.
+    let cache_file = app
+        .config
+        .cache_dir
+        .join(droppedneedle_kernel::db::cache::FILE_NAME);
+    app.until("the release group is in the cache file", || async {
+        let cache = rusqlite::Connection::open(&cache_file).ok()?;
+        cache
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM provider_cache_entries \
+                 WHERE kind = 'found' AND key LIKE '%:rg:' || ?1)",
+                [OK_COMPUTER],
+                |row| row.get::<_, bool>(0),
+            )
+            .ok()?
+            .then_some(())
     })
     .await;
 
+    // Background work may have asked for the group again before its entry
+    // landed; from here on the network is gone.
     server.abort();
     let _ = server.await;
+    let served = *hits.lock().unwrap();
     let app = app.restart().await;
     let (status, body) = app.call("GET", &basic, &auth, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["title"], "OK Computer");
-    assert_eq!(*hits.lock().unwrap(), 1, "answered from the cache file");
+    assert_eq!(
+        *hits.lock().unwrap(),
+        served,
+        "answered from the cache file"
+    );
     app.stop().await;
 }
 

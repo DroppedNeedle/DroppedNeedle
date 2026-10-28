@@ -175,15 +175,27 @@ async fn ipv6_clients_share_limits_across_their_64() {
     };
     let public = "/subsonic/rest/getOpenSubsonicExtensions?f=json";
     let limited = (Value::from(0), true);
-    let mut drained = false;
-    for _ in 0..100 {
-        if ask(public, "2001:db8:1:2::a").await == limited {
-            drained = true;
+    let drain = async || {
+        for _ in 0..100 {
+            if ask(public, "2001:db8:1:2::a").await == limited {
+                return true;
+            }
+        }
+        false
+    };
+    // The bucket refills five tokens a second, so a stall on a loaded host
+    // between tripping it and asking from `::b` can hand `::b` a fresh
+    // token. A bucket of its own would answer `::b` at least twenty times,
+    // so the shared one is the only way any of a few tries is refused.
+    let mut shared = false;
+    for _ in 0..5 {
+        assert!(drain().await, "the public bucket never tripped");
+        if ask(public, "2001:db8:1:2::b").await == limited {
+            shared = true;
             break;
         }
     }
-    assert!(drained, "the public bucket never tripped");
-    assert_eq!(ask(public, "2001:db8:1:2::b").await, limited);
+    assert!(shared, "another address in the /64 got a bucket of its own");
     assert_eq!(ask(public, "2001:db8:1:3::a").await, (Value::Null, false));
 
     let ping = "/subsonic/rest/ping?f=json";
