@@ -915,6 +915,46 @@ async fn held_downloads_carry_into_the_held_list() {
     assert_eq!(again, 2, "a repeat import adds nothing");
 }
 
+/// A v2 download with a text year and a REAL track number carries: the
+/// year lands NULL and the track number as its whole number. One stray
+/// value in a whole-number column must not stop the upgrade.
+#[tokio::test]
+async fn stray_whole_numbers_carry_as_null_or_whole() {
+    let root = scratch_dir("stray-whole");
+    let fixture = build_v2_fixture(&root.join("v2")).expect("fixture builds");
+    let v2_db = root.join("v2").join("cache").join("library.db");
+    delete_orphan_rows(&v2_db).expect("repair runs");
+    let alice = &fixture.alice_id;
+    let v2 = rusqlite::Connection::open(&v2_db).expect("v2 db opens");
+    v2.execute_batch(&format!(
+        "ALTER TABLE download_tasks ADD COLUMN year INTEGER;
+         ALTER TABLE download_tasks ADD COLUMN track_number INTEGER;
+         INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name,
+             album_title, status, year, track_number, created_at, updated_at)
+         VALUES ('download-stray', '{alice}', 'dddddddd-0000-4000-8000-000000000004',
+                 'Artist', 'Album', 'completed', 'unknown', 7.4, 1700000000.0,
+                 1700000000.0);"
+    ))
+    .expect("v2 row seeds");
+    drop(v2);
+    let export_path = root.join("export.json");
+    droppedneedle_tool::export::export_v2_to_file(
+        &export_request(&root.join("v2"), PASSPHRASE),
+        &export_path,
+    )
+    .expect("export writes");
+    let text = std::fs::read_to_string(&export_path).expect("export reads back");
+    let (v3_root, pool) = seeded_target(&root).await;
+
+    run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    let landed: (Option<i64>, Option<i64>) =
+        sqlx::query_as("SELECT year, track_number FROM download_tasks WHERE id = 'download-stray'")
+            .fetch_one(&pool)
+            .await
+            .expect("the download carries");
+    assert_eq!(landed, (None, Some(7)));
+}
+
 /// One user logs in with their v2 password through the production login
 /// path; success persists the Argon2id rehash, and a wrong password still
 /// fails.

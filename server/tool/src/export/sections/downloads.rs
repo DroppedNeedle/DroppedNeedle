@@ -5,7 +5,7 @@
 //! download that landed them, and per-user storage usage keeps counting
 //! the completed ones.
 
-use super::requests::{millis, now_millis};
+use super::requests::{flag, millis, now_millis, whole, whole_min, whole_or};
 use super::{Column, Parent, Source, TableSection, Target, col};
 
 /// Finished downloads.
@@ -30,10 +30,10 @@ pub const DOWNLOAD_TASKS: TableSection = TableSection {
         col("artist_name"),
         col("album_title"),
         col("track_title"),
-        col("track_number"),
-        col("disc_number"),
-        col("year"),
-        col("track_count"),
+        Column::new("track_number").from_sql_of("track_number", whole!("track_number")),
+        Column::new("disc_number").from_sql_of("disc_number", whole!("disc_number")),
+        Column::new("year").from_sql_of("year", whole!("year")),
+        Column::new("track_count").from_sql_of("track_count", whole!("track_count")),
         col("track_duration_seconds"),
         col("download_client"),
         col("source"),
@@ -42,40 +42,50 @@ pub const DOWNLOAD_TASKS: TableSection = TableSection {
         col("source_directory"),
         col("search_query"),
         col("search_job_id"),
-        col("candidate_index"),
+        Column::new("candidate_index").from_sql_of("candidate_index", whole!("candidate_index")),
         col("status"),
         col("preflight_score"),
-        col("progress_percent"),
-        col("total_size_bytes"),
-        col("downloaded_bytes"),
-        col("files_total"),
-        col("files_completed"),
-        col("files_failed"),
+        Column::new("progress_percent")
+            .from_sql_of("progress_percent", whole_or!("progress_percent", 0)),
+        Column::new("total_size_bytes").from_sql_of("total_size_bytes", whole!("total_size_bytes")),
+        Column::new("downloaded_bytes")
+            .from_sql_of("downloaded_bytes", whole_or!("downloaded_bytes", 0)),
+        Column::new("files_total").from_sql_of("files_total", whole_or!("files_total", 0)),
+        Column::new("files_completed")
+            .from_sql_of("files_completed", whole_or!("files_completed", 0)),
+        Column::new("files_failed").from_sql_of("files_failed", whole_or!("files_failed", 0)),
         col("quality_format"),
-        col("quality_bitrate"),
-        col("quality_sample_rate"),
-        col("quality_bit_depth"),
-        col("advertised_queue_depth"),
-        col("queue_position_start"),
-        col("queue_position_end"),
-        col("remote_queued"),
+        Column::new("quality_bitrate").from_sql_of("quality_bitrate", whole!("quality_bitrate")),
+        Column::new("quality_sample_rate")
+            .from_sql_of("quality_sample_rate", whole!("quality_sample_rate")),
+        Column::new("quality_bit_depth")
+            .from_sql_of("quality_bit_depth", whole!("quality_bit_depth")),
+        Column::new("advertised_queue_depth")
+            .from_sql_of("advertised_queue_depth", whole!("advertised_queue_depth")),
+        Column::new("queue_position_start")
+            .from_sql_of("queue_position_start", whole!("queue_position_start")),
+        Column::new("queue_position_end")
+            .from_sql_of("queue_position_end", whole!("queue_position_end")),
+        Column::new("remote_queued").from_sql_of("remote_queued", flag!("remote_queued")),
         Column::new("preferred_quality_fallback_at").from_sql_of(
             "preferred_quality_fallback_at",
             millis!("preferred_quality_fallback_at"),
         ),
         col("quality_pool_key"),
-        col("attempt_number"),
-        col("attempt_total"),
-        col("has_next_source"),
+        Column::new("attempt_number").from_sql_of("attempt_number", whole_or!("attempt_number", 0)),
+        Column::new("attempt_total").from_sql_of("attempt_total", whole_or!("attempt_total", 0)),
+        Column::new("has_next_source").from_sql_of("has_next_source", flag!("has_next_source")),
         col("quality_snapshot_json"),
-        col("quality_preference_step"),
+        Column::new("quality_preference_step")
+            .from_sql_of("quality_preference_step", whole!("quality_preference_step")),
         col("quality_certainty"),
         col("quality_provenance"),
-        col("manual_quality_override"),
+        Column::new("manual_quality_override")
+            .from_sql_of("manual_quality_override", flag!("manual_quality_override")),
         col("staging_path"),
         col("final_path"),
         col("error_message"),
-        col("retry_count"),
+        Column::new("retry_count").from_sql_of("retry_count", whole_or!("retry_count", 0)),
         Column::new("last_polled_at").from_sql_of("last_polled_at", millis!("last_polled_at")),
         Column::new("created_at").from_sql_of(
             "created_at",
@@ -120,7 +130,8 @@ pub const DOWNLOAD_ATTEMPTS: TableSection = TableSection {
         col("id"),
         col("task_id"),
         col("source"),
-        col("candidate_index"),
+        Column::new("candidate_index")
+            .from_sql_of("candidate_index", whole_min!("candidate_index", 0)),
         col("job_name"),
         col("handle_json"),
         col("remote_storage"),
@@ -129,10 +140,12 @@ pub const DOWNLOAD_ATTEMPTS: TableSection = TableSection {
         col("materialized_paths_json"),
         col("materialized_fingerprints_json"),
         col("publisher_bundle_ids_json"),
-        col("legacy_reconciled"),
+        Column::new("legacy_reconciled")
+            .from_sql_of("legacy_reconciled", flag!("legacy_reconciled")),
         col("state"),
         col("disposition"),
-        col("cleanup_failures"),
+        Column::new("cleanup_failures")
+            .from_sql_of("cleanup_failures", whole_min!("cleanup_failures", 0)),
         Column::new("next_retry_at").from_sql_of(
             "next_retry_at",
             concat!("COALESCE(", millis!("next_retry_at"), ", 0)"),
@@ -147,7 +160,7 @@ pub const DOWNLOAD_ATTEMPTS: TableSection = TableSection {
             concat!("COALESCE(", millis!("updated_at"), ", ", now_millis!(), ")"),
         ),
         Column::new("completed_at").from_sql_of("completed_at", millis!("completed_at")),
-        col("row_revision"),
+        Column::new("row_revision").from_sql_of("row_revision", whole_min!("row_revision", 1)),
     ],
     key: &["id"],
     unique: &[],

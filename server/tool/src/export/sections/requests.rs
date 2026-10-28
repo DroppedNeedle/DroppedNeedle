@@ -79,6 +79,35 @@ macro_rules! whole {
     };
 }
 
+pub(crate) use whole;
+
+/// A v2 whole-number column, `$default` when it does not read as one.
+macro_rules! whole_or {
+    ($column:literal, $default:literal) => {
+        concat!("COALESCE(", whole!($column), ", ", $default, ")")
+    };
+}
+
+pub(crate) use whole_or;
+
+/// A v2 whole-number column kept at `$min` or above, so a v3 CHECK holds.
+macro_rules! whole_min {
+    ($column:literal, $min:literal) => {
+        concat!("MAX(", $min, ", ", whole_or!($column, $min), ")")
+    };
+}
+
+pub(crate) use whole_min;
+
+/// A v2 flag column as 0 or 1: 1 when it reads as a non-zero number.
+macro_rules! flag {
+    ($column:literal) => {
+        concat!("CASE WHEN ", whole!($column), " != 0 THEN 1 ELSE 0 END")
+    };
+}
+
+pub(crate) use flag;
+
 /// Requester and dismissal rows hang off their request.
 const ON_REQUEST: &[Parent] = &[Parent::required(
     "request_history",
@@ -121,8 +150,9 @@ pub const REQUESTS: TableSection = TableSection {
         )),
         Column::new("completed_at").from_sql(millis!("completed_at")),
         col("status"),
-        col("monitor_artist"),
-        col("auto_download_artist"),
+        Column::new("monitor_artist").from_sql_of("monitor_artist", flag!("monitor_artist")),
+        Column::new("auto_download_artist")
+            .from_sql_of("auto_download_artist", flag!("auto_download_artist")),
         col("user_id"),
         col("requested_by_name"),
         Column::new("reviewed_by_id").from_sql(live_user!("reviewed_by_id")),
@@ -134,8 +164,9 @@ pub const REQUESTS: TableSection = TableSection {
         col("track_title"),
         Column::new("duration_seconds").from_sql(whole!("duration_seconds")),
         col("track_release_group_mbid"),
-        col("dispatch_authorized"),
-        col("generation"),
+        Column::new("dispatch_authorized")
+            .from_sql_of("dispatch_authorized", flag!("dispatch_authorized")),
+        Column::new("generation").from_sql_of("generation", whole_or!("generation", 1)),
     ],
     key: &["musicbrainz_id_lower"],
     unique: &[],
@@ -222,8 +253,8 @@ pub const WANTED_WATCHES: TableSection = TableSection {
             ")"
         )),
         col("first_release_date"),
-        col("check_count"),
-        col("quiet_streak"),
+        Column::new("check_count").from_sql_of("check_count", whole_or!("check_count", 0)),
+        Column::new("quiet_streak").from_sql_of("quiet_streak", whole_or!("quiet_streak", 0)),
         Column::new("last_checked_at").from_sql(millis!("last_checked_at")),
         Column::new("next_check_at").from_sql(concat!(
             "CASE WHEN s.state = 'dormant' THEN ",
@@ -235,7 +266,8 @@ pub const WANTED_WATCHES: TableSection = TableSection {
             ") END"
         )),
         col("last_outcome"),
-        col("new_candidate_count"),
+        Column::new("new_candidate_count")
+            .from_sql_of("new_candidate_count", whole_or!("new_candidate_count", 0)),
     ],
     key: &["release_group_mbid_lower"],
     unique: &[],
@@ -288,9 +320,11 @@ pub const QUOTAS: TableSection = TableSection {
     target: Target::Table("user_quotas"),
     columns: &[
         col("user_id"),
-        col("request_quota_count"),
-        col("request_quota_days"),
-        col("storage_quota_gb"),
+        Column::new("request_quota_count")
+            .from_sql_of("request_quota_count", whole!("request_quota_count")),
+        Column::new("request_quota_days")
+            .from_sql_of("request_quota_days", whole!("request_quota_days")),
+        Column::new("storage_quota_gb").from_sql_of("storage_quota_gb", whole!("storage_quota_gb")),
     ],
     key: &["user_id"],
     unique: &[],

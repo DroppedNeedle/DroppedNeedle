@@ -4,6 +4,7 @@
 //! release as the baseline and miss anything that came out between v2's
 //! last poll and the upgrade.
 
+use super::requests::whole;
 use super::{Column, Source, TableSection, Target, col};
 
 /// Releases each followed artist already had.
@@ -18,7 +19,8 @@ pub const KNOWN_RELEASES: TableSection = TableSection {
     columns: &[
         col("artist_mbid_lower"),
         col("rg_mbid_lower"),
-        col("auto_policy_revision"),
+        Column::new("auto_policy_revision")
+            .from_sql_of("auto_policy_revision", whole!("auto_policy_revision")),
     ],
     key: &["artist_mbid_lower", "rg_mbid_lower"],
     unique: &[],

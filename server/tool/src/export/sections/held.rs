@@ -6,6 +6,7 @@
 //! bundle, land in v3's own `<cache>/held` folder and join v3's held list.
 //! Rows already decided have no file left to act on and stay behind.
 
+use super::requests::{whole, whole_or};
 use super::{Column, FileSet, Source, TableSection, Target, col};
 
 /// Held downloads still waiting on a decision.
@@ -24,13 +25,13 @@ pub const HELD_IMPORTS: TableSection = TableSection {
         col("release_mbid"),
         col("release_track_mbid"),
         col("recording_mbid"),
-        col("track_number"),
-        col("disc_number"),
+        Column::new("track_number").from_sql_of("track_number", whole!("track_number")),
+        Column::new("disc_number").from_sql_of("disc_number", whole!("disc_number")),
         col("track_title"),
         col("artist_name"),
         col("artist_mbid"),
         col("album_title"),
-        col("year"),
+        Column::new("year").from_sql_of("year", whole!("year")),
         col("held_path"),
         col("original_filename"),
         col("file_format"),
@@ -45,7 +46,10 @@ pub const HELD_IMPORTS: TableSection = TableSection {
         col("source_task_id"),
         col("origin"),
         col("naming_template"),
-        col("management_retry_count"),
+        Column::new("management_retry_count").from_sql_of(
+            "management_retry_count",
+            whole_or!("management_retry_count", 0),
+        ),
         col("management_next_retry_at"),
         col("status"),
         col("created_at"),
