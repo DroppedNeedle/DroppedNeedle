@@ -406,11 +406,28 @@ impl InstallRecord {
         }
     }
 
+    /// Write through a synced temp file beside the record, then rename it
+    /// over the record, so a crash leaves the old record or the new one,
+    /// never a partial one.
     fn write(&self, plugin_dir: &Path) -> Result<(), InstallError> {
+        use std::io::Write as _;
+
         let json =
             serde_json::to_vec_pretty(self).map_err(|error| InstallError::Io(error.to_string()))?;
-        std::fs::write(plugin_dir.join(INSTALL_RECORD), json)
-            .map_err(|error| InstallError::Io(error.to_string()))
+        let temp = plugin_dir.join(format!(
+            "{INSTALL_RECORD}.{}.tmp",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let mut file = std::fs::File::create_new(&temp)
+            .map_err(|error| InstallError::Io(error.to_string()))?;
+        let synced = file.write_all(&json).and_then(|()| file.sync_all());
+        drop(file);
+        let swapped = synced.and_then(|()| std::fs::rename(&temp, plugin_dir.join(INSTALL_RECORD)));
+        if let Err(error) = swapped {
+            let _ = std::fs::remove_file(&temp);
+            return Err(InstallError::Io(error.to_string()));
+        }
+        Ok(())
     }
 }
 
@@ -666,6 +683,16 @@ pub async fn resolve(
                 _ => format!("release, tag or branch named {reference}"),
             })
         })?;
+    // GitHub's answer to a commit pin must start with the SHA asked, which
+    // for a full SHA means equal.
+    if ref_kind == PluginRefKind::Commit && !commit.starts_with(&reference) {
+        tracing::warn!(
+            asked = %reference,
+            answered = %commit,
+            "GitHub answered a pinned commit with another commit"
+        );
+        return Err(InstallError::Unreadable);
+    }
     Ok(ResolvedSource {
         source,
         repository_id: repository.id,
