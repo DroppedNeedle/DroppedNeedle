@@ -4,8 +4,12 @@
 //!
 //! Each piece is best effort: a provider that fails leaves its field
 //! empty, and the card's [`CacheHold`] keeps it from being cached as if
-//! that field had nothing. Last.fm fills tags and the bio when MusicBrainz
-//! and Wikipedia have none.
+//! that field had nothing. Only the facts that are the same for every
+//! user ([`CardFacts`]) are cached as a card; the listen count and
+//! Last.fm's tags and bio, which fill in where MusicBrainz and Wikipedia
+//! have none, are added for each user when the card is served.
+
+use serde::{Deserialize, Serialize};
 
 use crate::reads::cache_hold::CacheHold;
 use crate::reads::catalog::mapping::clean_lastfm_bio;
@@ -59,148 +63,164 @@ pub fn youtube_search_url(artist: &str, album: &str) -> String {
     }
 }
 
-/// Build the enrichment for one release group, with how long it may be
+/// The facts behind a card that are the same for every user: MusicBrainz
+/// and Wikipedia. Kept in the provider cache under the release group.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CardFacts {
+    /// Release-group title.
+    pub title: String,
+    /// First credited artist name.
+    pub artist_name: String,
+    /// First credited artist id.
+    pub artist_mbid: Option<String>,
+    /// First release date.
+    pub release_date: Option<String>,
+    /// The artist's country.
+    pub country: Option<String>,
+    /// MusicBrainz tags, most voted first.
+    pub tags: Vec<String>,
+    /// An embed link from the group's URL relationships.
+    pub youtube_url: Option<String>,
+    /// The artist's Wikipedia summary.
+    pub artist_description: Option<String>,
+}
+
+/// The shared facts for one release group, with how long they may be
 /// cached given the reads that failed.
-pub async fn enrich(
-    listening: &ListeningData,
-    youtube: &LiveYouTube,
-    user_id: &str,
-    release_group_mbid: &str,
-) -> (QueueEnrichment, CacheHold) {
+pub async fn facts(listening: &ListeningData, release_group_mbid: &str) -> (CardFacts, CacheHold) {
     let ask = Ask::person();
     let mut hold = CacheHold::default();
-    let facts = quiet(
+    let group = quiet(
         "musicbrainz release group",
         listening.release_group(release_group_mbid, &ask).await,
         &mut hold,
     )
     .unwrap_or_default();
-    let album = facts.title.clone();
-    let artist = facts.artist_name.clone().unwrap_or_default();
-    let mut enrichment = QueueEnrichment {
-        artist_mbid: facts.artist_mbid.clone(),
-        release_date: facts.first_release_date.clone(),
+    let mut facts = CardFacts {
+        title: group.title,
+        artist_name: group.artist_name.unwrap_or_default(),
+        artist_mbid: group.artist_mbid,
+        release_date: group.first_release_date,
         country: None,
-        tags: facts.tags.iter().take(MAX_TAGS).cloned().collect(),
-        youtube_url: facts.youtube_url.as_deref().and_then(youtube_embed),
-        youtube_search_url: youtube_search_url(&artist, &album),
-        youtube_search_available: false,
+        tags: group.tags.into_iter().take(MAX_TAGS).collect(),
+        youtube_url: group.youtube_url.as_deref().and_then(youtube_embed),
         artist_description: None,
-        listen_count: None,
     };
-    let ids = [release_group_mbid.to_owned()];
-    let listens = async {
-        let mut hold = CacheHold::default();
-        let count = quiet(
-            "listenbrainz listen counts",
-            listening.listen_counts(user_id, &ids, &ask).await,
-            &mut hold,
-        )
-        .get(release_group_mbid)
-        .copied();
-        (count, hold)
-    };
-    let about = artist_details(
-        listening,
-        &ask,
-        user_id,
-        &facts.artist_mbid,
-        &artist,
-        &album,
-    );
-    let ((listen_count, listens_hold), (country, description, extra)) =
-        tokio::join!(listens, about);
-    hold.merge(listens_hold);
-    hold.merge(extra.hold);
-    enrichment.listen_count = listen_count;
-    enrichment.country = country;
-    enrichment.artist_description = description;
-    if enrichment.tags.is_empty() {
-        enrichment.tags = extra.tags;
-    }
-    if enrichment.artist_mbid.is_none() {
-        enrichment.artist_mbid = extra.mbid;
-    }
-    if enrichment.youtube_url.is_none() {
-        enrichment.youtube_search_available = youtube.is_configured();
-    }
-    (enrichment, hold)
-}
-
-/// Last.fm facts gathered while filling the bio, and the reads that
-/// failed on the way.
-#[derive(Default)]
-struct Fallback {
-    tags: Vec<String>,
-    mbid: Option<String>,
-    hold: CacheHold,
-}
-
-/// Country and bio from MusicBrainz and Wikipedia, then Last.fm for the
-/// bio and tags when those are still missing.
-async fn artist_details(
-    listening: &ListeningData,
-    ask: &Ask,
-    user_id: &str,
-    artist_mbid: &Option<String>,
-    artist: &str,
-    album: &str,
-) -> (Option<String>, Option<String>, Fallback) {
-    let mut country = None;
-    let mut description = None;
-    let mut fallback = Fallback::default();
-    if let Some(mbid) = artist_mbid {
-        let facts = quiet(
+    if let Some(mbid) = &facts.artist_mbid {
+        let artist = quiet(
             "musicbrainz artist",
-            listening.artist(mbid, ask).await,
-            &mut fallback.hold,
+            listening.artist(mbid, &ask).await,
+            &mut hold,
         );
-        if let Some(facts) = facts {
-            country = facts.country;
-            if let Some(url) = facts.wiki_url {
-                description = quiet(
+        if let Some(artist) = artist {
+            facts.country = artist.country;
+            if let Some(url) = artist.wiki_url {
+                facts.artist_description = quiet(
                     "wikipedia",
-                    listening.wikipedia_extract(&url, ask).await,
-                    &mut fallback.hold,
+                    listening.wikipedia_extract(&url, &ask).await,
+                    &mut hold,
                 )
                 .filter(|text| !text.trim().is_empty());
             }
         }
     }
-    if album.is_empty() || artist.is_empty() {
-        return (country, description, fallback);
+    (facts, hold)
+}
+
+/// One user's card: the shared facts plus what depends on the user, the
+/// listen count and Last.fm's tags and bio where MusicBrainz and
+/// Wikipedia have none. Those reads are cached on their own.
+pub async fn for_user(
+    listening: &ListeningData,
+    youtube: &LiveYouTube,
+    user_id: &str,
+    release_group_mbid: &str,
+    facts: CardFacts,
+) -> QueueEnrichment {
+    let ask = Ask::person();
+    let ids = [release_group_mbid.to_owned()];
+    let listens = async {
+        quiet(
+            "listenbrainz listen counts",
+            listening.listen_counts(user_id, &ids, &ask).await,
+            &mut CacheHold::default(),
+        )
+        .get(release_group_mbid)
+        .copied()
+    };
+    let fallback = lastfm_fallback(listening, &ask, user_id, &facts);
+    let (listen_count, fallback) = tokio::join!(listens, fallback);
+    let mut enrichment = QueueEnrichment {
+        youtube_search_url: youtube_search_url(&facts.artist_name, &facts.title),
+        youtube_search_available: facts.youtube_url.is_none() && youtube.is_configured(),
+        artist_mbid: facts.artist_mbid.or(fallback.mbid),
+        release_date: facts.release_date,
+        country: facts.country,
+        tags: facts.tags,
+        youtube_url: facts.youtube_url,
+        artist_description: facts.artist_description.or(fallback.description),
+        listen_count,
+    };
+    if enrichment.tags.is_empty() {
+        enrichment.tags = fallback.tags;
     }
+    enrichment
+}
+
+/// What Last.fm adds to a card.
+#[derive(Default)]
+struct Fallback {
+    tags: Vec<String>,
+    mbid: Option<String>,
+    description: Option<String>,
+}
+
+/// Last.fm's album tags and bio, then the artist's when those are still
+/// missing. Empty when the user cannot read Last.fm.
+async fn lastfm_fallback(
+    listening: &ListeningData,
+    ask: &Ask,
+    user_id: &str,
+    facts: &CardFacts,
+) -> Fallback {
+    let mut fallback = Fallback::default();
+    let (artist, album) = (facts.artist_name.as_str(), facts.title.as_str());
+    if album.is_empty() || artist.is_empty() {
+        return fallback;
+    }
+    let mut hold = CacheHold::default();
     let album_facts = quiet(
         "lastfm album",
         listening.lastfm_album(user_id, artist, album, ask).await,
-        &mut fallback.hold,
+        &mut hold,
     );
-    if let Some(facts) = album_facts {
-        fallback.tags = facts.tags.into_iter().take(MAX_TAGS).collect();
-        if description.is_none() {
-            description = clean_lastfm_bio(&facts.summary);
+    let has_description = facts.artist_description.is_some();
+    if let Some(found) = album_facts {
+        fallback.tags = found.tags.into_iter().take(MAX_TAGS).collect();
+        if !has_description {
+            fallback.description = clean_lastfm_bio(&found.summary);
         }
     }
-    if description.is_some() && !fallback.tags.is_empty() {
-        return (country, description, fallback);
+    if (has_description || fallback.description.is_some()) && !fallback.tags.is_empty() {
+        return fallback;
     }
     let artist_facts = quiet(
         "lastfm artist",
         listening
-            .lastfm_artist(user_id, artist, artist_mbid.as_deref(), ask)
+            .lastfm_artist(user_id, artist, facts.artist_mbid.as_deref(), ask)
             .await,
-        &mut fallback.hold,
+        &mut hold,
     );
-    if let Some(facts) = artist_facts {
-        fallback.mbid = facts.mbid;
+    if let Some(found) = artist_facts {
+        fallback.mbid = found.mbid;
         if fallback.tags.is_empty() {
-            fallback.tags = facts.tags.into_iter().take(MAX_TAGS).collect();
+            fallback.tags = found.tags.into_iter().take(MAX_TAGS).collect();
         }
-        if description.is_none() {
-            description = clean_lastfm_bio(&facts.summary);
+        if !has_description && fallback.description.is_none() {
+            fallback.description = clean_lastfm_bio(&found.summary);
         }
     }
-    (country, description, fallback)
+    fallback
 }
 
 /// Find a video for one release group: links on the group, then on its

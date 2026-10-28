@@ -206,8 +206,10 @@ impl LibraryReads {
         Ok(grouped)
     }
 
-    /// Genres stored per artist (the artist genre cache), keyed by
-    /// lowercased artist MBID.
+    /// Genres per artist, keyed by lowercased artist MBID: the tags on the
+    /// library's indexed tracks credited to the artist, most used first,
+    /// then the genres discover builds learned from providers
+    /// (`catalog_artist_genres`). A genre appears once per artist.
     pub async fn genres_for_artists(
         &self,
         artist_mbids: &[String],
@@ -219,33 +221,49 @@ impl LibraryReads {
             .collect();
         wanted.sort();
         wanted.dedup();
-        let mut found = HashMap::new();
+        let mut found: HashMap<String, Vec<String>> = HashMap::new();
         for chunk in wanted.chunks(400) {
-            let sql = format!(
-                "SELECT artist_mbid_lower, genres_json FROM artist_genres \
-                 WHERE artist_mbid_lower IN ({})",
-                placeholders(chunk.len())
+            let marks = placeholders(chunk.len());
+            let library = format!(
+                "WITH artists AS (SELECT local_artist_id, lower(provider_artist_id) AS mbid \
+                 FROM local_artist_external_identities \
+                 WHERE provider = 'musicbrainz' AND lower(provider_artist_id) IN ({marks})), \
+                 credited(mbid, track_id) AS (\
+                 SELECT a.mbid, lta.local_track_id FROM artists a \
+                 JOIN local_track_artists lta ON lta.local_artist_id = a.local_artist_id UNION \
+                 SELECT a.mbid, t.id FROM artists a \
+                 JOIN local_album_artists laa ON laa.local_artist_id = a.local_artist_id \
+                 JOIN local_tracks t ON t.local_album_id = laa.local_album_id UNION \
+                 SELECT a.mbid, t.id FROM artists a \
+                 JOIN local_albums al ON al.album_artist_id = a.local_artist_id \
+                 JOIN local_tracks t ON t.local_album_id = al.id) \
+                 SELECT c.mbid, g.folded_name, min(g.name) FROM credited c \
+                 JOIN local_tracks t ON t.id = c.track_id AND t.availability = 'indexed' \
+                 JOIN local_track_genres g ON g.local_track_id = c.track_id \
+                 GROUP BY c.mbid, g.folded_name \
+                 ORDER BY c.mbid, count(*) DESC, g.folded_name"
             );
-            let mut query = sqlx::query_as::<_, (String, String)>(&sql);
-            for mbid in chunk {
-                query = query.bind(mbid);
-            }
-            let rows = query
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|error| format!("artist genres read: {error}"))?;
-            for (mbid, json) in rows {
-                let Ok(genres) = serde_json::from_str::<Vec<serde_json::Value>>(&json) else {
-                    continue;
-                };
-                let genres: Vec<String> = genres
-                    .iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|genre| !genre.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                found.insert(mbid, genres);
+            let learned = format!(
+                "SELECT artist_mbid, genre_folded, genre FROM catalog_artist_genres \
+                 WHERE artist_mbid IN ({marks}) \
+                 ORDER BY artist_mbid, learned_at DESC, genre_folded"
+            );
+            for (sql, what) in [(library, "library"), (learned, "learned")] {
+                let mut query = sqlx::query_as::<_, (String, String, String)>(&sql);
+                for mbid in chunk {
+                    query = query.bind(mbid);
+                }
+                let rows = query
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(|error| format!("{what} artist genres read: {error}"))?;
+                for (mbid, folded, name) in rows {
+                    let name = name.trim();
+                    let genres = found.entry(mbid).or_default();
+                    if !name.is_empty() && !genres.iter().any(|known| fold(known) == folded) {
+                        genres.push(name.to_owned());
+                    }
+                }
             }
         }
         Ok(found)

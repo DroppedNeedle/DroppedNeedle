@@ -65,7 +65,7 @@ const LASTFM_SIMILAR_FLOOR: u32 = 25;
 /// A Last.fm user's top artists read at once.
 const LASTFM_USER_FLOOR: u32 = 25;
 /// Rows of a MusicBrainz tag search page (the most it serves).
-const TAG_PAGE: u32 = 100;
+pub(in crate::reads::discover) const TAG_PAGE: u32 = 100;
 /// How long a popularity refusal keeps Last.fm standing in.
 const POPULARITY_DOWN_FOR: Duration = Duration::from_secs(10 * 60);
 

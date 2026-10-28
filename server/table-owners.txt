@@ -124,10 +124,10 @@ wanted_watches
 
 [catalog]
 artist_event_check
-artist_genres
 artist_skiddle_ids
 artist_skiddle_resolution
 artist_tm_attraction
+catalog_artist_genres
 catalog_cached_pages
 catalog_discover_activity
 catalog_ignored_releases

@@ -24,11 +24,9 @@ pub mod plan;
 
 use droppedneedle_providers::RequestPriority;
 use std::collections::HashSet;
+use std::future::Future;
 use std::sync::Arc;
-
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures_util::future::join_all;
 use futures_util::stream::{self, StreamExt};
@@ -55,8 +53,10 @@ use crate::reads::discover::ports::{BoxFuture, ProviderFailure, RadioFailure};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_providers::error::ProviderError;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
-use droppedneedle_providers::preview::PreviewClient;
+use droppedneedle_providers::preview::{PreviewClient, PreviewTrack};
+use droppedneedle_providers::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};
 use library::RadioLibrary;
 use plan::{LIBRARY_POOL, MAX_SEED_ARTISTS, TRACKS_PER_ARTIST, clean_pool, mix, song_key};
 
@@ -64,10 +64,11 @@ use plan::{LIBRARY_POOL, MAX_SEED_ARTISTS, TRACKS_PER_ARTIST, clean_pool, mix, s
 const SHELF_TITLE: &str = "Radio: This Shelf";
 /// Provider lookups one plan runs at once.
 const LOOKUP_CONCURRENCY: usize = 6;
-/// How long an artist's top tracks or an album's samples are reused.
-const LOOKUP_TTL: Duration = Duration::from_secs(3600);
-/// Entries the lookup cache holds before it starts over.
-const LOOKUP_CACHE_MAX: usize = 2000;
+/// How long an artist's preview tracks or an album's samples are kept.
+const PREVIEWS: Policy = Policy {
+    fresh: Duration::from_secs(3600),
+    miss: Duration::from_secs(3600),
+};
 
 /// Title of the playlist suggestions shelf.
 const SUGGESTIONS_TITLE: &str = "Suggestions for your playlist";
@@ -86,6 +87,8 @@ pub struct RadioInputs {
     pub catalog: Catalog,
     /// Keyless previews (Deezer, then iTunes).
     pub previews: PreviewClient,
+    /// The provider cache, which keeps preview titles.
+    pub cache: ProviderCacheStore,
     /// Wall time, which picks the day's shuffle.
     pub clock: Arc<dyn Clock>,
 }
@@ -99,33 +102,24 @@ pub struct LiveRadio {
     tracks: RadioLibrary,
     catalog: Catalog,
     previews: PreviewClient,
-    lookups: LookupCache,
+    cache: ProviderCacheStore,
     clock: Arc<dyn Clock>,
 }
 
-/// Recent provider answers for plans (top tracks, album samples), so a
-/// station started again soon does not repeat every lookup.
-#[derive(Default)]
-struct LookupCache {
-    entries: Mutex<HashMap<String, (Instant, Vec<RadioPlanTrack>)>>,
-}
+/// A preview's title and artist: what a plan keeps of it. The preview
+/// link itself expires, so it is never cached.
+type PreviewTitle = (String, String);
 
-impl LookupCache {
-    fn get(&self, key: &str) -> Option<Vec<RadioPlanTrack>> {
-        let entries = self.entries.lock().ok()?;
-        entries
-            .get(key)
-            .filter(|(at, _)| at.elapsed() < LOOKUP_TTL)
-            .map(|(_, tracks)| tracks.clone())
-    }
-
-    fn put(&self, key: String, tracks: &[RadioPlanTrack]) {
-        if let Ok(mut entries) = self.entries.lock() {
-            if entries.len() >= LOOKUP_CACHE_MAX {
-                entries.clear();
-            }
-            entries.insert(key, (Instant::now(), tracks.to_vec()));
-        }
+fn titles(tracks: Vec<PreviewTrack>) -> Fetched<Vec<PreviewTitle>> {
+    if tracks.is_empty() {
+        Fetched::Missing
+    } else {
+        Fetched::Found(
+            tracks
+                .into_iter()
+                .map(|track| (track.title, track.artist_name))
+                .collect(),
+        )
     }
 }
 
@@ -208,7 +202,7 @@ impl LiveRadio {
             tracks: RadioLibrary::new(inputs.pool),
             catalog: inputs.catalog,
             previews: inputs.previews,
-            lookups: LookupCache::default(),
+            cache: inputs.cache,
             clock: inputs.clock,
         }
     }
@@ -542,21 +536,39 @@ impl LiveRadio {
         (seeds, title)
     }
 
+    /// Preview titles under `key`, through the provider cache. A failed
+    /// fetch is an empty answer and keeps nothing.
+    async fn preview_titles<F, Fut>(&self, key: CacheKey, fetch: F) -> Vec<PreviewTitle>
+    where
+        F: FnOnce(PreviewClient, RequestPriority) -> Fut + Clone + Send + 'static,
+        Fut: Future<Output = Result<Fetched<Vec<PreviewTitle>>, ProviderError>> + Send + 'static,
+    {
+        let previews = self.previews.clone();
+        let found = self
+            .cache
+            .get_or_fetch(
+                &key,
+                PREVIEWS,
+                RequestPriority::UserInitiated,
+                move |priority| fetch(previews, priority),
+            )
+            .await;
+        match found {
+            Ok(found) => found.unwrap_or_default(),
+            Err(error) => {
+                tracing::debug!(%error, "radio previews unavailable");
+                Vec::new()
+            }
+        }
+    }
+
     /// One artist's popular tracks: ListenBrainz, then Last.fm (both
     /// through the catalog), then Deezer by name.
     async fn top_tracks(&self, user_id: &str, mbid: &str, name: &str) -> Vec<RadioPlanTrack> {
-        let key = format!("top:{mbid}|{}", name.to_lowercase());
-        if let Some(found) = self.lookups.get(&key) {
-            return found;
-        }
-        let found = timed("radio top tracks", async {
+        timed("radio top tracks", async {
             Ok::<_, std::convert::Infallible>(self.fetch_top_tracks(user_id, mbid, name).await)
         })
-        .await;
-        if !found.is_empty() {
-            self.lookups.put(key, &found);
-        }
-        found
+        .await
     }
 
     async fn fetch_top_tracks(&self, user_id: &str, mbid: &str, name: &str) -> Vec<RadioPlanTrack> {
@@ -600,12 +612,22 @@ impl LiveRadio {
         if name.is_empty() {
             return Vec::new();
         }
-        self.previews
-            .get_artist_top_tracks(name, TRACKS_PER_ARTIST, RequestPriority::UserInitiated)
-            .await
-            .into_iter()
-            .map(|found| track(found.title, found.artist_name, None))
-            .collect()
+        let key = CacheKey::hashed(
+            Source::Previews,
+            "artist_top_tracks",
+            &[name, &TRACKS_PER_ARTIST.to_string()],
+        );
+        let name = name.to_owned();
+        self.preview_titles(key, move |previews, priority| async move {
+            previews
+                .artist_top_tracks_leg(&name, TRACKS_PER_ARTIST, priority)
+                .await
+                .map(titles)
+        })
+        .await
+        .into_iter()
+        .map(|(title, artist)| track(title, artist, None))
+        .collect()
     }
 
     async fn build_plan(
@@ -750,33 +772,45 @@ impl LiveRadio {
         item: &RadioSeedItem,
         per_album: usize,
     ) -> Vec<RadioPlanTrack> {
-        let key = format!("samples:{album}|{per_album}");
-        if let Some(found) = self.lookups.get(&key) {
-            return found;
-        }
+        let key = CacheKey::hashed(
+            Source::Previews,
+            "album_samples",
+            &[&item.artist_name, &item.album_name, &per_album.to_string()],
+        );
+        let (artist, title) = (item.artist_name.clone(), item.album_name.clone());
         let found = timed("radio album samples", async {
             Ok::<_, std::convert::Infallible>(
-                self.previews
-                    .get_album_preview_tracks(
-                        &item.artist_name,
-                        &item.album_name,
-                        per_album,
-                        RequestPriority::UserInitiated,
-                    )
-                    .await
-                    .0,
+                self.preview_titles(key, move |previews, priority| async move {
+                    let deezer = previews
+                        .deezer_album_tracks(&artist, &title, per_album, priority)
+                        .await;
+                    if let Ok(tracks) = &deezer
+                        && !tracks.is_empty()
+                    {
+                        return deezer.map(titles);
+                    }
+                    let itunes = previews
+                        .itunes_album_tracks(&artist, &title, per_album, priority)
+                        .await;
+                    match (deezer, itunes) {
+                        (_, Ok(tracks)) if !tracks.is_empty() => Ok(titles(tracks)),
+                        (Err(error), _) | (_, Err(error)) => Err(error),
+                        _ => Ok(Fetched::Missing),
+                    }
+                })
+                .await,
             )
         })
         .await;
         let artist_mbid = normalize(Some(&item.artist_mbid)).unwrap_or_default();
-        let tracks: Vec<RadioPlanTrack> = found
+        found
             .into_iter()
-            .map(|sample| RadioPlanTrack {
-                track_name: sample.title,
-                artist_name: if sample.artist_name.is_empty() {
+            .map(|(track_name, artist_name)| RadioPlanTrack {
+                track_name,
+                artist_name: if artist_name.is_empty() {
                     item.artist_name.clone()
                 } else {
-                    sample.artist_name
+                    artist_name
                 },
                 artist_mbid: artist_mbid.clone(),
                 recording_mbid: None,
@@ -787,11 +821,7 @@ impl LiveRadio {
                 file_format: None,
                 duration_s: None,
             })
-            .collect();
-        if !tracks.is_empty() {
-            self.lookups.put(key, &tracks);
-        }
-        tracks
+            .collect()
     }
 
     async fn suggestions(

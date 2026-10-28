@@ -131,6 +131,7 @@ pub fn deps_over(
             LocalCatalog::new(inputs.db.clone()),
         ),
         previews: inputs.providers.previews.clone(),
+        cache: inputs.providers.cache.clone(),
         clock: Arc::clone(&inputs.clock),
     });
     let batches = batches::LiveBatches::new(

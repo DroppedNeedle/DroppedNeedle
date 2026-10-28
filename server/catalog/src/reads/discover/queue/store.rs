@@ -1,6 +1,7 @@
-//! The queue's durable state: the per-user ignore ledger
-//! (`catalog_ignored_releases`) and the Last.fm release to release-group
-//! map (`catalog_mbid_resolutions`). The decks are rows of the page cache.
+//! Discover's durable state: the per-user ignore ledger
+//! (`catalog_ignored_releases`), the Last.fm release to release-group map
+//! (`catalog_mbid_resolutions`) and the genres builds learned per artist
+//! (`catalog_artist_genres`). The decks are rows of the page cache.
 //!
 //! Reads use the reader pool; every write goes through the writer lane.
 
@@ -13,7 +14,7 @@ use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 /// Most ids one resolution read binds.
 const MAX_BIND: usize = 500;
 
-/// The queue's tables.
+/// Discover's tables.
 #[derive(Clone, Debug)]
 pub struct QueueDb {
     db: Db,
@@ -186,5 +187,43 @@ impl QueueDb {
             .await
             .map(|owned| owned.into_keys().collect())
             .map_err(|failure| failure.to_string())
+    }
+
+    /// Remember genres learned per artist (lowercased MBID, genre name)
+    /// at `at` (unix ms), and drop pairs no build has seen since
+    /// `forget_before`.
+    pub async fn learn_genres(&self, learned: Vec<(String, String)>, at: i64, forget_before: i64) {
+        let written: Result<(), DbError> = self
+            .db
+            .write(
+                Lane::Background,
+                "discover.artist_genres.learn",
+                move |tx| {
+                    for (artist, genre) in &learned {
+                        let genre = genre.trim();
+                        let folded = genre.to_lowercase();
+                        if artist.is_empty() || folded.is_empty() {
+                            continue;
+                        }
+                        tx.execute(
+                            "INSERT INTO catalog_artist_genres \
+                             (artist_mbid, genre_folded, genre, learned_at) \
+                         VALUES (?1, ?2, ?3, ?4) \
+                         ON CONFLICT(artist_mbid, genre_folded) DO UPDATE SET \
+                             genre = excluded.genre, learned_at = excluded.learned_at",
+                            rusqlite::params![artist, folded, genre, at],
+                        )?;
+                    }
+                    tx.execute(
+                        "DELETE FROM catalog_artist_genres WHERE learned_at < ?1",
+                        rusqlite::params![forget_before],
+                    )?;
+                    Ok(())
+                },
+            )
+            .await;
+        if let Err(error) = written {
+            tracing::warn!(%error, "could not save learned artist genres; the next build learns them again");
+        }
     }
 }

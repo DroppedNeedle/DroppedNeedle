@@ -63,11 +63,14 @@ pub enum Source {
     YouTube,
     /// LRCLIB lyrics.
     Lrclib,
+    /// Deezer and iTunes 30-second previews (titles only, never the
+    /// short-lived preview links).
+    Previews,
 }
 
 impl Source {
     /// Every source.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::MusicBrainz,
         Self::ListenBrainz,
         Self::LastFm,
@@ -77,6 +80,7 @@ impl Source {
         Self::Plugins,
         Self::YouTube,
         Self::Lrclib,
+        Self::Previews,
     ];
 
     /// The name keys start with and stats report.
@@ -92,6 +96,7 @@ impl Source {
             Self::Plugins => "plugins",
             Self::YouTube => "youtube",
             Self::Lrclib => "lrclib",
+            Self::Previews => "previews",
         }
     }
 

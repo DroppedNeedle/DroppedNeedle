@@ -7579,3 +7579,68 @@ async fn publish_journal_states_are_typed_and_outputs_backfilled() {
          bundle or of one whose text does not read"
     );
 }
+
+/// Migration 0098 replaces v2's `artist_genres`, which nothing in v3
+/// wrote, with `catalog_artist_genres`: STRICT, one row per artist and
+/// folded genre, its time in integer milliseconds and indexed for the
+/// prune.
+#[tokio::test]
+async fn artist_genres_rebuild_to_the_conventions_on_upgrade() {
+    let pool = scratch_pool().await;
+    migrator_through(96).run(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO artist_genres (artist_mbid_lower, artist_mbid, genres_json) \
+         VALUES ('a-1', 'A-1', '[\"Shoegaze\"]')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    migrator_through(98).run(&pool).await.unwrap();
+
+    let tables = table_names(&pool).await;
+    assert!(!tables.contains(&"artist_genres".to_owned()));
+    let sql: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'catalog_artist_genres'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(sql.trim_end().ends_with("STRICT"), "{sql}");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_artist_genres")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "nothing is carried");
+    let insert = |artist: &'static str, genre: &'static str, at: f64| {
+        sqlx::query(
+            "INSERT INTO catalog_artist_genres (artist_mbid, genre_folded, genre, learned_at) \
+             VALUES (?1, lower(?2), ?2, ?3)",
+        )
+        .bind(artist)
+        .bind(genre)
+        .bind(at)
+        .execute(&pool)
+    };
+    insert("a-1", "Shoegaze", 1_700_000_000_000.0)
+        .await
+        .unwrap();
+    assert!(
+        insert("a-1", "shoegaze", 1_700_000_000_001.0)
+            .await
+            .is_err(),
+        "one row per artist and genre"
+    );
+    assert!(
+        insert("a-2", "Drone", 1_700_000_000.5).await.is_err(),
+        "times are integer milliseconds"
+    );
+    let index: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' \
+         AND name = 'idx_catalog_artist_genres_learned'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(index, 1);
+}

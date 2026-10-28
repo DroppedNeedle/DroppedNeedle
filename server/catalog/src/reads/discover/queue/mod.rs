@@ -594,9 +594,11 @@ impl Inner {
         release_group_mbid: &str,
     ) -> Result<QueueEnrichment, ProviderFailure> {
         let group = release_group_mbid.trim().to_ascii_lowercase();
+        // Only the facts every user shares are kept under this key; the
+        // user's own parts are added below.
         let key = CacheKey::new(
             Source::MusicBrainz,
-            &[&self.listening.namespace(), "queue_card", &group],
+            &[&self.listening.namespace(), "queue_card_facts", &group],
         );
         let lifetime = QueueSettings::read(&self.settings).enrich_ttl;
         let policy = Policy {
@@ -604,7 +606,7 @@ impl Inner {
             miss: lifetime,
         };
         let inner = Arc::clone(self);
-        let user = user_id.to_owned();
+        let fetched_group = group.clone();
         let found = self
             .cache
             .get_or_fetch(
@@ -612,21 +614,27 @@ impl Inner {
                 policy,
                 RequestPriority::UserInitiated,
                 move |_| async move {
-                    let (enrichment, hold) =
-                        cards::enrich(&inner.listening, inner.youtube.as_ref(), &user, &group)
-                            .await;
-                    // Details built past a failed read are shown, not kept.
+                    let (facts, hold) = cards::facts(&inner.listening, &fetched_group).await;
+                    // Facts built past a failed read are shown, not kept.
                     Ok::<_, String>(if hold == CacheHold::default() {
-                        Fetched::Found(enrichment)
+                        Fetched::Found(facts)
                     } else {
-                        Fetched::Partial(enrichment)
+                        Fetched::Partial(facts)
                     })
                 },
             )
             .await;
-        found
+        let facts = found
             .map_err(ProviderFailure::failed)?
-            .ok_or_else(|| ProviderFailure::failed("queue card details missing"))
+            .ok_or_else(|| ProviderFailure::failed("queue card details missing"))?;
+        Ok(cards::for_user(
+            &self.listening,
+            self.youtube.as_ref(),
+            user_id,
+            &group,
+            facts,
+        )
+        .await)
     }
 }
 

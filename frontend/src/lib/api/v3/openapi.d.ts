@@ -19288,7 +19288,7 @@ export interface components {
          * @description Where a cached answer came from. Every key starts with one.
          * @enum {string}
          */
-        ProviderDataSource: "musicbrainz" | "listenbrainz" | "lastfm" | "audiodb" | "wikidata" | "purchase" | "plugins" | "youtube" | "lrclib";
+        ProviderDataSource: "musicbrainz" | "listenbrainz" | "lastfm" | "audiodb" | "wikidata" | "purchase" | "plugins" | "youtube" | "lrclib" | "previews";
         /** @description One provider's limiter posture. */
         ProviderLimiterView: {
             /**

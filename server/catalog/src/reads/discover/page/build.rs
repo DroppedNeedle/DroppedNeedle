@@ -26,7 +26,7 @@ use super::shelves::{self, RowMut, SHELF_SIZE, album, artist, genre, one, shelf}
 use crate::reads::discover::cache::Variant;
 use crate::reads::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData,
-    PlayedArtist, ScoredArtist, StatsRange, UserMusic,
+    PlayedArtist, ScoredArtist, StatsRange, TAG_PAGE, UserMusic,
 };
 use crate::reads::discover::models::{
     AlbumRef, BecauseYouListenTo, ChartSection, DiscoverResponse, RadioSeedKind, SectionContent,
@@ -69,6 +69,14 @@ const UNEXPLORED_MAX: usize = 8;
 const ANNIVERSARY_YEARS: [i64; 7] = [10, 20, 25, 30, 40, 50, 60];
 /// Albums per Daily Mix.
 const MIX_SIZE: usize = 12;
+/// Popular In Your Genres: the user's top genres it reads.
+const TOP_GENRES: usize = 3;
+/// Popular In Your Genres: a Last.fm user's top artists whose tags it reads.
+const GENRE_ARTISTS: usize = 5;
+/// Tags of a Last.fm top artist kept as its genres.
+const LEARNED_ARTIST_TAGS: usize = 5;
+/// How long a learned artist genre is kept after a build last saw it.
+const GENRES_KEPT_MS: i64 = 30 * 86_400_000;
 
 /// The settings one build reads, fresh each time.
 #[derive(Debug, Clone)]
@@ -287,6 +295,13 @@ impl Builder<'_> {
                 &needs,
             )
             .await;
+        if needs(Input::Genres) {
+            bounded(
+                "learn genres",
+                self.learn_genres(user_id, primary, &seeds, &shared),
+            )
+            .await;
+        }
         let library_groups: HashSet<String> = shared
             .library_albums
             .iter()
@@ -1509,13 +1524,7 @@ impl Builder<'_> {
         if primary == ListenSource::Lastfm {
             return self.popular_in_genres_lastfm(user_id, shared, seen).await;
         }
-        let genres: Vec<String> = shared
-            .genres
-            .iter()
-            .flatten()
-            .take(3)
-            .map(|(name, _)| name.clone())
-            .collect();
+        let genres = listenbrainz_top_genres(shared);
         if genres.is_empty() {
             return None;
         }
@@ -1541,6 +1550,90 @@ impl Builder<'_> {
             items,
             Some(ShelfSource::Musicbrainz),
         )
+    }
+
+    /// The Last.fm tags of the first few of `artists`, in order.
+    async fn lastfm_tags<'r>(
+        &self,
+        user_id: &str,
+        artists: &'r [ArtistRow],
+    ) -> Vec<(&'r ArtistRow, Vec<String>)> {
+        let top = &artists[..artists.len().min(GENRE_ARTISTS)];
+        let tags = join_all(top.iter().map(|artist| self.artist_tags(user_id, artist))).await;
+        top.iter()
+            .zip(tags)
+            .map(|(artist, found)| (artist, or_empty("lastfm artist tags", found)))
+            .collect()
+    }
+
+    /// Learn genres for the artists the tag reads of Popular In Your
+    /// Genres name, before the sections that score genre overlap run.
+    /// The reads are that section's own and cached, so a page showing it
+    /// makes no extra call. A ListenBrainz user's top genres each name
+    /// the artists MusicBrainz tags with them; a Last.fm user's top
+    /// artists (the seeds when that read was not made) carry their own
+    /// tags, and the tag charts of the genres drawn from them name more.
+    async fn learn_genres(
+        &self,
+        user_id: &str,
+        primary: ListenSource,
+        seeds: &[ArtistRow],
+        shared: &Shared,
+    ) {
+        let mut learned: Vec<(String, String)> = Vec::new();
+        let mut add = |mbid: Option<&str>, genre: &str| {
+            if let Some(mbid) = normalize(mbid)
+                && droppedneedle_providers::musicbrainz::is_valid_mbid(&mbid)
+                && mbid != VARIOUS_ARTISTS_MBID
+                && !genre.trim().is_empty()
+            {
+                learned.push((mbid, genre.trim().to_owned()));
+            }
+        };
+        if primary == ListenSource::Lastfm {
+            let artists = if shared.lastfm_genre_artists.is_empty() {
+                seeds
+            } else {
+                &shared.lastfm_genre_artists
+            };
+            let tags = self.lastfm_tags(user_id, artists).await;
+            for (artist, tags) in &tags {
+                for tag in tags.iter().take(LEARNED_ARTIST_TAGS) {
+                    add(artist.mbid.as_deref(), tag);
+                }
+            }
+            let genres = lastfm_top_genres(&tags);
+            let found = join_all(genres.iter().map(|genre| {
+                self.listening
+                    .lastfm_tag_artists(user_id, genre, 10, &self.ask)
+            }))
+            .await;
+            for (genre, rows) in genres.iter().zip(found) {
+                for row in or_empty("lastfm tag artists", rows) {
+                    add(row.mbid.as_deref(), genre);
+                }
+            }
+        } else {
+            let genres = listenbrainz_top_genres(shared);
+            let found = join_all(
+                genres
+                    .iter()
+                    .map(|genre| self.listening.tag_artists(genre, TAG_PAGE, 0, &self.ask)),
+            )
+            .await;
+            for (genre, rows) in genres.iter().zip(found) {
+                for row in or_empty("tag artists", rows) {
+                    add(row.mbid.as_deref(), genre);
+                }
+            }
+        }
+        if learned.is_empty() {
+            return;
+        }
+        let at = (self.now * 1000.0) as i64;
+        self.queue_db
+            .learn_genres(learned, at, at - GENRES_KEPT_MS)
+            .await;
     }
 
     /// An artist's Last.fm tags, most used first.
@@ -1571,23 +1664,8 @@ impl Builder<'_> {
         if top.is_empty() {
             return None;
         }
-        let tags = join_all(
-            top.iter()
-                .take(5)
-                .map(|artist| self.artist_tags(user_id, artist)),
-        )
-        .await;
-        let mut genres: Vec<String> = Vec::new();
-        'tags: for found in tags {
-            for tag in or_empty("lastfm artist tags", found).into_iter().take(2) {
-                if !genres.iter().any(|g| g.eq_ignore_ascii_case(&tag)) {
-                    genres.push(tag);
-                    if genres.len() >= 3 {
-                        break 'tags;
-                    }
-                }
-            }
-        }
+        let tags = self.lastfm_tags(user_id, top).await;
+        let genres = lastfm_top_genres(&tags);
         if genres.is_empty() {
             return None;
         }
@@ -1682,6 +1760,34 @@ impl Builder<'_> {
         };
         shelf("Genres to Explore", SectionKind::Genres, items, None)
     }
+}
+
+/// A ListenBrainz user's top genres, most listened first.
+fn listenbrainz_top_genres(shared: &Shared) -> Vec<String> {
+    shared
+        .genres
+        .iter()
+        .flatten()
+        .take(TOP_GENRES)
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// A Last.fm user's top genres: the first two tags of each top artist,
+/// in order, once each.
+fn lastfm_top_genres(tags: &[(&ArtistRow, Vec<String>)]) -> Vec<String> {
+    let mut genres: Vec<String> = Vec::new();
+    for (_, tags) in tags {
+        for tag in tags.iter().take(2) {
+            if !genres.iter().any(|g| g.eq_ignore_ascii_case(tag)) {
+                genres.push(tag.clone());
+                if genres.len() >= TOP_GENRES {
+                    return genres;
+                }
+            }
+        }
+    }
+    genres
 }
 
 /// The 60/40 new-to-familiar split of a Daily Mix, topped up from
