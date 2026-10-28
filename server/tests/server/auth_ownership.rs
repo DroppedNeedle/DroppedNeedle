@@ -998,8 +998,8 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
                 Some(json!({
                     "name": format!("Batch {n}"),
                     "items": [{
-                        "release_group_mbid": format!("00000000-0000-0000-0001-{n:012}"),
-                        "album_name": "Something",
+                        "musicbrainz_id": format!("00000000-0000-0000-0001-{n:012}"),
+                        "title": "Something",
                         "artist_name": "Someone",
                     }],
                 })),
