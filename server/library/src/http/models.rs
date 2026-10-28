@@ -10,14 +10,12 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 pub use super::operations::ReasonView;
-use crate::identify::models::{
-    EvidenceClass, IdentifyKind, JobState as IdentifyJobState, ReviewState,
-};
+use crate::identify::models::{EvidenceClass, ReviewState};
 use crate::identity::DecisionSource;
 use crate::publish::publisher::PublishOutcome;
 use crate::scan::models::{
-    Counters, Disposition, EffectivePolicy, FailureCode, RequestedControl, ScanKind, ScanPhase,
-    ScanState, ScanTrigger, Verdict,
+    Counters, EffectivePolicy, FailureCode, RequestedControl, ScanKind, ScanPhase, ScanState,
+    ScanTrigger, Verdict,
 };
 
 /// Which roots a scan run covers.
@@ -40,62 +38,6 @@ impl AggregateScope {
             Self::Selected
         }
     }
-}
-
-/// One library root.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct RootView {
-    /// Stable root id.
-    pub id: String,
-    /// Absolute root directory.
-    pub path: String,
-    pub policy: EffectivePolicy,
-}
-
-/// Root registry listing.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct RootsResponse {
-    /// Configured roots.
-    pub roots: Vec<RootView>,
-    /// Whether the local library is enabled.
-    pub enabled: bool,
-    /// Policy revision of the roots and rules, as the library settings
-    /// show it. Send it back as `expected_policy_revision`.
-    pub policy_revision: String,
-    /// Managed-write bundles not yet settled: cleanup still pending, or
-    /// recovery could not finish (their root is gone or excluded, a file
-    /// operation failed). The background maintenance retries them; their
-    /// tracks take no new managed writes until then.
-    pub held_publish_bundles: Vec<String>,
-}
-
-/// Add a library root. The path must exist and be absolute; the id
-/// defaults to a fresh uuid.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct AddRootBody {
-    /// Stable root id (default: fresh id).
-    pub id: Option<String>,
-    /// Absolute root directory.
-    pub path: String,
-    /// Effective policy (default: `automatic`).
-    pub policy: Option<EffectivePolicy>,
-}
-
-/// Trigger a scan over one root or every scheduled root.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct ScanBody {
-    /// Root id to scan (default: every scheduled root).
-    pub root_id: Option<String>,
-}
-
-/// Scan request answer.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct ScanResponse {
-    /// Run id (fresh or coalesced).
-    pub run_id: String,
-    pub disposition: Disposition,
-    /// Run state after the request.
-    pub state: ScanState,
 }
 
 /// One scan run.
@@ -186,26 +128,6 @@ pub struct RunDetailResponse {
     pub scopes: Vec<ScanScopeView>,
     /// Discovered files (bounded to the latest 500).
     pub files: Vec<ScanFileView>,
-}
-
-/// Enqueue one album for identification.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct IdentifyBody {
-    /// Catalog album id, as `GET /library/albums` lists it.
-    pub album_id: String,
-    /// Job kind (default: `manual`).
-    pub kind: Option<IdentifyKind>,
-}
-
-/// Enqueue answer.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct IdentifyResponse {
-    /// Job id.
-    pub job_id: String,
-    /// Local album id.
-    pub album_id: String,
-    /// Job state after enqueue.
-    pub state: IdentifyJobState,
 }
 
 /// One scored candidate inside a review.
@@ -405,134 +327,6 @@ pub struct ReviewResolveResponse {
     pub identity: Option<IdentityView>,
 }
 
-/// One file inside a management preview.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct ManageItemBody {
-    /// Source root id.
-    pub root_id: String,
-    /// Source path relative to the root.
-    pub rel_path: String,
-    /// Destination path relative to the root (organize only;
-    /// retag writes in place).
-    pub dest_rel: Option<String>,
-    /// Managed-field updates by Picard tag-set name: `title`,
-    /// `title_sort`, `artist`, `artists`, `artist_sort`, `album`,
-    /// `album_sort`, `album_artist`, `album_artist_sort`, `genre`,
-    /// `compilation` (`1` or `0`), `track_number`, `total_tracks`,
-    /// `disc_number`, `total_discs`, `disc_subtitle`, `date`, `original_date`,
-    /// `release_status`, `release_country`, `release_type`, `media`,
-    /// `label`, `catalog_number`, `barcode`, `asin`, and the
-    /// `musicbrainz_*` ids (`recording`, `release_track`, `release`,
-    /// `release_group`, `artist`, `album_artist`). A retag also writes
-    /// the full set from the album's identified release; these win.
-    pub managed_updates: HashMap<String, Vec<String>>,
-}
-
-/// What a management preview does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ManageKind {
-    /// Write the tags in place.
-    Retag,
-    /// Move the files.
-    Organize,
-}
-
-/// How one planned file is written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ManageFileKind {
-    /// Written in place.
-    SamePath,
-    Move,
-}
-
-/// Build a sealed management preview. Identity always resolves from
-/// the accepted identify rows for `album_id`; tracks without an
-/// accepted exact mapping block the preview loudly.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct ManagePreviewBody {
-    pub kind: ManageKind,
-    /// Local album id carrying the accepted identity.
-    pub album_id: String,
-    /// Files in the bundle.
-    pub items: Vec<ManageItemBody>,
-}
-
-/// One planned file inside a preview.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct ManageFileView {
-    /// Stable local track id.
-    pub track_id: String,
-    /// Source `root/rel`.
-    pub source: String,
-    /// Destination `root/rel`.
-    pub dest: String,
-    pub kind: ManageFileKind,
-    /// For a retag, the tags the write changes, in display order: album,
-    /// album artist, title, artist, track, disc, date, label, catalog
-    /// number, barcode, then `musicbrainz_ids`. Unchanged tags are left
-    /// out. Empty for a move.
-    pub changes: Vec<ManageTagChange>,
-}
-
-/// One tag a retag would change.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct ManageTagChange {
-    /// Tag field name (`album`, `track_number`, ...), or `musicbrainz_ids`
-    /// for every MusicBrainz id field together.
-    pub field: String,
-    /// The file's value now, several values joined with "; "; null when
-    /// absent. Always null for `musicbrainz_ids`.
-    pub from: Option<String>,
-    /// The value after the write; null when the write removes the tag.
-    /// For `musicbrainz_ids`, how many id fields change and stay, such as
-    /// "4 changed, 2 kept".
-    pub to: Option<String>,
-}
-
-/// Sealed preview answer. The token is single-use and short-lived.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct ManagePreviewResponse {
-    /// Single-use confirmation token.
-    pub preview_token: String,
-    /// Expiry day (unix day, exclusive).
-    pub expires_day: i64,
-    /// Bundle id the apply will publish under.
-    pub bundle_id: String,
-    /// Planned files.
-    pub files: Vec<ManageFileView>,
-}
-
-/// Apply a sealed preview.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct ManageApplyBody {
-    /// Preview token from the preview answer.
-    pub preview_token: String,
-}
-
-/// One applied file.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct ManageAppliedFile {
-    /// Stable local track id.
-    pub track_id: String,
-    /// Adopted root id.
-    pub root_id: String,
-    /// Adopted path relative to the root.
-    pub rel_path: String,
-}
-
-/// Apply answer.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct ManageApplyResponse {
-    /// Published bundle id.
-    pub bundle_id: String,
-    /// Whether cleanup finished.
-    pub outcome: PublishOutcome,
-    /// Applied files.
-    pub files: Vec<ManageAppliedFile>,
-}
-
 /// Undo one published bundle as a new previewed operation.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct ManageUndoBody {
@@ -587,22 +381,4 @@ pub struct PluginFileView {
     /// When it was added, in unix milliseconds.
     pub added_at: i64,
     pub state: PluginFileState,
-}
-
-/// Restore tracks to their immutable first-management baselines.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct BaselineRestoreBody {
-    /// Track ids to restore.
-    pub track_ids: Vec<String>,
-}
-
-/// Baseline restore answer.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct BaselineRestoreResponse {
-    /// Restore operation bundle id.
-    pub bundle_id: String,
-    /// Whether cleanup finished.
-    pub outcome: PublishOutcome,
-    /// Restored track ids.
-    pub restored: Vec<String>,
 }

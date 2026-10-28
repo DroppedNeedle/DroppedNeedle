@@ -4210,23 +4210,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/library/identify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Enqueue one album for identification. */
-        post: operations["enqueue_identify"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/library/identity-repairs": {
         parameters: {
             query?: never;
@@ -4355,40 +4338,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/library/manage/apply": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Apply a sealed preview exactly once. */
-        post: operations["manage_apply"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/library/manage/baseline/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Restore tracks to their first-management baselines. */
-        post: operations["baseline_restore"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/library/manage/plugin-files": {
         parameters: {
             query?: never;
@@ -4400,23 +4349,6 @@ export interface paths {
         get: operations["list_plugin_files"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/library/manage/preview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Build a sealed management preview (`retag` or `organize`). */
-        post: operations["manage_preview"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5434,41 +5366,6 @@ export interface paths {
          *     carries the decision, so the review is dismissed.
          */
         post: operations["retry_review"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/library/roots": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List library roots. */
-        get: operations["list_roots"];
-        put?: never;
-        /** Add a library root. Adding the first root enables the library. */
-        post: operations["add_root"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/library/scan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Trigger a manual scan over one root or every scheduled root. */
-        post: operations["trigger_scan"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9847,17 +9744,6 @@ export interface components {
          * @enum {string}
          */
         ActivityKind: "scan" | "identification";
-        /**
-         * @description Add a library root. The path must exist and be absolute; the id
-         *     defaults to a fresh uuid.
-         */
-        AddRootBody: {
-            /** @description Stable root id (default: fresh id). */
-            id?: string | null;
-            /** @description Absolute root directory. */
-            path: string;
-            policy?: null | components["schemas"]["EffectivePolicy"];
-        };
         /** @description Add-tracks body. */
         AddTracksBody: {
             /** @description Insert position. Missing appends; past-the-end clamps. */
@@ -11374,20 +11260,6 @@ export interface components {
              * @description Schema stamp from the manifest, when present.
              */
             user_version?: number | null;
-        };
-        /** @description Restore tracks to their immutable first-management baselines. */
-        BaselineRestoreBody: {
-            /** @description Track ids to restore. */
-            track_ids: string[];
-        };
-        /** @description Baseline restore answer. */
-        BaselineRestoreResponse: {
-            /** @description Restore operation bundle id. */
-            bundle_id: string;
-            /** @description Whether cleanup finished. */
-            outcome: components["schemas"]["PublishOutcome"];
-            /** @description Restored track ids. */
-            restored: string[];
         };
         /** @description Batch-cancel body. Dedupe is by exact string before lookup. */
         BatchCancelBody: {
@@ -14945,25 +14817,6 @@ export interface components {
          * @enum {string}
          */
         IdentificationState: "running" | "pausing" | "paused";
-        /** @description Enqueue one album for identification. */
-        IdentifyBody: {
-            /** @description Catalog album id, as `GET /library/albums` lists it. */
-            album_id: string;
-            kind?: null | components["schemas"]["IdentifyKind"];
-        };
-        /** @enum {string} */
-        IdentifyJobState: "queued" | "running" | "deferred" | "succeeded" | "failed" | "attention";
-        /** @enum {string} */
-        IdentifyKind: "automatic" | "manual" | "historical";
-        /** @description Enqueue answer. */
-        IdentifyResponse: {
-            /** @description Local album id. */
-            album_id: string;
-            /** @description Job id. */
-            job_id: string;
-            /** @description Job state after enqueue. */
-            state: components["schemas"]["IdentifyJobState"];
-        };
         /**
          * @description What the receiving album keeps when the albums being combined name
          *     different editions.
@@ -16678,128 +16531,6 @@ export interface components {
             lines: components["schemas"]["LyricLine"][];
             /** @description Full text, lines joined with newlines. */
             text: string;
-        };
-        /** @description One applied file. */
-        ManageAppliedFile: {
-            /** @description Adopted path relative to the root. */
-            rel_path: string;
-            /** @description Adopted root id. */
-            root_id: string;
-            /** @description Stable local track id. */
-            track_id: string;
-        };
-        /** @description Apply a sealed preview. */
-        ManageApplyBody: {
-            /** @description Preview token from the preview answer. */
-            preview_token: string;
-        };
-        /** @description Apply answer. */
-        ManageApplyResponse: {
-            /** @description Published bundle id. */
-            bundle_id: string;
-            /** @description Applied files. */
-            files: components["schemas"]["ManageAppliedFile"][];
-            /** @description Whether cleanup finished. */
-            outcome: components["schemas"]["PublishOutcome"];
-        };
-        /**
-         * @description How one planned file is written.
-         * @enum {string}
-         */
-        ManageFileKind: "same_path" | "move";
-        /** @description One planned file inside a preview. */
-        ManageFileView: {
-            /**
-             * @description For a retag, the tags the write changes, in display order: album,
-             *     album artist, title, artist, track, disc, date, label, catalog
-             *     number, barcode, then `musicbrainz_ids`. Unchanged tags are left
-             *     out. Empty for a move.
-             */
-            changes: components["schemas"]["ManageTagChange"][];
-            /** @description Destination `root/rel`. */
-            dest: string;
-            kind: components["schemas"]["ManageFileKind"];
-            /** @description Source `root/rel`. */
-            source: string;
-            /** @description Stable local track id. */
-            track_id: string;
-        };
-        /** @description One file inside a management preview. */
-        ManageItemBody: {
-            /**
-             * @description Destination path relative to the root (organize only;
-             *     retag writes in place).
-             */
-            dest_rel?: string | null;
-            /**
-             * @description Managed-field updates by Picard tag-set name: `title`,
-             *     `title_sort`, `artist`, `artists`, `artist_sort`, `album`,
-             *     `album_sort`, `album_artist`, `album_artist_sort`, `genre`,
-             *     `compilation` (`1` or `0`), `track_number`, `total_tracks`,
-             *     `disc_number`, `total_discs`, `disc_subtitle`, `date`, `original_date`,
-             *     `release_status`, `release_country`, `release_type`, `media`,
-             *     `label`, `catalog_number`, `barcode`, `asin`, and the
-             *     `musicbrainz_*` ids (`recording`, `release_track`, `release`,
-             *     `release_group`, `artist`, `album_artist`). A retag also writes
-             *     the full set from the album's identified release; these win.
-             */
-            managed_updates: {
-                [key: string]: string[];
-            };
-            /** @description Source path relative to the root. */
-            rel_path: string;
-            /** @description Source root id. */
-            root_id: string;
-        };
-        /**
-         * @description What a management preview does.
-         * @enum {string}
-         */
-        ManageKind: "retag" | "organize";
-        /**
-         * @description Build a sealed management preview. Identity always resolves from
-         *     the accepted identify rows for `album_id`; tracks without an
-         *     accepted exact mapping block the preview loudly.
-         */
-        ManagePreviewBody: {
-            /** @description Local album id carrying the accepted identity. */
-            album_id: string;
-            /** @description Files in the bundle. */
-            items: components["schemas"]["ManageItemBody"][];
-            kind: components["schemas"]["ManageKind"];
-        };
-        /** @description Sealed preview answer. The token is single-use and short-lived. */
-        ManagePreviewResponse: {
-            /** @description Bundle id the apply will publish under. */
-            bundle_id: string;
-            /**
-             * Format: int64
-             * @description Expiry day (unix day, exclusive).
-             */
-            expires_day: number;
-            /** @description Planned files. */
-            files: components["schemas"]["ManageFileView"][];
-            /** @description Single-use confirmation token. */
-            preview_token: string;
-        };
-        /** @description One tag a retag would change. */
-        ManageTagChange: {
-            /**
-             * @description Tag field name (`album`, `track_number`, ...), or `musicbrainz_ids`
-             *     for every MusicBrainz id field together.
-             */
-            field: string;
-            /**
-             * @description The file's value now, several values joined with "; "; null when
-             *     absent. Always null for `musicbrainz_ids`.
-             */
-            from?: string | null;
-            /**
-             * @description The value after the write; null when the write removes the tag.
-             *     For `musicbrainz_ids`, how many id fields change and stay, such as
-             *     "4 changed, 2 kept".
-             */
-            to?: string | null;
         };
         /** @description Undo one published bundle as a new previewed operation. */
         ManageUndoBody: {
@@ -21531,33 +21262,6 @@ export interface components {
             /** @description New role. */
             role: components["schemas"]["Role"];
         };
-        /** @description One library root. */
-        RootView: {
-            /** @description Stable root id. */
-            id: string;
-            /** @description Absolute root directory. */
-            path: string;
-            policy: components["schemas"]["EffectivePolicy"];
-        };
-        /** @description Root registry listing. */
-        RootsResponse: {
-            /** @description Whether the local library is enabled. */
-            enabled: boolean;
-            /**
-             * @description Managed-write bundles not yet settled: cleanup still pending, or
-             *     recovery could not finish (their root is gone or excluded, a file
-             *     operation failed). The background maintenance retries them; their
-             *     tracks take no new managed writes until then.
-             */
-            held_publish_bundles: string[];
-            /**
-             * @description Policy revision of the roots and rules, as the library settings
-             *     show it. Send it back as `expected_policy_revision`.
-             */
-            policy_revision: string;
-            /** @description Configured roots. */
-            roots: components["schemas"]["RootView"][];
-        };
         /** @description Run detail: the run, its scopes, and its discovered files. */
         RunDetailResponse: {
             /** @description Discovered files (bounded to the latest 500). */
@@ -21648,11 +21352,6 @@ export interface components {
             /** @description Server version, when known. */
             version?: string | null;
         };
-        /** @description Trigger a scan over one root or every scheduled root. */
-        ScanBody: {
-            /** @description Root id to scan (default: every scheduled root). */
-            root_id?: string | null;
-        };
         /** @description A pause, resume or stop request. */
         ScanControlBody: {
             /**
@@ -21727,14 +21426,6 @@ export interface components {
          * @enum {string}
          */
         ScanPhase: "queued" | "discovering" | "indexing" | "reconciling";
-        /** @description Scan request answer. */
-        ScanResponse: {
-            disposition: components["schemas"]["ScanDisposition"];
-            /** @description Run id (fresh or coalesced). */
-            run_id: string;
-            /** @description Run state after the request. */
-            state: components["schemas"]["ScanState"];
-        };
         /** @description The run holding the worker and the next queued one. */
         ScanRunCurrentResponse: {
             active: null | components["schemas"]["ScanRunView"];
@@ -34468,66 +34159,6 @@ export interface operations {
             };
         };
     };
-    enqueue_identify: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["IdentifyBody"];
-            };
-        };
-        responses: {
-            /** @description Enqueue answer */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IdentifyResponse"];
-                };
-            };
-            /** @description Bad album id or kind */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Curator role required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Unknown album id */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     list_repairs: {
         parameters: {
             query?: {
@@ -35063,135 +34694,6 @@ export interface operations {
             };
         };
     };
-    manage_apply: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ManageApplyBody"];
-            };
-        };
-        responses: {
-            /** @description Apply answer */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ManageApplyResponse"];
-                };
-            };
-            /** @description Missing preview token */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Curator role required; admin role for anything but a plain retag */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Unknown preview token */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Stale preview or blocked bundle */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    baseline_restore: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BaselineRestoreBody"];
-            };
-        };
-        responses: {
-            /** @description Restore answer */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BaselineRestoreResponse"];
-                };
-            };
-            /** @description No tracks listed */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Admin role required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Restore blocked for a file */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     list_plugin_files: {
         parameters: {
             query: {
@@ -35237,66 +34739,6 @@ export interface operations {
             };
             /** @description Admin role required */
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    manage_preview: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ManagePreviewBody"];
-            };
-        };
-        responses: {
-            /** @description Sealed preview */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ManagePreviewResponse"];
-                };
-            };
-            /** @description Bad kind, fields, or items */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Curator role required; admin role for anything but a plain retag */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Missing identity, collision, no space, or the album's chosen edition is still being placed */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -38548,164 +37990,6 @@ export interface operations {
                 };
             };
             /** @description Review already settled or changed since it was read (STALE_REVISION), album excluded, or needs the Local metadata confirmation */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    list_roots: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Root registry */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RootsResponse"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    add_root: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AddRootBody"];
-            };
-        };
-        responses: {
-            /** @description Added root */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RootView"];
-                };
-            };
-            /** @description Bad root path or policy */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Admin role required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Root id exists or recovery blocked */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    trigger_scan: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ScanBody"];
-            };
-        };
-        responses: {
-            /** @description Scan request answer */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScanResponse"];
-                };
-            };
-            /** @description No scopes to scan */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Admin role required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Unknown root id */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Library disabled or policy moved */
             409: {
                 headers: {
                     [name: string]: unknown;

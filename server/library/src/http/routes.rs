@@ -8,17 +8,10 @@ use crate::wiring::LibraryServices;
 /// Every library route, grouped by who may call it.
 pub fn library_routes() -> Routes<LibraryServices> {
     Routes::new()
-        .user(routes!(list_roots))
-        .admin(routes!(add_root))
-        .admin(routes!(trigger_scan))
         .user(routes!(list_runs))
         .user(routes!(get_run))
-        .curator(routes!(enqueue_identify))
-        .curator(routes!(manage_preview))
-        .curator(routes!(manage_apply))
         .curator(routes!(manage_undo))
         .admin(routes!(list_plugin_files))
-        .admin(routes!(baseline_restore))
         .merge(super::scan::routes())
         .merge(super::operations::routes())
         .merge(super::corrections::routes())

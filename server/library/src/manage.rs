@@ -1,4 +1,10 @@
-//! Library management: sealed previews, apply, undo, baseline restore.
+//! The publisher session and the service calls over it.
+//!
+//! One publish cell holds the open publisher; placement, removals, the
+//! management stack and plugin files publish through it. Beside it sit
+//! sealed previews and their apply, bundle undo and baseline restore:
+//! `POST /library/manage/undo` (a plugin file's take-back) uses the undo,
+//! and the tests drive single-file publishes through the rest.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -51,7 +57,6 @@ pub(super) fn policy_revision_u64(registry: &RootRegistry) -> u64 {
 pub struct PreviewEntry {
     sealed: SealedPreview,
     docs: BTreeMap<String, TagDocument>,
-    plain_retag: bool,
 }
 
 /// Open publisher plus the sandbox it runs under.
@@ -842,7 +847,7 @@ pub(crate) struct BaselineFiles {
     pub blocked: Vec<(String, BaselineSkip)>,
 }
 
-/// One file inside a management preview request (handler-mapped).
+/// One file inside a sealed preview request.
 pub struct PreviewItemInput {
     /// Source root id.
     pub root_id: String,
@@ -852,16 +857,6 @@ pub struct PreviewItemInput {
     pub dest_rel: Option<String>,
     /// Managed-field updates, as the request names them.
     pub managed_updates: BTreeMap<String, Vec<String>>,
-}
-
-/// Whether a preview request is a plain retag: the album's edition tags
-/// written in place, with no destination and no tag values from the
-/// caller. Anything else moves a file or writes what the caller chose.
-pub fn plain_retag(kind: PlanKind, items: &[PreviewItemInput]) -> bool {
-    kind == PlanKind::SamePath
-        && items
-            .iter()
-            .all(|item| item.dest_rel.is_none() && item.managed_updates.is_empty())
 }
 
 /// One planned file inside a sealed preview.
@@ -874,87 +869,6 @@ pub struct PreviewFile {
     pub dest: String,
     /// Write in place or move.
     pub kind: PlanKind,
-    /// The tags a retag changes, in display order; empty for a move.
-    pub changes: Vec<TagChange>,
-}
-
-/// One tag a retag would change. Values are text; several values are
-/// joined with "; ". `None` means the tag is absent.
-pub struct TagChange {
-    /// Tag field name, or `musicbrainz_ids` for the ids summarised.
-    pub field: String,
-    /// Value the file holds now.
-    pub from: Option<String>,
-    /// Value the write leaves.
-    pub to: Option<String>,
-}
-
-/// The fields a retag preview names one by one, in display order.
-const SHOWN_CHANGES: [super::tags::TagField; 10] = {
-    use super::tags::TagField;
-    [
-        TagField::Album,
-        TagField::AlbumArtist,
-        TagField::Title,
-        TagField::Artist,
-        TagField::TrackNumber,
-        TagField::DiscNumber,
-        TagField::Date,
-        TagField::Label,
-        TagField::CatalogNumber,
-        TagField::Barcode,
-    ]
-};
-
-/// The shown fields `updates` changes against `before`, then one
-/// `musicbrainz_ids` entry counting the MusicBrainz id fields that change
-/// and stay, when any changes. Fields the write leaves alone are skipped.
-fn tag_changes(
-    before: &BTreeMap<String, Vec<String>>,
-    updates: &BTreeMap<String, Vec<String>>,
-) -> Vec<TagChange> {
-    let text = |values: Option<&Vec<String>>| {
-        values
-            .filter(|values| !values.is_empty())
-            .map(|values| values.join("; "))
-    };
-    let differs = |name: &str, to: &Vec<String>| {
-        before.get(name).map(Vec::as_slice).unwrap_or_default() != to.as_slice()
-    };
-    let mut changes: Vec<TagChange> = SHOWN_CHANGES
-        .iter()
-        .filter_map(|field| {
-            let name = field.name();
-            let to = updates.get(name)?;
-            differs(name, to).then(|| TagChange {
-                field: name.to_owned(),
-                from: text(before.get(name)),
-                to: text(Some(to)),
-            })
-        })
-        .collect();
-    let (changed, kept) = updates
-        .iter()
-        .filter(|(name, _)| name.starts_with("musicbrainz_"))
-        .fold((0, 0), |(changed, kept), (name, to)| {
-            if differs(name, to) {
-                (changed + 1, kept)
-            } else {
-                (changed, kept + 1)
-            }
-        });
-    if changed > 0 {
-        changes.push(TagChange {
-            field: "musicbrainz_ids".to_owned(),
-            from: None,
-            to: Some(if kept > 0 {
-                format!("{changed} changed, {kept} kept")
-            } else {
-                format!("{changed} changed")
-            }),
-        });
-    }
-    changes
 }
 
 /// Sealed preview awaiting apply.
@@ -1543,19 +1457,12 @@ impl Publishing {
                 &item.rel_path,
                 &managed_updates,
             )?;
-            // The before-state the seal keeps is the file's tags now, so
-            // the changes come from it with no extra read.
-            let changes = match item_kind {
-                PlanKind::SamePath => tag_changes(&doc.managed.named(), &managed_updates.named()),
-                PlanKind::Move => Vec::new(),
-            };
             docs.insert(track_id.clone(), doc);
             files.push(PreviewFile {
                 track_id,
                 source: format!("{}/{}", item.root_id, item.rel_path),
                 dest: format!("{dest_root}/{dest_rel}"),
                 kind: item_kind,
-                changes,
             });
         }
         let mut bundle = PlanBundle {
@@ -1587,14 +1494,7 @@ impl Publishing {
                 .previews
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            previews.insert(
-                token_hash,
-                PreviewEntry {
-                    sealed,
-                    docs,
-                    plain_retag: plain_retag(kind, &items),
-                },
-            );
+            previews.insert(token_hash, PreviewEntry { sealed, docs });
         }
         Ok(PreviewSealed {
             token,
@@ -1602,18 +1502,6 @@ impl Publishing {
             bundle_id: bundle.id,
             files,
         })
-    }
-
-    /// Whether the preview behind `token` is a plain retag; `None` when
-    /// no such preview waits. Looking does not spend the token.
-    pub fn preview_is_plain_retag(&self, token: &str) -> Option<bool> {
-        let previews = self
-            .previews
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        previews
-            .get(&sha256_hex(token.as_bytes()))
-            .map(|entry| entry.plain_retag)
     }
 
     /// Apply a sealed preview exactly once, under the publish lock.

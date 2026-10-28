@@ -385,15 +385,26 @@ impl TestApp {
         let admin = self.login_admin().await;
         let headers = [("authorization", admin.as_str())];
         let before = self.finished_scans(&headers).await;
+        // Saved through the library settings with the caller's id, so the
+        // test can name the folder by it.
+        let (status, mut settings) = self
+            .call_through_busy("GET", "/api/v3/settings/library", &headers, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{settings}");
+        let revision = settings["policy_revision"].clone();
+        settings["library_roots"]
+            .as_array_mut()
+            .expect("library roots")
+            .push(json!({"id": id, "path": path.to_string_lossy(), "label": id}));
         let (status, body) = self
             .call_through_busy(
-                "POST",
-                "/api/v3/library/roots",
+                "PUT",
+                "/api/v3/settings/library",
                 &headers,
-                Some(json!({"id": id, "path": path.to_string_lossy()})),
+                Some(json!({"settings": settings, "expected_policy_revision": revision})),
             )
             .await;
-        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(status, StatusCode::OK, "{body}");
         let run = self
             .until("the new folder's first scan", || async {
                 let (status, body) = self
@@ -423,10 +434,19 @@ impl TestApp {
     pub async fn scan_library(&self) -> String {
         let admin = self.login_admin().await;
         let headers = [("authorization", admin.as_str())];
-        let (status, body) = self
-            .call_through_busy("POST", "/api/v3/library/scan", &headers, Some(json!({})))
+        let (status, settings) = self
+            .call_through_busy("GET", "/api/v3/settings/library", &headers, None)
             .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::OK, "{settings}");
+        let (status, body) = self
+            .call_through_busy(
+                "POST",
+                "/api/v3/library/scan/runs",
+                &headers,
+                Some(json!({"expected_policy_revision": settings["policy_revision"]})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
         let run = body["run_id"].as_str().expect("run id").to_owned();
         self.scan_ended(&run).await;
         run

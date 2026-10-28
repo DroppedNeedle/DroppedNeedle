@@ -133,6 +133,102 @@ impl Rig {
         body["row_revision"].as_u64().expect("revision")
     }
 
+    /// Queue the album for identification again, as the owner. No route
+    /// asks for one album by itself, so the journey calls the service.
+    async fn reidentify(&self, album: &str) {
+        use droppedneedle_library::identify::models::IdentifyKind;
+        let owner: String = self
+            .app
+            .db()
+            .query_row(
+                "SELECT id FROM auth_users WHERE role = 'admin'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("owner");
+        let identification = self.app.state().library_services.identification.clone();
+        let album = album.to_owned();
+        tokio::task::spawn_blocking(move || {
+            identification.enqueue_identify(&album, IdentifyKind::Manual, &owner)
+        })
+        .await
+        .expect("enqueue joins")
+        .expect("identification queued");
+    }
+
+    /// Write the album's edition tags into its files as `headers`, the way
+    /// the edition sheet does. Returns the album's tag-write path and the
+    /// written job's id, for its undo.
+    async fn write_edition_tags(&self, headers: &[(&str, &str)], album: &str) -> (String, String) {
+        let app = &self.app;
+        // The music folder writes tags by hand with the Picard profile.
+        let page = "/api/v3/settings/library-management";
+        let (code, saved) = app.call("GET", page, headers, None).await;
+        assert_eq!(code, StatusCode::OK, "{saved}");
+        let mut settings = saved.clone();
+        settings
+            .as_object_mut()
+            .expect("settings")
+            .remove("settings_revision");
+        settings["root_assignments"] = json!([{
+            "root_id": "music",
+            "profile_id": droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID,
+            "enabled": false,
+            "overrides": {"metadata_enabled": true},
+        }]);
+        let (code, body) = app
+            .call(
+                "PUT",
+                page,
+                headers,
+                Some(json!({
+                    "settings": settings,
+                    "expected_settings_revision": saved["settings_revision"],
+                })),
+            )
+            .await;
+        assert_eq!(code, StatusCode::OK, "{body}");
+        let edition = format!("/api/v3/library/albums/{album}/edition");
+        let status = edition_status(app, headers, &edition).await;
+        let release = self
+            .identify_store
+            .album_identity(album)
+            .unwrap()
+            .and_then(|identity| identity.release_mbid)
+            .expect("an edition");
+        let tags = format!("{edition}/tags");
+        let (code, queued) = app
+            .call(
+                "POST",
+                &tags,
+                headers,
+                Some(json!({
+                    "release_mbid": release,
+                    "expected_identity_revision": status["identity_revision"],
+                })),
+            )
+            .await;
+        assert_eq!(code, StatusCode::OK, "{queued}");
+        let job = queued["job_id"].as_str().expect("job id").to_owned();
+        let planned = settled_tag_write(app, headers, &format!("{tags}/{job}")).await;
+        assert!(
+            planned["files"]
+                .as_array()
+                .expect("files")
+                .iter()
+                .all(|file| file["blocked"].is_null()),
+            "{planned}"
+        );
+        write_planned(
+            app,
+            headers,
+            &format!("{tags}/{job}"),
+            &queued["preview_token"],
+        )
+        .await;
+        (tags, job)
+    }
+
     /// The owner chooses `REL_1` as the album's edition.
     async fn choose_first_edition(&self, album: &str) {
         let auth = self.app.login_admin().await;
@@ -200,8 +296,8 @@ impl Rig {
     /// there it places them, or hands the album back to automatic choice,
     /// and either way moves the album's identity and the catalog revision:
     /// a preview sealed before then is stale, and an Undo after it is
-    /// blocked. A manage preview asked for before then is refused with the
-    /// message a person sees, so a journey waits here before it previews.
+    /// blocked. A tag write asked for before then is refused with the
+    /// message a person sees, so a journey waits here before it writes.
     async fn edition_settled(&self, album: &str) {
         let db = self.app.db();
         self.app
@@ -390,7 +486,7 @@ fn file_edition_review(store: &SqliteIdentifyStore, album_id: &str) -> String {
 }
 
 #[tokio::test]
-async fn library_journey_scan_identify_review_organize_undo() {
+async fn library_journey_scan_identify_review() {
     let rig = Rig::start("lib-organize").await;
     let app = &rig.app;
     let auth = app.login_admin().await;
@@ -423,15 +519,11 @@ async fn library_journey_scan_identify_review_organize_undo() {
         Some(2),
         "exactly the two planted tracks index"
     );
-    let (track_a, track_b) = {
-        let track = |path| {
-            rig.scan_store
-                .track_at("music", path)
-                .unwrap()
-                .expect("track indexed")
-        };
-        (track("album-a/01.flac"), track("album-a/02.flac"))
-    };
+    let track_a = rig
+        .scan_store
+        .track_at("music", "album-a/01.flac")
+        .unwrap()
+        .expect("track indexed");
 
     // Purity: the scan wrote zero media bytes.
     assert_eq!(snapshot_tree(&music), bytes_before);
@@ -505,21 +597,13 @@ async fn library_journey_scan_identify_review_organize_undo() {
     // A manual re-enqueue is accepted (job queued); it runs against an
     // empty recall, so it ends without touching the review.
     rig.identify.set_recall(RecallResult::default());
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/identify",
-            &headers,
-            Some(json!({"album_id": album_key, "kind": "manual"})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.reidentify(album_key).await;
     rig.identified(album_key, 1).await;
 
     // Curator approval seals a manual identity. The candidate names only
     // the release, so the app goes on to ask MusicBrainz for it. The script
     // was emptied above and does not know it, so the album goes back to
-    // automatic choice on the same release. The preview waits for that.
+    // automatic choice on the same release. The journey waits for that.
     let (status, body) = app
         .call(
             "POST",
@@ -536,209 +620,6 @@ async fn library_journey_scan_identify_review_organize_undo() {
     assert_eq!(body["identity"]["release_mbid"], json!(REL_1));
     assert_eq!(body["identity"]["decision_source"], json!("manual"));
     rig.edition_settled(album_key).await;
-
-    // Auto-organize the whole album: preview, apply, and the files move
-    // with new tags.
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &headers,
-            Some(json!({
-                "kind": "organize",
-                "album_id": album_key,
-                "items": [
-                    {
-                        "root_id": "music",
-                        "rel_path": "album-a/01.flac",
-                        "dest_rel": "organized/01.flac",
-                        "managed_updates": {"title": ["Organized Title"]},
-                    },
-                    {
-                        "root_id": "music",
-                        "rel_path": "album-a/02.flac",
-                        "dest_rel": "organized/02.flac",
-                        "managed_updates": {"title": ["Organized Title"]},
-                    },
-                ],
-            })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let token = body["preview_token"].as_str().expect("token").to_owned();
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/apply",
-            &headers,
-            Some(json!({"preview_token": token})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["outcome"], json!("committed"));
-    let bundle_id = body["bundle_id"].as_str().expect("bundle").to_owned();
-    let moved = music.join("organized/01.flac");
-    assert!(moved.is_file(), "organized file lands");
-    assert!(!file_a.exists(), "source leaves after commit");
-    assert_eq!(read_title(&moved), "Organized Title");
-
-    // A rescan after the move re-reads the rewritten files and keeps them
-    // on the same album, so the approved release still applies. The rescan
-    // queues the album for identification again; Undo checks the identity,
-    // so that job ends first.
-    app.scan_library().await;
-    rig.identified(album_key, 1).await;
-    {
-        for track in [&track_a, &track_b] {
-            assert_eq!(
-                rig.scan_store.album_for_track(track).unwrap().as_deref(),
-                Some(album_key),
-                "an organized track stays on its album"
-            );
-        }
-        let identity = rig
-            .identify_store
-            .album_identity(album_key)
-            .unwrap()
-            .expect("identity stays with the album");
-        assert_eq!(identity.release_mbid.as_deref(), Some(REL_1));
-    }
-
-    // Undo restores the exact before state: path and tags.
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/undo",
-            &headers,
-            Some(json!({"bundle_id": bundle_id})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let mut restored: Vec<String> =
-        serde_json::from_value(body["restored"].clone()).expect("restored ids");
-    restored.sort();
-    let mut expected = vec![track_a.clone(), track_b.clone()];
-    expected.sort();
-    assert_eq!(restored, expected);
-    assert!(file_a.is_file(), "source returns after undo");
-    assert!(!moved.exists(), "destination clears after undo");
-    assert_eq!(read_title(&file_a), title_a_before);
-    rig.stop().await;
-}
-
-#[tokio::test]
-async fn library_journey_retag_apply_baseline_restore() {
-    let rig = Rig::start("lib-retag").await;
-    rig.identify.recall_from(ambiguous_from);
-    let app = &rig.app;
-    let auth = app.login_admin().await;
-    let headers = [("authorization", auth.as_str())];
-
-    let music = app.config.root_app_dir.join("music");
-    let file = plant(&music, "album-b/01.flac", "management_full.flac");
-    let original_title = read_title(&file);
-    let fields_before = droppedneedle_library::tags::read_fields(&file).expect("fields read");
-    app.add_library_folder("music", &music).await;
-    let track_id = {
-        rig.scan_store
-            .track_at("music", "album-b/01.flac")
-            .unwrap()
-            .expect("track indexed")
-    };
-
-    // Identify (it picks a best guess), then approve the winner of the
-    // review a dropped edition leaves.
-    let (status, body) = app
-        .call(
-            "GET",
-            &format!("/api/v3/library/tracks/{track_id}"),
-            &headers,
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let album_id = body["album_id"].as_str().expect("album id").to_owned();
-    let album_key = album_id.as_str();
-    rig.identified(album_key, 1).await;
-    file_edition_review(&rig.identify_store, album_key);
-    let (status, body) = app
-        .call(
-            "GET",
-            &format!("/api/v3/library/reviews?album_id={album_key}"),
-            &headers,
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let review_id = body["items"][0]["id"].as_str().expect("review").to_owned();
-    let revision = body["items"][0]["row_revision"].clone();
-    let (status, _) = app
-        .call(
-            "POST",
-            &format!("/api/v3/library/reviews/{review_id}/approve"),
-            &headers,
-            Some(json!({
-                "candidate_key": format!("rg-1:{REL_1}"),
-                "expected_revision": revision,
-            })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK);
-    // The candidate names only the release: the app places the file on it
-    // in its own time, and the preview is sealed after that.
-    rig.edition_settled(album_key).await;
-
-    // Manual retag preview, then apply.
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &headers,
-            Some(json!({
-                "kind": "retag",
-                "album_id": album_key,
-                "items": [{
-                    "root_id": "music",
-                    "rel_path": "album-b/01.flac",
-                    "managed_updates": {"title": ["Retagged Title"]},
-                }],
-            })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let token = body["preview_token"].as_str().expect("token").to_owned();
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/apply",
-            &headers,
-            Some(json!({"preview_token": token})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(read_title(&file), "Retagged Title");
-    // The retag also wrote the approved release's tags.
-    let written = droppedneedle_library::tags::read_fields(&file).expect("fields read");
-    let release_field = droppedneedle_library::tags::TagField::MusicBrainzReleaseId;
-    assert_eq!(written[&release_field], vec![REL_1.to_owned()]);
-
-    // Baseline restore returns the pre-management tags.
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/baseline/restore",
-            &headers,
-            Some(json!({"track_ids": [track_id]})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["restored"], json!([track_id]));
-    assert_eq!(read_title(&file), original_title);
-    assert_eq!(
-        droppedneedle_library::tags::read_fields(&file).expect("fields read"),
-        fields_before,
-        "every field the retag wrote is back"
-    );
     rig.stop().await;
 }
 
@@ -838,103 +719,6 @@ async fn library_management_placement_read_never_probes() {
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    rig.stop().await;
-}
-
-/// A retag preview lists, per file, the tags the write would change and
-/// nothing else: a file whose album and date differ from the chosen
-/// edition lists those two and its MusicBrainz ids; once written, the
-/// same file lists no changes.
-#[tokio::test]
-async fn retag_preview_lists_the_tags_that_change() {
-    let rig = Rig::start("lib-manage-changes").await;
-    rig.identify.recall_from(|facts| {
-        let mut recall = ambiguous_from(facts);
-        let artist = |name: &str, join: &str| CreditedArtist {
-            id: format!("{name}-id"),
-            name: name.to_owned(),
-            sort_name: None,
-            join: join.to_owned(),
-        };
-        for release in &mut recall.releases {
-            release.title = "Management Album (Deluxe)".to_owned();
-            release.date = Some("2025".to_owned());
-            for track in &mut release.tracks {
-                track.artists = vec![artist("Alpha", " feat. "), artist("Beta", "")];
-            }
-        }
-        recall
-    });
-    let app = &rig.app;
-    let auth = app.login_admin().await;
-    let headers = [("authorization", auth.as_str())];
-    let music = app.config.root_app_dir.join("music");
-    plant(&music, "album/01.flac", "management_full.flac");
-    app.add_library_folder("music", &music).await;
-    let track = rig
-        .scan_store
-        .track_at("music", "album/01.flac")
-        .unwrap()
-        .expect("track indexed");
-    let album = rig
-        .scan_store
-        .album_for_track(&track)
-        .unwrap()
-        .expect("album");
-    rig.identified(&album, 1).await;
-    rig.choose_first_edition(&album).await;
-    rig.edition_settled(&album).await;
-
-    let preview = json!({
-        "kind": "retag",
-        "album_id": album,
-        "items": [{"root_id": "music", "rel_path": "album/01.flac", "managed_updates": {}}],
-    });
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &headers,
-            Some(preview.clone()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let changes = &body["files"][0]["changes"];
-    let fields: Vec<&str> = changes
-        .as_array()
-        .expect("changes listed")
-        .iter()
-        .map(|change| change["field"].as_str().expect("field"))
-        .collect();
-    assert_eq!(fields, ["album", "date", "musicbrainz_ids"], "{body}");
-    assert_eq!(
-        changes[0],
-        json!({"field": "album", "from": "Management Album", "to": "Management Album (Deluxe)"})
-    );
-    assert_eq!(
-        changes[1],
-        json!({"field": "date", "from": "2024-03-02", "to": "2025"})
-    );
-
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/apply",
-            &headers,
-            Some(json!({"preview_token": body["preview_token"]})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &headers,
-            Some(preview),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["files"][0]["changes"], json!([]), "{body}");
     rig.stop().await;
 }
 
@@ -1044,31 +828,7 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
     ))
     .expect("link, favorite and play seeded");
 
-    let retag =
-        |rel_path: &str| json!({"root_id": "music", "rel_path": rel_path, "managed_updates": {}});
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &headers,
-            Some(json!({
-                "kind": "retag",
-                "album_id": album,
-                "items": [retag("album/01.flac"), retag("album/02.flac")],
-            })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/apply",
-            &headers,
-            Some(json!({"preview_token": body["preview_token"]})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let bundle = body["bundle_id"].as_str().expect("bundle").to_owned();
+    let (tags, job) = rig.write_edition_tags(&headers, &album).await;
     let written = read_fields(&music.join("album/02.flac")).expect("fields read");
     assert_eq!(
         (
@@ -1116,15 +876,7 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
     app.scan_library().await;
     assert_eq!(text(revisions), before, "a rescan with nothing new");
 
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/undo",
-            &headers,
-            Some(json!({"bundle_id": bundle})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    undo_written(app, &headers, &tags, &job).await;
     app.scan_library().await;
     assert_eq!(text(&rows_of_album), vec![artist.clone(); 4]);
     assert_eq!(
@@ -1136,19 +888,20 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
     rig.stop().await;
 }
 
-/// A trusted user may write an album's edition tags into its files and
-/// undo that write, nothing more: no destination, no tag values of their
-/// own, no undo of anyone else's write and no restore. An admin's same
-/// calls go through.
+/// Only the person who made a managed change, or an admin, may undo it
+/// through `manage/undo`: another trusted user is told it does not exist
+/// and a plain user is refused outright.
 #[tokio::test]
-async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
-    use droppedneedle_library::tags::{TagField, read_fields};
+async fn a_managed_change_is_undone_only_by_its_writer_or_an_admin() {
+    use droppedneedle_library::manage::PreviewItemInput;
+    use droppedneedle_library::publish::planner::PlanKind;
+    use droppedneedle_library::tags::read_fields;
 
-    let rig = Rig::start("lib-manage-roles").await;
+    let rig = Rig::start("lib-manage-undo-roles").await;
     rig.identify.recall_from(ambiguous_from);
     let app = &rig.app;
     let admin_auth = app.login_admin().await;
-    let admin_headers = [("authorization", admin_auth.as_str())];
+    let admin = [("authorization", admin_auth.as_str())];
     let mut curators = Vec::new();
     for name in ["tris", "kit"] {
         let login = app.login_user(name).await;
@@ -1156,17 +909,17 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
             .call(
                 "PUT",
                 &format!("/api/v3/admin/users/{}/role", login.user_id),
-                &admin_headers,
+                &admin,
                 Some(json!({"role": "trusted"})),
             )
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        curators.push(login.authorization);
+        curators.push(login);
     }
-    let tris_headers = [("authorization", curators[0].as_str())];
-    let kit_headers = [("authorization", curators[1].as_str())];
+    let tris = [("authorization", curators[0].authorization.as_str())];
+    let kit = [("authorization", curators[1].authorization.as_str())];
     let molly = app.login_user("molly").await;
-    let molly_headers = [("authorization", molly.authorization.as_str())];
+    let molly = [("authorization", molly.authorization.as_str())];
 
     let music = app.config.root_app_dir.join("music");
     let file = plant(&music, "album/01.flac", "management_full.flac");
@@ -1183,198 +936,60 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
         .expect("album");
     rig.identified(&album, 1).await;
     rig.choose_first_edition(&album).await;
-    let fields_before = read_fields(&file).expect("fields read");
+    rig.edition_settled(&album).await;
+    let before = read_fields(&file).expect("fields read");
 
-    // A second identified album: its file is never part of a preview
-    // for the first, whoever asks.
-    plant(&music, "other/01.flac", "management_full.flac");
-    app.scan_library().await;
-    let other_track = rig
-        .scan_store
-        .track_at("music", "other/01.flac")
-        .unwrap()
-        .expect("track indexed");
-    let other_album = rig
-        .scan_store
-        .album_for_track(&other_track)
-        .unwrap()
-        .expect("album");
-    assert_ne!(other_album, album);
-    rig.identified(&other_album, 1).await;
-    rig.choose_first_edition(&other_album).await;
-    for headers in [&tris_headers, &admin_headers] {
-        let (status, body) = app
-            .call(
-                "POST",
-                "/api/v3/library/manage/preview",
-                headers,
-                Some(json!({
-                    "kind": "retag",
-                    "album_id": album,
-                    "items": [{
-                        "root_id": "music",
-                        "rel_path": "other/01.flac",
-                        "managed_updates": {},
-                    }],
-                })),
-            )
-            .await;
-        assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    }
-
-    let preview = |dest_rel: Option<&str>, updates: Value| {
-        let mut item = json!({
-            "root_id": "music",
-            "rel_path": "album/01.flac",
-            "managed_updates": updates,
-        });
-        if let Some(dest_rel) = dest_rel {
-            item["dest_rel"] = json!(dest_rel);
+    // A retag of the file, applied as the first trusted user.
+    let publishing = app.state().library_services.publishing.clone();
+    let writer = curators[0].user_id.clone();
+    let retag = || {
+        let (publishing, album, writer) = (publishing.clone(), album.clone(), writer.clone());
+        async move {
+            tokio::task::spawn_blocking(move || {
+                let sealed = publishing
+                    .plan_preview(
+                        PlanKind::SamePath,
+                        &album,
+                        vec![PreviewItemInput {
+                            root_id: "music".to_owned(),
+                            rel_path: "album/01.flac".to_owned(),
+                            dest_rel: None,
+                            managed_updates: [("title".to_owned(), vec!["Theirs".to_owned()])]
+                                .into(),
+                        }],
+                    )
+                    .expect("preview seals");
+                publishing
+                    .apply_preview(&sealed.token, Some(&writer))
+                    .expect("apply publishes")
+                    .bundle_id
+            })
+            .await
+            .expect("retag joins")
         }
-        json!({
-            "kind": if dest_rel.is_some() { "organize" } else { "retag" },
-            "album_id": album,
-            "items": [item],
-        })
     };
-    let with_destination = preview(Some("elsewhere/01.flac"), json!({}));
-    let with_updates = preview(None, json!({"title": ["Their Title"]}));
 
-    for refused in [&with_destination, &with_updates] {
-        let (status, body) = app
-            .call(
-                "POST",
-                "/api/v3/library/manage/preview",
-                &tris_headers,
-                Some(refused.clone()),
-            )
-            .await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{refused}: {body}");
-        assert_eq!(body["error"]["code"], json!("FORBIDDEN"));
+    async fn call(app: &TestApp, headers: &[(&str, &str)], bundle: &str) -> (StatusCode, Value) {
+        let body = json!({"bundle_id": bundle});
+        app.call("POST", "/api/v3/library/manage/undo", headers, Some(body))
+            .await
     }
-    assert_eq!(read_fields(&file).expect("fields read"), fields_before);
 
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &tris_headers,
-            Some(preview(None, json!({}))),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let token = body["preview_token"].as_str().expect("token").to_owned();
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/apply",
-            &tris_headers,
-            Some(json!({"preview_token": token})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let bundle_id = body["bundle_id"].as_str().expect("bundle").to_owned();
-    assert_eq!(
-        read_fields(&file).expect("fields read")[&TagField::MusicBrainzReleaseId],
-        vec![REL_1.to_owned()],
-        "the plain retag wrote the edition's tags"
-    );
-
-    // Only the curator who wrote the tags, or an admin, may undo them.
-    // Another curator is told the write does not exist; a plain user is
-    // refused outright.
-    let undo = json!({"bundle_id": bundle_id});
-    let undo_uri = "/api/v3/library/manage/undo";
-    let (status, body) = app
-        .call("POST", undo_uri, &kit_headers, Some(undo.clone()))
-        .await;
+    let bundle = retag().await;
+    assert_ne!(read_fields(&file).expect("fields read"), before);
+    let (status, body) = call(app, &kit, &bundle).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    let (status, body) = app
-        .call("POST", undo_uri, &molly_headers, Some(undo.clone()))
-        .await;
+    let (status, body) = call(app, &molly, &bundle).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    let (status, body) = app.call("POST", undo_uri, &tris_headers, Some(undo)).await;
+    let (status, body) = call(app, &tris, &bundle).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(read_fields(&file).expect("fields read"), fields_before);
+    assert_eq!(read_fields(&file).expect("fields read"), before);
 
-    let restore = json!({"track_ids": [track]});
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/baseline/restore",
-            &tris_headers,
-            Some(restore.clone()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    assert!(file.is_file(), "the retagged file stays where it was");
-
-    // An admin may undo a curator's write.
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &tris_headers,
-            Some(preview(None, json!({}))),
-        )
-        .await;
+    // An admin may undo the trusted user's change.
+    let bundle = retag().await;
+    let (status, body) = call(app, &admin, &bundle).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/apply",
-            &tris_headers,
-            Some(json!({"preview_token": body["preview_token"]})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let undo = json!({"bundle_id": body["bundle_id"]});
-
-    for (uri, request) in [
-        ("/api/v3/library/manage/preview", &with_destination),
-        ("/api/v3/library/manage/preview", &with_updates),
-        ("/api/v3/library/manage/undo", &undo),
-        ("/api/v3/library/manage/baseline/restore", &restore),
-    ] {
-        let (status, body) = app
-            .call("POST", uri, &admin_headers, Some(request.clone()))
-            .await;
-        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
-    }
-
-    // An admin's move preview is not the trusted user's to apply, and
-    // their refused attempt leaves it for the admin.
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &admin_headers,
-            Some(with_destination.clone()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let apply = json!({"preview_token": body["preview_token"]});
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/apply",
-            &tris_headers,
-            Some(apply.clone()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    let moved = music.join("elsewhere/01.flac");
-    assert!(file.is_file() && !moved.exists(), "nothing moved");
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/apply",
-            &admin_headers,
-            Some(apply),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(moved.is_file() && !file.exists(), "the admin's move lands");
+    assert_eq!(read_fields(&file).expect("fields read"), before);
     rig.stop().await;
 }
 
@@ -1965,31 +1580,38 @@ async fn library_roots_survive_a_restart() {
     let app = &rig.app;
     let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
-    let (status, body) = app
-        .call("GET", "/api/v3/library/roots", &headers, None)
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["enabled"], json!(true));
-    let roots = body["roots"].as_array().expect("roots");
-    assert_eq!(roots.len(), 1);
-    assert_eq!(roots[0]["id"], json!("music"));
-    assert_eq!(roots[0]["path"], json!(music.to_string_lossy()));
-    // The same directory, or one inside it, cannot become a second root.
-    for overlapping in [music.clone(), music.join("album")] {
+    let roots = || async {
         let (status, body) = app
-            .call(
-                "POST",
-                "/api/v3/library/roots",
-                &headers,
-                Some(json!({"path": overlapping.to_string_lossy()})),
-            )
+            .call("GET", "/api/v3/settings/library", &headers, None)
             .await;
-        assert_eq!(
-            status,
-            StatusCode::CONFLICT,
-            "overlapping root refused: {body}"
-        );
-    }
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["enabled"], json!(true));
+        body["library_roots"].as_array().expect("roots").clone()
+    };
+    let saved = roots().await;
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0]["id"], json!("music"));
+    assert_eq!(saved[0]["path"], json!(music.to_string_lossy()));
+    // The same directory is already a root; one inside it cannot become a
+    // second root.
+    let add = |path: PathBuf| async move {
+        app.call(
+            "POST",
+            "/api/v3/settings/library/paths",
+            &headers,
+            Some(json!({"path": path.to_string_lossy()})),
+        )
+        .await
+    };
+    let (status, body) = add(music.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = add(music.join("album")).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "overlapping root refused: {body}"
+    );
+    assert_eq!(roots().await, saved);
     let run = app.scan_library().await;
     let (status, body) = app
         .call(
@@ -5833,15 +5455,7 @@ async fn library_journey_choose_edition() {
     assert_eq!(body["status"]["undo_available"], json!(true));
 
     // An automatic pass never flips the choice.
-    let (status, _) = app
-        .call(
-            "POST",
-            "/api/v3/library/identify",
-            &headers,
-            Some(json!({"album_id": album})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK);
+    rig.reidentify(&album).await;
     rig.identified(&album, 1).await;
     let kept = rig
         .identify_store
@@ -6676,7 +6290,7 @@ async fn activate_automatic_folder(app: &TestApp, headers: &[(&str, &str)], cust
         })),
     }
     let (status, roots) = app
-        .call("GET", "/api/v3/library/roots", headers, None)
+        .call("GET", "/api/v3/settings/library", headers, None)
         .await;
     assert_eq!(status, StatusCode::OK, "{roots}");
     let (status, dry_run) = app
@@ -6734,19 +6348,25 @@ async fn an_unmatched_album_in_a_keep_tags_folder_says_why() {
     let music = app.config.root_app_dir.join("music");
     plant(&music, "album-k/01.flac", "flac_full_01.flac");
     plant(&music, "album-k/02.flac", "flac_full_02.flac");
+    let library = "/api/v3/settings/library";
+    let (status, mut settings) = app.call("GET", library, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    let revision = settings["policy_revision"].clone();
+    settings["library_roots"] = json!([{
+        "id": "music",
+        "path": music.to_string_lossy(),
+        "label": "music",
+        "policy": "local_metadata",
+    }]);
     let (status, body) = app
         .call(
-            "POST",
-            "/api/v3/library/roots",
+            "PUT",
+            library,
             &headers,
-            Some(json!({
-                "id": "music",
-                "path": music.to_string_lossy(),
-                "policy": "local_metadata",
-            })),
+            Some(json!({"settings": settings, "expected_policy_revision": revision})),
         )
         .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
     let album = app
         .until("the album is indexed", || {
             let album = rig
@@ -13756,135 +13376,6 @@ async fn a_review_action_on_a_stale_revision_is_refused() {
         .call("GET", "/api/v3/library/reviews/rev-s", &admin, None)
         .await;
     assert_eq!(after["state"], json!("dismissed"));
-    rig.stop().await;
-}
-
-/// Approving an edition that names only a release queues the placing of
-/// the album's files. Until that is done a manage preview of the album is
-/// refused with a message that says so; once the queue is clear it goes
-/// through.
-#[tokio::test]
-async fn manage_preview_waits_while_the_chosen_edition_is_placed() {
-    let rig = Rig::start("lib-remap-preview").await;
-    rig.identify.recall_from(ambiguous_from);
-    let app = &rig.app;
-    let auth = app.login_admin().await;
-    let headers = [("authorization", auth.as_str())];
-    let music = app.config.root_app_dir.join("music");
-    plant(&music, "album-w/01.flac", "management_full.flac");
-    app.add_library_folder("music", &music).await;
-    let track_id = rig
-        .scan_store
-        .track_at("music", "album-w/01.flac")
-        .unwrap()
-        .expect("track indexed");
-    let (status, body) = app
-        .call(
-            "GET",
-            &format!("/api/v3/library/tracks/{track_id}"),
-            &headers,
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let album = body["album_id"].as_str().expect("album id").to_owned();
-    let album_key = album.as_str();
-    rig.identified(album_key, 1).await;
-    file_edition_review(&rig.identify_store, album_key);
-    let (status, body) = app
-        .call(
-            "GET",
-            &format!("/api/v3/library/reviews?album_id={album_key}"),
-            &headers,
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let review_id = body["items"][0]["id"].as_str().expect("review").to_owned();
-    let revision = body["items"][0]["row_revision"].clone();
-    let (status, body) = app
-        .call(
-            "POST",
-            &format!("/api/v3/library/reviews/{review_id}/approve"),
-            &headers,
-            Some(json!({
-                "candidate_key": format!("rg-1:{REL_1}"),
-                "expected_revision": revision,
-            })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    rig.edition_settled(album_key).await;
-
-    // The queue row an approval leaves while the files are placed. It is
-    // seeded by hand with a far-off `not_before`, so the loop never takes it.
-    let db = app.db();
-    db.execute(
-        "INSERT INTO library_edition_remap_queue \
-         (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
-         VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
-        rusqlite::params![album_key, REL_1],
-    )
-    .expect("remap row queued");
-    let preview = json!({
-        "kind": "retag",
-        "album_id": album_key,
-        "items": [{
-            "root_id": "music",
-            "rel_path": "album-w/01.flac",
-            "managed_updates": {"title": ["Waiting Title"]},
-        }],
-    });
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &headers,
-            Some(preview.clone()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(
-        body["error"]["message"],
-        json!("Still matching this album to the edition you chose. Try again in a moment.")
-    );
-
-    db.execute(
-        "UPDATE library_edition_remap_queue SET attempts = 1 WHERE local_album_id = ?1",
-        [album_key],
-    )
-    .expect("row updated");
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &headers,
-            Some(preview.clone()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(
-        body["error"]["message"],
-        json!(
-            "Still matching this album to the edition you chose. \
-             MusicBrainz is not answering, so this waits until it does."
-        )
-    );
-
-    db.execute(
-        "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
-        [album_key],
-    )
-    .expect("row removed");
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &headers,
-            Some(preview),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
     rig.stop().await;
 }
 
@@ -21495,31 +20986,7 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
     // A run that writes MusicBrainz's ids into First's files, once any
     // identification the rescan queued for it has ended.
     rig.identification_idle(&album).await;
-    let retag =
-        |rel_path: &str| json!({"root_id": "music", "rel_path": rel_path, "managed_updates": {}});
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/preview",
-            &headers,
-            Some(json!({
-                "kind": "retag",
-                "album_id": album,
-                "items": first.iter().map(|(relative, _)| retag(relative)).collect::<Vec<_>>(),
-            })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/manage/apply",
-            &headers,
-            Some(json!({"preview_token": body["preview_token"]})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(!body.to_string().contains("ALBUM_CHANGED"), "{body}");
+    rig.write_edition_tags(&headers, &album).await;
     let written = read_fields(&music.join("first/01.flac")).expect("fields read");
     assert_eq!(
         written[&TagField::MusicBrainzArtistId],
