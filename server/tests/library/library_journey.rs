@@ -13326,6 +13326,20 @@ async fn library_journey_review_exclude_restore_dismiss() {
         .call("GET", "/api/v3/library/reviews?state=all", &headers, None)
         .await;
     assert_eq!(body["total"], json!(1));
+    // The resolved view holds the dismissed review, and every view's count
+    // comes with any page.
+    let (status, body) = app
+        .call(
+            "GET",
+            "/api/v3/library/reviews?state=resolved&sort=reason",
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], json!(1));
+    assert_eq!(body["state_counts"]["dismissed"], json!(1));
+    assert_eq!(body["state_counts"]["pending"], json!(0));
 
     // A bulk keep-as-tagged previews first, and applies only that preview.
     conn.execute(

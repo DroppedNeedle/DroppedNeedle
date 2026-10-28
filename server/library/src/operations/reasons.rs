@@ -337,7 +337,7 @@ pub const REVIEW_FILTER_INVALID: Reason = reason(
 pub const REVIEW_STATE_INVALID: Reason = reason(
     "REVIEW_STATE_INVALID",
     "That is not a review state.",
-    "Use pending, approved, rejected, dismissed, excluded or all.",
+    "Use pending, approved, rejected, dismissed, excluded, resolved or all.",
 );
 
 /// Why a review was opened, by the code it was filed with. Edition

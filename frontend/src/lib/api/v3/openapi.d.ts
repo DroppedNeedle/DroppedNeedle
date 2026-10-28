@@ -21172,8 +21172,26 @@ export interface components {
             /** @description Makes a retried request return the same job (single review only). */
             idempotency_key?: string | null;
         };
+        /**
+         * @description How the review list is sorted.
+         * @enum {string}
+         */
+        ReviewSort: "newest" | "oldest" | "tracks" | "title" | "artist" | "root" | "reason";
         /** @enum {string} */
         ReviewState: "pending" | "approved" | "rejected" | "dismissed" | "excluded";
+        /** @description Reviews matching a filter apart from its state, by state. */
+        ReviewStateCounts: {
+            /** Format: int64 */
+            approved: number;
+            /** Format: int64 */
+            dismissed: number;
+            /** Format: int64 */
+            excluded: number;
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            rejected: number;
+        };
         /** @description One identification review and the album it is about. */
         ReviewView: {
             /** @description Local album id. */
@@ -21255,14 +21273,10 @@ export interface components {
             root_id?: string | null;
             /** @description Album title or artist contains this, ignoring case. */
             search?: string | null;
-            /**
-             * @description `newest` (default) or `oldest` change first, or `tracks` for the
-             *     albums with the most files first.
-             */
-            sort?: string | null;
+            sort?: null | components["schemas"]["ReviewSort"];
             /**
              * @description `pending` (default), `approved`, `rejected`, `dismissed`,
-             *     `excluded` or `all`.
+             *     `excluded`, `resolved` (approved or dismissed) or `all`.
              */
             state?: string | null;
             /**
@@ -21285,6 +21299,8 @@ export interface components {
         ReviewsResponse: components["schemas"]["Page_ReviewView"] & {
             /** @description Reviews matching the filter apart from its reason, by reason. */
             reason_counts: components["schemas"]["ReasonCount"][];
+            /** @description Reviews matching the filter apart from its state, by state. */
+            state_counts: components["schemas"]["ReviewStateCounts"];
         };
         /**
          * @description Account role. Meanings are unchanged from v2: `user` requests await
@@ -37389,7 +37405,7 @@ export interface operations {
             query?: {
                 /**
                  * @description `pending` (default), `approved`, `rejected`, `dismissed`,
-                 *     `excluded` or `all`.
+                 *     `excluded`, `resolved` (approved or dismissed) or `all`.
                  */
                 state?: string;
                 /** @description Only this album's reviews. */
@@ -37422,11 +37438,8 @@ export interface operations {
                 updated_to?: number;
                 /** @description Only reviews that list at least one release. */
                 with_candidates?: boolean;
-                /**
-                 * @description `newest` (default) or `oldest` change first, or `tracks` for the
-                 *     albums with the most files first.
-                 */
-                sort?: string;
+                /** @description Sort order; newest change first by default. */
+                sort?: components["schemas"]["ReviewSort"];
                 /** @description Page size, 1 to 200 (default 50); more is read as 200. */
                 limit?: number;
                 /** @description `next_cursor` from the previous page. */

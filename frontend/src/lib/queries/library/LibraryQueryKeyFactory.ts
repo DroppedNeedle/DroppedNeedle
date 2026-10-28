@@ -1,3 +1,4 @@
+import type { components } from '$lib/api/v3/openapi';
 import { userIdSegment } from '../userKeySegment';
 
 export type LibraryV3UserId = string | null | undefined;
@@ -31,8 +32,11 @@ export interface LibraryV3TracksParams {
 	genre?: string;
 }
 
+/** A stored review state, `resolved` (approved or dismissed) or `all`. */
 export type LibraryReviewState =
-	'pending' | 'approved' | 'rejected' | 'dismissed' | 'excluded' | 'all';
+	'pending' | 'approved' | 'rejected' | 'dismissed' | 'excluded' | 'resolved' | 'all';
+
+export type LibraryReviewSort = components['schemas']['ReviewSort'];
 
 export interface LibraryReviewParams {
 	limit: number;
@@ -47,7 +51,7 @@ export interface LibraryReviewParams {
 	createdFrom?: number;
 	createdTo?: number;
 	withCandidates?: boolean;
-	sort?: 'newest' | 'oldest' | 'tracks';
+	sort?: LibraryReviewSort;
 }
 
 export interface LibraryV3PageParams {

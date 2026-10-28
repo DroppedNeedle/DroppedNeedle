@@ -29,8 +29,8 @@ const DETACHED: &str = "DETACHED_BY_PERSON";
 /// nothing.
 #[derive(Debug, Clone, Default)]
 pub struct ReviewFilter {
-    /// One state, or every state when `None`.
-    pub state: Option<ReviewState>,
+    /// These states, or every state when empty.
+    pub states: Vec<ReviewState>,
     pub album_id: Option<String>,
     pub reason_code: Option<String>,
     /// Matches the album title or artist, case-insensitive.
@@ -68,6 +68,15 @@ pub enum ReviewOrder {
     Oldest,
     /// Albums with the most files first.
     MostTracks,
+    /// By album title, A to Z.
+    Title,
+    /// By album artist, then title.
+    Artist,
+    /// By library folder, then title.
+    Root,
+    /// By reason, newest first within each, so a reason's reviews sit
+    /// together.
+    Reason,
 }
 
 /// One review with the album it is about.
@@ -144,8 +153,31 @@ fn with_tracks(conn: &Connection, rows: &mut [ReviewRow]) -> rusqlite::Result<()
     Ok(())
 }
 
-/// Reviews matching a filter (its reason left out), counted by reason.
-pub type ReasonCounts = Vec<(String, u64)>;
+/// One page of a review listing.
+#[derive(Debug, Clone, Default)]
+pub struct ReviewPage {
+    pub rows: Vec<ReviewRow>,
+    /// Reviews the whole filter matches.
+    pub total: u64,
+    /// Reviews matching the filter apart from its reason, by reason.
+    pub reason_counts: Vec<(String, u64)>,
+    /// Reviews matching the filter apart from its state, by state.
+    pub state_counts: Vec<(ReviewState, u64)>,
+}
+
+const ALL_STATES: [ReviewState; 5] = [
+    ReviewState::Pending,
+    ReviewState::Approved,
+    ReviewState::Rejected,
+    ReviewState::Dismissed,
+    ReviewState::Excluded,
+];
+
+fn state_named(name: &str) -> Option<ReviewState> {
+    ALL_STATES
+        .into_iter()
+        .find(|state| state_name(*state) == name)
+}
 
 /// State name as stored.
 pub fn state_name(state: ReviewState) -> &'static str {
@@ -158,25 +190,22 @@ pub fn state_name(state: ReviewState) -> &'static str {
     }
 }
 
-/// Parse a state filter: `None` or `all` lists every state.
-pub fn parse_state(raw: Option<&str>) -> Result<Option<ReviewState>, OperationError> {
+/// Parse a state filter: `None` or `all` lists every state, and
+/// `resolved` the reviews closed with a release or without a decision.
+pub fn parse_state(raw: Option<&str>) -> Result<Vec<ReviewState>, OperationError> {
     match raw.map(str::trim).filter(|value| !value.is_empty()) {
-        None | Some("all") => Ok(None),
-        Some("pending") => Ok(Some(ReviewState::Pending)),
-        Some("approved") => Ok(Some(ReviewState::Approved)),
-        Some("rejected") => Ok(Some(ReviewState::Rejected)),
-        Some("dismissed") => Ok(Some(ReviewState::Dismissed)),
-        Some("excluded") => Ok(Some(ReviewState::Excluded)),
-        Some(_) => Err(OperationError::Invalid(reasons::REVIEW_STATE_INVALID)),
+        None | Some("all") => Ok(Vec::new()),
+        Some("resolved") => Ok(vec![ReviewState::Approved, ReviewState::Dismissed]),
+        Some(name) => state_named(name)
+            .map(|state| vec![state])
+            .ok_or(OperationError::Invalid(reasons::REVIEW_STATE_INVALID)),
     }
 }
 
 /// One page of reviews, the total that match, and how many match each
-/// reason (ignoring the reason filter, so every bucket stays visible).
-pub fn list(
-    conn: &Connection,
-    filter: &ReviewFilter,
-) -> rusqlite::Result<(Vec<ReviewRow>, u64, ReasonCounts)> {
+/// reason and each state (ignoring that part of the filter, so every
+/// bucket stays visible).
+pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<ReviewPage> {
     let search = filter
         .search
         .as_deref()
@@ -188,11 +217,20 @@ pub fn list(
     };
     let review_ids = json_list(&filter.review_ids);
     let root_ids = json_list(&filter.root_ids);
-    let state = filter.state.map(state_name);
+    let states = (!filter.states.is_empty()).then(|| {
+        serde_json::Value::from(
+            filter
+                .states
+                .iter()
+                .map(|state| state_name(*state))
+                .collect::<Vec<_>>(),
+        )
+        .to_string()
+    });
     let clause = "FROM library_identify_reviews r \
          JOIN local_albums a ON a.id = r.local_album_id \
          WHERE a.retired_into_album_id IS NULL \
-         AND (:state IS NULL OR r.state = :state) \
+         AND (:states IS NULL OR r.state IN (SELECT value FROM json_each(:states))) \
          AND (:album IS NULL OR r.local_album_id = :album) \
          AND (:reason IS NULL OR r.reason_code = :reason) \
          AND (:search IS NULL OR lower(a.title) LIKE :search \
@@ -214,7 +252,7 @@ pub fn list(
          AND (:updated_to IS NULL OR r.updated_ms <= :updated_to) \
          AND (:with_candidates = 0 OR json_array_length(r.candidates_json) > 0)";
     let params = rusqlite::named_params! {
-        ":state": state,
+        ":states": states,
         ":album": filter.album_id,
         ":reason": filter.reason_code,
         ":search": search,
@@ -239,6 +277,15 @@ pub fn list(
             "(SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = r.local_album_id) DESC, \
              r.updated_ms DESC"
         }
+        ReviewOrder::Title => "a.title COLLATE NOCASE ASC, r.updated_ms DESC",
+        ReviewOrder::Artist => {
+            "COALESCE(a.album_artist_name, '') COLLATE NOCASE ASC, a.title COLLATE NOCASE ASC"
+        }
+        ReviewOrder::Root => {
+            "(SELECT MIN(t.root_id) FROM local_tracks t WHERE t.local_album_id = r.local_album_id), \
+             a.title COLLATE NOCASE ASC"
+        }
+        ReviewOrder::Reason => "r.reason_code ASC, r.updated_ms DESC",
     };
     let mut statement = conn.prepare(&format!(
         "SELECT {} {clause} ORDER BY {order}, r.id LIMIT {} OFFSET {}",
@@ -251,34 +298,75 @@ pub fn list(
         .filter_map(Result::transpose)
         .collect::<rusqlite::Result<Vec<_>>>()?;
     with_tracks(conn, &mut rows)?;
-    // The reason buckets ignore the reason filter; the clause allows a
-    // NULL reason, so binding one gives every reason's count.
-    let bucket_params = rusqlite::named_params! {
-        ":state": state,
-        ":album": filter.album_id,
-        ":reason": Option::<String>::None,
-        ":search": search,
-        ":ids": review_ids,
-        ":roots": root_ids,
-        ":policy": filter.policy,
-        ":job": filter.job_state,
-        ":no_active": filter.exclude_active_jobs,
-        ":created_from": filter.created_from,
-        ":created_to": filter.created_to,
-        ":updated_from": filter.updated_from,
-        ":updated_to": filter.updated_to,
-        ":with_candidates": filter.with_candidates,
-    };
-    let mut buckets = conn.prepare(&format!(
-        "SELECT r.reason_code, COUNT(*) {clause} GROUP BY r.reason_code ORDER BY COUNT(*) DESC"
-    ))?;
-    let counts = buckets
-        .query_map(bucket_params, |row| {
+    // The reason buckets ignore the reason filter and the state buckets the
+    // state filter; the clause allows a NULL for each, so binding one gives
+    // every bucket's count.
+    let reason_counts = buckets(
+        conn,
+        &format!(
+            "SELECT r.reason_code, COUNT(*) {clause} GROUP BY r.reason_code \
+             ORDER BY COUNT(*) DESC"
+        ),
+        rusqlite::named_params! {
+            ":states": states,
+            ":album": filter.album_id,
+            ":reason": Option::<String>::None,
+            ":search": search,
+            ":ids": review_ids,
+            ":roots": root_ids,
+            ":policy": filter.policy,
+            ":job": filter.job_state,
+            ":no_active": filter.exclude_active_jobs,
+            ":created_from": filter.created_from,
+            ":created_to": filter.created_to,
+            ":updated_from": filter.updated_from,
+            ":updated_to": filter.updated_to,
+            ":with_candidates": filter.with_candidates,
+        },
+    )?;
+    let state_counts = buckets(
+        conn,
+        &format!("SELECT r.state, COUNT(*) {clause} GROUP BY r.state"),
+        rusqlite::named_params! {
+            ":states": Option::<String>::None,
+            ":album": filter.album_id,
+            ":reason": filter.reason_code,
+            ":search": search,
+            ":ids": review_ids,
+            ":roots": root_ids,
+            ":policy": filter.policy,
+            ":job": filter.job_state,
+            ":no_active": filter.exclude_active_jobs,
+            ":created_from": filter.created_from,
+            ":created_to": filter.created_to,
+            ":updated_from": filter.updated_from,
+            ":updated_to": filter.updated_to,
+            ":with_candidates": filter.with_candidates,
+        },
+    )?
+    .into_iter()
+    .filter_map(|(name, count)| state_named(&name).map(|state| (state, count)))
+    .collect();
+    Ok(ReviewPage {
+        rows,
+        total: u64::try_from(total).unwrap_or(0),
+        reason_counts,
+        state_counts,
+    })
+}
+
+/// A grouped count, as (key, count) rows.
+fn buckets(
+    conn: &Connection,
+    sql: &str,
+    params: &[(&str, &dyn rusqlite::ToSql)],
+) -> rusqlite::Result<Vec<(String, u64)>> {
+    conn.prepare(sql)?
+        .query_map(params, |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?
-        .map(|row| row.map(|(code, count)| (code, u64::try_from(count).unwrap_or(0))))
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok((rows, u64::try_from(total).unwrap_or(0), counts))
+        .map(|row| row.map(|(key, count)| (key, u64::try_from(count).unwrap_or(0))))
+        .collect()
 }
 
 /// How many reviews a batch changed, and why the rest were left alone.

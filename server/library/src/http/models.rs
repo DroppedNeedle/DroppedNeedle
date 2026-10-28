@@ -226,6 +226,16 @@ pub struct ReviewView {
     pub row_revision: i64,
 }
 
+/// Reviews matching a filter apart from its state, by state.
+#[derive(Debug, Clone, Copy, Default, Serialize, ToSchema)]
+pub struct ReviewStateCounts {
+    pub pending: u64,
+    pub approved: u64,
+    pub rejected: u64,
+    pub dismissed: u64,
+    pub excluded: u64,
+}
+
 /// One page of reviews, with the reviews matching the filter as its
 /// total.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -234,6 +244,8 @@ pub struct ReviewsResponse {
     pub page: Page<ReviewView>,
     /// Reviews matching the filter apart from its reason, by reason.
     pub reason_counts: Vec<ReasonCount>,
+    /// Reviews matching the filter apart from its state, by state.
+    pub state_counts: ReviewStateCounts,
 }
 
 /// What a "retry all" started.

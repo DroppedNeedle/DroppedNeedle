@@ -13,9 +13,11 @@
 
 	interface Props {
 		initialView?: 'unconfirmed' | 'unmatched';
+		/** Called when the person switches list, so the page can keep it in its address. */
+		onview?: (view: 'unconfirmed' | 'unmatched') => void;
 	}
 
-	let { initialView = 'unconfirmed' }: Props = $props();
+	let { initialView = 'unconfirmed', onview }: Props = $props();
 
 	const PAGE = 50;
 	// svelte-ignore state_referenced_locally
@@ -32,6 +34,7 @@
 
 	function show(next: 'unconfirmed' | 'unmatched'): void {
 		view = next;
+		onview?.(next);
 	}
 
 	async function looksRight(albumId: string, identityRevision: number): Promise<void> {

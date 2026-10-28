@@ -26,10 +26,11 @@ use super::blocking;
 use super::models::{
     ApproveBody, CandidateView, IdentityView, PenaltyView, ReasonCount, ReviewActionBody,
     ReviewBulkPreviewResponse, ReviewBulkResponse, ReviewResolveResponse, ReviewRetryAllResponse,
-    ReviewRetryBody, ReviewView, ReviewsResponse, SkippedReviews, TrackEvidenceView,
+    ReviewRetryBody, ReviewStateCounts, ReviewView, ReviewsResponse, SkippedReviews,
+    TrackEvidenceView,
 };
 use super::operations::{OperationView, job_view};
-use crate::identify::models::{AlbumIdentity, CandidateEvidence};
+use crate::identify::models::{AlbumIdentity, CandidateEvidence, ReviewState};
 use crate::operations::models::OperationError;
 use crate::operations::reasons::{self, review_reason};
 use crate::operations::reviews::{
@@ -60,12 +61,33 @@ pub fn routes() -> Routes<LibraryServices> {
         .admin(routes!(retry_review))
 }
 
+/// How the review list is sorted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewSort {
+    /// Most recently changed first.
+    #[default]
+    Newest,
+    /// Least recently changed first.
+    Oldest,
+    /// Albums with the most files first.
+    Tracks,
+    /// By album title.
+    Title,
+    /// By album artist, then title.
+    Artist,
+    /// By library folder, then title.
+    Root,
+    /// By reason, so each reason's reviews sit together.
+    Reason,
+}
+
 /// Review list filter and paging. A bulk change takes the same filter.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams, ToSchema)]
 #[into_params(parameter_in = Query)]
 pub struct ReviewsQuery {
     /// `pending` (default), `approved`, `rejected`, `dismissed`,
-    /// `excluded` or `all`.
+    /// `excluded`, `resolved` (approved or dismissed) or `all`.
     pub state: Option<String>,
     /// Only this album's reviews.
     pub album_id: Option<String>,
@@ -93,9 +115,8 @@ pub struct ReviewsQuery {
     pub updated_to: Option<i64>,
     /// Only reviews that list at least one release.
     pub with_candidates: Option<bool>,
-    /// `newest` (default) or `oldest` change first, or `tracks` for the
-    /// albums with the most files first.
-    pub sort: Option<String>,
+    /// Sort order; newest change first by default.
+    pub sort: Option<ReviewSort>,
     /// Page size, 1 to 200 (default 50); more is read as 200.
     pub limit: Option<u32>,
     /// `next_cursor` from the previous page.
@@ -204,11 +225,23 @@ pub async fn list_reviews(
     filter.limit = paging.limit as u32;
     filter.offset = paging.after.unwrap_or(0);
     let (offset, limit) = (filter.offset, filter.limit);
-    let (rows, total, counts) = blocking(move || ops.reviews(&filter)).await?;
-    let reviews = rows.iter().map(review_view).collect();
+    let listing = blocking(move || ops.reviews(&filter)).await?;
+    let reviews = listing.rows.iter().map(review_view).collect();
+    let mut state_counts = ReviewStateCounts::default();
+    for (state, count) in listing.state_counts {
+        *match state {
+            ReviewState::Pending => &mut state_counts.pending,
+            ReviewState::Approved => &mut state_counts.approved,
+            ReviewState::Rejected => &mut state_counts.rejected,
+            ReviewState::Dismissed => &mut state_counts.dismissed,
+            ReviewState::Excluded => &mut state_counts.excluded,
+        } = count;
+    }
     Ok(Json(ReviewsResponse {
-        page: Page::at_offset(reviews, offset.into(), limit.into(), total),
-        reason_counts: counts
+        page: Page::at_offset(reviews, offset.into(), limit.into(), listing.total),
+        state_counts,
+        reason_counts: listing
+            .reason_counts
             .into_iter()
             .map(|(code, count)| ReasonCount {
                 reason: review_reason(&code).into(),
@@ -233,19 +266,22 @@ fn review_filter(
     query: ReviewsQuery,
     review_ids: Vec<String>,
 ) -> Result<ReviewFilter, OperationError> {
-    let state = if query.state.is_none() {
-        Some(crate::identify::models::ReviewState::Pending)
+    let states = if query.state.is_none() {
+        vec![ReviewState::Pending]
     } else {
         parse_state(query.state.as_deref())?
     };
-    let order = match query.sort.as_deref() {
-        None | Some("") | Some("newest") => ReviewOrder::Newest,
-        Some("oldest") => ReviewOrder::Oldest,
-        Some("tracks") => ReviewOrder::MostTracks,
-        Some(_) => return Err(OperationError::Invalid(reasons::REVIEW_FILTER_INVALID)),
+    let order = match query.sort.unwrap_or_default() {
+        ReviewSort::Newest => ReviewOrder::Newest,
+        ReviewSort::Oldest => ReviewOrder::Oldest,
+        ReviewSort::Tracks => ReviewOrder::MostTracks,
+        ReviewSort::Title => ReviewOrder::Title,
+        ReviewSort::Artist => ReviewOrder::Artist,
+        ReviewSort::Root => ReviewOrder::Root,
+        ReviewSort::Reason => ReviewOrder::Reason,
     };
     Ok(ReviewFilter {
-        state,
+        states,
         album_id: query.album_id.filter(|id| !id.is_empty()),
         reason_code: query.reason_code.filter(|code| !code.is_empty()),
         search: query.search,

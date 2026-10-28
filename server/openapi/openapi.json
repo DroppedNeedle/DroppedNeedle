@@ -19192,7 +19192,7 @@
           {
             "name": "state",
             "in": "query",
-            "description": "`pending` (default), `approved`, `rejected`, `dismissed`,\n`excluded` or `all`.",
+            "description": "`pending` (default), `approved`, `rejected`, `dismissed`,\n`excluded`, `resolved` (approved or dismissed) or `all`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -19313,10 +19313,10 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "`newest` (default) or `oldest` change first, or `tracks` for the\nalbums with the most files first.",
+            "description": "Sort order; newest change first by default.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/ReviewSort"
             }
           },
           {
@@ -60781,6 +60781,19 @@
           }
         }
       },
+      "ReviewSort": {
+        "type": "string",
+        "description": "How the review list is sorted.",
+        "enum": [
+          "newest",
+          "oldest",
+          "tracks",
+          "title",
+          "artist",
+          "root",
+          "reason"
+        ]
+      },
       "ReviewState": {
         "type": "string",
         "enum": [
@@ -60790,6 +60803,44 @@
           "dismissed",
           "excluded"
         ]
+      },
+      "ReviewStateCounts": {
+        "type": "object",
+        "description": "Reviews matching a filter apart from its state, by state.",
+        "required": [
+          "pending",
+          "approved",
+          "rejected",
+          "dismissed",
+          "excluded"
+        ],
+        "properties": {
+          "approved": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "dismissed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "excluded": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
       "ReviewView": {
         "type": "object",
@@ -60965,18 +61016,22 @@
             "description": "Album title or artist contains this, ignoring case."
           },
           "sort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`newest` (default) or `oldest` change first, or `tracks` for the\nalbums with the most files first."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReviewSort",
+                "description": "Sort order; newest change first by default."
+              }
+            ]
           },
           "state": {
             "type": [
               "string",
               "null"
             ],
-            "description": "`pending` (default), `approved`, `rejected`, `dismissed`,\n`excluded` or `all`."
+            "description": "`pending` (default), `approved`, `rejected`, `dismissed`,\n`excluded`, `resolved` (approved or dismissed) or `all`."
           },
           "updated_from": {
             "type": [
@@ -61011,7 +61066,8 @@
           {
             "type": "object",
             "required": [
-              "reason_counts"
+              "reason_counts",
+              "state_counts"
             ],
             "properties": {
               "reason_counts": {
@@ -61020,6 +61076,10 @@
                   "$ref": "#/components/schemas/ReasonCount"
                 },
                 "description": "Reviews matching the filter apart from its reason, by reason."
+              },
+              "state_counts": {
+                "$ref": "#/components/schemas/ReviewStateCounts",
+                "description": "Reviews matching the filter apart from its state, by state."
               }
             }
           }

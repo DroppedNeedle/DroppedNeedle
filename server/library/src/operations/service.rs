@@ -170,7 +170,7 @@ impl Operations {
     pub fn reviews(
         &self,
         filter: &reviews::ReviewFilter,
-    ) -> Result<(Vec<reviews::ReviewRow>, u64, reviews::ReasonCounts), OperationError> {
+    ) -> Result<reviews::ReviewPage, OperationError> {
         self.db.read_blocking("operations.reviews", |conn| {
             Ok::<_, OperationError>(reviews::list(conn, filter)?)
         })
@@ -316,12 +316,12 @@ impl Operations {
         preview: bool,
     ) -> Result<reviews::Tally, OperationError> {
         let filter = reviews::ReviewFilter {
-            state: Some(ReviewState::Pending),
+            states: vec![ReviewState::Pending],
             limit: BULK_MAX,
             offset: 0,
             ..filter.clone()
         };
-        let (rows, _, _) = self.reviews(&filter)?;
+        let rows = self.reviews(&filter)?.rows;
         let mut outcome = reviews::Tally::default();
         for row in rows {
             let started = if preview {
@@ -386,8 +386,13 @@ impl Operations {
             offset: 0,
             ..filter.clone()
         };
-        let (rows, matched, _) = self.reviews(&filter)?;
-        Ok(reviews::plan_bulk(&rows, matched, action, candidate_key))
+        let page = self.reviews(&filter)?;
+        Ok(reviews::plan_bulk(
+            &page.rows,
+            page.total,
+            action,
+            candidate_key,
+        ))
     }
 
     /// What a bulk action would do to the reviews `filter` selects: the
