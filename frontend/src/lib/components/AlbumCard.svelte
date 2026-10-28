@@ -100,6 +100,7 @@
 				mbid={isLocalOnly ? '' : album.musicbrainz_id}
 				customUrl={album.cover_url}
 				remoteUrl={album.album_thumb_url ?? null}
+				artMissing={album.art_missing}
 				alt={album.title}
 				size="full"
 				requestSize={250}

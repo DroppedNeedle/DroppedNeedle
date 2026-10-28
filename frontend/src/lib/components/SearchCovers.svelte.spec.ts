@@ -33,7 +33,8 @@ const linkedAlbum: SearchResultItemV3 = {
 	year: 1997,
 	in_library: true,
 	requested: false,
-	score: 100
+	score: 100,
+	art_missing: false
 };
 const unlinkedAlbum: SearchResultItemV3 = {
 	id: UNLINKED_ALBUM_ID,
@@ -41,7 +42,8 @@ const unlinkedAlbum: SearchResultItemV3 = {
 	title: 'Home Demos',
 	in_library: true,
 	requested: false,
-	score: 100
+	score: 100,
+	art_missing: false
 };
 const linkedArtist: SearchResultItemV3 = {
 	id: '2e7c9b4a-1d3f-4a8e-b6c5-0f9e8d7c6b5a',
@@ -50,7 +52,8 @@ const linkedArtist: SearchResultItemV3 = {
 	title: 'Radiohead',
 	in_library: true,
 	requested: false,
-	score: 100
+	score: 100,
+	art_missing: false
 };
 const unlinkedArtist: SearchResultItemV3 = {
 	id: '6b0f3d9e-2a7c-4e1b-8d4f-5c6a7b8e9d0f',
@@ -58,7 +61,8 @@ const unlinkedArtist: SearchResultItemV3 = {
 	title: 'Home Band',
 	in_library: true,
 	requested: false,
-	score: 100
+	score: 100,
+	art_missing: false
 };
 
 describe('search covers', () => {

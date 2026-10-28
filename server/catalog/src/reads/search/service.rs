@@ -487,6 +487,7 @@ impl SearchService {
                     score: match_score(&name_folded, folded),
                     disambiguation: None,
                     type_info: None,
+                    art_missing: false,
                     track: None,
                 }
             })
@@ -513,8 +514,10 @@ impl SearchService {
     ) -> Result<Vec<SearchResultItem>, sqlx::Error> {
         let rows = sqlx::query(concat!(
             "SELECT b.id, b.title, b.title_folded, b.album_artist_name, b.year, \
-             e.release_group_mbid AS mbid \
+             e.release_group_mbid AS mbid, (w.local_album_id IS NOT NULL) AS own_art \
              FROM local_albums b \
+             LEFT JOIN local_album_artwork w ON w.local_album_id = b.id \
+             AND w.source IN ('folder','embedded') \
              LEFT JOIN local_album_external_identities e ON e.local_album_id = b.id AND ",
             musicbrainz!("e"),
             " WHERE ",
@@ -537,13 +540,15 @@ impl SearchService {
             .iter()
             .map(|row| {
                 let title_folded: String = row.get("title_folded");
+                let mbid: Option<String> = row.get("mbid");
                 SearchResultItem {
                     kind: SearchKind::Album,
                     id: Some(row.get("id")),
                     title: row.get("title"),
                     artist: row.get("album_artist_name"),
                     year: row.get("year"),
-                    musicbrainz_id: row.get("mbid"),
+                    art_missing: art_missing(row.get("own_art"), mbid.as_deref()),
+                    musicbrainz_id: mbid,
                     in_library: true,
                     requested: false,
                     score: match_score(&title_folded, folded),
@@ -577,6 +582,7 @@ impl SearchService {
             .iter()
             .map(|row| {
                 let title_folded: String = row.get("title_folded");
+                let release_group_mbid: Option<String> = row.get("release_group_mbid");
                 SearchResultItem {
                     kind: SearchKind::Track,
                     id: Some(row.get("id")),
@@ -589,11 +595,12 @@ impl SearchService {
                     score: song_score(&title_folded, folded),
                     disambiguation: None,
                     type_info: None,
+                    art_missing: art_missing(row.get("own_art"), release_group_mbid.as_deref()),
                     track: Some(SearchTrackDetail {
                         album_id: row.get("local_album_id"),
                         album_title: row.get("album_title"),
                         artist_id: row.get("artist_id"),
-                        release_group_mbid: row.get("release_group_mbid"),
+                        release_group_mbid,
                         disc_number: row.get("disc_number"),
                         track_number: row.get("track_number"),
                         duration_seconds: row.get("duration_seconds"),
@@ -604,6 +611,13 @@ impl SearchService {
             })
             .collect())
     }
+}
+
+/// Whether a library album is known to have no cover: no art of its own
+/// that the album artwork route serves (a folder image or an embedded
+/// picture), and no release group for the release-group route to try.
+fn art_missing(own_art: bool, release_group_mbid: Option<&str>) -> bool {
+    !own_art && release_group_mbid.is_none_or(|mbid| mbid.trim().is_empty())
 }
 
 /// One bind of [`song_query`]'s statement, in order.
@@ -668,6 +682,7 @@ pub(crate) fn song_query(folded: &str, limit: u32, offset: u32) -> (String, Vec<
          t.album_title, t.disc_number, t.track_number, t.duration_seconds, t.file_format, \
          {recording} AS mbid, ae.release_group_mbid AS release_group_mbid, \
          (w.local_album_id IS NOT NULL) AS cover_available, \
+         COALESCE(w.source IN ('folder','embedded'), 0) AS own_art, \
          (SELECT ta.local_artist_id FROM local_track_artists ta \
           WHERE ta.local_track_id = t.id ORDER BY ta.position LIMIT 1) AS artist_id \
          FROM (SELECT t.rowid AS hit, \
@@ -833,6 +848,7 @@ fn remote_item(hit: RemoteHit) -> SearchResultItem {
         score: hit.score,
         disambiguation: hit.disambiguation,
         type_info: hit.type_info,
+        art_missing: false,
         track: None,
     }
 }
@@ -1080,6 +1096,7 @@ mod tests {
             score,
             disambiguation: None,
             type_info: None,
+            art_missing: false,
             track: None,
         }
     }

@@ -53,6 +53,7 @@ export type Album = {
 	pick_basis?: EditionPickBasis | null;
 	local_id?: string | null;
 	cover_available?: boolean;
+	art_missing?: boolean;
 };
 
 export interface LibraryMembershipResponse {

@@ -7,6 +7,7 @@ const row = (over: Partial<SearchResultItemV3>): SearchResultItemV3 => ({
 	in_library: false,
 	requested: false,
 	score: 100,
+	art_missing: false,
 	...over
 });
 

@@ -21908,6 +21908,12 @@ export interface components {
          *     serve art by id, so search never duplicates those URLs.
          */
         SearchResultItem: {
+            /**
+             * @description True when the server knows there is no cover to show: a library
+             *     album, or a song's album, with no art of its own and no release
+             *     group to look one up by. False means ask the cover routes.
+             */
+            art_missing: boolean;
             /** @description Owning artist name, when the row has one. */
             artist?: string | null;
             /** @description MusicBrainz disambiguation comment. */

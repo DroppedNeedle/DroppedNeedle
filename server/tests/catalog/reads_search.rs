@@ -255,6 +255,55 @@ async fn unified_search_returns_ranked_buckets_with_tops() {
     assert!(body["top_track"].is_null());
 }
 
+/// A library album with no art of its own and no release group is marked
+/// `art_missing`, so the web UI draws its placeholder without asking for a
+/// cover; one with a folder image is not. A song inherits its album's mark.
+#[tokio::test]
+async fn album_hits_say_when_art_is_known_missing() {
+    let (app, pool, _held) = authed_app().await;
+    seed_track(
+        &pool,
+        "t-gulag",
+        "album-gulag",
+        "Brandenburg",
+        "Gulag Orkestar",
+        "indexed",
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO local_album_artwork (local_album_id, source, source_locator, \
+         version, updated_at) VALUES ('album-renaissance', 'folder', '/music/cover.jpg', 1, 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let mut marks = Vec::new();
+    for query in ["renaissance", "gulag", "brandenburg"] {
+        let uri = format!("/api/v3/search?q={query}");
+        let (status, _, bytes) = call(app.clone(), Method::GET, &uri, Some(TEST_TOKEN), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let body = json(&bytes);
+        let hit = if query == "brandenburg" {
+            body["tracks"][0].clone()
+        } else {
+            body["albums"][0].clone()
+        };
+        marks.push((
+            hit["id"].as_str().unwrap().to_owned(),
+            hit["art_missing"].clone(),
+        ));
+    }
+    assert_eq!(
+        marks,
+        vec![
+            ("album-renaissance".to_owned(), serde_json::json!(false)),
+            ("album-gulag".to_owned(), serde_json::json!(true)),
+            ("t-gulag".to_owned(), serde_json::json!(true)),
+        ]
+    );
+}
+
 /// Insert one track; `availability` other than `indexed` must never match.
 async fn seed_track(
     pool: &SqlitePool,

@@ -22,6 +22,8 @@
 		testId?: string;
 		source?: 'provider' | 'local';
 		available?: boolean;
+		/** The server says there is no art: draw the placeholder, ask for nothing. */
+		artMissing?: boolean;
 		retryOnError?: boolean;
 	}
 
@@ -44,6 +46,7 @@
 		testId = undefined,
 		source = 'provider',
 		available = true,
+		artMissing = false,
 		retryOnError = undefined
 	}: Props = $props();
 
@@ -51,9 +54,12 @@
 	// of its own, that art is shown; otherwise `mbid` (its release group, when
 	// linked) gives the release-group cover, and an unlinked album shows the
 	// fallback. A local id is never sent where an MBID belongs. BaseImage builds
-	// its srcset from release-group URLs, so local art goes without one.
+	// its srcset from release-group URLs, so local art goes without one. Art the
+	// server knows is missing is never requested.
 	let localArtUrl = $derived(
-		albumId && available ? albumArtworkPath(albumId, coverVersion, requestSize) : null
+		albumId && available && !artMissing
+			? albumArtworkPath(albumId, coverVersion, requestSize)
+			: null
 	);
 </script>
 
@@ -69,11 +75,11 @@
 	{className}
 	{rounded}
 	customUrl={localArtUrl ?? customUrl}
-	{remoteUrl}
+	remoteUrl={artMissing ? null : remoteUrl}
 	{onload}
 	{testId}
 	source={localArtUrl ? 'local' : source}
-	available={albumId && !localArtUrl ? isValidMbid(mbid) : available}
+	available={artMissing ? false : albumId && !localArtUrl ? isValidMbid(mbid) : available}
 	retryOnError={retryOnError ?? !localArtUrl}
 	transparentFallback={Boolean(localArtUrl) && coverVersion !== undefined}
 	imageType="album"

@@ -44,6 +44,7 @@ const withSong: SearchResponse = {
 			score: 100,
 			disambiguation: null,
 			type_info: null,
+			art_missing: true,
 			track: {
 				album_id: 'album-1',
 				album_title: 'Renaissance',
@@ -76,6 +77,61 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
+});
+
+// Two library albums with no MusicBrainz id: one with art of its own, one the
+// server says has none.
+const withAlbums: SearchResponse = {
+	...empty,
+	albums: [
+		{
+			kind: 'album',
+			id: 'album-art',
+			title: 'Kitchen Tapes',
+			artist: 'Someone',
+			year: 2020,
+			musicbrainz_id: null,
+			in_library: true,
+			requested: false,
+			score: 70,
+			disambiguation: null,
+			type_info: null,
+			art_missing: false,
+			track: null
+		},
+		{
+			kind: 'album',
+			id: 'album-bare',
+			title: 'Home Demos',
+			artist: 'Someone',
+			year: 2021,
+			musicbrainz_id: null,
+			in_library: true,
+			requested: false,
+			score: 70,
+			disambiguation: null,
+			type_info: null,
+			art_missing: true,
+			track: null
+		}
+	]
+};
+
+describe('search page album covers', () => {
+	it('asks for no cover the server says is missing and shows the placeholder', async () => {
+		const api = fakeApi({ 'GET /api/v3/search': withAlbums });
+		await renderWithQuery(SearchPage, { data: { query: 'someone' } });
+
+		await expect
+			.element(page.getByRole('img', { name: 'Kitchen Tapes' }))
+			.toHaveAttribute('data-src', expect.stringContaining('/library/albums/album-art/artwork'));
+		const bare = page.getByRole('link', { name: 'Open Home Demos' });
+		await expect.element(bare.getByTestId('cover-placeholder')).toBeInTheDocument();
+		await expect.element(page.getByRole('img', { name: 'Home Demos' })).not.toBeInTheDocument();
+		expect(api.calls().map((call) => call.url.pathname)).not.toContainEqual(
+			expect.stringContaining('/artwork')
+		);
+	});
 });
 
 describe('search page songs', () => {

@@ -22,6 +22,7 @@
 		if (artist) {
 			return isLocalOnlyRow(artist) ? null : coverPath('artist', artist.musicbrainz_id, 250);
 		}
+		if (album?.art_missing) return null;
 		if (localAlbumId) return albumArtworkPath(localAlbumId, undefined, 250);
 		if (album) {
 			return coverPath('release-group', album.musicbrainz_id, 250);
@@ -80,6 +81,7 @@
 				<AlbumImage
 					albumId={localAlbumId ?? undefined}
 					mbid={imageMbid(album)}
+					artMissing={album.art_missing}
 					alt={album.title}
 					size="full"
 					requestSize={250}

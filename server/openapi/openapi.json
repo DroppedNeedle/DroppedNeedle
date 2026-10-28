@@ -62486,9 +62486,14 @@
           "title",
           "in_library",
           "requested",
-          "score"
+          "score",
+          "art_missing"
         ],
         "properties": {
+          "art_missing": {
+            "type": "boolean",
+            "description": "True when the server knows there is no cover to show: a library\nalbum, or a song's album, with no art of its own and no release\ngroup to look one up by. False means ask the cover routes."
+          },
           "artist": {
             "type": [
               "string",

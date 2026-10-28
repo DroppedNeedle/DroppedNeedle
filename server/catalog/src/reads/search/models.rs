@@ -74,6 +74,10 @@ pub struct SearchResultItem {
     pub disambiguation: Option<String>,
     /// Artist type, or an `Album + Live` style type label.
     pub type_info: Option<String>,
+    /// True when the server knows there is no cover to show: a library
+    /// album, or a song's album, with no art of its own and no release
+    /// group to look one up by. False means ask the cover routes.
+    pub art_missing: bool,
     /// Library details of a song hit; present exactly when `kind` is
     /// `track`.
     pub track: Option<SearchTrackDetail>,

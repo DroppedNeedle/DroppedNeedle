@@ -50,7 +50,8 @@ export function toV1Album(row: SearchResultItemV3): Album {
 		in_library: row.in_library,
 		requested: row.requested,
 		score: row.score,
-		local_id: row.id ?? null
+		local_id: row.id ?? null,
+		art_missing: row.art_missing
 	};
 }
 
