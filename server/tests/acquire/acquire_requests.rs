@@ -1473,7 +1473,7 @@ async fn edition_acquire_is_held_while_no_source_is_ready() {
     let staging = crate::common::ScratchDir::new("edition-held");
     state.readiness = Some(AcquireReadiness {
         sources: droppedneedle_acquire::readiness::SourceReadiness::unprobed(
-            droppedneedle_acquire::worker::SourceList::Fixed(Arc::new(Vec::new())),
+            droppedneedle_acquire::downloads::worker::SourceList::Fixed(Arc::new(Vec::new())),
         ),
         staging_root: staging.to_path_buf(),
     });

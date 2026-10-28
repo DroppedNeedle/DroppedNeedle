@@ -22,10 +22,10 @@ use droppedneedle_acquire::downloads::SourceTag;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::sources::{DownloadSource as _, SourceHandle};
 use droppedneedle_acquire::downloads::store::NewTask;
+use droppedneedle_acquire::downloads::worker::{DownloadWorker, SourceList};
 use droppedneedle_acquire::readiness::SourceReadiness;
 use droppedneedle_acquire::target::{SearchTarget, Targets};
 use droppedneedle_acquire::wiring::{ClientLives, LiveClients, WorkerSettings};
-use droppedneedle_acquire::worker::{DownloadWorker, SourceList};
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::runtime_config::secret_sections::SlskdConnection;
 use droppedneedle_kernel::runtime_config::sections::{

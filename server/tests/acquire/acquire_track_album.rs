@@ -15,6 +15,7 @@ use droppedneedle_acquire::dispatch::{
 use droppedneedle_acquire::downloads::TrackPosition;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
+use droppedneedle_acquire::downloads::worker::{DownloadWorker, WorkerConfig};
 use droppedneedle_acquire::slskd::{
     DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
 };
@@ -23,7 +24,6 @@ use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::target::lookup::{
     AlbumRelease, AlbumTrack, FixedAlbums, ReleaseCandidate,
 };
-use droppedneedle_acquire::worker::{DownloadWorker, WorkerConfig};
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};

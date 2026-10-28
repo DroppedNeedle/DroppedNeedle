@@ -15,6 +15,9 @@ use droppedneedle_acquire::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget, DownloadDispatch,
 };
 use droppedneedle_acquire::downloads::journal::Journal;
+use droppedneedle_acquire::downloads::worker::{
+    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
+};
 use droppedneedle_acquire::downloads::{
     http::downloads_router,
     state::{AttemptState, TaskStatus},
@@ -22,9 +25,6 @@ use droppedneedle_acquire::downloads::{
 };
 use droppedneedle_acquire::landing::LandingService;
 use droppedneedle_acquire::reason::Reason;
-use droppedneedle_acquire::worker::{
-    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
-};
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_kernel::db::{DbError, Lane};

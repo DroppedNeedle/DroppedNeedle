@@ -5,7 +5,8 @@
 
 use std::sync::Arc;
 
-use super::{DownloadWorker, Pass, handled_count, live_attempt, successor_row};
+use super::retry::successor_row;
+use super::{DownloadWorker, Pass, handled_count, live_attempt};
 use crate::downloads::queue_rows::ProgressColumns;
 use crate::downloads::reasons::NEXT_SOURCE_NOTE;
 use crate::downloads::source_tag::SourceTag;

@@ -20,13 +20,13 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
+use droppedneedle_acquire::downloads::worker::SourceList;
 use droppedneedle_acquire::follows::Follows;
 use droppedneedle_acquire::probes::{LiveProbes, ProbeCache, refresh_probes};
 use droppedneedle_acquire::readiness::SourceReadiness;
 use droppedneedle_acquire::settings::{ConfigLidarrSettings, ConfigSpotifySettings};
 use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::wiring::{ClientLives, LiveClients, WorkerSettings};
-use droppedneedle_acquire::worker::SourceList;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::models::PlaylistTrack;
@@ -1670,10 +1670,10 @@ fn plugin_host_with_download_client(auth: &AuthRig, dir: &std::path::Path) -> Ar
 /// starts. Requests and the download queue read the same answer as
 /// search, through the worker's readiness.
 async fn readiness_answers(setup: SourceSetup) -> (Vec<bool>, Vec<String>) {
+    use droppedneedle_acquire::downloads::worker::DownloadWorker;
     use droppedneedle_acquire::requests::quota::QuotaLedger;
     use droppedneedle_acquire::search_jobs::store::JobStore;
     use droppedneedle_acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs};
-    use droppedneedle_acquire::worker::DownloadWorker;
     use droppedneedle_catalog::reads::discover::content::IntegrationSettings;
 
     let (auth, _, user_id) = seed_rig().await;

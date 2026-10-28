@@ -4,7 +4,8 @@
 //!
 //! - [`requests`] serves the user-facing ask/approval/wanted surface.
 //! - [`downloads`] owns the durable task journal, task plans, watchdog
-//!   math, recovery classification, and quarantine.
+//!   math, recovery classification, quarantine, and the worker that
+//!   drives every download through them.
 //! - [`slskd`] and [`usenet`] own the source clients and indexers, which
 //!   all fail with one [`client_error::ClientError`].
 //! - [`flows`] runs the wanted watcher, follow poll, upgrade sweep and
@@ -26,7 +27,7 @@
 //!   candidates for one album, and the pick that starts a download.
 //!
 //! The `db`, `dispatch`, `search`, `sources`, `settings`, `probes`,
-//! `readiness`, `worker`, and `wiring` modules unify the per-area seams onto one
+//! `readiness`, and `wiring` modules unify the per-area seams onto one
 //! production spelling each (one [`dispatch::DownloadDispatch`] starts
 //! every download, every source is one
 //! [`downloads::sources::DownloadSource`] in the worker's list, and so on)
@@ -64,7 +65,6 @@ mod sql;
 pub mod target;
 pub mod usenet;
 pub mod wiring;
-pub mod worker;
 
 pub use wiring::AcquireSetup;
 

@@ -17,6 +17,9 @@ use droppedneedle_acquire::downloads::queue_rows::Viewer as HeldViewer;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::downloads::state::{AttemptState, TaskStatus};
 use droppedneedle_acquire::downloads::store::{NewTask, TaskOutcome};
+use droppedneedle_acquire::downloads::worker::{
+    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
+};
 use droppedneedle_acquire::downloads::{PlannedAlbum, ReplaceVersion, TaskPlan};
 use droppedneedle_acquire::intake::{self, Gate};
 use droppedneedle_acquire::landing::library::LibraryLanding;
@@ -26,9 +29,6 @@ use droppedneedle_acquire::landing::ports::{
 use droppedneedle_acquire::landing::specs::{Disposition, Rejection};
 use droppedneedle_acquire::landing::{Landed, LandingReport, LandingResult, Reported};
 use droppedneedle_acquire::reason::{Reason, ReasonKind};
-use droppedneedle_acquire::worker::{
-    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
-};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::ids::UuidGenerator;

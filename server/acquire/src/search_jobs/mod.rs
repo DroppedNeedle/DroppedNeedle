@@ -46,7 +46,7 @@ use super::requests::ledger::{WantedWatch, WatchState};
 use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::WantedStore;
 use super::target::{SearchTarget, Targets};
-use super::worker::DownloadWorker;
+use crate::downloads::worker::DownloadWorker;
 use droppedneedle_auth::Principal;
 use droppedneedle_kernel::events::{EventHub, SearchJobUpdated, UserNotice, new_event_id};
 

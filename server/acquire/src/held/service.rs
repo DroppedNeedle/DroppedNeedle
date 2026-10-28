@@ -27,6 +27,7 @@ use crate::downloads::plan::PlannedAlbum;
 use crate::downloads::queue_rows::Viewer;
 use crate::downloads::state::TaskStatus;
 use crate::downloads::store::{DownloadStore, TaskRow};
+use crate::downloads::worker::DownloadWorker;
 use crate::drop_import::{DropError, DropImports, identify};
 use crate::intake::{self, Gate, IntakeBatch, IntakeFile, Origin, Outcome};
 use crate::landing::canonical_dirs;
@@ -34,7 +35,6 @@ use crate::landing::ports::LandingLibrary;
 use crate::landing::probe::{self, LandedFile, Landing};
 use crate::landing::specs;
 use crate::reason::{Reason, ReasonKind};
-use crate::worker::DownloadWorker;
 use droppedneedle_library::matching::Release;
 
 /// Job name of the loop that removes expired entries' copies, finishes

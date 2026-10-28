@@ -670,9 +670,9 @@ async fn plugins_conform() {
 /// the source's, or one that says nothing, blocklists the release.
 #[tokio::test]
 async fn a_plugin_says_whose_fault_a_failed_download_was() {
+    use droppedneedle_acquire::downloads::worker::{DownloadWorker, WorkerConfig};
     use droppedneedle_acquire::downloads::{AttemptState, TaskStatus};
     use droppedneedle_acquire::reason::Reason;
-    use droppedneedle_acquire::worker::{DownloadWorker, WorkerConfig};
     use droppedneedle_providers::health::ServiceHealth;
 
     let rig = plugin_rig("fault").await;

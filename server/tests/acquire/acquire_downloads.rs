@@ -13,13 +13,13 @@ use std::time::{Instant, SystemTime};
 
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
+use droppedneedle_acquire::downloads::worker::{
+    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
+};
 use droppedneedle_acquire::held::store::{
     EntryOrigin, GroupKey, HeldRoot, HeldRows, NewEntry, NewFile,
 };
 use droppedneedle_acquire::reason::Reason;
-use droppedneedle_acquire::worker::{
-    DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
-};
 use droppedneedle_providers::health::ServiceHealth;
 
 use crate::common::bundles::quiet_ticks;

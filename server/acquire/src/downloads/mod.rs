@@ -20,6 +20,8 @@
 //! - [`queue`] the queue view and its actions, over [`queue_rows`].
 //! - [`reasons`] why a task sits where it does, in plain words.
 //! - [`upgrades`] the quality-upgrade worklist and asks.
+//! - [`worker`] the loop that drives every task: startup recovery, then
+//!   enqueue, poll, retry, cleanup and the orphan sweep on one cadence.
 //! - [`http`] the queue routes and the upgrade routes. Held files are in
 //!   [`crate::held`].
 //!
@@ -43,6 +45,7 @@ pub mod state;
 pub mod store;
 pub mod upgrades;
 pub mod watchdog;
+pub mod worker;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use http::downloads_router;

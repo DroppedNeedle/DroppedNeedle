@@ -12,6 +12,7 @@ use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::downloads::store::{NewTask, TaskDetails};
+use droppedneedle_acquire::downloads::worker::{DownloadWorker, WorkerConfig};
 use droppedneedle_acquire::requests::quota::QuotaLedger;
 use droppedneedle_acquire::search_jobs::candidates::{
     CandidateNoteCode, CandidateRefusal, CandidateTier,
@@ -26,7 +27,6 @@ use droppedneedle_acquire::slskd::{
 use droppedneedle_acquire::sources::SlskdSource;
 use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack, FixedAlbums};
-use droppedneedle_acquire::worker::{DownloadWorker, WorkerConfig};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::events::EventHub;

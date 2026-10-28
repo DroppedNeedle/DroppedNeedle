@@ -18,8 +18,8 @@ use super::sources::SourceHandle;
 use super::state::TaskStatus;
 use super::store::{QuarantineRow, TaskRow};
 use super::watchdog::RetryPolicy;
+use crate::downloads::worker::{DownloadWorker, NextSourceError, RetryError};
 use crate::reason::Reason;
-use crate::worker::{DownloadWorker, NextSourceError, RetryError};
 
 /// Queue failures, mapped to HTTP statuses by the handlers.
 #[derive(Debug, thiserror::Error)]

@@ -67,7 +67,9 @@ use super::usenet::newznab::{NewznabClient, NewznabIndexer, NewznabIndexerEntry}
 use super::usenet::policy::{QualityTier, UsenetPolicy};
 use super::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use super::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
-use super::worker::{DownloadWorker, SourceList, SourceSet, WorkerConfig, run_startup_recovery};
+use crate::downloads::worker::{
+    DownloadWorker, SourceList, SourceSet, WorkerConfig, run_startup_recovery,
+};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::collections::store::Stores as CollectionsStores;
 use droppedneedle_kernel::db::DbError;
@@ -130,7 +132,7 @@ pub const ACQUIRE_LOOPS: &[&str] = &[
     SYNC_JOB,
     PRUNE_JOB,
     super::held::PRUNE_JOB,
-    super::worker::DOWNLOAD_WORKER_JOB,
+    crate::downloads::worker::DOWNLOAD_WORKER_JOB,
     PROBE_JOB,
     SOURCE_WATCH_JOB,
 ];
@@ -285,7 +287,10 @@ impl LiveClients {
 
     /// The built-in sources for the current settings plus one source per
     /// enabled plugin download client.
-    pub fn sources_with_plugins(&self, policy: &DownloadPolicy) -> super::worker::SourceSet {
+    pub fn sources_with_plugins(
+        &self,
+        policy: &DownloadPolicy,
+    ) -> crate::downloads::worker::SourceSet {
         let built = self.current().sources.clone();
         let Some(host) = &self.plugins else {
             return built;
@@ -1065,7 +1070,9 @@ impl AcquireSetup {
     /// a run that stopped on a busy database: the drop sweep leaves an
     /// upload it could not read in place, a restarted download keeps its
     /// keys, and a request's cancel or dispatch reuses its key or relinks.
-    pub async fn run_recovery(&self) -> Result<super::worker::RecoveryReport, RecoveryError> {
+    pub async fn run_recovery(
+        &self,
+    ) -> Result<crate::downloads::worker::RecoveryReport, RecoveryError> {
         self.drops
             .sweep_stale()
             .await
@@ -1106,7 +1113,7 @@ impl AcquireSetup {
         spawn_sweep_loop(supervisor, self.flows.sweep_deps.clone())?;
         spawn_sync_loop(supervisor, self.flows.sync_deps.clone())?;
         spawn_prune_loop(supervisor, self.prune.clone())?;
-        super::worker::spawn_download_worker(self.worker.clone(), supervisor)?;
+        crate::downloads::worker::spawn_download_worker(self.worker.clone(), supervisor)?;
         self.spawn_held_prune(supervisor)?;
         self.spawn_probe_loop(supervisor)?;
         self.spawn_source_watch(supervisor)

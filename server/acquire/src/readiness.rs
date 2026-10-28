@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use super::downloads::source_tag::SourceTag;
 use super::probes::{CachedProbes, ProbeCache};
-use super::worker::SourceList;
+use crate::downloads::worker::SourceList;
 
 /// The download sources as they stand now.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

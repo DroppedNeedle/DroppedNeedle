@@ -140,7 +140,7 @@ pub struct WantedDeps {
     pub ledger: RequestStore,
     /// The download sources a watch searches: those turned on, plugin
     /// sources included.
-    pub sources: crate::worker::SourceList,
+    pub sources: crate::downloads::worker::SourceList,
     /// Download dispatch.
     pub downloads: Arc<DownloadDispatch>,
     /// Library presence for satisfaction checks.

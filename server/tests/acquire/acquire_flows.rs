@@ -19,6 +19,7 @@ use droppedneedle_acquire::dispatch::{
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::state::TaskStatus;
 use droppedneedle_acquire::downloads::store::{NewTask, TaskRow};
+use droppedneedle_acquire::downloads::worker::SourceList;
 use droppedneedle_acquire::flows::{
     loops::{
         FollowDeps, PruneDeps, SYNC_INITIAL_DELAY, SYNC_INTERVAL, SYNC_JOB, SweepDeps, SyncDeps,
@@ -41,7 +42,6 @@ use droppedneedle_acquire::requests::{
 use droppedneedle_acquire::search_jobs::store::JobStore;
 use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::wiring::{ClientLives, LiveClients, WorkerSettings};
-use droppedneedle_acquire::worker::SourceList;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::db::{DbRuntime, JobState};
 use droppedneedle_kernel::events::EventHub;
