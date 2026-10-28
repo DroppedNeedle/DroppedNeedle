@@ -342,7 +342,7 @@ async fn the_listenbrainz_client_verifies_links() {
     assert!(!unsafe_token.valid);
     assert_eq!(
         wire.sent().len(),
-        sent.len() + 5,
+        sent.len() + 4,
         "an unsafe token never reaches the wire"
     );
 }

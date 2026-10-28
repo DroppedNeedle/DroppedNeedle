@@ -726,8 +726,9 @@ async fn only_storage_node_failures_are_kept_off_the_archive() {
 /// The ListenBrainz rules: a policy block (the popularity 500 "currently
 /// disabled", the anti-scraper 401) is a deliberate switch-off that is not
 /// retried and never rests the bucket; a 429 rests it for
-/// `X-RateLimit-Reset-In`, else `Retry-After`, else two seconds; and an
-/// answer that says the window is spent rests it until the window resets.
+/// `X-RateLimit-Reset-In`, else `Retry-After`, else from a minute (jittered
+/// down by at most half), without a second try; and an answer that says
+/// the window is spent rests it until the window resets.
 #[tokio::test(start_paused = true)]
 async fn listenbrainz_hooks() {
     type Check = fn(&Result<Vec<listenbrainz::stats::ArtistStat>, ProviderError>) -> bool;
@@ -795,8 +796,8 @@ async fn listenbrainz_hooks() {
                     })
                 )
             },
-            2,
-            Duration::from_secs(2),
+            1,
+            Duration::from_secs(60),
         ),
         (
             "window spent",
@@ -824,8 +825,13 @@ async fn listenbrainz_hooks() {
         assert!(check(&result), "{name}: got {result:?}");
         assert_eq!(wire.sent().len(), sends, "{name}: requests sent");
         let cooling = providers.limiter("listenbrainz").unwrap().cooling_for();
+        let jitter = if name == "429 naming no wait" {
+            rest / 2
+        } else {
+            Duration::from_millis(600)
+        };
         assert!(
-            cooling <= rest && cooling + Duration::from_millis(600) >= rest,
+            cooling <= rest && cooling + jitter >= rest,
             "{name}: rests {cooling:?}, expected {rest:?}"
         );
     }

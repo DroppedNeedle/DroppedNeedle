@@ -14,9 +14,9 @@
 //! - Last.fm readiness: a user who cannot read Last.fm gets empty answers
 //!   before the cache is asked, so nothing empty is kept under keys every
 //!   user shares.
-//! - ListenBrainz popularity health: its "switched off" answer marks
-//!   popularity down for a while, and [`SourcePolicy`] lets Last.fm stand
-//!   in.
+//! - ListenBrainz popularity health: its "switched off" answer, or a rate
+//!   limit met by a background read, marks popularity down for a while,
+//!   and [`SourcePolicy`] lets Last.fm stand in.
 //! - the build cap: an [`Ask`] made for a build lets at most
 //!   [`BUILD_CAP`] of its provider calls run at once.
 
@@ -66,7 +66,8 @@ const LASTFM_SIMILAR_FLOOR: u32 = 25;
 const LASTFM_USER_FLOOR: u32 = 25;
 /// Rows of a MusicBrainz tag search page (the most it serves).
 pub(in crate::reads::discover) const TAG_PAGE: u32 = 100;
-/// How long a popularity refusal keeps Last.fm standing in.
+/// How long a popularity refusal, or a rate limit that names no wait,
+/// keeps Last.fm standing in.
 const POPULARITY_DOWN_FOR: Duration = Duration::from_secs(10 * 60);
 
 const HOUR: Duration = Duration::from_secs(3_600);
@@ -180,20 +181,31 @@ impl Ask {
 }
 
 /// ListenBrainz popularity health: down for a while after it switched a
-/// popularity read off.
+/// popularity read off or rate limited one.
 #[derive(Default)]
 struct Health {
     popularity_down_until: Mutex<Option<Instant>>,
 }
 
 impl Health {
-    fn note<T>(&self, result: &ListeningResult<T>) {
-        if matches!(
-            result,
-            Err(ListeningError::Provider(ProviderError::Disabled { .. }))
-        ) && let Ok(mut until) = self.popularity_down_until.lock()
-        {
-            *until = Some(Instant::now() + POPULARITY_DOWN_FOR);
+    /// Note a popularity read made at `priority`. A rate limit counts only
+    /// for a background read: a person's read is also turned down by our
+    /// own pacing, which says nothing about ListenBrainz. Without this a
+    /// 429 storm costs every build its retries, longer than a shelf's
+    /// bound, and the shelves time out empty.
+    fn note<T>(&self, result: &ListeningResult<T>, priority: RequestPriority) {
+        let down_for = match result {
+            Err(ListeningError::Provider(ProviderError::Disabled { .. })) => POPULARITY_DOWN_FOR,
+            Err(ListeningError::Provider(ProviderError::RateLimited { retry_after, .. }))
+                if !priority.is_user_facing() =>
+            {
+                retry_after.unwrap_or(POPULARITY_DOWN_FOR)
+            }
+            _ => return,
+        };
+        if let Ok(mut until) = self.popularity_down_until.lock() {
+            let end = Instant::now() + down_for;
+            *until = Some(until.map_or(end, |current| current.max(end)));
         }
     }
 
@@ -521,7 +533,7 @@ impl ListeningData {
         let rows = self
             .list(key, ARTIST, ask, move |network, priority| async move {
                 let found = network.artist_albums(&user, &mbid, read, priority).await;
-                health.note(&found);
+                health.note(&found, priority);
                 found
             })
             .await?;
@@ -660,7 +672,7 @@ impl ListeningData {
                 self.network.listen_counts(user_id, &missing, ask.priority),
             )
             .await;
-        self.health.note(&fetched);
+        self.health.note(&fetched, ask.priority);
         for (mbid, count) in fetched? {
             if let Ok(bytes) = serde_json::to_vec(&count) {
                 self.cache.set_bytes(&key_of(&mbid), bytes, ARTIST.fresh);
@@ -1139,5 +1151,29 @@ impl ListeningData {
     ) -> ListeningResult<Vec<PlayedArtist>> {
         self.call(ask, self.network.jellyfin_plays(user_id, limit))
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_background_rate_limit_lets_lastfm_stand_in_and_a_person_read_does_not() {
+        let limited: ListeningResult<()> =
+            Err(ListeningError::Provider(ProviderError::RateLimited {
+                provider: "listenbrainz",
+                retry_after: None,
+            }));
+
+        let health = Health::default();
+        health.note(&limited, RequestPriority::UserInitiated);
+        assert!(
+            !health.popularity_down(),
+            "our own pacing declined a person's read"
+        );
+
+        health.note(&limited, RequestPriority::BackgroundSync);
+        assert!(health.popularity_down());
     }
 }

@@ -50,18 +50,23 @@ pub const SOURCE: &str = "listenbrainz";
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// ListenBrainz on the wire. A policy block is [`ProviderError::Disabled`];
-/// a 429 waits for `X-RateLimit-Reset-In`, else `Retry-After`, else two
-/// seconds, and never more than
-/// an hour. The rate-limit headers are
-/// described at
+/// a 429 waits for `X-RateLimit-Reset-In`, else `Retry-After`, and never
+/// more than an hour. The rate-limit headers are described at
 /// https://listenbrainz.readthedocs.io/en/latest/users/api/index.html (read
-/// 2026-10-18).
+/// 2026-10-18). A 429 with neither comes from the MetaBrainz gateway in
+/// front of the service (seen 2026-10-20: an HTML 429 from openresty with
+/// `x-mb-gateway`, for every read from one address), which does not clear
+/// in seconds: it rests the bucket from a minute, doubling while they keep
+/// coming, up to fifteen minutes.
 pub static SPEC: Spec = Spec {
     source: SOURCE,
     health_key: SOURCE,
     timeout: Duration::from_secs(15),
     max_body: MAX_BODY_BYTES,
-    retry_after_default: Backoff::Fixed(Duration::from_secs(2)),
+    retry_after_default: Backoff::Exponential {
+        base: Duration::from_secs(60),
+        max: Duration::from_secs(15 * 60),
+    },
     retry_after_cap: Duration::from_secs(3600),
     classify,
 };
