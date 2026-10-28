@@ -20,8 +20,9 @@
 //! its pool, and an hour passed since the last reclaim. A final `TRUNCATE`
 //! runs at clean shutdown, so a stopped database leaves no `-wal` behind.
 //!
-//! Every pass records its outcome for the log and keeps the latest one for
-//! the admin health endpoint (which reads [`CheckpointService::latest`]).
+//! Every pass records its outcome for the log (a routine `PASSIVE` pass at
+//! debug, see [`record_level`]) and keeps the latest one for the admin health
+//! endpoint (which reads [`CheckpointService::latest`]).
 
 use std::{
     path::{Path, PathBuf},
@@ -401,7 +402,7 @@ impl CheckpointService {
                 )
             };
         }
-        if relief && outcome.suspended {
+        if record_level(&outcome, relief) == tracing::Level::DEBUG {
             recorded!(debug);
         } else {
             recorded!(info);
@@ -620,6 +621,23 @@ fn short_error(error: &rusqlite::Error) -> String {
         other => other.to_string(),
     };
     text.chars().take(160).collect()
+}
+
+/// The level a recorded pass is logged at. A steady-state `PASSIVE` pass that
+/// met no lock, no error and no hold is the heartbeat of the 30-second loop, a
+/// line that says nothing changed: it goes to debug, as does a relief pass
+/// that leaves the hold on. Every pass a person may need to see stays at
+/// info: busy, failed, holding bulk writes, or a `TRUNCATE` reclaim.
+fn record_level(outcome: &CheckpointOutcome, relief: bool) -> tracing::Level {
+    let routine = outcome.mode == CheckpointMode::Passive
+        && !outcome.busy
+        && outcome.error.is_none()
+        && !outcome.suspended;
+    if routine || (relief && outcome.suspended) {
+        tracing::Level::DEBUG
+    } else {
+        tracing::Level::INFO
+    }
 }
 
 #[cfg(test)]
