@@ -8,7 +8,11 @@
 //! another library's catalog. When the source is down the resolution still
 //! echoes the stored preference with `source_available` false.
 
+use droppedneedle_kernel::db::DbError;
+use rusqlite::OptionalExtension as _;
+
 use super::adapter::BoxFuture;
+use super::sql;
 
 /// Stored folder preference for one user.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +72,35 @@ pub trait FolderStore: Send + Sync {
     ) -> BoxFuture<'a, Result<(), String>>;
 }
 
+/// One `user_navidrome_folder_preferences` row as stored.
+struct FolderPreferenceRow {
+    mode: String,
+    selected_ids_json: String,
+    server_identity: Option<String>,
+}
+
+impl FolderPreferenceRow {
+    /// A row read by `sql::FOLDER_PREFERENCE`.
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            mode: row.get(0)?,
+            selected_ids_json: row.get(1)?,
+            server_identity: row.get(2)?,
+        })
+    }
+
+    /// The preference the row holds; ids that are not a JSON list fail.
+    fn decode(self) -> Result<FolderPreference, String> {
+        let selected_folder_ids: Vec<String> = serde_json::from_str(&self.selected_ids_json)
+            .map_err(|error| format!("folder preference ids are not a JSON list: {error}"))?;
+        Ok(FolderPreference {
+            mode: self.mode,
+            selected_folder_ids,
+            server_identity: self.server_identity,
+        })
+    }
+}
+
 /// Preferences in `user_navidrome_folder_preferences`.
 #[derive(Clone)]
 pub struct SqliteFolderStore {
@@ -87,27 +120,25 @@ impl SqliteFolderStore {
 
 impl FolderStore for SqliteFolderStore {
     fn get<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<FolderPreference, String>> {
+        let user_id = user_id.to_owned();
         Box::pin(async move {
-            let row: Option<(String, String, Option<String>)> = sqlx::query_as(
-                "SELECT mode, selected_ids_json, server_identity \
-                 FROM user_navidrome_folder_preferences WHERE user_id = ?1",
+            let row = self
+                .db
+                .read("remotes.folders.get", move |conn| {
+                    Ok(conn
+                        .query_row(
+                            sql::FOLDER_PREFERENCE.text(),
+                            [user_id],
+                            FolderPreferenceRow::from_row,
+                        )
+                        .optional()?)
+                })
+                .await
+                .map_err(|error: DbError| error.to_string())?;
+            row.map_or_else(
+                || Ok(FolderPreference::default()),
+                FolderPreferenceRow::decode,
             )
-            .bind(user_id)
-            .fetch_optional(self.db.sqlx())
-            .await
-            .map_err(|error| {
-                droppedneedle_kernel::db::map_sqlx_busy("remotes.folders.get", error).to_string()
-            })?;
-            let Some((mode, selected, server_identity)) = row else {
-                return Ok(FolderPreference::default());
-            };
-            let selected_folder_ids: Vec<String> = serde_json::from_str(&selected)
-                .map_err(|error| format!("folder preference ids are not a JSON list: {error}"))?;
-            Ok(FolderPreference {
-                mode,
-                selected_folder_ids,
-                server_identity,
-            })
         })
     }
 
@@ -127,13 +158,7 @@ impl FolderStore for SqliteFolderStore {
                     "remotes.folders.set",
                     move |tx| {
                         tx.execute(
-                            "INSERT INTO user_navidrome_folder_preferences \
-                             (user_id, mode, selected_ids_json, server_identity, updated_at) \
-                             VALUES (?1, ?2, ?3, ?4, ?5) \
-                             ON CONFLICT (user_id) DO UPDATE SET mode = excluded.mode, \
-                             selected_ids_json = excluded.selected_ids_json, \
-                             server_identity = excluded.server_identity, \
-                             updated_at = excluded.updated_at",
+                            sql::SAVE_FOLDER_PREFERENCE.text(),
                             rusqlite::params![
                                 user_id,
                                 preference.mode,
@@ -146,7 +171,7 @@ impl FolderStore for SqliteFolderStore {
                     },
                 )
                 .await
-                .map_err(|error: droppedneedle_kernel::db::DbError| error.to_string())
+                .map_err(|error: DbError| error.to_string())
         })
     }
 }

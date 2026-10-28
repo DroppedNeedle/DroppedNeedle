@@ -13,7 +13,6 @@ kernel/src/events/
 kernel/src/jobs/
 kernel/src/schema/
 library/src/
-media/src/
 plugins/src/
 src/
 tool/src/export/artist_keys.rs

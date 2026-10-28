@@ -31,6 +31,7 @@ use droppedneedle_kernel::jobs::discovery_demand::{self, DemandTick, NoDemand};
 use droppedneedle_kernel::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
 use droppedneedle_kernel::jobs::events_watcher::{self, PollTimeSource};
 use droppedneedle_kernel::jobs::personal_mix::{self, PersonalMixer};
+use droppedneedle_kernel::jobs::playlist_export::M3uPlaylistExporter;
 use droppedneedle_kernel::jobs::playlist_sync;
 use droppedneedle_kernel::jobs::precache::{self, PrecacheLimits, PrecacheWork};
 use droppedneedle_kernel::jobs::precache_phases::{LibraryPrecache, PrecacheSources};
@@ -342,7 +343,7 @@ impl JobsSetup {
             },
             playlist: PlaylistSyncState {
                 settings: NavidromeSyncSettings::new(config.live()),
-                exporter: media.exporter(),
+                exporter: M3uPlaylistExporter::new(Some(platform.db.sqlx().clone())),
             },
             presence: (media.feed(), media.pollers()),
             warmups: media.warmups(),

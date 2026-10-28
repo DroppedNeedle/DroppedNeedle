@@ -44,4 +44,5 @@ pub mod plex_models;
 pub mod presence_feed;
 pub mod reader;
 pub mod service;
+pub(crate) mod sql;
 pub mod warmup;

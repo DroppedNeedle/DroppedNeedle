@@ -11,11 +11,13 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use sqlx::{Row as _, SqlitePool};
+use rusqlite::{OptionalExtension as _, Row};
 
-use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
+use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_library::scan::coordinator::{ResolverSource as _, SharedResolver};
 use droppedneedle_library::scan::roots::RootRegistry;
+
+use super::sql;
 
 /// One catalog file playback or a download may serve.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,103 +65,98 @@ pub enum PathRefusal {
     Outside,
 }
 
-const FILE_COLUMNS: &str = "id, root_id, relative_path, file_path, title, disc_number, \
-     track_number, file_format, bit_rate, duration_seconds";
-
-fn file_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<CatalogFile, sqlx::Error> {
-    Ok(CatalogFile {
-        track_id: row.try_get("id")?,
-        root_id: row.try_get("root_id")?,
-        relative_path: row.try_get("relative_path")?,
-        file_path: row.try_get("file_path")?,
-        title: row.try_get("title")?,
-        disc_number: row.try_get("disc_number")?,
-        track_number: row.try_get("track_number")?,
-        file_format: row.try_get("file_format")?,
-        bitrate_kbps: row.try_get("bit_rate")?,
-        duration_seconds: row.try_get("duration_seconds")?,
-    })
+impl CatalogFile {
+    /// A row read by `sql::TRACK_FILE` or `sql::ALBUM_FILES`.
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            track_id: row.get(0)?,
+            root_id: row.get(1)?,
+            relative_path: row.get(2)?,
+            file_path: row.get(3)?,
+            title: row.get(4)?,
+            disc_number: row.get(5)?,
+            track_number: row.get(6)?,
+            file_format: row.get(7)?,
+            bitrate_kbps: row.get(8)?,
+            duration_seconds: row.get(9)?,
+        })
+    }
 }
 
-/// Catalog reads over the reader pool.
-#[derive(Debug, Clone)]
+/// Catalog reads over the database's read pool.
+#[derive(Clone)]
 pub struct FileCatalog {
-    pool: SqlitePool,
+    db: Db,
 }
 
 impl FileCatalog {
-    /// Read from this pool.
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    /// Read from this database.
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
     /// One streamable track's file; the old id of a track that continued
     /// into another answers with that track's file. None for unknown,
     /// missing or excluded tracks.
-    pub async fn track(&self, track_id: &str) -> Result<Option<CatalogFile>, sqlx::Error> {
-        let row = sqlx::query(&format!(
-            "SELECT {FILE_COLUMNS} FROM local_tracks \
-             WHERE id = ({CURRENT_TRACK}) AND availability = 'indexed'"
-        ))
-        .bind(track_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        row.as_ref().map(file_from_row).transpose()
+    pub async fn track(&self, track_id: &str) -> Result<Option<CatalogFile>, DbError> {
+        let track_id = track_id.to_owned();
+        self.db
+            .read("stream-track-file", move |conn| {
+                Ok(conn
+                    .query_row(sql::TRACK_FILE.text(), [track_id], CatalogFile::from_row)
+                    .optional()?)
+            })
+            .await
     }
 
     /// One album (a merged album answers for the album it merged into)
     /// with its streamable files. None when the album is unknown.
-    pub async fn album(&self, album_id: &str) -> Result<Option<AlbumFiles>, sqlx::Error> {
-        let row = sqlx::query(
-            "SELECT a.id AS id, a.title AS title, \
-             COALESCE(an.display_name, a.album_artist_name, '') AS artist_name \
-             FROM local_albums a LEFT JOIN local_artists an ON an.id = a.album_artist_id \
-             WHERE a.id = (SELECT COALESCE(retired_into_album_id, id) FROM local_albums \
-             WHERE id = ?)",
-        )
-        .bind(album_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let id: String = row.try_get("id")?;
-        let rows = sqlx::query(&format!(
-            "SELECT {FILE_COLUMNS} FROM local_tracks \
-             WHERE local_album_id = ? AND availability = 'indexed' \
-             ORDER BY disc_number, track_number, id"
-        ))
-        .bind(&id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(Some(AlbumFiles {
-            title: row.try_get("title")?,
-            artist_name: row.try_get("artist_name")?,
-            files: rows.iter().map(file_from_row).collect::<Result<_, _>>()?,
-        }))
+    pub async fn album(&self, album_id: &str) -> Result<Option<AlbumFiles>, DbError> {
+        let album_id = album_id.to_owned();
+        self.db
+            .read("stream-album-files", move |conn| {
+                let album = conn
+                    .query_row(sql::ALBUM.text(), [album_id], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    })
+                    .optional()?;
+                let Some((id, title, artist_name)) = album else {
+                    return Ok(None);
+                };
+                let mut query = conn.prepare(sql::ALBUM_FILES.text())?;
+                let files = query
+                    .query_map([id], CatalogFile::from_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(Some(AlbumFiles {
+                    title,
+                    artist_name,
+                    files,
+                }))
+            })
+            .await
     }
 
     /// The oldest live album with a streamable track holding a MusicBrainz
     /// release group, else release. Ids compare case-insensitively.
-    pub async fn album_by_mbid(&self, mbid: &str) -> Result<Option<String>, sqlx::Error> {
+    pub async fn album_by_mbid(&self, mbid: &str) -> Result<Option<String>, DbError> {
         let needle = mbid.trim().to_lowercase();
-        for column in ["release_group_mbid", "release_mbid"] {
-            let found: Option<String> = sqlx::query_scalar(&format!(
-                "SELECT b.id FROM local_album_external_identities e \
-                 JOIN local_albums b ON b.id = e.local_album_id \
-                 WHERE lower(e.{column}) = ? AND b.retired_into_album_id IS NULL \
-                 AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = b.id \
-                 AND t.availability = 'indexed') \
-                 ORDER BY b.created_at, b.id LIMIT 1"
-            ))
-            .bind(&needle)
-            .fetch_optional(&self.pool)
-            .await?;
-            if found.is_some() {
-                return Ok(found);
-            }
-        }
-        Ok(None)
+        self.db
+            .read("stream-album-by-mbid", move |conn| {
+                for statement in [sql::ALBUM_BY_RELEASE_GROUP, sql::ALBUM_BY_RELEASE] {
+                    let found = conn
+                        .query_row(statement.text(), [&needle], |row| row.get::<_, String>(0))
+                        .optional()?;
+                    if found.is_some() {
+                        return Ok(found);
+                    }
+                }
+                Ok(None)
+            })
+            .await
     }
 }
 
@@ -227,11 +224,11 @@ pub struct LibraryFiles {
 }
 
 impl LibraryFiles {
-    /// Catalog reads over `pool`, paths resolved against `roots`, which is
+    /// Catalog reads over `db`, paths resolved against `roots`, which is
     /// read again on every lookup so root changes apply without a restart.
-    pub fn new(pool: SqlitePool, roots: SharedResolver) -> Self {
+    pub fn new(db: Db, roots: SharedResolver) -> Self {
         Self {
-            catalog: FileCatalog::new(pool),
+            catalog: FileCatalog::new(db),
             roots,
         }
     }

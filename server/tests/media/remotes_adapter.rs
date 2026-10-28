@@ -1550,7 +1550,6 @@ async fn presence_poll_merges_a_remote_session() {
         registry.clone(),
         Arc::new(rig.resolver()),
         http_client(),
-        rig.platform.db.sqlx().clone(),
         rig.platform.clock.clone(),
         MbidIndex::default(),
     );

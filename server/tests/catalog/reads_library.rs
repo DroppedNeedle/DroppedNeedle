@@ -55,7 +55,7 @@ fn scripted_lyrics() -> ScriptedLyrics {
 /// lyrics route, or the production lyrics without an online lookup.
 fn deps(db: &Db, lyrics: Option<Arc<dyn LyricsPort>>) -> LibraryDeps {
     let catalog = LocalCatalog::new(db.clone());
-    let files = LibraryFiles::new(db.sqlx().clone(), SharedResolver::default());
+    let files = LibraryFiles::new(db.clone(), SharedResolver::default());
     LibraryDeps {
         lyrics: lyrics
             .unwrap_or_else(|| Arc::new(LyricsService::new(catalog.clone(), files.clone(), None))),

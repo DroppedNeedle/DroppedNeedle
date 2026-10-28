@@ -360,7 +360,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             collections: CollectionsState::over(collections_db, collections, local),
             catalog,
             artwork,
-            library_files: LibraryFiles::new(db.sqlx().clone(), library.core.root_source()),
+            library_files: LibraryFiles::new(db.clone(), library.core.root_source()),
             // Discovery batches file their albums through the requests
             // service.
             batch_requests: Arc::new(DiscoveryBatchRequests::new(

@@ -17,10 +17,12 @@
 
 use std::sync::Arc;
 
+use rusqlite::OptionalExtension as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 
+use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::crypto::{Crypto, CryptoError};
 use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -34,6 +36,7 @@ use super::jellyfin::JellyfinAdapter;
 use super::models::SourceName;
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
+use super::sql;
 
 // ---------------------------------------------------------------------------
 // Rows
@@ -50,6 +53,17 @@ pub struct ConnectionRow {
     pub enabled: bool,
     /// Stored document. Never logged.
     pub data: String,
+}
+
+impl ConnectionRow {
+    /// A row read by `sql::CONNECTION` or `sql::CONNECTIONS`.
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            service: row.get(0)?,
+            enabled: row.get::<_, i64>(1)? != 0,
+            data: row.get(2)?,
+        })
+    }
 }
 
 impl std::fmt::Debug for ConnectionRow {
@@ -112,23 +126,21 @@ impl ConnectionStore for SqliteConnectionStore {
         user_id: &'a str,
         service: &'a str,
     ) -> BoxFuture<'a, Result<Option<ConnectionRow>, String>> {
+        let user_id = user_id.to_owned();
+        let service = service.to_owned();
         Box::pin(async move {
-            let row: Option<(String, i64, String)> = sqlx::query_as(
-                "SELECT service, enabled, connection_data FROM user_connections \
-                 WHERE user_id = ?1 AND service = ?2",
-            )
-            .bind(user_id)
-            .bind(service)
-            .fetch_optional(self.db.sqlx())
-            .await
-            .map_err(|error| {
-                droppedneedle_kernel::db::map_sqlx_busy("remotes.connection.get", error).to_string()
-            })?;
-            Ok(row.map(|(service, enabled, data)| ConnectionRow {
-                service,
-                enabled: enabled != 0,
-                data,
-            }))
+            self.db
+                .read("remotes.connection.get", move |conn| {
+                    Ok(conn
+                        .query_row(
+                            sql::CONNECTION.text(),
+                            [user_id, service],
+                            ConnectionRow::from_row,
+                        )
+                        .optional()?)
+                })
+                .await
+                .map_err(|error: DbError| error.to_string())
         })
     }
 
@@ -148,19 +160,14 @@ impl ConnectionStore for SqliteConnectionStore {
                     "remotes.connection.upsert",
                     move |tx| {
                         tx.execute(
-                            "INSERT INTO user_connections \
-                             (user_id, service, connection_data, enabled, created_at, updated_at) \
-                             VALUES (?1, ?2, ?3, 1, ?4, ?4) \
-                             ON CONFLICT (user_id, service) DO UPDATE SET \
-                             connection_data = excluded.connection_data, enabled = 1, \
-                             updated_at = excluded.updated_at",
+                            sql::SAVE_CONNECTION.text(),
                             rusqlite::params![user_id, service, data, now],
                         )?;
                         Ok(())
                     },
                 )
                 .await
-                .map_err(|error: droppedneedle_kernel::db::DbError| error.to_string())
+                .map_err(|error: DbError| error.to_string())
         })
     }
 
@@ -178,38 +185,30 @@ impl ConnectionStore for SqliteConnectionStore {
                     "remotes.connection.delete",
                     move |tx| {
                         Ok(tx.execute(
-                            "DELETE FROM user_connections WHERE user_id = ?1 AND service = ?2",
+                            sql::DELETE_CONNECTION.text(),
                             rusqlite::params![user_id, service],
                         )?)
                     },
                 )
                 .await
                 .map(|changed| changed > 0)
-                .map_err(|error: droppedneedle_kernel::db::DbError| error.to_string())
+                .map_err(|error: DbError| error.to_string())
         })
     }
 
     fn list<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<Vec<ConnectionRow>, String>> {
+        let user_id = user_id.to_owned();
         Box::pin(async move {
-            let rows: Vec<(String, i64, String)> = sqlx::query_as(
-                "SELECT service, enabled, connection_data FROM user_connections \
-                 WHERE user_id = ?1 ORDER BY service",
-            )
-            .bind(user_id)
-            .fetch_all(self.db.sqlx())
-            .await
-            .map_err(|error| {
-                droppedneedle_kernel::db::map_sqlx_busy("remotes.connection.list", error)
-                    .to_string()
-            })?;
-            Ok(rows
-                .into_iter()
-                .map(|(service, enabled, data)| ConnectionRow {
-                    service,
-                    enabled: enabled != 0,
-                    data,
+            self.db
+                .read("remotes.connection.list", move |conn| {
+                    let mut query = conn.prepare(sql::CONNECTIONS.text())?;
+                    let rows = query
+                        .query_map([user_id], ConnectionRow::from_row)?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok(rows)
                 })
-                .collect())
+                .await
+                .map_err(|error: DbError| error.to_string())
         })
     }
 }
@@ -246,15 +245,7 @@ impl CredentialCoder {
 /// servers, ListenBrainz, Spotify) or plain JSON with sealed fields
 /// (Last.fm). The user links the service again. Answers the rows deleted.
 pub fn forget_sealed(conn: &rusqlite::Connection) -> rusqlite::Result<usize> {
-    // `json_tree` fails the whole statement on text that is not JSON, so a
-    // document sealed whole is walked as an empty array.
-    conn.execute(
-        "DELETE FROM user_connections WHERE connection_data LIKE 'v3:%' OR EXISTS (
-             SELECT 1 FROM json_tree(CASE WHEN json_valid(user_connections.connection_data)
-                 THEN user_connections.connection_data ELSE '[]' END) AS tree
-             WHERE tree.type = 'text' AND tree.value LIKE 'v3:%')",
-        [],
-    )
+    conn.execute(sql::FORGET_SEALED.text(), [])
 }
 
 // ---------------------------------------------------------------------------

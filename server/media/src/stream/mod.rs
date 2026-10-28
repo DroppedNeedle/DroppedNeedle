@@ -8,4 +8,5 @@ pub mod local_files;
 pub mod plugin_url;
 pub mod ranged;
 pub mod routes;
+pub(crate) mod sql;
 pub mod transcode;

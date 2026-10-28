@@ -170,7 +170,7 @@ impl MediaSetup {
         );
         let http = http_factory.shared().clone();
         crate::stream::plugin_url::sweep_stale_spools();
-        let library = LibraryFiles::new(db.sqlx().clone(), library_roots);
+        let library = LibraryFiles::new(db.clone(), library_roots);
         let download = DownloadState::new(Some(library.clone()), config.live());
         let resolver = remotes;
         let service = RemotesService::new(
@@ -268,13 +268,12 @@ impl MediaSetup {
 
     /// What the jobs bundle reads from media: the presence registry the
     /// playback routes write, the bundle's connection resolver and MBID
-    /// index, and the platform's outbound client, database and clock.
+    /// index, and the platform's outbound client and clock.
     pub fn jobs(&self, platform: &Platform) -> MediaJobs {
         MediaJobs::new(
             self.playback.presence.clone(),
             self.remotes.service.resolver().clone(),
             platform.http.shared().clone(),
-            platform.db.sqlx().clone(),
             platform.clock.clone(),
             self.remotes.service.index().clone(),
         )
@@ -293,7 +292,11 @@ pub fn routes() -> Routes<MediaSetup> {
 /// Every `sql.rs` of this crate, one line each, for the schema test.
 #[cfg(any(test, feature = "test-support"))]
 pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![playback::sql::registered()]
+    vec![
+        playback::sql::registered(),
+        remotes::sql::registered(),
+        stream::sql::registered(),
+    ]
 }
 
 impl FromRef<MediaSetup> for RemotesDeps {

@@ -1,8 +1,6 @@
 //! Media-backed inputs for the jobs loops: the now-playing feed over the
 //! live presence registry, the Jellyfin/Navidrome/Plex session pollers and
 //! the MBID warmups.
-//! The Navidrome playlist exporter lives in
-//! [`droppedneedle_kernel::jobs::playlist_export`].
 //!
 //! The pollers read sessions through the admin's shared accounts (v2 polled
 //! with the configured server credentials), so a source counts as enabled
@@ -18,7 +16,6 @@ use super::warmup::{MbidIndex, Warmups};
 use crate::playback::presence::{ExternalSession, PresenceRegistry};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::jobs::BoxFuture;
-use droppedneedle_kernel::jobs::playlist_export::M3uPlaylistExporter;
 use droppedneedle_kernel::jobs::presence::{
     PresenceSession, PresenceSources, PresenceStore, SourceStatus,
 };
@@ -29,7 +26,6 @@ pub struct MediaJobs {
     presence: PresenceRegistry,
     resolver: Arc<ConnectionResolver>,
     http: reqwest::Client,
-    pool: sqlx::SqlitePool,
     clock: Arc<dyn Clock>,
     index: MbidIndex,
 }
@@ -37,14 +33,12 @@ pub struct MediaJobs {
 impl MediaJobs {
     /// Inputs over the live presence registry the playback routes write,
     /// the shared connection resolver (admin servers and their shared
-    /// accounts), the outbound client, the database the playlist export
-    /// reads, the clock the presence sweep measures against and the MBID
-    /// index the warmups fill.
+    /// accounts), the outbound client, the clock the presence sweep
+    /// measures against and the MBID index the warmups fill.
     pub fn new(
         presence: PresenceRegistry,
         resolver: Arc<ConnectionResolver>,
         http: reqwest::Client,
-        pool: sqlx::SqlitePool,
         clock: Arc<dyn Clock>,
         index: MbidIndex,
     ) -> Self {
@@ -52,7 +46,6 @@ impl MediaJobs {
             presence,
             resolver,
             http,
-            pool,
             clock,
             index,
         }
@@ -77,11 +70,6 @@ impl MediaJobs {
             resolver: self.resolver.clone(),
             http: self.http.clone(),
         }
-    }
-
-    /// The m3u8 exporter.
-    pub fn exporter(&self) -> M3uPlaylistExporter {
-        M3uPlaylistExporter::new(Some(self.pool.clone()))
     }
 }
 

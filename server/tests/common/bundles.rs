@@ -168,10 +168,7 @@ pub fn reads_at(
             collections,
             catalog,
             artwork,
-            library_files: LibraryFiles::new(
-                platform.db.sqlx().clone(),
-                library.core.root_source(),
-            ),
+            library_files: LibraryFiles::new(platform.db.clone(), library.core.root_source()),
             batch_requests,
             download_readiness,
             cover_warm: None,
@@ -274,7 +271,6 @@ pub fn media_jobs(platform: &Platform) -> droppedneedle_media::remotes::presence
         droppedneedle_media::playback::presence::PresenceRegistry::new(platform.events.clone()),
         Arc::new(remotes_resolver(platform)),
         platform.http.shared().clone(),
-        platform.db.sqlx().clone(),
         platform.clock.clone(),
         droppedneedle_media::remotes::warmup::MbidIndex::default(),
     )
