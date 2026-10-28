@@ -663,9 +663,12 @@ rename that checks the name is free first; the report then has a `note`
 saying so. A restore that stops before the database is in place leaves
 its own marker and temporary files, which the next restore into that
 folder clears; once the database is in place, a later restore into that
-folder refuses. It also
-refuses a target folder on a network filesystem, as the server does, and
-a backup whose `-wal` file holds writes the copy would leave out.
+folder refuses. The server, the host commands and `import` refuse a
+folder holding that marker but no database, so run the restore again
+first; a marker left beside a finished database does not stop the
+server, which logs that it can be deleted. The restore also refuses a
+target folder on a network filesystem, as the server does, and a backup
+whose `-wal` file holds writes the copy would leave out.
 
 Backups leave out `metadata-cache.db` on purpose: it holds only provider
 answers that are fetched again when needed.

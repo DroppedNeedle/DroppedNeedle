@@ -31,7 +31,7 @@
 
 use std::path::PathBuf;
 
-use droppedneedle::bootstrap::data_dirs::{DataDirs, Layout};
+use droppedneedle::bootstrap::data_dirs::{DataDirs, Layout, refuse_unfinished_restore};
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::datalock::DataLock;
 use droppedneedle_kernel::runtime_config::Secret;
@@ -516,6 +516,7 @@ fn run_import_cmd(args: &[String], dry_run: bool) -> Result<(), String> {
     // the import, and a server cannot start until the import ends.
     let data_lock = DataLock::exclusive(&db_path)
         .map_err(|error| format!("{error} (stop the server before importing)"))?;
+    refuse_unfinished_restore(&db_path).map_err(|error| error.to_string())?;
     let report = runtime
         .block_on(upgrade::run_offline_import(
             &data_lock,

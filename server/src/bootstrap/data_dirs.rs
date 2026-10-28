@@ -14,7 +14,7 @@ use rusqlite::{Connection, OpenFlags};
 use thiserror::Error;
 
 use droppedneedle_kernel::config::AppConfig;
-use droppedneedle_kernel::db::backup::{WalState, wal_path, wal_state};
+use droppedneedle_kernel::db::backup::{RESTORE_MARKER, WalState, wal_path, wal_state};
 use droppedneedle_kernel::db::factory::sqlite_uri_path;
 use droppedneedle_kernel::runtime_config::crypto::{KEY_FILE_NAME, NEW_KEY_FILE_NAME};
 use droppedneedle_kernel::runtime_config::ingest::LEGACY_CONFIG_FILE_NAME;
@@ -230,6 +230,25 @@ pub enum BootRefusal {
         .0.display()
     )]
     ResetUnfinished(PathBuf),
+    /// A `restore` into the database's folder stopped before the restored
+    /// database took its name.
+    #[error(
+        "a restore into {} did not finish. Run `droppedneedle-tool restore` again, which \
+         clears its own leftovers, or remove the restore's files from that folder ({}, the \
+         .restore-* files and the undo folder). Nothing was changed",
+        .0.display(),
+        RESTORE_MARKER
+    )]
+    RestoreUnfinished(PathBuf),
+    /// The restore marker, or the database beside it, could not be read,
+    /// so an unfinished restore cannot be ruled out.
+    #[error("cannot read {}: {reason}; check its permissions", .path.display())]
+    Unreadable {
+        /// What could not be read.
+        path: PathBuf,
+        /// What reading it reported.
+        reason: String,
+    },
 }
 
 /// The refusal for a key that is missing or does not belong to the
@@ -248,13 +267,48 @@ pub fn key_refusal(config_dir: &Path, db_path: &Path, missing: bool) -> BootRefu
     }
 }
 
-/// The server's boot guard: start only on an empty or v3 layout.
+/// The server's boot guard: start only on an empty or v3 layout, and
+/// never on a folder a restore left unfinished, where a new database
+/// would sit beside the restored undo copies.
 pub fn check_bootable(dirs: &DataDirs) -> Result<(), BootRefusal> {
+    refuse_unfinished_restore(&dirs.db_path)?;
     match detect(dirs) {
         Layout::Empty | Layout::V3 => Ok(()),
         Layout::V2 => Err(BootRefusal::V2),
         Layout::Interrupted => Err(BootRefusal::Interrupted),
         Layout::Unknown(reason) => Err(BootRefusal::Unknown(reason)),
+    }
+}
+
+/// Refuse the database's folder while a restore into it is unfinished:
+/// its marker is there and the database is not. A marker beside the
+/// database is one a restore stopped short of removing after placing it;
+/// that only logs a warning and is left in place.
+pub fn refuse_unfinished_restore(db_path: &Path) -> Result<(), BootRefusal> {
+    let db_dir = db_path.parent().unwrap_or_else(|| Path::new("."));
+    let marker = db_dir.join(RESTORE_MARKER);
+    if !present(&marker)? {
+        return Ok(());
+    }
+    if !present(db_path)? {
+        return Err(BootRefusal::RestoreUnfinished(db_dir.to_path_buf()));
+    }
+    tracing::warn!(
+        marker = %marker.display(),
+        "a restore placed this database but left its marker behind; the marker can be deleted"
+    );
+    Ok(())
+}
+
+/// Whether `path` exists. Only `NotFound` counts as absent.
+fn present(path: &Path) -> Result<bool, BootRefusal> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(BootRefusal::Unreadable {
+            path: path.to_path_buf(),
+            reason: error.to_string(),
+        }),
     }
 }
 
