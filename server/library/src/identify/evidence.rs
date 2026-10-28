@@ -7,7 +7,7 @@ use super::models::{
 };
 use crate::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK, REVIEW_CEILING};
 use crate::matching::score::{FINGERPRINT_OVERRULED, LIBRARY_EXCLUDED};
-use crate::matching::{EditionHints, LocalAlbum, LocalTrack, Release, ReleaseMatch};
+use crate::matching::{EditionHints, LocalAlbum, LocalTrack, Release, ReleaseMatch, usable_mbid};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// The release group the files name, lowercase: the one every indexed
@@ -45,32 +45,41 @@ pub fn local_album(
     facts: &LocalAlbumFacts,
     fingerprints: &HashMap<String, Vec<String>>,
 ) -> LocalAlbum {
+    let mut dropped = 0;
+    let tracks: Vec<LocalTrack> = facts
+        .tracks
+        .iter()
+        .map(|track| LocalTrack {
+            id: track.local_track_id.clone(),
+            title: track.title.clone(),
+            artist: track.artist_name.clone(),
+            track_number: track.track_number,
+            disc_number: track.disc_number.max(1),
+            duration_secs: track
+                .duration_exact
+                .or(track.duration_secs.map(|seconds| seconds as f64)),
+            recording_mbid: usable_mbid(track.recording_mbid.as_deref(), &mut dropped),
+            release_track_mbid: usable_mbid(track.release_track_mbid.as_deref(), &mut dropped),
+            release_mbid: usable_mbid(track.release_mbid.as_deref(), &mut dropped),
+            fingerprint_recordings: fingerprints
+                .get(&track.local_track_id)
+                .cloned()
+                .unwrap_or_default(),
+        })
+        .collect();
+    if dropped > 0 {
+        tracing::debug!(
+            album = facts.local_album_id,
+            dropped,
+            "malformed MusicBrainz ids in tags left out of matching"
+        );
+    }
     LocalAlbum {
         title: facts.title.clone(),
         artist: facts.album_artist_name.clone(),
         year: facts.year,
         is_compilation: facts.is_compilation,
-        tracks: facts
-            .tracks
-            .iter()
-            .map(|track| LocalTrack {
-                id: track.local_track_id.clone(),
-                title: track.title.clone(),
-                artist: track.artist_name.clone(),
-                track_number: track.track_number,
-                disc_number: track.disc_number.max(1),
-                duration_secs: track
-                    .duration_exact
-                    .or(track.duration_secs.map(|seconds| seconds as f64)),
-                recording_mbid: non_blank(track.recording_mbid.as_deref()),
-                release_track_mbid: non_blank(track.release_track_mbid.as_deref()),
-                release_mbid: non_blank(track.release_mbid.as_deref()),
-                fingerprint_recordings: fingerprints
-                    .get(&track.local_track_id)
-                    .cloned()
-                    .unwrap_or_default(),
-            })
-            .collect(),
+        tracks,
         hints: hints(facts),
     }
 }

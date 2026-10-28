@@ -11,6 +11,8 @@
 //! scores into a verdict with fixed thresholds, MBID vetoes, and edition
 //! preferences ([`decide`], which documents the numbers).
 
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
+
 pub mod assign;
 pub mod decide;
 pub mod distance;
@@ -25,3 +27,19 @@ pub use model::{
     ReleaseTrack,
 };
 pub use score::{ReleaseMatch, Support, match_release, unknown_recordings};
+
+/// The MusicBrainz id a file's tag gives the matcher: trimmed and lowercased
+/// when it has the id shape, else none. Tags are free text, so a value that
+/// is not an id is never looked up or compared. `dropped` counts the
+/// non-blank values refused.
+pub fn usable_mbid(raw: Option<&str>, dropped: &mut usize) -> Option<String> {
+    let id = raw?.trim().to_ascii_lowercase();
+    if id.is_empty() {
+        return None;
+    }
+    if is_valid_mbid(&id) {
+        return Some(id);
+    }
+    *dropped += 1;
+    None
+}

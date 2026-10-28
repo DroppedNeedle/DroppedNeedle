@@ -596,21 +596,23 @@ async fn a_download_with_a_merged_recording_id_imports() {
     );
 }
 
-/// A recording id tag that is not a MusicBrainz id is never looked up: it
-/// contradicts the release, so the download is held as a tag mismatch
-/// and fails over, instead of waiting on MusicBrainz for ever.
+/// A recording id tag that is not a MusicBrainz id counts as no id. The
+/// download matches on its other evidence and imports, without a MusicBrainz
+/// lookup or a wait.
 #[tokio::test]
-async fn a_download_with_a_junk_recording_id_is_held() {
-    let (acquire, _music, _platform) = land_with_recording("t-junk", "not-an-id").await;
+async fn a_download_with_a_junk_recording_id_imports_as_untagged() {
+    let (acquire, music, _platform) = land_with_recording("t-junk", "not-an-id").await;
     let decisions: Vec<(String, Option<String>)> = sqlx::query_as(
         "SELECT outcome, reason_code FROM download_import_decisions WHERE task_id = 't-junk'",
     )
     .fetch_all(acquire.db.db().sqlx())
     .await
     .expect("decisions");
-    assert_eq!(
-        decisions,
-        vec![("held".to_owned(), Some("tag_mismatch".to_owned()))]
+    assert_eq!(decisions, vec![("imported".to_owned(), None)]);
+    assert!(
+        music
+            .join("Portishead/Dummy/0102 Sour Times.flac")
+            .is_file()
     );
 }
 

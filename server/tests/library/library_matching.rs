@@ -350,6 +350,68 @@ async fn tagged_album_identifies_through_a_merged_release_id() {
     assert_eq!(stored.labels, vec!["Harbour Lights Records".to_owned()]);
 }
 
+/// A recording id that is not a MusicBrainz id counts as absent: the album's
+/// tagged release is still recalled, and the attempt identifies it with no
+/// recording conflict.
+#[tokio::test]
+async fn malformed_recording_ids_count_as_absent() {
+    let rig = rig(false);
+    let recordings: Vec<String> = (1..=4).map(|n| format!("rec-airbag-{n:04}")).collect();
+    let release_tracks: Vec<String> = (0xe001..=0xe004)
+        .map(|n| format!("c0ffee00-0000-4000-8000-00000000{n:04x}"))
+        .collect();
+    let titles = [
+        ("Lamplight", 214),
+        ("Blue Hour", 251),
+        ("Night Shift", 198),
+        ("Last Train Home", 305),
+    ];
+    let files: Vec<FileTags<'_>> = titles
+        .iter()
+        .enumerate()
+        .map(|(index, (title, seconds))| {
+            (
+                *title,
+                *seconds,
+                Some((
+                    recordings[index].as_str(),
+                    release_tracks[index].as_str(),
+                    STANDARD,
+                )),
+            )
+        })
+        .collect();
+    let facts = album(&files);
+
+    let recalled = rig
+        .service
+        .recall(
+            &facts,
+            Some(STANDARD),
+            droppedneedle_kernel::db::Lane::Background,
+            RequestPriority::BackgroundSync,
+        )
+        .await
+        .unwrap();
+    assert!(!recalled.provider_deferred, "recall deferred");
+    assert!(
+        recalled
+            .releases
+            .iter()
+            .any(|release| release.id == STANDARD)
+    );
+
+    let report = identify(&rig, facts).await;
+    assert_eq!(report.outcome, IdentificationOutcome::Identified);
+    assert_eq!(report.reason_code, "SUPPORTED");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
+    assert_eq!(identity.release_mbid.as_deref(), Some(STANDARD));
+}
+
 /// Untagged files, one a minute shorter than any edition's track (left
 /// unmatched) and one with a placeholder title: not close enough to
 /// confirm, so the best guess is kept as the album's identity (flagged
