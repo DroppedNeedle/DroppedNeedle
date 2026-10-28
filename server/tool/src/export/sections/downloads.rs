@@ -5,7 +5,7 @@
 //! download that landed them, and per-user storage usage keeps counting
 //! the completed ones.
 
-use super::requests::{flag, millis, now_millis, whole, whole_min, whole_or};
+use super::requests::{flag, millis, now_millis, real, set_or, whole, whole_min, whole_or};
 use super::{Column, Parent, Source, TableSection, Target, col};
 
 /// Finished downloads.
@@ -34,7 +34,8 @@ pub const DOWNLOAD_TASKS: TableSection = TableSection {
         Column::new("disc_number").from_sql_of("disc_number", whole!("disc_number")),
         Column::new("year").from_sql_of("year", whole!("year")),
         Column::new("track_count").from_sql_of("track_count", whole!("track_count")),
-        col("track_duration_seconds"),
+        Column::new("track_duration_seconds")
+            .from_sql_of("track_duration_seconds", real!("track_duration_seconds")),
         col("download_client"),
         col("source"),
         col("origin"),
@@ -43,8 +44,20 @@ pub const DOWNLOAD_TASKS: TableSection = TableSection {
         col("search_query"),
         col("search_job_id"),
         Column::new("candidate_index").from_sql_of("candidate_index", whole!("candidate_index")),
-        col("status"),
-        col("preflight_score"),
+        // A live status would put a finished download back to work, so anything
+        // else reads as failed.
+        Column::new("status").from_sql_of(
+            "status",
+            set_or!(
+                "status",
+                "failed",
+                "completed" => "completed",
+                "partial" => "partial",
+                "failed" => "failed",
+                "cancelled" => "cancelled",
+            ),
+        ),
+        Column::new("preflight_score").from_sql_of("preflight_score", real!("preflight_score")),
         Column::new("progress_percent")
             .from_sql_of("progress_percent", whole_or!("progress_percent", 0)),
         Column::new("total_size_bytes").from_sql_of("total_size_bytes", whole!("total_size_bytes")),
@@ -129,7 +142,13 @@ pub const DOWNLOAD_ATTEMPTS: TableSection = TableSection {
     columns: &[
         col("id"),
         col("task_id"),
-        col("source"),
+        // The v2 check already holds these values; an unknown source reads as
+        // soulseek, the v3 default for a source.
+        Column::new("source").from_sql_of(
+            "source",
+            "CASE WHEN s.source IN ('soulseek', 'usenet') OR s.source LIKE 'plugin:%' \
+             THEN s.source ELSE 'soulseek' END",
+        ),
         Column::new("candidate_index")
             .from_sql_of("candidate_index", whole_min!("candidate_index", 0)),
         col("job_name"),
@@ -142,8 +161,28 @@ pub const DOWNLOAD_ATTEMPTS: TableSection = TableSection {
         col("publisher_bundle_ids_json"),
         Column::new("legacy_reconciled")
             .from_sql_of("legacy_reconciled", flag!("legacy_reconciled")),
-        col("state"),
-        col("disposition"),
+        // Cleanup retries the other states, so an unknown one reads as preserved,
+        // which cleanup never sweeps.
+        Column::new("state").from_sql_of(
+            "state",
+            set_or!(
+                "state",
+                "preserved",
+                "complete" => "complete",
+                "preserved" => "preserved",
+            ),
+        ),
+        // A discard aborts a cancelled transfer, so an unknown value reads as undecided.
+        Column::new("disposition").from_sql_of(
+            "disposition",
+            set_or!(
+                "disposition",
+                "undecided",
+                "undecided" => "undecided",
+                "discard" => "discard",
+                "preserve" => "preserve",
+            ),
+        ),
         Column::new("cleanup_failures")
             .from_sql_of("cleanup_failures", whole_min!("cleanup_failures", 0)),
         Column::new("next_retry_at").from_sql_of(
@@ -184,7 +223,21 @@ pub const QUARANTINE: TableSection = TableSection {
         col("source"),
         col("identity"),
         col("release_group_mbid"),
-        col("reason"),
+        // Every reason blocks the source for the same 7 days, so an unknown one
+        // only labels the row; it reads as a failed download.
+        Column::new("reason").from_sql_of(
+            "reason",
+            set_or!(
+                "reason",
+                "download_failed",
+                "verify_failed" => "verify_failed",
+                "corrupt" => "corrupt",
+                "fingerprint_mismatch" => "fingerprint_mismatch",
+                "duration_mismatch" => "duration_mismatch",
+                "download_failed" => "download_failed",
+                "manual" => "manual",
+            ),
+        ),
         Column::new("quarantined_at").from_sql_of(
             "quarantined_at",
             concat!(

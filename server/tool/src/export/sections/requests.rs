@@ -108,6 +108,38 @@ macro_rules! flag {
 
 pub(crate) use flag;
 
+/// A v2 REAL column: the value when it is a number, NULL otherwise.
+macro_rules! real {
+    ($column:literal) => {
+        concat!(
+            "CASE WHEN typeof(s.",
+            $column,
+            ") IN ('integer', 'real') THEN s.",
+            $column,
+            " END"
+        )
+    };
+}
+
+pub(crate) use real;
+
+/// A v2 text column with a fixed set of values: each `$from` maps to its v3
+/// `$to`; anything else, NULL included, takes `$default`.
+macro_rules! set_or {
+    ($column:literal, $default:literal, $($from:literal => $to:literal),+ $(,)?) => {
+        concat!(
+            "CASE s.",
+            $column,
+            $(" WHEN '", $from, "' THEN '", $to, "'",)+
+            " ELSE '",
+            $default,
+            "' END"
+        )
+    };
+}
+
+pub(crate) use set_or;
+
 /// Requester and dismissal rows hang off their request.
 const ON_REQUEST: &[Parent] = &[Parent::required(
     "request_history",
@@ -149,7 +181,20 @@ pub const REQUESTS: TableSection = TableSection {
             ")"
         )),
         Column::new("completed_at").from_sql(millis!("completed_at")),
-        col("status"),
+        // A live status would send a finished request back to work, so anything
+        // else reads as failed.
+        Column::new("status").from_sql_of(
+            "status",
+            set_or!(
+                "status",
+                "failed",
+                "imported" => "imported",
+                "incomplete" => "incomplete",
+                "failed" => "failed",
+                "cancelled" => "cancelled",
+                "rejected" => "rejected",
+            ),
+        ),
         Column::new("monitor_artist").from_sql_of("monitor_artist", flag!("monitor_artist")),
         Column::new("auto_download_artist")
             .from_sql_of("auto_download_artist", flag!("auto_download_artist")),
@@ -160,7 +205,10 @@ pub const REQUESTS: TableSection = TableSection {
         Column::new("reviewed_at").from_sql(millis!("reviewed_at")),
         col("download_task_id"),
         col("release_mbid"),
-        col("request_kind"),
+        Column::new("request_kind").from_sql_of(
+            "request_kind",
+            set_or!("request_kind", "album", "album" => "album", "track" => "track"),
+        ),
         col("track_title"),
         Column::new("duration_seconds").from_sql(whole!("duration_seconds")),
         col("track_release_group_mbid"),
@@ -242,9 +290,22 @@ pub const WANTED_WATCHES: TableSection = TableSection {
         col("artist_mbid"),
         Column::new("year").from_sql(whole!("year")),
         col("cover_url"),
-        col("kind"),
-        Column::new("state")
-            .from_sql("CASE s.state WHEN 'dormant' THEN 'watching' ELSE s.state END"),
+        Column::new("kind").from_sql_of(
+            "kind",
+            set_or!("kind", "missing", "missing" => "missing", "partial" => "partial"),
+        ),
+        // Only watching watches are checked, so an unknown state reads as stopped.
+        Column::new("state").from_sql_of(
+            "state",
+            set_or!(
+                "state",
+                "stopped",
+                "watching" => "watching",
+                "dormant" => "watching",
+                "stopped" => "stopped",
+                "fulfilled" => "fulfilled",
+            ),
+        ),
         Column::new("created_at").from_sql(concat!(
             "COALESCE(",
             millis!("created_at"),
