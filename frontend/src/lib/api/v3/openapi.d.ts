@@ -26183,7 +26183,14 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        /** @description Raw session token; present only in Bearer mode. */
+                        token?: string | null;
+                        /** @description Authenticated user. */
+                        user: components["schemas"]["UserResponse"];
+                    };
+                };
             };
             /** @description Invalid credentials */
             401: {
@@ -26385,7 +26392,14 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        /** @description Raw session token; present only in Bearer mode. */
+                        token?: string | null;
+                        /** @description Authenticated user. */
+                        user: components["schemas"]["UserResponse"];
+                    };
+                };
             };
             /** @description Invalid or expired code */
             401: {

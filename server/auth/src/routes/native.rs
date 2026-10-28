@@ -12,7 +12,7 @@ use crate::session::login::{
 use crate::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
 use crate::session::tokens;
-use crate::sqlite::Sessions;
+use crate::sqlite::{Sessions, Users};
 use crate::users::UsersDeps;
 use crate::users::models::UserResponse;
 use crate::users::services::SetupSession;
@@ -152,7 +152,7 @@ pub async fn login_handler(
     };
     match state.login.login(request, ctx).await {
         Ok(success) => {
-            let user = login_user(&state.users, &success.user_id).await?;
+            let user = login_user(&state.users.users, &success.user_id).await?;
             Ok(login_handoff(
                 &state.base_path,
                 secure,
@@ -302,17 +302,19 @@ async fn users_exist(users: &UsersDeps) -> Result<bool, AuthRouteError> {
         .map_err(|error| AuthRouteError::from(store_failure(&error)))
 }
 
-/// Full login user for the response body. The credential lookup already
-/// proved the account exists; a vanished row is a 500, never a partial body.
-async fn login_user(users: &UsersDeps, user_id: &str) -> Result<UserResponse, AuthRouteError> {
+/// Full login user for the response body of every sign-in. The credential
+/// lookup already proved the account exists; a vanished row is a 500, never a
+/// partial body.
+pub(super) async fn login_user(
+    users: &Users,
+    user_id: &str,
+) -> Result<UserResponse, AuthRouteError> {
     let user = users
-        .users
         .get_by_id(user_id)
         .await
         .map_err(|error| AuthRouteError::from(store_failure(&error)))?
         .ok_or_else(|| AuthRouteError::internal(&"login credential has no user row"))?;
     let providers = users
-        .users
         .provider_names(user_id)
         .await
         .map_err(|error| AuthRouteError::from(store_failure(&error)))?;

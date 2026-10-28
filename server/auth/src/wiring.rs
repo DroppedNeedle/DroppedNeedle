@@ -163,6 +163,7 @@ impl AuthSetup {
                 clock.clone(),
             ),
             sign_in.clone(),
+            auth.users.clone(),
             base_path,
         )
         .with_stated_addresses(stated.clone());
@@ -171,6 +172,7 @@ impl AuthSetup {
             jellyfin_http,
             links.clone(),
             auth.sessions.clone(),
+            auth.users.clone(),
             base_path,
         )
         .with_limits(limits.clone())

@@ -1,5 +1,4 @@
 import type { components } from '$lib/api/v3/openapi';
-import type { V3Response } from '$lib/api/v3/client';
 import type { AuthUser } from '$lib/stores/authStore.svelte';
 
 /** Which sign-in methods the server has switched on. */
@@ -20,12 +19,6 @@ export interface SessionUserLike {
 	username_display?: string | null;
 	providers?: string[];
 }
-
-/** Login/setup success body, inferred from the contract (user plus the raw
- * session token only in Bearer mode. Jellyfin and OIDC logins answer the same
- * shape, but their spec entries carry no response schema, so those two
- * mutations name this type explicitly until the backend annotates them. */
-export type AuthSessionResponse = V3Response<'/api/v3/auth/login', 'post'>;
 
 export type LocalLoginVars = components['schemas']['LoginBody'];
 

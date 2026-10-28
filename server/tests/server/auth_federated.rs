@@ -411,9 +411,11 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let token = body["token"].as_str().expect("bearer token").to_owned();
-    assert_eq!(body["role"], "admin", "first account is the admin: {body}");
-    assert_eq!(body["email"], "jane.doe@example.com");
-    assert_eq!(body["username"], "jane.doe");
+    let user = &body["user"];
+    assert_eq!(user["role"], "admin", "first account is the admin: {body}");
+    assert_eq!(user["email"], "jane.doe@example.com");
+    assert_eq!(user["username"], "jane.doe");
+    assert_eq!(user["providers"], json!(["oidc"]));
     let (status, _, _) = call(
         app.clone(),
         "GET",
@@ -570,7 +572,7 @@ async fn jellyfin_sign_in_links_the_media_account_and_feeds_the_import() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, body, _) = login("right-password").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["role"], "admin");
+    assert_eq!(body["user"]["role"], "admin");
     let token = body["token"].as_str().expect("bearer token").to_owned();
     // Signing in linked the Jellyfin account for playback (v2 auto-link).
     let links = linked_accounts(e2e.router(), &token).await;

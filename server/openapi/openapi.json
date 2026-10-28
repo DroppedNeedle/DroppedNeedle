@@ -3190,7 +3190,31 @@
         },
         "responses": {
           "200": {
-            "description": "Authenticated user; token only in Bearer mode"
+            "description": "Authenticated user; token only in Bearer mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Login/setup success body: the authenticated user, plus the raw session\ntoken only in Bearer mode (cookie mode carries it in `Set-Cookie`).",
+                  "required": [
+                    "user"
+                  ],
+                  "properties": {
+                    "token": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Raw session token; present only in Bearer mode."
+                    },
+                    "user": {
+                      "$ref": "#/components/schemas/UserResponse",
+                      "description": "Authenticated user."
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Invalid credentials",
@@ -3447,7 +3471,31 @@
         },
         "responses": {
           "200": {
-            "description": "Authenticated user; token only in Bearer mode"
+            "description": "Authenticated user; token only in Bearer mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Login/setup success body: the authenticated user, plus the raw session\ntoken only in Bearer mode (cookie mode carries it in `Set-Cookie`).",
+                  "required": [
+                    "user"
+                  ],
+                  "properties": {
+                    "token": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Raw session token; present only in Bearer mode."
+                    },
+                    "user": {
+                      "$ref": "#/components/schemas/UserResponse",
+                      "description": "Authenticated user."
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Invalid or expired code",

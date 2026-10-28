@@ -2,7 +2,6 @@ import { api } from '$lib/api/client';
 import { createMutation } from '@tanstack/svelte-query';
 import { AUTH_ENDPOINTS } from './endpoints';
 import type {
-	AuthSessionResponse,
 	JellyfinLoginVars,
 	LocalLoginVars,
 	OidcAuthorizeResponse,
@@ -13,10 +12,6 @@ import type {
 } from './types';
 
 /** Recovery redemption is public; code generation uses the authenticated admin client. */
-
-// The federated sign-ins answer the session user, but the contract lists no
-// body for them, so the typed client infers void.
-const sessionResponse = (body: unknown): AuthSessionResponse => body as AuthSessionResponse;
 
 export const createLocalLoginMutation = () =>
 	createMutation(() => ({
@@ -37,8 +32,7 @@ export const createPasswordRecoveryCodeMutation = () =>
 
 export const createJellyfinLoginMutation = () =>
 	createMutation(() => ({
-		mutationFn: async (vars: JellyfinLoginVars): Promise<AuthSessionResponse> =>
-			sessionResponse(await api.global.v3.POST(AUTH_ENDPOINTS.jellyfinLogin, vars))
+		mutationFn: (vars: JellyfinLoginVars) => api.global.v3.POST(AUTH_ENDPOINTS.jellyfinLogin, vars)
 	}));
 
 export const createSetupMutation = () =>
@@ -48,8 +42,7 @@ export const createSetupMutation = () =>
 
 export const createOidcExchangeMutation = () =>
 	createMutation(() => ({
-		mutationFn: async (vars: OidcExchangeVars): Promise<AuthSessionResponse> =>
-			sessionResponse(await api.global.v3.POST(AUTH_ENDPOINTS.oidcExchange, vars))
+		mutationFn: (vars: OidcExchangeVars) => api.global.v3.POST(AUTH_ENDPOINTS.oidcExchange, vars)
 	}));
 
 export const createOidcAuthorizeMutation = () =>

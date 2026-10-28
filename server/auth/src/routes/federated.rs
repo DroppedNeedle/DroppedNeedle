@@ -18,12 +18,12 @@ use crate::federated::oidc::{OidcLogin, STATE_TTL_SECS};
 use crate::federated::plex::{PinClaim, PlexJourney, PlexPoll, PlexPurpose, PlexStartDenied};
 use crate::federated::plex_http::PlexTv;
 use crate::federated::{FederatedError, MediaLinks};
-use crate::routes::native::PeerAddr;
+use crate::routes::native::{AuthSessionBody, PeerAddr, login_user};
 use crate::session::cookies;
 use crate::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
 use crate::session::tokens::{constant_time_eq, hash_token};
-use crate::sqlite::{FederatedUsers, Sessions};
+use crate::sqlite::{FederatedUsers, Sessions, Users};
 use crate::users::roles::{Admin, RoleRequired, User};
 use axum::{
     Json,
@@ -79,6 +79,8 @@ pub struct OidcRouteState {
     /// The sign-in settings, read live so an admin's edit applies to the
     /// next login without a restart.
     pub config: SignInSettings,
+    /// Account rows, read for the signed-in user's answer.
+    pub accounts: Users,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
     /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
@@ -90,11 +92,13 @@ pub struct OidcRouteState {
 }
 
 impl OidcRouteState {
-    /// Wire the state from the login service and the live settings.
-    pub fn new(login: OidcLogin, config: SignInSettings, base_path: &str) -> Self {
+    /// Wire the state from the login service, the live settings and the
+    /// account rows.
+    pub fn new(login: OidcLogin, config: SignInSettings, accounts: Users, base_path: &str) -> Self {
         Self {
             login,
             config,
+            accounts,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
             stated: StatedAddresses::default(),
@@ -234,7 +238,7 @@ pub async fn oidc_callback_handler(
     path = "/api/v3/auth/oidc/exchange",
     request_body = OidcExchangeBody,
     responses(
-        (status = 200, description = "Authenticated user; token only in Bearer mode"),
+        (status = 200, description = "Authenticated user; token only in Bearer mode", body = inline(AuthSessionBody)),
         (status = 401, description = "Invalid or expired code")
     )
 )]
@@ -247,8 +251,7 @@ pub async fn oidc_exchange_handler(
 ) -> Result<Response, ApiError> {
     match state.login.exchange_code(&body.code).await {
         Ok((user, raw_token)) => {
-            let body_value = serde_json::to_value(FederatedUserView::from(&user))
-                .map_err(|cause| AuthRouteError::internal(&cause))?;
+            let user = login_user(&state.accounts, &user.id).await?;
             Ok(federated_login_response(
                 &Handoff {
                     base_path: &state.base_path,
@@ -260,7 +263,7 @@ pub async fn oidc_exchange_handler(
                     ),
                     transport: body.transport,
                 },
-                body_value,
+                serde_json::json!({ "user": user }),
                 raw_token,
             ))
         }
@@ -277,6 +280,8 @@ pub async fn oidc_exchange_handler(
 pub struct JellyfinRouteState {
     /// Jellyfin login service.
     pub login: JellyfinLogin,
+    /// Account rows, read for the signed-in user's answer.
+    pub accounts: Users,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
     /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
@@ -291,16 +296,19 @@ pub struct JellyfinRouteState {
 }
 
 impl JellyfinRouteState {
-    /// Wire the state from the store, client, links and sessions.
+    /// Wire the state from the store, client, links, sessions and account
+    /// rows.
     pub fn new(
         users: FederatedUsers,
         idp: JellyfinHttp,
         links: MediaLinks,
         sessions: Sessions,
+        accounts: Users,
         base_path: &str,
     ) -> Self {
         Self {
             login: JellyfinLogin::new(users, idp, links, sessions),
+            accounts,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
             stated: StatedAddresses::default(),
@@ -335,7 +343,7 @@ impl JellyfinRouteState {
     path = "/api/v3/auth/jellyfin/login",
     request_body = JellyfinLoginBody,
     responses(
-        (status = 200, description = "Authenticated user; token only in Bearer mode"),
+        (status = 200, description = "Authenticated user; token only in Bearer mode", body = inline(AuthSessionBody)),
         (status = 401, description = "Invalid credentials"),
         (status = 429, description = "Too many attempts for this client or username"),
         (status = 503, description = "Jellyfin unavailable")
@@ -360,8 +368,7 @@ pub async fn jellyfin_login_handler(
         .await
     {
         Ok((user, raw_token)) => {
-            let body_value = serde_json::to_value(FederatedUserView::from(&user))
-                .map_err(|cause| AuthRouteError::internal(&cause))?;
+            let user = login_user(&state.accounts, &user.id).await?;
             Ok(federated_login_response(
                 &Handoff {
                     base_path: &state.base_path,
@@ -373,7 +380,7 @@ pub async fn jellyfin_login_handler(
                     ),
                     transport: body.transport,
                 },
-                body_value,
+                serde_json::json!({ "user": user }),
                 raw_token,
             ))
         }
