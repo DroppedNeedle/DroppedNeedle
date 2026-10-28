@@ -39,7 +39,7 @@ pub struct FollowCursor {
     pub cursor_date: Option<String>,
     /// Release groups already seen for this artist, lowercase.
     pub known: HashSet<String>,
-    /// Unix seconds when the next poll is due.
+    /// Unix seconds when the next poll is due (stored as milliseconds).
     pub next_poll_at: i64,
     /// Releases held for auto-download until their date (dispatch-pending).
     pub pending: Vec<PendingRelease>,
@@ -99,7 +99,7 @@ fn cursor_from_row(conn: &Connection, row: &rusqlite::Row<'_>) -> rusqlite::Resu
         baselined: baselined.unwrap_or(0) != 0,
         cursor_date: row.get(4)?,
         known,
-        next_poll_at: next_poll_at.unwrap_or(0),
+        next_poll_at: next_poll_at.unwrap_or(0) / 1000,
         pending,
     })
 }
@@ -116,8 +116,9 @@ impl Follows {
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         read(self.db.db(), "follows.list_due", move |conn| {
             let mut statement = conn.prepare_cached(sql::CURSORS_DUE.text())?;
-            let rows =
-                statement.query_map(params![now, limit], |row| cursor_from_row(conn, row))?;
+            let rows = statement.query_map(params![now.saturating_mul(1000), limit], |row| {
+                cursor_from_row(conn, row)
+            })?;
             rows.collect()
         })
         .await
@@ -174,7 +175,7 @@ impl Follows {
                         artist,
                         cursor.baselined,
                         cursor.cursor_date,
-                        cursor.next_poll_at,
+                        cursor.next_poll_at.saturating_mul(1000),
                         pending
                     ],
                 )?;

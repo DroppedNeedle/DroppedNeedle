@@ -7,6 +7,7 @@ use rusqlite::{OptionalExtension, params};
 
 use super::sql;
 use super::store::{DownloadStore, StoreError};
+use crate::db::{ms_from_secs_f64 as ms, secs_f64_from_ms as secs};
 use crate::reason::Reason;
 
 /// One landing's decision, as `download_import_decisions` stores it.
@@ -57,7 +58,7 @@ impl DownloadStore<'_> {
                 row.files_held,
                 row.checks_json,
                 row.missing_positions,
-                row.decided_at,
+                ms(row.decided_at),
             ],
         )?;
         Ok(())
@@ -100,8 +101,10 @@ impl DownloadStore<'_> {
         detail: &str,
         now: f64,
     ) -> Result<(), StoreError> {
-        self.conn
-            .execute(sql::SET_WRONG_PRODUCT.text(), params![now, detail, task_id])?;
+        self.conn.execute(
+            sql::SET_WRONG_PRODUCT.text(),
+            params![ms(now), detail, task_id],
+        )?;
         Ok(())
     }
 
@@ -123,7 +126,7 @@ impl DownloadStore<'_> {
     ) -> Result<bool, StoreError> {
         let changed = self.conn.execute(
             sql::COMPLETE_AFTER_MANUAL_IMPORT.text(),
-            params![now, task_id],
+            params![ms(now), task_id],
         )?;
         if changed > 0 {
             self.settle_requests(task_id, super::state::TaskStatus::Completed, now)?;
@@ -198,7 +201,7 @@ impl ImportDecisionRow {
             files_held: row.get(9)?,
             checks_json: row.get(10)?,
             missing_positions: row.get(11)?,
-            decided_at: row.get(12)?,
+            decided_at: secs(row.get(12)?),
         })
     }
 }

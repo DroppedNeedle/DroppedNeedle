@@ -14,7 +14,9 @@ use std::sync::Arc;
 use super::RequestsState;
 use super::auth::auto_approves;
 use super::error::RequestsError;
-use super::ledger::{BeginOutcome, RequestRecord, RequestStatus, meaningful_name, validate_mbid};
+use super::ledger::{
+    ApprovalState, BeginOutcome, RequestRecord, RequestStatus, meaningful_name, validate_mbid,
+};
 use super::models::{
     ActionResponse, ActiveCountResponse, ActiveRequestsResponse, AlbumIntake, BatchCancelResponse,
     BatchIntake, BatchIntakeResponse, ClearHistoryResponse, HistoryQuery, HistoryResponse,
@@ -1641,7 +1643,12 @@ impl RequestsService {
     ) -> Result<ActionResponse, RequestsError> {
         if !self
             .mixes
-            .decide(user_id, "approved", reviewer(admin), self.now_epoch())
+            .decide(
+                user_id,
+                ApprovalState::Approved,
+                reviewer(admin),
+                self.now_epoch(),
+            )
             .await?
         {
             return Ok(no_match());
@@ -1660,7 +1667,12 @@ impl RequestsService {
     ) -> Result<ActionResponse, RequestsError> {
         if !self
             .mixes
-            .decide(user_id, "rejected", reviewer(admin), self.now_epoch())
+            .decide(
+                user_id,
+                ApprovalState::Rejected,
+                reviewer(admin),
+                self.now_epoch(),
+            )
             .await?
         {
             return Ok(no_match());

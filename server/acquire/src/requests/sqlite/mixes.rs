@@ -6,12 +6,16 @@ use std::sync::Mutex;
 use rusqlite::{OptionalExtension, params};
 
 use super::super::error::RequestsError;
-use super::super::ledger::MixApproval;
+use super::super::ledger::{ApprovalState, MixApproval};
 use super::super::sql;
-use super::{
-    APPROVAL_APPROVED, APPROVAL_PENDING, APPROVAL_REVOKED, epoch_from_real, lane_error, read,
-};
+use super::{lane_error, ms_from_secs, read, secs_from_ms, unknown_value};
 use crate::db::AcquireDb;
+
+/// Decode a stored approval state; one outside the CHECK fails the read.
+fn approval_state(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<ApprovalState> {
+    let text: String = row.get(index)?;
+    ApprovalState::parse(&text).ok_or_else(|| unknown_value(index, "state", &text))
+}
 
 /// Durable personal-mix approvals over `personal_mix_approvals`, plus the
 /// in-process refresh guard (a build running in this process).
@@ -36,7 +40,7 @@ impl PersonalMixStore {
             .write("mix.file", move |tx| {
                 tx.execute(
                     sql::FILE_MIX_APPROVAL.text(),
-                    params![user_id, APPROVAL_PENDING, now as f64],
+                    params![user_id, ApprovalState::Pending.as_str(), ms_from_secs(now)],
                 )?;
                 Ok(())
             })
@@ -49,7 +53,7 @@ impl PersonalMixStore {
         let user_id = user_id.to_owned();
         read(&self.db, "mix.state", move |conn| {
             conn.query_row(sql::MIX_APPROVAL_STATE.text(), params![user_id], |row| {
-                row.get(0)
+                Ok(approval_state(row, 0)?.as_str().to_owned())
             })
             .optional()
         })
@@ -66,8 +70,8 @@ impl PersonalMixStore {
                 Ok(MixApproval {
                     user_name: user_name.unwrap_or_else(|| user_id.clone()),
                     user_id,
-                    state: row.get(2)?,
-                    requested_at: epoch_from_real(row.get(3)?),
+                    state: approval_state(row, 2)?.as_str().to_owned(),
+                    requested_at: secs_from_ms(row.get(3)?),
                 })
             })?;
             rows.collect()
@@ -84,11 +88,11 @@ impl PersonalMixStore {
     pub async fn decide(
         &self,
         user_id: &str,
-        state: &str,
+        state: ApprovalState,
         reviewer: (&str, Option<String>),
         now: u64,
     ) -> Result<bool, RequestsError> {
-        self.transition(user_id, APPROVAL_PENDING, state, reviewer, now)
+        self.transition(user_id, ApprovalState::Pending, state, reviewer, now)
             .await
     }
 
@@ -99,8 +103,14 @@ impl PersonalMixStore {
         reviewer: (&str, Option<String>),
         now: u64,
     ) -> Result<bool, RequestsError> {
-        self.transition(user_id, APPROVAL_APPROVED, APPROVAL_REVOKED, reviewer, now)
-            .await
+        self.transition(
+            user_id,
+            ApprovalState::Approved,
+            ApprovalState::Revoked,
+            reviewer,
+            now,
+        )
+        .await
     }
 
     /// Claim the refresh key. False means a build already holds it.
@@ -123,18 +133,25 @@ impl PersonalMixStore {
     async fn transition(
         &self,
         user_id: &str,
-        from: &'static str,
-        to: &str,
+        from: ApprovalState,
+        to: ApprovalState,
         reviewer: (&str, Option<String>),
         now: u64,
     ) -> Result<bool, RequestsError> {
-        let (user_id, to) = (user_id.to_owned(), to.to_owned());
+        let user_id = user_id.to_owned();
         let (reviewer_id, reviewer_name) = (reviewer.0.to_owned(), reviewer.1);
         self.db
             .write("mix.transition", move |tx| {
                 let changed = tx.execute(
                     sql::MIX_APPROVAL_TRANSITION.text(),
-                    params![user_id, to, reviewer_id, reviewer_name, now as f64, from],
+                    params![
+                        user_id,
+                        to.as_str(),
+                        reviewer_id,
+                        reviewer_name,
+                        ms_from_secs(now),
+                        from.as_str()
+                    ],
                 )?;
                 Ok(changed > 0)
             })

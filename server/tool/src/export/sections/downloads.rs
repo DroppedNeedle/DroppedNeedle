@@ -5,7 +5,8 @@
 //! download that landed them, and per-user storage usage keeps counting
 //! the completed ones.
 
-use super::{Parent, Source, TableSection, Target, col};
+use super::requests::{millis, now_millis};
+use super::{Column, Parent, Source, TableSection, Target, col};
 
 /// Finished downloads.
 pub const DOWNLOAD_TASKS: TableSection = TableSection {
@@ -58,14 +59,15 @@ pub const DOWNLOAD_TASKS: TableSection = TableSection {
         col("queue_position_start"),
         col("queue_position_end"),
         col("remote_queued"),
-        col("preferred_quality_fallback_at"),
+        Column::new("preferred_quality_fallback_at").from_sql_of(
+            "preferred_quality_fallback_at",
+            millis!("preferred_quality_fallback_at"),
+        ),
         col("quality_pool_key"),
         col("attempt_number"),
         col("attempt_total"),
         col("has_next_source"),
         col("quality_snapshot_json"),
-        col("quality_snapshot_hash"),
-        col("quality_snapshot_summary"),
         col("quality_preference_step"),
         col("quality_certainty"),
         col("quality_provenance"),
@@ -74,13 +76,22 @@ pub const DOWNLOAD_TASKS: TableSection = TableSection {
         col("final_path"),
         col("error_message"),
         col("retry_count"),
-        col("last_polled_at"),
-        col("created_at"),
-        col("started_at"),
-        col("completed_at"),
-        col("cancelled_at"),
-        col("updated_at"),
-        col("wrong_product_verdict_at"),
+        Column::new("last_polled_at").from_sql_of("last_polled_at", millis!("last_polled_at")),
+        Column::new("created_at").from_sql_of(
+            "created_at",
+            concat!("COALESCE(", millis!("created_at"), ", ", now_millis!(), ")"),
+        ),
+        Column::new("started_at").from_sql_of("started_at", millis!("started_at")),
+        Column::new("completed_at").from_sql_of("completed_at", millis!("completed_at")),
+        Column::new("cancelled_at").from_sql_of("cancelled_at", millis!("cancelled_at")),
+        Column::new("updated_at").from_sql_of(
+            "updated_at",
+            concat!("COALESCE(", millis!("updated_at"), ", ", now_millis!(), ")"),
+        ),
+        Column::new("wrong_product_verdict_at").from_sql_of(
+            "wrong_product_verdict_at",
+            millis!("wrong_product_verdict_at"),
+        ),
         col("wrong_product_detail"),
     ],
     key: &["id"],
@@ -122,11 +133,20 @@ pub const DOWNLOAD_ATTEMPTS: TableSection = TableSection {
         col("state"),
         col("disposition"),
         col("cleanup_failures"),
-        col("next_retry_at"),
+        Column::new("next_retry_at").from_sql_of(
+            "next_retry_at",
+            concat!("COALESCE(", millis!("next_retry_at"), ", 0)"),
+        ),
         col("error_code"),
-        col("created_at"),
-        col("updated_at"),
-        col("completed_at"),
+        Column::new("created_at").from_sql_of(
+            "created_at",
+            concat!("COALESCE(", millis!("created_at"), ", ", now_millis!(), ")"),
+        ),
+        Column::new("updated_at").from_sql_of(
+            "updated_at",
+            concat!("COALESCE(", millis!("updated_at"), ", ", now_millis!(), ")"),
+        ),
+        Column::new("completed_at").from_sql_of("completed_at", millis!("completed_at")),
         col("row_revision"),
     ],
     key: &["id"],
@@ -152,7 +172,16 @@ pub const QUARANTINE: TableSection = TableSection {
         col("identity"),
         col("release_group_mbid"),
         col("reason"),
-        col("quarantined_at"),
+        Column::new("quarantined_at").from_sql_of(
+            "quarantined_at",
+            concat!(
+                "COALESCE(",
+                millis!("quarantined_at"),
+                ", ",
+                now_millis!(),
+                ")"
+            ),
+        ),
     ],
     key: &["source", "identity", "release_group_mbid"],
     unique: &[],

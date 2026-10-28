@@ -44,13 +44,13 @@ droppedneedle_kernel::sql! {
     /// Finished upgrade tasks by album, newest first within one:
     /// `(group, status, finished at)`.
     pub(crate) UPGRADE_HISTORY = "SELECT lower(release_group_mbid), status, \
-             CAST(COALESCE(completed_at, cancelled_at, updated_at) AS INTEGER) \
+             COALESCE(completed_at, cancelled_at, updated_at) / 1000 \
          FROM download_tasks \
          WHERE origin = 'upgrade' AND release_group_mbid <> '' \
            AND status IN ('completed', 'partial', 'failed', 'cancelled') \
          ORDER BY 1, created_at DESC, rowid DESC";
     /// When the newest upgrade task was made.
-    pub(crate) NEWEST_UPGRADE = "SELECT CAST(max(created_at) AS INTEGER) FROM download_tasks \
+    pub(crate) NEWEST_UPGRADE = "SELECT max(created_at) / 1000 FROM download_tasks \
          WHERE origin = 'upgrade'";
     /// The oldest admin.
     pub(crate) OLDEST_ADMIN = "SELECT id FROM auth_users WHERE role = 'admin' \

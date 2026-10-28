@@ -641,12 +641,7 @@ impl<'c> HeldRows<'c> {
     fn settle_item(&self, item_id: i64, discarded: &str, now: i64) -> rusqlite::Result<()> {
         self.conn.execute(
             sql::SETTLE_ITEM.text(),
-            params![
-                item_id,
-                discarded,
-                now as f64 / 1000.0,
-                Reason::AlreadyOwned.message()
-            ],
+            params![item_id, discarded, now, Reason::AlreadyOwned.message()],
         )?;
         Ok(())
     }

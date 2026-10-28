@@ -24,8 +24,10 @@ pub use editions::EditionStore;
 pub use mixes::PersonalMixStore;
 pub(crate) use requests::HistoryOrder;
 pub use requests::RequestStore;
-pub use wanted::{WantedStore, WatchChange};
+pub use wanted::{WantedStore, WatchChange, WatchCheck};
 pub(crate) use wanted::{rearm_after_removal, stop_after_removal};
+
+pub(super) use crate::db::ms_from_secs_f64;
 
 use super::error::RequestsError;
 use crate::db::AcquireDb;
@@ -69,11 +71,6 @@ pub(crate) fn unknown_value(index: usize, column: &str, value: &str) -> rusqlite
     )
 }
 
-/// Personal-mix approval states (`personal_mix_approvals` has no CHECK yet).
-pub(super) const APPROVAL_PENDING: &str = "pending";
-pub(super) const APPROVAL_APPROVED: &str = "approved";
-pub(super) const APPROVAL_REVOKED: &str = "revoked";
-
 /// Epoch seconds as stored: request, watch and approval times are integer
 /// milliseconds.
 pub(crate) fn ms_from_secs(seconds: u64) -> i64 {
@@ -82,21 +79,7 @@ pub(crate) fn ms_from_secs(seconds: u64) -> i64 {
         .saturating_mul(1000)
 }
 
-/// Fractional epoch seconds (a library removal's time) as stored.
-pub(super) fn ms_from_secs_f64(seconds: f64) -> i64 {
-    (seconds * 1000.0).round() as i64
-}
-
 /// A stored millisecond time as epoch seconds, clamping negatives to zero.
 pub(crate) fn secs_from_ms(millis: i64) -> u64 {
     u64::try_from(millis / 1000).unwrap_or(0)
-}
-
-/// Personal-mix times are still REAL epoch seconds.
-pub(super) fn epoch_from_real(value: f64) -> u64 {
-    if value.is_finite() && value > 0.0 {
-        value as u64
-    } else {
-        0
-    }
 }

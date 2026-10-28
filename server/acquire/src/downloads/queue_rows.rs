@@ -15,6 +15,7 @@ use rusqlite::{OptionalExtension as _, Row, params};
 use super::sql;
 use super::state::TaskStatus;
 use super::store::{DownloadStore, NewTask, StoreError, TaskRow};
+use crate::db::{ms_from_secs_f64 as ms, secs_f64_from_ms};
 use crate::held::store::{FileState, HeldRows};
 use crate::reason::Reason;
 use crate::requests::settle::relink;
@@ -93,9 +94,10 @@ impl DownloadStore<'_> {
         let cancelled: Vec<String> = self
             .conn
             .prepare(sql::PURGE_ALBUM_TASKS.text())?
-            .query_map(params![release_group_mbid, now, removed_at], |row| {
-                row.get(0)
-            })?
+            .query_map(
+                params![release_group_mbid, ms(now), ms(removed_at)],
+                |row| row.get(0),
+            )?
             .collect::<Result<_, _>>()?;
         // Files kept for "Retry import" go with the tasks that kept them.
         for task_id in &cancelled {
@@ -103,15 +105,15 @@ impl DownloadStore<'_> {
         }
         let retries_cancelled = cancelled.len();
         let held = HeldRows::new(self.conn);
-        let removed_ms = (removed_at * 1000.0) as i64;
-        let now_ms = (now * 1000.0) as i64;
+        let removed_ms = ms(removed_at);
+        let now_ms = ms(now);
         let mut held_removed = 0;
         for (file, entry, _) in held.removed_album_files(release_group_mbid, removed_ms)? {
             held_removed += held.resolve(entry, &[file], FileState::Discarded, now_ms)?;
         }
         self.conn.execute(
             sql::PURGE_ALBUM_QUARANTINE.text(),
-            params![release_group_mbid, removed_at],
+            params![release_group_mbid, ms(removed_at)],
         )?;
         Ok(AlbumPurge {
             retries_cancelled,
@@ -139,7 +141,7 @@ impl DownloadStore<'_> {
                 progress.queue_position_start,
                 progress.queue_position_end,
                 progress.remote_queued,
-                now,
+                ms(now),
             ],
         )?;
         Ok(())
@@ -163,7 +165,7 @@ impl DownloadStore<'_> {
             TaskStatus::Failed | TaskStatus::Partial => {
                 let changed = self
                     .conn
-                    .execute(sql::STOP_RETRIES.text(), params![task.id, now])?;
+                    .execute(sql::STOP_RETRIES.text(), params![task.id, ms(now)])?;
                 if changed == 0 {
                     Stopped::AlreadySettled
                 } else {
@@ -285,7 +287,9 @@ impl QueueTask {
                 quality_sample_rate: row.get("quality_sample_rate")?,
                 advertised_queue_depth: row.get("advertised_queue_depth")?,
                 final_path: row.get("final_path")?,
-                wrong_product_verdict_at: row.get("wrong_product_verdict_at")?,
+                wrong_product_verdict_at: row
+                    .get::<_, Option<i64>>("wrong_product_verdict_at")?
+                    .map(secs_f64_from_ms),
                 wrong_product_detail: row.get("wrong_product_detail")?,
             },
         })
@@ -418,7 +422,7 @@ impl DownloadStore<'_> {
                     files_total: row.get(4)?,
                     files_imported: row.get(5)?,
                     files_held: row.get(6)?,
-                    decided_at: row.get(7)?,
+                    decided_at: secs_f64_from_ms(row.get(7)?),
                 });
             }
         }

@@ -5,8 +5,8 @@ use rusqlite::{OptionalExtension, params};
 use super::super::error::RequestsError;
 use super::super::ledger::EditionMark;
 use super::super::sql;
-use super::{lane_error, read};
-use crate::db::{AcquireDb, to_i64, to_u64};
+use super::{lane_error, ms_from_secs, read, secs_from_ms};
+use crate::db::AcquireDb;
 
 /// Durable in-flight edition acquires.
 #[derive(Clone)]
@@ -28,7 +28,7 @@ impl EditionStore {
                 Ok(EditionMark {
                     key: row.get(0)?,
                     task_id: row.get(1)?,
-                    started_at: to_u64(row.get(2)?),
+                    started_at: secs_from_ms(row.get(2)?),
                 })
             })
             .optional()
@@ -45,7 +45,7 @@ impl EditionStore {
                     params![
                         mark.key.to_lowercase(),
                         mark.task_id,
-                        to_i64(mark.started_at)
+                        ms_from_secs(mark.started_at)
                     ],
                 )?;
                 Ok(())

@@ -35,7 +35,7 @@ use crate::requests::ledger::{RequestStatus, WantedWatch, WatchState};
 use crate::requests::models::RequestKind;
 use crate::requests::service::{FollowIntake, FollowRelease, RequestsService};
 use crate::requests::settle::announce_fulfilled;
-use crate::requests::sqlite::{RequestStore, WantedStore};
+use crate::requests::sqlite::{RequestStore, WantedStore, WatchCheck};
 use crate::search_jobs::store::JobStore;
 use crate::target::Targets;
 use droppedneedle_catalog::reads::catalog::mapping::{should_include_release, type_set};
@@ -235,31 +235,59 @@ async fn check_watch(
         at + u64::try_from(interval_seconds(date.schedule.as_deref(), streak, now)).unwrap_or(0)
     };
     let found = date.found;
+    let check = |quiet_streak: u32, outcome: &'static str| WatchCheck {
+        quiet_streak,
+        next_check_at: next(quiet_streak),
+        now: at,
+        outcome,
+        first_release_date: found.clone(),
+        ..WatchCheck::default()
+    };
     match searched {
         Ok(candidates) if !candidates.is_empty() => {
+            let seen: Vec<(String, String)> = candidates
+                .iter()
+                .map(|candidate| (candidate.view.source.clone(), candidate.seen_identity()))
+                .collect();
             if !settings.auto_download_on_find {
+                // Only copies the watch has not seen before badge it and
+                // tell the owner (v2's seen set).
+                let known = deps.watches.seen(&watch.key).await?;
+                let fresh = seen.iter().filter(|pair| !known.contains(*pair)).count();
+                if fresh == 0 {
+                    let streak = watch.quiet_streak.saturating_add(1);
+                    deps.watches
+                        .record_check(
+                            &watch.key,
+                            WatchCheck {
+                                seen,
+                                ..check(streak, "seen")
+                            },
+                        )
+                        .await?;
+                    return Ok(());
+                }
+                let fresh = u32::try_from(fresh).unwrap_or(u32::MAX);
                 deps.watches
                     .record_check(
                         &watch.key,
-                        watch.quiet_streak,
-                        next(watch.quiet_streak),
-                        at,
-                        "found",
-                        found,
+                        WatchCheck {
+                            seen,
+                            new_candidates: Some(fresh),
+                            ..check(0, "found")
+                        },
                     )
                     .await?;
                 deps.ticks.emit(
                     "wanted.found",
                     &format!(
-                        "wanted {} has {} candidate(s) (badge-only)",
-                        watch.key,
-                        candidates.len()
+                        "wanted {} has {fresh} new candidate(s) (badge-only)",
+                        watch.key
                     ),
                     now,
                 );
-                let found = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
                 notify_wanted(deps, watch, UserNotice::WantedNewCandidates, |notice| {
-                    notice.new_candidates = Some(found);
+                    notice.new_candidates = Some(fresh);
                 });
                 return Ok(());
             }
@@ -280,7 +308,13 @@ async fn check_watch(
                         .link_task(RequestKind::Album, &watch.key, &task_id, None)
                         .await?;
                     deps.watches
-                        .record_check(&watch.key, 0, next(0), at, "dispatched", found)
+                        .record_check(
+                            &watch.key,
+                            WatchCheck {
+                                seen,
+                                ..check(0, "dispatched")
+                            },
+                        )
                         .await?;
                     if !outcome.started() {
                         // Another download of the album is already working.
@@ -299,7 +333,7 @@ async fn check_watch(
                 Err(cause) => {
                     tracing::warn!(key = %watch.key, %cause, "wanted dispatch failed");
                     deps.watches
-                        .record_check(&watch.key, 0, next(0), at, "error", found)
+                        .record_check(&watch.key, check(0, "error"))
                         .await?;
                     summary.errors += 1;
                 }
@@ -308,7 +342,7 @@ async fn check_watch(
         Ok(_) => {
             let streak = watch.quiet_streak.saturating_add(1);
             deps.watches
-                .record_check(&watch.key, streak, next(streak), at, "quiet", found)
+                .record_check(&watch.key, check(streak, "quiet"))
                 .await?;
         }
         Err(cause) => {
@@ -316,7 +350,7 @@ async fn check_watch(
             // one bad want never kills the sweep (v2 `_record_error_cycle`).
             tracing::warn!(key = %watch.key, %cause, "wanted search failed");
             deps.watches
-                .record_check(&watch.key, 0, next(0), at, "error", found)
+                .record_check(&watch.key, check(0, "error"))
                 .await?;
             summary.errors += 1;
         }
@@ -1104,8 +1138,6 @@ pub struct PruneSummary {
     pub requests: u64,
     /// Finished watches deleted.
     pub watches: u64,
-    /// Seen-candidate rows deleted.
-    pub seen: u64,
     /// Manual search jobs deleted.
     pub search_jobs: u64,
 }
@@ -1127,7 +1159,7 @@ pub async fn prune_tick(now: i64, deps: &PruneDeps) -> Result<PruneSummary, Requ
         .unwrap_or(0)
         .saturating_sub(days * 86_400);
     let requests = deps.ledger.prune_terminal(cutoff).await?;
-    let (watches, seen) = deps.watches.prune(cutoff).await?;
+    let watches = deps.watches.prune(cutoff).await?;
     let search_jobs = deps
         .search_jobs
         .prune(now as f64)
@@ -1136,7 +1168,6 @@ pub async fn prune_tick(now: i64, deps: &PruneDeps) -> Result<PruneSummary, Requ
     Ok(PruneSummary {
         requests,
         watches,
-        seen,
         search_jobs,
     })
 }

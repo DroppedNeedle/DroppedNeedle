@@ -543,12 +543,6 @@ impl SearchJobs {
                     .collect()
             })
             .unwrap_or_default();
-        if !seen.is_empty() {
-            self.wanted
-                .add_seen(&group, seen, now)
-                .await
-                .map_err(refused)?;
-        }
         let existing = self.wanted.get(&group).await.map_err(refused)?;
         match existing.as_ref().map(|watch| watch.state) {
             None | Some(WatchState::Fulfilled) => {
@@ -589,6 +583,13 @@ impl SearchJobs {
                     .map_err(refused)?;
             }
             Some(WatchState::Watching) => {}
+        }
+        // The watch exists now: its seen candidates hang off it.
+        if !seen.is_empty() {
+            self.wanted
+                .add_seen(&group, seen, now)
+                .await
+                .map_err(refused)?;
         }
         let state = self
             .wanted

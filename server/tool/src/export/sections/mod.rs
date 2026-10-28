@@ -91,6 +91,9 @@ pub enum V2Value {
     /// An SQL expression over the v2 row (alias `s`, other v2 tables as
     /// `v2.<table>`).
     Expr(&'static str),
+    /// An SQL expression over one v2 column; when the v2 table lacks that
+    /// column, the column stays out of the bundle.
+    ExprOf(&'static str, &'static str),
 }
 
 /// One carried column: its v3 (and bundle) name, where the value comes
@@ -127,6 +130,14 @@ impl Column {
     #[must_use]
     pub const fn from_sql(mut self, expr: &'static str) -> Self {
         self.v2 = V2Value::Expr(expr);
+        self
+    }
+
+    /// The value is computed from v2 column `v2_name`, and left out when
+    /// v2 lacks that column.
+    #[must_use]
+    pub const fn from_sql_of(mut self, v2_name: &'static str, expr: &'static str) -> Self {
+        self.v2 = V2Value::ExprOf(v2_name, expr);
         self
     }
 

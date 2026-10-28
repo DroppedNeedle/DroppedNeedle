@@ -452,6 +452,28 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     .await
     .expect("request reads");
     assert_eq!(request, (1_700_000_000_250, 1_700_000_000_250));
+    // v2's REAL-second download, quarantine, seen and approval times land
+    // as milliseconds.
+    let times: (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT created_at FROM download_tasks), \
+         (SELECT updated_at FROM download_attempts), \
+         (SELECT quarantined_at FROM download_quarantine), \
+         (SELECT first_seen_at FROM wanted_seen_candidates), \
+         (SELECT requested_at FROM personal_mix_approvals)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("times read");
+    assert_eq!(
+        times,
+        (
+            1_700_000_100_000,
+            1_700_000_400_000,
+            1_700_000_200_000,
+            1_700_000_300_000,
+            1_700_000_000_000
+        )
+    );
     let dormant: (String, i64, i64) = sqlx::query_as(
         "SELECT state, created_at, next_check_at FROM wanted_watches \
          WHERE release_group_mbid_lower = ?",

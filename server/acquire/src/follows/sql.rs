@@ -115,8 +115,8 @@ droppedneedle_kernel::sql! {
          ORDER BY f.user_id";
     /// Store one cursor.
     pub(crate) PUT_CURSOR = "INSERT OR REPLACE INTO acquire_follow_cursors (artist_mbid_lower, \
-         baselined, cursor_date, next_poll_at, followers, pending) \
-         VALUES (?1, ?2, ?3, ?4, '[]', ?5)";
+         baselined, cursor_date, next_poll_at, pending) \
+         VALUES (?1, ?2, ?3, ?4, ?5)";
     /// Remember one known release group.
     pub(crate) ADD_KNOWN_RELEASE = "INSERT OR IGNORE INTO artist_known_releases \
          (artist_mbid_lower, rg_mbid_lower) VALUES (?1, ?2)";

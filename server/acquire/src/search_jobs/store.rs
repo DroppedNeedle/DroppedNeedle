@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::candidates::Candidate;
 use super::sql;
-use crate::db::AcquireDb;
+use crate::db::{AcquireDb, ms_from_secs_f64 as ms};
 use crate::downloads::store::{DownloadStore, NewTask, StoreError, TaskDetails};
 use droppedneedle_kernel::db::{DbError, Lane};
 
@@ -190,7 +190,7 @@ impl JobStore {
                         format!("{} - {}", job.artist_name, job.album_title),
                         SEARCHING,
                         payload.encode()?,
-                        at,
+                        ms(at),
                     ],
                 )?;
                 Ok(())
@@ -248,7 +248,7 @@ impl JobStore {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
                 let changed = tx.execute(
                     sql::FINISH_JOB.text(),
-                    params![job_id, status, payload.encode()?, reason, at, SEARCHING],
+                    params![job_id, status, payload.encode()?, reason, ms(at), SEARCHING],
                 )?;
                 Ok(changed > 0)
             })
@@ -297,7 +297,7 @@ impl JobStore {
                         format!("{} - {}", job.artist_name, job.album_title),
                         status,
                         payload.encode()?,
-                        at,
+                        ms(at),
                     ],
                 )?;
                 match outcome {
@@ -313,7 +313,7 @@ impl JobStore {
                         )
                         .map_err(|error| store_failed("search_jobs.review", error))?,
                     ReviewOutcome::Park => {
-                        tx.execute(sql::PARK_TASK.text(), params![task_id, job.id, at])?;
+                        tx.execute(sql::PARK_TASK.text(), params![task_id, job.id, ms(at)])?;
                     }
                 }
                 Ok(true)
@@ -334,7 +334,7 @@ impl JobStore {
                 let at = crate::db::unix_secs_f64(clock.as_ref());
                 let moved = tx.execute(
                     sql::CLOSE_JOB.text(),
-                    params![job_id, CANCELLED, at, SEARCHING, COMPLETED, FAILED],
+                    params![job_id, CANCELLED, ms(at), SEARCHING, COMPLETED, FAILED],
                 )?;
                 let parked: Option<String> = tx
                     .query_row(sql::PARKED_TASK.text(), params![job_id], |row| row.get(0))
@@ -368,7 +368,7 @@ impl JobStore {
                 for status in from {
                     moved += tx.execute(
                         sql::TRANSITION_JOB.text(),
-                        params![job_id, to, reason, at, status],
+                        params![job_id, to, reason, ms(at), status],
                     )?;
                 }
                 Ok(moved > 0)
@@ -389,7 +389,7 @@ impl JobStore {
             .write_background("search_jobs.prune", move |tx| {
                 let stale = tx.execute(
                     sql::PRUNE_STALE.text(),
-                    params![SEARCHING, COMPLETED, FAILED, CANCELLED, cutoff],
+                    params![SEARCHING, COMPLETED, FAILED, CANCELLED, ms(cutoff)],
                 )?;
                 let picked = tx.execute(sql::PRUNE_PICKED.text(), params![MATCHED])?;
                 Ok(u64::try_from(stale + picked).unwrap_or(u64::MAX))
@@ -450,7 +450,7 @@ impl JobStore {
                         )
                         .map_err(store_error)?;
                     waive(&task_id).map_err(store_error)?;
-                    tx.execute(sql::SET_JOB_STATUS.text(), params![job_id, MATCHED, at])?;
+                    tx.execute(sql::SET_JOB_STATUS.text(), params![job_id, MATCHED, ms(at)])?;
                     return Ok(task_id);
                 }
                 if !picked.task.release_group_mbid.is_empty()
@@ -477,7 +477,7 @@ impl JobStore {
                     )
                     .map_err(store_error)?;
                 waive(&picked.task.id).map_err(store_error)?;
-                tx.execute(sql::SET_JOB_STATUS.text(), params![job_id, MATCHED, at])?;
+                tx.execute(sql::SET_JOB_STATUS.text(), params![job_id, MATCHED, ms(at)])?;
                 Ok(picked.task.id.clone())
             })
             .await;

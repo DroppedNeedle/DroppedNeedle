@@ -13,7 +13,7 @@ use rusqlite::{OptionalExtension, params};
 use droppedneedle_kernel::db::DbError;
 
 use super::sql;
-use crate::db::AcquireDb;
+use crate::db::{AcquireDb, ms_from_secs_f64 as ms, secs_f64_from_ms as secs};
 use crate::held::store::{EntryOrigin, GroupKey, HeldRows, NewEntry, NewFile};
 use crate::reason::Reason;
 
@@ -112,7 +112,7 @@ impl JobRecord {
             user_id: row.get(1)?,
             user_name: row.get(2)?,
             status: row.get(3)?,
-            created_at: row.get(4)?,
+            created_at: secs(row.get(4)?),
             upload_name: row.get(5)?,
             staging_dir: row.get(6)?,
             error: row.get(7)?,
@@ -130,7 +130,7 @@ impl ItemRecord {
             job_id: row.get(1)?,
             folder_name: row.get(2)?,
             status: row.get(3)?,
-            updated_at: row.get(4)?,
+            updated_at: secs(row.get(4)?),
             release_group_mbid: row.get(5)?,
             album_title: row.get(6)?,
             artist_name: row.get(7)?,
@@ -192,7 +192,7 @@ impl DropStore {
                 let (id, user_id, user_name, upload_name, staging_dir, at) = values;
                 tx.execute(
                     sql::INSERT_JOB.text(),
-                    params![id, user_id, user_name, at, upload_name, staging_dir],
+                    params![id, user_id, user_name, ms(at), upload_name, staging_dir],
                 )?;
                 Ok(())
             })
@@ -236,7 +236,7 @@ impl DropStore {
                 let (job_id, folder_name, paths, total, at) = values;
                 tx.execute(
                     sql::INSERT_ITEM.text(),
-                    params![job_id, folder_name, total, paths, at],
+                    params![job_id, folder_name, total, paths, ms(at)],
                 )?;
                 Ok(tx.last_insert_rowid())
             })
@@ -272,10 +272,8 @@ impl DropStore {
         let clock = self.db.clock().clone();
         self.db
             .write("drop_import.claim_review", move |tx| {
-                let changed = tx.execute(
-                    sql::CLAIM_REVIEW.text(),
-                    params![item_id, crate::db::unix_secs_f64(clock.as_ref())],
-                )?;
+                let changed =
+                    tx.execute(sql::CLAIM_REVIEW.text(), params![item_id, clock.now_ms()])?;
                 Ok(changed == 1)
             })
             .await
@@ -349,7 +347,6 @@ impl DropStore {
         let clock = self.db.clock().clone();
         self.db
             .write_background("drop_import.fail_stale", move |tx| {
-                let at = crate::db::unix_secs_f64(clock.as_ref());
                 let now = clock.now_ms();
                 let mut select = tx.prepare(sql::CUT_OFF_ITEMS.text())?;
                 type Cut = (
@@ -389,7 +386,7 @@ impl DropStore {
                     let waits = kept.unwrap_or(reason);
                     tx.execute(
                         sql::RETURN_TO_REVIEW.text(),
-                        params![waits.message(), waits.code(), at, kept.is_some(), id],
+                        params![waits.message(), waits.code(), now, kept.is_some(), id],
                     )?;
                     if !user_known || rows.entry_of_item(id)?.is_some() {
                         continue;
@@ -479,7 +476,7 @@ pub(crate) fn write_item(
             item.detail,
             item.reason_code.map(Reason::code),
             serde_json::to_string(&item.staging_paths).unwrap_or_else(|_| "[]".to_owned()),
-            at,
+            ms(at),
         ],
     )?;
     Ok(changed == 1)

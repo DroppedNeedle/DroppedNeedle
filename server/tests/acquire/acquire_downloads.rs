@@ -702,6 +702,7 @@ fn idempotency_keys_answer_the_original_task() {
     let conn = scratch_store(&dir);
     let store = DownloadStore::new(&conn);
     let now = 1_700_000_000.0;
+    store.insert_task(&new_task("task-a"), now).unwrap();
     assert!(
         store
             .claim_key("dispatch:k1", "task-a", "dispatch", now)
@@ -849,13 +850,13 @@ fn kept_files_go_to_cleanup_without_racing_a_reimport() {
     }
     conn.execute(
         "UPDATE download_attempts SET completed_at = ?1 WHERE task_id = 'young'",
-        [now - 89.0 * 86_400.0],
+        [((now - 89.0 * 86_400.0) * 1000.0) as i64],
     )
     .unwrap();
     conn.execute(
         "UPDATE download_attempts SET lease_owner = 'cleaner', lease_expires_at = ?1 \
          WHERE task_id = 'leased'",
-        [now + 60.0],
+        [((now + 60.0) * 1000.0) as i64],
     )
     .unwrap();
     let state = |task: &str| {

@@ -1,5 +1,7 @@
 //! Wanted watches over `wanted_watches`.
 
+use std::collections::HashSet;
+
 use rusqlite::{Connection, OptionalExtension, Params, Transaction, params};
 
 use super::super::error::RequestsError;
@@ -61,6 +63,25 @@ pub enum WatchChange {
     Fulfilled,
 }
 
+/// One check of a watch, as [`WantedStore::record_check`] writes it.
+#[derive(Debug, Clone, Default)]
+pub struct WatchCheck {
+    /// The quiet streak after this check.
+    pub quiet_streak: u32,
+    /// When the watch is next due (epoch seconds).
+    pub next_check_at: u64,
+    /// When the check ran (epoch seconds).
+    pub now: u64,
+    /// What the check found.
+    pub outcome: &'static str,
+    /// The release date, when this check found one.
+    pub first_release_date: Option<String>,
+    /// Every candidate the check saw, as `(source, identity)`.
+    pub seen: Vec<(String, String)>,
+    /// How many of them were new, when any were: the badge count.
+    pub new_candidates: Option<u32>,
+}
+
 /// Durable wanted watches, shared by the wanted view and the watcher loop
 /// (v2 `WantedStore`).
 #[derive(Clone)]
@@ -70,18 +91,14 @@ pub struct WantedStore {
 
 impl WantedStore {
     /// Delete stopped and fulfilled watches last touched before `cutoff`
-    /// (epoch seconds), then seen-candidate rows left without a watch.
-    /// Returns `(watches, seen rows)` deleted (v2 `WantedStore.prune`).
-    pub async fn prune(&self, cutoff: u64) -> Result<(u64, u64), RequestsError> {
+    /// (epoch seconds); their seen candidates go with them. Returns the
+    /// watches deleted (v2 `WantedStore.prune`).
+    pub async fn prune(&self, cutoff: u64) -> Result<u64, RequestsError> {
         self.db
             .write_background("wanted.prune", move |tx| {
                 let watches =
                     tx.execute(sql::PRUNE_WATCHES.text(), params![ms_from_secs(cutoff)])?;
-                let seen = tx.execute(sql::PRUNE_SEEN.text(), [])?;
-                Ok((
-                    u64::try_from(watches).unwrap_or(0),
-                    u64::try_from(seen).unwrap_or(0),
-                ))
+                Ok(u64::try_from(watches).unwrap_or(0))
             })
             .await
             .map_err(|error| lane_error("wanted.prune", error))
@@ -180,36 +197,47 @@ impl WantedStore {
             .map_err(|error| lane_error("wanted.enrol", error))
     }
 
-    /// Record one check: the new quiet streak and next due time, and the
-    /// release date when this check found one (a stored date is kept).
-    pub async fn record_check(
-        &self,
-        key: &str,
-        quiet_streak: u32,
-        next_check_at: u64,
-        now: u64,
-        outcome: &str,
-        first_release_date: Option<String>,
-    ) -> Result<(), RequestsError> {
+    /// Record one check: the new quiet streak and next due time, the
+    /// release date when this check found one (a stored date is kept), the
+    /// candidates it saw and, when some were new, the badge count. The
+    /// check and its seen candidates land together.
+    pub async fn record_check(&self, key: &str, check: WatchCheck) -> Result<(), RequestsError> {
         let key = key.to_lowercase();
-        let outcome = outcome.to_owned();
         self.db
             .write_background("wanted.record_check", move |tx| {
                 tx.execute(
                     sql::RECORD_CHECK.text(),
                     params![
                         key,
-                        quiet_streak,
-                        ms_from_secs(next_check_at),
-                        ms_from_secs(now),
-                        outcome,
-                        first_release_date
+                        check.quiet_streak,
+                        ms_from_secs(check.next_check_at),
+                        ms_from_secs(check.now),
+                        check.outcome,
+                        check.first_release_date,
+                        check.new_candidates
                     ],
                 )?;
+                for (source, identity) in &check.seen {
+                    tx.execute(
+                        sql::ADD_SEEN.text(),
+                        params![key, source, identity, ms_from_secs(check.now)],
+                    )?;
+                }
                 Ok(())
             })
             .await
             .map_err(|error| lane_error("wanted.record_check", error))
+    }
+
+    /// The candidates a watch has seen, as `(source, identity)`.
+    pub async fn seen(&self, key: &str) -> Result<HashSet<(String, String)>, RequestsError> {
+        let key = key.to_lowercase();
+        read(&self.db, "wanted.seen", move |conn| {
+            let mut statement = conn.prepare_cached(sql::SEEN_CANDIDATES.text())?;
+            let rows = statement.query_map(params![key], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            rows.collect()
+        })
+        .await
     }
 
     /// Mark a watch fulfilled (the album reached the library).
@@ -309,7 +337,7 @@ impl WantedStore {
                 for (source, identity) in &candidates {
                     tx.execute(
                         sql::ADD_SEEN.text(),
-                        params![key, source, identity, now as f64],
+                        params![key, source, identity, ms_from_secs(now)],
                     )?;
                 }
                 Ok(())

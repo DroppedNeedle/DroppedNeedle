@@ -5681,6 +5681,7 @@ async fn request_state_checks_list_exactly_the_code_values() {
         "request_history",
         "wanted_watches",
         "auto_download_approvals",
+        "personal_mix_approvals",
     ] {
         let sql: String = sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE name = ?")
             .bind(table)
@@ -5712,6 +5713,10 @@ async fn request_state_checks_list_exactly_the_code_values() {
     );
     assert_eq!(
         listed("auto_download_approvals", "state"),
+        ApprovalState::ALL.map(|state| state.as_str().to_owned())
+    );
+    assert_eq!(
+        listed("personal_mix_approvals", "state"),
         ApprovalState::ALL.map(|state| state.as_str().to_owned())
     );
     for status in RequestStatus::ALL {
@@ -5848,7 +5853,8 @@ async fn queued_downloads_take_an_empty_plan_on_upgrade() {
     let pool = scratch_pool().await;
     migrator_through(83).run(&pool).await.unwrap();
     sqlx::raw_sql(
-        "PRAGMA foreign_keys = OFF; \
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'U', 'user', 'now'); \
          INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name, \
              album_title, status, created_at, updated_at) \
          VALUES ('t-queued', 'u1', 'rg', 'A', 'B', 'queued', 1, 1);",
@@ -7075,4 +7081,304 @@ async fn discover_tables_rebuild_and_hidden_releases_carry() {
         .await
         .unwrap();
     assert_eq!(left, 0, "hidden releases go with their user");
+}
+
+/// Migration 0096 rebuilds the remaining acquire tables as STRICT with
+/// millisecond times. A download mid-transfer, its attempt, a held upload
+/// of a drop job, a follow cursor and a seen candidate carry with equal
+/// meaning; rows whose parent is already gone drop; and the download then
+/// completes from its converted row, its triggers still moving the
+/// activity revision.
+#[tokio::test]
+async fn acquire_rows_carry_onto_strict_tables_on_upgrade() {
+    use droppedneedle_acquire::downloads::state::{AttemptState, TaskStatus};
+    use droppedneedle_acquire::downloads::store::DownloadStore;
+
+    let dir = crate::common::ScratchDir::new("acquire-0096");
+    let path = dir.join("app.db");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    migrator_through(95).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'U', 'user', 'now'), ('admin', 'A', 'admin', 'now'); \
+         INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name, \
+             album_title, status, year, quality_snapshot_hash, remote_queued, created_at, \
+             started_at, last_polled_at, updated_at) \
+         VALUES ('t1', 'u1', 'rg', 'A', 'B', 'downloading', 'junk', 'h', 1, \
+             1700000000.123, 1700000000.5, 1700000002.25, 1700000002.25); \
+         INSERT INTO download_attempts (id, task_id, source, candidate_index, handle_json, \
+             state, next_retry_at, lease_expires_at, created_at, updated_at) \
+         VALUES ('a1', 't1', 'soulseek', 0, '{}', 'in_use', 0, 1700000060.0, \
+             1700000000.5, 1700000001.0); \
+         INSERT INTO download_idempotency_keys VALUES ('k1', 't1', 'dispatch', 1700000000.0); \
+         INSERT INTO download_import_decisions (task_id, attempt_id, outcome, decided_at) \
+         VALUES ('t1', 'a1', 'deferred', 1700000003.0); \
+         INSERT INTO download_quarantine (source, identity, reason, quarantined_at) \
+         VALUES ('soulseek', 'peer/x', 'corrupt', 1700000004.0); \
+         INSERT INTO drop_import_jobs (id, user_id, status, created_at, upload_name, \
+             staging_dir) VALUES ('j1', 'u1', 'failed', 1700000005.0, 'up', '/s'); \
+         INSERT INTO drop_import_items (id, job_id, folder_name, status, updated_at) \
+         VALUES (5, 'j1', 'f', 'needs_review', 1700000006.0); \
+         INSERT INTO acquire_held_entries (id, user_id, origin, group_key, drop_item_id, \
+             state, created_at, expires_at) \
+         VALUES (9, 'u1', 'upload', 'upload:5', 5, 'held', 1, 2); \
+         INSERT INTO acquire_held_files (id, entry_id, root, path, original_name, source, \
+             reason, state, created_at) \
+         VALUES (3, 9, 'drop', 'p', 'o', 'upload', 'weak_match', 'held', 1); \
+         INSERT INTO search_jobs (id, user_id, artist_name, album_title, search_query, \
+             quality_snapshot_summary, created_at, updated_at) \
+         VALUES ('s1', 'u1', 'A', 'B', 'A - B', 'x', 1700000007.0, 1700000007.5); \
+         INSERT INTO spotify_auth_requests VALUES ('st', 'u1', 'https://r', 1700000600); \
+         INSERT INTO acquire_edition_acquires VALUES ('rg', 't1', 1700000008); \
+         INSERT INTO personal_mix_approvals (user_id, state, requested_at, reviewed_by_id, \
+             reviewed_at) VALUES ('u1', 'approved', 1700000009.5, 'admin', 1700000010.0); \
+         INSERT INTO acquire_follow_cursors (artist_mbid_lower, baselined, next_poll_at, \
+             followers) VALUES ('ar', 1, 1700000011, '[]'); \
+         INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid, user_id, \
+             artist_name, album_title, kind, created_at, next_check_at) \
+         VALUES ('w1', 'W1', 'u1', 'A', 'B', 'missing', 1, 2); \
+         INSERT INTO wanted_seen_candidates VALUES ('w1', 'soulseek', 'peer/B', 1700000012.0); \
+         PRAGMA foreign_keys = OFF; \
+         INSERT INTO download_idempotency_keys VALUES ('k2', 'gone', 'dispatch', 1); \
+         INSERT INTO download_import_decisions (task_id, outcome, decided_at) \
+         VALUES ('gone', 'rejected', 1); \
+         INSERT INTO search_jobs (id, user_id, artist_name, album_title, search_query, \
+             created_at, updated_at) VALUES ('s2', 'ghost', 'A', 'B', 'q', 1, 1); \
+         INSERT INTO acquire_edition_acquires VALUES ('rg2', 'gone', 1); \
+         INSERT INTO wanted_seen_candidates VALUES ('nowatch', 'soulseek', 'p', 1); \
+         PRAGMA foreign_keys = ON;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let ms = |sql: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sql)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    let task: (i64, i64, i64, i64, Option<i64>, i64) = sqlx::query_as(
+        "SELECT created_at, started_at, last_polled_at, updated_at, year, remote_queued \
+         FROM download_tasks WHERE id = 't1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        task,
+        (
+            1_700_000_000_123,
+            1_700_000_000_500,
+            1_700_000_002_250,
+            1_700_000_002_250,
+            None,
+            1
+        ),
+        "times are exact milliseconds and a year that is not a number reads none"
+    );
+    let attempt: (i64, i64, i64, String) = sqlx::query_as(
+        "SELECT next_retry_at, lease_expires_at, created_at, state FROM download_attempts",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        attempt,
+        (0, 1_700_000_060_000, 1_700_000_000_500, "in_use".to_owned())
+    );
+    assert_eq!(
+        ms("SELECT created_at FROM download_idempotency_keys").await,
+        1_700_000_000_000,
+        "the key of a missing download drops"
+    );
+    assert_eq!(
+        ms("SELECT decided_at FROM download_import_decisions").await,
+        1_700_000_003_000,
+        "the decision of a missing download drops"
+    );
+    assert_eq!(
+        ms("SELECT quarantined_at FROM download_quarantine").await,
+        1_700_000_004_000
+    );
+    assert_eq!(
+        ms("SELECT created_at FROM drop_import_jobs").await,
+        1_700_000_005_000
+    );
+    assert_eq!(
+        ms("SELECT updated_at FROM drop_import_items WHERE id = 5").await,
+        1_700_000_006_000
+    );
+    assert_eq!(
+        ms("SELECT COUNT(*) FROM acquire_held_entries e \
+            JOIN acquire_held_files f ON f.entry_id = e.id \
+            WHERE e.id = 9 AND e.drop_item_id = 5 AND f.id = 3")
+        .await,
+        1,
+        "the held upload of a drop item survives the rebuild"
+    );
+    assert_eq!(
+        ms("SELECT created_at + updated_at FROM search_jobs WHERE id = 's1'").await,
+        3_400_000_014_500
+    );
+    assert_eq!(
+        ms("SELECT COUNT(*) FROM search_jobs").await,
+        1,
+        "the search job of a missing user drops"
+    );
+    assert_eq!(
+        ms("SELECT expires_at FROM spotify_auth_requests").await,
+        1_700_000_600_000
+    );
+    assert_eq!(
+        ms("SELECT started_at FROM acquire_edition_acquires").await,
+        1_700_000_008_000,
+        "the mark of a missing download drops"
+    );
+    let mix: (String, i64, Option<String>, i64) = sqlx::query_as(
+        "SELECT state, requested_at, reviewed_by_id, reviewed_at FROM personal_mix_approvals",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        mix,
+        (
+            "approved".to_owned(),
+            1_700_000_009_500,
+            Some("admin".to_owned()),
+            1_700_000_010_000
+        )
+    );
+    assert_eq!(
+        ms("SELECT next_poll_at FROM acquire_follow_cursors").await,
+        1_700_000_011_000
+    );
+    assert_eq!(
+        ms("SELECT first_seen_at FROM wanted_seen_candidates").await,
+        1_700_000_012_000,
+        "the seen candidate of a missing watch drops"
+    );
+    for (table, column) in [
+        ("download_tasks", "quality_snapshot_hash"),
+        ("download_tasks", "quality_snapshot_summary"),
+        ("search_jobs", "quality_snapshot_hash"),
+        ("search_jobs", "quality_snapshot_summary"),
+        ("acquire_follow_cursors", "followers"),
+    ] {
+        assert!(
+            !column_names(&pool, table).await.iter().any(|c| c == column),
+            "{table}.{column} is gone"
+        );
+    }
+    for table in [
+        "download_tasks",
+        "download_attempts",
+        "download_idempotency_keys",
+        "download_import_decisions",
+        "download_quarantine",
+        "download_activity_global_revision",
+        "download_activity_user_revisions",
+        "drop_import_jobs",
+        "drop_import_items",
+        "search_jobs",
+        "spotify_auth_requests",
+        "acquire_edition_acquires",
+        "personal_mix_approvals",
+        "acquire_follow_cursors",
+        "artist_known_releases",
+        "user_quotas",
+        "wanted_seen_candidates",
+    ] {
+        let strict: i64 = sqlx::query_scalar("SELECT strict FROM pragma_table_list WHERE name = ?")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(strict, 1, "{table} is STRICT");
+    }
+    assert!(
+        sqlx::raw_sql("UPDATE personal_mix_approvals SET state = 'dormant'")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "only the approval states are taken"
+    );
+    let triggers: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' \
+         AND name LIKE 'download_activity_%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(triggers, 15, "every activity trigger is back");
+    let violations: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(violations, 0);
+    pool.close().await;
+
+    // The download finishes from its converted row.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+    let revision = || -> i64 {
+        conn.query_row(
+            "SELECT revision FROM download_activity_global_revision",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    let before = revision();
+    let store = DownloadStore::new(&conn);
+    let row = store.get_task("t1").unwrap().unwrap();
+    assert_eq!(row.status, TaskStatus::Downloading);
+    assert_eq!(row.created_at, 1_700_000_000.123);
+    assert_eq!(row.last_polled_at, Some(1_700_000_002.25));
+    let attempt = store.get_attempt("a1").unwrap().unwrap();
+    assert_eq!(attempt.lease_expires_at, Some(1_700_000_060.0));
+    store
+        .transition_task("t1", TaskStatus::Processing, 1_700_000_100.5, None)
+        .unwrap();
+    store
+        .finalize_task_and_attempt(
+            "t1",
+            TaskStatus::Completed,
+            1_700_000_200.25,
+            None,
+            Some("a1"),
+            false,
+        )
+        .unwrap();
+    let done = store.get_task("t1").unwrap().unwrap();
+    assert_eq!(done.status, TaskStatus::Completed);
+    assert_eq!(done.completed_at, Some(1_700_000_200.25));
+    let stored: i64 = conn
+        .query_row(
+            "SELECT completed_at FROM download_tasks WHERE id = 't1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, 1_700_000_200_250);
+    assert_eq!(
+        store.get_attempt("a1").unwrap().unwrap().state,
+        AttemptState::CleanupPending
+    );
+    assert!(revision() > before, "the activity triggers still fire");
 }

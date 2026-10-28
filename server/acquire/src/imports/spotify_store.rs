@@ -51,7 +51,7 @@ impl SqliteSpotifyStates {
         let clock = self.db.clock().clone();
         self.db
             .write("spotify.state.store", move |tx| {
-                let now = now_unix_secs(clock.as_ref());
+                let now = clock.now_ms();
                 tx.execute(sql::PRUNE_STATES.text(), params![now])?;
                 tx.execute(
                     sql::INSERT_STATE.text(),
@@ -59,7 +59,7 @@ impl SqliteSpotifyStates {
                         state,
                         pending.user_id,
                         pending.redirect_uri,
-                        now + STATE_TTL_SECS
+                        now.saturating_add(STATE_TTL_SECS.saturating_mul(1000))
                     ],
                 )?;
                 Ok(())
@@ -82,7 +82,7 @@ impl SqliteSpotifyStates {
                     .optional()?;
                 tx.execute(sql::DELETE_STATE.text(), params![state])?;
                 Ok(row
-                    .filter(|(_, _, expires_at)| *expires_at > now_unix_secs(clock.as_ref()))
+                    .filter(|(_, _, expires_at)| *expires_at > clock.now_ms())
                     .map(|(user_id, redirect_uri, _)| PendingAuth {
                         user_id,
                         redirect_uri,

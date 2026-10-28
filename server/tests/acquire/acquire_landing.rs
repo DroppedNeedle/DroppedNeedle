@@ -2021,6 +2021,16 @@ async fn a_wait_after_an_import_does_not_hide_it() {
         .journal
         .run("test.seed", |store| {
             store.insert_task(&new_task("t-again", GOOD_GROUP), 1.0)?;
+            store.insert_attempt(
+                "t-again-a0",
+                "t-again",
+                "soulseek",
+                0,
+                "",
+                "",
+                AttemptState::InUse,
+                1.0,
+            )?;
             for (outcome, at) in [("imported", 2.0), ("deferred", 3.0)] {
                 store.record_import_decision(&ImportDecisionRow {
                     task_id: "t-again".to_owned(),

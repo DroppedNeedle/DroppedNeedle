@@ -1,6 +1,8 @@
 //! Small per-user preferences.
 
-use super::{Source, TableSection, Target, col};
+use super::library::live_user;
+use super::requests::{millis, now_millis};
+use super::{Column, Source, TableSection, Target, col};
 
 /// Scrobble targets, now-playing visibility and the personal-mix switch.
 pub const LISTENING_PREFS: TableSection = TableSection {
@@ -39,11 +41,24 @@ pub const PERSONAL_MIX_APPROVALS: TableSection = TableSection {
     target: Target::Table("personal_mix_approvals"),
     columns: &[
         col("user_id"),
-        col("state"),
-        col("requested_at"),
-        col("reviewed_by_id"),
+        // A state outside the four asks again.
+        Column::new("state").from_sql(
+            "CASE WHEN s.state IN ('pending', 'approved', 'rejected', 'revoked') \
+             THEN s.state ELSE 'pending' END",
+        ),
+        Column::new("requested_at").from_sql_of(
+            "requested_at",
+            concat!(
+                "COALESCE(",
+                millis!("requested_at"),
+                ", ",
+                now_millis!(),
+                ")"
+            ),
+        ),
+        Column::new("reviewed_by_id").from_sql(live_user!("reviewed_by_id")),
         col("reviewed_by_name"),
-        col("reviewed_at"),
+        Column::new("reviewed_at").from_sql_of("reviewed_at", millis!("reviewed_at")),
     ],
     key: &["user_id"],
     unique: &[],

@@ -43,12 +43,15 @@ macro_rules! millis {
     };
 }
 
+pub(crate) use millis;
+
 /// Now, as integer milliseconds.
 macro_rules! now_millis {
     () => {
         "CAST(round((julianday('now') - 2440587.5) * 86400000.0) AS INTEGER)"
     };
 }
+pub(crate) use now_millis;
 
 /// A v2 whole-number column, NULL when it holds something else.
 macro_rules! whole {
@@ -256,7 +259,16 @@ pub const WANTED_SEEN_CANDIDATES: TableSection = TableSection {
         col("release_group_mbid_lower"),
         col("source"),
         col("identity"),
-        col("first_seen_at"),
+        Column::new("first_seen_at").from_sql_of(
+            "first_seen_at",
+            concat!(
+                "COALESCE(",
+                millis!("first_seen_at"),
+                ", ",
+                now_millis!(),
+                ")"
+            ),
+        ),
     ],
     key: &["release_group_mbid_lower", "source", "identity"],
     unique: &[],

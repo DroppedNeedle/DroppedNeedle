@@ -133,6 +133,16 @@ pub fn unix_secs_f64(clock: &dyn Clock) -> f64 {
     clock.now_ms().max(0) as f64 / 1000.0
 }
 
+/// Float unix seconds as a time column stores them: integer milliseconds.
+pub fn ms_from_secs_f64(seconds: f64) -> i64 {
+    (seconds * 1000.0).round() as i64
+}
+
+/// A stored millisecond time as float unix seconds.
+pub fn secs_f64_from_ms(millis: i64) -> f64 {
+    millis as f64 / 1000.0
+}
+
 /// Convert a stored integer to `u64`, clamping negatives to zero.
 pub fn to_u64(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)

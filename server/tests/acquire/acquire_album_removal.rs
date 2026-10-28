@@ -92,8 +92,8 @@ async fn album_cleanup_leaves_what_came_after_the_removal() {
     conn.execute_batch(&format!(
         "INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name, album_title, \
          status, created_at, updated_at) VALUES \
-         ('task-old', 'fan', 'rg-1', 'Band', 'LP', 'failed', {before}, {before}), \
-         ('task-new', 'fan', 'rg-1', 'Band', 'LP', 'failed', {after}, {after}); \
+         ('task-old', 'fan', 'rg-1', 'Band', 'LP', 'failed', {before_ms}, {before_ms}), \
+         ('task-new', 'fan', 'rg-1', 'Band', 'LP', 'failed', {after_ms}, {after_ms}); \
          INSERT INTO acquire_held_entries (id, user_id, origin, group_key, release_group_mbid, \
          state, created_at, expires_at) \
          VALUES (1, 'fan', 'download', 'album:rg-1', 'rg-1', 'held', {before_ms}, {after_ms}); \
@@ -103,8 +103,8 @@ async fn album_cleanup_leaves_what_came_after_the_removal() {
          {before_ms}), \
          (1, 'held', 'held-new.flac', '01.flac', 'soulseek', 'weak_match', 'held', {after_ms}); \
          INSERT INTO download_quarantine (identity, release_group_mbid, reason, quarantined_at) \
-         VALUES ('peer-old', 'rg-1', 'corrupt', {before}), \
-         ('peer-new', 'rg-1', 'corrupt', {after}); \
+         VALUES ('peer-old', 'rg-1', 'corrupt', {before_ms}), \
+         ('peer-new', 'rg-1', 'corrupt', {after_ms}); \
          INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid, user_id, \
          artist_name, album_title, kind, state, created_at, next_check_at) \
          VALUES ('rg-1', 'rg-1', 'fan', 'Band', 'LP', 'missing', 'watching', {after_ms}, \

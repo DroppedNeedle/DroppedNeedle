@@ -249,9 +249,6 @@ droppedneedle_kernel::sql! {
     pub(crate) PRUNE_WATCHES = "DELETE FROM wanted_watches \
          WHERE state IN ('stopped', 'fulfilled') \
          AND COALESCE(last_checked_at, created_at) < ?1";
-    /// Seen-candidate rows left without a watch.
-    pub(crate) PRUNE_SEEN = "DELETE FROM wanted_seen_candidates WHERE release_group_mbid_lower \
-         NOT IN (SELECT release_group_mbid_lower FROM wanted_watches)";
     /// Enrol a new watch; an existing one is left alone.
     pub(crate) ENROL_WATCH = "INSERT INTO wanted_watches (release_group_mbid_lower, \
          release_group_mbid, user_id, artist_name, album_title, artist_mbid, year, cover_url, \
@@ -264,10 +261,15 @@ droppedneedle_kernel::sql! {
          next_check_at = ?6, last_outcome = NULL, new_candidate_count = 0, \
          first_release_date = COALESCE(?8, first_release_date) \
          WHERE release_group_mbid_lower = ?1 AND state = ?7";
-    /// Record one check.
+    /// Record one check; a count of new candidates (`?7`) replaces the
+    /// badge, none keeps it.
     pub(crate) RECORD_CHECK = "UPDATE wanted_watches SET check_count = check_count + 1, \
          quiet_streak = ?2, next_check_at = ?3, last_checked_at = ?4, \
-         last_outcome = ?5, first_release_date = COALESCE(?6, first_release_date) \
+         last_outcome = ?5, first_release_date = COALESCE(?6, first_release_date), \
+         new_candidate_count = COALESCE(?7, new_candidate_count) \
+         WHERE release_group_mbid_lower = ?1";
+    /// The candidates watch `?1` has seen: `(source, identity)`.
+    pub(crate) SEEN_CANDIDATES = "SELECT source, identity FROM wanted_seen_candidates \
          WHERE release_group_mbid_lower = ?1";
     /// Mark watch `?1` as `?2` with outcome `?3` at `?4`.
     pub(crate) MARK_FULFILLED = "UPDATE wanted_watches SET state = ?2, last_outcome = ?3, \
