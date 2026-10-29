@@ -727,7 +727,7 @@ pub struct LibraryManagementRootAssignment {
 }
 
 /// External-server refresh after publishing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct ExternalRefreshSettings {
     /// Master switch.
@@ -738,23 +738,6 @@ pub struct ExternalRefreshSettings {
     pub jellyfin_enabled: bool,
     /// Refresh Navidrome.
     pub navidrome_enabled: bool,
-    /// Retry attempts.
-    pub retry_attempts: i64,
-    /// Retry delay in seconds.
-    pub retry_delay_seconds: i64,
-}
-
-impl Default for ExternalRefreshSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            plex_enabled: false,
-            jellyfin_enabled: false,
-            navidrome_enabled: false,
-            retry_attempts: 3,
-            retry_delay_seconds: 30,
-        }
-    }
 }
 
 /// Library management settings (secret-free on purpose).

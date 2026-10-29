@@ -320,6 +320,16 @@ impl Answer {
         self.success()
     }
 
+    /// An answer to a call whose body carries nothing we use: 404 is no
+    /// such call at that address, and any other failure an error. The
+    /// body is still read under [`MAX_API_BYTES`].
+    pub(crate) async fn acknowledged(self) -> Result<(), AdapterError> {
+        if self.response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(AdapterError::NotFound);
+        }
+        self.body().await.map(drop)
+    }
+
     /// The body of a successful answer, read under [`MAX_API_BYTES`].
     pub(crate) async fn body(self) -> Result<Vec<u8>, AdapterError> {
         self.success()?;
@@ -876,6 +886,16 @@ impl RemoteHandle {
         match self {
             Self::Plex(client) => Ok(client),
             _ => Err(unsupported(self.source(), what)),
+        }
+    }
+
+    /// Ask the server to rescan its music: Jellyfin's library refresh,
+    /// Plex's section refresh, Navidrome's Subsonic scan.
+    pub async fn rescan(&self) -> Result<(), AdapterError> {
+        match self {
+            Self::Jellyfin(client) => client.refresh_library().await,
+            Self::Navidrome(client) => client.start_scan().await,
+            Self::Plex(client) => client.refresh_sections().await,
         }
     }
 

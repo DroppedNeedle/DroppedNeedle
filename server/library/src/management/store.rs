@@ -11,6 +11,7 @@
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
+use super::after_apply::RefreshTarget;
 use super::models::{
     DesiredDocument, Eligibility, HistoryFilter, HistoryItem, ItemDiff, ItemFacts, ItemFilter,
     ItemPage, JobIntent, JobMode, Origin, PlannedItem, ResultItem, ResultPage, ResultState,
@@ -559,6 +560,60 @@ pub fn record_apply_key(tx: &Transaction<'_>, job_id: &str, key: &str) -> rusqli
     Ok(())
 }
 
+/// Note the jobs-table row a server's rescan was queued as for a run.
+pub fn record_refresh_job(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    target: RefreshTarget,
+    queued: i64,
+) -> rusqlite::Result<()> {
+    let sql = match target {
+        RefreshTarget::Jellyfin => {
+            "UPDATE library_management_job_snapshots SET jellyfin_refresh_job_id = ?2 \
+             WHERE job_id = ?1"
+        }
+        RefreshTarget::Plex => {
+            "UPDATE library_management_job_snapshots SET plex_refresh_job_id = ?2 \
+             WHERE job_id = ?1"
+        }
+        RefreshTarget::Navidrome => {
+            "UPDATE library_management_job_snapshots SET navidrome_refresh_job_id = ?2 \
+             WHERE job_id = ?1"
+        }
+    };
+    tx.execute(sql, params![job_id, queued])?;
+    Ok(())
+}
+
+/// The rescans a run queued, by server.
+pub fn refresh_jobs(
+    conn: &Connection,
+    job_id: &str,
+) -> rusqlite::Result<Vec<(RefreshTarget, i64)>> {
+    let ids: Option<[Option<i64>; 3]> = conn
+        .query_row(
+            "SELECT jellyfin_refresh_job_id, plex_refresh_job_id, navidrome_refresh_job_id \
+             FROM library_management_job_snapshots WHERE job_id = ?1",
+            params![job_id],
+            |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]),
+        )
+        .optional()?;
+    let targets = [
+        RefreshTarget::Jellyfin,
+        RefreshTarget::Plex,
+        RefreshTarget::Navidrome,
+    ];
+    Ok(ids
+        .map(|ids| {
+            targets
+                .into_iter()
+                .zip(ids)
+                .filter_map(|(target, id)| Some((target, id?)))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 /// Change a job's mode.
 pub fn set_mode(tx: &Transaction<'_>, job_id: &str, mode: &str) -> rusqlite::Result<()> {
     tx.execute(
@@ -826,30 +881,6 @@ pub fn baseline_available(conn: &Connection, job_id: &str) -> rusqlite::Result<i
         params![job_id],
         |row| row.get(0),
     )
-}
-
-/// The media-server refreshes an apply asked for, as the pages show them.
-pub fn external_refreshes(
-    conn: &Connection,
-    job_id: &str,
-) -> rusqlite::Result<Vec<serde_json::Value>> {
-    let mut statement = conn.prepare_cached(
-        "SELECT target, state, attempts, max_attempts, failure_code, updated_at, completed_at \
-         FROM library_management_external_refresh_deliveries WHERE operation_job_id = ?1 \
-         ORDER BY target",
-    )?;
-    let rows = statement.query_map(params![job_id], |row| {
-        Ok(serde_json::json!({
-            "target": row.get::<_, String>(0)?,
-            "state": row.get::<_, String>(1)?,
-            "attempts": row.get::<_, i64>(2)?,
-            "max_attempts": row.get::<_, i64>(3)?,
-            "failure_code": row.get::<_, Option<String>>(4)?,
-            "updated_at": row.get::<_, f64>(5)?,
-            "completed_at": row.get::<_, Option<f64>>(6)?,
-        }))
-    })?;
-    rows.collect()
 }
 
 /// One page of management history, newest first.
@@ -1245,122 +1276,6 @@ pub fn revert_tag_edit(
                 }
             }
         }
-    }
-    Ok(())
-}
-
-/// Media-server refreshes to send for a finished apply, one per server.
-pub fn queue_refreshes(
-    tx: &Transaction<'_>,
-    job_id: &str,
-    targets: &[&str],
-    max_attempts: i64,
-    retry_delay_seconds: i64,
-    now: f64,
-) -> rusqlite::Result<()> {
-    for target in targets {
-        tx.execute(
-            "INSERT OR IGNORE INTO library_management_external_refresh_deliveries (id, \
-             operation_job_id, target, state, max_attempts, retry_delay_seconds, not_before, \
-             created_at, updated_at) VALUES (?1, ?2, ?3, 'pending', ?4, ?5, ?6 + 15.0, ?6, ?6)",
-            params![
-                &sha256_hex(format!("{job_id}\u{0}{target}").as_bytes())[..32],
-                job_id,
-                target,
-                max_attempts.clamp(1, 21),
-                retry_delay_seconds.clamp(1, 3600),
-                now
-            ],
-        )?;
-    }
-    Ok(())
-}
-
-/// One media-server refresh due now.
-#[derive(Debug, Clone)]
-pub struct DueRefresh {
-    pub id: String,
-    pub target: String,
-    pub attempts: i64,
-    pub max_attempts: i64,
-    pub retry_delay_seconds: i64,
-}
-
-/// Claim the next refresh due now.
-pub fn claim_refresh(
-    tx: &Transaction<'_>,
-    worker: &str,
-    now: f64,
-) -> rusqlite::Result<Option<DueRefresh>> {
-    let due = tx
-        .query_row(
-            "SELECT id, target, attempts, max_attempts, retry_delay_seconds \
-             FROM library_management_external_refresh_deliveries \
-             WHERE (state IN ('pending', 'retry_wait') AND not_before <= ?1) \
-             OR (state = 'delivering' AND COALESCE(lease_expires_at, 0) <= ?1) \
-             ORDER BY not_before, id LIMIT 1",
-            params![now],
-            |row| {
-                Ok(DueRefresh {
-                    id: row.get(0)?,
-                    target: row.get(1)?,
-                    attempts: row.get(2)?,
-                    max_attempts: row.get(3)?,
-                    retry_delay_seconds: row.get(4)?,
-                })
-            },
-        )
-        .optional()?;
-    if let Some(due) = &due {
-        tx.execute(
-            "UPDATE library_management_external_refresh_deliveries SET state = 'delivering', \
-             attempts = MIN(attempts + 1, max_attempts), lease_owner = ?2, \
-             lease_expires_at = ?3, updated_at = ?4, row_revision = row_revision + 1 \
-             WHERE id = ?1",
-            params![due.id, worker, now + 120.0, now],
-        )?;
-    }
-    Ok(due)
-}
-
-/// Record how one refresh attempt went: `succeeded`, `unavailable`
-/// (the server is not set up), or a failure that waits and retries until
-/// its attempts run out.
-pub fn finish_refresh(
-    tx: &Transaction<'_>,
-    due: &DueRefresh,
-    outcome: Result<(), &str>,
-    now: f64,
-) -> rusqlite::Result<()> {
-    let attempts = due.attempts + 1;
-    let (state, code, not_before, done) = match outcome {
-        Ok(()) => ("succeeded", None, now, Some(now)),
-        Err("NOT_CONFIGURED") => ("unavailable", Some("NOT_CONFIGURED"), now, Some(now)),
-        Err(code) if attempts >= due.max_attempts => ("failed", Some(code), now, Some(now)),
-        Err(code) => (
-            "retry_wait",
-            Some(code),
-            now + due.retry_delay_seconds as f64,
-            None,
-        ),
-    };
-    tx.execute(
-        "UPDATE library_management_external_refresh_deliveries SET state = ?2, \
-         failure_code = ?3, not_before = ?4, completed_at = ?5, lease_owner = NULL, \
-         lease_expires_at = NULL, updated_at = ?6, row_revision = row_revision + 1 \
-         WHERE id = ?1",
-        params![due.id, state, code, not_before, done, now],
-    )?;
-    // One rescan covers every run that ended before it: the others for
-    // the same server are done too.
-    if state == "succeeded" {
-        tx.execute(
-            "UPDATE library_management_external_refresh_deliveries SET state = 'succeeded', \
-             failure_code = 'COALESCED', completed_at = ?3, updated_at = ?3, \
-             row_revision = row_revision + 1 \
-             WHERE target = ?2 AND id <> ?1 AND state IN ('pending', 'retry_wait')",
-            params![due.id, due.target, now],
-        )?;
     }
     Ok(())
 }

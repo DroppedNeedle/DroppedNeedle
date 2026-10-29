@@ -16,8 +16,8 @@
 //! from the edition sheet), `restore` (back to the originals, and
 //! purging them), `duplicates` (a file whose place is taken), `activation`
 //! (the dry run that turns automatic management on), `automatic` (runs
-//! after a scan or an import), `after_apply` (bookkeeping and media-server
-//! refreshes), `recovery` (writes that need an administrator),
+//! after a scan or an import), `after_apply` (bookkeeping, and the
+//! media-server rescans queued on the jobs table), `recovery` (writes that need an administrator),
 //! `placement` (how safely each library folder can be written to), and
 //! `takeover` (albums whose files were changed outside the app, which
 //! automatic management then leaves alone).
@@ -59,8 +59,7 @@ use models::ManagementError;
 use service::Management;
 
 /// How long the worker waits for a wakeup before it looks anyway: a
-/// queued job wakes it, while automatic management and media-server
-/// refreshes come due with time.
+/// queued job wakes it, while automatic management comes due with time.
 const IDLE_CEILING: Duration = Duration::from_secs(2);
 
 /// After a step the database was too busy for, the worker waits this
@@ -79,8 +78,8 @@ enum Step {
 /// The management worker's name on the supervisor.
 pub const JOB_NAME: &str = "library-management";
 
-/// Start the management worker: plans and applies jobs, starts automatic
-/// management, and tells media servers to rescan. It has its own loop so
+/// Start the management worker: plans and applies jobs and starts
+/// automatic management. It has its own loop so
 /// a long preview never holds up re-identification jobs. Its first turn
 /// runs at once and requeues the jobs an earlier process left running;
 /// after that a queued job wakes it.
@@ -122,9 +121,6 @@ impl Tick for ManagementTick {
             let mut step = tick(&self.management, &self.owners.mint(), ctx.token()).await;
             if step == Step::Idle {
                 step = automatic_tick(&self.management, &mut self.settle).await;
-            }
-            if step == Step::Idle {
-                step = refresh_tick(&self.management, &self.owners.mint()).await;
             }
             match step {
                 Step::Worked => {}
@@ -187,16 +183,6 @@ async fn automatic_tick(management: &Management, settle: &mut automatic::Settle)
             Step::Idle
         }
     }
-}
-
-/// Send one due media-server refresh.
-async fn refresh_tick(management: &Management, worker: &str) -> Step {
-    let management = management.clone();
-    let worker = worker.to_owned();
-    blocking("media server refresh", move || {
-        management.deliver_refresh(&worker)
-    })
-    .await
 }
 
 async fn blocking(

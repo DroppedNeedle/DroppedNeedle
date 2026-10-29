@@ -44521,6 +44521,48 @@
           }
         }
       },
+      "ExternalRefresh": {
+        "type": "object",
+        "description": "One media server's rescan after a run, as the run's page shows it.",
+        "required": [
+          "target",
+          "state",
+          "attempts"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Tries so far.",
+            "minimum": 0
+          },
+          "code": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RefreshCode",
+                "description": "Why the last try did not go through."
+              }
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When it ended, unix ms."
+          },
+          "state": {
+            "$ref": "#/components/schemas/RefreshState"
+          },
+          "target": {
+            "$ref": "#/components/schemas/RefreshTarget"
+          }
+        }
+      },
       "ExternalRefreshSettings": {
         "type": "object",
         "description": "External-server refresh after publishing.",
@@ -44544,18 +44586,6 @@
             "type": "boolean",
             "description": "Refresh Plex.",
             "default": false
-          },
-          "retry_attempts": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Retry attempts.",
-            "default": 3
-          },
-          "retry_delay_seconds": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Retry delay in seconds.",
-            "default": 30
           }
         }
       },
@@ -48314,9 +48344,7 @@
               "enabled": false,
               "jellyfin_enabled": false,
               "navidrome_enabled": false,
-              "plex_enabled": false,
-              "retry_attempts": 3,
-              "retry_delay_seconds": 30
+              "plex_enabled": false
             }
           },
           "naming_scripts": {
@@ -50186,8 +50214,9 @@
           "external_refreshes": {
             "type": "array",
             "items": {
-              "type": "object"
-            }
+              "$ref": "#/components/schemas/ExternalRefresh"
+            },
+            "description": "Media servers asked to rescan after the apply, and how it went."
           },
           "failed_count": {
             "type": "integer",
@@ -58035,6 +58064,18 @@
           }
         }
       },
+      "RefreshCode": {
+        "type": "string",
+        "description": "Why a rescan did not go through. The handler stores these as the\njob's code; the run's page shows them.",
+        "enum": [
+          "EXTERNAL_REFRESH_NOT_CONFIGURED",
+          "EXTERNAL_REFRESH_AUTH_FAILED",
+          "EXTERNAL_REFRESH_NOT_FOUND",
+          "EXTERNAL_REFRESH_UNREACHABLE",
+          "EXTERNAL_REFRESH_FAILED",
+          "EXTERNAL_REFRESH_INTERRUPTED"
+        ]
+      },
       "RefreshResponse": {
         "type": "object",
         "description": "Acknowledgement of a triggered background refresh.",
@@ -58052,6 +58093,26 @@
             "description": "Always `ok` when the trigger lands."
           }
         }
+      },
+      "RefreshState": {
+        "type": "string",
+        "description": "Where a rescan stands.",
+        "enum": [
+          "queued",
+          "running",
+          "done",
+          "failed",
+          "no_record"
+        ]
+      },
+      "RefreshTarget": {
+        "type": "string",
+        "description": "A media server Library Management can ask to rescan.",
+        "enum": [
+          "jellyfin",
+          "plex",
+          "navidrome"
+        ]
       },
       "ReidentificationCandidateView": {
         "type": "object",

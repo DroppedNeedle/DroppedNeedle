@@ -207,18 +207,10 @@ export interface LibraryManagementPreviewDetailResponse {
 	undo_expired_count: number;
 	undo_expires_at: number | null;
 	baseline_available_count: number;
-	external_refreshes: LibraryManagementExternalRefreshDelivery[];
+	external_refreshes: LibraryManagementExternalRefresh[];
 }
 
-export interface LibraryManagementExternalRefreshDelivery {
-	target: 'plex' | 'jellyfin' | 'navidrome';
-	state: 'pending' | 'delivering' | 'retry_wait' | 'succeeded' | 'failed' | 'unavailable';
-	attempts: number;
-	max_attempts: number;
-	failure_code: string | null;
-	updated_at: number;
-	completed_at: number | null;
-}
+export type LibraryManagementExternalRefresh = components['schemas']['ExternalRefresh'];
 
 export interface LibraryManagementPlanItem {
 	ordinal: number;

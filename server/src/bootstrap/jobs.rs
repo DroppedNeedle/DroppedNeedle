@@ -44,6 +44,7 @@ use droppedneedle_kernel::jobs::{
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::EventsSettings;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
+use droppedneedle_media::MediaSetup;
 use droppedneedle_media::remotes::playlist_sync::{
     NavidromeSyncSettings, PlaylistSyncState, ProdPlaylistSync,
 };
@@ -380,6 +381,19 @@ impl JobsSetup {
     pub fn with_jobs(self, jobs: Vec<(KindSpec, Arc<dyn JobHandler>)>) -> Self {
         jobs.into_iter()
             .fold(self, |setup, (spec, handler)| setup.with_job(spec, handler))
+    }
+
+    /// Register the media-server rescans Library Management queues after a
+    /// run, sent through media's connection resolver.
+    pub fn with_media_refresh(self, platform: &Platform, media: &MediaSetup) -> Self {
+        self.with_job(
+            droppedneedle_media::remotes::refresh::SPEC,
+            Arc::new(droppedneedle_media::remotes::refresh::RefreshJobs::new(
+                media.remotes.service.resolver().clone(),
+                platform.http.shared().clone(),
+                platform.settings.live(),
+            )),
+        )
     }
 
     /// The jobs table, once [`JobsSetup::with_queue`] gave it one.

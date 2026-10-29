@@ -303,15 +303,13 @@ pub struct LibrarySetup {
     /// Shared root-directory lookup.
     pub root_dirs: RootDirs,
     /// The jobs table: a removed album's clean-up is queued here in the
-    /// removal's own commit.
+    /// removal's own commit, and a management run's media-server rescans
+    /// in the run's last.
     pub jobs: droppedneedle_kernel::jobs::queue::JobQueue,
     /// The recycle bins removals, upgrades and replaced files go to.
     pub bins: super::publish::bin::BinSource,
     /// Wall time: the kernel clock, which recycle-bin expiry reads.
     pub clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
-    /// The shared outbound HTTP client, for media-server refreshes after a
-    /// management run.
-    pub http: reqwest::Client,
     /// Library Management's settings service. The settings page uses this
     /// one too, so an activation dry run and a page save never save over
     /// each other.
@@ -576,7 +574,6 @@ impl LibrarySetup {
             jobs,
             bins: core.bins.clone(),
             clock: platform.clock.clone(),
-            http: platform.http.shared().clone(),
             enrichment,
             core,
             scans,

@@ -24,9 +24,7 @@ const session: LibraryManagementActivationSession = {
 			enabled: false,
 			plex_enabled: false,
 			jellyfin_enabled: false,
-			navidrome_enabled: false,
-			retry_attempts: 3,
-			retry_delay_seconds: 30
+			navidrome_enabled: false
 		}
 	},
 	activationDraft: {
@@ -43,9 +41,7 @@ const session: LibraryManagementActivationSession = {
 			enabled: false,
 			plex_enabled: false,
 			jellyfin_enabled: false,
-			navidrome_enabled: false,
-			retry_attempts: 3,
-			retry_delay_seconds: 30
+			navidrome_enabled: false
 		}
 	},
 	rootIds: ['root-1'],

@@ -70,7 +70,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 173);
+    assert_eq!(table_names(&pool).await.len(), 172);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -329,10 +329,16 @@ async fn every_earlier_version_upgrades_and_keeps_data() {
             no_tx: false,
         };
         run_migrations(&pool, &through).await.unwrap();
-        sqlx::query(
+        // From 0101 on, times are integer milliseconds.
+        let created_at = if version >= 101 {
+            "1704067200000"
+        } else {
+            "'2024-01-01T00:00:00+00:00'"
+        };
+        sqlx::query(&format!(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('u1', 'Kept', 'user', '2024-01-01T00:00:00+00:00')",
-        )
+             VALUES ('u1', 'Kept', 'user', {created_at})"
+        ))
         .execute(&pool)
         .await
         .unwrap();
@@ -7795,6 +7801,46 @@ async fn reviews_gain_a_revision_on_upgrade() {
     }
 }
 
+/// Migration 0102 drops the management run's own rescan queue, pending
+/// rows with it, and gives each run a column per media server for the
+/// jobs-table row its rescan was queued as. A run carries, with no rescan
+/// noted.
+#[tokio::test]
+async fn media_rescans_leave_their_queue_for_the_jobs_table() {
+    let pool = scratch_pool().await;
+    migrator_through(100).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO library_operation_jobs (id, kind, state, created_at, updated_at) \
+         VALUES ('run', 'library_management', 'succeeded', 1, 1); \
+         INSERT INTO library_management_job_snapshots (job_id, mode, origin, phase, \
+         selection_json, profile_revision, settings_revision, naming_revision, \
+         policy_revision, catalog_revision, profile_snapshot_json, created_at, updated_at) \
+         VALUES ('run', 'apply', 'manual', 'complete', '{}', 'p', 's', 'n', 'l', 0, '{}', 1, 1); \
+         INSERT INTO library_management_external_refresh_deliveries (id, operation_job_id, \
+         target, state, max_attempts, retry_delay_seconds, created_at, updated_at) \
+         VALUES ('d1', 'run', 'jellyfin', 'pending', 4, 30, 1, 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+
+    assert!(
+        !table_names(&pool)
+            .await
+            .contains(&"library_management_external_refresh_deliveries".to_owned())
+    );
+    let noted: (Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT jellyfin_refresh_job_id, plex_refresh_job_id, navidrome_refresh_job_id \
+         FROM library_management_job_snapshots WHERE job_id = 'run'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(noted, (None, None, None));
+}
+
 /// The runner's `-- no-transaction` path and the table-rebuild recipe in the
 /// kernel's `schema::boot` module doc, proven on a parent that cascade,
 /// restrict and set-null children point at.
@@ -8681,8 +8727,21 @@ async fn auth_rows_carry_onto_strict_tables_on_upgrade() {
     let children_before = children(&pool).await;
     assert_eq!(children_before.len(), 9, "every child is seeded");
 
-    apply_migrations(&pool).await.unwrap();
-    assert_migrated(&pool).await.unwrap();
+    // Through 0101 only: later migrations change other tables.
+    let through = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version <= 101)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    run_migrations(&pool, &through).await.unwrap();
 
     // Outside the rebuilt tables, only the index renames differ.
     let rebuilt = |row: &SchemaRow| row.0 == "table" && REBUILT.contains(&row.1.as_str());

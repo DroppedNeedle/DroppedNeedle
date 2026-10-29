@@ -400,11 +400,11 @@ impl Management {
             .read_blocking("management.baseline_available", |conn| {
                 Ok::<_, ManagementError>(store::baseline_available(conn, job_id)?)
             })?;
-        let external_refreshes = self
+        let refresh_jobs = self
             .setup
             .db
-            .read_blocking("management.external_refreshes", |conn| {
-                Ok::<_, ManagementError>(store::external_refreshes(conn, job_id)?)
+            .read_blocking("management.refresh_jobs", |conn| {
+                Ok::<_, ManagementError>(store::refresh_jobs(conn, job_id)?)
             })?;
         let (profile_id, profile_name) = snapshot.profile_label();
         let worker_stalled = snapshot.job.state == OperationState::Running
@@ -436,7 +436,7 @@ impl Management {
             undo_expires_at: undo.first_expiry_day.map(|day| day as f64 * 86_400.0),
             baseline_available_count,
             proposed_settings_revision: snapshot.proposed_settings_revision,
-            external_refreshes,
+            refresh_jobs,
             job: snapshot.job,
         })
     }
@@ -1772,21 +1772,17 @@ impl Management {
                         Ok::<_, ManagementError>(jobs::claim_work(tx, job_id, now)?)
                     })?
             else {
-                let finished = self.setup.db.write_blocking(
+                let refreshes = self.refresh_targets(&snapshot);
+                self.setup.db.write_blocking(
                     Lane::Background,
                     "management.finish_apply",
                     |tx| {
-                        Ok::<_, ManagementError>(store::finish_apply(
-                            tx,
-                            job_id,
-                            worker,
-                            self.setup.clock.now_secs(),
-                        )?)
+                        if store::finish_apply(tx, job_id, worker, self.setup.clock.now_secs())? {
+                            self.queue_refreshes(tx, job_id, &refreshes)?;
+                        }
+                        Ok::<_, ManagementError>(())
                     },
                 )?;
-                if finished {
-                    self.queue_external_refreshes(&snapshot);
-                }
                 return Ok(());
             };
             let Some((failure, bundle_id, mut result)) =

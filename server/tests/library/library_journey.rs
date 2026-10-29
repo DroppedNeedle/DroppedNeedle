@@ -55,12 +55,25 @@ struct Rig {
 
 impl Rig {
     async fn start(tag: &str) -> Self {
+        Self::launch(tag, false).await
+    }
+
+    /// As [`Rig::start`], with the jobs table on a manual clock.
+    async fn start_hooked(tag: &str) -> Self {
+        Self::launch(tag, true).await
+    }
+
+    async fn launch(tag: &str, hooked: bool) -> Self {
         let identify = ScriptedIdentify::new();
         let contrib = ScriptedContrib::default();
         let mut outbound = closed_outbound();
         outbound.identify_providers = Port::given(identify.clone());
         outbound.contribution_providers = Port::given(contrib.providers());
-        let app = TestApp::start_with(tag, outbound).await;
+        let app = if hooked {
+            TestApp::start_hooked_with(tag, outbound).await
+        } else {
+            TestApp::start_with(tag, outbound).await
+        };
         let db = droppedneedle_kernel::db::Db::open_for_tests(&app.config.library_db_path)
             .expect("database opens");
         Self {
@@ -992,6 +1005,143 @@ async fn a_managed_change_is_undone_only_by_its_writer_or_an_admin() {
     let (status, body) = call(app, &admin, &bundle).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(read_fields(&file).expect("fields read"), before);
+    rig.stop().await;
+}
+
+/// A management run with every media server switched on asks each one to
+/// rescan through the jobs table, a little after the run: Jellyfin signed
+/// with the MediaBrowser header, Plex on each music section with its token,
+/// Navidrome through `startScan`. A run and its undo, ending close
+/// together, share one rescan per server, and both runs' pages show it.
+#[tokio::test]
+async fn a_management_run_asks_each_media_server_to_rescan_once() {
+    use droppedneedle_kernel::runtime_config::Secret;
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        JellyfinConnection, NavidromeConnection, PlexConnection,
+    };
+    use droppedneedle_testkit::remotes::{
+        JELLYFIN_KEY, NAVIDROME_USER, PLEX_TOKEN, RecordedCalls, serve_jellyfin, serve_navidrome,
+        serve_plex,
+    };
+
+    let rig = Rig::start_hooked("lib-media-rescan").await;
+    rig.identify.recall_from(ambiguous_from);
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let admin = [("authorization", auth.as_str())];
+    let (jellyfin, plex, navidrome) = (
+        serve_jellyfin().await.expect("mock Jellyfin starts"),
+        serve_plex().await.expect("mock Plex starts"),
+        serve_navidrome().await.expect("mock Navidrome starts"),
+    );
+    let store = app.state().library_services.setup.settings.store().clone();
+    store
+        .save_secret_blocking(JellyfinConnection {
+            jellyfin_url: jellyfin.base_url.clone(),
+            api_key: Secret::new(JELLYFIN_KEY),
+            enabled: true,
+            ..JellyfinConnection::default()
+        })
+        .expect("Jellyfin saves");
+    store
+        .save_secret_blocking(PlexConnection {
+            plex_url: plex.base_url.clone(),
+            plex_token: Secret::new(PLEX_TOKEN),
+            enabled: true,
+            ..PlexConnection::default()
+        })
+        .expect("Plex saves");
+    store
+        .save_secret_blocking(NavidromeConnection {
+            navidrome_url: navidrome.base_url.clone(),
+            username: NAVIDROME_USER.to_owned(),
+            password: Secret::new("nd-password"),
+            enabled: true,
+            ..NavidromeConnection::default()
+        })
+        .expect("Navidrome saves");
+    let page = "/api/v3/settings/library-management";
+    let (status, saved) = app.call("GET", page, &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let mut settings = saved.clone();
+    settings
+        .as_object_mut()
+        .expect("settings")
+        .remove("settings_revision");
+    settings["external_refresh"] = json!({
+        "enabled": true, "jellyfin_enabled": true, "plex_enabled": true, "navidrome_enabled": true,
+    });
+    for profile in settings["profiles"].as_array_mut().expect("profiles") {
+        profile["notification"]["refresh_external_servers"] = json!(true);
+    }
+    let (status, body) = app
+        .call(
+            "PUT",
+            page,
+            &admin,
+            Some(json!({
+                "settings": settings,
+                "expected_settings_revision": saved["settings_revision"],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "album/01.flac", "management_full.flac");
+    app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    rig.identified(&album, 1).await;
+    rig.choose_first_edition(&album).await;
+    rig.edition_settled(&album).await;
+
+    // A run and its undo, both ended before the rescan is due.
+    let (tags, job) = rig.write_edition_tags(&admin, &album).await;
+    undo_written(app, &admin, &tags, &job).await;
+    let scans = |calls: &RecordedCalls| {
+        calls
+            .navidrome_queries
+            .iter()
+            .filter(|(endpoint, _)| endpoint == "startScan")
+            .count()
+    };
+    assert_eq!(jellyfin.recorder.snapshot().jellyfin_refreshes, 0);
+    assert!(plex.recorder.snapshot().plex_refreshes.is_empty());
+    assert_eq!(scans(&navidrome.recorder.snapshot()), 0);
+
+    let jobs = app.state().jobs.scripted().expect("test hooks are on");
+    jobs.clock().advance(60 * 60 * 1000);
+    app.state().jobs.queue().expect("jobs table").wake();
+    let run = format!("/api/v3/library/management/previews/{job}");
+    let shown = app
+        .until("every server's rescan is done", || {
+            let (run, admin) = (&run, &admin);
+            async move {
+                let (status, body) = app.call("GET", run, admin, None).await;
+                assert_eq!(status, StatusCode::OK, "{body}");
+                let refreshes = body["external_refreshes"].as_array()?.clone();
+                (refreshes.len() == 3 && refreshes.iter().all(|refresh| refresh["state"] == "done"))
+                    .then_some(refreshes)
+            }
+        })
+        .await;
+    let targets: Vec<&str> = shown
+        .iter()
+        .map(|refresh| refresh["target"].as_str().expect("target"))
+        .collect();
+    assert_eq!(targets, ["jellyfin", "plex", "navidrome"]);
+    assert_eq!(jellyfin.recorder.snapshot().jellyfin_refreshes, 1);
+    assert_eq!(plex.recorder.snapshot().plex_refreshes, ["1", "2"]);
+    assert_eq!(scans(&navidrome.recorder.snapshot()), 1);
     rig.stop().await;
 }
 

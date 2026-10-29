@@ -814,7 +814,6 @@ dependencies = [
  "libc",
  "lofty",
  "regex",
- "reqwest",
  "rubato",
  "rusqlite",
  "rusty-chromaprint",

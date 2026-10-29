@@ -22,7 +22,6 @@ jiff.workspace = true
 libc.workspace = true
 lofty.workspace = true
 regex.workspace = true
-reqwest.workspace = true
 rubato.workspace = true
 rusqlite.workspace = true
 rusty-chromaprint.workspace = true

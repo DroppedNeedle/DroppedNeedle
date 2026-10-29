@@ -1029,6 +1029,28 @@ impl JellyfinAdapter {
             .map(|hint| hint.id.clone()))
     }
 
+    /// Rescan every library: `POST /Library/Refresh`, signed with the
+    /// `MediaBrowser` header. Verified against a throwaway Jellyfin
+    /// 10.10.6 (2026-10-29): 204 with an empty body for an API key, 401
+    /// with no or a wrong key, 405 for GET. That version also took the key
+    /// in the legacy Emby header; 10.11 reads that one only while
+    /// `EnableLegacyAuthorization` is on, and 12.0 turns it off on every
+    /// server.
+    pub async fn refresh_library(&self) -> Result<(), AdapterError> {
+        self.require_configured()?;
+        let endpoint = "/Library/Refresh";
+        let request = self
+            .http
+            .client()
+            .post(RemoteHttp::url(&self.base_url, endpoint)?)
+            .header("Authorization", self.auth_header());
+        self.http
+            .send(endpoint, request)
+            .await?
+            .acknowledged()
+            .await
+    }
+
     fn require_configured(&self) -> Result<(), AdapterError> {
         if self.is_configured() {
             Ok(())

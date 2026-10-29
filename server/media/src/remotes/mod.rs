@@ -21,8 +21,9 @@
 //! summarizes listening history; `reader` serves the stream gateway;
 //! `presence_feed` feeds the jobs presence loop from the live registry and
 //! the upstream sessions; `warmup` keeps the MBID album index the album
-//! match reads first; and `playlist_sync` is the admin route that forces
-//! one Navidrome playlist sync.
+//! match reads first; `playlist_sync` is the admin route that forces
+//! one Navidrome playlist sync; and `refresh` sends the rescans Library
+//! Management queues after a run.
 //! The loopback mock servers the tests run against live in the testkit
 //! crate.
 //! `MediaSetup` mounts [`handlers::routes`] inside the session gate.
@@ -43,6 +44,7 @@ pub mod plex;
 pub mod plex_models;
 pub mod presence_feed;
 pub mod reader;
+pub mod refresh;
 pub mod service;
 pub(crate) mod sql;
 pub mod warmup;

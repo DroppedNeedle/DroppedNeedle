@@ -492,19 +492,6 @@ fn normalize_with(
             "Preview retention must be between 1 and 168 hours.",
         ));
     }
-    if settings.external_refresh.retry_attempts < 0 || settings.external_refresh.retry_attempts > 20
-    {
-        return Err(invalid(
-            "External refresh retries must be between 0 and 20.",
-        ));
-    }
-    if settings.external_refresh.retry_delay_seconds < 1
-        || settings.external_refresh.retry_delay_seconds > 3600
-    {
-        return Err(invalid(
-            "External refresh retry delay must be between 1 and 3600 seconds.",
-        ));
-    }
 
     let mut script_ids: BTreeSet<String> = BTreeSet::new();
     let mut script_names: BTreeSet<String> = BTreeSet::new();

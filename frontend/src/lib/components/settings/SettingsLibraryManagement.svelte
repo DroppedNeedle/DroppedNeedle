@@ -363,18 +363,6 @@
 								/><span>Navidrome</span></label
 							>
 						</div>
-						<NumberField
-							label="Refresh retry attempts"
-							min={0}
-							max={20}
-							bind:value={draft.external_refresh.retry_attempts}
-						/>
-						<NumberField
-							label="Retry delay (seconds)"
-							min={0}
-							max={3600}
-							bind:value={draft.external_refresh.retry_delay_seconds}
-						/>
 					{/if}
 					<LibraryManagementPurgeDialog onerror={(message) => (settings.saveError = message)} />
 				</div>

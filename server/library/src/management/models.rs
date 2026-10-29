@@ -597,8 +597,9 @@ pub struct JobDetail {
     pub baseline_available_count: i64,
     /// For an activation dry run: the settings revision it proves.
     pub proposed_settings_revision: Option<String>,
-    /// Media servers told to rescan after the apply.
-    pub external_refreshes: Vec<serde_json::Value>,
+    /// The rescans the apply queued, by media server: their jobs-table
+    /// rows.
+    pub refresh_jobs: Vec<(super::after_apply::RefreshTarget, i64)>,
 }
 
 /// One page of planned files.

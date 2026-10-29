@@ -16,7 +16,7 @@ use super::service::ServiceError;
 use crate::edition_prefs::LivePreferences;
 use crate::policy::{self as library_policy, clean_absolute};
 use droppedneedle_kernel::runtime_config::secret_sections::{
-    IdentificationPolicy, JellyfinConnection, LibraryRoot as StoredRoot, TypedLibrary,
+    IdentificationPolicy, LibraryRoot as StoredRoot, TypedLibrary,
 };
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, FilesystemWatcher, LibraryManagement, LibraryScanSchedule, MusicBrainzSettings,
@@ -43,8 +43,6 @@ pub struct LibrarySettings {
     pub download_policy: Live<DownloadPolicy>,
     /// Edition preferences, for identification and management.
     pub editions: LivePreferences,
-    /// The Jellyfin server refreshed after a management run.
-    pub jellyfin: Live<JellyfinConnection>,
     /// The MusicBrainz source identification asks.
     pub musicbrainz: Live<MusicBrainzSettings>,
     /// Adding a root and Library Management's settings write here, and
@@ -64,7 +62,6 @@ impl LibrarySettings {
             management: config.live(),
             download_policy: config.live(),
             editions: LivePreferences::new(config),
-            jellyfin: config.live(),
             musicbrainz: config.live(),
             store: config.clone(),
         }

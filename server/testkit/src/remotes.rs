@@ -20,7 +20,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use serde_json::{Value, json};
 
@@ -76,6 +76,10 @@ pub struct RecordedCalls {
     pub plex_tokens: Vec<String>,
     /// Query pairs per Plex section call, keyed by endpoint path.
     pub plex_section_queries: Vec<(String, Vec<(String, String)>)>,
+    /// `POST /Library/Refresh` calls the Jellyfin mock took.
+    pub jellyfin_refreshes: usize,
+    /// Section keys of the Plex section refreshes the mock took.
+    pub plex_refreshes: Vec<String>,
 }
 
 /// Cloneable recorder handle shared by a mock app and its test.
@@ -224,6 +228,7 @@ fn jellyfin_router(recorder: MockRecorder) -> axum::Router {
         .route("/Audio/{id}/Lyrics", get(jf_lyrics))
         .route("/Audio/{id}/stream", get(jf_stream))
         .route("/Sessions", get(jf_sessions))
+        .route("/Library/Refresh", post(jf_refresh))
         .route("/Items/{id}/Images/Primary", get(jf_image))
         .with_state(recorder)
 }
@@ -249,6 +254,15 @@ async fn jf_system_info(State(recorder): State<MockRecorder>, headers: HeaderMap
         return jf_unauthorized();
     }
     Json(json!({"ServerName": "Mock Jellyfin", "Version": "10.11.11"})).into_response()
+}
+
+/// A library rescan, as Jellyfin 10.10.6 answers it: 204, no body.
+async fn jf_refresh(State(recorder): State<MockRecorder>, headers: HeaderMap) -> Response {
+    if !jf_authorized(&headers, &recorder) {
+        return jf_unauthorized();
+    }
+    recorder.record(|calls| calls.jellyfin_refreshes += 1);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn jf_users(State(recorder): State<MockRecorder>, headers: HeaderMap) -> Response {
@@ -899,6 +913,10 @@ async fn nd_handle(
     }
     match endpoint.as_str() {
         "ping" => nd_envelope(json!({})),
+        // The 0.62.0 answer for an admin.
+        "startScan" => nd_envelope(json!({
+            "scanStatus": {"scanning": true, "count": 0, "folderCount": 0},
+        })),
         "getMusicFolders" => {
             let listed: Vec<Value> = known
                 .iter()
@@ -1240,6 +1258,7 @@ fn plex_router(recorder: MockRecorder) -> axum::Router {
         .route("/api/v2/resources", get(px_resources))
         .route("/library/sections", get(px_sections))
         .route("/library/sections/{id}/all", get(px_section_all))
+        .route("/library/sections/{id}/refresh", get(px_refresh))
         .route("/library/sections/{id}/recentlyAdded", get(px_recently))
         .route("/library/sections/{id}/recentlyViewed", get(px_recently))
         .route("/library/sections/{id}/genre", get(px_taxonomy))
@@ -1465,6 +1484,19 @@ async fn px_sections(State(recorder): State<MockRecorder>, headers: HeaderMap) -
         {"key": "2", "title": "More Music", "type": "artist", "uuid": "uuid-2"},
         {"key": "3", "title": "Movies", "type": "movie", "uuid": "uuid-3"},
     ]}))
+}
+
+/// A section rescan: 200 with no body to read.
+async fn px_refresh(
+    State(recorder): State<MockRecorder>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    if !px_authorized(&headers, &recorder) {
+        return px_unauthorized();
+    }
+    recorder.record(|calls| calls.plex_refreshes.push(id.clone()));
+    StatusCode::OK.into_response()
 }
 
 async fn px_section_all(

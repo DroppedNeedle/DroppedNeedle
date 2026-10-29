@@ -13923,6 +13923,22 @@ export interface components {
             /** @description The URL. */
             url: string;
         };
+        /** @description One media server's rescan after a run, as the run's page shows it. */
+        ExternalRefresh: {
+            /**
+             * Format: int32
+             * @description Tries so far.
+             */
+            attempts: number;
+            code?: null | components["schemas"]["RefreshCode"];
+            /**
+             * Format: int64
+             * @description When it ended, unix ms.
+             */
+            finished_at?: number | null;
+            state: components["schemas"]["RefreshState"];
+            target: components["schemas"]["RefreshTarget"];
+        };
         /** @description External-server refresh after publishing. */
         ExternalRefreshSettings: {
             /**
@@ -13945,18 +13961,6 @@ export interface components {
              * @default false
              */
             plex_enabled: boolean;
-            /**
-             * Format: int64
-             * @description Retry attempts.
-             * @default 3
-             */
-            retry_attempts: number;
-            /**
-             * Format: int64
-             * @description Retry delay in seconds.
-             * @default 30
-             */
-            retry_delay_seconds: number;
         };
         /**
          * @description Why a scan skipped or failed a path, or why a run ended early. The
@@ -15673,9 +15677,7 @@ export interface components {
              *       "enabled": false,
              *       "jellyfin_enabled": false,
              *       "navidrome_enabled": false,
-             *       "plex_enabled": false,
-             *       "retry_attempts": 3,
-             *       "retry_delay_seconds": 30
+             *       "plex_enabled": false
              *     }
              */
             external_refresh: components["schemas"]["ExternalRefreshSettings"];
@@ -16526,7 +16528,8 @@ export interface components {
             expired: boolean;
             /** Format: double */
             expires_at?: number | null;
-            external_refreshes: Record<string, never>[];
+            /** @description Media servers asked to rescan after the apply, and how it went. */
+            external_refreshes: components["schemas"]["ExternalRefresh"][];
             /** Format: int64 */
             failed_count: number;
             job_id: string;
@@ -19871,6 +19874,12 @@ export interface components {
             /** @description False when the album was not excluded. */
             reenabled: boolean;
         };
+        /**
+         * @description Why a rescan did not go through. The handler stores these as the
+         *     job's code; the run's page shows them.
+         * @enum {string}
+         */
+        RefreshCode: "EXTERNAL_REFRESH_NOT_CONFIGURED" | "EXTERNAL_REFRESH_AUTH_FAILED" | "EXTERNAL_REFRESH_NOT_FOUND" | "EXTERNAL_REFRESH_UNREACHABLE" | "EXTERNAL_REFRESH_FAILED" | "EXTERNAL_REFRESH_INTERRUPTED";
         /** @description Acknowledgement of a triggered background refresh. */
         RefreshResponse: {
             /** @description Human message. */
@@ -19878,6 +19887,16 @@ export interface components {
             /** @description Always `ok` when the trigger lands. */
             status: string;
         };
+        /**
+         * @description Where a rescan stands.
+         * @enum {string}
+         */
+        RefreshState: "queued" | "running" | "done" | "failed" | "no_record";
+        /**
+         * @description A media server Library Management can ask to rescan.
+         * @enum {string}
+         */
+        RefreshTarget: "jellyfin" | "plex" | "navidrome";
         /** @description One candidate a re-identification offers. */
         ReidentificationCandidateView: {
             /**

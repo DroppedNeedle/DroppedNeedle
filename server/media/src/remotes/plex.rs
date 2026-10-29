@@ -950,6 +950,33 @@ impl PlexAdapter {
             .any(|key| key == section))
     }
 
+    /// Rescan the music sections pinned in the server settings, or every
+    /// music section when none is pinned:
+    /// `GET /library/sections/{key}/refresh` each, 200 with no body to
+    /// read. Taken from Plex's published API (the "Refresh" section call)
+    /// and never run against a real Plex server. No music section to
+    /// rescan reads as not set up.
+    pub async fn refresh_sections(&self) -> Result<(), AdapterError> {
+        let sections = self.resolve_sections().await?;
+        if sections.is_empty() {
+            return Err(AdapterError::NotConfigured);
+        }
+        for section in sections {
+            let endpoint = format!("/library/sections/{section}/refresh");
+            let request = self
+                .http
+                .client()
+                .get(self.url(&endpoint)?)
+                .headers(self.headers());
+            self.http
+                .send(&endpoint, request)
+                .await?
+                .acknowledged()
+                .await?;
+        }
+        Ok(())
+    }
+
     fn require_configured(&self) -> Result<(), AdapterError> {
         if self.is_configured() {
             Ok(())

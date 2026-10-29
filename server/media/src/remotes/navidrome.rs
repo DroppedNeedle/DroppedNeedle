@@ -1029,6 +1029,34 @@ impl NavidromeAdapter {
         }
     }
 
+    /// Start a library scan: the Subsonic `startScan`. Verified against a
+    /// throwaway Navidrome 0.62.0 (2026-10-29): an admin gets status `ok`
+    /// with a `scanStatus`; a user who is not an admin gets Subsonic error
+    /// 50 ("not authorized"), read as a refused credential like 40 and 41.
+    /// Both answer HTTP 200.
+    pub async fn start_scan(&self) -> Result<(), AdapterError> {
+        self.require_configured()?;
+        let endpoint = "/rest/startScan";
+        let request = self
+            .http
+            .client()
+            .get(RemoteHttp::url(&self.base_url, endpoint)?)
+            .query(&auth_params(&self.username, &self.password));
+        let answer = self.http.send(endpoint, request).await?;
+        if answer.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(AdapterError::NotFound);
+        }
+        let body = answer.json::<Envelope>().await?.response;
+        if body.status == "ok" {
+            return Ok(());
+        }
+        let error = body.error.unwrap_or_default();
+        Err(match error.code {
+            40 | 41 | 50 => AdapterError::Auth,
+            code => AdapterError::Api(format!("Subsonic error {code} on startScan")),
+        })
+    }
+
     /// Scoped call. Repeats one `musicFolderId` param per selected id;
     /// omits the param for the all-folders scope.
     async fn request(

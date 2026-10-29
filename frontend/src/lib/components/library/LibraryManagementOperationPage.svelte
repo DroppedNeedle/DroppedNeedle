@@ -52,7 +52,10 @@
 		type ManagementAuditEntry,
 		type ManagementAuditTone
 	} from './LibraryManagementAuditTypes';
-	import type { LibraryManagementResultItem } from '$lib/queries/library-management/types';
+	import type {
+		LibraryManagementExternalRefresh,
+		LibraryManagementResultItem
+	} from '$lib/queries/library-management/types';
 
 	interface Props {
 		jobId: string;
@@ -270,13 +273,19 @@
 		return new Date(value * 1000).toLocaleString();
 	}
 
-	function refreshStatusCopy(state: string): string {
-		if (state === 'succeeded') return 'Refresh request accepted by the media server.';
-		if (state === 'delivering') return 'Sending the refresh request now.';
-		if (state === 'retry_wait') return 'The last request failed; a durable retry is scheduled.';
-		if (state === 'failed') return 'Refresh attempts ended without acknowledgement.';
-		if (state === 'unavailable') return 'This integration is unavailable or not configured.';
-		return 'Waiting for the operation worker.';
+	function refreshStatusCopy(refresh: LibraryManagementExternalRefresh): string {
+		if (refresh.state === 'done') return 'Rescan asked for.';
+		if (refresh.state === 'running') return 'Asking now.';
+		if (refresh.state === 'failed') return 'Gave up.';
+		if (refresh.state === 'no_record') return 'No record kept.';
+		return refresh.code ? 'Will try again.' : 'Waiting to ask.';
+	}
+
+	function refreshBadge(refresh: LibraryManagementExternalRefresh): string {
+		if (refresh.state === 'done') return 'badge-success';
+		if (refresh.state === 'failed') return 'badge-error';
+		if (refresh.state === 'queued' && refresh.code) return 'badge-warning';
+		return 'badge-outline';
 	}
 
 	function resultTone(item: LibraryManagementResultItem): ManagementAuditTone {
@@ -450,34 +459,30 @@
 							<ServerCog class="h-4 w-4 text-library-manage" />
 						</div>
 						<div>
-							<p class="management-step">Post-commit refresh</p>
-							<h2 class="font-display text-xl font-semibold">Media-server delivery ledger</h2>
+							<p class="management-step">After the run</p>
+							<h2 class="font-display text-xl font-semibold">Media server rescans</h2>
 							<p class="mt-1 text-sm text-base-content/55">
-								These requests happen after the file and catalog transaction. A refresh failure
-								never rolls those changes back.
+								A failed rescan never undoes the run's changes.
 							</p>
 						</div>
 					</div>
 					<div class="mt-4 divide-y divide-base-content/10 border-y border-base-content/10">
-						{#each externalRefreshes as delivery (delivery.target)}<div
+						{#each externalRefreshes as refresh (refresh.target)}<div
 								class="grid gap-2 py-3 sm:grid-cols-[10rem_1fr_auto] sm:items-center"
 							>
-								<strong>{titleManagementValue(delivery.target)}</strong>
+								<strong>{titleManagementValue(refresh.target)}</strong>
 								<div>
-									<p class="text-sm text-base-content/65">{refreshStatusCopy(delivery.state)}</p>
-									<p class="mt-0.5 text-xs text-base-content/45">
-										{delivery.attempts} of {delivery.max_attempts} attempts used{#if delivery.failure_code}
-											· {managementReasonLabel(delivery.failure_code)}{/if}
-									</p>
+									<p class="text-sm text-base-content/65">{refreshStatusCopy(refresh)}</p>
+									{#if refresh.attempts || refresh.code}<p
+											class="mt-0.5 text-xs text-base-content/45"
+										>
+											{refresh.attempts}
+											{refresh.attempts === 1 ? 'try' : 'tries'}{#if refresh.code}
+												· {managementReasonLabel(refresh.code)}{/if}
+										</p>{/if}
 								</div>
-								<span
-									class="badge badge-sm {delivery.state === 'succeeded'
-										? 'badge-success'
-										: ['failed', 'unavailable'].includes(delivery.state)
-											? 'badge-error'
-											: delivery.state === 'retry_wait'
-												? 'badge-warning'
-												: 'badge-outline'}">{titleManagementValue(delivery.state)}</span
+								<span class="badge badge-sm {refreshBadge(refresh)}"
+									>{titleManagementValue(refresh.state)}</span
 								>
 							</div>{/each}
 					</div>

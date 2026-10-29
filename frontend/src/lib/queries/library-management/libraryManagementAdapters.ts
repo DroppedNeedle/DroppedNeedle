@@ -1,7 +1,6 @@
 import type { components } from '$lib/api/v3/openapi';
 import { toOperationResponse } from '$lib/queries/library/libraryOperationAdapters';
 import type {
-	LibraryManagementExternalRefreshDelivery,
 	LibraryManagementOperationHistoryResponse,
 	LibraryManagementPlanItem,
 	LibraryManagementPlanItemPageResponse,
@@ -100,34 +99,7 @@ export function toPreviewDetail(view: JobView): LibraryManagementPreviewDetailRe
 		worker_heartbeat_at: view.worker_heartbeat_at ?? null,
 		worker_lease_expires_at: view.worker_lease_expires_at ?? null,
 		undo_expires_at: view.undo_expires_at ?? null,
-		external_refreshes: records(view.external_refreshes).map(toExternalRefresh)
-	};
-}
-
-const REFRESH_TARGETS: LibraryManagementExternalRefreshDelivery['target'][] = [
-	'plex',
-	'jellyfin',
-	'navidrome'
-];
-const REFRESH_STATES: LibraryManagementExternalRefreshDelivery['state'][] = [
-	'pending',
-	'delivering',
-	'retry_wait',
-	'succeeded',
-	'failed',
-	'unavailable'
-];
-
-function toExternalRefresh(row: Record<string, unknown>): LibraryManagementExternalRefreshDelivery {
-	const number = (value: unknown) => (typeof value === 'number' ? value : 0);
-	return {
-		target: REFRESH_TARGETS.find((value) => value === row.target) ?? 'jellyfin',
-		state: REFRESH_STATES.find((value) => value === row.state) ?? 'failed',
-		attempts: number(row.attempts),
-		max_attempts: number(row.max_attempts),
-		failure_code: typeof row.failure_code === 'string' ? row.failure_code : null,
-		updated_at: number(row.updated_at),
-		completed_at: typeof row.completed_at === 'number' ? row.completed_at : null
+		external_refreshes: view.external_refreshes
 	};
 }
 

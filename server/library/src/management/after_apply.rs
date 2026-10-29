@@ -1,9 +1,15 @@
 //! What happens after an album is written: the files' management state
 //! (so automatic management knows they are done), the overrides a tag
 //! edit asked to keep, and the media servers told to rescan when the job
-//! ends.
+//! ends. A rescan is a job on the jobs table, one per server, which the
+//! media crate's handler sends.
 
 use droppedneedle_kernel::db::Lane;
+use droppedneedle_kernel::jobs::queue::{JobKind, JobStatus, State};
+use droppedneedle_kernel::runtime_config::sections::ExternalRefreshSettings;
+use rusqlite::Transaction;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::models::{JobMode, ManagementError};
 use super::service::Management;
@@ -265,128 +271,243 @@ impl Management {
         }
     }
 
-    /// Ask the media servers to rescan once a job that wrote files ends,
-    /// when the profile and the settings say so (as v2 did: Jellyfin is
-    /// told; Plex and Navidrome have no refresh call and say so).
-    pub(super) fn queue_external_refreshes(&self, snapshot: &Snapshot) {
+    /// The media servers a finished run asks to rescan: every server whose
+    /// own switch is on, when the run's profile and the library-wide
+    /// switch both ask for it. Settings that cannot be read ask for none.
+    pub(super) fn refresh_targets(&self, snapshot: &Snapshot) -> Vec<RefreshTarget> {
         let wants = Self::pinned(snapshot)
             .is_ok_and(|pinned| pinned.profile.notification.refresh_external_servers);
         if !wants {
-            return;
+            return Vec::new();
         }
-        let settings = match self.settings() {
-            Ok(settings) => settings.external_refresh,
-            Err(error) => {
-                tracing::warn!(%error, "media server refresh skipped: settings unreadable");
-                return;
-            }
+        let Some(settings) = self.readable_settings() else {
+            tracing::warn!("media server rescans skipped: settings unreadable");
+            return Vec::new();
         };
+        RefreshTarget::switched_on(&settings.external_refresh)
+    }
+
+    /// Queue each target's rescan on the finishing run's own transaction,
+    /// due [`REFRESH_DELAY_MS`] later, and note the job on the run. A
+    /// rescan already queued for the server is joined, so a burst of runs
+    /// asks each server once.
+    pub(super) fn queue_refreshes(
+        &self,
+        tx: &Transaction<'_>,
+        job_id: &str,
+        targets: &[RefreshTarget],
+    ) -> Result<(), ManagementError> {
+        let due = self.setup.clock.now_ms().saturating_add(REFRESH_DELAY_MS);
+        for &target in targets {
+            let queued = self
+                .setup
+                .jobs
+                .enqueue_at(
+                    tx,
+                    MEDIA_SERVER_REFRESH,
+                    target.as_str(),
+                    &RefreshJob { target },
+                    due,
+                )
+                .map_err(|error| {
+                    if error.is_busy() {
+                        ManagementError::Busy(error.to_string())
+                    } else {
+                        ManagementError::Store(error.to_string())
+                    }
+                })?;
+            store::record_refresh_job(tx, job_id, target, queued.id)?;
+        }
+        Ok(())
+    }
+
+    /// How each rescan a run asked for went, read from the jobs table. A
+    /// job that was pruned or folded into a newer request reads as no
+    /// record.
+    pub async fn external_refreshes(
+        &self,
+        jobs: &[(RefreshTarget, i64)],
+    ) -> Result<Vec<ExternalRefresh>, ManagementError> {
+        let mut refreshes = Vec::with_capacity(jobs.len());
+        for &(target, id) in jobs {
+            let status = self.setup.jobs.get(id).await?;
+            refreshes.push(ExternalRefresh::read(target, status));
+        }
+        Ok(refreshes)
+    }
+}
+
+/// The jobs-table kind a media server's rescan runs as, keyed by the
+/// server ([`RefreshTarget::as_str`]).
+pub const MEDIA_SERVER_REFRESH: JobKind = JobKind::new("media_server.refresh");
+
+/// How long after a run its rescans wait, so the runs of a burst join one.
+pub const REFRESH_DELAY_MS: i64 = 15_000;
+
+/// A media server Library Management can ask to rescan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RefreshTarget {
+    Jellyfin,
+    Plex,
+    Navidrome,
+}
+
+impl RefreshTarget {
+    /// The job key and the stored name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Jellyfin => "jellyfin",
+            Self::Plex => "plex",
+            Self::Navidrome => "navidrome",
+        }
+    }
+
+    /// The servers the settings switch on, none while the library-wide
+    /// switch is off.
+    pub fn switched_on(settings: &ExternalRefreshSettings) -> Vec<Self> {
         if !settings.enabled {
-            return;
+            return Vec::new();
         }
-        let mut targets = Vec::new();
-        if settings.jellyfin_enabled {
-            targets.push("jellyfin");
+        [
+            (Self::Jellyfin, settings.jellyfin_enabled),
+            (Self::Plex, settings.plex_enabled),
+            (Self::Navidrome, settings.navidrome_enabled),
+        ]
+        .into_iter()
+        .filter_map(|(target, on)| on.then_some(target))
+        .collect()
+    }
+}
+
+/// A rescan job's payload: a function of its key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefreshJob {
+    pub target: RefreshTarget,
+}
+
+/// Why a rescan did not go through. The handler stores these as the
+/// job's code; the run's page shows them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub enum RefreshCode {
+    /// The server, or its rescan, is not set up. Not retried.
+    #[serde(rename = "EXTERNAL_REFRESH_NOT_CONFIGURED")]
+    NotConfigured,
+    /// The server refused the saved credential. Not retried.
+    #[serde(rename = "EXTERNAL_REFRESH_AUTH_FAILED")]
+    AuthFailed,
+    /// The server has no rescan call at that address. Not retried.
+    #[serde(rename = "EXTERNAL_REFRESH_NOT_FOUND")]
+    NotFound,
+    /// The server could not be reached. Retried.
+    #[serde(rename = "EXTERNAL_REFRESH_UNREACHABLE")]
+    Unreachable,
+    /// The server answered with an error. Retried.
+    #[serde(rename = "EXTERNAL_REFRESH_FAILED")]
+    Failed,
+    /// The server stopped or the call ran too long. Retried.
+    #[serde(rename = "EXTERNAL_REFRESH_INTERRUPTED")]
+    Interrupted,
+}
+
+impl RefreshCode {
+    /// The stored and wire code.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotConfigured => "EXTERNAL_REFRESH_NOT_CONFIGURED",
+            Self::AuthFailed => "EXTERNAL_REFRESH_AUTH_FAILED",
+            Self::NotFound => "EXTERNAL_REFRESH_NOT_FOUND",
+            Self::Unreachable => "EXTERNAL_REFRESH_UNREACHABLE",
+            Self::Failed => "EXTERNAL_REFRESH_FAILED",
+            Self::Interrupted => "EXTERNAL_REFRESH_INTERRUPTED",
         }
-        if settings.plex_enabled {
-            targets.push("plex");
+    }
+
+    /// The code a job row holds: one of ours, or one the jobs table wrote
+    /// when a run did not finish.
+    fn read(stored: &str) -> Self {
+        use droppedneedle_kernel::jobs::queue::{
+            BUSY, HANDLER_PANICKED, INTERRUPTED, LEASE_EXPIRED, TIMED_OUT,
+        };
+        let ours = [
+            Self::NotConfigured,
+            Self::AuthFailed,
+            Self::NotFound,
+            Self::Unreachable,
+            Self::Failed,
+            Self::Interrupted,
+        ]
+        .into_iter()
+        .find(|code| code.as_str() == stored);
+        match ours {
+            Some(code) => code,
+            None if [
+                INTERRUPTED,
+                LEASE_EXPIRED,
+                TIMED_OUT,
+                HANDLER_PANICKED,
+                BUSY,
+            ]
+            .contains(&stored) =>
+            {
+                Self::Interrupted
+            }
+            None => Self::Failed,
         }
-        if settings.navidrome_enabled {
-            targets.push("navidrome");
-        }
-        if targets.is_empty() {
-            return;
-        }
-        let job_id = snapshot.job.id.as_str();
-        let queued = self.setup.db.write_blocking(
-            Lane::Background,
-            "management.queue_external_refreshes",
-            |tx| {
-                Ok::<_, ManagementError>(store::queue_refreshes(
-                    tx,
-                    job_id,
-                    &targets,
-                    settings.retry_attempts.saturating_add(1),
-                    settings.retry_delay_seconds,
-                    self.setup.clock.now_secs(),
-                )?)
+    }
+}
+
+/// Where a rescan stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RefreshState {
+    /// Waiting to be sent, or to be tried again after its code.
+    Queued,
+    /// Being sent.
+    Running,
+    /// The server took it.
+    Done,
+    /// Given up for good.
+    Failed,
+    /// No longer kept (after a week), or joined into a later run's rescan.
+    NoRecord,
+}
+
+/// One media server's rescan after a run, as the run's page shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ExternalRefresh {
+    pub target: RefreshTarget,
+    pub state: RefreshState,
+    /// Tries so far.
+    pub attempts: u32,
+    /// Why the last try did not go through.
+    pub code: Option<RefreshCode>,
+    /// When it ended, unix ms.
+    pub finished_at: Option<i64>,
+}
+
+impl ExternalRefresh {
+    fn read(target: RefreshTarget, status: Option<JobStatus>) -> Self {
+        let Some(status) = status else {
+            return Self {
+                target,
+                state: RefreshState::NoRecord,
+                attempts: 0,
+                code: None,
+                finished_at: None,
+            };
+        };
+        Self {
+            target,
+            state: match status.state {
+                State::Queued => RefreshState::Queued,
+                State::Running => RefreshState::Running,
+                State::Done => RefreshState::Done,
+                State::Failed => RefreshState::Failed,
             },
-        );
-        if let Err(error) = queued {
-            tracing::warn!(%error, job_id, "media server refresh not queued");
-        }
-    }
-
-    /// Send the next media-server refresh that is due. True when one was
-    /// sent (or settled). Blocking: it waits on the HTTP call.
-    pub fn deliver_refresh(&self, worker: &str) -> Result<bool, ManagementError> {
-        let Some(due) =
-            self.setup
-                .db
-                .write_blocking(Lane::Background, "management.claim_refresh", |tx| {
-                    Ok::<_, ManagementError>(store::claim_refresh(
-                        tx,
-                        worker,
-                        self.setup.clock.now_secs(),
-                    )?)
-                })?
-        else {
-            return Ok(false);
-        };
-        let outcome = match due.target.as_str() {
-            "jellyfin" => self.refresh_jellyfin(),
-            // v2 had no refresh call for these either.
-            _ => Err("NOT_CONFIGURED"),
-        };
-        if let Err(code) = outcome {
-            tracing::info!(
-                target = due.target,
-                code,
-                "media server refresh did not go through"
-            );
-        }
-        self.setup
-            .db
-            .write_blocking(Lane::Background, "management.finish_refresh", |tx| {
-                Ok::<_, ManagementError>(store::finish_refresh(
-                    tx,
-                    &due,
-                    outcome,
-                    self.setup.clock.now_secs(),
-                )?)
-            })?;
-        Ok(true)
-    }
-
-    fn refresh_jellyfin(&self) -> Result<(), &'static str> {
-        let http = self.setup.http.clone();
-        let connection = self
-            .setup
-            .settings
-            .jellyfin
-            .get()
-            .map_err(|_| "NOT_CONFIGURED")?;
-        let key = connection.api_key.expose().to_owned();
-        if !connection.enabled || key.is_empty() || connection.jellyfin_url.is_empty() {
-            return Err("NOT_CONFIGURED");
-        }
-        let base = connection.jellyfin_url.trim().trim_end_matches('/');
-        let url = format!("{base}/Library/Refresh");
-        let handle = tokio::runtime::Handle::try_current().map_err(|_| "UNAVAILABLE")?;
-        let response =
-            droppedneedle_kernel::db::block_on(&handle, "jellyfin_refresh", async move {
-                http.post(url)
-                    .header("X-Emby-Token", key)
-                    .timeout(std::time::Duration::from_secs(15))
-                    .send()
-                    .await
-            })
-            .map_err(|_| "UNAVAILABLE")?;
-        match response {
-            Ok(response) if response.status().is_success() => Ok(()),
-            Ok(response) if matches!(response.status().as_u16(), 401 | 403) => Err("AUTH_FAILED"),
-            Ok(_) => Err("SERVER_ERROR"),
-            Err(_) => Err("UNREACHABLE"),
+            attempts: status.attempts,
+            code: status.last_error.as_deref().map(RefreshCode::read),
+            finished_at: status.finished_at,
         }
     }
 }

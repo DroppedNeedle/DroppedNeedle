@@ -444,6 +444,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     )
     .with_queue(queues)
     .with_jobs(media.scrobble_jobs())
+    .with_media_refresh(p, &media)
     .with_job(
         droppedneedle_library::contrib::worker::SPEC,
         library.contrib_worker.handler(),
