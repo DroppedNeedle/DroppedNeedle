@@ -50,6 +50,12 @@ pub async fn place(
             ImportFailure::FolderMissing(folder) => {
                 return deferred(Reason::LibraryFolderMissing, folder);
             }
+            ImportFailure::LibraryOff => {
+                return deferred(
+                    Reason::LibraryFolderMissing,
+                    crate::landing::ports::LIBRARY_OFF_DETAIL.to_owned(),
+                );
+            }
             ImportFailure::NamingScript(detail) => {
                 return deferred(Reason::NamingScriptFailed, detail);
             }

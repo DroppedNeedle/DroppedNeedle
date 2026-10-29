@@ -134,7 +134,14 @@ pub enum ImportFailure {
     /// The library folder the files go to is not there (the folder). The
     /// download waits until it is back.
     FolderMissing(String),
+    /// The library-wide switch is off. The download waits until it is on.
+    LibraryOff,
 }
+
+/// The detail a deferred import carries while the library is switched off.
+/// It rides with `library_folder_missing`, the stored code for "the files
+/// wait for the library".
+pub const LIBRARY_OFF_DETAIL: &str = "the library is switched off";
 
 impl ImportFailure {
     pub fn detail(&self) -> &str {
@@ -143,6 +150,7 @@ impl ImportFailure {
             | ImportFailure::Occupied(detail)
             | ImportFailure::NamingScript(detail)
             | ImportFailure::FolderMissing(detail) => detail,
+            ImportFailure::LibraryOff => LIBRARY_OFF_DETAIL,
         }
     }
 }
@@ -262,6 +270,12 @@ pub trait LandingLibrary: Send + Sync {
     /// resolves the folders.
     fn import_folder(&self) -> Option<PathBuf> {
         None
+    }
+
+    /// Whether the library-wide switch is off, so nothing lands. Blocking:
+    /// it reads the folders.
+    fn library_off(&self) -> bool {
+        false
     }
 
     /// Publish verified files into the library.

@@ -5029,7 +5029,7 @@ export interface paths {
          * Empty the recycle bin of what it held at `before`, under the rules
          *     its expiry keeps: a copy that changed in the bin, one a put-back is
          *     using, and one in a bin that is or holds a library or download folder
-         *     stay. Runs in the background.
+         *     stay. Runs in the background. Refused while the library is off.
          */
         post: operations["empty_recycle_bin"];
         delete?: never;
@@ -30717,7 +30717,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The edition changed since the plan was read (STALE_REVISION), the library is busy, or a file is outside the library folders */
+            /** @description The edition changed since the plan was read (STALE_REVISION), the library is busy or off, or a file is outside the library folders */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -31725,7 +31725,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back */
+            /** @description Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, the library is busy, or the library is off; nothing was put back */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -31802,7 +31802,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The library could not start a scan */
+            /** @description The library could not start a scan, or the library is off */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -32273,7 +32273,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Library busy or a file is outside the library folders */
+            /** @description Library busy or off, or a file is outside the library folders */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -37134,6 +37134,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description The library is off */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description The server is busy; try again */
             503: {
                 headers: {
@@ -39242,7 +39251,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Library busy or the file is outside the library folders */
+            /** @description Library busy or off, or the file is outside the library folders */
             409: {
                 headers: {
                     [name: string]: unknown;

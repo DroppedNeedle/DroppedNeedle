@@ -129,11 +129,29 @@ pub const SCAN_REFUSED: Reason = reason(
     "The library folders changed while the rescan was being set up.",
     "Reload the album page and try again.",
 );
+macro_rules! library_off_message {
+    () => {
+        "The local library is switched off, so no files can be changed."
+    };
+}
+macro_rules! library_off_action {
+    () => {
+        "Turn it on under Settings > Library."
+    };
+}
+
+/// The library-wide switch is off. Its code is the `CONFLICT` a scan and
+/// Library Management answer with while the library is off.
 pub const LIBRARY_DISABLED: Reason = reason(
-    "LIBRARY_DISABLED",
+    "CONFLICT",
     "The local library is switched off, so nothing can be rescanned.",
     "Turn the library on under Settings > Library, then try again.",
 );
+/// A file change refused while the library-wide switch is off, in the
+/// words Library Management uses.
+pub const LIBRARY_OFF: Reason = reason("CONFLICT", library_off_message!(), library_off_action!());
+/// [`LIBRARY_OFF`] as one text, for answers that carry no action.
+pub const LIBRARY_OFF_TEXT: &str = concat!(library_off_message!(), " ", library_off_action!());
 
 pub const HAND_BACK_UNREADABLE: Reason = reason(
     "HAND_BACK_UNREADABLE",
@@ -984,6 +1002,7 @@ struct Removal<'a> {
 fn refusal(refused: Refusal) -> MutationError {
     match refused {
         Refusal::Busy => MutationError::Conflict(LIBRARY_BUSY),
+        Refusal::LibraryOff => MutationError::Conflict(LIBRARY_OFF),
         Refusal::Changed => MutationError::Conflict(REMOVAL_CHANGED),
         Refusal::OutsideRoot => MutationError::Conflict(FILE_OUTSIDE_ROOT),
         Refusal::BinsUnknown(cause) => {
@@ -1041,6 +1060,7 @@ fn refusal(refused: Refusal) -> MutationError {
 fn put_back_refusal(refused: PutBackRefusal) -> MutationError {
     match refused {
         PutBackRefusal::Busy => MutationError::Conflict(LIBRARY_BUSY),
+        PutBackRefusal::LibraryOff => MutationError::Conflict(LIBRARY_OFF),
         PutBackRefusal::NothingToRestore => MutationError::NotFound(NOTHING_TO_RESTORE),
         PutBackRefusal::Changed => MutationError::Conflict(RESTORE_CHANGED),
         PutBackRefusal::OutsideRoot => MutationError::Conflict(FILE_OUTSIDE_ROOT),

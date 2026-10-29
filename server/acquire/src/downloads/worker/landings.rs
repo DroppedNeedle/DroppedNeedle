@@ -21,9 +21,11 @@ use crate::downloads::quarantine::QuarantineReason;
 use crate::downloads::sources::{DownloadSource, SourceHandle};
 use crate::downloads::state::{AttemptState, TaskStatus};
 use crate::downloads::store::{AttemptRow, ReimportStart, TaskOutcome, TaskRow};
+use crate::landing::ports::LIBRARY_OFF_DETAIL;
 use crate::landing::specs::Disposition;
 use crate::landing::{LandingReport, LandingResult};
 use crate::reason::Reason;
+use droppedneedle_library::mutations::LIBRARY_OFF_TEXT;
 
 /// The outcome a reason records when its own sentence is the log text.
 fn said(reason: Reason) -> TaskOutcome<'static> {
@@ -343,7 +345,12 @@ impl DownloadWorker {
                     // Our own fault, or a reimport that cannot fail over:
                     // keep the files for another try.
                     tracing::info!(task_id = %task.id, code = %rejection.code, detail = %rejection.detail, "landing kept for retry");
-                    self.settle_failed(task, attempt, said(rejection.code), true, was_partial, now)
+                    let outcome = if rejection.detail == LIBRARY_OFF_DETAIL {
+                        TaskOutcome::new(rejection.code, LIBRARY_OFF_TEXT)
+                    } else {
+                        said(rejection.code)
+                    };
+                    self.settle_failed(task, attempt, outcome, true, was_partial, now)
                         .await;
                 }
             },
@@ -563,10 +570,18 @@ impl DownloadWorker {
         self: &Arc<Self>,
         task_id: &str,
     ) -> Result<Option<TaskRow>, ReimportError> {
-        if self.landing.is_none() {
+        let Some(landing) = self.landing.as_ref() else {
             return Err(ReimportError::Unavailable(
                 "imports are not available yet".to_owned(),
             ));
+        };
+        if let Some(library) = landing.library().cloned() {
+            let off = tokio::task::spawn_blocking(move || library.library_off())
+                .await
+                .unwrap_or(false);
+            if off {
+                return Err(ReimportError::Unavailable(LIBRARY_OFF_TEXT.to_owned()));
+            }
         }
         let Some(task) = self
             .journal

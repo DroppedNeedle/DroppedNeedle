@@ -826,7 +826,7 @@ impl HeldService {
                     "held import refused"
                 );
                 if deferred.reason != Reason::LibraryChanged {
-                    return Err(refused(deferred.reason));
+                    return Err(refused_for(&deferred));
                 }
                 // The library changed under the import twice: the files
                 // stay held with the publisher's words, to try again.
@@ -1109,7 +1109,7 @@ impl HeldService {
                 .await
                 .map_err(|deferred| {
                     tracing::warn!(entry_id = entry.id, detail = %deferred.detail, "held match refused");
-                    refused(deferred.reason)
+                    refused_for(&deferred)
                 })?;
             let by_path = |path: &Path| {
                 files.iter().find(|file| {
@@ -1598,6 +1598,15 @@ fn rechecks(file: &HeldFile) -> bool {
 /// The answer for a file that stays held.
 fn refused(reason: Reason) -> HeldError {
     HeldError::Refused(format!("{} {}", reason.message(), reason.action()))
+}
+
+/// A deferred import as a person reads it: while the library is switched
+/// off, that is what they are told.
+fn refused_for(deferred: &intake::Deferred) -> HeldError {
+    if deferred.detail == crate::landing::ports::LIBRARY_OFF_DETAIL {
+        return HeldError::Refused(droppedneedle_library::mutations::LIBRARY_OFF_TEXT.to_owned());
+    }
+    refused(deferred.reason)
 }
 
 /// Read files off the async workers, never entering the library.

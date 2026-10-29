@@ -419,6 +419,10 @@ impl LandingLibrary for LibraryLanding {
             .collect()
     }
 
+    fn library_off(&self) -> bool {
+        self.library.core.switched_off()
+    }
+
     fn import_folder(&self) -> Option<PathBuf> {
         let registry = self.library.core.live_registry();
         let usable: Vec<_> = registry
@@ -487,6 +491,7 @@ impl LandingLibrary for LibraryLanding {
                 Err(ImportError::FolderMissing(folder)) => {
                     Err(ImportFailure::FolderMissing(folder))
                 }
+                Err(ImportError::LibraryOff) => Err(ImportFailure::LibraryOff),
             }
         })
     }

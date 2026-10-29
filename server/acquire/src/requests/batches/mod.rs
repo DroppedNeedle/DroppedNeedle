@@ -24,7 +24,7 @@ use std::collections::HashSet;
 use droppedneedle_auth::{Admin, Principal, Role};
 use droppedneedle_catalog::reads::catalog::library::LocalCatalog;
 use droppedneedle_catalog::reads::library::stores::StoreError;
-use droppedneedle_library::mutations::MutationError;
+use droppedneedle_library::mutations::{LIBRARY_OFF, MutationError};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 use self::models::{
@@ -367,6 +367,13 @@ impl DiscoveryBatches {
         match removed {
             Ok(_) => Ok(true),
             Err(MutationError::NotFound(_)) => Ok(false),
+            Err(MutationError::Conflict(reason)) if reason == LIBRARY_OFF => {
+                tracing::info!(
+                    album = mbid,
+                    "batch removal kept an album: the library is off"
+                );
+                Ok(false)
+            }
             Err(error) => Err(RequestsError::internal(&format_args!(
                 "batch album removal: {error:?}"
             ))),

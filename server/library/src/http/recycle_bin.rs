@@ -261,7 +261,7 @@ pub async fn recycle_bin_status(
 /// Empty the recycle bin of what it held at `before`, under the rules
 /// its expiry keeps: a copy that changed in the bin, one a put-back is
 /// using, and one in a bin that is or holds a library or download folder
-/// stay. Runs in the background.
+/// stay. Runs in the background. Refused while the library is off.
 #[utoipa::path(
     post,
     tag = "library management",
@@ -272,6 +272,7 @@ pub async fn recycle_bin_status(
         (status = 400, description = "Bad body"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
+        (status = 409, description = "The library is off"),
         (status = 503, description = "The server is busy; try again"),
     )
 )]
@@ -282,6 +283,12 @@ pub async fn empty_recycle_bin(
 ) -> Result<(StatusCode, Json<EmptyRecycleBinView>), ApiError> {
     let actor = caller.user_id().to_owned();
     let enqueued = blocking(move || {
+        if state.core.switched_off() {
+            return Err(super::error::refused(
+                StatusCode::CONFLICT,
+                crate::mutations::LIBRARY_OFF,
+            ));
+        }
         recycle_bin::request_empty(&state, body.before, &actor).map_err(|error| {
             if error.is_busy() {
                 ApiError::unavailable(Unavailable::ServerBusy, error)

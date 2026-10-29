@@ -2695,6 +2695,209 @@ async fn a_missing_library_folder_holds_downloads_until_it_is_back() {
     assert!(started.facts.attempts > 0, "the queued download started");
 }
 
+/// While the library is switched off, a finished download does not land
+/// and a queued one does not start: both wait, the queue says the library
+/// is off, and nothing is read or decided meanwhile. A person's Import of
+/// a held file is told the library is off. Once the library is back on,
+/// the download lands by itself.
+#[tokio::test]
+async fn a_switched_off_library_holds_downloads_until_it_is_on() {
+    use droppedneedle_acquire::downloads::queue::DownloadQueue;
+    use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .scans
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let switch = |on: bool| {
+        library
+            .settings
+            .store()
+            .update_secret_blocking::<TypedLibrary, String, _>(move |stored| {
+                let mut settings = stored.into_inner();
+                settings.enabled = on;
+                Ok(settings)
+            })
+            .expect("library switch saved");
+        library.core.refresh_registry();
+    };
+
+    let downloads = dir.join("downloads");
+    let files = vec![
+        land_file(
+            &downloads.join("job"),
+            "01 - Mysterons.flac",
+            "flac_full_01.flac",
+            "Mysterons",
+            1,
+        ),
+        land_file(
+            &downloads.join("job"),
+            "02 - Sour Times.flac",
+            "flac_full_02.flac",
+            "Sour Times",
+            2,
+        ),
+    ];
+    let lengths: Vec<Option<u64>> = files.iter().map(|path| length_ms(path)).collect();
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons", "Sour Times"],
+        &lengths,
+    )]));
+    let acquire = acquire_over(
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
+    );
+    let source = Arc::new(FixedSource::new(downloads.clone(), files.clone()));
+    let worker = Arc::new(
+        DownloadWorker::fixed(
+            acquire.journal.clone(),
+            vec![crate::as_source(source.clone())],
+            WorkerConfig::default(),
+            droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
+        )
+        .with_landing(acquire.landing.clone()),
+    );
+    let queue = DownloadQueue::new(acquire.journal.clone(), worker.clone());
+    let viewer = HeldViewer {
+        user_id: "u-ada".to_owned(),
+        admin: true,
+    };
+    let handle = serde_json::to_string(&SourceHandle {
+        filenames: files
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+        job_name: "fixed-landing-0".to_owned(),
+        ..SourceHandle::new(SourceTag::Plugin("fixed".to_owned()))
+    })
+    .expect("handle");
+    acquire
+        .journal
+        .run("test.seed", move |store| {
+            store.insert_task(&new_task("landing", GOOD_GROUP), 1.0)?;
+            store.insert_attempt(
+                "landing-a0",
+                "landing",
+                "plugin:fixed",
+                0,
+                "fixed-landing-0",
+                &handle,
+                AttemptState::InUse,
+                1.0,
+            )?;
+            store.transition_task("landing", TaskStatus::Downloading, 1.0, None)?;
+            store.insert_task(&new_task("queued", BAD_GROUP), 1.0)
+        })
+        .await
+        .expect("seed");
+
+    switch(false);
+    for pass in 1..=2 {
+        worker.run_once(pass).await;
+        worker.wait_for_landings().await;
+    }
+    let waiting = "Waiting: the library is switched off.";
+    let queued = queue.get(&viewer, "queued").await.expect("queued task");
+    assert_eq!(queued.facts.attempts, 0, "nothing was fetched");
+    assert_eq!(queued.reason_text.as_deref(), Some(waiting));
+    let landing = queue.get(&viewer, "landing").await.expect("landing task");
+    assert_eq!(landing.row.task.status, TaskStatus::Downloading, "it waits");
+    assert_eq!(landing.reason_text.as_deref(), Some(waiting));
+    let decisions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_import_decisions")
+        .fetch_one(acquire.db.db().sqlx())
+        .await
+        .expect("decision count");
+    assert_eq!(decisions, 0, "nothing was landed while the library is off");
+    assert!(
+        files.iter().all(|path| path.is_file()),
+        "files wait in place"
+    );
+
+    // A held file a person imports while the library is off is told so.
+    let held_dir = acquire.held.folders().held.clone();
+    std::fs::create_dir_all(&held_dir).expect("held dir");
+    std::fs::copy(&files[0], held_dir.join("held.flac")).expect("held copy");
+    let local_fault = Reason::LocalFault.code();
+    let first_track = format!("{}8", &GOOD_RELEASE[..GOOD_RELEASE.len() - 1]);
+    let first_recording = format!("{}8", &GOOD_GROUP[..GOOD_GROUP.len() - 1]);
+    let entry: i64 = acquire
+        .db
+        .write("test.held", move |tx| {
+            tx.execute(
+                "INSERT INTO acquire_held_entries (user_id, origin, group_key, \
+                 release_group_mbid, state, created_at, expires_at) VALUES ('u-ada', \
+                 'download', ?1, ?2, 'held', 1, 2)",
+                rusqlite::params![format!("album:{GOOD_GROUP}"), GOOD_GROUP],
+            )?;
+            let entry = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT INTO acquire_held_files (entry_id, root, path, original_name, \
+                 release_mbid, release_track_mbid, recording_mbid, track_number, \
+                 disc_number, reason, source, source_task_id, state, created_at) VALUES \
+                 (?1, 'held', 'held.flac', 'held.flac', ?2, ?3, ?4, 1, 1, ?5, 'soulseek', \
+                 't-held', 'held', 1)",
+                rusqlite::params![
+                    entry,
+                    GOOD_RELEASE,
+                    first_track,
+                    first_recording,
+                    local_fault
+                ],
+            )?;
+            Ok(entry)
+        })
+        .await
+        .expect("held row");
+    let refused = acquire
+        .held
+        .import(&viewer, entry, None, "u-ada")
+        .await
+        .expect_err("a held import waits while the library is off");
+    assert!(refused.to_string().contains("switched off"), "{refused}");
+    assert!(
+        held_dir.join("held.flac").is_file(),
+        "the held file is kept"
+    );
+
+    // Back on: the download lands by itself on the next pass.
+    switch(true);
+    worker.run_once(3).await;
+    worker.wait_for_landings().await;
+    let landed = acquire.journal.read_task("landing").await.unwrap().unwrap();
+    assert_eq!(
+        landed.status,
+        TaskStatus::Completed,
+        "{:?}",
+        landed.error_message
+    );
+    assert!(music.join("Portishead/Dummy/0101 Mysterons.flac").is_file());
+    let started = queue.get(&viewer, "queued").await.expect("queued task");
+    assert!(started.facts.attempts > 0, "the queued download started");
+}
+
 /// Downloads wait only for the folder they go to: a read-only first
 /// folder that keeps its own tags does not hold downloads bound for an
 /// Automatic folder after it.

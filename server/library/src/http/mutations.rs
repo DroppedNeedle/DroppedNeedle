@@ -118,7 +118,7 @@ pub async fn list_album_removals(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown album, or nothing left to put back"),
-        (status = 409, description = "Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back"),
+        (status = 409, description = "Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, the library is busy, or the library is off; nothing was put back"),
         (status = 422, description = "The files could not be put back; they stay in the recycle bin"),
         (status = 503, description = "The server is busy; try again"),
     )
@@ -239,7 +239,7 @@ impl From<MutationError> for ApiError {
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Album not found"),
-        (status = 409, description = "Library busy or a file is outside the library folders"),
+        (status = 409, description = "Library busy or off, or a file is outside the library folders"),
         (status = 422, description = "A file could not be recycled; nothing changed"),
     )
 )]
@@ -275,7 +275,7 @@ pub async fn remove_album(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Track not found"),
-        (status = 409, description = "Library busy or the file is outside the library folders"),
+        (status = 409, description = "Library busy or off, or the file is outside the library folders"),
         (status = 422, description = "The file could not be recycled; nothing changed"),
     )
 )]
@@ -305,7 +305,7 @@ pub async fn remove_track(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Album not found or has no files"),
-        (status = 409, description = "The library could not start a scan"),
+        (status = 409, description = "The library could not start a scan, or the library is off"),
     )
 )]
 pub async fn rescan_album(

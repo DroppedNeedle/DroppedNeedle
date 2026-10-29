@@ -26,6 +26,8 @@ The Albums, Artists and Tracks lists show the first page and add the next with L
 
 Scans live on the Scanning tab of Library Management. A running scan can be paused, resumed or stopped there; stopping keeps everything it already read. New music shows up in the library as the scan finds it, not only when the scan ends. Rescan files rereads every file in the folders you pick, even ones that look unchanged, which helps after you fix files with another tool. Each finished run in Recent runs lists the files it could not read or skipped, each with a short reason and what to do about it (for example, a damaged file says to re-download or replace it). If someone changed the library folders since you opened the page, the scan is refused: reload and try again.
 
+While the library is switched off under Settings > Library, nothing changes your files: scans, Library Management, removals to the recycle bin, Put back, Empty recycle bin, imports of held files and plugin writes are refused, the recycle bin's expiry waits, and downloads wait (the Downloads page says so) and start and come into the library by themselves once it is back on.
+
 Between scheduled scans, DroppedNeedle checks your library folders every few minutes and starts a scan when files change. Turn this off with "Watch folders for changes" under Settings > Library > Automatic scanning; scheduled and manual scans still run.
 
 After a scan, the library notes which tracks carry lyrics (a lyrics tag, or a `.lrc` file named like the track); it only reads them.

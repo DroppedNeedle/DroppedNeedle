@@ -293,6 +293,12 @@ pub fn validate_root_assignments(
                 root.label
             )));
         }
+        // Nothing is written to a library folder while the library is
+        // switched off, this probe included. Its dry runs are refused
+        // then, so no folder starts being written without the check.
+        if !library.enabled {
+            continue;
+        }
         // Writable check: the directory must accept a probe file. The
         // probe is created and removed atomically; failure means
         // read-only (or a permissions error either way).

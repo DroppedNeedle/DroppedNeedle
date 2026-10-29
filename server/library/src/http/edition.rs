@@ -902,7 +902,7 @@ pub struct RemoveExtrasView {
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown album or track"),
-        (status = 409, description = "The edition changed since the plan was read (STALE_REVISION), the library is busy, or a file is outside the library folders"),
+        (status = 409, description = "The edition changed since the plan was read (STALE_REVISION), the library is busy or off, or a file is outside the library folders"),
         (status = 422, description = "A file could not be recycled; nothing changed"),
         (status = 503, description = "MusicBrainz is not answering"),
     )

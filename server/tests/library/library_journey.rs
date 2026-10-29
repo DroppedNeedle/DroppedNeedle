@@ -4743,6 +4743,135 @@ async fn a_removed_album_is_put_back_from_its_page() {
     assert_eq!(availability_of(&conn, &gone_track), "missing");
 }
 
+/// While the library-wide switch is off nothing writes to a library
+/// folder: removing an album to the recycle bin, putting one back and a
+/// plugin's new file are refused with the library-off 409 and leave the
+/// files where they are, and a finished download waits as it does for a
+/// missing folder. Once the library is back on the same download goes in.
+#[tokio::test]
+async fn a_switched_off_library_takes_no_file_changes() {
+    use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+    use droppedneedle_library::import::{DownloadImport, ImportError, ImportOrigin, ImportSource};
+    use droppedneedle_library::manage::PluginFileRefusal;
+    use droppedneedle_library::mutations::{MutationError, Mutations};
+
+    let (scratch, library, music) = bare_library("lib-switched-off").await;
+    plant(&music, "Kept/01.flac", "flac_no_tags.flac");
+    plant(&music, "Binned/01.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let album_at = |rel: &str| -> String {
+        let track = indexed_at(&library, rel);
+        conn.query_row(
+            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+            [&track],
+            |row| row.get(0),
+        )
+        .expect("album id")
+    };
+    let (kept, binned) = (album_at("Kept/01.flac"), album_at("Binned/01.flac"));
+    let mutations = Mutations::new(&library);
+    let removal = mutations
+        .remove_album(&binned, true, true, "admin")
+        .expect("removed while on")
+        .removal_id
+        .expect("removal id");
+    let switch = |on: bool| {
+        library
+            .settings
+            .store()
+            .update_secret_blocking::<TypedLibrary, String, _>(move |stored| {
+                let mut settings = stored.into_inner();
+                settings.enabled = on;
+                Ok(settings)
+            })
+            .expect("library switch saved");
+        library.core.refresh_registry();
+    };
+    fn library_off<T: std::fmt::Debug>(result: Result<T, MutationError>) {
+        match result {
+            Err(MutationError::Conflict(reason)) => {
+                assert_eq!(reason.code, "CONFLICT");
+                assert!(reason.message.contains("switched off"), "{reason:?}");
+            }
+            other => panic!("expected the library-off refusal, got {other:?}"),
+        }
+    }
+    let release = Release {
+        id: "20000000-0000-4000-8000-00000000000d".to_owned(),
+        release_group_id: "20000000-0000-4000-8000-00000000000e".to_owned(),
+        title: "Landed".to_owned(),
+        artists: vec![CreditedArtist {
+            id: "20000000-0000-4000-8000-00000000000a".to_owned(),
+            name: "The Band".to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        tracks: vec![ReleaseTrack {
+            id: "20000000-0000-4000-8000-00000000000b".to_owned(),
+            recording_id: "20000000-0000-4000-8000-00000000000c".to_owned(),
+            title: "Song".to_owned(),
+            disc: 1,
+            position: 1,
+            absolute_position: 1,
+            ..ReleaseTrack::default()
+        }],
+        ..Release::default()
+    };
+    let download = scratch.join("incoming/task-off/01.mp3");
+    std::fs::create_dir_all(download.parent().expect("parent")).expect("mkdir");
+    std::fs::copy(fixtures_dir().join("management_full.mp3"), &download).expect("download");
+    let land = || {
+        library.imports.import_download(&DownloadImport {
+            task_id: "task-off".to_owned(),
+            origin: ImportOrigin::Download,
+            staging: None,
+            release: release.clone(),
+            files: vec![ImportSource {
+                path: download.clone(),
+                track: 0,
+                replaces: Vec::new(),
+            }],
+            extras: Vec::new(),
+            actor: None,
+        })
+    };
+    let before = snapshot_tree(&music);
+
+    switch(false);
+    library_off(mutations.remove_album(&kept, true, true, "admin"));
+    library_off(mutations.put_back(&binned, &removal, "admin"));
+    let added = library.core.add_plugin_file(
+        "notes",
+        "plugin/new.txt",
+        b"hello".to_vec(),
+        std::time::Instant::now() + std::time::Duration::from_secs(5),
+        &Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        &|_, _, _| Ok(()),
+    );
+    match added {
+        Err(PluginFileRefusal::FolderUnusable(why)) => assert!(why.contains("switched off")),
+        other => panic!("expected the library-off refusal, got {other:?}"),
+    }
+    match land() {
+        Err(ImportError::LibraryOff) => {}
+        other => panic!("a landing while off waits, got {other:?}"),
+    }
+    assert_eq!(snapshot_tree(&music), before, "nothing was written");
+    assert!(download.is_file(), "the download waits where it is");
+    assert_eq!(
+        mutations.album_removals(&binned).expect("removals").len(),
+        1,
+        "the removal can still be put back"
+    );
+
+    switch(true);
+    let landed = land().expect("the waiting download goes in once the library is on");
+    assert_eq!(landed.paths.len(), 1);
+    assert!(landed.paths[0].starts_with(&music) && landed.paths[0].is_file());
+}
+
 /// A removed track's copy in the bin, and its row.
 fn copy_of(conn: &rusqlite::Connection, track: &str) -> (PathBuf, String) {
     conn.query_row(

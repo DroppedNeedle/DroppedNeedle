@@ -40,6 +40,8 @@ use crate::scan::store::CommitIndexedItem;
 pub enum Refusal {
     /// Another write holds the library folder or one of the tracks.
     Busy,
+    /// The library-wide switch is off.
+    LibraryOff,
     /// No removal with that id is left to take back.
     NothingToRestore,
     /// A track or its removal's rows are not as the put-back needs them.

@@ -195,6 +195,8 @@ pub enum ImportError {
     NamingScript(String),
     /// The library folder the files go to is not there (the folder).
     FolderMissing(String),
+    /// The library-wide switch is off. The files wait until it is on.
+    LibraryOff,
 }
 
 /// One planned file.
@@ -433,6 +435,12 @@ impl Imports {
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Read under the lock, so an import that waited out another write
+        // sees the switch as it is now. It waits like a missing folder.
+        if super::manage::switched_off(&self.core.live_registry()) {
+            tracing::info!("a landing waits: the library is switched off");
+            return Err(ImportError::LibraryOff);
+        }
         cell.refresh(&registry, &self.core.root_dirs)
             .map_err(|error| fault(error.to_string()))?;
         let open = cell.open().map_err(|error| fault(error.to_string()))?;
@@ -999,6 +1007,7 @@ fn indexed_among(
 fn blocked_reason(refusal: &Refusal) -> String {
     match refusal {
         Refusal::Busy => "another write holds the copy it replaces".to_owned(),
+        Refusal::LibraryOff => "the library is switched off".to_owned(),
         Refusal::Changed => "the copy it replaces changed while it was read".to_owned(),
         Refusal::OutsideRoot => "the copy it replaces is not in a library folder".to_owned(),
         Refusal::BinsUnknown(cause) => format!("no recycle bin is known while {cause}"),

@@ -94,8 +94,7 @@ pub(super) fn stale(message: &str) -> ManagementError {
 
 /// The refusal while the library-wide switch is off: the same answer a
 /// scan gets (409 `CONFLICT`).
-pub(super) const LIBRARY_OFF: &str = "The local library is switched off, so no files can be changed. \
-     Turn it on under Settings > Library.";
+pub(super) const LIBRARY_OFF: &str = crate::mutations::LIBRARY_OFF_TEXT;
 
 impl Management {
     pub fn new(setup: &LibrarySetup) -> Self {

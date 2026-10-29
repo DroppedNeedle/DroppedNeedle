@@ -427,7 +427,11 @@ impl DownloadWorker {
         let shared = self.library_check.clone();
         let check = tokio::task::spawn_blocking(move || {
             let folder = library.import_folder();
-            let wait = folder.as_deref().and_then(crate::library_ready::check);
+            let wait = if library.library_off() {
+                Some(LibraryWait::Off)
+            } else {
+                folder.as_deref().and_then(crate::library_ready::check)
+            };
             let mut state = lock_check(&shared);
             state.running = false;
             state.folder = folder;
@@ -460,7 +464,7 @@ impl DownloadWorker {
         }
         match wait {
             Some(wait) => tracing::warn!("downloads wait for the library: {}", wait.sentence()),
-            None => tracing::info!("the library folder is back; downloads start again"),
+            None => tracing::info!("the library is back; downloads start again"),
         }
         *logged = wait.cloned();
     }

@@ -306,6 +306,12 @@ fn resolve_roots(registry: &RootRegistry) -> Vec<ResolvedRoot> {
 
 /// The saved roots that take no file changes now, as [`left_out`] decides
 /// over the folders they resolve to. Blocking: it reads the disk.
+/// Whether the library-wide switch is off while folders are set. With no
+/// folder nothing can be written anyway, and other answers say why.
+pub(crate) fn switched_off(registry: &RootRegistry) -> bool {
+    !registry.enabled() && !registry.roots().is_empty()
+}
+
 pub(crate) fn left_out_now(registry: &RootRegistry) -> Vec<String> {
     left_out(&resolve_roots(registry))
 }
@@ -574,6 +580,12 @@ pub enum PluginFileRefusal {
 const PLUGIN_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
 
 impl super::wiring::LibraryCore {
+    /// Whether the library-wide switch is off, so nothing may be written
+    /// to a library folder. Blocking: it reads the folders.
+    pub fn switched_off(&self) -> bool {
+        switched_off(&self.live_registry())
+    }
+
     /// Add `bytes` as the new file `relative_path` under the first library
     /// folder for plugin `plugin`, as one publisher bundle with one add
     /// row. It waits for the publish lock and then the folder until
@@ -656,6 +668,11 @@ impl super::wiring::LibraryCore {
                     "the first library folder isn't usable; check it in the library settings",
                 )));
             }
+        }
+        if switched_off(&registry) {
+            return Some(Err(PluginFileRefusal::FolderUnusable(
+                "the library is switched off; try again once it is on",
+            )));
         }
         let session = cell.session(&registry);
         let terms = terms();
@@ -1823,6 +1840,9 @@ impl Publishing {
             },
         };
         let registry = self.core.live_registry();
+        if switched_off(&registry) {
+            return Err(Refusal::LibraryOff);
+        }
         let session = cell.session(&registry);
         cell.refresh_to(session, &self.core.root_dirs)?;
         let open = cell.open().map_err(|_| Refusal::OutsideRoot)?;
@@ -1950,6 +1970,9 @@ impl Publishing {
             Err(std::sync::TryLockError::WouldBlock) => return Err(Refusal::Busy),
         };
         let registry = self.core.live_registry();
+        if switched_off(&registry) {
+            return Err(Refusal::LibraryOff);
+        }
         let session = cell.session(&registry);
         cell.refresh_to(session, &self.core.root_dirs)?;
         let open = cell.open().map_err(|_| Refusal::OutsideRoot)?;

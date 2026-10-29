@@ -501,10 +501,10 @@ impl Publishing {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.core.live_registry();
         // Reconcile-on-reopen (and the retry of held bundles) can resume
-        // renames.
+        // renames. Held bundles wait while the library is switched off.
         let session = cell.session(&registry);
         let reopen = cell.needs_refresh(&session);
-        let retry = !reopen && cell.has_held()?;
+        let retry = !reopen && !super::manage::switched_off(&registry) && cell.has_held()?;
         cell.refresh_to(session, &self.core.root_dirs)?;
         if retry {
             cell.retry_held()?;
@@ -540,7 +540,7 @@ impl Publishing {
 
     /// One recycle-bin expiry pass, on the retention the download settings
     /// give now. Skipped while those or the library settings cannot be
-    /// read. The deletes wait for the publish lock, so no put-back or
+    /// read, and while the library is switched off. The deletes wait for the publish lock, so no put-back or
     /// removal is reading a copy while it goes. `go_on` is asked between
     /// rows. Blocking.
     pub fn recycle_expiry_tick(
@@ -550,6 +550,9 @@ impl Publishing {
         let Some(policy) = self.settings.download_policy.read() else {
             return Ok(ExpiryReport::default());
         };
+        if self.core.switched_off() {
+            return Ok(ExpiryReport::default());
+        }
         let pass = ExpiryPass {
             retention_days: policy.recycle_retention_days,
             now_ms: self.core.clock.now_ms(),

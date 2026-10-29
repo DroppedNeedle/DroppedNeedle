@@ -365,7 +365,8 @@ name differs only in letter case: the call fails instead. A first library
 folder set to Excluded, one that isn't there (a share not mounted), one
 reached through a link into another library folder, or one on a disk that
 can only add a file by checking first and then renaming, takes no plugin
-files: the call fails. Each plugin may
+files: the call fails. While the library is switched off, the call fails
+with `the library is switched off; try again once it is on`. Each plugin may
 write 100 MiB and 1000 files a day; past either the call fails until older
 writes are a day old. The allowance is kept in the database, so a restart
 does not reset it, and a write that failed or was undone by itself does not
@@ -659,7 +660,7 @@ server does not know, reads as `unknown`.
 | `host.publish` | `{kind, payload, causation_id?}` | `{ok, status, retry_after, error}` |
 | `host.state.get` | `{key}` | `{value}` (`null` when unset) |
 | `host.state.set` | `{key, value}` | `{}` |
-| `host.library.write` | `{rel_path, data_base64}` | `{path, bundle_id}`; refused (-32001) for a bad path, a file over 6,288,384 bytes, an existing file, a library that stays busy for 8 s or over the daily allowance |
+| `host.library.write` | `{rel_path, data_base64}` | `{path, bundle_id}`; refused (-32001) for a bad path, a file over 6,288,384 bytes, an existing file, a library that is switched off or stays busy for 8 s, or over the daily allowance |
 
 State keys are 1-64 lowercase letters, digits, `_`, `-` or `/`, starting
 with a letter or digit; values are strings up to 1 MiB. One plugin may keep

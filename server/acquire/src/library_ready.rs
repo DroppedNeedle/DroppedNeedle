@@ -31,6 +31,8 @@ pub enum LibraryWait {
     /// The check did not finish in time (a hung network share). The folder
     /// is the last one known, if any.
     NotAnswering(Option<PathBuf>),
+    /// The library-wide switch is off.
+    Off,
 }
 
 impl LibraryWait {
@@ -39,6 +41,7 @@ impl LibraryWait {
         match self {
             Self::Missing(folder) | Self::Unavailable(folder) => Some(folder),
             Self::NotAnswering(folder) => folder.as_deref(),
+            Self::Off => None,
         }
     }
 
@@ -46,13 +49,14 @@ impl LibraryWait {
     pub fn reason(&self) -> Reason {
         match self {
             Self::Missing(_) => Reason::LibraryFolderMissing,
-            Self::Unavailable(_) | Self::NotAnswering(_) => Reason::LibraryUnavailable,
+            Self::Unavailable(_) | Self::NotAnswering(_) | Self::Off => Reason::LibraryUnavailable,
         }
     }
 
     /// The sentence the queue shows.
     pub fn sentence(&self) -> String {
         let problem = match self {
+            Self::Off => return "Waiting: the library is switched off.".to_owned(),
             Self::Missing(_) => reason::FolderProblem::Missing,
             Self::Unavailable(_) => reason::FolderProblem::NotWritable,
             Self::NotAnswering(_) => reason::FolderProblem::NotAnswering,

@@ -60,6 +60,8 @@ pub enum Probe {
 pub enum Refusal {
     /// Another write holds the library folder or one of the tracks.
     Busy,
+    /// The library-wide switch is off.
+    LibraryOff,
     /// A track's rows or its file changed since the caller read them.
     Changed,
     /// A track's library folder is not one the publisher holds.

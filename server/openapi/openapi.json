@@ -9872,7 +9872,7 @@
             }
           },
           "409": {
-            "description": "The edition changed since the plan was read (STALE_REVISION), the library is busy, or a file is outside the library folders",
+            "description": "The edition changed since the plan was read (STALE_REVISION), the library is busy or off, or a file is outside the library folders",
             "content": {
               "application/json": {
                 "schema": {
@@ -11317,7 +11317,7 @@
             }
           },
           "409": {
-            "description": "Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, or the library is busy; nothing was put back",
+            "description": "Another file now sits at an old path, a file or track changed, none of the files are left in the recycle bin, the library is busy, or the library is off; nothing was put back",
             "content": {
               "application/json": {
                 "schema": {
@@ -11416,7 +11416,7 @@
             }
           },
           "409": {
-            "description": "The library could not start a scan",
+            "description": "The library could not start a scan, or the library is off",
             "content": {
               "application/json": {
                 "schema": {
@@ -12065,7 +12065,7 @@
             }
           },
           "409": {
-            "description": "Library busy or a file is outside the library folders",
+            "description": "Library busy or off, or a file is outside the library folders",
             "content": {
               "application/json": {
                 "schema": {
@@ -18899,7 +18899,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "Empty the recycle bin of what it held at `before`, under the rules\nits expiry keeps: a copy that changed in the bin, one a put-back is\nusing, and one in a bin that is or holds a library or download folder\nstay. Runs in the background.",
+        "summary": "Empty the recycle bin of what it held at `before`, under the rules\nits expiry keeps: a copy that changed in the bin, one a put-back is\nusing, and one in a bin that is or holds a library or download folder\nstay. Runs in the background. Refused while the library is off.",
         "operationId": "empty_recycle_bin",
         "requestBody": {
           "content": {
@@ -18944,6 +18944,16 @@
           },
           "403": {
             "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The library is off",
             "content": {
               "application/json": {
                 "schema": {
@@ -21993,7 +22003,7 @@
             }
           },
           "409": {
-            "description": "Library busy or the file is outside the library folders",
+            "description": "Library busy or off, or the file is outside the library folders",
             "content": {
               "application/json": {
                 "schema": {
