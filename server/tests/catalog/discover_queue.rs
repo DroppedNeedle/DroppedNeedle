@@ -44,7 +44,8 @@ fn group(n: u8) -> String {
 
 /// Scripted listening answers, the network behind the listening data.
 /// Each read answers its field (empty by default). Release-group facts
-/// fail while `musicbrainz_down` is set.
+/// fail while `musicbrainz_down` is set, fresh releases while
+/// `fresh_down` is.
 #[derive(Default)]
 pub(crate) struct Script {
     pub user: UserMusic,
@@ -70,6 +71,7 @@ pub(crate) struct Script {
     pub tag_albums: Vec<TagAlbum>,
     pub release_group: Option<ReleaseGroupFacts>,
     pub musicbrainz_down: AtomicBool,
+    pub fresh_down: AtomicBool,
     /// When set, ListenBrainz top-artist reads wait here until released.
     pub hold: Option<Arc<Hold>>,
 }
@@ -190,6 +192,13 @@ impl ListeningNetwork for Script {
         ok(self.genres.clone())
     }
     fn fresh_releases<'a>(&'a self, _u: &'a str, _p: RequestPriority) -> Answer<'a, Vec<AlbumRow>> {
+        if self.fresh_down.load(Ordering::SeqCst) {
+            return Box::pin(async {
+                Err(ListeningError::MediaServer(
+                    "fresh releases down".to_owned(),
+                ))
+            });
+        }
         ok(self.fresh.clone())
     }
     fn loved<'a>(

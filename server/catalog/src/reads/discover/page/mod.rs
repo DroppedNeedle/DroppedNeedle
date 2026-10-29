@@ -13,7 +13,12 @@
 //! (`refreshing`), so the page polls until the new one lands. With no
 //! page at all the answer is an empty, `loading` page. An empty or failed
 //! build never replaces a good page, and the next one waits five minutes,
-//! so the page settles instead of rebuilding on every poll.
+//! so the page settles instead of rebuilding on every poll. A page built
+//! while a read failed or a shelf ran out of time is kept, but only for
+//! those five minutes, so the missing shelf is tried again soon.
+//!
+//! While the advanced settings cannot be read no build starts: visits get
+//! the saved page, and builds resume once the settings are saved again.
 //!
 //! The warm scheduler keeps the pages people use fresh through
 //! [`DiscoverPages`]'s registration. Each kept page queues a background
@@ -46,7 +51,7 @@ use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
 use build::{Builder, PageSettings, mark_ownership};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
-use droppedneedle_kernel::runtime_config::{Live, Plain, secret_sections::AdvancedSettings};
+use droppedneedle_kernel::runtime_config::{Live, secret_sections::AdvancedSettings};
 use library::LibraryReads;
 use memo::BuildMemo;
 
@@ -83,11 +88,14 @@ pub fn empty_page() -> DiscoverResponse {
 }
 
 /// A built page as the cache keeps it, with the sections the user had
-/// switched off when it was built.
+/// switched off when it was built, and whether a read failed or a shelf
+/// ran out of time while it was.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuiltPage {
     page: DiscoverResponse,
     skipped: Vec<SectionKey>,
+    #[serde(default)]
+    incomplete: bool,
 }
 
 /// Everything the page reads from.
@@ -192,31 +200,34 @@ impl DiscoverPages {
         })
     }
 
-    fn settings(&self, download_client: bool) -> PageSettings {
-        let advanced = self.inner.advanced.get().unwrap_or_else(|error| {
-            tracing::warn!(%error, "cannot read advanced settings; discover uses defaults");
-            Arc::new(Plain::default())
-        });
-        PageSettings {
+    /// The settings a build reads now. `None` while the advanced settings
+    /// cannot be read: no build starts until they are saved again.
+    fn settings(&self) -> Option<PageSettings> {
+        let advanced = self.inner.advanced.read()?;
+        Some(PageSettings {
             picks_count: advanced.discover_picks_count.clamp(4, 30) as usize,
             genre_weight: advanced
                 .discover_picks_genre_affinity_weight
                 .clamp(0.0, 1.0)
                 / 2.0,
             queue: QueueSettings::from_advanced(&advanced),
-            download_client,
-        }
+            download_client: self.inner.integrations.download_client_ready(),
+        })
     }
 
-    /// Start a background build for the user unless one is running.
+    /// Start a background build for the user unless one is running or the
+    /// settings cannot be read.
     async fn start(&self, user_id: &str, variant: Variant) {
+        let Some(settings) = self.settings() else {
+            return;
+        };
         let Some(claim) = self.inner.cache.claim(user_id).await else {
             return;
         };
         let pages = self.clone();
         let user_id = user_id.to_owned();
         tokio::spawn(async move {
-            let build = pages.build(&user_id, &variant, claim.generation());
+            let build = pages.build(&user_id, &variant, claim.generation(), settings);
             pages.inner.cache.run(claim, &variant, build).await;
         });
     }
@@ -224,20 +235,28 @@ impl DiscoverPages {
     /// Build the user's page now and keep it when it has anything to show.
     /// Returns whether a new page was kept.
     pub async fn warm(&self, user_id: &str) -> bool {
+        let Some(settings) = self.settings() else {
+            return false;
+        };
         let variant = Variant::for_user(&self.inner.listening, user_id).await;
         let Some(claim) = self.inner.cache.claim(user_id).await else {
             return false;
         };
-        let build = self.build(user_id, &variant, claim.generation());
+        let build = self.build(user_id, &variant, claim.generation(), settings);
         self.inner.cache.run(claim, &variant, build).await
     }
 
     /// One build. `None` when it found nothing to show or the MusicBrainz
     /// source changed while it ran.
-    async fn build(&self, user_id: &str, variant: &Variant, generation: i64) -> Option<BuiltPage> {
+    async fn build(
+        &self,
+        user_id: &str,
+        variant: &Variant,
+        generation: i64,
+        settings: PageSettings,
+    ) -> Option<BuiltPage> {
         let off = sections::switched_off(&self.inner.pool, user_id, Page::Discover).await;
         let source = self.inner.listening.source();
-        let download_client = self.inner.integrations.download_client_ready();
         let now = self.inner.cache.now_ms() as f64 / 1000.0;
         let (today, year) = today(now);
         let builder = Builder {
@@ -248,7 +267,7 @@ impl DiscoverPages {
             memo: &self.inner.memo,
             variant,
             generation,
-            settings: self.settings(download_client),
+            settings,
             today,
             year,
             now,
@@ -281,6 +300,7 @@ impl DiscoverPages {
         Some(BuiltPage {
             page,
             skipped: sections::sorted(&off),
+            incomplete: built.incomplete,
         })
     }
 }
@@ -321,11 +341,14 @@ impl LiveDiscover {
         let off = sections::switched_off(&inner.pool, user_id, Page::Discover).await;
         let variant = Variant::for_user(&inner.listening, user_id).await;
         let saved = inner.cache.load(user_id, &variant).await;
-        // A page that left out a section switched on since is rebuilt as
+        // A page that left out a section switched on since, or one built
+        // past a failed read more than the retry wait ago, is rebuilt as
         // if it were missing.
-        let current = saved
-            .as_ref()
-            .filter(|saved| saved.value.skipped.iter().all(|key| off.contains(key)));
+        let now = inner.cache.now_ms();
+        let current = saved.as_ref().filter(|saved| {
+            saved.value.skipped.iter().all(|key| off.contains(key))
+                && !(saved.value.incomplete && now - saved.built_at > TIMING.retry_ms)
+        });
         if inner.cache.due(user_id, current) {
             self.pages.start(user_id, variant).await;
         }

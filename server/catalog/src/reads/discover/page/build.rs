@@ -128,6 +128,9 @@ pub struct Built {
     pub page: DiscoverResponse,
     /// Each listening service all of whose reads failed.
     pub degraded: HashMap<ListenSource, ServiceState>,
+    /// Whether a read failed or a shelf ran out of time, so some shelf
+    /// may be missing or short.
+    pub incomplete: bool,
 }
 
 /// Failed reads of the first round, for the degraded banner.
@@ -159,6 +162,11 @@ impl Tracker {
         None
     }
 
+    /// Whether any read failed.
+    fn any_failed(&self) -> bool {
+        self.failed.lock().map(|f| !f.is_empty()).unwrap_or(true)
+    }
+
     /// Services whose every attempted read failed.
     fn degraded(&self) -> HashMap<ListenSource, ServiceState> {
         let attempted = self.attempted.lock().map(|a| a.clone()).unwrap_or_default();
@@ -177,17 +185,24 @@ impl Tracker {
     }
 }
 
-/// Run a shelf builder under the task bound; a timeout empties it.
-async fn bounded<T: Default>(what: &str, build: impl Future<Output = T>) -> T {
-    bounded_by(what, TASK_TIMEOUT, build).await
+/// Run a shelf builder under the task bound; a timeout empties it and
+/// is noted on `ask`, so the page is built again soon.
+async fn bounded<T: Default>(ask: &Ask, what: &str, build: impl Future<Output = T>) -> T {
+    bounded_by(ask, what, TASK_TIMEOUT, build).await
 }
 
 /// [`bounded`] with a bound of its own.
-async fn bounded_by<T: Default>(what: &str, bound: Duration, build: impl Future<Output = T>) -> T {
+async fn bounded_by<T: Default>(
+    ask: &Ask,
+    what: &str,
+    bound: Duration,
+    build: impl Future<Output = T>,
+) -> T {
     match tokio::time::timeout(bound, build).await {
         Ok(value) => value,
         Err(_) => {
             tracing::warn!(shelf = what, "discover shelf timed out; leaving it empty");
+            ask.note_failure();
             T::default()
         }
     }
@@ -355,6 +370,7 @@ impl Builder<'_> {
             .await;
         if needs(Input::Genres) {
             bounded(
+                &self.ask,
                 "learn genres",
                 self.learn_genres(user_id, primary, &seeds, &shared),
             )
@@ -386,7 +402,8 @@ impl Builder<'_> {
                         SectionKey::DailyMixes => TASK_TIMEOUT + MIXES_GRACE,
                         _ => TASK_TIMEOUT,
                     };
-                    let content = bounded_by(&name, bound, self.section(def.key, &ctx)).await;
+                    let content =
+                        bounded_by(&self.ask, &name, bound, self.section(def.key, &ctx)).await;
                     (def.key, content)
                 }),
         )
@@ -398,8 +415,12 @@ impl Builder<'_> {
         let mut seen_artists: HashSet<String> = HashSet::new();
         for def in wanted.iter().filter(|def| def.dedupe == Dedupe::Artists) {
             let name = def.key.name();
-            let content =
-                bounded(&name, self.artist_section(def.key, &ctx, &mut seen_artists)).await;
+            let content = bounded(
+                &self.ask,
+                &name,
+                self.artist_section(def.key, &ctx, &mut seen_artists),
+            )
+            .await;
             if let Some(content) = content {
                 built.insert(def.key, content);
             }
@@ -420,6 +441,7 @@ impl Builder<'_> {
         Built {
             page,
             degraded: tracker.degraded(),
+            incomplete: tracker.any_failed() || self.ask.met_failure(),
         }
     }
 
@@ -576,39 +598,37 @@ impl Builder<'_> {
         // Blended, both services answer and their lists merge; in a
         // popularity outage Last.fm answers alone, as above.
         let blend = policy.blends(self.settings.queue.blend_services) && !policy.popularity_down();
-        const SIMILAR_KEYS: [&str; SEEDS] = ["similar_0", "similar_1", "similar_2"];
+        // Keyed by service, so a failed read counts toward that service's
+        // banner.
+        const SIMILAR_KEYS: [(&str, &str); SEEDS] = [
+            ("lb_similar_0", "lfm_similar_0"),
+            ("lb_similar_1", "lfm_similar_1"),
+            ("lb_similar_2", "lfm_similar_2"),
+        ];
         let similar_seeds = if needs(Input::Similar) { SEEDS } else { 0 };
         let similar = join_all(seeds.iter().take(similar_seeds).enumerate().map(
             |(index, seed)| {
-                let key = SIMILAR_KEYS[index];
+                let (lb_key, lfm_key) = SIMILAR_KEYS[index];
                 async move {
                     let Some(mbid) = seed.mbid.as_deref() else {
                         return Vec::new();
                     };
-                    let read = async {
-                        if blend {
-                            let (lastfm, listenbrainz) = tokio::join!(
-                                listening.lastfm_similar(user_id, seed, 20, ask),
-                                listening.similar_artists(user_id, mbid, 20, ask),
-                            );
-                            let (first, second) = match primary {
-                                ListenSource::Lastfm => (lastfm, listenbrainz),
-                                ListenSource::Listenbrainz => (listenbrainz, lastfm),
-                            };
-                            match (first, second) {
-                                (Err(cause), Err(_)) => Err(cause),
-                                (first, second) => Ok(blend_similar(
-                                    or_empty("similar artists", first),
-                                    or_empty("similar artists", second),
-                                )),
-                            }
-                        } else if lastfm_similar {
-                            listening.lastfm_similar(user_id, seed, 20, ask).await
-                        } else {
-                            listening.similar_artists(user_id, mbid, 20, ask).await
-                        }
-                    };
-                    tracker.run(key, read).await.unwrap_or_default()
+                    let lastfm =
+                        || tracker.run(lfm_key, listening.lastfm_similar(user_id, seed, 20, ask));
+                    let listenbrainz =
+                        || tracker.run(lb_key, listening.similar_artists(user_id, mbid, 20, ask));
+                    if blend {
+                        let (lastfm, listenbrainz) = tokio::join!(lastfm(), listenbrainz());
+                        let (first, second) = match primary {
+                            ListenSource::Lastfm => (lastfm, listenbrainz),
+                            ListenSource::Listenbrainz => (listenbrainz, lastfm),
+                        };
+                        blend_similar(first.unwrap_or_default(), second.unwrap_or_default())
+                    } else if lastfm_similar {
+                        lastfm().await.unwrap_or_default()
+                    } else {
+                        listenbrainz().await.unwrap_or_default()
+                    }
                 }
             },
         ));
@@ -911,9 +931,17 @@ impl Builder<'_> {
             ..self.queue_ctx(&settings)
         };
         if self.lastfm_for_popularity(user) {
-            lastfm_pools(&ctx, user_id, seeds, excluded, similar_limit * albums_per).await
+            lastfm_pools(
+                &ctx,
+                user_id,
+                user,
+                seeds,
+                excluded,
+                similar_limit * albums_per,
+            )
+            .await
         } else {
-            similar_artist_pools(&ctx, user_id, seeds, excluded).await
+            similar_artist_pools(&ctx, user_id, user, seeds, excluded).await
         }
     }
 
@@ -951,6 +979,7 @@ impl Builder<'_> {
         if finished && !ask.met_failure() {
             self.memo.store_mixes(&key, mixes.clone()).await;
         } else {
+            self.ask.note_failure();
             tracing::info!(
                 built = mixes.len(),
                 finished,

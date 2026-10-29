@@ -168,10 +168,13 @@ pub fn blend<T>(
 }
 
 /// [`blend`] for two services' similar artists, keyed by MusicBrainz id
-/// or else by name. Each list's scores are scaled to its own best first
-/// (Last.fm sends a match from 0 to 1, ListenBrainz a raw count), and an
-/// artist both suggest carries the sum, so agreement also weighs most
-/// where a score is read.
+/// or else by name. A row without an id takes the id the other rows give
+/// its name, so an artist one service names by id and the other by name
+/// alone is listed once; a name given two different ids keys by name.
+/// Each list's scores are scaled to its own best first (Last.fm sends a
+/// match from 0 to 1, ListenBrainz a raw count), and an artist both
+/// suggest carries the sum, so agreement also weighs most where a score
+/// is read.
 pub fn blend_similar(first: Vec<ScoredArtist>, second: Vec<ScoredArtist>) -> Vec<ScoredArtist> {
     fn scaled(mut rows: Vec<ScoredArtist>) -> Vec<ScoredArtist> {
         let best = rows.iter().map(|row| row.score).fold(0.0_f64, f64::max);
@@ -180,17 +183,41 @@ pub fn blend_similar(first: Vec<ScoredArtist>, second: Vec<ScoredArtist>) -> Vec
         }
         rows
     }
-    let key = |row: &ScoredArtist| {
+    fn mbid_of(row: &ScoredArtist) -> Option<String> {
         let mbid = row.artist.mbid.as_deref().map(str::trim).unwrap_or("");
-        if mbid.is_empty() {
-            let name = row.artist.name.trim().to_lowercase();
-            (!name.is_empty()).then(|| format!("name:{name}"))
-        } else {
-            Some(mbid.to_ascii_lowercase())
+        (!mbid.is_empty()).then(|| mbid.to_ascii_lowercase())
+    }
+    fn name_of(row: &ScoredArtist) -> Option<String> {
+        let name = row.artist.name.trim().to_lowercase();
+        (!name.is_empty()).then_some(name)
+    }
+    let mut ids_by_name: HashMap<String, Option<String>> = HashMap::new();
+    for row in first.iter().chain(&second) {
+        if let (Some(name), Some(mbid)) = (name_of(row), mbid_of(row)) {
+            ids_by_name
+                .entry(name)
+                .and_modify(|known| {
+                    if known.as_deref() != Some(mbid.as_str()) {
+                        *known = None;
+                    }
+                })
+                .or_insert(Some(mbid));
         }
+    }
+    let key = |row: &ScoredArtist| {
+        mbid_of(row).or_else(|| {
+            let name = name_of(row)?;
+            match ids_by_name.get(&name) {
+                Some(Some(mbid)) => Some(mbid.clone()),
+                _ => Some(format!("name:{name}")),
+            }
+        })
     };
     blend(scaled(first), scaled(second), key, |mut kept, other| {
         kept.score += other.score;
+        if mbid_of(&kept).is_none() {
+            kept.artist.mbid = other.artist.mbid;
+        }
         kept
     })
 }

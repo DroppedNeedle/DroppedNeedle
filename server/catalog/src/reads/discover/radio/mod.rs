@@ -35,13 +35,13 @@ use super::listening::{ArtistRow, Ask, ListenSource, ListeningData, SourcePolicy
 use super::page::build::daily_shuffler;
 use super::page::library::{LibraryReads, fold};
 use super::page::shelves;
-use super::queue::QueueSettings;
 use super::queue::build::{
     BuildContext, VARIOUS_ARTISTS_MBID, cover_url, is_various_artists, lastfm_pools, normalize,
-    similar_artist_pools, timed,
+    similar_artist_pools, similar_to, timed,
 };
 use super::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
 use super::queue::store::QueueDb;
+use super::queue::{QueueSettings, SETTINGS_UNREADABLE};
 use crate::reads::catalog::Catalog;
 use crate::reads::catalog::error::CatalogError;
 use crate::reads::discover::models::{
@@ -207,6 +207,14 @@ impl LiveRadio {
         }
     }
 
+    /// The queue settings now, or an honest refusal while they cannot be
+    /// read.
+    fn queue_settings(&self) -> Result<QueueSettings, RadioFailure> {
+        QueueSettings::read(&self.settings).ok_or_else(|| {
+            RadioFailure::Provider(ProviderFailure::not_configured(SETTINGS_UNREADABLE))
+        })
+    }
+
     /// One pool of albums per seed from its similar artists.
     async fn similar_pools(
         &self,
@@ -216,11 +224,11 @@ impl LiveRadio {
         similar_limit: usize,
         albums_per: usize,
         use_lastfm: bool,
-    ) -> Vec<Vec<QueueItemLight>> {
+    ) -> Result<Vec<Vec<QueueItemLight>>, RadioFailure> {
         let settings = QueueSettings {
             similar_artists_limit: similar_limit,
             albums_per_similar: albums_per,
-            ..QueueSettings::read(&self.settings)
+            ..self.queue_settings()?
         };
         // A radio plan is built while the listener waits.
         let ctx = BuildContext {
@@ -230,11 +238,19 @@ impl LiveRadio {
             ask: Ask::build(RequestPriority::UserInitiated),
         };
         let excluded = HashSet::new();
-        if use_lastfm && user.lastfm {
-            lastfm_pools(&ctx, user_id, seeds, &excluded, similar_limit * albums_per).await
+        Ok(if use_lastfm && user.lastfm {
+            lastfm_pools(
+                &ctx,
+                user_id,
+                user,
+                seeds,
+                &excluded,
+                similar_limit * albums_per,
+            )
+            .await
         } else {
-            similar_artist_pools(&ctx, user_id, seeds, &excluded).await
-        }
+            similar_artist_pools(&ctx, user_id, user, seeds, &excluded).await
+        })
     }
 
     /// Cards as album rows, marked owned or requested.
@@ -330,7 +346,7 @@ impl LiveRadio {
                 let name = self.artist_name(user_id, &mbid).await;
                 let pools = self
                     .similar_pools(user_id, &user, &[seed(&mbid, &name)], 15, 3, lastfm)
-                    .await;
+                    .await?;
                 let picked = round_robin(pools, count, MAX_PER_ARTIST, &mut Shuffler::random());
                 (
                     format!("Radio: {name}"),
@@ -357,7 +373,7 @@ impl LiveRadio {
                 let seeds: Vec<ArtistRow> = artists.iter().map(|id| seed(id, id)).collect();
                 let pools = self
                     .similar_pools(user_id, &user, &seeds, 10, 3, lastfm)
-                    .await;
+                    .await?;
                 let picked = round_robin(pools, count, MAX_PER_ARTIST, &mut Shuffler::random());
                 (
                     format!("Radio: {}", title_case(&genre)),
@@ -477,10 +493,21 @@ impl LiveRadio {
             let name = self.artist_name(user_id, &mbid).await;
             ((mbid.clone(), name.clone()), format!("Radio: {name}"))
         };
-        let similar = timed(
-            "listenbrainz similar artists",
-            self.listening
-                .similar_artists(user_id, &base.0, MAX_SEED_ARTISTS + 1, &Ask::person()),
+        let settings = self.queue_settings()?;
+        let ctx = BuildContext {
+            listening: &self.listening,
+            db: &self.queue_db,
+            settings: &settings,
+            ask: Ask::person(),
+        };
+        let policy = self.listening.policy(user_id).await;
+        let similar = similar_to(
+            &ctx,
+            user_id,
+            policy.user(),
+            &seed(&base.0, &base.1),
+            MAX_SEED_ARTISTS + 1,
+            false,
         )
         .await;
         let mut seeds = vec![base];
@@ -881,7 +908,7 @@ impl LiveRadio {
                 3,
                 source == ListenSource::Lastfm,
             )
-            .await;
+            .await?;
         let genres = self.genre_albums(&profile).await;
         if !genres.is_empty() {
             pools.push(genres);

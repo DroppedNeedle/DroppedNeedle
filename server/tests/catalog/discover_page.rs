@@ -3,10 +3,12 @@
 //! its shelves and is saved, a restart serves the saved page at once,
 //! activity is recorded for the warm cycle, and refresh is accepted. A
 //! user with Last.fm and ListenBrainz both linked gets shelves grown from
-//! both, unless the server turns the blend off.
+//! both, unless the server turns the blend off. Unreadable settings hold
+//! every build, and a page built past a failed read is rebuilt soon.
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::{
     Router,
@@ -22,11 +24,13 @@ use droppedneedle_catalog::reads::discover::listening::{
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, LegacyConfig};
 use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
 use crate::common::auth::AuthRig;
+use crate::common::platform::TEST_KEY;
 use crate::discover_queue::{Script, after_commits, discover_deps, discover_routes};
 
 const SEED: &str = "11111111-1111-4111-8111-111111111111";
@@ -441,13 +445,21 @@ async fn because_entries(on: bool) -> Vec<(String, String, String)> {
                 (7..=9).map(|n| scored('b', n, 90.0)).collect(),
             ),
         ]),
-        // Last.fm's last pick for "Both" is ListenBrainz's last one too.
+        // Last.fm's last pick for "Both" is ListenBrainz's last one too,
+        // named without its id.
         lastfm_similar: HashMap::from([(
             both.mbid.clone().unwrap_or_default(),
             vec![
                 scored('c', 1, 0.9),
                 scored('c', 2, 0.8),
-                scored('b', 6, 0.7),
+                ScoredArtist {
+                    artist: ArtistRow {
+                        name: "Artist b6".to_owned(),
+                        mbid: None,
+                        listen_count: 0,
+                    },
+                    score: 0.7,
+                },
             ],
         )]),
         ..Script::default()
@@ -477,9 +489,9 @@ async fn because_entries(on: bool) -> Vec<(String, String, String)> {
 }
 
 /// Blended, the seeds come from both histories with the artist both name
-/// first, its similar artists lead with the one both services suggest,
-/// and the shelves carry the blended badge. Turned off, only the primary
-/// service is read.
+/// first, its similar artists lead with the one both services suggest
+/// (one by id, the other by name alone), and the shelves carry the
+/// blended badge. Turned off, only the primary service is read.
 #[tokio::test]
 async fn both_services_blend_unless_the_server_turns_it_off() {
     let entry = |seed: &str, source: &str, first: &str| {
@@ -500,4 +512,110 @@ async fn both_services_blend_unless_the_server_turns_it_off() {
             entry("Both", "listenbrainz", "Artist b4"),
         ]
     );
+}
+
+/// The user's saved discover page, once no build is running.
+async fn settled_page(rig: &AuthRig, app: &Router, what: &str) -> Value {
+    after_commits(&rig.platform.db, what, || async {
+        let (_, page) = call(app, "GET", "/api/v3/discover", None).await;
+        (page["refreshing"] == false && page["generated_at"].is_number()).then_some(page)
+    })
+    .await
+}
+
+/// While the advanced settings cannot be read no build starts, asked for
+/// or not: visits get the last saved page. Saving the settings again lets
+/// the next refresh build.
+#[tokio::test]
+async fn unreadable_settings_hold_builds_and_serve_the_saved_page() {
+    let dir = crate::common::ScratchDir::new("discover-unreadable");
+    let mut rig = AuthRig::new("discover-unreadable").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let app = page_app(&rig, &dir);
+    call(&app, "GET", "/api/v3/discover", None).await;
+    settled_page(&rig, &app, "the first page was built").await;
+
+    db.write(Lane::Foreground, "test.break_settings", |tx| {
+        tx.execute(
+            "INSERT INTO config_sections (key, value_json, revision, updated_at) \
+             VALUES ('advanced_settings', '{\"audiodb_api_key\": \"not sealed\"}', 50, 1) \
+             ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json, \
+             revision = excluded.revision",
+            [],
+        )?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .expect("a secret that does not decrypt stored");
+    rig.config = Arc::new(
+        ConfigStore::open(
+            db.clone(),
+            Crypto::from_key_bytes(&TEST_KEY).expect("test key"),
+            rig.platform.clock.clone(),
+            LegacyConfig::at(&dir, false),
+        )
+        .await
+        .expect("settings reopen"),
+    );
+    let restarted = page_app(&rig, &dir);
+
+    let (status, _) = call(&restarted, "POST", "/api/v3/discover/refresh", None).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let (_, page) = call(&restarted, "GET", "/api/v3/discover", None).await;
+    assert_eq!(page["refreshing"], false, "no build started");
+    assert_eq!(
+        content(&page, "because_you_listen_to")["entries"][0]["seed_artist"],
+        "Seed",
+        "the saved page is served"
+    );
+
+    rig.config
+        .save_secret_blocking(AdvancedSettings::default())
+        .expect("settings saved again");
+    call(&restarted, "POST", "/api/v3/discover/refresh", None).await;
+    let (_, page) = call(&restarted, "GET", "/api/v3/discover", None).await;
+    assert_eq!(page["refreshing"], true, "builds resume");
+    settled_page(&rig, &restarted, "the rebuild finished").await;
+}
+
+/// A page built while a read failed is kept, without the shelf that read
+/// fed, only until the retry wait is up: the next visit then builds again
+/// and the shelf comes back. A page built with every read answered keeps
+/// its hour.
+#[tokio::test]
+async fn a_shelf_whose_read_failed_is_built_again_soon() {
+    let dir = crate::common::ScratchDir::new("discover-failed-shelf");
+    let rig = AuthRig::new("discover-failed-shelf").await;
+    seed_user(&rig.platform.db).await;
+    let script = Arc::new(page_script());
+    script.fresh_down.store(true, Ordering::SeqCst);
+    let network = Arc::clone(&script);
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = network;
+    }));
+    let fresh = |page: &Value| {
+        content(page, "fresh_releases")["shelf"]["items"]
+            .as_array()
+            .map(Vec::len)
+    };
+
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let page = settled_page(&rig, &app, "the first page was built").await;
+    assert_eq!(fresh(&page), None, "the failed shelf is left out");
+
+    script.fresh_down.store(false, Ordering::SeqCst);
+    rig.clock.advance(301_000);
+    let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
+    assert_eq!(page["refreshing"], true, "a rebuild started");
+    let page = after_commits(&rig.platform.db, "the shelf came back", || async {
+        let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
+        (fresh(&page) == Some(1)).then_some(page)
+    })
+    .await;
+    assert_eq!(page["refreshing"], false);
+
+    rig.clock.advance(301_000);
+    let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
+    assert_eq!(page["refreshing"], false, "a whole page is kept");
 }

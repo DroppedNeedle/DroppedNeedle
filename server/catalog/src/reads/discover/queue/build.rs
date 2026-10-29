@@ -22,7 +22,7 @@ use super::select::{self, Shuffler};
 use super::store::QueueDb;
 use crate::reads::discover::listening::{
     AlbumRow, ArtistRow, Ask, JellyfinList, LastFmAlbum, ListenSource, ListenedAlbum,
-    ListeningData, StatsRange, TagAlbum, UserMusic, blend,
+    ListeningData, ScoredArtist, StatsRange, TagAlbum, UserMusic, blend, blend_similar,
 };
 use crate::reads::discover::models::QueueItemLight;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
@@ -359,7 +359,7 @@ async fn personalized(
     let target = count.saturating_sub(wildcard_slots);
     let per_seed = (target / seeds.len().max(1) + 3).max(4);
     let pools = if use_lastfm {
-        lastfm_pools(ctx, user_id, &seeds, ignored, per_seed).await
+        lastfm_pools(ctx, user_id, user, &seeds, ignored, per_seed).await
     } else {
         let listened = listened_albums(ctx, user, source).await;
         listenbrainz_pools(ctx, user_id, user, &seeds, ignored, &listened).await
@@ -403,7 +403,7 @@ async fn listenbrainz_pools(
     let mut deep_excluded = excluded.clone();
     deep_excluded.extend(listened.iter().cloned());
     let (similar, genres, fresh, loved, deep) = tokio::join!(
-        similar_artist_pools(ctx, user_id, seeds, excluded),
+        similar_artist_pools(ctx, user_id, user, seeds, excluded),
         genre_albums(ctx, username, excluded),
         fresh_releases(ctx, username, excluded),
         loved_artist_albums(ctx, user_id, username, excluded, per_artist),
@@ -418,27 +418,72 @@ async fn listenbrainz_pools(
     pools
 }
 
-/// One pool per seed: the top albums of each artist ListenBrainz calls
-/// similar to it.
+/// Up to `limit` artists similar to `seed`: both services blended when
+/// the server allows it and the user has both linked (Last.fm alone
+/// while ListenBrainz popularity is down), else Last.fm when `lastfm`,
+/// else ListenBrainz. A service that fails leaves the other's answer.
+pub(in crate::reads::discover) async fn similar_to(
+    ctx: &BuildContext<'_>,
+    user_id: &str,
+    user: &UserMusic,
+    seed: &ArtistRow,
+    limit: usize,
+    lastfm: bool,
+) -> Vec<ScoredArtist> {
+    let policy = ctx.listening.policy_for(user);
+    let lastfm_read = || {
+        timed(
+            "lastfm similar artists",
+            ctx.listening
+                .lastfm_similar(user_id, seed, limit as u32, &ctx.ask),
+        )
+    };
+    let listenbrainz_read = || async {
+        let Some(mbid) = seed.mbid.as_deref() else {
+            return Vec::new();
+        };
+        timed(
+            "listenbrainz similar artists",
+            ctx.listening
+                .similar_artists(user_id, mbid, limit, &ctx.ask),
+        )
+        .await
+    };
+    if policy.blends(ctx.settings.blend_services) && !policy.popularity_down() {
+        let (lastfm, listenbrainz) = tokio::join!(lastfm_read(), listenbrainz_read());
+        return match policy.listening() {
+            ListenSource::Lastfm => blend_similar(lastfm, listenbrainz),
+            ListenSource::Listenbrainz => blend_similar(listenbrainz, lastfm),
+        };
+    }
+    if lastfm {
+        lastfm_read().await
+    } else {
+        listenbrainz_read().await
+    }
+}
+
+/// One pool per seed: the top albums of each artist similar to it (see
+/// [`similar_to`]).
 pub(in crate::reads::discover) async fn similar_artist_pools(
     ctx: &BuildContext<'_>,
     user_id: &str,
+    user: &UserMusic,
     seeds: &[ArtistRow],
     excluded: &HashSet<String>,
 ) -> Vec<Vec<QueueItemLight>> {
     let settings = ctx.settings;
     join_all(seeds.iter().map(|seed| async move {
-        let Some(seed_mbid) = seed.mbid.as_deref() else {
+        if seed.mbid.is_none() {
             return Vec::new();
-        };
-        let similar = timed(
-            "listenbrainz similar artists",
-            ctx.listening.similar_artists(
-                user_id,
-                seed_mbid,
-                settings.similar_artists_limit,
-                &ctx.ask,
-            ),
+        }
+        let similar = similar_to(
+            ctx,
+            user_id,
+            user,
+            seed,
+            settings.similar_artists_limit,
+            false,
         )
         .await;
         let reason = format!("Similar to {}", seed.name);
@@ -700,10 +745,12 @@ async fn deep_cuts(
 }
 
 /// One pool per seed from Last.fm: similar artists' top albums, matched
-/// to release groups.
+/// to release groups. The similar artists are read as [`similar_to`]
+/// reads them.
 pub(in crate::reads::discover) async fn lastfm_pools(
     ctx: &BuildContext<'_>,
     user_id: &str,
+    user: &UserMusic,
     seeds: &[ArtistRow],
     excluded: &HashSet<String>,
     per_seed: usize,
@@ -713,17 +760,15 @@ pub(in crate::reads::discover) async fn lastfm_pools(
         if seed.mbid.is_none() {
             return Vec::new();
         }
-        let similar = or_empty(
-            "lastfm similar artists",
-            ctx.listening
-                .lastfm_similar(
-                    user_id,
-                    seed,
-                    settings.similar_artists_limit as u32,
-                    &ctx.ask,
-                )
-                .await,
-        );
+        let similar = similar_to(
+            ctx,
+            user_id,
+            user,
+            seed,
+            settings.similar_artists_limit,
+            true,
+        )
+        .await;
         let similar: Vec<ArtistRow> = similar
             .into_iter()
             .map(|scored| scored.artist)

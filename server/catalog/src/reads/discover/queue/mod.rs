@@ -50,8 +50,6 @@ use store::QueueDb;
 pub struct QueueSettings {
     /// Cards per deck.
     pub queue_size: usize,
-    /// How long before a deck reads as stale, ms.
-    pub ttl_ms: i64,
     /// Seed artists per deck.
     pub seed_artists: usize,
     /// Trending wildcards per deck.
@@ -60,8 +58,6 @@ pub struct QueueSettings {
     pub similar_artists_limit: usize,
     /// Albums read per similar artist.
     pub albums_per_similar: usize,
-    /// How long card details stay cached.
-    pub enrich_ttl: Duration,
     /// MusicBrainz lookups one Last.fm album batch may spend.
     pub lastfm_mbid_max_lookups: usize,
     /// Whether the warm cycle may build decks.
@@ -97,12 +93,10 @@ impl QueueSettings {
     pub fn from_advanced(advanced: &AdvancedSettings) -> Self {
         Self {
             queue_size: bounded(advanced.discover_queue_size, 1, 20),
-            ttl_ms: QUEUE_TTL_MS,
             seed_artists: bounded(advanced.discover_queue_seed_artists, 1, 10),
             wildcard_slots: bounded(advanced.discover_queue_wildcard_slots, 0, 10),
             similar_artists_limit: bounded(advanced.discover_queue_similar_artists_limit, 5, 50),
             albums_per_similar: bounded(advanced.discover_queue_albums_per_similar, 1, 20),
-            enrich_ttl: QUEUE_ENRICH_TTL,
             lastfm_mbid_max_lookups: bounded(
                 advanced.discover_queue_lastfm_mbid_max_lookups,
                 1,
@@ -116,25 +110,21 @@ impl QueueSettings {
     }
 }
 
-impl Default for QueueSettings {
-    fn default() -> Self {
-        Self::from_advanced(&AdvancedSettings::default())
+impl QueueSettings {
+    /// The queue settings in the advanced settings now. `None` when they
+    /// cannot be read: the work they steer waits until they are saved
+    /// again, and [`Live::read`] logs it once.
+    pub fn read(advanced: &Live<AdvancedSettings>) -> Option<Self> {
+        advanced
+            .read()
+            .map(|advanced| Self::from_advanced(&advanced))
     }
 }
 
-impl QueueSettings {
-    /// The queue settings in the advanced settings now, or the defaults
-    /// when they cannot be read.
-    pub fn read(advanced: &Live<AdvancedSettings>) -> Self {
-        match advanced.get() {
-            Ok(advanced) => Self::from_advanced(&advanced),
-            Err(error) => {
-                tracing::warn!(%error, "cannot read advanced settings; the queue uses defaults");
-                Self::default()
-            }
-        }
-    }
-}
+/// What a person who asks for Discover while its settings cannot be read
+/// is told.
+pub const SETTINGS_UNREADABLE: &str =
+    "Discover's settings cannot be read. Save Settings > Advanced again to resume Discover.";
 
 /// One deck as saved.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,15 +183,14 @@ impl UserState {
     }
 }
 
-fn is_stale(deck: Option<&Saved<Deck>>, settings: &QueueSettings, now: i64) -> bool {
-    deck.is_none_or(|deck| now - deck.built_at > settings.ttl_ms)
+fn is_stale(deck: Option<&Saved<Deck>>, now: i64) -> bool {
+    deck.is_none_or(|deck| now - deck.built_at > QUEUE_TTL_MS)
 }
 
 fn status_of(
     phase: Phase,
     error: Option<String>,
     deck: Option<&Saved<Deck>>,
-    settings: &QueueSettings,
     now: i64,
 ) -> DiscoverQueueStatusResponse {
     let mut status = DiscoverQueueStatusResponse {
@@ -223,7 +212,7 @@ fn status_of(
             status.queue_id = Some(deck.value.queue_id.clone());
             status.item_count = Some(deck.value.items.len() as i64);
             status.built_at = Some(deck.built_at / 1000);
-            status.stale = Some(is_stale(Some(deck), settings, now));
+            status.stale = Some(is_stale(Some(deck), now));
         }
         (Phase::Settled, None) => {}
     }
@@ -349,7 +338,6 @@ impl Inner {
 
     async fn status(&self, user_id: &str) -> DiscoverQueueStatusResponse {
         let variant = Variant::for_user(&self.listening, user_id).await;
-        let settings = QueueSettings::read(&self.settings);
         // The phase is read before the deck, so a build that settles in
         // between never reads as ready with the deck it replaced.
         let (phase, error) = {
@@ -361,7 +349,7 @@ impl Inner {
             Phase::Settled => self.deck(user_id, &variant).await,
             Phase::Building | Phase::Failed => None,
         };
-        status_of(phase, error, deck.as_ref(), &settings, self.decks.now_ms())
+        status_of(phase, error, deck.as_ref(), self.decks.now_ms())
     }
 
     /// The user's deck without the albums they ignored: a deck built, or
@@ -401,14 +389,17 @@ impl Inner {
         let answer = |action: QueueAction, state: &UserState| {
             generate_response(
                 action,
-                status_of(
-                    state.phase,
-                    state.error.clone(),
-                    deck.as_ref(),
-                    &settings,
-                    now,
-                ),
+                status_of(state.phase, state.error.clone(), deck.as_ref(), now),
             )
+        };
+        // Unreadable settings hold every build until they are saved again;
+        // a person who asked is told why.
+        let Some(settings) = settings else {
+            if !scheduled && state.phase != Phase::Building {
+                state.phase = Phase::Failed;
+                state.error = Some(SETTINGS_UNREADABLE.to_owned());
+            }
+            return (answer(QueueAction::Disabled, state), None);
         };
         if scheduled && !settings.warm_cycle_build {
             return (answer(QueueAction::Disabled, state), None);
@@ -421,7 +412,7 @@ impl Inner {
         if state.phase == Phase::Building {
             return (answer(QueueAction::AlreadyBuilding, state), None);
         }
-        if !force && state.phase == Phase::Settled && !is_stale(deck.as_ref(), &settings, now) {
+        if !force && state.phase == Phase::Settled && !is_stale(deck.as_ref(), now) {
             return (answer(QueueAction::AlreadyReady, state), None);
         }
         state.stop_task();
@@ -441,7 +432,7 @@ impl Inner {
         };
         let task = tokio::spawn(async move {
             inner
-                .run_build(user, built_for, generation, run, priority)
+                .run_build(user, built_for, settings, generation, run, priority)
                 .await
         });
         state.task = Some(task.abort_handle());
@@ -454,11 +445,11 @@ impl Inner {
         self: Arc<Self>,
         user_id: String,
         variant: Variant,
+        settings: QueueSettings,
         generation: Option<i64>,
         run: u64,
         priority: RequestPriority,
     ) {
-        let settings = QueueSettings::read(&self.settings);
         self.prune_if_due(&settings).await;
         let ask = Ask::build(priority);
         let ctx = BuildContext {
@@ -477,8 +468,11 @@ impl Inner {
                 return;
             }
             state.task = None;
-            if state.scheduled && !QueueSettings::read(&self.settings).warm_cycle_build {
-                // The warm cycle was switched off while this ran.
+            if state.scheduled
+                && QueueSettings::read(&self.settings).is_none_or(|now| !now.warm_cycle_build)
+            {
+                // The warm cycle was switched off, or its settings stopped
+                // reading, while this ran.
                 state.settled();
                 return;
             }
@@ -589,7 +583,8 @@ impl Inner {
         user_id: &str,
         count: Option<usize>,
     ) -> Result<QueueDeck, ProviderFailure> {
-        let settings = QueueSettings::read(&self.settings);
+        let settings = QueueSettings::read(&self.settings)
+            .ok_or_else(|| ProviderFailure::not_configured(SETTINGS_UNREADABLE))?;
         // The request waits for this deck.
         let ctx = BuildContext {
             listening: &self.listening,
@@ -618,10 +613,9 @@ impl Inner {
             Source::MusicBrainz,
             &[&self.listening.namespace(), "queue_card_facts", &group],
         );
-        let lifetime = QueueSettings::read(&self.settings).enrich_ttl;
         let policy = Policy {
-            fresh: lifetime,
-            miss: lifetime,
+            fresh: QUEUE_ENRICH_TTL,
+            miss: QUEUE_ENRICH_TTL,
         };
         let inner = Arc::clone(self);
         let fetched_group = group.clone();
