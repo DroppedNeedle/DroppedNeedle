@@ -112,6 +112,8 @@ pub(super) fn feed_page(for_user: bool, newest_first: bool) -> String { ... }
 4. Make sure tests pass before submitting.
 5. Keep changes focused. One PR per fix or feature.
 
+Outside pull requests are welcome. Each one is reviewed against the rules in [CLAUDE.md](CLAUDE.md) and checked on the current tip before it is taken. A pull request taken as it is merges with your authorship; one that needs changes is taken as your commit with the fixes folded in or added beside it, and the pull request is closed with a note saying which. New features and changes to product rules are the maintainer's call, so open an issue first for those.
+
 ## Code style
 
 - Server: no `unwrap`, `expect` or `panic!` outside tests (clippy enforces it). Services return typed errors; only handlers map them to HTTP status. Blocking file, SQLite or CPU-heavy work runs off the async workers.
