@@ -82,9 +82,11 @@ function withRating(lookup: RatingLookup, { kind, itemId, rating }: RateVars): R
  * once and go back if the save fails. Ratings save one at a time, so quick
  * clicks end on the last one.
  */
+const SET_RATING = ['set-rating'] as const;
+
 export function setRating() {
 	return createMutation(() => ({
-		mutationKey: RatingQueryKeyFactory.prefix,
+		mutationKey: SET_RATING,
 		scope: { id: 'ratings' },
 		mutationFn: ({ kind, itemId, rating }: RateVars) =>
 			api.v3.PUT(RatingV3Api.rating(kind, itemId), { rating }),
@@ -111,7 +113,7 @@ export function setRating() {
 		},
 		onSettled: () => {
 			// A later click is still saving: its own settle reads the result.
-			if (queryClient.isMutating({ mutationKey: RatingQueryKeyFactory.prefix }) > 1) return;
+			if (queryClient.isMutating({ mutationKey: SET_RATING }) > 1) return;
 			void invalidateQueriesWithPersister({
 				queryKey: RatingQueryKeyFactory.user(authStore.user?.id)
 			});

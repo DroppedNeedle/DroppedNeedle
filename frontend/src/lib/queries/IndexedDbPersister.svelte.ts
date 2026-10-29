@@ -1,9 +1,6 @@
-import {
-	type AsyncStorage,
-	PERSISTER_KEY_PREFIX,
-	type PersistedQuery
-} from '@tanstack/svelte-query-persist-client';
+import { type AsyncStorage, PERSISTER_KEY_PREFIX } from '@tanstack/svelte-query-persist-client';
 import { clear, createStore, del, entries, get } from 'idb-keyval';
+import type { StoredQuery } from './persistedCache';
 /**
  * Wipe every persisted query from IndexedDB on a user switch: the
  * per-query entries written by {@link createIDBStorage}. idb-keyval's default
@@ -14,11 +11,13 @@ export async function clearPersistedQueryCache(): Promise<void> {
 	await clear();
 }
 
-export type PersistedQueryPredicate = (query: Pick<PersistedQuery, 'queryKey'>) => boolean;
+export type PersistedQueryPredicate = (
+	query: Pick<StoredQuery, 'queryKey' | 'provider'>
+) => boolean;
 
-function asPersistedQuery(value: unknown): PersistedQuery | null {
+function asPersistedQuery(value: unknown): StoredQuery | null {
 	if (typeof value !== 'object' || value === null) return null;
-	const candidate = value as Partial<PersistedQuery>;
+	const candidate = value as Partial<StoredQuery>;
 	if (
 		typeof candidate.buster !== 'string' ||
 		typeof candidate.queryHash !== 'string' ||
@@ -28,7 +27,7 @@ function asPersistedQuery(value: unknown): PersistedQuery | null {
 	) {
 		return null;
 	}
-	return candidate as PersistedQuery;
+	return candidate as StoredQuery;
 }
 
 const persistedStore = createStore('keyval-store', 'keyval');
@@ -134,18 +133,11 @@ export async function removePersistedQueries(predicate: PersistedQueryPredicate)
 	if (removalFailed) throw firstFailure;
 }
 
-export function createIDBStorage(
-	canPersist: PersistedQueryPredicate
-): AsyncStorage<PersistedQuery> {
+export function createIDBStorage(): AsyncStorage<StoredQuery> {
 	return {
-		getItem: async (key: string) => {
-			const val = await get<PersistedQuery>(key);
-			return val && canPersist(val) ? val : undefined;
-		},
-		setItem: async (key: string, value: PersistedQuery) => {
+		getItem: async (key: string) => await get<StoredQuery>(key),
+		setItem: async (key: string, value: StoredQuery) => {
 			await persistedStore('readwrite', (store) => {
-				// Check at transaction admission, not before awaiting the database open.
-				if (!canPersist(value)) return Promise.resolve();
 				return new Promise<void>((resolve, reject) => {
 					store.transaction.oncomplete = () => resolve();
 					store.transaction.onabort = () => reject(store.transaction.error);

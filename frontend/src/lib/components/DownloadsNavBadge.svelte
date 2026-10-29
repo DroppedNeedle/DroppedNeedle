@@ -9,6 +9,7 @@
 	} from '$lib/queries/downloads/downloadActivitySync';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { libraryStore } from '$lib/stores/library';
+	import { everyScope } from '$lib/queries/keys';
 
 	const query = getDownloadActivitySummaryQuery();
 	const count = $derived(query.data?.active_count ?? 0);
@@ -29,7 +30,7 @@
 				queryKey: DownloadQueryKeyFactory.heldPrefix(userId)
 			});
 			if (actions.invalidateLibrary) {
-				void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all });
+				void invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature));
 			}
 		}
 	});

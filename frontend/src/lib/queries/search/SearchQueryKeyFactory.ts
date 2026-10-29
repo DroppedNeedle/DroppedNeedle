@@ -1,5 +1,4 @@
-import { musicBrainzSourceKey } from '../musicbrainz/sourceScope.svelte';
-import { userIdSegment } from '../userKeySegment';
+import { key, userScope } from '../keys';
 
 export type SearchV3UserId = string | null | undefined;
 
@@ -19,12 +18,9 @@ export interface SearchV3EnrichFingerprint {
 const normalizeQuery = (query: string) => query.trim().toLowerCase();
 
 export const SearchQueryKeyFactory = {
-	// v3 search keys. Unified search, bucket drill-downs, and suggestions read
-	// the local catalog, so they carry only the userId. Enrichment fans out to
-	// the metadata provider, so it also embeds the provider source identity and
-	// joins the source-switch sweep.
+	// Search answers carry the caller's library and request marks.
 	v3: {
-		root: (userId: SearchV3UserId) => ['search', 'v3', userIdSegment(userId)] as const,
+		root: (userId: SearchV3UserId) => key(userScope(userId), 'search'),
 		unified: (
 			userId: SearchV3UserId,
 			query: string,
@@ -55,14 +51,7 @@ export const SearchQueryKeyFactory = {
 			] as const,
 		suggest: (userId: SearchV3UserId, query: string, limit: number) =>
 			[...SearchQueryKeyFactory.v3.root(userId), 'suggest', normalizeQuery(query), limit] as const,
-		enrich: (userId: SearchV3UserId, fingerprint: SearchV3EnrichFingerprint) => {
-			const normalizedUserId = userIdSegment(userId);
-			return [
-				...SearchQueryKeyFactory.v3.root(normalizedUserId),
-				musicBrainzSourceKey(normalizedUserId),
-				'enrich',
-				fingerprint
-			] as const;
-		}
+		enrich: (userId: SearchV3UserId, fingerprint: SearchV3EnrichFingerprint) =>
+			[...SearchQueryKeyFactory.v3.root(userId), 'enrich', fingerprint] as const
 	}
 };

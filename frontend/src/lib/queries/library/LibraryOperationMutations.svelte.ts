@@ -13,11 +13,12 @@ import type {
 	ScanKind,
 	ScanRunRequestedResponse
 } from './LibraryOperationsTypes';
+import { everyScope } from '$lib/queries/keys';
 
 async function invalidateWork(): Promise<void> {
 	await Promise.all([
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.activityPrefix() }),
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.operationsPrefix() })
+		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'activity')),
+		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'operations'))
 	]);
 }
 

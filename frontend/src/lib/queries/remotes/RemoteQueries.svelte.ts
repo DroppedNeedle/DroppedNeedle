@@ -19,6 +19,7 @@ import { readNow } from '../readNow';
 import { RemoteQueryKeyFactory } from './RemoteQueryKeyFactory';
 import { remoteApi } from './remoteApi';
 import type { RemoteAlbumPage, RemoteFolders, RemoteSource, RemoteTrack } from './types';
+import { PERSIST, type CacheMeta } from '$lib/queries/persistedCache';
 
 type Source = Getter<RemoteSource>;
 type Enabled = Getter<boolean>;
@@ -35,12 +36,14 @@ function query<T>(
 		load: (signal: AbortSignal) => Promise<T>;
 		getEnabled: Enabled;
 		extraGate?: boolean;
+		meta?: CacheMeta;
 	}
 ) {
 	return createQuery(() => {
-		const { key, load, getEnabled, extraGate = true } = build();
+		const { key, load, getEnabled, extraGate = true, meta } = build();
 		return {
 			queryKey: key,
+			meta,
 			queryFn: ({ signal }: { signal: AbortSignal }) => load(signal),
 			enabled: authed(getEnabled) && extraGate
 		};
@@ -49,6 +52,7 @@ function query<T>(
 
 export const getRemoteHubQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
+		meta: PERSIST,
 		key: RemoteQueryKeyFactory.hub(userId(), getSource()),
 		load: (signal: AbortSignal) => api.v3.GET(REMOTE_ENDPOINTS.hub(getSource()), { signal }),
 		getEnabled
@@ -63,6 +67,7 @@ export const getRemoteConnectionQuery = (getSource: Source, getEnabled: Enabled 
 
 export const getRemoteArtistIndexQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
+		meta: PERSIST,
 		key: RemoteQueryKeyFactory.artistIndex(userId(), getSource()),
 		load: (signal: AbortSignal) =>
 			api.v3.GET(REMOTE_ENDPOINTS.artistIndex(getSource()), { signal }),
@@ -71,6 +76,7 @@ export const getRemoteArtistIndexQuery = (getSource: Source, getEnabled: Enabled
 
 export const getRemoteFavoritesQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
+		meta: PERSIST,
 		key: RemoteQueryKeyFactory.favorites(userId(), getSource()),
 		load: (signal: AbortSignal) => api.v3.GET(REMOTE_ENDPOINTS.favorites(getSource()), { signal }),
 		getEnabled
@@ -101,6 +107,7 @@ export const getRemoteInfoArtistQuery = (
 	getEnabled: Enabled = () => true
 ) =>
 	query(() => ({
+		meta: PERSIST,
 		key: RemoteQueryKeyFactory.infoArtist(userId(), getSource(), getId()),
 		load: (signal: AbortSignal) =>
 			api.v3.GET(REMOTE_ENDPOINTS.infoArtist(getSource(), getId()), { signal }),
@@ -190,6 +197,7 @@ export const getRemoteRecentQuery = (getSource: Source, getEnabled: Enabled = ()
 
 export const getRemoteGenresQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
+		meta: PERSIST,
 		key: RemoteQueryKeyFactory.genres(userId(), getSource()),
 		load: (signal: AbortSignal) => remoteApi.genres(getSource(), signal),
 		getEnabled
@@ -197,6 +205,7 @@ export const getRemoteGenresQuery = (getSource: Source, getEnabled: Enabled = ()
 
 export const getRemoteMoodsQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
+		meta: PERSIST,
 		key: RemoteQueryKeyFactory.moods(userId(), getSource()),
 		load: (signal: AbortSignal) => api.v3.GET(REMOTE_ENDPOINTS.moods(getSource()), { signal }),
 		getEnabled
@@ -223,6 +232,7 @@ export const getRemoteArtistsQuery = (
 	getEnabled: Enabled = () => true
 ) =>
 	query(() => ({
+		meta: PERSIST,
 		key: RemoteQueryKeyFactory.artists(userId(), getSource(), getParams()),
 		load: (signal: AbortSignal) => remoteApi.artists(getSource(), getParams(), signal),
 		getEnabled
@@ -235,6 +245,7 @@ export const getRemoteTracksQuery = (
 	getEnabled: Enabled = () => true
 ) =>
 	query(() => ({
+		meta: PERSIST,
 		key: RemoteQueryKeyFactory.tracks(userId(), getSource(), getParams()),
 		load: (signal: AbortSignal) => remoteApi.tracks(getSource(), getParams(), signal),
 		getEnabled
@@ -256,6 +267,7 @@ export const getRemoteAlbumsInfiniteQuery = (
 		const params = getParams();
 		const search = getSearch().trim();
 		return {
+			meta: PERSIST,
 			queryKey: RemoteQueryKeyFactory.albums(userId(), source, params, search),
 			initialPageParam: 0,
 			queryFn: async ({

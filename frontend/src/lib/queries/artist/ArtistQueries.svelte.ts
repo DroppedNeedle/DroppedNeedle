@@ -10,10 +10,12 @@ import { setQueryDataWithPersister } from '../QueryClient';
 import { readNow } from '../readNow';
 import { toArtistInfoBasic, toArtistReleases } from '../catalog/catalogAdapters';
 import { CATALOG_ENDPOINTS } from '../catalog/endpoints';
+import { PERSIST, PERSIST_PROVIDER } from '$lib/queries/persistedCache';
 
 export const getBasicArtistQueryOptions = (artistId: string) =>
 	queryOptions({
 		staleTime: STALE_SLOW,
+		meta: PERSIST_PROVIDER,
 		queryKey: ArtistQueryKeyFactory.basic(artistId),
 		queryFn: async ({ signal }) => {
 			return toArtistInfoBasic(await api.v3.GET(CATALOG_ENDPOINTS.artist(artistId), { signal }));
@@ -26,6 +28,7 @@ export const getBasicArtistQuery = (getArtistId: Getter<string>) =>
 export const getExtendedArtistQueryOptions = (artistId: string) =>
 	queryOptions({
 		staleTime: STALE_SLOW,
+		meta: PERSIST_PROVIDER,
 		queryKey: ArtistQueryKeyFactory.extended(artistId),
 		// A fast extended query can finish before the provider page observes its lazy fields.
 		notifyOnChangeProps: 'all',
@@ -43,6 +46,7 @@ export const getSimilarArtistsQuery = (
 		return {
 			enabled,
 			staleTime: STALE_SLOW,
+			meta: PERSIST_PROVIDER,
 			queryKey: ArtistQueryKeyFactory.similarArtists(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.v3.GET(CATALOG_ENDPOINTS.similarArtists(artistId, source), {
@@ -59,6 +63,7 @@ export const getArtistTopAlbumsQuery = (
 		return {
 			enabled,
 			staleTime: STALE_SLOW,
+			meta: PERSIST_PROVIDER,
 			queryKey: ArtistQueryKeyFactory.topAlbums(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.v3.GET(CATALOG_ENDPOINTS.topAlbums(artistId, source), {
@@ -75,6 +80,7 @@ export const getArtistTopSongsQuery = (
 		return {
 			enabled,
 			staleTime: STALE_SLOW,
+			meta: PERSIST_PROVIDER,
 			queryKey: ArtistQueryKeyFactory.topSongs(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.v3.GET(CATALOG_ENDPOINTS.topSongs(artistId, source), {
@@ -90,6 +96,7 @@ export const getArtistLastFmEnrichmentQuery = (
 		const { artistId, artistName } = getParams();
 		return {
 			staleTime: STALE_SLOW,
+			meta: PERSIST,
 			queryKey: ArtistQueryKeyFactory.lastFmEnrichment(artistId, artistName),
 			queryFn: ({ signal }) =>
 				api.v3.GET(CATALOG_ENDPOINTS.artistLastFm(artistId, artistName!), {
@@ -116,6 +123,7 @@ export const getArtistReleasesInfiniteQuery = (getArtistId: Getter<string>) =>
 		let lastKey: string | null = null;
 		return {
 			staleTime: STALE_SLOW,
+			meta: PERSIST_PROVIDER,
 			queryKey: ArtistQueryKeyFactory.releases(getArtistId()),
 			initialPageParam: 0,
 			queryFn: async ({ pageParam = 0, signal }) => {

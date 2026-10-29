@@ -1,6 +1,7 @@
+import { key, SHARED } from './keys';
+
 export const VersionQueryKeyFactory = {
-	prefix: ['version'] as const,
-	info: () => [...VersionQueryKeyFactory.prefix, 'info'] as const,
-	updateCheck: () => [...VersionQueryKeyFactory.prefix, 'update-check'] as const,
-	releases: () => [...VersionQueryKeyFactory.prefix, 'releases'] as const
+	info: () => key(SHARED, 'version', 'info'),
+	updateCheck: () => key(SHARED, 'version', 'update-check'),
+	releases: () => key(SHARED, 'version', 'releases')
 };

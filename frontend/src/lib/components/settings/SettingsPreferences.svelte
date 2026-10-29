@@ -10,6 +10,7 @@
 	import Card from '$lib/ui/Card.svelte';
 	import CardActions from '$lib/ui/CardActions.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
+	import { everyScope } from '$lib/queries/keys';
 
 	const DEFAULT_PREFERENCES: UserPreferences = {
 		primary_types: ['album', 'ep', 'single'],
@@ -116,7 +117,7 @@
 			saveMessage = 'Saved. Artist pages and search results will refresh automatically.';
 
 			// these prefs change which releases show on artist pages + search
-			await invalidateQueriesWithPersister({ queryKey: ArtistQueryKeyFactory.prefix });
+			await invalidateQueriesWithPersister(everyScope(ArtistQueryKeyFactory.feature));
 			window.dispatchEvent(new CustomEvent('search-refresh'));
 
 			setTimeout(() => {

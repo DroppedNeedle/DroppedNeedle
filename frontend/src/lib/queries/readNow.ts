@@ -13,7 +13,6 @@ export function readNow<T>(
 	return queryClient.fetchQuery({
 		queryKey,
 		queryFn: ({ signal }) => read(signal),
-		staleTime: 0,
-		persister: undefined
+		staleTime: 0
 	});
 }

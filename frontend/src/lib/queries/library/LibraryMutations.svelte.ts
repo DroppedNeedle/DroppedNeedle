@@ -8,7 +8,7 @@ import { HomeQueryKeyFactory } from '../HomeQueryKeyFactory';
 import { WantedQueryKeyFactory } from '../wanted/WantedQueryKeyFactory';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
 import { LOCAL_KEYS } from '../local/LocalV3Keys';
-import { AlbumMatchKeyFactory } from '../albumMatch';
+import { AlbumMatchKeyFactory } from '../AlbumMatchQueryKeyFactory';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 import type {
@@ -17,6 +17,7 @@ import type {
 	LibraryAlbumStatus,
 	LibraryScanSchedule
 } from '$lib/types';
+import { everyScope } from '$lib/queries/keys';
 
 export function removeLibraryAlbum() {
 	return createMutation(() => ({
@@ -35,7 +36,7 @@ export function removeLibraryAlbum() {
 			}
 			try {
 				await setQueryDataWithPersister<LibraryAlbumStatus>(
-					LibraryQueryKeyFactory.album(requestedMbid),
+					LibraryQueryKeyFactory.album(authStore.user?.id, requestedMbid),
 					(previous) =>
 						previous
 							? {
@@ -53,12 +54,12 @@ export function removeLibraryAlbum() {
 				console.error('Album removal cache update failed', error);
 			}
 			const refreshes = await Promise.allSettled([
-				invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all }),
-				invalidateQueriesWithPersister({ queryKey: ArtistQueryKeyFactory.prefix }),
-				invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix }),
-				invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix }),
-				invalidateQueriesWithPersister({ queryKey: WantedQueryKeyFactory.prefix }),
-				invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root })
+				invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature)),
+				invalidateQueriesWithPersister(everyScope(ArtistQueryKeyFactory.feature)),
+				invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature)),
+				invalidateQueriesWithPersister(everyScope(DiscoverQueryKeyFactory.feature)),
+				invalidateQueriesWithPersister(everyScope(WantedQueryKeyFactory.feature)),
+				invalidateQueriesWithPersister(everyScope(LOCAL_KEYS.feature))
 			]);
 			for (const refresh of refreshes) {
 				if (refresh.status === 'rejected') {
@@ -79,7 +80,9 @@ export function rescanAlbum() {
 		mutationFn: (mbid: string) => api.v3.POST(LibraryV3Api.rescanAlbum(mbid)),
 		onSuccess: (_data, mbid) => {
 			const invalidate = () =>
-				invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.album(mbid) });
+				invalidateQueriesWithPersister({
+					queryKey: LibraryQueryKeyFactory.album(authStore.user?.id, mbid)
+				});
 			void invalidate();
 			for (const delay of RESCAN_REFRESH_DELAYS_MS) setTimeout(() => void invalidate(), delay);
 		}
@@ -110,14 +113,14 @@ export function removeLibraryTrack() {
 		onSuccess: async (_data, { albumMbid }) => {
 			const userId = authStore.user?.id;
 			for (const queryKey of [
-				LibraryQueryKeyFactory.album(albumMbid),
+				LibraryQueryKeyFactory.album(userId, albumMbid),
 				AlbumMatchKeyFactory.local(userId, albumMbid),
 				LibraryQueryKeyFactory.catalog.stats(userId),
-				LOCAL_KEYS.root,
 				LibraryQueryKeyFactory.catalog.albumRemovalsPrefix(userId)
 			]) {
 				await invalidateQueriesWithPersister({ queryKey }, undefined, { client });
 			}
+			await invalidateQueriesWithPersister(everyScope(LOCAL_KEYS.feature), undefined, { client });
 		}
 	}));
 }

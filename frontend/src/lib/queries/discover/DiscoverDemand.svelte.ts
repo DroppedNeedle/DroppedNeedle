@@ -2,7 +2,7 @@ import { createMutation } from '@tanstack/svelte-query';
 import { untrack } from 'svelte';
 import { api } from '$lib/api/client';
 import {
-	musicBrainzSourceKey,
+	musicBrainzSourceStamp,
 	setMusicBrainzSourceScope
 } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import type { MusicBrainzSourceMode } from '$lib/queries/musicbrainz/types';
@@ -25,13 +25,13 @@ export async function recordDiscoverActivity(
 	signal?: AbortSignal
 ): Promise<void> {
 	const userId = authStore.user?.id;
-	const before = JSON.stringify(musicBrainzSourceKey());
+	const before = musicBrainzSourceStamp();
 	const source = await api.v3.POST(DiscoverV3Api.activity(), activity, { signal });
 	const knownMode = KNOWN_SOURCE_MODES.find((mode) => mode === source.source_mode);
 	if (
 		!signal?.aborted &&
 		userId === authStore.user?.id &&
-		before === JSON.stringify(musicBrainzSourceKey()) &&
+		before === musicBrainzSourceStamp() &&
 		knownMode !== undefined
 	) {
 		setMusicBrainzSourceScope(

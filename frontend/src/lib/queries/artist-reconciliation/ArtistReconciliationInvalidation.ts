@@ -1,6 +1,6 @@
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
-import { ArtistReconciliationQueryKeyFactory } from './ArtistReconciliationQueryKeyFactory';
+import { everyScope } from '$lib/queries/keys';
 
 export const invalidateArtistReconciliation = () =>
-	invalidateQueriesWithPersister({ queryKey: ArtistReconciliationQueryKeyFactory.prefix });
+	invalidateQueriesWithPersister(everyScope('library', 'artist-reconciliation'));

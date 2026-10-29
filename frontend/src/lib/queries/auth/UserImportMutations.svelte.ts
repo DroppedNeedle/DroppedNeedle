@@ -16,6 +16,6 @@ export const createImportUsersMutation = () =>
 		mutationFn: (vars: ImportUsersVars) => api.v3.POST(AUTH_ENDPOINTS.adminImport, vars),
 		onSuccess: (_result: ImportUsersResult, vars: ImportUsersVars) =>
 			invalidateQueriesWithPersister({
-				queryKey: AuthQueryKeyFactory.importCandidates(vars.provider, authStore.user?.id)
+				queryKey: AuthQueryKeyFactory.importCandidates(authStore.user?.id, vars.provider)
 			})
 	}));

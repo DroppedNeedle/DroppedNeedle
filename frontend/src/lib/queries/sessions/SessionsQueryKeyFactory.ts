@@ -1,11 +1,6 @@
-import { AuthQueryKeyFactory } from '../auth/AuthQueryKeyFactory';
-import { userIdSegment } from '../userKeySegment';
+import { key, userScope } from '../keys';
 
-// Sessions nest under the shared auth prefix so the login/logout cache
-// clears cover them. The userId segment keeps one user's sessions
-// out of another's persisted cache on a shared browser.
+// Under the auth feature, beside the other sign-in data.
 export const SessionsQueryKeyFactory = {
-	prefix: [...AuthQueryKeyFactory.prefix, 'sessions'] as const,
-	list: (userId: string | null | undefined) =>
-		[...SessionsQueryKeyFactory.prefix, 'list', userIdSegment(userId)] as const
+	list: (userId: string | null | undefined) => key(userScope(userId), 'auth', 'sessions', 'list')
 };

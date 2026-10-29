@@ -1,12 +1,5 @@
-import { musicBrainzSourceKey } from './sourceScope.svelte';
+import { key, userScope } from '../keys';
 
 export const MusicBrainzQueryKeyFactory = {
-	prefix: ['musicbrainz'] as const,
-	sourceScope: () => musicBrainzSourceKey(),
-	settings: () =>
-		[
-			...MusicBrainzQueryKeyFactory.prefix,
-			'settings',
-			MusicBrainzQueryKeyFactory.sourceScope()
-		] as const
+	settings: (userId: string | null | undefined) => key(userScope(userId), 'musicbrainz', 'settings')
 };

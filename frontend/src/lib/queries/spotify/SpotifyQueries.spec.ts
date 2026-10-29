@@ -20,7 +20,7 @@ vi.mock('../QueryClient', () => ({
 
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { userIdSegment } from '../userKeySegment';
+import { SpotifyQueryKeyFactory } from './SpotifyQueryKeyFactory';
 import { SPOTIFY_ENDPOINTS } from './endpoints';
 import { getSpotifyPlaylistsQuery } from './SpotifyQueries.svelte';
 
@@ -48,7 +48,7 @@ describe('getSpotifyPlaylistsQuery', () => {
 		await query.queryFn?.({});
 
 		expect(mockGet).toHaveBeenCalledWith(SPOTIFY_ENDPOINTS.playlists());
-		expect(query.queryKey).toEqual(['spotify-playlists', userIdSegment('userA')]);
+		expect(query.queryKey).toEqual(SpotifyQueryKeyFactory.playlists('userA'));
 	});
 
 	it('never retries: an unlinked account answers 400, not a flake', () => {

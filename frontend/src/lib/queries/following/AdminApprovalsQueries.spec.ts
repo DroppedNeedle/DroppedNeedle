@@ -28,7 +28,7 @@ describe('pending approval count query', () => {
 
 		await options.queryFn({ signal: undefined });
 
-		expect(options.queryKey).toEqual(['following', 'admin-approvals', 'count', 'admin-1']);
+		expect(options.queryKey).toEqual(['user:admin-1', 'following', 'admin-approvals', 'count']);
 		expect(mockGet.mock.calls.at(-1)?.[0]).toBe('/api/v3/requests/approvals/count');
 		expect(options.refetchInterval).toBe(120_000);
 		expect(options.refetchIntervalInBackground).toBe(false);

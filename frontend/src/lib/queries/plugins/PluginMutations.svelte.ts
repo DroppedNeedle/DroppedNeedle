@@ -6,6 +6,7 @@ import { toastStore } from '$lib/stores/toast';
 
 import { PluginQueryKeyFactory } from './PluginQueryKeyFactory';
 import { PLUGIN_ENDPOINTS } from './endpoints';
+import { everyScope } from '$lib/queries/keys';
 
 export const updatePluginMutation = () =>
 	createMutation(() => ({
@@ -25,7 +26,7 @@ export const updatePluginMutation = () =>
 					: `${plugin.display_name} saved.`,
 				type: plugin.error ? 'error' : 'success'
 			});
-			await invalidateQueriesWithPersister({ queryKey: PluginQueryKeyFactory.prefix });
+			await invalidateQueriesWithPersister(everyScope(PluginQueryKeyFactory.feature));
 		},
 		onError: (error: Error) => {
 			toastStore.show({ message: error.message || 'Saving the plugin failed.', type: 'error' });
@@ -37,7 +38,7 @@ export const uninstallPluginMutation = () =>
 		mutationFn: (name: string) => api.v3.DELETE(PLUGIN_ENDPOINTS.plugin(name)),
 		onSuccess: async () => {
 			toastStore.show({ message: 'Plugin removed.', type: 'info' });
-			await invalidateQueriesWithPersister({ queryKey: PluginQueryKeyFactory.prefix });
+			await invalidateQueriesWithPersister(everyScope(PluginQueryKeyFactory.feature));
 		},
 		onError: (error: Error) => {
 			toastStore.show({ message: error.message || 'Removing the plugin failed.', type: 'error' });

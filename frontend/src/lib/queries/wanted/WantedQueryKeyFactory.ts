@@ -1,9 +1,6 @@
-import { userIdSegment } from '../userKeySegment';
+import { key, userScope } from '../keys';
 
-// userId scopes the key: the cache persists to IndexedDB across refresh on
-// shared browsers, and a keyless list would leak one user's watches to another.
 export const WantedQueryKeyFactory = {
-	prefix: ['wanted'] as const,
-	list: (userId: string | null | undefined) =>
-		[...WantedQueryKeyFactory.prefix, 'list', userIdSegment(userId)] as const
+	feature: 'wanted',
+	list: (userId: string | null | undefined) => key(userScope(userId), 'wanted', 'list')
 };

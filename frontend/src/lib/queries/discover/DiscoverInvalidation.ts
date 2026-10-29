@@ -4,5 +4,5 @@ import { DiscoverQueryKeyFactory } from './DiscoverQueryKeyFactory';
 
 export const invalidateDiscoverRecommendations = () =>
 	invalidateQueriesWithPersister({
-		queryKey: DiscoverQueryKeyFactory.discover(authStore.user?.id)
+		queryKey: DiscoverQueryKeyFactory.v3.root(authStore.user?.id)
 	});

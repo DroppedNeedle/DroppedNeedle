@@ -1,5 +1,4 @@
 import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
-import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { AUTH_ENDPOINTS } from './endpoints';
 import { toAuthUser } from './types';
 
@@ -38,12 +37,6 @@ function lastMutationFn(): (vars: unknown) => Promise<unknown> {
 	][0] as unknown as () => { mutationFn: (vars: unknown) => Promise<unknown> };
 	return factory().mutationFn;
 }
-
-describe('AuthQueryKeyFactory', () => {
-	it('providers key is [auth, providers]', () => {
-		expect(AuthQueryKeyFactory.providers()).toEqual(['auth', 'providers']);
-	});
-});
 
 describe('toAuthUser', () => {
 	it('maps a session user (incl. username fields) onto the auth store shape', () => {

@@ -1,53 +1,35 @@
-import { userIdSegment } from '$lib/queries/userKeySegment';
+import { key, userScope } from '../keys';
 
-// userId scopes every key: without it the persisted cache leaks one
-// user's follows to another on a shared browser.
+type UserId = string | null | undefined;
+
+// Follows, releases, concerts and the approval queue are read per caller.
 export const FollowQueryKeyFactory = {
-	statusPrefix: ['follow', 'status'] as const,
-	followingPrefix: ['following'] as const,
-	status: (mbid: string, userId: string | null | undefined) =>
-		[...FollowQueryKeyFactory.statusPrefix, mbid, userIdSegment(userId)] as const,
-	artists: (userId: string | null | undefined) =>
-		[...FollowQueryKeyFactory.followingPrefix, 'artists', userIdSegment(userId)] as const,
-	recentReleases: (
-		userId: string | null | undefined,
-		days: number,
-		limit: number,
-		includeOwned: boolean
-	) =>
+	following: (userId: UserId) => key(userScope(userId), 'following'),
+	status: (userId: UserId, mbid: string) => key(userScope(userId), 'follow', 'status', mbid),
+	artists: (userId: UserId) => [...FollowQueryKeyFactory.following(userId), 'artists'] as const,
+	recentReleases: (userId: UserId, days: number, limit: number, includeOwned: boolean) =>
 		[
-			...FollowQueryKeyFactory.followingPrefix,
+			...FollowQueryKeyFactory.following(userId),
 			'recent-releases',
-			userIdSegment(userId),
 			days,
 			limit,
 			includeOwned
 		] as const,
-	newReleasesUnseen: (userId: string | null | undefined) =>
-		[
-			...FollowQueryKeyFactory.followingPrefix,
-			'new-releases-unseen',
-			userIdSegment(userId)
-		] as const,
-	concerts: (userId: string | null | undefined) =>
-		[...FollowQueryKeyFactory.followingPrefix, 'concerts', userIdSegment(userId)] as const,
-	concertCities: (userId: string | null | undefined) =>
-		[...FollowQueryKeyFactory.followingPrefix, 'concert-cities', userIdSegment(userId)] as const,
-	concertsUnseen: (userId: string | null | undefined) =>
-		[...FollowQueryKeyFactory.followingPrefix, 'concerts-unseen', userIdSegment(userId)] as const,
-	citySearch: (userId: string | null | undefined, q: string) =>
-		[...FollowQueryKeyFactory.followingPrefix, 'city-search', userIdSegment(userId), q] as const,
-	// admin queue is global (not per-user) - admins review every pending grant
-	adminApprovals: () => [...FollowQueryKeyFactory.followingPrefix, 'admin-approvals'] as const,
-	// bulk "Lidarr Import" approval cards, nested under admin-approvals so its prefix
-	// invalidation sweeps both
-	adminApprovalBatches: () =>
-		[...FollowQueryKeyFactory.followingPrefix, 'admin-approvals', 'batches'] as const,
-	pendingApprovalCount: (userId: string | null | undefined) =>
-		[
-			...FollowQueryKeyFactory.followingPrefix,
-			'admin-approvals',
-			'count',
-			userIdSegment(userId)
-		] as const
+	newReleasesUnseen: (userId: UserId) =>
+		[...FollowQueryKeyFactory.following(userId), 'new-releases-unseen'] as const,
+	concerts: (userId: UserId) => [...FollowQueryKeyFactory.following(userId), 'concerts'] as const,
+	concertCities: (userId: UserId) =>
+		[...FollowQueryKeyFactory.following(userId), 'concert-cities'] as const,
+	concertsUnseen: (userId: UserId) =>
+		[...FollowQueryKeyFactory.following(userId), 'concerts-unseen'] as const,
+	citySearch: (userId: UserId, q: string) =>
+		[...FollowQueryKeyFactory.following(userId), 'city-search', q] as const,
+	// The admin queue lists every pending grant; its count and the bulk Lidarr
+	// import cards nest under it, so one invalidation refreshes all three.
+	adminApprovals: (userId: UserId) =>
+		[...FollowQueryKeyFactory.following(userId), 'admin-approvals'] as const,
+	adminApprovalBatches: (userId: UserId) =>
+		[...FollowQueryKeyFactory.adminApprovals(userId), 'batches'] as const,
+	pendingApprovalCount: (userId: UserId) =>
+		[...FollowQueryKeyFactory.adminApprovals(userId), 'count'] as const
 };

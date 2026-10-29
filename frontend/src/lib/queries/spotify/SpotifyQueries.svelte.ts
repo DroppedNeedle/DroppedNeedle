@@ -4,19 +4,14 @@ import { createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { invalidateQueriesWithPersister } from '../QueryClient';
 import { PlaylistQueryKeyFactory } from '../playlists/PlaylistQueryKeyFactory';
-import { userIdSegment } from '../userKeySegment';
 import { SPOTIFY_ENDPOINTS } from './endpoints';
-
-export const SPOTIFY_PLAYLISTS_KEY = (userId: string | null | undefined) => [
-	'spotify-playlists',
-	userIdSegment(userId)
-];
+import { SpotifyQueryKeyFactory } from './SpotifyQueryKeyFactory';
 
 export const getSpotifyPlaylistsQuery = () =>
 	createQuery(() => ({
 		gcTime: 10 * 60_000,
 		refetchOnWindowFocus: false,
-		queryKey: SPOTIFY_PLAYLISTS_KEY(authStore.user?.id),
+		queryKey: SpotifyQueryKeyFactory.playlists(authStore.user?.id),
 		queryFn: () => api.v3.GET(SPOTIFY_ENDPOINTS.playlists()),
 		retry: false
 	}));
@@ -36,21 +31,18 @@ export const createImportSpotifyPlaylistMutation = () =>
 				queryKey: PlaylistQueryKeyFactory.root(authStore.user?.id)
 			});
 			invalidateQueriesWithPersister({
-				queryKey: SPOTIFY_PLAYLISTS_KEY(authStore.user?.id)
+				queryKey: SpotifyQueryKeyFactory.playlists(authStore.user?.id)
 			});
 		}
 	}));
 
-/**
- * The address Spotify sends the browser back to. It follows the saved
- * redirect origin, so the key carries it and a saved change reads it again.
- */
+/** The address Spotify sends the browser back to, for the saved redirect origin. */
 export const getSpotifyRedirectUriQuery = (getOrigin: Getter<string | undefined>) =>
 	createQuery(() => {
 		const origin = getOrigin();
 		return {
 			enabled: origin !== undefined,
-			queryKey: ['spotify-redirect-uri', userIdSegment(authStore.user?.id), origin ?? null],
+			queryKey: SpotifyQueryKeyFactory.redirectUri(authStore.user?.id, origin ?? null),
 			queryFn: ({ signal }: { signal: AbortSignal }) =>
 				api.v3.GET(SPOTIFY_ENDPOINTS.redirectUri(), { signal })
 		};

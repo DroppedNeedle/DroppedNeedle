@@ -11,6 +11,7 @@ import {
 	type SearchV3Limits,
 	type SearchV3UserId
 } from './SearchQueryKeyFactory';
+import { PROVIDER } from '$lib/queries/persistedCache';
 
 export type SearchResponseV3 = components['schemas']['SearchResponse'];
 export type SearchBucketResponseV3 = components['schemas']['SearchBucketResponse'];
@@ -112,6 +113,7 @@ export const getSearchEnrichBatchV3QueryOptions = (
 ) =>
 	queryOptions({
 		enabled: Boolean(userId && (body.artists?.length || body.albums?.length)),
+		meta: PROVIDER,
 		queryKey: SearchQueryKeyFactory.v3.enrich(userId, enrichFingerprint(body)),
 		queryFn: ({ signal }) => api.v3.POST(SearchV3Api.enrichBatch(), body, { signal })
 	});

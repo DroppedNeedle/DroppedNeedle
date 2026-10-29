@@ -1,7 +1,7 @@
 import { browser } from '$app/environment';
 import { api } from '$lib/api/client';
 import { ApiError, TransportError } from '$lib/api/errors';
-import { queryClient } from '$lib/queries/QueryClient';
+import { collectPersistedGarbage, queryClient } from '$lib/queries/QueryClient';
 import { AUTH_FREE_PATHS } from '$lib/constants';
 import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
 import { PROFILE_ENDPOINTS } from '$lib/queries/profile/endpoints';
@@ -92,6 +92,7 @@ export const load: LayoutLoad = async ({ url }) => {
 			await clearUserSessionState({ clearAuth: false }).catch(() => undefined);
 		}
 		localStorage.setItem(LAST_USER_ID_KEY, authStore.user.id);
+		collectPersistedGarbage(authStore.user.id);
 	}
 
 	if (!setupRequired && !isAuthFree && !authStore.isAuthenticated) {

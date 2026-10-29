@@ -1,30 +1,26 @@
-import { musicBrainzSourceKey } from '../musicbrainz/sourceScope.svelte';
-import { userIdSegment } from '../userKeySegment';
+import { key, SHARED, userScope } from '../keys';
 
 type UserId = string | null | undefined;
 
-// The album page's catalog reads. The header, the tracklist and the discovery
-// shelves carry the caller's owned and requested marks, so their keys hold the
-// user id; they come from MusicBrainz, so they also hold the source scope a
-// source switch sweeps. Last.fm and the saved YouTube links are the same for
-// everyone.
-const providerKey = (segment: string, userId: UserId) => {
-	const user = userIdSegment(userId);
-	return [...AlbumQueryKeyFactory.prefix, segment, user, musicBrainzSourceKey(user)] as const;
-};
-
+// The album page's reads. The header, the tracklist, the discovery shelves and
+// the editions carry the owned and requested marks, so they are the caller's.
+// Last.fm, the saved YouTube links, purchase links and plugin details are the
+// same for everyone.
 export const AlbumQueryKeyFactory = {
-	prefix: ['albums'] as const,
-	basic: (userId: UserId, albumId: string) => [...providerKey('basic', userId), albumId] as const,
-	tracks: (userId: UserId, albumId: string) => [...providerKey('tracks', userId), albumId] as const,
+	feature: 'albums',
+	basic: (userId: UserId, albumId: string) => key(userScope(userId), 'albums', 'basic', albumId),
+	tracks: (userId: UserId, albumId: string) => key(userScope(userId), 'albums', 'tracks', albumId),
 	moreByArtist: (userId: UserId, albumId: string, artistId: string) =>
-		[...providerKey('more-by-artist', userId), albumId, artistId] as const,
+		key(userScope(userId), 'albums', 'more-by-artist', albumId, artistId),
 	similar: (userId: UserId, albumId: string, artistId: string) =>
-		[...providerKey('similar', userId), albumId, artistId] as const,
+		key(userScope(userId), 'albums', 'similar', albumId, artistId),
+	editions: (userId: UserId, mbid: string) => key(userScope(userId), 'albums', 'editions', mbid),
+	editionTracks: (userId: UserId, release: string) =>
+		key(userScope(userId), 'albums', 'edition-tracks', release),
 	lastFm: (albumId: string, artistName: string, albumName: string) =>
-		[...AlbumQueryKeyFactory.prefix, 'lastfm', albumId, { artistName, albumName }] as const,
-	youtubeLink: (albumId: string) =>
-		[...AlbumQueryKeyFactory.prefix, 'youtube-link', albumId] as const,
-	youtubeTrackLinks: (albumId: string) =>
-		[...AlbumQueryKeyFactory.prefix, 'youtube-track-links', albumId] as const
+		key(SHARED, 'albums', 'lastfm', albumId, { artistName, albumName }),
+	youtubeLink: (albumId: string) => key(SHARED, 'albums', 'youtube-link', albumId),
+	youtubeTrackLinks: (albumId: string) => key(SHARED, 'albums', 'youtube-track-links', albumId),
+	purchaseOptions: (mbid: string) => key(SHARED, 'albums', 'purchase-options', mbid),
+	pluginDetails: (mbid: string) => key(SHARED, 'albums', 'plugin-details', mbid)
 };

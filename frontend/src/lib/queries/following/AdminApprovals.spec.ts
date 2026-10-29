@@ -124,9 +124,9 @@ beforeEach(() => {
 });
 
 describe('admin auto-download approvals query', () => {
-	it('uses the global admin key and hits the approvals endpoint', async () => {
+	it('hits the approvals endpoint', async () => {
 		const opts = getAutoDownloadApprovalsQuery(() => true) as unknown as Opts;
-		expect(opts.queryKey).toEqual(['following', 'admin-approvals']);
+		expect(opts.queryKey).toEqual(FollowQueryKeyFactory.adminApprovals(undefined));
 		expect(opts.enabled).toBe(true);
 		await opts.queryFn!({ signal: new AbortController().signal });
 		expect(mockGet.mock.calls[0][0]).toBe(FOLLOW_ENDPOINTS.adminApprovals());
@@ -149,7 +149,7 @@ describe('admin approval mutations', () => {
 			expect.objectContaining({ type: 'success', message: expect.stringContaining('Radiohead') })
 		);
 		expect(spy.mock.calls[0][0]).toEqual(
-			expect.objectContaining({ queryKey: FollowQueryKeyFactory.adminApprovals() })
+			expect.objectContaining({ queryKey: FollowQueryKeyFactory.adminApprovals(undefined) })
 		);
 		spy.mockRestore();
 	});

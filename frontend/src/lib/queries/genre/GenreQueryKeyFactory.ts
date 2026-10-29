@@ -1,9 +1,13 @@
+import { key, userScope } from '../keys';
+
+type UserId = string | null | undefined;
+
 export const GenreQueryKeyFactory = {
-	prefix: ['genre'] as const,
-	detail: (userId: string | null | undefined, genre: string) =>
-		[...GenreQueryKeyFactory.prefix, userId ?? null, genre.trim().toLocaleLowerCase()] as const,
-	artistPages: (userId: string | null | undefined, genre: string) =>
+	feature: 'genre',
+	detail: (userId: UserId, genre: string) =>
+		key(userScope(userId), 'genre', genre.trim().toLocaleLowerCase()),
+	artistPages: (userId: UserId, genre: string) =>
 		[...GenreQueryKeyFactory.detail(userId, genre), 'artists'] as const,
-	albumPages: (userId: string | null | undefined, genre: string) =>
+	albumPages: (userId: UserId, genre: string) =>
 		[...GenreQueryKeyFactory.detail(userId, genre), 'albums'] as const
 };

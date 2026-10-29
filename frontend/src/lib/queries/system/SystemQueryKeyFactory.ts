@@ -1,5 +1,6 @@
+import { key, SHARED } from '../keys';
+
+// Service health is the server's, the same for everyone.
 export const SystemQueryKeyFactory = {
-	prefix: ['system'] as const,
-	// no userId dimension: service health is global, not per-user
-	health: () => [...SystemQueryKeyFactory.prefix, 'health'] as const
+	health: () => key(SHARED, 'system', 'health')
 };

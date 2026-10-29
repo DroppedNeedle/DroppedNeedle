@@ -138,24 +138,11 @@ beforeEach(() => {
 	});
 });
 
-describe('ScrobblePreferencesQueryKeyFactory', () => {
-	it('scopes the key by userId', () => {
-		expect(ScrobblePreferencesQueryKeyFactory.get('userA')).toEqual([
-			'me',
-			'scrobble-preferences',
-			'userA'
-		]);
-		expect(ScrobblePreferencesQueryKeyFactory.get('userB')).not.toEqual(
-			ScrobblePreferencesQueryKeyFactory.get('userA')
-		);
-	});
-});
-
 describe('getScrobblePreferencesQuery', () => {
 	it('builds a userId-scoped key and fetches /me/scrobble-preferences', async () => {
 		const opts = getScrobblePreferencesQuery() as unknown as Opts;
 		const signal = new AbortController().signal;
-		expect(opts.queryKey).toEqual(['me', 'scrobble-preferences', 'userA']);
+		expect(opts.queryKey).toEqual(ScrobblePreferencesQueryKeyFactory.get('userA'));
 		await opts.queryFn!({ signal });
 		expect(mockV3Get).toHaveBeenCalledWith(SCROBBLE_PREFERENCES_ENDPOINTS.get(), {
 			signal,
@@ -183,10 +170,14 @@ describe('update scrobble preferences', () => {
 		const context = m.onMutate!({ primary_music_source: 'lastfm' });
 		const updated = await m.mutationFn({ primary_music_source: 'lastfm' });
 		await m.onSuccess!(updated, { primary_music_source: 'lastfm' }, context);
-		expect(queryClient.getQueryData(['me', 'scrobble-preferences', 'userA'])).toMatchObject({
-			primary_music_source: 'lastfm'
-		});
-		expect(queryClient.getQueryData(['me', 'scrobble-preferences', 'userB'])).toBeUndefined();
+		expect(queryClient.getQueryData(ScrobblePreferencesQueryKeyFactory.get('userA'))).toMatchObject(
+			{
+				primary_music_source: 'lastfm'
+			}
+		);
+		expect(
+			queryClient.getQueryData(ScrobblePreferencesQueryKeyFactory.get('userB'))
+		).toBeUndefined();
 	});
 
 	it('discards a delayed mutation result after an account switch', async () => {
@@ -197,7 +188,11 @@ describe('update scrobble preferences', () => {
 
 		await m.onSuccess!(updated, { primary_music_source: 'lastfm' }, context);
 
-		expect(queryClient.getQueryData(['me', 'scrobble-preferences', 'userA'])).toBeUndefined();
-		expect(queryClient.getQueryData(['me', 'scrobble-preferences', 'userB'])).toBeUndefined();
+		expect(
+			queryClient.getQueryData(ScrobblePreferencesQueryKeyFactory.get('userA'))
+		).toBeUndefined();
+		expect(
+			queryClient.getQueryData(ScrobblePreferencesQueryKeyFactory.get('userB'))
+		).toBeUndefined();
 	});
 });

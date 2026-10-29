@@ -95,11 +95,12 @@ describe('createLibraryActivityEvents', () => {
 
 		expect(h.invalidate).toHaveBeenCalledTimes(3);
 		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.activityPrefix()
+			queryKey: LibraryQueryKeyFactory.activity('user-1')
 		});
-		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.operationsPrefix()
-		});
+		const swept = (queryKey: readonly unknown[]) =>
+			h.invalidate.mock.calls.some(([filter]) => filter.predicate?.({ queryKey }));
+		expect(swept(LibraryQueryKeyFactory.currentRuns())).toBe(true);
+		expect(swept(LibraryQueryKeyFactory.identityPreparationsPrefix('user-1'))).toBe(true);
 		expect(h.invalidate).toHaveBeenCalledWith({
 			queryKey: LibraryQueryKeyFactory.reviewsPrefix()
 		});
@@ -124,7 +125,7 @@ describe('createLibraryActivityEvents', () => {
 
 		expect(h.invalidate).toHaveBeenCalledOnce();
 		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: LibraryQueryKeyFactory.activityPrefix()
+			queryKey: LibraryQueryKeyFactory.activity('user-1')
 		});
 	});
 

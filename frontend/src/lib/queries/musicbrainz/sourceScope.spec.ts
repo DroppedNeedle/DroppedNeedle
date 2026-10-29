@@ -3,10 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('$app/environment', () => ({ browser: true }));
 
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
-import { MusicBrainzQueryKeyFactory } from './MusicBrainzQueryKeyFactory';
 import {
 	getMusicBrainzSourceScope,
-	musicBrainzSourceKey,
+	musicBrainzSourceStamp,
 	resetMusicBrainzSourceScope,
 	setMusicBrainzSourceScope,
 	subscribeMusicBrainzSourceScope,
@@ -59,7 +58,7 @@ function persistScope(
 }
 
 describe('MusicBrainz source scope', () => {
-	it('keeps persisted user scope reads pure and isolated from query-key mutation', () => {
+	it('keeps persisted user scope reads pure and isolated from mutation', () => {
 		persistScope('user-a', 'mirror', 'mirror-a', 7);
 		persistScope('user-b', 'community', 'community-b', 9);
 
@@ -88,12 +87,7 @@ describe('MusicBrainz source scope', () => {
 			generation: 9
 		});
 
-		expect(MusicBrainzQueryKeyFactory.settings()[2]).toEqual({
-			user_id: 'user-b',
-			source_mode: 'community',
-			source_id: 'community-b',
-			generation: 9
-		});
+		expect(musicBrainzSourceStamp()).toBe('community:community-b:9');
 	});
 
 	it('keeps mismatched scope lookups pure while returning the authenticated user scope', () => {
@@ -117,12 +111,7 @@ describe('MusicBrainz source scope', () => {
 				sourceId: 'community-b',
 				generation: 9
 			});
-			expect(MusicBrainzQueryKeyFactory.settings()[2]).toEqual({
-				user_id: 'user-b',
-				source_mode: 'community',
-				source_id: 'community-b',
-				generation: 9
-			});
+			expect(musicBrainzSourceStamp()).toBe('community:community-b:9');
 			expect(notificationCount).toBe(0);
 
 			setMusicBrainzSourceScope(activeScope, 'user-a');
@@ -130,18 +119,6 @@ describe('MusicBrainz source scope', () => {
 		} finally {
 			unsubscribe();
 		}
-	});
-
-	it('uses a passed user id instead of the live auth user for source keys', () => {
-		persistScope('user-a', 'mirror', 'mirror-a', 7);
-		persistScope('user-b', 'community', 'community-b', 9);
-		authStore.setUser(user('user-a'));
-		expect(musicBrainzSourceKey('user-b')).toEqual({
-			user_id: 'user-b',
-			source_mode: 'community',
-			source_id: 'community-b',
-			generation: 9
-		});
 	});
 
 	it('keeps the in-memory scope valid when localStorage persistence fails', () => {

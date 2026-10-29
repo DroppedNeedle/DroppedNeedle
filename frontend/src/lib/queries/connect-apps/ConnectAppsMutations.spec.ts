@@ -35,22 +35,6 @@ function lastMutationOpts(): Record<string, unknown> {
 	return (calls[calls.length - 1][0] as unknown as () => Record<string, unknown>)();
 }
 
-describe('ConnectAppsQueryKeyFactory', () => {
-	it('scopes the app-passwords key by userId and namespaces the admin roster', () => {
-		expect(ConnectAppsQueryKeyFactory.settings()).toEqual(['connect-apps', 'settings']);
-		expect(ConnectAppsQueryKeyFactory.appPasswords('user-1')).toEqual([
-			'connect-apps',
-			'user-1',
-			'app-passwords'
-		]);
-		expect(ConnectAppsQueryKeyFactory.adminAppPasswords()).toEqual([
-			'connect-apps',
-			'admin',
-			'app-passwords'
-		]);
-	});
-});
-
 describe('saveConnectAppsSettings', () => {
 	it('PUTs the settings and invalidates the settings key', async () => {
 		mockPut.mockResolvedValue({});

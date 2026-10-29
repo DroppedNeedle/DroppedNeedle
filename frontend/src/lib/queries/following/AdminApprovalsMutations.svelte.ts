@@ -5,6 +5,7 @@ import { invalidateQueriesWithPersister } from '../QueryClient';
 import { FollowQueryKeyFactory } from './FollowQueryKeyFactory';
 import { FOLLOW_ENDPOINTS } from './endpoints';
 import { notifyPendingApprovalCountChanged } from '$lib/utils/requestsApi';
+import { authStore } from '$lib/stores/authStore.svelte';
 
 interface ApprovalActionVars {
 	userId: string;
@@ -13,7 +14,9 @@ interface ApprovalActionVars {
 }
 
 function invalidateApprovals(): Promise<void> {
-	return invalidateQueriesWithPersister({ queryKey: FollowQueryKeyFactory.adminApprovals() });
+	return invalidateQueriesWithPersister({
+		queryKey: FollowQueryKeyFactory.adminApprovals(authStore.user?.id)
+	});
 }
 
 function errorMessage(err: unknown, fallback: string): string {

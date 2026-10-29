@@ -5,6 +5,8 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 import { PAGE_SOURCE_KEYS } from '$lib/constants';
 import { queryClient } from '$lib/queries/QueryClient';
+import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
+import { PERSIST } from '$lib/queries/persistedCache';
 import {
 	getMusicBrainzSourceScope,
 	setMusicBrainzSourceScope
@@ -50,6 +52,11 @@ async function signInAlice(): Promise<void> {
 		'GET /api/v3/me/scrobble-preferences': { primary_music_source: 'lastfm' }
 	});
 	await queryClient.fetchQuery(getScrobblePreferencesQueryOptions(ALICE.id));
+	await queryClient.fetchQuery({
+		queryKey: LibraryQueryKeyFactory.catalog.stats(ALICE.id),
+		meta: PERSIST,
+		queryFn: async () => ({ favorite_albums: 3 })
+	});
 	await expect.poll(async () => (await entries()).length).toBeGreaterThan(0);
 
 	setMusicBrainzSourceScope({ source_mode: 'mirror', source_id: 'mirror-a', generation: 7 });

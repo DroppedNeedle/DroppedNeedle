@@ -5,7 +5,6 @@ import { api } from '$lib/api/client';
 import { v3 } from '$lib/api/v3/endpoint';
 import type { components } from '$lib/api/v3/openapi';
 import { STALE_LIVE, STALE_SLOW } from '$lib/queries/staleTime';
-import { purchaseOptionsKey } from '$lib/queries/albums/GetItQueries.svelte';
 import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
 import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
 import { RequestQueryKeyFactory } from '$lib/queries/requests/RequestQueryKeyFactory';
@@ -18,26 +17,16 @@ import {
 } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 import { RatingQueryKeyFactory } from '$lib/queries/ratings/RatingQueryKeyFactory';
 import { invalidateQueriesWithPersister, queryClient } from '$lib/queries/QueryClient';
-import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
+import { PROVIDER } from '$lib/queries/persistedCache';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
 import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
+import { everyScope } from '$lib/queries/keys';
 
 // Choosing an edition is for curators; the list of a group's editions is
 // open to any authenticated user.
 
 type EditionUserId = string | null | undefined;
-
-export const editionsKey = (userId: EditionUserId, mbid: string) => {
-	const normalizedUserId = userId ?? null;
-	return [
-		'albums',
-		'editions',
-		normalizedUserId,
-		musicBrainzSourceKey(normalizedUserId),
-		mbid
-	] as const;
-};
 
 export const getAlbumEditionsQuery = (
 	getUserId: Getter<EditionUserId>,
@@ -45,22 +34,12 @@ export const getAlbumEditionsQuery = (
 	enabled: Getter<boolean>
 ) =>
 	createQuery(() => ({
-		queryKey: editionsKey(getUserId(), mbid()),
+		queryKey: AlbumQueryKeyFactory.editions(getUserId(), mbid()),
+		meta: PROVIDER,
 		enabled: enabled() && !!getUserId() && !!mbid(),
 		staleTime: STALE_SLOW,
 		queryFn: ({ signal }) => api.v3.GET(CATALOG_ENDPOINTS.editions(mbid()), { signal })
 	}));
-
-export const editionTracksKey = (userId: EditionUserId, release: string) => {
-	const normalizedUserId = userId ?? null;
-	return [
-		'albums',
-		'edition-tracks',
-		normalizedUserId,
-		musicBrainzSourceKey(normalizedUserId),
-		release
-	] as const;
-};
 
 // One edition's tracklist, for an album the library does not hold.
 export const getEditionTracksQuery = (
@@ -70,7 +49,8 @@ export const getEditionTracksQuery = (
 	enabled: Getter<boolean>
 ) =>
 	createQuery(() => ({
-		queryKey: editionTracksKey(getUserId(), release() ?? ''),
+		queryKey: AlbumQueryKeyFactory.editionTracks(getUserId(), release() ?? ''),
+		meta: PROVIDER,
 		enabled: enabled() && !!getUserId() && !!group() && !!release(),
 		staleTime: STALE_SLOW,
 		queryFn: ({ signal }) =>
@@ -94,7 +74,7 @@ export function switchRequestedEdition() {
 				release_mbid: input.release
 			}),
 		onSettled: () => {
-			void invalidateQueriesWithPersister({ queryKey: RequestQueryKeyFactory.all });
+			void invalidateQueriesWithPersister(everyScope(RequestQueryKeyFactory.feature));
 		}
 	}));
 }
@@ -117,7 +97,9 @@ export function acquireEdition() {
 			void invalidateQueriesWithPersister({
 				queryKey: DownloadQueryKeyFactory.tasksPrefix(authStore.user?.id)
 			});
-			void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.album(mbid) });
+			void invalidateQueriesWithPersister({
+				queryKey: LibraryQueryKeyFactory.album(authStore.user?.id, mbid)
+			});
 		}
 	}));
 }
@@ -127,9 +109,6 @@ export function acquireEdition() {
 // cancelling or retrying any download reads it again.
 export type EditionFetch = components['schemas']['EditionFetchView'];
 export type EditionFetchTrackState = components['schemas']['EditionFetchTrackState'];
-
-export const editionFetchKey = (userId: EditionUserId, group: string) =>
-	[...DownloadQueryKeyFactory.tasks(userId ?? undefined), 'edition', group] as const;
 
 const EDITION_FETCH_POLL_MS = 2_500;
 
@@ -154,7 +133,7 @@ export const getEditionFetchQuery = (
 		const userId = getUserId();
 		const group = getGroup();
 		const localId = getLocalId();
-		const queryKey = editionFetchKey(userId, group);
+		const queryKey = DownloadQueryKeyFactory.editionFetch(userId, group);
 		return {
 			queryKey,
 			enabled: getEnabled() && !!userId && !!group,
@@ -298,9 +277,9 @@ function invalidateHandMatchScope(localId: string): void {
 	invalidateEditionScope({ userId, localId });
 	for (const queryKey of [
 		LibraryQueryKeyFactory.catalog.albumHistory(userId, localId),
-		FavoriteQueryKeyFactory.prefix,
-		RatingQueryKeyFactory.prefix,
-		PlaylistQueryKeyFactory.prefix
+		FavoriteQueryKeyFactory.user(userId),
+		RatingQueryKeyFactory.user(userId),
+		PlaylistQueryKeyFactory.root(userId)
 	]) {
 		void invalidateQueriesWithPersister({ queryKey });
 	}
@@ -386,16 +365,16 @@ function invalidateEditionScope(
 		LibraryQueryKeyFactory.catalog.albumDetail(userId, localId),
 		LibraryQueryKeyFactory.catalog.albumTracksPrefix(userId, localId),
 		LibraryQueryKeyFactory.catalog.albumCopiesPrefix(userId),
-		LibraryQueryKeyFactory.albumPrefix(),
-		[...LibraryQueryKeyFactory.catalog.root(userId), 'unconfirmed']
+		LibraryQueryKeyFactory.albumPrefix(userId),
+		LibraryQueryKeyFactory.catalog.unconfirmedPrefix(userId)
 	];
 	for (const group of new Set([rgMbid, joinedGroup])) {
 		if (!group) continue;
 		keys.push(
 			AlbumQueryKeyFactory.basic(userId, group),
 			AlbumQueryKeyFactory.tracks(userId, group),
-			editionsKey(userId, group),
-			purchaseOptionsKey(group)
+			AlbumQueryKeyFactory.editions(userId, group),
+			AlbumQueryKeyFactory.purchaseOptions(group)
 		);
 	}
 	for (const queryKey of keys) void invalidateQueriesWithPersister({ queryKey });
@@ -601,7 +580,7 @@ export function undoAlbumEdition() {
 			invalidateHeldEditionScope(variables);
 			// Identity reports list this album's change too.
 			void invalidateQueriesWithPersister({
-				queryKey: LibraryQueryKeyFactory.identityPreparationsPrefix(variables.userId ?? undefined)
+				queryKey: LibraryQueryKeyFactory.identityPreparationsPrefix(variables.userId)
 			});
 			void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.repairsPrefix() });
 		}

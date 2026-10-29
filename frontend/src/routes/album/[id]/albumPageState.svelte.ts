@@ -59,11 +59,8 @@ import {
 } from '$lib/queries/catalog/AlbumQueries.svelte';
 import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
 import { refreshAlbum } from '$lib/queries/catalog/AlbumMutations.svelte';
-import {
-	AlbumMatchKeyFactory,
-	getLocalAlbumMatchQuery,
-	getRemoteAlbumMatchQuery
-} from '$lib/queries/albumMatch';
+import { getLocalAlbumMatchQuery, getRemoteAlbumMatchQuery } from '$lib/queries/albumMatch';
+import { AlbumMatchKeyFactory } from '$lib/queries/AlbumMatchQueryKeyFactory';
 import {
 	invalidateQueriesWithPersister,
 	setQueryDataWithPersister

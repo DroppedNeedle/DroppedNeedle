@@ -2,7 +2,7 @@ import { createMutation, useQueryClient } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import type { AlbumBasicInfo } from '$lib/types';
-import { AlbumMatchKeyFactory } from '../albumMatch';
+import { AlbumMatchKeyFactory } from '../AlbumMatchQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '../library/LibraryQueryKeyFactory';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
 import { AlbumQueryKeyFactory } from './AlbumQueryKeyFactory';
@@ -29,7 +29,7 @@ export function refreshAlbum() {
 			const keys: (readonly unknown[])[] = [
 				AlbumQueryKeyFactory.tracks(userId, albumId),
 				AlbumMatchKeyFactory.album(userId, albumId),
-				LibraryQueryKeyFactory.album(albumId)
+				LibraryQueryKeyFactory.album(userId, albumId)
 			];
 			if (error) keys.push(AlbumQueryKeyFactory.basic(userId, albumId));
 			await Promise.allSettled(

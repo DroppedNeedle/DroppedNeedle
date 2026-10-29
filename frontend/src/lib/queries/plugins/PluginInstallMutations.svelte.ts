@@ -7,6 +7,7 @@ import { toastStore } from '$lib/stores/toast';
 
 import { PluginQueryKeyFactory } from './PluginQueryKeyFactory';
 import { PLUGIN_ENDPOINTS } from './endpoints';
+import { everyScope } from '$lib/queries/keys';
 
 export type PluginInstallPreview = components['schemas']['PluginInstallPreview'];
 export type PluginInstallRequest = components['schemas']['PluginInstallRequest'];
@@ -37,7 +38,7 @@ export const installPreviewedPluginMutation = () =>
 				message: `Installed ${plugin.display_name}. Enable it below when you are ready.`,
 				type: 'success'
 			});
-			await invalidateQueriesWithPersister({ queryKey: PluginQueryKeyFactory.prefix });
+			await invalidateQueriesWithPersister(everyScope(PluginQueryKeyFactory.feature));
 		},
 		onError: (error: Error) => {
 			toastStore.show({ message: error.message || 'Install failed.', type: 'error' });
@@ -55,7 +56,7 @@ export const updatePluginFromSourceMutation = () =>
 					: `${result.plugin.display_name} is already up to date.`,
 				type: result.updated ? 'success' : 'info'
 			});
-			await invalidateQueriesWithPersister({ queryKey: PluginQueryKeyFactory.prefix });
+			await invalidateQueriesWithPersister(everyScope(PluginQueryKeyFactory.feature));
 		},
 		onError: (error: Error) => {
 			toastStore.show({ message: error.message || 'Update failed.', type: 'error' });

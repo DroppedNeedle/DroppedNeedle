@@ -7,12 +7,13 @@ import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 import { toTargetLibrarySettings } from './libraryAdapters';
 import type { LibraryRestoreRootsRequest, TypedLibrarySettings } from './LibraryOperationsTypes';
+import { everyScope } from '$lib/queries/keys';
 
 async function invalidatePolicies(): Promise<void> {
 	await Promise.all([
 		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.policyPrefix() }),
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.operationsPrefix() }),
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.activityPrefix() })
+		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'operations')),
+		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'activity'))
 	]);
 }
 

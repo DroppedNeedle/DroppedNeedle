@@ -11,6 +11,7 @@ import { invalidateQueriesWithPersister } from '../QueryClient';
 import { DownloadQueryKeyFactory } from '../downloads/DownloadQueryKeyFactory';
 import { REQUESTS_ENDPOINTS } from './endpoints';
 import { RequestQueryKeyFactory } from './RequestQueryKeyFactory';
+import { everyScope } from '$lib/queries/keys';
 
 export interface RequestActionVars {
 	mbid: string;
@@ -31,10 +32,12 @@ function errorMessage(err: unknown, fallback: string): string {
 // active rows). Mutations that move an album row also refresh that album's
 // library key so the album page shows the new state (download-to-library).
 async function invalidateRequestSurface(mbids: string[] = []): Promise<void> {
-	await invalidateQueriesWithPersister({ queryKey: RequestQueryKeyFactory.all });
-	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.all });
+	await invalidateQueriesWithPersister(everyScope(RequestQueryKeyFactory.feature));
+	await invalidateQueriesWithPersister(everyScope(DownloadQueryKeyFactory.feature));
 	for (const mbid of mbids) {
-		await invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.album(mbid) });
+		await invalidateQueriesWithPersister({
+			queryKey: LibraryQueryKeyFactory.album(authStore.user?.id, mbid)
+		});
 	}
 }
 

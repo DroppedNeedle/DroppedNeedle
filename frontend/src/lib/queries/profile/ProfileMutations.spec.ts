@@ -150,19 +150,10 @@ type Opts = {
 	onSuccess: (user: unknown) => Promise<void> | void;
 };
 
-describe('ProfileQueryKeyFactory', () => {
-	it('scopes the profile key by userId', () => {
-		expect(ProfileQueryKeyFactory.profile('userA')).toEqual(['profile', 'userA']);
-		expect(ProfileQueryKeyFactory.profile('userB')).not.toEqual(
-			ProfileQueryKeyFactory.profile('userA')
-		);
-	});
-});
-
 describe('getProfileQuery', () => {
 	it('builds a userId-scoped key and fetches GET /api/v3/me', async () => {
 		const opts = getProfileQuery(() => 'userA') as unknown as Opts;
-		expect(opts.queryKey).toEqual(['profile', 'userA']);
+		expect(opts.queryKey).toEqual(ProfileQueryKeyFactory.profile('userA'));
 		await opts.queryFn!({ signal: new AbortController().signal });
 		expect(mockV3Get.mock.calls[0][0]).toBe(PROFILE_ENDPOINTS.get());
 	});
@@ -211,7 +202,7 @@ describe('mutation onSuccess', () => {
 		expect(authStore.setUser).toHaveBeenCalledTimes(1);
 		expect(invalidateSpy).toHaveBeenCalledTimes(1);
 		expect(invalidateSpy.mock.calls[0][0]).toEqual(
-			expect.objectContaining({ queryKey: ['profile', 'userA'] })
+			expect.objectContaining({ queryKey: ProfileQueryKeyFactory.profile('userA') })
 		);
 		invalidateSpy.mockRestore();
 	});
@@ -219,12 +210,14 @@ describe('mutation onSuccess', () => {
 
 describe('resetQueryCacheForUserSwitch', () => {
 	it('empties the in-memory client AND the persisted IndexedDB store', async () => {
-		await setQueryDataWithPersister(['profile', 'userA'], { display_name: 'leaked' });
-		expect(queryClient.getQueryData(['profile', 'userA'])).toBeDefined();
+		await setQueryDataWithPersister(ProfileQueryKeyFactory.profile('userA'), {
+			display_name: 'leaked'
+		});
+		expect(queryClient.getQueryData(ProfileQueryKeyFactory.profile('userA'))).toBeDefined();
 
 		await resetQueryCacheForUserSwitch();
 
-		expect(queryClient.getQueryData(['profile', 'userA'])).toBeUndefined();
+		expect(queryClient.getQueryData(ProfileQueryKeyFactory.profile('userA'))).toBeUndefined();
 		expect(idbClear).toHaveBeenCalled();
 	});
 });

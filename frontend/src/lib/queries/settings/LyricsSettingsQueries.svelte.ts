@@ -7,21 +7,16 @@ import {
 } from '$lib/queries/QueryClient';
 import { LyricsQueryKeyFactory } from '$lib/queries/lyrics/LyricsQueryKeyFactory';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { userIdSegment } from '../userKeySegment';
+import { SettingsQueryKeyFactory } from './SettingsQueryKeyFactory';
 import { SETTINGS_ENDPOINTS } from './endpoints';
+import { everyScope } from '$lib/queries/keys';
 
 export type LyricsSettings = components['schemas']['LyricsSettings'];
-
-export const LyricsSettingsQueryKeyFactory = {
-	prefix: ['settings', 'lyrics'] as const,
-	saved: (userId: string | null | undefined) =>
-		[...LyricsSettingsQueryKeyFactory.prefix, userIdSegment(userId)] as const
-};
 
 export const getLyricsSettingsQuery = () =>
 	createQuery(() => ({
 		enabled: authStore.isAdmin,
-		queryKey: LyricsSettingsQueryKeyFactory.saved(authStore.user?.id),
+		queryKey: SettingsQueryKeyFactory.lyrics(authStore.user?.id),
 		queryFn: ({ signal }) => api.v3.GET(SETTINGS_ENDPOINTS.lyrics(), { signal })
 	}));
 
@@ -30,10 +25,7 @@ export const createSaveLyricsSettingsMutation = () =>
 	createMutation(() => ({
 		mutationFn: (body: LyricsSettings) => api.v3.PUT(SETTINGS_ENDPOINTS.lyrics(), body),
 		onSuccess: async (saved: LyricsSettings) => {
-			await setQueryDataWithPersister(
-				LyricsSettingsQueryKeyFactory.saved(authStore.user?.id),
-				saved
-			);
-			await invalidateQueriesWithPersister({ queryKey: LyricsQueryKeyFactory.prefix });
+			await setQueryDataWithPersister(SettingsQueryKeyFactory.lyrics(authStore.user?.id), saved);
+			await invalidateQueriesWithPersister(everyScope(LyricsQueryKeyFactory.feature));
 		}
 	}));

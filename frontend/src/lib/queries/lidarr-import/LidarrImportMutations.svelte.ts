@@ -4,12 +4,12 @@ import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-import { FollowQueryKeyFactory } from '$lib/queries/following/FollowQueryKeyFactory';
 import { notifyPendingApprovalCountChanged } from '$lib/utils/requestsApi';
 
 import { LidarrImportQueryKeyFactory } from './LidarrImportQueryKeyFactory';
 import { LIDARR_IMPORT_ENDPOINTS } from './endpoints';
 import type { LidarrImportConnection } from './types';
+import { everyScope } from '$lib/queries/keys';
 
 // The connection form renders errors inline, so save/test don't toast here.
 export const saveLidarrConfigMutation = () =>
@@ -37,13 +37,11 @@ export const importFromLidarrMutation = () =>
 			// Follows changed: sweep the whole following prefix (artists list + new-release
 			// views) and re-annotate the candidate list's already_following. Home surfaces
 			// followed new releases, so invalidate it too (cross-domain rule).
-			await invalidateQueriesWithPersister({
-				queryKey: FollowQueryKeyFactory.followingPrefix
-			});
+			await invalidateQueriesWithPersister(everyScope('following'));
 			await invalidateQueriesWithPersister({
 				queryKey: LidarrImportQueryKeyFactory.candidates(authStore.user?.id)
 			});
-			await invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix });
+			await invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature));
 			// Import is admin-only, so the importer's own auto-download is live immediately;
 			// the pending-approval badge refresh stays as a harmless no-op.
 			notifyPendingApprovalCountChanged();

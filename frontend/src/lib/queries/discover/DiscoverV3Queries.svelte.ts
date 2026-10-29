@@ -14,6 +14,7 @@ import {
 } from './DiscoverQueryKeyFactory';
 
 import type { ListenSource, RadioSeedKind } from './types';
+import { PERSIST_PROVIDER, PROVIDER } from '$lib/queries/persistedCache';
 
 export type DiscoverResponseV3 = components['schemas']['DiscoverResponse'];
 export type DiscoveryBatchDetailV3 = components['schemas']['DiscoveryBatchDetail'];
@@ -49,6 +50,7 @@ export const getDiscoverHomeV3QueryOptions = (userId: DiscoverV3UserId) =>
 		enabled: Boolean(userId),
 		staleTime: STALE_SLOW,
 		refetchOnWindowFocus: false,
+		meta: PERSIST_PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.home(userId),
 		queryFn: ({ signal }) => fetchDiscoverHome(userId, signal),
 		refetchInterval: (query: { state: { data?: DiscoverResponseV3 | undefined } }) =>
@@ -81,6 +83,7 @@ export const getDiscoverRadioV3Query = (getParams: Getter<DiscoverV3RadioInput>)
 		if (params.source !== undefined) radioParams.source = params.source;
 		return {
 			staleTime: STALE_SLOW,
+			meta: PROVIDER,
 			queryKey: DiscoverQueryKeyFactory.v3.radio(
 				authStore.user?.id,
 				params.seedType,
@@ -116,6 +119,7 @@ export const getDiscoverPlaylistSuggestionsV3Query = (
 		const params = getParams();
 		return {
 			staleTime: STALE_SLOW,
+			meta: PROVIDER,
 			queryKey: DiscoverQueryKeyFactory.v3.playlistSuggestions(
 				authStore.user?.id,
 				params.playlistId,

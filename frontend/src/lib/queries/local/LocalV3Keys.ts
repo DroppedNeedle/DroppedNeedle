@@ -1,5 +1,5 @@
+import { key, SHARED, userScope } from '../keys';
 import type { LibraryV3AlbumsParams } from '../library/LibraryQueryKeyFactory';
-import { userIdSegment } from '../userKeySegment';
 
 export type LocalV3AlbumsParams = Pick<
 	LibraryV3AlbumsParams,
@@ -11,23 +11,21 @@ export interface LocalV3PageParams {
 	offset?: number;
 }
 
-// Local-library keys. The listening room's queries keep only the card
-// fields, which carry nothing per caller, so these stay shared; all nest
-// under the local root for prefix invalidation. The download-access bit is
-// per viewer, so that key carries the user id.
+type UserId = string | null | undefined;
+
+// Local-library keys. The listening room's lists keep only the card fields,
+// which carry nothing per caller, so they are shared. The download-access
+// bit and the stats (with the caller's favourite counts) are the caller's.
 export const LOCAL_KEYS = {
-	root: ['local'] as const,
-	downloadAccess: (userId: string | null | undefined) =>
-		[...LOCAL_KEYS.root, 'download-access', userIdSegment(userId)] as const,
-	albums: (params: LocalV3AlbumsParams) => [...LOCAL_KEYS.root, 'albums', params] as const,
-	recent: (limit: number | null) => [...LOCAL_KEYS.root, 'recent', limit] as const,
+	feature: 'local',
+	downloadAccess: (userId: UserId) => key(userScope(userId), 'local', 'download-access'),
+	albums: (params: LocalV3AlbumsParams) => key(SHARED, 'local', 'albums', params),
+	recent: (limit: number | null) => key(SHARED, 'local', 'recent', limit),
 	suggestions: (limit: number, decade: number | null) =>
-		[...LOCAL_KEYS.root, 'suggestions', limit, decade] as const,
-	search: (term: string) => [...LOCAL_KEYS.root, 'search', term] as const,
-	decades: () => [...LOCAL_KEYS.root, 'decades'] as const,
-	// Totals only: the stats view also carries per-caller favorite counts,
-	// which no local consumer reads, so this key stays shared.
-	stats: () => [...LOCAL_KEYS.root, 'stats'] as const,
+		key(SHARED, 'local', 'suggestions', limit, decade),
+	search: (term: string) => key(SHARED, 'local', 'search', term),
+	decades: () => key(SHARED, 'local', 'decades'),
+	stats: (userId: UserId) => key(userScope(userId), 'local', 'stats'),
 	albumMatch: (mbid: string, page: LocalV3PageParams) =>
-		[...LOCAL_KEYS.root, 'album-match', mbid, page] as const
+		key(SHARED, 'local', 'album-match', mbid, page)
 };

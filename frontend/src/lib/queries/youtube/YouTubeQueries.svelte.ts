@@ -6,12 +6,7 @@ import type { YouTubeLink } from '$lib/types';
 import { AlbumQueryKeyFactory } from '../catalog/AlbumQueryKeyFactory';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
 import { YOUTUBE_ENDPOINTS } from './endpoints';
-
-// Saved links are shared by everyone on the server, so the keys carry no user.
-export const YouTubeQueryKeyFactory = {
-	prefix: ['youtube'] as const,
-	links: () => [...YouTubeQueryKeyFactory.prefix, 'links'] as const
-};
+import { YouTubeQueryKeyFactory } from './YouTubeQueryKeyFactory';
 
 type GenerateAlbumBody = V3Body<'/api/v3/youtube/generate', 'post'>;
 type GenerateTrackBody = V3Body<'/api/v3/youtube/generate-track', 'post'>;

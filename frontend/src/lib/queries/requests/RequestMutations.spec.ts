@@ -59,10 +59,20 @@ beforeEach(() => {
 	setUser({ id: 'userA' });
 });
 
-function invalidatedPrefixes(): unknown[][] {
-	return mockInvalidate.mock.calls.map((call) => [
-		...((call[0] as { queryKey: readonly unknown[] }).queryKey ?? [])
-	]);
+type Filter = {
+	queryKey?: readonly unknown[];
+	predicate?: (query: { queryKey: unknown[] }) => boolean;
+};
+
+/** Whether any invalidation reached this key, by key prefix or by predicate. */
+function swept(queryKey: readonly unknown[]): boolean {
+	return mockInvalidate.mock.calls.some(([filter]) => {
+		const { queryKey: prefix, predicate } = (filter ?? {}) as Filter;
+		if (predicate) return predicate({ queryKey: Array.from(queryKey) });
+		return (
+			!!prefix && prefix.every((part, i) => JSON.stringify(part) === JSON.stringify(queryKey[i]))
+		);
+	});
 }
 
 describe('createCancelRequestMutation', () => {
@@ -79,10 +89,9 @@ describe('createCancelRequestMutation', () => {
 
 		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
 		await mutation.onSuccess?.({ success: true }, vars, context);
-		const swept = invalidatedPrefixes();
-		expect(swept).toContainEqual([...RequestQueryKeyFactory.all]);
-		expect(swept).toContainEqual([...DownloadQueryKeyFactory.all]);
-		expect(swept).toContainEqual([...LibraryQueryKeyFactory.album('mbid-1')]);
+		expect(swept(RequestQueryKeyFactory.active('userA'))).toBe(true);
+		expect(swept(DownloadQueryKeyFactory.tasks('userA'))).toBe(true);
+		expect(swept(LibraryQueryKeyFactory.album('userA', 'mbid-1'))).toBe(true);
 	});
 
 	it('skips invalidation when the user changed mid-flight', async () => {
@@ -113,10 +122,9 @@ describe('createApproveRequestMutation', () => {
 
 		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
 		await mutation.onSuccess?.({ success: true }, vars, context);
-		const swept = invalidatedPrefixes();
-		expect(swept).toContainEqual([...RequestQueryKeyFactory.all]);
-		expect(swept).toContainEqual([...DownloadQueryKeyFactory.all]);
-		expect(swept).toContainEqual([...LibraryQueryKeyFactory.album('mbid-3')]);
+		expect(swept(RequestQueryKeyFactory.active('userA'))).toBe(true);
+		expect(swept(DownloadQueryKeyFactory.tasks('userA'))).toBe(true);
+		expect(swept(LibraryQueryKeyFactory.album('userA', 'mbid-3'))).toBe(true);
 	});
 });
 
@@ -134,6 +142,6 @@ describe('createRejectRequestMutation', () => {
 
 		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
 		await mutation.onSuccess?.({ success: true }, vars, context);
-		expect(invalidatedPrefixes()).toContainEqual([...RequestQueryKeyFactory.all]);
+		expect(swept(RequestQueryKeyFactory.active('userA'))).toBe(true);
 	});
 });

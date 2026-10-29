@@ -26,7 +26,7 @@ import {
 } from '$lib/queries/discover/DiscoverQueueQueries';
 import { discoverQueueAutoGenerate } from '$lib/queries/AdvancedSettingsReads.svelte';
 import {
-	musicBrainzSourceKey,
+	musicBrainzSourceStamp,
 	subscribeMusicBrainzSourceScope,
 	watchMusicBrainzSourceScope
 } from '$lib/queries/musicbrainz/sourceScope.svelte';
@@ -74,7 +74,7 @@ function createDiscoverQueueDeck() {
 	let isVisible = () => true;
 
 	function requestKey(): string {
-		return `${generation}:${JSON.stringify(musicBrainzSourceKey())}`;
+		return `${generation}:${musicBrainzSourceStamp()}`;
 	}
 
 	let abortController: AbortController | null = null;

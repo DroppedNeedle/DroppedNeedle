@@ -11,18 +11,19 @@ import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 import { toOperationResponse } from './libraryOperationAdapters';
 import { createUuid } from '$lib/utils/uuid';
+import { everyScope } from '$lib/queries/keys';
 
 async function invalidateRepairs(catalogChanged = false): Promise<void> {
 	await Promise.all([
 		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.repairsPrefix() }),
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.activityPrefix() }),
+		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'activity')),
 		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.reviewsPrefix() }),
 		...(catalogChanged
 			? [
-					invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all }),
-					invalidateQueriesWithPersister({ queryKey: ArtistQueryKeyFactory.prefix }),
-					invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix }),
-					invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix }),
+					invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature)),
+					invalidateQueriesWithPersister(everyScope(ArtistQueryKeyFactory.feature)),
+					invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature)),
+					invalidateQueriesWithPersister(everyScope(DiscoverQueryKeyFactory.feature)),
 					invalidateQueriesWithPersister({
 						queryKey: SearchQueryKeyFactory.v3.root(authStore.user?.id)
 					})

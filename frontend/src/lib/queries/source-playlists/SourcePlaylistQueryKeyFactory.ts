@@ -1,14 +1,14 @@
-import { userIdSegment } from '$lib/queries/userKeySegment';
 import type { SourcePlaylistSource } from '$lib/types';
+import { key, userScope } from '../keys';
+
+type UserId = string | null | undefined;
 
 export const SourcePlaylistQueryKeyFactory = {
-	prefix: ['source-playlists'] as const,
-	user: (userId: string | null | undefined) =>
-		[...SourcePlaylistQueryKeyFactory.prefix, userIdSegment(userId)] as const,
-	source: (userId: string | null | undefined, source: SourcePlaylistSource) =>
+	user: (userId: UserId) => key(userScope(userId), 'source-playlists'),
+	source: (userId: UserId, source: SourcePlaylistSource) =>
 		[...SourcePlaylistQueryKeyFactory.user(userId), source] as const,
-	list: (userId: string | null | undefined, source: SourcePlaylistSource, limit: number) =>
+	list: (userId: UserId, source: SourcePlaylistSource, limit: number) =>
 		[...SourcePlaylistQueryKeyFactory.source(userId, source), 'list', limit] as const,
-	detail: (userId: string | null | undefined, source: SourcePlaylistSource, playlistId: string) =>
+	detail: (userId: UserId, source: SourcePlaylistSource, playlistId: string) =>
 		[...SourcePlaylistQueryKeyFactory.source(userId, source), 'detail', playlistId] as const
 };

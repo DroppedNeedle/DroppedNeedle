@@ -7,6 +7,7 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
+import { everyScope } from '$lib/queries/keys';
 
 export type IndexerSettings = components['schemas']['NewznabIndexer'];
 export type IndexerTestResult = components['schemas']['IndexerTestResponse'];
@@ -24,7 +25,7 @@ async function invalidateIndexers() {
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.indexers() });
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
 	// Home reads integration_status; an added/removed indexer changes it.
-	await invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix });
+	await invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature));
 }
 
 export function saveIndexerMutation() {

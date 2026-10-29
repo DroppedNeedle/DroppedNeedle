@@ -10,6 +10,7 @@ import {
 	setQueryDataWithPersister
 } from '$lib/queries/QueryClient';
 import { SectionPrefsQueryKeyFactory } from './SectionPrefsQueryKeyFactory';
+import { everyScope } from '$lib/queries/keys';
 
 const SECTION_PREFS_ENDPOINT = () => v3('/api/v3/me/section-prefs');
 
@@ -38,8 +39,8 @@ export async function saveSectionPrefs(update: SectionPrefsUpdate): Promise<void
 	// the home/discover responses are filtered server-side, so their caches are stale
 	// now; sidebar prefs are client-only chrome read straight from the prefs cache
 	if (update.page === 'home') {
-		await invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix });
+		await invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature));
 	} else if (update.page === 'discover') {
-		await invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix });
+		await invalidateQueriesWithPersister(everyScope(DiscoverQueryKeyFactory.feature));
 	}
 }

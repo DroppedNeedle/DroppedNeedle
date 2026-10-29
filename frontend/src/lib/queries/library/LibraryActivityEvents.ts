@@ -7,6 +7,7 @@ import {
 	type MuxEventStream,
 	type MuxUnsubscribe
 } from '$lib/queries/events/MuxEventStream';
+import { everyScope } from '$lib/queries/keys';
 
 const CATALOG_REFRESH_WINDOW_MS = 10_000;
 
@@ -21,11 +22,11 @@ export function createLibraryActivityEvents(mux: MuxEventStream = muxEventStream
 	let catalogPending = false;
 
 	function invalidateActivity(): void {
-		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.activityPrefix() });
+		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.activity(userId) });
 	}
 
 	function invalidateOperations(): void {
-		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.operationsPrefix() });
+		void invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'operations'));
 		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.reviewsPrefix() });
 	}
 

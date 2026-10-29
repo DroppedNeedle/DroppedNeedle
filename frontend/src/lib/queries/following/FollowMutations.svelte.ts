@@ -25,7 +25,7 @@ const NOT_FOLLOWING: FollowStatus = {
 };
 
 function statusKey(mbid: string) {
-	return FollowQueryKeyFactory.status(mbid, authStore.user?.id);
+	return FollowQueryKeyFactory.status(authStore.user?.id, mbid);
 }
 
 function invalidateFollowedArtists(): Promise<void> {

@@ -129,44 +129,10 @@ beforeEach(() => {
 	queryClient.clear();
 });
 
-describe('FollowQueryKeyFactory', () => {
-	it('scopes every key by userId and falls back to anon', () => {
-		expect(FollowQueryKeyFactory.status(MBID, 'userA')).toEqual([
-			'follow',
-			'status',
-			MBID,
-			'userA'
-		]);
-		expect(FollowQueryKeyFactory.status(MBID, undefined)).toEqual(['follow', 'status', MBID, null]);
-		expect(FollowQueryKeyFactory.artists('userA')).toEqual(['following', 'artists', 'userA']);
-		expect(FollowQueryKeyFactory.recentReleases('userA', 30, 48, true)).toEqual([
-			'following',
-			'recent-releases',
-			'userA',
-			30,
-			48,
-			true
-		]);
-		expect(FollowQueryKeyFactory.newReleasesUnseen('userA')).toEqual([
-			'following',
-			'new-releases-unseen',
-			'userA'
-		]);
-		expect(FollowQueryKeyFactory.newReleasesUnseen(undefined)).toEqual([
-			'following',
-			'new-releases-unseen',
-			null
-		]);
-		expect(FollowQueryKeyFactory.status(MBID, 'userB')).not.toEqual(
-			FollowQueryKeyFactory.status(MBID, 'userA')
-		);
-	});
-});
-
 describe('follow queries hit the right endpoints with user-scoped keys', () => {
 	it('getUnseenNewReleasesCountQuery is user-scoped and disabled when logged out', async () => {
 		const opts = getUnseenNewReleasesCountQuery() as unknown as Opts & { enabled?: boolean };
-		expect(opts.queryKey).toEqual(['following', 'new-releases-unseen', 'userA']);
+		expect(opts.queryKey).toEqual(FollowQueryKeyFactory.newReleasesUnseen('userA'));
 		expect(opts.enabled).toBe(true);
 		await opts.queryFn!({ signal: new AbortController().signal });
 		expect(mockGet.mock.calls[0][0]).toBe(FOLLOW_ENDPOINTS.newReleasesUnseenCount());
@@ -180,7 +146,7 @@ describe('follow queries hit the right endpoints with user-scoped keys', () => {
 describe('concerts queries hit the right endpoints with user-scoped keys', () => {
 	it('getUnseenConcertsCountQuery is user-scoped and disabled when logged out', async () => {
 		const opts = getUnseenConcertsCountQuery() as unknown as Opts & { enabled?: boolean };
-		expect(opts.queryKey).toEqual(['following', 'concerts-unseen', 'userA']);
+		expect(opts.queryKey).toEqual(FollowQueryKeyFactory.concertsUnseen('userA'));
 		expect(opts.enabled).toBe(true);
 		await opts.queryFn!({ signal: new AbortController().signal });
 		expect(mockGet.mock.calls[0][0]).toBe(CONCERT_ENDPOINTS.concertsUnseenCount());
@@ -197,7 +163,7 @@ describe('follow mutations', () => {
 		const m = createSetAutoDownloadMutation(() => MBID) as unknown as Opts;
 		await m.onMutate!(true);
 		const cached = queryClient.getQueryData<FollowStatus>(
-			FollowQueryKeyFactory.status(MBID, 'userA')
+			FollowQueryKeyFactory.status('userA', MBID)
 		);
 		expect(cached?.auto_download).toBe(true);
 		expect(cached?.auto_download_state).toBe('pending');
@@ -208,7 +174,7 @@ describe('follow mutations', () => {
 		const m = createSetAutoDownloadMutation(() => MBID) as unknown as Opts;
 		await m.onMutate!(true);
 		const cached = queryClient.getQueryData<FollowStatus>(
-			FollowQueryKeyFactory.status(MBID, 'userA')
+			FollowQueryKeyFactory.status('userA', MBID)
 		);
 		expect(cached?.auto_download_state).toBe('approved');
 	});

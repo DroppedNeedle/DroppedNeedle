@@ -11,6 +11,7 @@ import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api, reviewFilterQuery } from './LibraryV3Api';
 import type { LibraryReviewParams } from './LibraryQueryKeyFactory';
+import { everyScope } from '$lib/queries/keys';
 
 // Two-layer sweep: the review-local layer (reviews, activity, operations)
 // always runs; the catalog layer (library, artist, home, discover) runs only
@@ -18,15 +19,15 @@ import type { LibraryReviewParams } from './LibraryQueryKeyFactory';
 async function invalidateReviewState(options?: { catalog?: boolean }): Promise<void> {
 	await Promise.all([
 		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.reviewsPrefix() }),
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.activityPrefix() }),
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.operationsPrefix() }),
+		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'activity')),
+		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'operations')),
 		invalidateQueriesWithPersister({ queryKey: SearchQueryKeyFactory.v3.root(authStore.user?.id) }),
 		...(options?.catalog
 			? [
-					invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all }),
-					invalidateQueriesWithPersister({ queryKey: ArtistQueryKeyFactory.prefix }),
-					invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix }),
-					invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix })
+					invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature)),
+					invalidateQueriesWithPersister(everyScope(ArtistQueryKeyFactory.feature)),
+					invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature)),
+					invalidateQueriesWithPersister(everyScope(DiscoverQueryKeyFactory.feature))
 				]
 			: [])
 	]);

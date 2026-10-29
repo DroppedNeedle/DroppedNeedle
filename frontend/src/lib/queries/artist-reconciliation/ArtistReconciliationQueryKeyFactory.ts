@@ -1,4 +1,4 @@
-import { userIdSegment } from '$lib/queries/userKeySegment';
+import { key, userScope } from '../keys';
 import type { ArtistDuplicateGroupParams } from './ArtistReconciliationTypes';
 
 const normalizedParams = (params: ArtistDuplicateGroupParams) => ({
@@ -6,20 +6,20 @@ const normalizedParams = (params: ArtistDuplicateGroupParams) => ({
 	search: params.search?.trim() || null
 });
 
+type UserId = string | null | undefined;
+
 export const ArtistReconciliationQueryKeyFactory = {
-	prefix: ['library', 'artist-reconciliation'] as const,
-	user: (userId: string | null | undefined) =>
-		[...ArtistReconciliationQueryKeyFactory.prefix, userIdSegment(userId)] as const,
-	progress: (userId: string | null | undefined) =>
+	user: (userId: UserId) => key(userScope(userId), 'library', 'artist-reconciliation'),
+	progress: (userId: UserId) =>
 		[...ArtistReconciliationQueryKeyFactory.user(userId), 'progress'] as const,
-	groupsPrefix: (userId: string | null | undefined) =>
+	groupsPrefix: (userId: UserId) =>
 		[...ArtistReconciliationQueryKeyFactory.user(userId), 'groups'] as const,
-	groups: (userId: string | null | undefined, params: ArtistDuplicateGroupParams) =>
+	groups: (userId: UserId, params: ArtistDuplicateGroupParams) =>
 		[
 			...ArtistReconciliationQueryKeyFactory.groupsPrefix(userId),
 			'list',
 			normalizedParams(params)
 		] as const,
-	group: (userId: string | null | undefined, groupId: string) =>
+	group: (userId: UserId, groupId: string) =>
 		[...ArtistReconciliationQueryKeyFactory.groupsPrefix(userId), 'detail', groupId] as const
 };

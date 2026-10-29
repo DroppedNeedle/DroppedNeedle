@@ -10,7 +10,7 @@ type Getter<T> = () => T;
 
 export const getFollowStatusQuery = (getMbid: Getter<string>) =>
 	createQuery(() => ({
-		queryKey: FollowQueryKeyFactory.status(getMbid(), authStore.user?.id),
+		queryKey: FollowQueryKeyFactory.status(authStore.user?.id, getMbid()),
 		queryFn: async ({ signal }) =>
 			toFollowStatus(await api.v3.GET(FOLLOW_ENDPOINTS.status(getMbid()), { signal }))
 	}));

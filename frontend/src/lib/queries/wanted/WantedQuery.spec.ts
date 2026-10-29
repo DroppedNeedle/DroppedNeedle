@@ -98,7 +98,6 @@ vi.mock('$lib/stores/toast', () => ({
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { queryClient } from '../QueryClient';
-import { WantedQueryKeyFactory } from './WantedQueryKeyFactory';
 import { getWantedWatchesQuery } from './WantedQuery.svelte';
 import { type WantedActionVars } from './WantedMutations.svelte';
 
@@ -124,14 +123,6 @@ beforeEach(() => {
 	mockGet.mockResolvedValue({ items: [], count: 0, retrying: [] });
 	mockPost.mockResolvedValue({ success: true, state: 'stopped' });
 	queryClient.clear();
-});
-
-describe('WantedQueryKeyFactory', () => {
-	it('scopes the list key by userId and falls back to null', () => {
-		expect(WantedQueryKeyFactory.list('userA')).toEqual(['wanted', 'list', 'userA']);
-		expect(WantedQueryKeyFactory.list(undefined)).toEqual(['wanted', 'list', null]);
-		expect(WantedQueryKeyFactory.list('userB')).not.toEqual(WantedQueryKeyFactory.list('userA'));
-	});
 });
 
 describe('getWantedWatchesQuery', () => {

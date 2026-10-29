@@ -1,60 +1,88 @@
 import { describe, expect, it } from 'vitest';
 
-import { ArtistReconciliationQueryKeyFactory } from './artist-reconciliation/ArtistReconciliationQueryKeyFactory';
-import { AuthQueryKeyFactory } from './auth/AuthQueryKeyFactory';
-import { DownloadQueryKeyFactory } from './downloads/DownloadQueryKeyFactory';
-import { FollowQueryKeyFactory } from './following/FollowQueryKeyFactory';
-import { DropImportQueryKeyFactory } from './import/DropImportQueryKeyFactory';
-import { LibraryManagementQueryKeyFactory } from './library-management/LibraryManagementQueryKeyFactory';
-import { LibraryContributionQueryKeyFactory } from './libraryContributions/LibraryContributionQueryKeyFactory';
-import { LidarrImportQueryKeyFactory } from './lidarr-import/LidarrImportQueryKeyFactory';
-import { PluginQueryKeyFactory } from './plugins/PluginQueryKeyFactory';
-import { RatingQueryKeyFactory } from './ratings/RatingQueryKeyFactory';
-import { ScrobblePreferencesQueryKeyFactory } from './scrobble-preferences/ScrobblePreferencesQueryKeyFactory';
-import { SourcePlaylistQueryKeyFactory } from './source-playlists/SourcePlaylistQueryKeyFactory';
+import { ADMIN, SHARED, SIGNED_OUT } from './keys';
 
-type UserKey = (userId: string | undefined) => readonly unknown[];
+// Every key factory, found by file name, so a new factory is checked here
+// without editing this spec.
+const modules = import.meta.glob<Record<string, unknown>>(
+	['./**/*QueryKeyFactory.ts', './**/*Keys.ts'],
+	{
+		eager: true
+	}
+);
 
-// Every user-scoped key a factory builds, by the user it belongs to.
-const userKeys: Record<string, UserKey> = {
-	'artist reconciliation': (u) => ArtistReconciliationQueryKeyFactory.progress(u),
-	'download tasks scope': (u) => DownloadQueryKeyFactory.tasksPrefix(u),
-	'download search': (u) => DownloadQueryKeyFactory.searchJob(u, 'job-1'),
-	'follow status': (u) => FollowQueryKeyFactory.status('mbid-1', u),
-	'followed artists': (u) => FollowQueryKeyFactory.artists(u),
-	concerts: (u) => FollowQueryKeyFactory.concerts(u),
-	'drop import jobs': (u) => DropImportQueryKeyFactory.jobs(u, false),
-	'library management settings': (u) => LibraryManagementQueryKeyFactory.settings(u),
-	'library contributions': (u) => LibraryContributionQueryKeyFactory.detail(u, 'c-1'),
-	'lidarr candidates': (u) => LidarrImportQueryKeyFactory.candidates(u),
-	'plugin sources': (u) => PluginQueryKeyFactory.sources(u),
-	'plugin ui': (u) => PluginQueryKeyFactory.ui(u, 'plugin-1'),
-	ratings: (u) => RatingQueryKeyFactory.lookup(u, ['album-1'], ['track-1'], []),
-	'scrobble preferences': (u) => ScrobblePreferencesQueryKeyFactory.get(u),
-	'source playlists': (u) => SourcePlaylistQueryKeyFactory.list(u, 'navidrome', 20),
-	'import candidates': (u) => AuthQueryKeyFactory.importCandidates('plex', u)
-};
+type Builder = (...args: unknown[]) => unknown;
 
-describe('user-scoped query keys', () => {
-	it.each(Object.entries(userKeys))('%s: two users never share a key', (_name, key) => {
-		expect(key('user-a')).not.toEqual(key('user-b'));
-		expect(key('user-a')).toContain('user-a');
+/** Every key builder and fixed key of every factory, by its path. */
+function collect(): [string, Builder | readonly unknown[]][] {
+	const found: [string, Builder | readonly unknown[]][] = [];
+	const walk = (path: string, value: unknown) => {
+		if (typeof value === 'function') found.push([path, value as Builder]);
+		else if (Array.isArray(value)) found.push([path, value]);
+		else if (value && typeof value === 'object') {
+			for (const [name, inner] of Object.entries(value)) walk(`${path}.${name}`, inner);
+		}
+	};
+	for (const [file, exports] of Object.entries(modules)) {
+		for (const [name, value] of Object.entries(exports)) walk(`${file} ${name}`, value);
+	}
+	return found;
+}
+
+// Stand-ins for the arguments after the first: ids and text, params objects, id lists.
+const STAND_INS: unknown[] = ['part', {}, ['part']];
+
+/** Calls a builder with `first` as its first argument and a stand-in for the rest. */
+function build(builder: Builder, first: string | undefined): readonly unknown[] {
+	const count = Math.max(builder.length - 1, 0);
+	let failure: unknown;
+	for (const standIn of STAND_INS) {
+		try {
+			return builder(first, ...Array.from({ length: count }, () => standIn)) as readonly unknown[];
+		} catch (error) {
+			failure = error;
+		}
+	}
+	throw failure;
+}
+
+const isUserScope = (scope: unknown) =>
+	scope === SIGNED_OUT || (typeof scope === 'string' && scope.startsWith('user:'));
+
+const entries = collect();
+const userBuilders = entries.filter(
+	(entry): entry is [string, Builder] =>
+		typeof entry[1] === 'function' && isUserScope(build(entry[1], 'user-a')[0])
+);
+
+describe('query keys', () => {
+	it('finds every factory', () => {
+		expect(Object.keys(modules).length).toBeGreaterThan(30);
+		expect(userBuilders.length).toBeGreaterThan(100);
 	});
 
-	it.each(Object.entries(userKeys))(
-		'%s: a logged-out key carries the null segment, never a user id',
-		(_name, key) => {
-			const loggedOut = key(undefined);
-			expect(loggedOut).toContain(null);
-			expect(loggedOut).not.toContain('anon');
-			expect(loggedOut).not.toContain('anonymous');
-			expect(loggedOut).not.toEqual(key('user-a'));
+	it('start with their scope and feature', () => {
+		for (const [path, entry] of entries) {
+			const queryKey = typeof entry === 'function' ? build(entry, 'user-a') : entry;
+			expect(Array.isArray(queryKey), path).toBe(true);
+			const [scope, feature] = queryKey;
+			expect(isUserScope(scope) || scope === SHARED || scope === ADMIN, path).toBe(true);
+			expect(typeof feature === 'string' && feature.length > 0, path).toBe(true);
 		}
-	);
+	});
 
-	it('keys each quota by the user it describes', () => {
-		expect(AuthQueryKeyFactory.userQuota('user-a')).not.toEqual(
-			AuthQueryKeyFactory.userQuota('user-b')
-		);
+	it('keep two users apart, and name the user only in the scope', () => {
+		for (const [path, builder] of userBuilders) {
+			const a = build(builder, 'user-a');
+			expect(a[0], path).toBe('user:user-a');
+			expect(build(builder, 'user-b')[0], path).toBe('user:user-b');
+			expect(a.slice(1), path).not.toContain('user-a');
+		}
+	});
+
+	it('keep the signed-out visitor apart from every user', () => {
+		for (const [path, builder] of userBuilders) {
+			expect(build(builder, undefined)[0], path).toBe(SIGNED_OUT);
+		}
 	});
 });

@@ -4,12 +4,13 @@ import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 
-import { AlbumMatchKeyFactory } from '../albumMatch';
+import { AlbumMatchKeyFactory } from '../AlbumMatchQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '../library/LibraryQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '../QueryClient';
 import { REMOTE_ENDPOINTS } from './endpoints';
 import { RemoteQueryKeyFactory } from './RemoteQueryKeyFactory';
 import type { RemoteFolderSave } from './types';
+import { everyScope } from '$lib/queries/keys';
 
 function errorMessage(err: unknown, fallback: string): string {
 	return err instanceof Error && err.message ? err.message : fallback;
@@ -34,7 +35,7 @@ export const createSaveRemoteFoldersMutation = () =>
 			await invalidateQueriesWithPersister({
 				queryKey: RemoteQueryKeyFactory.source(context.userId, 'navidrome')
 			});
-			await invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all });
+			await invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature));
 			toastStore.show({ message: 'Music folder scope saved', type: 'success' });
 		},
 		onError: (err) =>

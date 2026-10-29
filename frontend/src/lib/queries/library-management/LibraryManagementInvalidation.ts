@@ -11,21 +11,21 @@ import { LyricsQueryKeyFactory } from '$lib/queries/lyrics/LyricsQueryKeyFactory
 import { SearchQueryKeyFactory } from '$lib/queries/search/SearchQueryKeyFactory';
 import { authStore } from '$lib/stores/authStore.svelte';
 
-import { LibraryManagementQueryKeyFactory } from './LibraryManagementQueryKeyFactory';
+import { everyScope } from '$lib/queries/keys';
 
 export async function invalidateLibraryManagementSurfaces(): Promise<void> {
 	await Promise.all([
-		invalidateQueriesWithPersister({ queryKey: LibraryManagementQueryKeyFactory.prefix }),
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.operationsPrefix() }),
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all }),
-		invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root }),
-		invalidateQueriesWithPersister({ queryKey: GenreQueryKeyFactory.prefix }),
-		invalidateQueriesWithPersister({ queryKey: ArtistQueryKeyFactory.prefix }),
-		invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix }),
-		invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix }),
-		invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.all }),
-		invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix }),
-		invalidateQueriesWithPersister({ queryKey: LyricsQueryKeyFactory.prefix }),
+		invalidateQueriesWithPersister(everyScope('library-management')),
+		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'operations')),
+		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature)),
+		invalidateQueriesWithPersister(everyScope(LOCAL_KEYS.feature)),
+		invalidateQueriesWithPersister(everyScope(GenreQueryKeyFactory.feature)),
+		invalidateQueriesWithPersister(everyScope(ArtistQueryKeyFactory.feature)),
+		invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature)),
+		invalidateQueriesWithPersister(everyScope(DiscoverQueryKeyFactory.feature)),
+		invalidateQueriesWithPersister(everyScope(DownloadQueryKeyFactory.feature)),
+		invalidateQueriesWithPersister(everyScope(DropImportQueryKeyFactory.feature)),
+		invalidateQueriesWithPersister(everyScope(LyricsQueryKeyFactory.feature)),
 		invalidateQueriesWithPersister({ queryKey: SearchQueryKeyFactory.v3.root(authStore.user?.id) })
 	]);
 }

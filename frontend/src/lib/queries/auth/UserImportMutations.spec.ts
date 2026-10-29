@@ -45,17 +45,6 @@ function lastQueryOpts(): Record<string, unknown> {
 	return factory();
 }
 
-describe('AuthQueryKeyFactory.importCandidates', () => {
-	it('keys by provider and userId under the auth prefix', () => {
-		expect(AuthQueryKeyFactory.importCandidates('plex', 'admin-1')).toEqual([
-			'auth',
-			'import',
-			'plex',
-			'admin-1'
-		]);
-	});
-});
-
 describe('createImportUsersMutation', () => {
 	it('posts provider + uids to the import endpoint via the authenticated api', async () => {
 		mockPost.mockResolvedValue({ imported: [], conflicts: [], skipped: [], total_imported: 0 });
@@ -84,7 +73,7 @@ describe('createImportUsersMutation', () => {
 		);
 
 		expect(mockInvalidate).toHaveBeenCalledWith({
-			queryKey: AuthQueryKeyFactory.importCandidates('plex', 'admin-1')
+			queryKey: AuthQueryKeyFactory.importCandidates('admin-1', 'plex')
 		});
 		authStore.clear();
 	});
@@ -101,7 +90,7 @@ describe('getImportCandidatesQuery', () => {
 		);
 
 		const opts = lastQueryOpts();
-		expect(opts.queryKey).toEqual(AuthQueryKeyFactory.importCandidates('plex', 'admin-1'));
+		expect(opts.queryKey).toEqual(AuthQueryKeyFactory.importCandidates('admin-1', 'plex'));
 		expect(opts.enabled).toBe(true);
 
 		const queryFn = opts.queryFn as (ctx: { signal: AbortSignal }) => Promise<unknown>;
@@ -119,6 +108,6 @@ describe('getImportCandidatesQuery', () => {
 
 		const opts = lastQueryOpts();
 		expect(opts.enabled).toBe(false);
-		expect(opts.queryKey).toEqual(AuthQueryKeyFactory.importCandidates('jellyfin', 'admin-1'));
+		expect(opts.queryKey).toEqual(AuthQueryKeyFactory.importCandidates('admin-1', 'jellyfin'));
 	});
 });

@@ -1,34 +1,32 @@
-import { userIdSegment } from '../userKeySegment';
+import { ADMIN, key, SHARED, userScope } from '../keys';
 import { getDownloadScope } from './downloadScope.svelte';
 
+type UserId = string | null | undefined;
+
 export const DownloadQueryKeyFactory = {
-	all: ['downloads'] as const,
-	clientConfig: () => [...DownloadQueryKeyFactory.all, 'client-config'] as const,
-	clientStatus: () => [...DownloadQueryKeyFactory.all, 'client-status'] as const,
-	searchJob: (userId: string | null | undefined, jobId: string) =>
-		[...DownloadQueryKeyFactory.all, 'search', userIdSegment(userId), jobId] as const,
-	// Every scope (role and generation) of one user's task keys.
-	tasksPrefix: (userId: string | null | undefined) =>
-		[...DownloadQueryKeyFactory.all, 'tasks', userIdSegment(userId)] as const,
-	tasks: (userId?: string) =>
+	feature: 'downloads',
+	clientConfig: () => key(ADMIN, 'downloads', 'client-config'),
+	clientStatus: () => key(SHARED, 'downloads', 'client-status'),
+	searchJob: (userId: UserId, jobId: string) =>
+		key(userScope(userId), 'downloads', 'search', jobId),
+	// Every role and generation of one user's task keys.
+	tasksPrefix: (userId: UserId) => key(userScope(userId), 'downloads', 'tasks'),
+	// The role and its generation: a role change starts new keys, so an answer
+	// read under the old role is never shown under the new one.
+	tasks: (userId: UserId) =>
 		[
-			...DownloadQueryKeyFactory.all,
-			'tasks',
-			userIdSegment(userId),
+			...DownloadQueryKeyFactory.tasksPrefix(userId),
 			getDownloadScope().role,
 			getDownloadScope().generation
 		] as const,
-	activity: (userId?: string) => [...DownloadQueryKeyFactory.tasks(userId), 'activity'] as const,
-	// nested under tasks() so the existing invalidateTasks() prefix-invalidates this too
-	albumTasks: (userId: string | null | undefined, mbid: string) =>
-		[...DownloadQueryKeyFactory.tasks(userId ?? undefined), 'album', mbid] as const,
-	quarantine: () => [...DownloadQueryKeyFactory.all, 'quarantine'] as const,
-	// nested under tasks() so invalidateTasks() prefix-invalidates every held list
-	heldPrefix: (userId?: string) => [...DownloadQueryKeyFactory.tasks(userId), 'held'] as const,
-	held: (
-		userId: string | undefined,
-		filters: { releaseGroupMbid?: string; taskId?: string; all?: boolean }
-	) =>
+	activity: (userId: UserId) => [...DownloadQueryKeyFactory.tasks(userId), 'activity'] as const,
+	// Nested under tasks() so invalidating the tasks refreshes these too.
+	albumTasks: (userId: UserId, mbid: string) =>
+		[...DownloadQueryKeyFactory.tasks(userId), 'album', mbid] as const,
+	editionFetch: (userId: UserId, group: string) =>
+		[...DownloadQueryKeyFactory.tasks(userId), 'edition', group] as const,
+	heldPrefix: (userId: UserId) => [...DownloadQueryKeyFactory.tasks(userId), 'held'] as const,
+	held: (userId: UserId, filters: { releaseGroupMbid?: string; taskId?: string; all?: boolean }) =>
 		[
 			...DownloadQueryKeyFactory.heldPrefix(userId),
 			{
@@ -37,14 +35,15 @@ export const DownloadQueryKeyFactory = {
 				all: filters.all ?? false
 			}
 		] as const,
-	indexers: () => [...DownloadQueryKeyFactory.all, 'indexers'] as const,
+	quarantine: () => key(ADMIN, 'downloads', 'quarantine'),
+	indexers: () => key(ADMIN, 'downloads', 'indexers'),
 	searchBackend: () => [...DownloadQueryKeyFactory.indexers(), 'search-backend'] as const,
-	prowlarr: () => [...DownloadQueryKeyFactory.all, 'prowlarr'] as const,
-	sabnzbd: () => [...DownloadQueryKeyFactory.all, 'sabnzbd'] as const,
-	sourcePriority: () => [...DownloadQueryKeyFactory.all, 'source-priority'] as const,
-	sabnzbdStatus: () => [...DownloadQueryKeyFactory.all, 'sabnzbd-status'] as const,
-	policy: () => [...DownloadQueryKeyFactory.all, 'policy'] as const,
-	policySummary: () => [...DownloadQueryKeyFactory.all, 'policy-summary'] as const,
-	wantedSettings: () => [...DownloadQueryKeyFactory.all, 'wanted-settings'] as const,
-	cutoffUnmet: () => [...DownloadQueryKeyFactory.all, 'cutoff-unmet'] as const
+	prowlarr: () => key(ADMIN, 'downloads', 'prowlarr'),
+	sabnzbd: () => key(ADMIN, 'downloads', 'sabnzbd'),
+	sourcePriority: () => key(ADMIN, 'downloads', 'source-priority'),
+	sabnzbdStatus: () => key(ADMIN, 'downloads', 'sabnzbd-status'),
+	policy: () => key(ADMIN, 'downloads', 'policy'),
+	policySummary: () => key(SHARED, 'downloads', 'policy-summary'),
+	wantedSettings: () => key(ADMIN, 'downloads', 'wanted-settings'),
+	cutoffUnmet: () => key(ADMIN, 'downloads', 'cutoff-unmet')
 };

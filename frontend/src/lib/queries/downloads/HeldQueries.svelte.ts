@@ -13,6 +13,7 @@ import type { HeldActionResult, HeldRecheckAllResult } from '$lib/types';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { HELD_ENDPOINTS, type HeldListFilters } from './endpoints';
+import { everyScope } from '$lib/queries/keys';
 
 // Held files waiting for a decision, one entry per download or upload. Three
 // callers: the Downloads queue (every entry), the import tab (an upload's
@@ -56,18 +57,22 @@ async function invalidateAfterAction(imported: boolean, albums: (string | null |
 	const userId = authStore.user?.id;
 	const work: Promise<unknown>[] = [
 		invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.tasksPrefix(userId) }),
-		invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix })
+		invalidateQueriesWithPersister(everyScope(DropImportQueryKeyFactory.feature))
 	];
 	for (const mbid of albums) {
 		if (mbid) {
-			work.push(invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.album(mbid) }));
+			work.push(
+				invalidateQueriesWithPersister({
+					queryKey: LibraryQueryKeyFactory.album(authStore.user?.id, mbid)
+				})
+			);
 		}
 	}
 	if (imported) {
 		work.push(
-			invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all }),
-			invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root }),
-			invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix })
+			invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature)),
+			invalidateQueriesWithPersister(everyScope(LOCAL_KEYS.feature)),
+			invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature))
 		);
 	}
 	await Promise.all(work);

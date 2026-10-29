@@ -3,21 +3,15 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { userIdSegment } from '../userKeySegment';
+import { SettingsQueryKeyFactory } from './SettingsQueryKeyFactory';
 import { SETTINGS_ENDPOINTS } from './endpoints';
 
 export type JellyfinSettings = components['schemas']['JellyfinConnection'];
 export type JellyfinVerifyResult = components['schemas']['JellyfinVerifyResponse'];
 
-export const JellyfinSettingsQueryKeyFactory = {
-	prefix: ['settings', 'jellyfin'] as const,
-	saved: (userId: string | null | undefined) =>
-		[...JellyfinSettingsQueryKeyFactory.prefix, userIdSegment(userId)] as const
-};
-
 export const getJellyfinSettingsQuery = () =>
 	createQuery(() => ({
-		queryKey: JellyfinSettingsQueryKeyFactory.saved(authStore.user?.id),
+		queryKey: SettingsQueryKeyFactory.jellyfin(authStore.user?.id),
 		queryFn: ({ signal }) => api.v3.GET(SETTINGS_ENDPOINTS.jellyfin(), { signal })
 	}));
 
@@ -26,7 +20,7 @@ export const createSaveJellyfinSettingsMutation = () =>
 	createMutation(() => ({
 		mutationFn: (body: JellyfinSettings) => api.v3.PUT(SETTINGS_ENDPOINTS.jellyfin(), body),
 		onSuccess: (saved: JellyfinSettings) =>
-			setQueryDataWithPersister(JellyfinSettingsQueryKeyFactory.saved(authStore.user?.id), saved)
+			setQueryDataWithPersister(SettingsQueryKeyFactory.jellyfin(authStore.user?.id), saved)
 	}));
 
 /** Checks the entered connection without saving it. */

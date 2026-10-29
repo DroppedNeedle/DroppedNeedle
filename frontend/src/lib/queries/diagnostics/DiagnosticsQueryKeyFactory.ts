@@ -1,10 +1,11 @@
+import { ADMIN, key } from '../keys';
+
 /**
- * Admin-only runtime observability gauges. Nested under the
- * 'admin' parent segment so an admin-prefix sweep clears every gauge; there is
- * no userId dimension - gauges describe the shared backend process.
+ * Admin-only runtime gauges. They describe the shared server process, the
+ * same for every admin.
  */
 export const DiagnosticsQueryKeyFactory = {
-	prefix: ['admin', 'diagnostics'] as const,
-	queueStats: () => [...DiagnosticsQueryKeyFactory.prefix, 'queue-stats'] as const,
-	providerStats: () => [...DiagnosticsQueryKeyFactory.prefix, 'provider-stats'] as const
+	all: () => key(ADMIN, 'diagnostics'),
+	queueStats: () => key(ADMIN, 'diagnostics', 'queue-stats'),
+	providerStats: () => key(ADMIN, 'diagnostics', 'provider-stats')
 };

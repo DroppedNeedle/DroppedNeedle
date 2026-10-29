@@ -1,12 +1,10 @@
-import { userIdSegment } from '$lib/queries/userKeySegment';
+import { ADMIN, key, userScope } from '../keys';
 
-// Config is the single admin-global connection (user-agnostic key). The candidates
-// query is user-scoped (already_following differs per user), so its key carries the
-// userId segment - without it the IndexedDB-persisted cache would leak one user's
-// annotations to another on a shared browser.
+// The connection is the one admin setting. The candidates say which artists
+// the caller already follows, so they are the caller's.
 export const LidarrImportQueryKeyFactory = {
-	prefix: ['lidarr-import'] as const,
-	config: () => [...LidarrImportQueryKeyFactory.prefix, 'config'] as const,
+	feature: 'lidarr-import',
+	config: () => key(ADMIN, 'lidarr-import', 'config'),
 	candidates: (userId: string | null | undefined) =>
-		[...LidarrImportQueryKeyFactory.prefix, 'candidates', userIdSegment(userId)] as const
+		key(userScope(userId), 'lidarr-import', 'candidates')
 };

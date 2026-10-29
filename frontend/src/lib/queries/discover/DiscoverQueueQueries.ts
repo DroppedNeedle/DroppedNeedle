@@ -11,6 +11,7 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { DiscoverQueryKeyFactory } from './DiscoverQueryKeyFactory';
 import { DiscoverV3Api } from './DiscoverV3Api';
 import type { DeckCard } from './types';
+import { PERSIST_PROVIDER, PROVIDER } from '$lib/queries/persistedCache';
 
 export type QueueStatus = components['schemas']['DiscoverQueueStatusResponse'];
 
@@ -19,14 +20,12 @@ const BUILD_POLL_MS = 4000;
 
 export const getDiscoverQueueStatusQueryOptions = (userId: string | null | undefined) =>
 	queryOptions({
+		meta: PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.queueStatus(userId),
 		queryFn: ({ signal }): Promise<QueueStatus> =>
 			api.v3.GET(DiscoverV3Api.queueStatus(), { signal }),
 		enabled: Boolean(userId),
 		staleTime: STALE_LIVE,
-		// Never restored from the browser's copy: an old status could offer a
-		// queue that is already taken.
-		persister: undefined,
 		refetchInterval: (query: { state: { data?: QueueStatus } }) =>
 			query.state.data?.status === 'building' ? BUILD_POLL_MS : false
 	});
@@ -99,10 +98,10 @@ export function markDiscoverQueueConsumed(): Promise<void> {
 /** Takes the built queue. */
 export function fetchDiscoverQueue() {
 	return queryClient.fetchQuery({
+		meta: PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.queue(authStore.user?.id, null),
 		queryFn: ({ signal }) => api.v3.GET(DiscoverV3Api.queue(null), { signal }),
-		staleTime: STALE_LIVE,
-		persister: undefined
+		staleTime: STALE_LIVE
 	});
 }
 
@@ -116,14 +115,14 @@ export function fetchQueueInLibrary(releaseGroupMbids: string[]) {
 				{ release_group_mbids: releaseGroupMbids },
 				{ signal }
 			),
-		staleTime: STALE_LIVE,
-		persister: undefined
+		staleTime: STALE_LIVE
 	});
 }
 
 /** The details a card shows beyond the queue's light rows. */
 export function fetchQueueEnrichment(releaseGroupMbid: string) {
 	return queryClient.fetchQuery({
+		meta: PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.queueEnrich(authStore.user?.id, releaseGroupMbid),
 		queryFn: ({ signal }) => api.v3.GET(DiscoverV3Api.queueEnrich(releaseGroupMbid), { signal }),
 		staleTime: STALE_SLOW
@@ -150,6 +149,7 @@ export function ignoreQueueItem(item: QueueIgnoreItem) {
 /** A preview clip for one track. */
 export function fetchTrackPreview(artist: string, track: string) {
 	return queryClient.fetchQuery({
+		meta: PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.trackPreview(authStore.user?.id, artist, track),
 		queryFn: ({ signal }) => api.v3.GET(DiscoverV3Api.trackPreview(artist, track), { signal }),
 		staleTime: STALE_SLOW
@@ -159,6 +159,7 @@ export function fetchTrackPreview(artist: string, track: string) {
 /** Preview clips for an album's tracks. */
 export function fetchAlbumPreview(artist: string, album: string) {
 	return queryClient.fetchQuery({
+		meta: PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.albumPreview(authStore.user?.id, artist, album, null),
 		queryFn: ({ signal }) =>
 			api.v3.GET(DiscoverV3Api.albumPreview(artist, album, null), { signal }),
@@ -179,19 +180,31 @@ const SAVED_DECK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const savedDeckKey = () => DiscoverQueryKeyFactory.v3.savedDeck(authStore.user?.id);
 
+// Saved in the browser, so a reload resumes the deck; a source switch drops it.
+const savedDeckOptions = () => {
+	const key = savedDeckKey();
+	return {
+		queryKey: key,
+		meta: PERSIST_PROVIDER,
+		// Nothing on the server holds it: a refetch after a broad sweep keeps
+		// what is in memory, and a fresh start finds the browser's copy first.
+		queryFn: (): SavedDeck | null => queryClient.getQueryData<SavedDeck | null>(key) ?? null,
+		// Only the deck itself changes this entry, so it never goes stale.
+		staleTime: Infinity,
+		gcTime: Infinity
+	};
+};
+
+/** Writes the deck through the query that saves it, building that query if need be. */
+function writeDeck(deck: SavedDeck | null): Promise<void> {
+	queryClient.getQueryCache().build(queryClient, savedDeckOptions());
+	return setQueryDataWithPersister(savedDeckKey(), deck);
+}
+
 /** The saved deck from memory or the browser's copy, or null. */
 export async function readSavedDeck(): Promise<SavedDeck | null> {
 	try {
-		const key = savedDeckKey();
-		const saved = await queryClient.fetchQuery({
-			queryKey: key,
-			// Nothing on the server holds it: a refetch after a broad sweep keeps
-			// what is in memory, and a fresh start finds the browser's copy first.
-			queryFn: (): SavedDeck | null => queryClient.getQueryData<SavedDeck | null>(key) ?? null,
-			// Only the deck itself changes this entry, so it never goes stale.
-			staleTime: Infinity,
-			gcTime: Infinity
-		});
+		const saved = await queryClient.fetchQuery(savedDeckOptions());
 		if (!saved || Date.now() - saved.savedAt > SAVED_DECK_MAX_AGE_MS) return null;
 		return saved;
 	} catch {
@@ -205,11 +218,9 @@ export function peekSavedDeck(): SavedDeck | null {
 }
 
 export function saveDeck(deck: Omit<SavedDeck, 'savedAt'>): Promise<void> {
-	const saved: SavedDeck | null = { ...deck, savedAt: Date.now() };
-	return setQueryDataWithPersister(savedDeckKey(), saved);
+	return writeDeck({ ...deck, savedAt: Date.now() });
 }
 
 export function forgetSavedDeck(): Promise<void> {
-	const none: SavedDeck | null = null;
-	return setQueryDataWithPersister(savedDeckKey(), none);
+	return writeDeck(null);
 }

@@ -5,6 +5,7 @@ import type { HomeResponse } from './discover/types';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 import { HOME_ENDPOINTS } from './charts/endpoints';
 import { HomeQueryKeyFactory } from './HomeQueryKeyFactory';
+import { PERSIST_PROVIDER } from '$lib/queries/persistedCache';
 
 function sectionCount(d: HomeResponse | null | undefined): number {
 	return d?.sections.length ?? 0;
@@ -29,6 +30,7 @@ async function fetchHome(
 export const getHomeQueryOptions = (userId: string | null | undefined) =>
 	queryOptions({
 		staleTime: STALE_SLOW,
+		meta: PERSIST_PROVIDER,
 		queryKey: HomeQueryKeyFactory.home(userId),
 		queryFn: ({ signal }) => fetchHome(userId, signal)
 	});

@@ -23,7 +23,6 @@ vi.mock('../QueryClient', () => ({
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { invalidateQueriesWithPersister } from '../QueryClient';
-import { AuthQueryKeyFactory } from '../auth/AuthQueryKeyFactory';
 import { SessionsQueryKeyFactory } from './SessionsQueryKeyFactory';
 import { SESSIONS_ENDPOINTS } from './endpoints';
 import { getSessionsQuery, getSessionsQueryOptions } from './SessionsQuery.svelte';
@@ -54,29 +53,6 @@ function setUser(user: { id: string } | null) {
 beforeEach(() => {
 	vi.clearAllMocks();
 	setUser({ id: 'userA' });
-});
-
-describe('SessionsQueryKeyFactory', () => {
-	it('nests under the shared auth prefix', () => {
-		expect([...SessionsQueryKeyFactory.prefix]).toEqual([
-			...AuthQueryKeyFactory.prefix,
-			'sessions'
-		]);
-	});
-
-	it('scopes the list key by userId', () => {
-		expect(SessionsQueryKeyFactory.list('userA')).toEqual(['auth', 'sessions', 'list', 'userA']);
-	});
-
-	it('produces different keys for different users', () => {
-		expect(SessionsQueryKeyFactory.list('userA')).not.toEqual(
-			SessionsQueryKeyFactory.list('userB')
-		);
-	});
-
-	it('normalizes a missing userId to null', () => {
-		expect(SessionsQueryKeyFactory.list(undefined)).toEqual(['auth', 'sessions', 'list', null]);
-	});
 });
 
 describe('getSessionsQuery', () => {

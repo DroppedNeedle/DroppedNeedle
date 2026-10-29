@@ -1,4 +1,4 @@
-import { userIdSegment } from '../userKeySegment';
+import { key, userScope } from '../keys';
 
 export type RatingUserId = string | null | undefined;
 
@@ -12,8 +12,8 @@ function keyIds(ids: string[]): string[] {
 // The caller's own star ratings. Every key sits under the user's root, so
 // one invalidation refreshes every page's lookup.
 export const RatingQueryKeyFactory = {
-	prefix: ['ratings'] as const,
-	user: (userId: RatingUserId) => [...RatingQueryKeyFactory.prefix, userIdSegment(userId)] as const,
+	feature: 'ratings',
+	user: (userId: RatingUserId) => key(userScope(userId), 'ratings'),
 	lookup: (userId: RatingUserId, albumIds: string[], trackIds: string[], artistIds: string[]) =>
 		[
 			...RatingQueryKeyFactory.user(userId),

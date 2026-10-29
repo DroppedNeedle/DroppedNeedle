@@ -1,4 +1,4 @@
-import { userIdSegment } from '../userKeySegment';
+import { key, userScope } from '../keys';
 import type {
 	RemoteAlbumParams,
 	RemoteArtistParams,
@@ -11,13 +11,12 @@ import type { RemoteSource } from './types';
 
 type UserId = string | null | undefined;
 
-// userId scopes every key (persisted cache on shared browsers). Keys nest
-// source-first under `all`: one source-prefix sweep clears an adapter after
+// Every key is the caller's (their own connections). Keys nest
+// source-first: one source-prefix sweep clears an adapter after
 // a reconnect without touching the others.
 export const RemoteQueryKeyFactory = {
-	all: ['remotes'] as const,
-	source: (userId: UserId, source: RemoteSource) =>
-		[...RemoteQueryKeyFactory.all, source, userIdSegment(userId)] as const,
+	feature: 'remotes',
+	source: (userId: UserId, source: RemoteSource) => key(userScope(userId), 'remotes', source),
 	hub: (userId: UserId, source: RemoteSource) =>
 		[...RemoteQueryKeyFactory.source(userId, source), 'hub'] as const,
 	connection: (userId: UserId, source: RemoteSource) =>
@@ -88,7 +87,7 @@ export const RemoteQueryKeyFactory = {
 			...RemoteQueryKeyFactory.source(userId, source),
 			'genres',
 			'songs',
-			genres.join(','),
+			[...genres].join(','),
 			params.limit ?? null,
 			params.offset ?? null
 		] as const,

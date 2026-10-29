@@ -9,6 +9,8 @@ import type { SearchV3Limits } from '../search/SearchQueryKeyFactory';
 import { LOCAL_KEYS, type LocalV3AlbumsParams } from './LocalV3Keys';
 import { readNow } from '../readNow';
 import { STALE_LIVE } from '$lib/queries/staleTime';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { PERSIST } from '$lib/queries/persistedCache';
 
 export type SuggestionTrackV3 = components['schemas']['SuggestionTrack'];
 export type LocalTrackV3 = components['schemas']['TrackView'];
@@ -51,6 +53,7 @@ export const getLocalRecentV3Query = (getLimit: Getter<number> = () => 20) =>
 	createQuery(() => {
 		const limit = getLimit();
 		return queryOptions({
+			meta: PERSIST,
 			queryKey: LOCAL_KEYS.recent(limit),
 			queryFn: async ({ signal }) => {
 				const page = await api.v3.GET(LibraryV3Api.recentlyAdded(limit), { signal });
@@ -67,6 +70,7 @@ export const getLocalAlbumsV3Query = (
 		const params = getParams();
 		return queryOptions({
 			enabled: getEnabled(),
+			meta: PERSIST,
 			queryKey: LOCAL_KEYS.albums(params),
 			queryFn: async ({ signal }) => {
 				const page = await api.v3.GET(LibraryV3Api.albums(params), { signal });
@@ -118,6 +122,7 @@ export const getLibrarySearchV3Query = (getTerm: Getter<string>) =>
 export const getLocalDecadesV3Query = () =>
 	createQuery(() =>
 		queryOptions({
+			meta: PERSIST,
 			queryKey: LOCAL_KEYS.decades(),
 			queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.decades(), { signal })
 		})
@@ -128,7 +133,8 @@ export const getLocalStatsV3Query = (getEnabled: Getter<boolean> = () => true) =
 	createQuery(() =>
 		queryOptions({
 			enabled: getEnabled(),
-			queryKey: LOCAL_KEYS.stats(),
+			meta: PERSIST,
+			queryKey: LOCAL_KEYS.stats(authStore.user?.id),
 			queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.stats(), { signal })
 		})
 	);

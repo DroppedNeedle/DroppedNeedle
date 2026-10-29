@@ -27,8 +27,8 @@ describe('LibraryManagementQueryKeyFactory', () => {
 			LibraryManagementQueryKeyFactory.settings('admin-b')
 		);
 		expect(LibraryManagementQueryKeyFactory.preview('admin-a', 'job-1')).toEqual([
+			'user:admin-a',
 			'library-management',
-			'admin-a',
 			'previews',
 			'job-1'
 		]);
@@ -69,8 +69,8 @@ describe('LibraryManagementQueryKeyFactory', () => {
 			})
 		);
 		expect(LibraryManagementQueryKeyFactory.tagEditor('admin-a', 'track-1')).toEqual([
+			'user:admin-a',
 			'library-management',
-			'admin-a',
 			'tag-editor',
 			'track-1'
 		]);

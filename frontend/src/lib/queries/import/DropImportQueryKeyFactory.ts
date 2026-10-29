@@ -1,10 +1,9 @@
-import { userIdSegment } from '$lib/queries/userKeySegment';
+import { key, userScope } from '../keys';
 
-// Jobs are user-dependent (each curator sees their own; admins can see all), so the
-// key carries the userId segment - the IndexedDB-persisted cache must never show one
-// user's import history to another on a shared browser.
+// Each curator sees their own import jobs (admins may see all), so the jobs
+// are the caller's.
 export const DropImportQueryKeyFactory = {
-	prefix: ['drop-import'] as const,
+	feature: 'drop-import',
 	jobs: (userId: string | null | undefined, all: boolean) =>
-		[...DropImportQueryKeyFactory.prefix, 'jobs', userIdSegment(userId), { all }] as const
+		key(userScope(userId), 'drop-import', 'jobs', { all })
 };

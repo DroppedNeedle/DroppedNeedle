@@ -7,7 +7,7 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { WantedQueryKeyFactory } from '$lib/queries/wanted/WantedQueryKeyFactory';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
-import { AlbumMatchKeyFactory } from '$lib/queries/albumMatch';
+import { AlbumMatchKeyFactory } from '$lib/queries/AlbumMatchQueryKeyFactory';
 import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
 import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
@@ -63,7 +63,7 @@ export function putBackRemoval() {
 			if (releaseGroupMbid) libraryStore.addMbid(releaseGroupMbid);
 			await Promise.allSettled([
 				invalidateLibraryCatalog(),
-				...[WantedQueryKeyFactory.prefix, ...albumPage].map((queryKey) =>
+				...[WantedQueryKeyFactory.list(userId), ...albumPage].map((queryKey) =>
 					invalidateQueriesWithPersister({ queryKey })
 				)
 			]);

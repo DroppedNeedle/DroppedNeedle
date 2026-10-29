@@ -179,30 +179,8 @@ export function forgetStoredMusicBrainzSourceScopes(): void {
 	}
 }
 
-export interface MusicBrainzSourceKey {
-	user_id: string | null;
-	source_mode: MusicBrainzSourceMode;
-	source_id: string;
-	generation: number;
-}
-
-export function musicBrainzSourceKey(userId?: string | null): MusicBrainzSourceKey {
-	if (userId === undefined) {
-		return { ...musicBrainzSourceKeyForScope(getMusicBrainzSourceScope()) };
-	}
-	const normalizedUserId = userId ?? null;
-	const activeUserId = authStore.user?.id ?? null;
-	const scope =
-		normalizedUserId === activeUserId
-			? getMusicBrainzSourceScope()
-			: scopeForUser(normalizedUserId);
-	return { ...musicBrainzSourceKeyForScope(scope) };
-}
-function musicBrainzSourceKeyForScope(scope: MusicBrainzSourceScope) {
-	return {
-		user_id: scope.userId,
-		source_mode: scope.sourceMode,
-		source_id: scope.sourceId,
-		generation: scope.generation
-	};
+/** The current user's source as one string, for telling answers from two sources apart. */
+export function musicBrainzSourceStamp(): string {
+	const scope = getMusicBrainzSourceScope();
+	return `${scope.sourceMode}:${scope.sourceId}:${scope.generation}`;
 }

@@ -31,8 +31,8 @@ beforeEach(() => {
 describe('library contribution queries', () => {
 	it('keeps every key scoped to the signed-in user', () => {
 		expect(LibraryContributionQueryKeyFactory.detail('user-1', 'draft-1')).toEqual([
+			'user:user-1',
 			'library-contributions',
-			'user-1',
 			'detail',
 			'draft-1'
 		]);

@@ -48,12 +48,11 @@ vi.mock('$lib/queries/QueryClient', () => ({
 		getQueryData: () => undefined,
 		prefetchQuery: vi.fn()
 	},
-	resetQueryCacheForUserSwitch: state.resetQueryCache
+	resetQueryCacheForUserSwitch: state.resetQueryCache,
+	collectPersistedGarbage: vi.fn()
 }));
 vi.mock('$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte', () => ({
-	getScrobblePreferencesQueryOptions: (userId: string | undefined) => ({
-		queryKey: ['me', 'scrobble-preferences', userId]
-	})
+	getScrobblePreferencesQueryOptions: (userId: string | undefined) => ({ userId })
 }));
 vi.mock('$lib/stores/musicSource', () => ({
 	DEFAULT_SOURCE: 'listenbrainz',
@@ -191,9 +190,7 @@ describe('+layout load session bootstrap', () => {
 		state.ensureQueryData.mockRejectedValueOnce(new DOMException('Timed out', 'TimeoutError'));
 
 		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
-		expect(state.ensureQueryData).toHaveBeenNthCalledWith(1, {
-			queryKey: ['me', 'scrobble-preferences', 'user-1']
-		});
+		expect(state.ensureQueryData).toHaveBeenNthCalledWith(1, { userId: 'user-1' });
 		expect(state.clear).not.toHaveBeenCalled();
 		expect(state.user).toBe(user);
 	});
@@ -204,9 +201,7 @@ describe('+layout load session bootstrap', () => {
 		state.ensureQueryData.mockResolvedValueOnce({ primary_music_source: 'lastfm' });
 
 		await expect(loadPage('/library')).resolves.toEqual({ primarySource: 'lastfm', user });
-		expect(state.ensureQueryData).toHaveBeenCalledWith({
-			queryKey: ['me', 'scrobble-preferences', 'user-1']
-		});
+		expect(state.ensureQueryData).toHaveBeenCalledWith({ userId: 'user-1' });
 		expect(state.apiGet).not.toHaveBeenCalled();
 	});
 

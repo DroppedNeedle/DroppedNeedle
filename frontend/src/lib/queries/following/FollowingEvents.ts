@@ -12,6 +12,7 @@ import {
 	type MuxEventStream,
 	type MuxUnsubscribe
 } from '$lib/queries/events/MuxEventStream';
+import { everyScope } from '$lib/queries/keys';
 
 // SSEPublisher replays its last payload to every new subscriber, so toasting
 // events arrive again on each reconnect. De-dupe them by id, persisted per
@@ -151,10 +152,10 @@ export function createFollowingEvents(mux: MuxEventStream = muxEventStream) {
 		void invalidateQueriesWithPersister({
 			queryKey: FollowQueryKeyFactory.concerts(userId)
 		});
-		void invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix });
+		void invalidateQueriesWithPersister(everyScope(DropImportQueryKeyFactory.feature));
 		// an import can land an album while the tab is hidden: Library/Home are
 		// covered by the activity.changed replay sweep, but local lists are not
-		void invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root });
+		void invalidateQueriesWithPersister(everyScope(LOCAL_KEYS.feature));
 	}
 
 	// badge-only: the new-candidates count lives in the wanted list data, so a
@@ -221,7 +222,7 @@ export function createFollowingEvents(mux: MuxEventStream = muxEventStream) {
 	// The user's own drop-import job progressed server-side - refresh the lists,
 	// the held list included: an upload that waits for review joins it.
 	function handleDropImportUpdated(): void {
-		void invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix });
+		void invalidateQueriesWithPersister(everyScope(DropImportQueryKeyFactory.feature));
 		void invalidateQueriesWithPersister({
 			queryKey: DownloadQueryKeyFactory.heldPrefix(authStore.user?.id)
 		});

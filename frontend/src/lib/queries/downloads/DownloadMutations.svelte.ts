@@ -20,6 +20,7 @@ import {
 import { albumRequestOutcome } from '$lib/utils/requestOutcome';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
+import { everyScope } from '$lib/queries/keys';
 
 interface AlbumRequestInput {
 	release_group_mbid: string;
@@ -65,8 +66,8 @@ function errorMessage(err: unknown, fallback: string): string {
 // rows. DownloadQueryKeyFactory.all already prefixes tasks/activity/held/policy.
 async function invalidateRequestSurface(): Promise<void> {
 	await Promise.all([
-		invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.all }),
-		invalidateQueriesWithPersister({ queryKey: RequestQueryKeyFactory.all })
+		invalidateQueriesWithPersister(everyScope(DownloadQueryKeyFactory.feature)),
+		invalidateQueriesWithPersister(everyScope(RequestQueryKeyFactory.feature))
 	]);
 }
 
@@ -344,7 +345,7 @@ export function retryAllFailed() {
 function invalidateAlbum(releaseGroupMbid?: string | null) {
 	if (releaseGroupMbid) {
 		void invalidateQueriesWithPersister({
-			queryKey: LibraryQueryKeyFactory.album(releaseGroupMbid)
+			queryKey: LibraryQueryKeyFactory.album(authStore.user?.id, releaseGroupMbid)
 		});
 	}
 }
@@ -375,7 +376,7 @@ export function reimportDownload() {
 				});
 			}
 			void invalidateTasks();
-			void invalidateQueriesWithPersister({ queryKey: RequestQueryKeyFactory.all });
+			void invalidateQueriesWithPersister(everyScope(RequestQueryKeyFactory.feature));
 			invalidateAlbum(input.release_group_mbid);
 		},
 		onError: (err: unknown) =>

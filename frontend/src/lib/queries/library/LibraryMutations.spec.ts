@@ -22,6 +22,8 @@ vi.mock('../QueryClient', () => ({
 import { api } from '$lib/api/client';
 import { removeLibraryAlbum, saveLibraryScanSchedule } from './LibraryMutations.svelte';
 import { LibraryV3Api } from './LibraryV3Api';
+import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
+import { WantedQueryKeyFactory } from '../wanted/WantedQueryKeyFactory';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
 
 // The typed client's DELETE resolves to the response body; the mock stands in for it.
@@ -58,11 +60,16 @@ describe('album removal mutation', () => {
 		expect(mockRemoveMbid).toHaveBeenCalledWith('release-1');
 		expect(mockRemoveMbid).toHaveBeenCalledWith('rg-1');
 		expect(setQueryDataWithPersister).toHaveBeenCalledWith(
-			['library', 'album', 'release-1'],
+			LibraryQueryKeyFactory.album(undefined, 'release-1'),
 			expect.any(Function)
 		);
 		expect(invalidateQueriesWithPersister).toHaveBeenCalledTimes(6);
-		expect(invalidateQueriesWithPersister).toHaveBeenCalledWith({ queryKey: ['wanted'] });
+		const swept = vi
+			.mocked(invalidateQueriesWithPersister)
+			.mock.calls.some(([filter]) =>
+				filter?.predicate?.({ queryKey: WantedQueryKeyFactory.list('u') } as never)
+			);
+		expect(swept).toBe(true);
 	});
 
 	it('does not report cache housekeeping failures as removal failures', async () => {

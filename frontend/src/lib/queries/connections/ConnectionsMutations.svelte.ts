@@ -16,7 +16,7 @@ import type {
 	PlexLinkPinResponse
 } from './types';
 import { SourcePlaylistQueryKeyFactory } from '$lib/queries/source-playlists/SourcePlaylistQueryKeyFactory';
-import { SPOTIFY_PLAYLISTS_KEY } from '$lib/queries/spotify/SpotifyQueries.svelte';
+import { SpotifyQueryKeyFactory } from '$lib/queries/spotify/SpotifyQueryKeyFactory';
 
 type SourcePlaylistSource = components['schemas']['SourceName'];
 
@@ -38,7 +38,9 @@ async function invalidateConnectionAndPlaylists(service?: string): Promise<void>
 		});
 	}
 	if (service === 'spotify') {
-		await invalidateQueriesWithPersister({ queryKey: SPOTIFY_PLAYLISTS_KEY(authStore.user?.id) });
+		await invalidateQueriesWithPersister({
+			queryKey: SpotifyQueryKeyFactory.playlists(authStore.user?.id)
+		});
 	}
 }
 

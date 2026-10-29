@@ -7,6 +7,7 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
+import { everyScope } from '$lib/queries/keys';
 
 export type ProwlarrConnectionSettings = components['schemas']['ProwlarrConnection'];
 
@@ -28,7 +29,7 @@ async function invalidateProwlarr() {
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbd() });
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbdStatus() });
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
-	await invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix });
+	await invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature));
 }
 
 export function saveProwlarrConfigMutation() {

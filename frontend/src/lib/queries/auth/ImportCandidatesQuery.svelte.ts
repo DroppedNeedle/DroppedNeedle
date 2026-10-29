@@ -13,7 +13,7 @@ export const getImportCandidatesQuery = (
 	userId: () => string | null | undefined
 ) =>
 	createQuery(() => ({
-		queryKey: AuthQueryKeyFactory.importCandidates(provider(), userId()),
+		queryKey: AuthQueryKeyFactory.importCandidates(userId(), provider()),
 		enabled: enabled(),
 		queryFn: ({ signal }) =>
 			api.v3.GET(

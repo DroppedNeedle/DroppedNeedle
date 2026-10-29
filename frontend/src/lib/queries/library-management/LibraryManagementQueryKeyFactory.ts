@@ -1,4 +1,4 @@
-import { userIdSegment } from '$lib/queries/userKeySegment';
+import { key, userScope } from '../keys';
 import type { LibraryManagementHistoryParams, LibraryManagementPlanItemParams } from './types';
 
 const normalizedHistory = (params: LibraryManagementHistoryParams) => ({
@@ -26,54 +26,50 @@ const normalizedItems = (params: LibraryManagementPlanItemParams) => ({
 	changeKind: params.changeKind ?? null
 });
 
+type UserId = string | null | undefined;
+
 export const LibraryManagementQueryKeyFactory = {
-	prefix: ['library-management'] as const,
-	user: (userId: string | null | undefined) =>
-		[...LibraryManagementQueryKeyFactory.prefix, userIdSegment(userId)] as const,
-	settings: (userId: string | null | undefined) =>
+	user: (userId: UserId) => key(userScope(userId), 'library-management'),
+	settings: (userId: UserId) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'settings'] as const,
-	profile: (userId: string | null | undefined, profileId: string) =>
+	profile: (userId: UserId, profileId: string) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'profiles', profileId] as const,
-	presetDiff: (userId: string | null | undefined, profileId: string) =>
+	presetDiff: (userId: UserId, profileId: string) =>
 		[...LibraryManagementQueryKeyFactory.profile(userId, profileId), 'preset-diff'] as const,
-	tagEditor: (userId: string | null | undefined, trackId: string) =>
+	tagEditor: (userId: UserId, trackId: string) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'tag-editor', trackId] as const,
-	previewsPrefix: (userId: string | null | undefined) =>
+	previewsPrefix: (userId: UserId) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'previews'] as const,
-	preview: (userId: string | null | undefined, jobId: string) =>
+	preview: (userId: UserId, jobId: string) =>
 		[...LibraryManagementQueryKeyFactory.previewsPrefix(userId), jobId] as const,
-	previewItems: (
-		userId: string | null | undefined,
-		jobId: string,
-		params: LibraryManagementPlanItemParams
-	) =>
+	previewItems: (userId: UserId, jobId: string, params: LibraryManagementPlanItemParams) =>
 		[
 			...LibraryManagementQueryKeyFactory.preview(userId, jobId),
 			'items',
 			normalizedItems(params)
 		] as const,
-	activationPreview: (userId: string | null | undefined, jobId: string) =>
+	activationPreview: (userId: UserId, jobId: string) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'activation-previews', jobId] as const,
-	activationHealth: (userId: string | null | undefined) =>
+	activationHealth: (userId: UserId) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'activation-health'] as const,
-	placement: (userId: string | null | undefined) =>
+	placement: (userId: UserId) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'placement'] as const,
-	operationsPrefix: (userId: string | null | undefined) =>
+	operationsPrefix: (userId: UserId) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'operations'] as const,
-	operations: (userId: string | null | undefined, params: LibraryManagementHistoryParams) =>
+	operations: (userId: UserId, params: LibraryManagementHistoryParams) =>
 		[
 			...LibraryManagementQueryKeyFactory.operationsPrefix(userId),
 			'history',
 			normalizedHistory(params)
 		] as const,
-	operation: (userId: string | null | undefined, jobId: string) =>
+	operation: (userId: UserId, jobId: string) =>
 		[...LibraryManagementQueryKeyFactory.operationsPrefix(userId), jobId] as const,
-	operationResults: (userId: string | null | undefined, jobId: string, limit: number) =>
+	operationResults: (userId: UserId, jobId: string, limit: number) =>
 		[...LibraryManagementQueryKeyFactory.operation(userId, jobId), 'results', { limit }] as const,
-	recovery: (userId: string | null | undefined) =>
+	recovery: (userId: UserId) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'recovery'] as const,
-	automaticSkipped: (userId: string | null | undefined) =>
+	automaticSkipped: (userId: UserId) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'automatic-skipped'] as const,
-	takeovers: (userId: string | null | undefined) =>
+	takeovers: (userId: UserId) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'takeovers'] as const
 };

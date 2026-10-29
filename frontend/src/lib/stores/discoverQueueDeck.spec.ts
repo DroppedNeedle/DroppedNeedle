@@ -50,7 +50,7 @@ vi.mock('$lib/queries/discover/DiscoverDemand.svelte', () => ({
 	recordDiscoverActivity: vi.fn().mockResolvedValue(undefined)
 }));
 vi.mock('$lib/queries/musicbrainz/sourceScope.svelte', () => ({
-	musicBrainzSourceKey: () => ({ source_mode: 'brainzmash', source_id: 'source-a', generation: 1 }),
+	musicBrainzSourceStamp: () => 'brainzmash:source-a:1',
 	subscribeMusicBrainzSourceScope: () => () => {},
 	watchMusicBrainzSourceScope: () => () => {}
 }));

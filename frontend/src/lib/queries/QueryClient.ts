@@ -18,16 +18,20 @@ import {
 } from './IndexedDbPersister.svelte';
 import { createPersistedQueryPersister } from './persistedCache';
 import {
-	musicBrainzSourceKey,
-	subscribeMusicBrainzSourceScope,
-	type MusicBrainzSourceKey
+	musicBrainzSourceStamp,
+	subscribeMusicBrainzSourceScope
 } from './musicbrainz/sourceScope.svelte';
-import { getDownloadScope, subscribeDownloadRoleChange } from './downloads/downloadScope.svelte';
+import { subscribeDownloadRoleChange } from './downloads/downloadScope.svelte';
 import { DownloadQueryKeyFactory } from './downloads/DownloadQueryKeyFactory';
 import { STALE_DEFAULT } from './staleTime';
 import { recordServiceStatus } from '$lib/stores/serviceStatus';
 
-const queryPersister = createPersistedQueryPersister(createIDBStorage(isCurrentQueryScope));
+// The MusicBrainz source the cached provider answers were read under, once any was.
+let sourceInUse: string | null = null;
+const queryPersister = createPersistedQueryPersister(
+	createIDBStorage(),
+	() => (sourceInUse = musicBrainzSourceStamp())
+);
 
 // Both helpers act on the app's client unless given one. A mutation or page
 // passes the client it took from context (`useQueryClient()`), so the change
@@ -45,13 +49,13 @@ export const setQueryDataWithPersister = async <
 	options?: SetDataOptions,
 	client: QueryClient = queryClient
 ) => {
-	if (!isCurrentQueryScope({ queryKey })) return;
 	await client.setQueryData<TQueryFnData, TTaggedQueryKey, TInferredQueryFnData>(
 		queryKey,
 		updater,
 		options
 	);
-	await queryPersister.persistQueryByKey(queryKey, client);
+	const query = client.getQueryCache().find({ queryKey, exact: true });
+	if (query) await queryPersister.save(query);
 };
 
 export const invalidateQueriesWithPersister = async <TTaggedQueryKey extends QueryKey = QueryKey>(
@@ -71,9 +75,13 @@ export const invalidateQueriesWithPersister = async <TTaggedQueryKey extends Que
 	let persistedFailure: unknown;
 	let persistedFailed = false;
 	if (opts?.removePersisted) {
+		// TanStack removes every saved row for a filter without a key, so a
+		// filter by predicate names its saved rows itself.
 		const persistedRemoval = opts.persistedPredicate
 			? removePersistedQueries(opts.persistedPredicate)
-			: queryPersister.removeQueries(filters);
+			: filters?.queryKey
+				? queryPersister.removeQueries(filters)
+				: Promise.reject(new Error('Saved rows need a key or a persisted predicate'));
 		try {
 			await persistedRemoval;
 		} catch (error) {
@@ -98,122 +106,31 @@ export const invalidateQueriesWithPersister = async <TTaggedQueryKey extends Que
 	if (activeFailed) throw activeFailure;
 };
 
-const MUSICBRAINZ_ARTIST_QUERY_SEGMENTS: Record<string, true> = {
-	extended: true,
-	releases: true
-};
-const MUSICBRAINZ_SEARCH_QUERY_SEGMENTS: Record<string, true> = {
-	artists: true,
-	albums: true,
-	suggestions: true
-};
-const MUSICBRAINZ_DISCOVER_QUERY_SEGMENTS: Record<string, true> = {
-	radio: true,
-	'playlist-suggestions': true
-};
-
-function providerSourceKey(queryKey: readonly unknown[]): MusicBrainzSourceKey | undefined {
-	return queryKey.find(
-		(part): part is MusicBrainzSourceKey =>
-			typeof part === 'object' &&
-			part !== null &&
-			'source_mode' in part &&
-			typeof part.source_mode === 'string' &&
-			'source_id' in part &&
-			typeof part.source_id === 'string' &&
-			'generation' in part &&
-			typeof part.generation === 'number' &&
-			'user_id' in part &&
-			(typeof part.user_id === 'string' || part.user_id === null)
-	);
-}
-
-function isCurrentQueryScope(query: { queryKey: readonly unknown[] }): boolean {
-	const [root, section, userId, role, generation] = query.queryKey;
-	if (root === 'downloads' && section === 'tasks') {
-		const current = getDownloadScope();
-		return (
-			current.userId !== null &&
-			userId === current.userId &&
-			role === current.role &&
-			generation === current.generation
-		);
-	}
-	if (!isMusicBrainzProviderQuery(query)) return true;
-	const source = providerSourceKey(query.queryKey);
-	const current = musicBrainzSourceKey();
-	return (
-		source !== undefined &&
-		current.source_id !== '' &&
-		source.user_id === current.user_id &&
-		source.source_mode === current.source_mode &&
-		source.source_id === current.source_id &&
-		source.generation === current.generation
-	);
-}
-
-function isMusicBrainzProviderQuery(query: { queryKey: readonly unknown[] }): boolean {
-	if (providerSourceKey(query.queryKey)) return true;
-	const [root, second, third, fourth] = query.queryKey;
-	if (root === 'artist') {
-		if (query.queryKey.length === 2) return true;
-		if (typeof second === 'object' && second !== null) {
-			if (query.queryKey.length === 3) return true;
-			return typeof fourth === 'string' && MUSICBRAINZ_ARTIST_QUERY_SEGMENTS[fourth] === true;
-		}
-		return typeof third === 'string' && MUSICBRAINZ_ARTIST_QUERY_SEGMENTS[third] === true;
-	}
-	if (root === 'albums') return second === 'editions';
-	if (root === 'search') {
-		const segment = typeof third === 'string' ? third : fourth;
-		return typeof segment === 'string' && MUSICBRAINZ_SEARCH_QUERY_SEGMENTS[segment] === true;
-	}
-	if (root === 'discover') {
-		const segment = typeof third === 'string' ? third : fourth;
-		// The home response intentionally mixes library/user sections with provider-derived
-		// recommendations, so its whole user-keyed payload is a correctness boundary.
-		if (typeof segment !== 'string') {
-			return query.queryKey.length === 2 || (typeof third === 'object' && third !== null);
-		}
-		return MUSICBRAINZ_DISCOVER_QUERY_SEGMENTS[segment] === true;
-	}
-	if (root === 'home') {
-		// Home's source-scoped payload mixes provider recommendations with local sections.
-		return typeof third === 'object' && third !== null;
-	}
-	return false;
-}
+const isProviderQuery = (query: { meta?: { provider?: string } }) =>
+	query.meta?.provider === 'musicbrainz';
 
 /**
- * A MusicBrainz source switch invalidates provider-bearing artist/album/search/discovery
- * queries. The discover home response is deliberately swept whole because it mixes
- * provider recommendations with user/library sections; local search, discovery batches,
- * integrations, and other user data stay outside this boundary. Persisted provider rows
- * are removed because their source provenance is no longer valid.
+ * Refreshes every answer built from the MusicBrainz source and removes their
+ * saved copies. Other data stays.
  */
 export const invalidateMusicBrainzProviderQueries = async (): Promise<void> => {
-	await invalidateQueriesWithPersister({ predicate: isMusicBrainzProviderQuery }, undefined, {
+	await invalidateQueriesWithPersister({ predicate: isProviderQuery }, undefined, {
 		removePersisted: true,
-		persistedPredicate: isMusicBrainzProviderQuery
+		persistedPredicate: (row) => row.provider !== undefined
 	});
 };
-subscribeMusicBrainzSourceScope((next, previous) => {
-	if (
-		next.userId === null ||
-		next.userId !== previous.userId ||
-		(next.sourceMode === previous.sourceMode &&
-			next.sourceId === previous.sourceId &&
-			next.generation === previous.generation)
-	) {
-		return;
-	}
-	const obsolete = {
-		predicate: (query: { queryKey: readonly unknown[] }) =>
-			isMusicBrainzProviderQuery(query) && !isCurrentQueryScope(query)
-	};
-	void queryClient.cancelQueries(obsolete);
-	queryClient.removeQueries(obsolete);
-	void removePersistedQueries(obsolete.predicate).catch(() => undefined);
+
+// A source switch resets the provider answers in memory, so the screens ask
+// again, and removes saved answers of any other source. A saved answer names
+// its source, so one from before the switch is never restored after it.
+subscribeMusicBrainzSourceScope((next) => {
+	const stamp = musicBrainzSourceStamp();
+	if (next.userId === null || sourceInUse === null || stamp === sourceInUse) return;
+	sourceInUse = stamp;
+	void queryClient.resetQueries({ predicate: isProviderQuery }).catch(() => undefined);
+	void removePersistedQueries(
+		(row) => row.provider !== undefined && row.provider !== `musicbrainz:${stamp}`
+	).catch(() => undefined);
 });
 
 export const queryClient = new QueryClient({
@@ -234,20 +151,30 @@ export const queryClient = new QueryClient({
 
 subscribeDownloadRoleChange((userId) => {
 	const filters = { queryKey: DownloadQueryKeyFactory.tasksPrefix(userId) };
-	// Cancellation fences transport and persister completion before old scope removal.
+	// Cancelling first keeps a late answer for the old role out of the cache.
 	void queryClient.cancelQueries(filters);
 	queryClient.removeQueries(filters);
-	void invalidateQueriesWithPersister(filters, undefined, { removePersisted: true }).catch(
-		() => undefined
-	);
 });
 
 /**
- * Drop ALL cached query data on login / logout / user-switch: QueryClient +
- * IndexedDB persister form one browser-wide cache with no user dimension, so
- * personalized data would otherwise leak across users sharing a browser.
+ * Drop ALL cached query data on login / logout / user-switch. Keys are scoped
+ * by user, so this is the backstop, not the only guard.
  */
 export const resetQueryCacheForUserSwitch = async (): Promise<void> => {
 	queryClient.clear();
 	await clearPersistedQueryCache();
 };
+
+// Long enough for the first page to paint from the saved answers first.
+const GC_DELAY_MS = 5_000;
+let collectedFor: string | null = null;
+
+/**
+ * Removes saved answers past their age or from an older cache version, once
+ * per signed-in user (at start, and after each sign-in).
+ */
+export function collectPersistedGarbage(userId: string): void {
+	if (collectedFor === userId) return;
+	collectedFor = userId;
+	setTimeout(() => void queryPersister.persisterGc().catch(() => undefined), GC_DELAY_MS);
+}

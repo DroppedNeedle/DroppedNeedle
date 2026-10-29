@@ -2,6 +2,7 @@ import { page } from 'vitest/browser';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { PlaylistDetailV3 } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
+import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 
 const mockShareMutate = vi.fn();
 const mockDeleteMutate = vi.fn();
@@ -36,7 +37,7 @@ vi.mock('$lib/queries/playlists/PlaylistV3Queries.svelte', () => ({
 	}),
 	isRedactedPlaylistV3: () => false,
 	getPlaylistSourcesV3QueryOptions: (userId: string | undefined, id: string) => ({
-		queryKey: ['playlists', userId ?? null, 'sources', id],
+		queryKey: PlaylistQueryKeyFactory.sources(userId, id),
 		queryFn: async () => (await mockResolveMutate(id)).sources
 	})
 }));
@@ -254,7 +255,7 @@ describe('Playlist detail page', () => {
 		// Empty resolve maps are never fresh, so the kept answer is dropped.
 		await vi.waitFor(() => {
 			expect(mockInvalidate).toHaveBeenCalledWith(
-				{ queryKey: ['playlists', null, 'sources', 'pl-1'], exact: true },
+				{ queryKey: PlaylistQueryKeyFactory.sources(undefined, 'pl-1'), exact: true },
 				undefined,
 				{ removePersisted: true }
 			);

@@ -69,13 +69,6 @@ beforeEach(() => {
 	setAdmin(true);
 });
 
-describe('ListenBrainzQueryKeyFactory', () => {
-	it('keys the connection under settings', () => {
-		expect(ListenBrainzQueryKeyFactory.prefix).toEqual(['settings']);
-		expect(ListenBrainzQueryKeyFactory.connection()).toEqual(['settings', 'listenbrainz']);
-	});
-});
-
 describe('ListenBrainz queries', () => {
 	it('reads the connection endpoint and forwards the abort signal', async () => {
 		mockGet.mockResolvedValue({ username: '', user_token: '', enabled: false });

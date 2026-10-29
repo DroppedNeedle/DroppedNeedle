@@ -43,7 +43,10 @@ const cacheSettingsResponse = async (
 	}
 	setMusicBrainzSourceScope(data, onMutateResult.userId);
 	try {
-		await setQueryDataWithPersister(MusicBrainzQueryKeyFactory.settings(), data);
+		await setQueryDataWithPersister(
+			MusicBrainzQueryKeyFactory.settings(onMutateResult.userId),
+			data
+		);
 	} catch {
 		// Persisted settings are a cache optimization; a committed source response
 		// must still update the in-memory scope and let the caller finish its sweep.

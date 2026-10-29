@@ -1,8 +1,6 @@
-// Instance-wide admin settings, not per-user data: no userId segment
-// (same as SystemQueryKeyFactory.health). The login/logout cache clears
-// still sweep them on user switch, and the queries only run for
-// admins, so a persisted payload can never surface to a signed-out user.
+import { ADMIN, key } from '../keys';
+
+// The instance's ListenBrainz connection, an admin setting.
 export const ListenBrainzQueryKeyFactory = {
-	prefix: ['settings'] as const,
-	connection: () => [...ListenBrainzQueryKeyFactory.prefix, 'listenbrainz'] as const
+	connection: () => key(ADMIN, 'settings', 'listenbrainz')
 };

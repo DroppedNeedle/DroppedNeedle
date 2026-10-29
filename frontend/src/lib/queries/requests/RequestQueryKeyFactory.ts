@@ -1,27 +1,24 @@
-import { userIdSegment } from '../userKeySegment';
+import { key, userScope } from '../keys';
 import type { HistoryParams } from './endpoints';
 
-// userId scopes every key: the cache persists to IndexedDB across refresh on
-// shared browsers, and a keyless list would leak one user's requests to
-// another. Everything nests under `all` so one prefix invalidation sweeps
-// the whole request surface after any mutation.
+type UserId = string | null | undefined;
+
+// Every key is the caller's and nests under `all(userId)`, so one prefix
+// invalidation sweeps the whole request surface after any mutation.
 export const RequestQueryKeyFactory = {
-	all: ['requests'] as const,
-	active: (userId: string | null | undefined) =>
-		[...RequestQueryKeyFactory.all, 'active', userIdSegment(userId)] as const,
-	activeCount: (userId: string | null | undefined) =>
-		[...RequestQueryKeyFactory.all, 'active-count', userIdSegment(userId)] as const,
-	history: (userId: string | null | undefined, params: HistoryParams) =>
+	feature: 'requests',
+	all: (userId: UserId) => key(userScope(userId), 'requests'),
+	active: (userId: UserId) => [...RequestQueryKeyFactory.all(userId), 'active'] as const,
+	activeCount: (userId: UserId) => [...RequestQueryKeyFactory.all(userId), 'active-count'] as const,
+	history: (userId: UserId, params: HistoryParams) =>
 		[
-			...RequestQueryKeyFactory.all,
+			...RequestQueryKeyFactory.all(userId),
 			'history',
-			userIdSegment(userId),
 			params.page ?? 1,
 			params.pageSize ?? 20,
 			params.status ?? '',
 			params.sort ?? '',
 			params.kind ?? ''
 		] as const,
-	approvals: (userId: string | null | undefined) =>
-		[...RequestQueryKeyFactory.all, 'approvals', userIdSegment(userId)] as const
+	approvals: (userId: UserId) => [...RequestQueryKeyFactory.all(userId), 'approvals'] as const
 };

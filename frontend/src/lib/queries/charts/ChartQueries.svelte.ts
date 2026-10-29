@@ -4,6 +4,7 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import type { AlbumRef, ArtistRef, ListenSource, StatsRange } from '../discover/types';
 import { ChartQueryKeyFactory } from './ChartQueryKeyFactory';
 import { HOME_ENDPOINTS, type ChartKind, type ChartPageParams } from './endpoints';
+import { PERSIST } from '$lib/queries/persistedCache';
 
 type Getter<T> = () => T;
 export type ChartItem = AlbumRef | ArtistRef;
@@ -54,6 +55,7 @@ export const getChartOverviewQuery = (
 	getSource: Getter<ListenSource | null>
 ) =>
 	createQuery(() => ({
+		meta: PERSIST,
 		queryKey: ChartQueryKeyFactory.overview(authStore.user?.id, getChart(), getSource()),
 		queryFn: async ({ signal }): Promise<ChartOverview> => {
 			const chart = getChart();
@@ -78,6 +80,7 @@ export const getChartRangeQuery = (
 	getRange: Getter<StatsRange | null>
 ) =>
 	createInfiniteQuery(() => ({
+		meta: PERSIST,
 		queryKey: ChartQueryKeyFactory.range(
 			authStore.user?.id,
 			getChart(),

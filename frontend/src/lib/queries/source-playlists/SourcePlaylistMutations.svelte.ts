@@ -11,6 +11,7 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import type { SourcePlaylistSource } from '$lib/types';
 
 import { SourcePlaylistQueryKeyFactory } from './SourcePlaylistQueryKeyFactory';
+import { everyScope } from '$lib/queries/keys';
 
 // Copies one remote playlist into the caller's playlists. The new playlist
 // shows up in the playlist list, so the playlist root is refreshed with the
@@ -34,8 +35,8 @@ export const createSourcePlaylistImportMutation = (getSource: () => SourcePlayli
 					queryKey: RemoteQueryKeyFactory.source(userId, source)
 				}),
 				invalidateQueriesWithPersister({ queryKey: PlaylistQueryKeyFactory.root(userId) }),
-				invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix }),
-				invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all })
+				invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature)),
+				invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature))
 			]);
 		}
 	}));

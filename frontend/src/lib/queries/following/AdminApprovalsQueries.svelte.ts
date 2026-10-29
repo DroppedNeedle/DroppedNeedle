@@ -10,7 +10,7 @@ type Getter<T> = () => T;
 
 export const getAutoDownloadApprovalsQuery = (getEnabled: Getter<boolean>) =>
 	createQuery(() => ({
-		queryKey: FollowQueryKeyFactory.adminApprovals(),
+		queryKey: FollowQueryKeyFactory.adminApprovals(authStore.user?.id),
 		queryFn: ({ signal }) => api.v3.GET(FOLLOW_ENDPOINTS.adminApprovals(), { signal }),
 		enabled: getEnabled()
 	}));
@@ -18,7 +18,7 @@ export const getAutoDownloadApprovalsQuery = (getEnabled: Getter<boolean>) =>
 // The bulk "Lidarr Import" approval cards.
 export const getAutoDownloadApprovalBatchesQuery = (getEnabled: Getter<boolean>) =>
 	createQuery(() => ({
-		queryKey: FollowQueryKeyFactory.adminApprovalBatches(),
+		queryKey: FollowQueryKeyFactory.adminApprovalBatches(authStore.user?.id),
 		queryFn: ({ signal }) =>
 			api.v3.GET(FOLLOW_ENDPOINTS.adminApprovalBatches(), {
 				signal

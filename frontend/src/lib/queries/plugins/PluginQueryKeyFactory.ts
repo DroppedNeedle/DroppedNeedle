@@ -1,14 +1,13 @@
-import { userIdSegment } from '$lib/queries/userKeySegment';
+import { ADMIN, key, userScope } from '../keys';
 
-// Plugin list/config is global admin state, not user-dependent, so no userId segment.
-// Sources feed per-user acquisition surfaces (priority/review labels), so
-// sources()/ui() carry userId like the downloads keys.
+type UserId = string | null | undefined;
+
+// The plugin list and files are admin state. Sources and plugin panels feed
+// the caller's acquisition screens, so they are the caller's.
 export const PluginQueryKeyFactory = {
-	prefix: ['plugins'] as const,
-	list: () => [...PluginQueryKeyFactory.prefix, 'list'] as const,
-	files: (name: string) => [...PluginQueryKeyFactory.prefix, 'files', name] as const,
-	sources: (userId?: string) =>
-		[...PluginQueryKeyFactory.prefix, 'sources', userIdSegment(userId)] as const,
-	ui: (userId: string | null | undefined, name: string) =>
-		[...PluginQueryKeyFactory.prefix, 'ui', userIdSegment(userId), name] as const
+	feature: 'plugins',
+	list: () => key(ADMIN, 'plugins', 'list'),
+	files: (name: string) => key(ADMIN, 'plugins', 'files', name),
+	sources: (userId: UserId) => key(userScope(userId), 'plugins', 'sources'),
+	ui: (userId: UserId, name: string) => key(userScope(userId), 'plugins', 'ui', name)
 };

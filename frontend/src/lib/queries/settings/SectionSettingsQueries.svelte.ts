@@ -12,7 +12,7 @@ import { FollowQueryKeyFactory } from '$lib/queries/following/FollowQueryKeyFact
 import { PLEX_ENDPOINTS } from '$lib/queries/plex/endpoints';
 import { SPOTIFY_ENDPOINTS } from '$lib/queries/spotify/endpoints';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { userIdSegment } from '../userKeySegment';
+import { SettingsQueryKeyFactory } from './SettingsQueryKeyFactory';
 import { SETTINGS_ENDPOINTS } from './endpoints';
 
 type Schemas = components['schemas'];
@@ -39,8 +39,7 @@ function section<T>(
 	afterSave?: () => Promise<unknown>
 ) {
 	const keys = {
-		prefix: ['settings', name] as const,
-		saved: (userId: string | null | undefined) => ['settings', name, userIdSegment(userId)] as const
+		saved: (userId: string | null | undefined) => SettingsQueryKeyFactory.section(userId, name)
 	};
 	return {
 		keys,

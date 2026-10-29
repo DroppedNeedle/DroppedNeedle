@@ -9,6 +9,7 @@ import type { AlbumBasicInfo, YouTubeLink, YouTubeTrackLink } from '$lib/types';
 import { AlbumQueryKeyFactory } from './AlbumQueryKeyFactory';
 import { fetchAlbumTracks } from './albumTracks';
 import { CATALOG_ENDPOINTS } from './endpoints';
+import { PERSIST, PERSIST_PROVIDER } from '$lib/queries/persistedCache';
 
 type UserId = string | null | undefined;
 
@@ -19,6 +20,7 @@ export const getAlbumBasicQuery = (getUserId: Getter<UserId>, getAlbumId: Getter
 	createQuery(() => {
 		const albumId = getAlbumId();
 		return {
+			meta: PERSIST_PROVIDER,
 			queryKey: AlbumQueryKeyFactory.basic(getUserId(), albumId),
 			enabled: !!albumId,
 			staleTime: STALE_SLOW,
@@ -31,6 +33,7 @@ export const getAlbumTracksQuery = (getUserId: Getter<UserId>, getAlbumId: Gette
 	createQuery(() => {
 		const albumId = getAlbumId();
 		return {
+			meta: PERSIST_PROVIDER,
 			queryKey: AlbumQueryKeyFactory.tracks(getUserId(), albumId),
 			enabled: !!albumId,
 			staleTime: STALE_SLOW,
@@ -52,6 +55,7 @@ export const getMoreByArtistQuery = (
 	createQuery(() => {
 		const { albumId, artistId, enabled } = getParams();
 		return {
+			meta: PERSIST_PROVIDER,
 			queryKey: AlbumQueryKeyFactory.moreByArtist(getUserId(), albumId, artistId),
 			enabled: enabled && !!albumId && !!artistId,
 			staleTime: STALE_SLOW,
@@ -67,6 +71,7 @@ export const getSimilarAlbumsQuery = (
 	createQuery(() => {
 		const { albumId, artistId, enabled } = getParams();
 		return {
+			meta: PERSIST_PROVIDER,
 			queryKey: AlbumQueryKeyFactory.similar(getUserId(), albumId, artistId),
 			enabled: enabled && !!albumId && !!artistId,
 			staleTime: STALE_SLOW,
@@ -85,6 +90,7 @@ export const getAlbumLastFmQuery = (
 		const artistName = params?.artistName ?? '';
 		const albumName = params?.albumName ?? '';
 		return {
+			meta: PERSIST,
 			queryKey: AlbumQueryKeyFactory.lastFm(albumId, artistName, albumName),
 			enabled: !!albumId,
 			staleTime: STALE_SLOW,
@@ -100,6 +106,7 @@ export const getAlbumYouTubeLinkQuery = (getAlbumId: Getter<string>) =>
 	createQuery(() => {
 		const albumId = getAlbumId();
 		return {
+			meta: PERSIST,
 			queryKey: AlbumQueryKeyFactory.youtubeLink(albumId),
 			enabled: !!albumId,
 			staleTime: STALE_SLOW,
@@ -112,6 +119,7 @@ export const getAlbumYouTubeTrackLinksQuery = (getAlbumId: Getter<string>) =>
 	createQuery(() => {
 		const albumId = getAlbumId();
 		return {
+			meta: PERSIST,
 			queryKey: AlbumQueryKeyFactory.youtubeTrackLinks(albumId),
 			enabled: !!albumId,
 			staleTime: STALE_SLOW,

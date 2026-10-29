@@ -121,47 +121,31 @@ beforeEach(() => {
 	mockV3Delete.mockResolvedValue({});
 });
 
-describe('ConnectionsQueryKeyFactory', () => {
-	it('scopes the key by userId and normalizes a missing id to null', () => {
-		expect(ConnectionsQueryKeyFactory.list('userA')).toEqual(['me', 'connections', 'userA']);
-		expect(ConnectionsQueryKeyFactory.list(undefined)).toEqual(['me', 'connections', null]);
-		expect(ConnectionsQueryKeyFactory.list('userB')).not.toEqual(
+describe('getConnectionsQuery', () => {
+	it('builds a userId-scoped key', () => {
+		expect((getConnectionsQuery() as unknown as Opts).queryKey).toEqual(
 			ConnectionsQueryKeyFactory.list('userA')
+		);
+	});
+
+	it('does not leak across a user switch (key re-derives from authStore)', () => {
+		expect((getConnectionsQuery() as unknown as Opts).queryKey).toEqual(
+			ConnectionsQueryKeyFactory.list('userA')
+		);
+		(authStore as { user: { id: string } | null }).user = { id: 'userB' };
+		expect((getConnectionsQuery() as unknown as Opts).queryKey).toEqual(
+			ConnectionsQueryKeyFactory.list('userB')
 		);
 	});
 });
 
-describe('getConnectionsQuery', () => {
-	it('builds a userId-scoped key', () => {
-		expect((getConnectionsQuery() as unknown as Opts).queryKey).toEqual([
-			'me',
-			'connections',
-			'userA'
-		]);
-	});
-
-	it('does not leak across a user switch (key re-derives from authStore)', () => {
-		expect((getConnectionsQuery() as unknown as Opts).queryKey).toEqual([
-			'me',
-			'connections',
-			'userA'
-		]);
-		(authStore as { user: { id: string } | null }).user = { id: 'userB' };
-		expect((getConnectionsQuery() as unknown as Opts).queryKey).toEqual([
-			'me',
-			'connections',
-			'userB'
-		]);
-	});
-});
-
 describe('mutation onSuccess invalidates the user-scoped key', () => {
-	it('disconnect invalidates ["me","connections","userA"]', async () => {
+	it("disconnect invalidates the caller's connections", async () => {
 		const spy = vi.spyOn(queryClient, 'invalidateQueries');
 		const m = createDisconnectMutation() as unknown as Opts;
 		await m.onSuccess!({ service: 'lastfm', deleted: true });
 		expect(spy.mock.calls[0][0]).toEqual(
-			expect.objectContaining({ queryKey: ['me', 'connections', 'userA'] })
+			expect.objectContaining({ queryKey: ConnectionsQueryKeyFactory.list('userA') })
 		);
 		spy.mockRestore();
 	});

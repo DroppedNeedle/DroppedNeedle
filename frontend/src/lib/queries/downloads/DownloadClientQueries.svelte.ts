@@ -7,6 +7,7 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
+import { everyScope } from '$lib/queries/keys';
 
 export type DownloadClientConfig = components['schemas']['SlskdConnection'];
 
@@ -37,7 +38,7 @@ export function saveDownloadClientConfig() {
 			await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
 			// Home reads integration_status.download_client; invalidate or its
 			// "Configure Download Client" prompt lingers until the cache expires
-			await invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix });
+			await invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature));
 		}
 	}));
 }

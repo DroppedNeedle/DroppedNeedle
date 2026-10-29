@@ -1,13 +1,17 @@
-import { userIdSegment } from '../userKeySegment';
+import { ADMIN, key, SHARED, userScope } from '../keys';
+
+type UserId = string | null | undefined;
 
 export const AuthQueryKeyFactory = {
-	prefix: ['auth'] as const,
-	providers: () => [...AuthQueryKeyFactory.prefix, 'providers'] as const,
-	/** Admin-only enumerated import candidates per provider. Kept under the `auth`
-	 *  prefix so the login/logout cache-clear covers it. The userId segment
-	 *  isolates persisted admin data across users sharing a browser. */
+	feature: 'auth',
+	providers: () => key(SHARED, 'auth', 'providers'),
 	/** Admin view of one user's quota; keyed by the user it describes. */
-	userQuota: (userId: string) => [...AuthQueryKeyFactory.prefix, 'user-quota', userId] as const,
-	importCandidates: (provider: string, userId: string | null | undefined) =>
-		[...AuthQueryKeyFactory.prefix, 'import', provider, userIdSegment(userId)] as const
+	userQuota: (userId: string) => key(ADMIN, 'auth', 'user-quota', userId),
+	/** The import candidates one admin enumerated from a provider. */
+	importCandidates: (userId: UserId, provider: string) =>
+		key(userScope(userId), 'auth', 'import', provider),
+	/** The server's accounts, as the admin reading them sees them. */
+	adminUsers: (userId: UserId) => key(userScope(userId), 'auth', 'admin-users'),
+	adminUsersPage: (userId: UserId, limit: number, offset: number) =>
+		[...AuthQueryKeyFactory.adminUsers(userId), { limit, offset }] as const
 };

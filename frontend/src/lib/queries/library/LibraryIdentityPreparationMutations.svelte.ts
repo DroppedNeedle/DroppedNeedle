@@ -12,6 +12,7 @@ import { invalidateAlbumEdition } from '$lib/queries/albums/EditionQueries.svelt
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 import { toOperationResponse } from './libraryOperationAdapters';
+import { everyScope } from '$lib/queries/keys';
 
 async function invalidateIdentityPreparation(
 	userId: string | undefined,
@@ -21,13 +22,13 @@ async function invalidateIdentityPreparation(
 		invalidateQueriesWithPersister({
 			queryKey: LibraryQueryKeyFactory.identityPreparationsPrefix(userId)
 		}),
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.activityPrefix() }),
+		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'activity')),
 		...(catalogChanged
 			? [
-					invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all }),
-					invalidateQueriesWithPersister({ queryKey: ArtistQueryKeyFactory.prefix }),
-					invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix }),
-					invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix }),
+					invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature)),
+					invalidateQueriesWithPersister(everyScope(ArtistQueryKeyFactory.feature)),
+					invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature)),
+					invalidateQueriesWithPersister(everyScope(DiscoverQueryKeyFactory.feature)),
 					invalidateQueriesWithPersister({
 						queryKey: SearchQueryKeyFactory.v3.root(authStore.user?.id)
 					})

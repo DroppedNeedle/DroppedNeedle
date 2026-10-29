@@ -8,9 +8,10 @@ import { toastStore } from '$lib/stores/toast';
 import { DropImportQueryKeyFactory } from './DropImportQueryKeyFactory';
 import { DROP_IMPORT_ENDPOINTS } from './endpoints';
 import type { DropImportJob } from './types';
+import { everyScope } from '$lib/queries/keys';
 
 const invalidateJobs = () =>
-	invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix });
+	invalidateQueriesWithPersister(everyScope(DropImportQueryKeyFactory.feature));
 
 /** An upload that sends nothing for this long has stalled. */
 const STALL_MS = 60_000;

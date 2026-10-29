@@ -5,12 +5,6 @@ import { v3 } from '$lib/api/v3/endpoint';
 import { STALE_SLOW } from '$lib/queries/staleTime';
 import { ArtistQueryKeyFactory } from './ArtistQueryKeyFactory';
 
-// The credit is stored with the artist's picture, so it is read once the
-// picture has loaded and lives as long as the artist's other page data.
-export const ArtistImageCreditQueryKeyFactory = {
-	credit: (mbid: string) => [...ArtistQueryKeyFactory.prefix, 'image-credit', mbid] as const
-};
-
 export const ARTIST_IMAGE_CREDIT_ENDPOINT = (mbid: string) =>
 	v3('/api/v3/covers/artist/{artist_id}/credit', { path: { artist_id: mbid } });
 
@@ -20,7 +14,7 @@ export const getArtistImageCreditQuery = (getParams: Getter<{ mbid: string; enab
 		return {
 			enabled: enabled && !!mbid,
 			staleTime: STALE_SLOW,
-			queryKey: ArtistImageCreditQueryKeyFactory.credit(mbid),
+			queryKey: ArtistQueryKeyFactory.imageCredit(mbid),
 			queryFn: async ({ signal }) => {
 				const answer = await api.v3.GET(ARTIST_IMAGE_CREDIT_ENDPOINT(mbid), { signal });
 				return answer.credit;

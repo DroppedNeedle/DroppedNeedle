@@ -11,7 +11,8 @@ const h = vi.hoisted(() => ({
 vi.mock('$lib/api/client', () => ({ api: { v3: { POST: h.post } } }));
 vi.mock('$lib/stores/authStore.svelte', () => ({ authStore: { user: h.user } }));
 vi.mock('$lib/queries/musicbrainz/sourceScope.svelte', () => ({
-	musicBrainzSourceKey: () => ({ user_id: h.user.id, ...h.source }),
+	musicBrainzSourceStamp: () =>
+		`${h.source.source_mode}:${h.source.source_id}:${h.source.generation}`,
 	setMusicBrainzSourceScope: h.setSource
 }));
 vi.mock('@tanstack/svelte-query', () => ({
