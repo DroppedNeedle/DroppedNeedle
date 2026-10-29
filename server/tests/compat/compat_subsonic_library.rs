@@ -445,7 +445,7 @@ async fn error_codes() {
 
 /// LRCLIB as the lyrics lookup sees it: synced and plain lyrics for "One"
 /// by U2, nothing for anything else.
-async fn lyrics_server() -> (String, tokio::task::JoinHandle<()>) {
+async fn lyrics_server() -> (String, droppedneedle_testkit::usenet::ServerGuard) {
     use axum::extract::Query;
     use axum::response::IntoResponse;
     use std::collections::HashMap;

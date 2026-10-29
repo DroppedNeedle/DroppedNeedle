@@ -23,6 +23,8 @@ use axum::{
 };
 use serde_json::{Value, json};
 
+use crate::usenet::ServerGuard;
+
 /// API key the Lidarr mock accepts.
 pub const LIDARR_KEY: &str = "lidarr-test-key";
 /// Version the Lidarr mock reports.
@@ -42,20 +44,20 @@ pub const LIDARR_MBID_NONE: &str = "22222222-2222-2222-2222-222222222222";
 /// Unmonitored mock MBID (never imported).
 pub const LIDARR_MBID_UNMONITORED: &str = "33333333-3333-3333-3333-333333333333";
 
-/// Loopback mock server handle.
+/// Loopback mock server handle. Dropping it stops the server.
 pub struct MockServer {
     /// Base URL (scheme + host + port, no trailing slash).
     pub base_url: String,
-    _guard: tokio::task::JoinHandle<()>,
+    _guard: ServerGuard,
 }
 
 /// Serve `app` on a loopback port.
 async fn serve(app: axum::Router) -> Result<MockServer, std::io::Error> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr: SocketAddr = listener.local_addr()?;
-    let guard = tokio::spawn(async move {
+    let guard = ServerGuard::new(tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap_or(());
-    });
+    }));
     Ok(MockServer {
         base_url: format!("http://{addr}"),
         _guard: guard,

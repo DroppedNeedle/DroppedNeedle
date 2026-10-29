@@ -24,11 +24,31 @@ use crate::scripted::ScriptedStatuses;
 // Shared plumbing.
 // ---------------------------------------------------------------------------
 
+/// Owns a loopback mock server's task. Dropping the guard aborts the task,
+/// so the server stops with it.
+pub struct ServerGuard(tokio::task::JoinHandle<()>);
+
+impl ServerGuard {
+    pub(crate) fn new(task: tokio::task::JoinHandle<()>) -> Self {
+        Self(task)
+    }
+
+    /// Stops the server now instead of when the guard drops.
+    pub fn abort(&self) {
+        self.0.abort();
+    }
+}
+
+impl Drop for ServerGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// Serve `router` on an ephemeral loopback port. Returns the base URL
-/// (`http://127.0.0.1:{port}`); dropping the handle stops the server.
-pub async fn serve_loopback(
-    router: Router,
-) -> Result<(String, tokio::task::JoinHandle<()>), String> {
+/// (`http://127.0.0.1:{port}`) and a guard: the server stops when the guard
+/// drops.
+pub async fn serve_loopback(router: Router) -> Result<(String, ServerGuard), String> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|error| format!("loopback bind: {error}"))?;
@@ -39,7 +59,7 @@ pub async fn serve_loopback(
     let handle = tokio::task::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
-    Ok((base, handle))
+    Ok((base, ServerGuard::new(handle)))
 }
 
 fn json_response(body: serde_json::Value) -> Response {

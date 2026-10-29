@@ -34,6 +34,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::scripted::ScriptedStatuses;
+use crate::usenet::ServerGuard;
 
 /// API key the mock accepts when strict mode is armed.
 pub const MOCK_API_KEY: &str = "slskd-test-key";
@@ -591,10 +592,12 @@ fn router(state: AppState) -> axum::Router {
 }
 
 /// A running mock slskd server on loopback, with scriptable fault modes.
+/// Dropping it stops the server.
 pub struct MockSlskd {
     state: AppState,
     statuses: ScriptedStatuses,
     addr: SocketAddr,
+    _guard: ServerGuard,
 }
 
 impl MockSlskd {
@@ -616,13 +619,14 @@ impl MockSlskd {
             .map_err(|error| format!("mock has an address: {error}"))?;
         let statuses = ScriptedStatuses::default();
         let app = statuses.layer(router(state.clone()));
-        tokio::spawn(async move {
+        let guard = ServerGuard::new(tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
-        });
+        }));
         Ok(Self {
             state,
             statuses,
             addr,
+            _guard: guard,
         })
     }
 

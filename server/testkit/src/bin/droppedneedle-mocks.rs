@@ -46,15 +46,21 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     Ok(parsed)
 }
 
-/// Start the mocks, which serve from their own tasks until the runtime
-/// ends, then wait for the stop signal.
+/// Start the mocks and hold them until the stop signal: each mock stops
+/// when it is dropped, so both live to the end of this function.
 async fn run(args: Args) -> Result<(), String> {
-    if let Some(addr) = args.slskd {
-        let mock = MockSlskd::start_at(addr).await?;
+    let slskd = match args.slskd {
+        Some(addr) => Some(MockSlskd::start_at(addr).await?),
+        None => None,
+    };
+    if let Some(mock) = &slskd {
         println!("slskd listening on {}", mock.base_url());
     }
-    if let Some(addr) = args.musicbrainz {
-        let mock = MockMusicBrainz::start_at(addr).await?;
+    let musicbrainz = match args.musicbrainz {
+        Some(addr) => Some(MockMusicBrainz::start_at(addr).await?),
+        None => None,
+    };
+    if let Some(mock) = &musicbrainz {
         println!("musicbrainz listening on {}", mock.base_url());
     }
     stop_signal().await

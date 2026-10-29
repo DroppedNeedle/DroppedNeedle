@@ -31,6 +31,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use crate::usenet::ServerGuard;
+
 /// The Radiohead artist id the catalog recordings describe.
 const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
 
@@ -244,8 +246,10 @@ fn router() -> axum::Router {
 }
 
 /// A running mock MusicBrainz. Point a client at [`Self::base_url`].
+/// Dropping it stops the server.
 pub struct MockMusicBrainz {
     addr: SocketAddr,
+    _guard: ServerGuard,
 }
 
 impl MockMusicBrainz {
@@ -262,12 +266,15 @@ impl MockMusicBrainz {
         let addr = listener
             .local_addr()
             .map_err(|error| format!("mock musicbrainz has an address: {error}"))?;
-        tokio::spawn(async move {
+        let guard = ServerGuard::new(tokio::spawn(async move {
             if let Err(error) = axum::serve(listener, router()).await {
                 eprintln!("mock musicbrainz stopped: {error}");
             }
-        });
-        Ok(Self { addr })
+        }));
+        Ok(Self {
+            addr,
+            _guard: guard,
+        })
     }
 
     /// The `/ws/2` base a client is configured with.

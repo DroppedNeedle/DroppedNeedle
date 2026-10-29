@@ -85,7 +85,7 @@ pub struct TestApp {
     server: Option<JoinHandle<bootstrap::Stopped>>,
     /// What the serving task logged at warning level and above.
     shutdown_log: Arc<Mutex<Vec<u8>>>,
-    sabnzbd_server: JoinHandle<()>,
+    sabnzbd_server: droppedneedle_testkit::usenet::ServerGuard,
     // Last, so the directory goes after everything that writes to it.
     _dir: ScratchDir,
 }

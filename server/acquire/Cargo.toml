@@ -48,3 +48,4 @@ test-support = [
 
 [dev-dependencies]
 droppedneedle-kernel = { workspace = true, features = ["test-support"] }
+droppedneedle-providers = { workspace = true, features = ["test-support"] }

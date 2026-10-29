@@ -307,7 +307,7 @@ async fn limited(indexer: &dyn Indexer, searches: impl Fn() -> usize) {
 }
 
 /// An indexer, its mock's call log, and the mock's server task.
-type Rig<I, M> = (I, M, tokio::task::JoinHandle<()>);
+type Rig<I, M> = (I, M, droppedneedle_testkit::usenet::ServerGuard);
 
 async fn newznab_on(scenario: NewznabScenario) -> Rig<NewznabIndexer, NewznabMock> {
     let mock = NewznabMock::new();

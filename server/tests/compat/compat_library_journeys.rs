@@ -3082,7 +3082,7 @@ async fn web_and_subsonic_apps_share_one_favorite() {
 /// lyrics for "Paranoid Android", nothing for anything else.
 async fn counted_lyrics_server() -> (
     String,
-    tokio::task::JoinHandle<()>,
+    droppedneedle_testkit::usenet::ServerGuard,
     std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) {
     use axum::extract::Query;

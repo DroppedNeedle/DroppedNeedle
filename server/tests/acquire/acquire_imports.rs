@@ -1496,7 +1496,9 @@ async fn save_slskd(auth: &AuthRig, url: &str) {
 }
 
 /// Serve the SABnzbd mock and save an enabled connection to it.
-async fn serve_sabnzbd(auth: &AuthRig) -> (SabnzbdMock, tokio::task::JoinHandle<()>) {
+async fn serve_sabnzbd(
+    auth: &AuthRig,
+) -> (SabnzbdMock, droppedneedle_testkit::usenet::ServerGuard) {
     let mock = SabnzbdMock::new();
     let (url, server) = serve_loopback(mock.router())
         .await

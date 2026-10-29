@@ -1263,7 +1263,7 @@ async fn prowlarr_apikey_never_logged() {
 
 /// An indexer that answers every path with `body`, streamed in pieces
 /// with no `Content-Length`, the way a hostile one would hide its size.
-async fn serve_streamed(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
+async fn serve_streamed(body: Vec<u8>) -> (String, droppedneedle_testkit::usenet::ServerGuard) {
     let body = std::sync::Arc::new(body);
     let router = axum::Router::new().fallback(move || {
         let body = body.clone();
