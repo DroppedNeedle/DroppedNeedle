@@ -156,7 +156,7 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     db.write(Lane::Foreground, "test.seed", |tx| {
         tx.execute(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-                 VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z')",
+                 VALUES ('user-1', 'Ada', 'user', 0)",
             [],
         )?;
         Ok::<_, droppedneedle_kernel::db::DbError>(())
@@ -258,7 +258,7 @@ async fn seed_user(db: &droppedneedle_kernel::db::Db) {
     db.write(Lane::Foreground, "test.seed", |tx| {
         tx.execute(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-                 VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z')",
+                 VALUES ('user-1', 'Ada', 'user', 0)",
             [],
         )?;
         Ok::<_, droppedneedle_kernel::db::DbError>(())

@@ -47,6 +47,9 @@ use super::report::{
 };
 use super::schedule_carry::carry_frequency;
 use super::validate::{REMOVED_SECTIONS, ValidationIssue, strip_removed, validate_export};
+use droppedneedle_auth::Role;
+use droppedneedle_auth::federated::password_import::HashScheme;
+use droppedneedle_auth::times::parse_iso_ms;
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Sections the export may carry (kept whole or in part). Present
@@ -962,8 +965,8 @@ struct UserRow {
     email: Option<String>,
     avatar_url: Option<String>,
     role: String,
-    created_at: String,
-    last_login_at: Option<String>,
+    created_at: i64,
+    last_login_at: Option<i64>,
     username: Option<String>,
     username_display: Option<String>,
 }
@@ -974,7 +977,9 @@ struct ProviderRow {
     provider: String,
     provider_uid: String,
     provider_data: Option<String>,
-    created_at: String,
+    password_hash: Option<String>,
+    hash_scheme: Option<String>,
+    created_at: i64,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -982,8 +987,8 @@ struct AppPasswordRow {
     user_id: String,
     name: String,
     secret_sha256: String,
-    created_at: String,
-    last_used_at: Option<String>,
+    created_at: i64,
+    last_used_at: Option<i64>,
     last_client: Option<String>,
     revoked: i64,
 }
@@ -992,8 +997,8 @@ struct AppPasswordRow {
 struct RecoveryRow {
     user_id: String,
     code_hash: String,
-    created_at: String,
-    expires_at: String,
+    created_at: i64,
+    expires_at: i64,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -1088,14 +1093,14 @@ impl DatabaseSnapshot {
         .fetch_all(&mut *conn)
         .await?;
         let providers: Vec<ProviderRow> = sqlx::query_as(
-            "SELECT user_id, provider, provider_uid, provider_data, created_at \
-             FROM auth_providers",
+            "SELECT user_id, provider, provider_uid, provider_data, password_hash, \
+             hash_scheme, created_at FROM auth_providers",
         )
         .fetch_all(&mut *conn)
         .await?;
         let app_passwords: Vec<AppPasswordRow> = sqlx::query_as(
             "SELECT user_id, name, secret_sha256, created_at, last_used_at, \
-             last_client, revoked FROM connect_app_passwords",
+             last_client, revoked FROM auth_app_passwords",
         )
         .fetch_all(&mut *conn)
         .await?;
@@ -1501,9 +1506,13 @@ impl Plan {
                 });
             }
             Some(existing) => {
+                let (provider_data, password) = provider_columns(provider);
+                let (scheme, hash) = password.unzip();
                 if existing.user_id == user_id
-                    && existing.provider_data == opt_str(provider, "provider_data")
-                    && existing.created_at == str_or(provider, "created_at", "")
+                    && existing.provider_data == provider_data
+                    && existing.hash_scheme == scheme
+                    && existing.password_hash == hash
+                    && existing.created_at == time_ms(provider, "created_at")
                 {
                     report.record("provider", key, "skipped_identical", String::new());
                 } else {
@@ -1540,6 +1549,7 @@ impl Plan {
             return;
         }
         let created_at = str_or(password, "created_at", "");
+        let created_ms = time_ms(password, "created_at");
         let key = format!("{user_id}|{name}|{created_at}");
         let secret_sha = unsealed
             .get(secret_path)
@@ -1553,7 +1563,7 @@ impl Plan {
             let same_row = rows.is_some_and(|existing| {
                 existing
                     .iter()
-                    .any(|row| row.secret_sha256 == *sha && row.created_at == created_at)
+                    .any(|row| row.secret_sha256 == *sha && row.created_at == created_ms)
             });
             !same_row && (snapshot.app_password_shas.contains(sha) || batch_shas.contains(sha))
         });
@@ -1582,11 +1592,11 @@ impl Plan {
             }
             Some(existing) => {
                 let identical = existing.iter().any(|row| {
-                    row.created_at == created_at
+                    row.created_at == created_ms
                         && secret_sha
                             .as_ref()
                             .is_some_and(|sha| *sha == row.secret_sha256)
-                        && row.last_used_at == opt_str(password, "last_used_at")
+                        && row.last_used_at == opt_time_ms(password, "last_used_at")
                         && row.last_client == opt_str(password, "last_client")
                         && row.revoked == i64::from(bool_or(password, "revoked", false))
                 });
@@ -1594,7 +1604,7 @@ impl Plan {
                     report.record("app_password", key, "skipped_identical", String::new());
                     return;
                 }
-                if existing.iter().any(|row| row.created_at == created_at) {
+                if existing.iter().any(|row| row.created_at == created_ms) {
                     report.record(
                         "app_password",
                         key,
@@ -1651,8 +1661,8 @@ impl Plan {
             }
             Some(existing) => {
                 if existing.code_hash == str_or(recovery, "code_hash", "")
-                    && existing.created_at == str_or(recovery, "created_at", "")
-                    && existing.expires_at == str_or(recovery, "expires_at", "")
+                    && existing.created_at == time_ms(recovery, "created_at")
+                    && existing.expires_at == time_ms(recovery, "expires_at")
                 {
                     report.record(
                         "recovery_code",
@@ -2089,11 +2099,52 @@ fn users_identical(existing: &UserRow, imported: &Value) -> bool {
     existing.display_name == str_or(imported, "display_name", "")
         && existing.email == opt_str(imported, "email")
         && existing.avatar_url == v3_avatar_url(&existing.id, opt_str(imported, "avatar_url"))
-        && existing.role == str_or(imported, "role", "user")
+        && existing.role == role_of(imported)
         && existing.username == opt_str(imported, "username")
         && existing.username_display == opt_str(imported, "username_display")
-        && existing.created_at == str_or(imported, "created_at", "")
-        && existing.last_login_at == opt_str(imported, "last_login_at")
+        && existing.created_at == time_ms(imported, "created_at")
+        && existing.last_login_at == opt_time_ms(imported, "last_login_at")
+}
+
+/// A v2 time as the auth tables store it: integer milliseconds, or none
+/// when it does not read as one (migration 0101's rule).
+fn opt_time_ms(record: &Value, field: &str) -> Option<i64> {
+    record
+        .get(field)
+        .and_then(Value::as_str)
+        .and_then(parse_iso_ms)
+}
+
+/// A v2 time that must have a value: one that does not read stores 0.
+fn time_ms(record: &Value, field: &str) -> i64 {
+    opt_time_ms(record, field).unwrap_or(0)
+}
+
+/// A v2 role as stored: an unknown role is `user`, as it always read.
+fn role_of(record: &Value) -> &'static str {
+    Role::from_stored(&str_or(record, "role", "user")).as_str()
+}
+
+/// A v2 provider row as stored: `(provider_data, (scheme, hash))`. A
+/// local row's `{"password_hash", "scheme"}` document becomes the password
+/// columns, an untagged one is bcrypt, and one that does not read holds no
+/// password; any other provider keeps `provider_data` as it is.
+fn provider_columns(record: &Value) -> (Option<String>, Option<(String, String)>) {
+    let data = opt_str(record, "provider_data");
+    if str_or(record, "provider", "") != "local" {
+        return (data, None);
+    }
+    let document: Option<Value> = data.and_then(|text| serde_json::from_str(&text).ok());
+    let password = document.as_ref().and_then(|document| {
+        let hash = document.get("password_hash")?.as_str()?;
+        let tag = document
+            .get("scheme")
+            .and_then(Value::as_str)
+            .unwrap_or(HashScheme::Bcrypt.as_tag());
+        let scheme = HashScheme::from_tag(tag)?;
+        Some((scheme.as_tag().to_owned(), hash.to_owned()))
+    });
+    (None, password)
 }
 
 fn str_or(record: &Value, field: &str, fallback: &str) -> String {
@@ -2156,9 +2207,9 @@ async fn insert_user(
     .bind(str_or(record, "display_name", ""))
     .bind(email)
     .bind(avatar_url)
-    .bind(str_or(record, "role", "user"))
-    .bind(str_or(record, "created_at", ""))
-    .bind(opt_str(record, "last_login_at"))
+    .bind(role_of(record))
+    .bind(time_ms(record, "created_at"))
+    .bind(opt_time_ms(record, "last_login_at"))
     .bind(username)
     .bind(opt_str(record, "username_display"))
     .execute(&mut **tx)
@@ -2171,16 +2222,21 @@ async fn insert_provider(
     record: &Value,
     user_id: &str,
 ) -> Result<(), ImportError> {
+    let (provider_data, password) = provider_columns(record);
+    let (scheme, hash) = password.unzip();
     sqlx::query(
         "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
-         provider_data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+         provider_data, password_hash, hash_scheme, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(uuid::Uuid::new_v4().to_string())
     .bind(user_id)
     .bind(str_or(record, "provider", ""))
     .bind(str_or(record, "provider_uid", ""))
-    .bind(opt_str(record, "provider_data"))
-    .bind(str_or(record, "created_at", ""))
+    .bind(provider_data)
+    .bind(hash)
+    .bind(scheme)
+    .bind(time_ms(record, "created_at"))
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -2197,7 +2253,7 @@ async fn insert_app_password(
     let ciphertext = crypto.encrypt(plaintext).map_err(|_| ImportError::Rekey)?;
     let sha = sha_hex(plaintext);
     sqlx::query(
-        "INSERT INTO connect_app_passwords (id, user_id, name, secret_sha256, \
+        "INSERT INTO auth_app_passwords (id, user_id, name, secret_sha256, \
          secret_encrypted, created_at, last_used_at, last_client, revoked) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
@@ -2206,8 +2262,8 @@ async fn insert_app_password(
     .bind(name)
     .bind(sha)
     .bind(ciphertext)
-    .bind(str_or(record, "created_at", ""))
-    .bind(opt_str(record, "last_used_at"))
+    .bind(time_ms(record, "created_at"))
+    .bind(opt_time_ms(record, "last_used_at"))
     .bind(opt_str(record, "last_client"))
     .bind(i64::from(bool_or(record, "revoked", false)))
     .execute(&mut **tx)
@@ -2226,8 +2282,8 @@ async fn insert_recovery(
     )
     .bind(user_id)
     .bind(str_or(record, "code_hash", ""))
-    .bind(str_or(record, "created_at", ""))
-    .bind(str_or(record, "expires_at", ""))
+    .bind(time_ms(record, "created_at"))
+    .bind(time_ms(record, "expires_at"))
     .execute(&mut **tx)
     .await?;
     Ok(())

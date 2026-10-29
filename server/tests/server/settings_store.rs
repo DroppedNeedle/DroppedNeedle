@@ -480,7 +480,7 @@ fn unchecked_instance(name: &str) -> (ScratchDir, AppConfig, Crypto) {
         .unwrap()
         .execute(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('u1', 'U', 'admin', '2026-01-01T00:00:00+00:00')",
+             VALUES ('u1', 'U', 'admin', 0)",
             [],
         )
         .unwrap();
@@ -554,8 +554,8 @@ async fn a_stale_value_beside_a_good_one_lets_the_right_key_start() {
         .unwrap();
     let db = rusqlite::Connection::open(&config.library_db_path).unwrap();
     db.execute(
-        "INSERT INTO connect_app_passwords (id, user_id, name, secret_sha256, \
-         secret_encrypted, created_at) VALUES ('p1', 'u1', 'phone', 'sha', ?1, 'now')",
+        "INSERT INTO auth_app_passwords (id, user_id, name, secret_sha256, \
+         secret_encrypted, created_at) VALUES ('p1', 'u1', 'phone', 'sha', ?1, 0)",
         [stale],
     )
     .unwrap();

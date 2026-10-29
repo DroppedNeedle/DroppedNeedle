@@ -36,6 +36,9 @@ pub enum Role {
 }
 
 impl Role {
+    /// Every role, in the order `auth_users.role`'s CHECK lists them.
+    pub const ALL: [Self; 3] = [Self::User, Self::Trusted, Self::Admin];
+
     /// Parse a stored or submitted role string. Unknown strings fail closed
     /// to `None` at API boundaries; see [`Role::from_stored`] for rows.
     pub fn parse(value: &str) -> Option<Self> {

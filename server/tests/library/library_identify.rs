@@ -1049,7 +1049,7 @@ impl Links {
         let db = droppedneedle_kernel::db::open_connection(&path).expect("side connection opens");
         db.execute(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
             [],
         )
         .expect("admin seeds");
@@ -2169,7 +2169,7 @@ fn a_continuation_backlog_moves_in_bounded_turns() {
     rig.db
         .execute(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('listener', 'Listener', 'user', '2026-01-01T00:00:00Z')",
+             VALUES ('listener', 'Listener', 'user', 0)",
             [],
         )
         .expect("listener seeds");
@@ -2343,7 +2343,7 @@ impl Rig {
     fn manifest(&self, album: &str, manifest: &str) {
         self.run(&format!(
             "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('curator-1', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+             VALUES ('curator-1', 'Curator', 'admin', 0); \
              INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
              release_group_mbid, album_title, album_artist_name, source_album_revision, \
              input_revision, content_hash, sealed_by_user_id, sealed_at) \
@@ -2547,7 +2547,7 @@ async fn a_withdrawn_match_keeps_one_undo() {
 
     rig.run(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('curator-1', 'Curator', 'admin', '2026-01-01T00:00:00Z');",
+         VALUES ('curator-1', 'Curator', 'admin', 0);",
     );
     let undone = rig.change(|tx| {
         droppedneedle_library::operations::choice::undo(tx, "album-1", "curator-1", 2.0)

@@ -23,11 +23,9 @@
 //!
 //! - Argon2id `m=19456, t=2, p=1` (OWASP minimum, verified 2026-09-28
 //!   against the live cheat sheet and the `argon2` 0.5 defaults).
-//! - Scheme dispatch on the explicit tag only (`bcrypt` | `argon2id`);
-//!   a missing tag on a local row reads as `bcrypt` (v2 rows predate it).
-//! - Local credential JSON is `{"password_hash": ..., "scheme": ...}`
-//!   in `auth_providers.provider_data` with `provider = 'local'`; no
-//!   migration adds a scheme column.
+//! - Scheme dispatch on the explicit tag only (`bcrypt` | `argon2id`).
+//! - The local credential is the `password_hash` and `hash_scheme`
+//!   columns of the `auth_providers` row with `provider = 'local'`.
 //! - `last_seen_at` rewrites at most once per 5 minutes per token, in a
 //!   background write the request does not wait for.
 //! - A login against a hash weaker than the pin writes the rehash in the
@@ -68,7 +66,7 @@ pub struct ProdAuth {
     pub users: Users,
     /// Federated import over `auth_users` / `auth_providers`.
     pub federated: FederatedUsers,
-    /// Compat secrets over `connect_app_passwords`.
+    /// Compat secrets over `auth_app_passwords`.
     pub app_passwords: AppPasswords,
     /// Single-active-code rows over `auth_password_recovery_codes`.
     pub recovery: RecoveryCodes,

@@ -468,8 +468,8 @@ async fn follow_poll_baselines_then_emits() {
     db.write("seed follows", |tx| {
         tx.execute_batch(
             "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
-               ('user-1', 'Admin', 'admin', '2024-01-01'), \
-               ('user-2', 'Pending', 'user', '2024-01-01'); \
+               ('user-1', 'Admin', 'admin', 0), \
+               ('user-2', 'Pending', 'user', 0); \
              INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
                artist_name, auto_download, followed_at, updated_at) VALUES \
                ('user-2', 'Artist-1', 'artist-1', 'The Band', 1, 1, 1), \
@@ -909,7 +909,7 @@ async fn seed_approved_follower(db: &AcquireDb) {
     db.write("seed follows", |tx| {
         tx.execute_batch(
             "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
-               ('user-2', 'Listener', 'user', '2024-01-01'); \
+               ('user-2', 'Listener', 'user', 0); \
              INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
                artist_name, auto_download, followed_at, updated_at) VALUES \
                ('user-2', 'Artist-1', 'artist-1', 'The Band', 1, 1, 1); \

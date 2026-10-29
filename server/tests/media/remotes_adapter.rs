@@ -62,7 +62,7 @@ impl Rig {
             .write(droppedneedle_kernel::db::Lane::Foreground, "seed", |tx| {
                 tx.execute(
                     "INSERT INTO auth_users (id, username, display_name, role, created_at) \
-                     VALUES (?1, 'ada', 'Ada', 'user', '2026-01-01T00:00:00Z')",
+                     VALUES (?1, 'ada', 'Ada', 'user', 0)",
                     [USER_ID],
                 )?;
                 Ok::<_, droppedneedle_kernel::db::DbError>(())

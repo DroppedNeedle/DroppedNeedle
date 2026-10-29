@@ -1,7 +1,7 @@
 //! Production compat password store: both protocols over the real users
 //! tables.
 //!
-//! Reads `connect_app_passwords` (decrypting `secret_encrypted` for the
+//! Reads `auth_app_passwords` (decrypting `secret_encrypted` for the
 //! Subsonic token scheme) and `auth_users` only. Account passwords and
 //! native tokens are unreachable here by construction, so presenting one
 //! fails exactly like an unknown credential. `note_use` throttles

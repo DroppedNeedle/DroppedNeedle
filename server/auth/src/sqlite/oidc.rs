@@ -5,7 +5,7 @@ use rusqlite::OptionalExtension as _;
 use super::{AuthDb, op_error, store_unavailable};
 use crate::federated::FederatedError;
 use crate::federated::oidc::STATE_TTL_SECS;
-use crate::times::{parse_iso, to_iso};
+use crate::times::{ms_to_secs, secs_to_ms};
 use droppedneedle_kernel::db::Lane;
 
 /// Short-lived OIDC PKCE states over `auth_oidc_states`.
@@ -38,7 +38,7 @@ impl OidcStates {
             // in the same transaction so the table stays small.
             tx.execute(
                 "DELETE FROM auth_oidc_states WHERE expires_at <= ?",
-                rusqlite::params![to_iso(now)],
+                rusqlite::params![secs_to_ms(now)],
             )
             .map_err(op_error)?;
             tx.execute(
@@ -46,8 +46,8 @@ impl OidcStates {
                  (state, created_at, expires_at, code_verifier) VALUES (?, ?, ?, ?)",
                 rusqlite::params![
                     state,
-                    to_iso(now),
-                    to_iso(now + STATE_TTL_SECS as i64),
+                    secs_to_ms(now),
+                    secs_to_ms(now + STATE_TTL_SECS as i64),
                     code_verifier,
                 ],
             )
@@ -64,7 +64,7 @@ impl OidcStates {
         let state = state.to_owned();
         let now = self.db.now_unix();
         lane.write(Lane::Foreground, "auth.oidc.consume", move |tx| {
-            let found: Option<(Option<String>, String)> = tx
+            let found: Option<(Option<String>, i64)> = tx
                 .query_row(
                     "SELECT code_verifier, expires_at FROM auth_oidc_states WHERE state = ?",
                     rusqlite::params![state],
@@ -77,10 +77,10 @@ impl OidcStates {
                 rusqlite::params![state],
             )
             .map_err(op_error)?;
-            let Some((verifier, expires_raw)) = found else {
+            let Some((verifier, expires_ms)) = found else {
                 return Ok(None);
             };
-            if parse_iso(&expires_raw).is_none_or(|at| at <= now) {
+            if ms_to_secs(expires_ms) <= now {
                 return Ok(None);
             }
             Ok(verifier)

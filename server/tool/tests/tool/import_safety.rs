@@ -18,7 +18,7 @@ async fn entity_counts(pool: &sqlx::SqlitePool) -> Vec<i64> {
     for table in [
         "auth_users",
         "auth_providers",
-        "connect_app_passwords",
+        "auth_app_passwords",
         "auth_password_recovery_codes",
         "user_followed_artists",
         "auto_download_approvals",
@@ -42,14 +42,14 @@ async fn mid_import_failure_rolls_back_everything() {
     let pool = migrated_pool().await;
     sqlx::query(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('prior', 'Prior', 'user', '')",
+         VALUES ('prior', 'Prior', 'user', 0)",
     )
     .execute(&pool)
     .await
     .unwrap();
     sqlx::query(
         "INSERT INTO auth_password_recovery_codes (user_id, code_hash, created_at, expires_at) \
-         VALUES ('prior', 'hash-u2', '', '')",
+         VALUES ('prior', 'hash-u2', 0, 0)",
     )
     .execute(&pool)
     .await
@@ -352,7 +352,7 @@ async fn import_serializes_with_a_concurrent_writer() {
         .execute_batch(&format!(
             "BEGIN IMMEDIATE;
              INSERT INTO auth_users (id, display_name, role, created_at)
-                 VALUES ('u1', 'Live', 'user', '');
+                 VALUES ('u1', 'Live', 'user', 0);
              INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower,
                  artist_name, auto_download, followed_at, updated_at)
                  VALUES ('u1', '{MBID}', '{MBID}', 'Live', 1, 1, 1);"

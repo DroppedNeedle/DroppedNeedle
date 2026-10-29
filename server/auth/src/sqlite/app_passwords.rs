@@ -1,17 +1,17 @@
-//! App-password rows over `connect_app_passwords`.
+//! App-password rows over `auth_app_passwords`.
 
 use rusqlite::OptionalExtension as _;
 use rusqlite::Transaction;
 
 use super::sql;
 use super::{AuthDb, WriteError, is_write_conflict, op_error, store_error};
-use crate::times::{parse_iso, to_iso};
+use crate::times::{ms_to_secs, secs_to_ms};
 use crate::users::models::AppPasswordRecord;
 use crate::users::stores::StoreError;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::db::statement::Statement;
 
-/// App-password rows over `connect_app_passwords`.
+/// App-password rows over `auth_app_passwords`.
 ///
 /// Verification stays decrypt-free: `secret_sha256` resolves the row and the
 /// touch stamps last use. `secret_encrypted` round-trips untouched so exports
@@ -23,16 +23,14 @@ pub struct AppPasswords {
 
 /// Map one row read with [`sql::APP_PASSWORD_COLUMNS`].
 fn map_app_password(row: &rusqlite::Row<'_>) -> rusqlite::Result<AppPasswordRecord> {
-    let created_raw: String = row.get(5)?;
-    let used_raw: Option<String> = row.get(6)?;
     Ok(AppPasswordRecord {
         id: row.get(0)?,
         user_id: row.get(1)?,
         name: row.get(2)?,
         secret_sha256: row.get(3)?,
         secret_encrypted: row.get(4)?,
-        created_at: parse_iso(&created_raw).unwrap_or(0),
-        last_used_at: used_raw.as_deref().and_then(parse_iso),
+        created_at: ms_to_secs(row.get(5)?),
+        last_used_at: row.get::<_, Option<i64>>(6)?.map(ms_to_secs),
         last_client: row.get(7)?,
     })
 }
@@ -92,8 +90,8 @@ impl AppPasswords {
                 row.name,
                 row.secret_sha256,
                 row.secret_encrypted,
-                to_iso(row.created_at),
-                row.last_used_at.map(to_iso),
+                secs_to_ms(row.created_at),
+                row.last_used_at.map(secs_to_ms),
                 row.last_client,
                 revoked,
             ],
@@ -193,7 +191,7 @@ impl AppPasswords {
             .write(Lane::Foreground, "auth.app_passwords.touch", move |tx| {
                 tx.execute(
                     sql::TOUCH_APP_PASSWORD.text(),
-                    rusqlite::params![to_iso(last_used_at), last_client, secret_sha256],
+                    rusqlite::params![secs_to_ms(last_used_at), last_client, secret_sha256],
                 )
                 .map_err(op_error)?;
                 Ok(())

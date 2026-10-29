@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 use droppedneedle_auth::compat_auth::subsonic::md5_hex;
 use droppedneedle_auth::federated::users::{FederatedProfile, find_or_create_federated_user};
 use droppedneedle_auth::prod::{
-    OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, Passwords, StoredPassword, Verdict, to_iso,
+    OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, Passwords, StoredPassword, Verdict,
 };
 use droppedneedle_auth::session::store::{NewSession, SessionKind, SessionRecord};
 use droppedneedle_auth::session::tokens;
@@ -154,8 +154,9 @@ fn md5_keeps_rfc_and_v2_spot_values() {
     );
 }
 
-/// A deployment with one local user whose `provider_data` is `local`.
-async fn deployment_with(tag: &str, local: String) -> E2e {
+/// A deployment with one local user whose password is `hash` under
+/// `scheme`.
+async fn deployment_with(tag: &str, scheme: &'static str, hash: &'static str) -> E2e {
     let e2e = E2e::open(tag).await;
     let auth_db = AuthDb::new(e2e.db(), Arc::new(SystemClock));
     Users::new(&auth_db)
@@ -165,9 +166,9 @@ async fn deployment_with(tag: &str, local: String) -> E2e {
     e2e.db()
         .write(Lane::Foreground, "test.seed", move |tx| {
             tx.execute(
-                "INSERT INTO auth_providers (id, user_id, provider, provider_uid, provider_data, \
-                 created_at) VALUES ('cred-1', 'user-1', 'local', 'ada', ?, '2023-11-14T22:13:20+00:00')",
-                params![local],
+                "INSERT INTO auth_providers (id, user_id, provider, provider_uid, hash_scheme, \
+                 password_hash, created_at) VALUES ('cred-1', 'user-1', 'local', 'ada', ?, ?, 0)",
+                params![scheme, hash],
             )?;
             Ok::<_, droppedneedle_kernel::db::DbError>(())
         })
@@ -191,40 +192,35 @@ async fn sign_in(e2e: &E2e, password: &str) -> StatusCode {
     status
 }
 
-/// `ada`'s local `provider_data` and `last_login_at`.
-async fn ada_row(e2e: &E2e) -> (serde_json::Value, Option<String>) {
-    let data: String = sqlx::query_scalar(
-        "SELECT provider_data FROM auth_providers WHERE user_id = 'user-1' AND provider = 'local'",
+/// `ada`'s local scheme, hash and `last_login_at`.
+async fn ada_row(e2e: &E2e) -> (String, String, Option<i64>) {
+    let (scheme, hash): (String, String) = sqlx::query_as(
+        "SELECT hash_scheme, password_hash FROM auth_providers \
+         WHERE user_id = 'user-1' AND provider = 'local'",
     )
     .fetch_one(e2e.pool())
     .await
     .unwrap();
-    let last_login: Option<String> =
+    let last_login: Option<i64> =
         sqlx::query_scalar("SELECT last_login_at FROM auth_users WHERE id = 'user-1'")
             .fetch_one(e2e.pool())
             .await
             .unwrap();
-    (serde_json::from_str(&data).unwrap(), last_login)
+    (scheme, hash, last_login)
 }
 
 #[tokio::test]
 async fn v2_bcrypt_rows_log_in_and_rehash_to_argon2id() {
-    // v2 verbatim shape: {"password_hash": ...} with no scheme tag.
-    let legacy = serde_json::json!({ "password_hash": LEGACY_BCRYPT }).to_string();
-    let e2e = deployment_with("bcrypt-login", legacy).await;
+    let e2e = deployment_with("bcrypt-login", "bcrypt", LEGACY_BCRYPT).await;
     assert_eq!(
         sign_in(&e2e, "wrong password here!").await,
         StatusCode::UNAUTHORIZED
     );
-    assert_eq!(ada_row(&e2e).await.0["password_hash"], LEGACY_BCRYPT);
+    assert_eq!(ada_row(&e2e).await.1, LEGACY_BCRYPT);
 
     assert_eq!(sign_in(&e2e, LEGACY_PASSWORD).await, StatusCode::OK);
-    let (stored, last_login) = ada_row(&e2e).await;
-    assert_eq!(
-        stored["scheme"], "argon2id",
-        "the login persisted the upgrade"
-    );
-    let hash = stored["password_hash"].as_str().unwrap();
+    let (scheme, hash, last_login) = ada_row(&e2e).await;
+    assert_eq!(scheme, "argon2id", "the login persisted the upgrade");
     assert!(
         hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
         "{hash}"
@@ -270,7 +266,7 @@ async fn login_write_needs_the_credential_it_verified() {
             .await
             .unwrap()
             .unwrap();
-        let last_login: Option<String> =
+        let last_login: Option<i64> =
             sqlx::query_scalar("SELECT last_login_at FROM auth_users WHERE id = 'user-ada'")
                 .fetch_one(fx.runtime().db().sqlx())
                 .await
@@ -303,7 +299,7 @@ async fn login_write_needs_the_credential_it_verified() {
         .await
         .unwrap();
     assert_eq!(written, LoginWrite::Stored);
-    assert_eq!(state().await, (1, rehash, Some(to_iso(TEST_NOW))));
+    assert_eq!(state().await, (1, rehash, Some(TEST_NOW * 1000)));
 }
 
 #[tokio::test]
@@ -822,7 +818,7 @@ async fn oidc_states_consume_once_and_expired_ones_are_swept() {
         .write(Lane::Foreground, "test.seed", |tx| {
             tx.execute(
                 "INSERT INTO auth_oidc_states (state, created_at, expires_at, code_verifier) \
-                 VALUES ('stale', '2020-01-01T00:00:00+00:00', '2020-01-01T00:10:00+00:00', 'v')",
+                 VALUES ('stale', 1577836800000, 1577837400000, 'v')",
                 params![],
             )?;
             Ok::<_, droppedneedle_kernel::db::DbError>(())

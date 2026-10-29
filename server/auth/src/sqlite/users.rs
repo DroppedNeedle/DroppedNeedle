@@ -6,14 +6,11 @@ use rusqlite::Transaction;
 
 use super::sessions::insert_token_row;
 use super::sql;
-use super::{
-    AuthDb, WriteError, is_write_conflict, op_error, parse_local_data, render_local_data,
-    store_error,
-};
+use super::{AuthDb, WriteError, is_write_conflict, op_error, store_error, stored_password};
 use crate::federated::users::ProviderBinding;
 use crate::session::login::{LocalCredential as LoginCredential, LoginError};
 use crate::session::store::SessionRecord;
-use crate::times::{parse_iso, to_iso};
+use crate::times::{ms_to_secs, secs_to_ms};
 use crate::users::models::{LocalCredential, UserRecord};
 use crate::users::roles::Role;
 use crate::users::stores::{RoleChange, StoreError, UserDeletion};
@@ -22,21 +19,17 @@ use droppedneedle_kernel::db::{DbError, Lane};
 
 /// Accounts and their credentials over `auth_users` plus `auth_providers`.
 ///
-/// The local credential lives in the `local` row's `provider_data` as
-/// `{"password_hash": ..., "scheme": ...}` (see [`parse_local_data`]); a
-/// missing scheme reads as `bcrypt` (v2 rows predate it). Renames sync the
-/// local `provider_uid` in the same transaction; deletes cascade through
-/// the baseline foreign keys.
+/// The local credential is the `local` row's `password_hash` and
+/// `hash_scheme`; a `local` row with neither holds no password. Renames
+/// sync the local `provider_uid` in the same transaction; deletes cascade
+/// through the foreign keys.
 #[derive(Clone, Debug)]
 pub struct Users {
     db: AuthDb,
 }
 
-/// Map one `auth_users` row read with [`sql::USER_COLUMNS`]. Unknown roles
-/// degrade to least privilege; unparseable display times degrade to 0.
+/// Map one `auth_users` row read with [`sql::USER_COLUMNS`].
 fn map_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserRecord> {
-    let created_raw: String = row.get(5)?;
-    let login_raw: Option<String> = row.get(6)?;
     let role_raw: String = row.get(4)?;
     Ok(UserRecord {
         id: row.get(0)?,
@@ -44,8 +37,8 @@ fn map_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserRecord> {
         email: row.get(2)?,
         avatar_url: row.get(3)?,
         role: Role::from_stored(&role_raw),
-        created_at: parse_iso(&created_raw).unwrap_or(0),
-        last_login_at: login_raw.as_deref().and_then(parse_iso),
+        created_at: ms_to_secs(row.get(5)?),
+        last_login_at: row.get::<_, Option<i64>>(6)?.map(ms_to_secs),
         username: row.get(7)?,
         username_display: row.get(8)?,
     })
@@ -373,23 +366,24 @@ impl Users {
             .await
     }
 
-    /// The local credential, when the account has one. A corrupt document
-    /// reads as none.
+    /// The local credential, when the account has one. A `local` row that
+    /// holds no password reads as none.
     pub async fn local_credential(&self, id: &str) -> Result<Option<LocalCredential>, StoreError> {
         let user_id = id.to_owned();
-        let row: Option<(String, Option<String>)> = self
+        type Row = (String, Option<String>, Option<String>);
+        let row: Option<Row> = self
             .db
             .read("auth.users.credential", move |conn| {
                 conn.prepare_cached(sql::LOCAL_CREDENTIAL.text())?
-                    .query_row([user_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .query_row([user_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
                     .optional()
             })
             .await?;
-        let Some((credential_id, Some(data))) = row else {
+        let Some((credential_id, scheme, hash)) = row else {
             return Ok(None);
         };
         Ok(
-            parse_local_data(&data).map(|(scheme, hash)| LocalCredential {
+            stored_password(scheme, hash).map(|(scheme, hash)| LocalCredential {
                 id: credential_id,
                 user_id: id.to_owned(),
                 scheme,
@@ -399,14 +393,16 @@ impl Users {
     }
 
     /// The stored credential for a lowercased username, for the sign-in to
-    /// verify. Unknown users, missing local rows and corrupt documents all
-    /// read as absent so the caller burns exactly one dummy verify.
+    /// verify. Unknown users, missing local rows and local rows with no
+    /// password all read as absent so the caller burns exactly one dummy
+    /// verify.
     pub async fn login_credential(
         &self,
         username_lc: &str,
     ) -> Result<Option<LoginCredential>, LoginError> {
         let username = username_lc.to_owned();
-        let row: Option<(String, String, Option<String>)> = self
+        type Row = (String, String, Option<String>, Option<String>);
+        let row: Option<Row> = self
             .db
             .db
             .read("auth.login.lookup", move |conn| {
@@ -414,7 +410,7 @@ impl Users {
                     .and_then(|mut statement| {
                         statement
                             .query_row([username], |row| {
-                                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
                             })
                             .optional()
                     })
@@ -428,10 +424,10 @@ impl Users {
                     LoginError::Unavailable
                 }
             })?;
-        let Some((user_id, display_name, data)) = row else {
+        let Some((user_id, display_name, scheme, hash)) = row else {
             return Ok(None);
         };
-        let Some((scheme, hash)) = data.as_deref().and_then(parse_local_data) else {
+        let Some((scheme, hash)) = stored_password(scheme, hash) else {
             return Ok(None);
         };
         Ok(Some(LoginCredential {
@@ -441,7 +437,7 @@ impl Users {
         }))
     }
 
-    /// Insert the local credential. Conflict when one already exists or the
+    /// Set the local credential. Conflict when one already exists or the
     /// `(local, username)` binding is taken.
     pub async fn insert_local_credential(
         &self,
@@ -531,11 +527,11 @@ impl Users {
     }
 
     /// Complete a recovery reset for an account with no local password:
-    /// consume the code, insert the credential and revoke every session of
+    /// consume the code, set the credential and revoke every session of
     /// the user, in one transaction. The code is the only authorisation
     /// here, so it is checked again inside the transaction. Returns false
     /// (and writes nothing) when the code with `code_hash` is gone or
-    /// expired at `now`, the account already has a local credential, or it
+    /// expired at `now`, the account already has a local password, or it
     /// has no username to sign in with.
     pub async fn complete_recovery_first_password(
         &self,
@@ -569,7 +565,7 @@ impl Users {
                     let consumed = tx
                         .execute(
                             sql::CONSUME_RECOVERY_CODE.text(),
-                            rusqlite::params![id, code_hash, to_iso(now)],
+                            rusqlite::params![id, code_hash, secs_to_ms(now)],
                         )
                         .map_err(op_error)?;
                     if consumed == 0 {
@@ -639,8 +635,8 @@ impl Users {
                 user.email,
                 user.avatar_url,
                 user.role.as_str(),
-                to_iso(user.created_at),
-                user.last_login_at.map(to_iso),
+                secs_to_ms(user.created_at),
+                user.last_login_at.map(secs_to_ms),
                 user.username,
                 user.username_display,
             ],
@@ -649,10 +645,11 @@ impl Users {
         Ok(())
     }
 
-    /// Insert the `local` provider row inside the caller's transaction; the
+    /// Set the local password inside the caller's transaction: a `local`
+    /// row that holds none gets it in place, else a row is inserted. The
     /// binding's uid is the account's username, read through `tx`. An
-    /// account with no username fails; a taken binding is
-    /// [`WriteError::Conflict`].
+    /// account with no username fails; a taken binding or an existing
+    /// password is [`WriteError::Conflict`].
     pub fn insert_local_credential_in(
         tx: &Transaction<'_>,
         credential: &LocalCredential,
@@ -673,15 +670,29 @@ impl Users {
                 cause: "cannot set a local password without a username".to_owned(),
             }));
         };
+        let filled = tx
+            .execute(
+                sql::FILL_EMPTY_LOCAL_CREDENTIAL.text(),
+                rusqlite::params![
+                    username,
+                    credential.hash,
+                    credential.scheme,
+                    credential.user_id
+                ],
+            )
+            .map_err(op_error)?;
+        if filled > 0 {
+            return Ok(());
+        }
         tx.execute(
-            sql::INSERT_PROVIDER.text(),
+            sql::INSERT_LOCAL_CREDENTIAL.text(),
             rusqlite::params![
                 credential.id,
                 credential.user_id,
-                "local",
                 username,
-                render_local_data(&credential.scheme, &credential.hash),
-                to_iso(created_at),
+                credential.hash,
+                credential.scheme,
+                secs_to_ms(created_at),
             ],
         )
         .map_err(op_error)?;
@@ -705,7 +716,7 @@ impl Users {
                 binding.provider,
                 binding.provider_uid,
                 provider_data,
-                to_iso(created_at),
+                secs_to_ms(created_at),
             ],
         )
         .map_err(op_error)?;
@@ -735,23 +746,17 @@ fn swap_local_hash(
     new_hash: &str,
 ) -> Result<bool, WriteError> {
     let current: Option<Option<String>> = tx
-        .query_row(sql::LOCAL_DATA.text(), rusqlite::params![id], |row| {
-            row.get(0)
+        .query_row(sql::LOCAL_PASSWORD.text(), rusqlite::params![id], |row| {
+            row.get(1)
         })
         .optional()
         .map_err(op_error)?;
-    let Some(Some(data)) = current else {
-        return Ok(false);
-    };
-    let Some((_, hash)) = parse_local_data(&data) else {
-        return Ok(false);
-    };
-    if hash != expected_hash {
+    if current.flatten().as_deref() != Some(expected_hash) {
         return Ok(false);
     }
     tx.execute(
-        sql::SET_LOCAL_DATA.text(),
-        rusqlite::params![render_local_data(scheme, new_hash), id],
+        sql::SET_LOCAL_PASSWORD.text(),
+        rusqlite::params![scheme, new_hash, id],
     )
     .map_err(op_error)?;
     Ok(true)

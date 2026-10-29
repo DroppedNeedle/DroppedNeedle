@@ -3815,7 +3815,7 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
 
@@ -3891,7 +3891,7 @@ async fn album_cleanup_survives_a_stop_after_the_removal() {
              release_group_mbid, decision_source, selected_at) \
              VALUES ('{album}', 'musicbrainz', 'rg-gone', 'manual', 0); \
              INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('fan', 'Fan', 'user', '2026-01-01T00:00:00Z'); \
+             VALUES ('fan', 'Fan', 'user', 0); \
              INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name, \
              album_title, status, created_at, updated_at) \
              VALUES ('task-old', 'fan', 'rg-gone', 'Band', 'LP', 'failed', 1767225600000, \
@@ -4129,7 +4129,7 @@ async fn put_back_refuses_an_occupied_path() {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
 
@@ -4212,7 +4212,7 @@ async fn a_stopped_removal_keeps_each_file_with_its_track() {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
     let conn = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
@@ -4374,7 +4374,7 @@ fn add_admin(library: &LibrarySetup) {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
 }
@@ -5276,7 +5276,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
     crate::common::library::operations(&library)
@@ -7180,7 +7180,7 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
     let settings = library
@@ -7269,7 +7269,7 @@ async fn a_management_job_whose_worker_died_is_finished_by_its_own_worker() {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
     let settings = library
@@ -7359,7 +7359,7 @@ async fn the_management_loop_recovers_at_start_and_wakes_on_enqueue() {
         .expect("album");
     db.run_sql(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+         VALUES ('admin', 'Admin', 'admin', 0)",
     )
     .expect("admin row");
     let settings = library
@@ -7618,7 +7618,7 @@ async fn library_management_preview_apply_undo() {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
     // A second profile names files after their title in place, so the
@@ -8310,7 +8310,7 @@ async fn library_management_tools_journey() {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
     crate::common::library::operations(&library)
@@ -9034,7 +9034,7 @@ async fn library_management_custom_edition_journey() {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
     crate::common::library::operations(&library)
@@ -9222,7 +9222,7 @@ async fn library_management_artwork_journey() {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
     crate::common::library::operations(&library)
@@ -9469,7 +9469,7 @@ impl ManagedLibrary {
             .db()
             .run_sql(
                 "INSERT INTO auth_users (id, display_name, role, created_at) \
-                 VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+                 VALUES ('admin', 'Admin', 'admin', 0)",
             )
             .expect("admin row");
         let mut settings = lm::initial_settings("");
@@ -11453,7 +11453,7 @@ async fn handing_every_album_back_takes_one_step_each() {
         .expect("db");
     db.execute_batch(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z'); \
+         VALUES ('admin', 'Admin', 'admin', 0); \
          INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
          SELECT id, 'files_changed', 1000 FROM local_albums; \
          DELETE FROM library_management_automatic_queue;",
@@ -11652,7 +11652,7 @@ async fn a_hand_back_that_cannot_read_the_files_keeps_the_mark() {
         .expect("db");
     db.execute_batch(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z'); \
+         VALUES ('admin', 'Admin', 'admin', 0); \
          INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
          SELECT id, 'files_changed', 1000 FROM local_albums;",
     )
@@ -12675,7 +12675,7 @@ async fn import_and_management_name_a_file_alike() {
         .db()
         .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+             VALUES ('admin', 'Admin', 'admin', 0)",
         )
         .expect("admin row");
     let mut settings = lm::initial_settings("");
@@ -13789,7 +13789,7 @@ async fn a_merge_places_files_on_the_edition_the_album_has() {
         let db = app.db();
         db.execute_batch(&format!(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+             VALUES ('curator', 'Curator', 'admin', 0); \
              INSERT INTO local_album_external_identities (local_album_id, provider, \
              release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
              selected_at, row_revision) VALUES ('{album_a}', 'musicbrainz', 'rg-1', '{REL_1}', \
@@ -13922,7 +13922,7 @@ async fn a_file_that_joins_while_musicbrainz_is_asked_is_placed_next() {
     let db = app.db();
     db.execute_batch(&format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+         VALUES ('curator', 'Curator', 'admin', 0); \
          INSERT INTO local_album_external_identities (local_album_id, provider, \
          release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
          selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-1', '{REL_1}', \
@@ -13999,7 +13999,7 @@ async fn chosen_album_at_rest(tag: &str) -> (Scratch, LibrarySetup, String, Vec<
         .db()
         .run_sql(&format!(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+             VALUES ('curator', 'Curator', 'admin', 0); \
              INSERT INTO local_album_external_identities (local_album_id, provider, \
              release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
              selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-1', '{REL_1}', \
@@ -14710,8 +14710,8 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     let db = scratch_db(&scratch);
     db.execute_batch(&format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
-         ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'), \
-         ('listener', 'Listener', 'user', '2026-01-01T00:00:00Z'); \
+         ('curator', 'Curator', 'admin', 0), \
+         ('listener', 'Listener', 'user', 0); \
          INSERT INTO local_album_external_identities (local_album_id, provider, \
          release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
          selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-1', '{REL_1}', \
@@ -15046,8 +15046,8 @@ async fn a_rated_track_continues_with_its_ratings() {
     let db = scratch_db(&scratch);
     db.execute_batch(&format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
-         ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'), \
-         ('listener', 'Listener', 'user', '2026-01-01T00:00:00Z'); \
+         ('curator', 'Curator', 'admin', 0), \
+         ('listener', 'Listener', 'user', 0); \
          INSERT INTO local_album_external_identities (local_album_id, provider, \
          release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
          selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-1', '{REL_1}', \
@@ -15218,7 +15218,7 @@ async fn retagged_without_ids(
     while library.identification.identify_tick().await > 0 {}
     db.execute_batch(&format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+         VALUES ('curator', 'Curator', 'admin', 0); \
          INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{}', 1);",
         old[0]
@@ -17088,7 +17088,7 @@ async fn an_approval_continues_a_track_once_its_files_are_placed() {
     assert_eq!(placement(&db, &copy).1, None, "the copy is not mapped yet");
     db.execute_batch(&format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+         VALUES ('curator', 'Curator', 'admin', 0); \
          INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{}', 1);",
         old[1]
@@ -17273,7 +17273,7 @@ async fn retag_pairs_list_join_and_dismiss() {
     db.execute_batch(
         &[
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z');"
+             VALUES ('curator', 'Curator', 'admin', 0);"
                 .to_owned(),
             choose("a-old", "rg-a", "'rel-a-old'"),
             choose("a-new", "rg-a", "'rel-a-new'"),
@@ -20097,7 +20097,7 @@ impl ManagedLibrary {
             .expect("album");
         let mut sql = format!(
             "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+             VALUES ('curator', 'Curator', 'admin', 0); \
              INSERT OR REPLACE INTO local_album_external_identities (local_album_id, provider, \
              release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
              selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-chosen', \

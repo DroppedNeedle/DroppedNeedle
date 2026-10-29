@@ -56,37 +56,45 @@ droppedneedle_kernel::sql! {
     pub(super) HELD_BY_MANAGEMENT_EXCLUSIONS = "SELECT 1 FROM library_management_exclusions \
         WHERE excluded_by_user_id = ?1 LIMIT 1";
 
-    /// Insert one provider row: a local credential or a sign-in binding.
+    /// Insert one sign-in binding, with its sealed token document or none.
     pub(super) INSERT_PROVIDER = "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
         provider_data, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+    /// Insert one local credential.
+    pub(super) INSERT_LOCAL_CREDENTIAL = "INSERT INTO auth_providers (id, user_id, provider, \
+        provider_uid, password_hash, hash_scheme, created_at) \
+        VALUES (?1, ?2, 'local', ?3, ?4, ?5, ?6)";
+    /// Give a local row that holds no password its first one, in place.
+    pub(super) FILL_EMPTY_LOCAL_CREDENTIAL = "UPDATE auth_providers SET provider_uid = ?1, \
+        password_hash = ?2, hash_scheme = ?3 \
+        WHERE user_id = ?4 AND provider = 'local' AND password_hash IS NULL";
     /// Bound provider names of one account.
     pub(super) USER_PROVIDERS = "SELECT provider FROM auth_providers WHERE user_id = ?1 \
         ORDER BY provider ASC";
     /// One account's local credential row.
-    pub(super) LOCAL_CREDENTIAL = "SELECT id, provider_data FROM auth_providers \
+    pub(super) LOCAL_CREDENTIAL = "SELECT id, hash_scheme, password_hash FROM auth_providers \
         WHERE user_id = ?1 AND provider = 'local'";
-    /// One account's local credential document.
-    pub(super) LOCAL_DATA = "SELECT provider_data FROM auth_providers \
+    /// One account's local credential: scheme and hash.
+    pub(super) LOCAL_PASSWORD = "SELECT hash_scheme, password_hash FROM auth_providers \
         WHERE user_id = ?1 AND provider = 'local'";
-    /// Replace one account's local credential document.
-    pub(super) SET_LOCAL_DATA = "UPDATE auth_providers SET provider_data = ?1 \
-        WHERE user_id = ?2 AND provider = 'local'";
+    /// Replace one account's local password.
+    pub(super) SET_LOCAL_PASSWORD = "UPDATE auth_providers SET hash_scheme = ?1, \
+        password_hash = ?2 WHERE user_id = ?3 AND provider = 'local'";
     /// Keep the local binding's uid on the username.
     pub(super) SET_LOCAL_UID = "UPDATE auth_providers SET provider_uid = ?1 \
         WHERE user_id = ?2 AND provider = 'local'";
     /// One sign-in binding by provider and provider-side id.
     pub(super) PROVIDER_BINDING = "SELECT id, user_id, provider, provider_uid FROM auth_providers \
         WHERE provider = ?1 AND provider_uid = ?2";
-    /// The sign-in lookup: the account and its local credential document.
-    pub(super) LOGIN_CREDENTIAL = "SELECT u.id, u.display_name, p.provider_data \
+    /// The sign-in lookup: the account and its local credential.
+    pub(super) LOGIN_CREDENTIAL = "SELECT u.id, u.display_name, p.hash_scheme, p.password_hash \
         FROM auth_users u \
         LEFT JOIN auth_providers p ON p.user_id = u.id AND p.provider = 'local' \
         WHERE u.username = ?1";
-    /// Whether a recovery code may create the account's first password: it
-    /// has a username and no local credential yet.
+    /// Whether a recovery code may set the account's first password: it
+    /// has a username and no local password yet.
     pub(super) FIRST_PASSWORD_READY = "SELECT username IS NOT NULL AND NOT EXISTS (SELECT 1 FROM \
-        auth_providers WHERE user_id = auth_users.id AND provider = 'local') \
-        FROM auth_users WHERE id = ?1";
+        auth_providers WHERE user_id = auth_users.id AND provider = 'local' \
+        AND password_hash IS NOT NULL) FROM auth_users WHERE id = ?1";
 
     /// Revoke every session of one account but the one named.
     pub(super) REVOKE_OTHER_SESSIONS = "UPDATE auth_tokens SET revoked = 1 \
@@ -98,40 +106,40 @@ droppedneedle_kernel::sql! {
     pub(super) fragment APP_PASSWORD_COLUMNS = "id, user_id, name, secret_sha256, \
         secret_encrypted, created_at, last_used_at, last_client";
     /// Live app passwords of one account.
-    pub(super) ACTIVE_APP_PASSWORD_COUNT = "SELECT COUNT(*) FROM connect_app_passwords \
+    pub(super) ACTIVE_APP_PASSWORD_COUNT = "SELECT COUNT(*) FROM auth_app_passwords \
         WHERE user_id = ?1 AND revoked = 0";
     /// Insert one app password.
-    pub(super) INSERT_APP_PASSWORD = "INSERT INTO connect_app_passwords (id, user_id, name, \
+    pub(super) INSERT_APP_PASSWORD = "INSERT INTO auth_app_passwords (id, user_id, name, \
         secret_sha256, secret_encrypted, created_at, last_used_at, last_client, revoked) \
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
     /// One app password by id, revoked or not.
     pub(super) APP_PASSWORD_BY_ID = "SELECT " + APP_PASSWORD_COLUMNS
-        + " FROM connect_app_passwords WHERE id = ?1";
+        + " FROM auth_app_passwords WHERE id = ?1";
     /// The live app password with one secret hash.
     pub(super) ACTIVE_APP_PASSWORD_BY_SHA256 = "SELECT " + APP_PASSWORD_COLUMNS
-        + " FROM connect_app_passwords WHERE secret_sha256 = ?1 AND revoked = 0";
+        + " FROM auth_app_passwords WHERE secret_sha256 = ?1 AND revoked = 0";
     /// Live app passwords of one account: oldest first, id tiebreak.
     pub(super) ACTIVE_APP_PASSWORDS_OF_USER = "SELECT " + APP_PASSWORD_COLUMNS
-        + " FROM connect_app_passwords WHERE user_id = ?1 AND revoked = 0 \
+        + " FROM auth_app_passwords WHERE user_id = ?1 AND revoked = 0 \
         ORDER BY created_at ASC, id ASC";
     /// Every live app password: owner, then age, then id.
     pub(super) ACTIVE_APP_PASSWORDS = "SELECT " + APP_PASSWORD_COLUMNS
-        + " FROM connect_app_passwords WHERE revoked = 0 \
+        + " FROM auth_app_passwords WHERE revoked = 0 \
         ORDER BY user_id ASC, created_at ASC, id ASC";
     /// Revoke one live app password.
-    pub(super) REVOKE_APP_PASSWORD = "UPDATE connect_app_passwords SET revoked = 1 \
+    pub(super) REVOKE_APP_PASSWORD = "UPDATE auth_app_passwords SET revoked = 1 \
         WHERE id = ?1 AND revoked = 0";
     /// Stamp an app password's last use; a NULL client keeps the stored one.
-    pub(super) TOUCH_APP_PASSWORD = "UPDATE connect_app_passwords SET last_used_at = ?1, \
+    pub(super) TOUCH_APP_PASSWORD = "UPDATE auth_app_passwords SET last_used_at = ?1, \
         last_client = COALESCE(?2, last_client) WHERE secret_sha256 = ?3";
     /// Revoke and empty every app password sealed under the data key.
-    pub(super) FORGET_APP_PASSWORD_SECRETS = "UPDATE connect_app_passwords \
+    pub(super) FORGET_APP_PASSWORD_SECRETS = "UPDATE auth_app_passwords \
         SET revoked = 1, secret_encrypted = '' WHERE secret_encrypted LIKE 'v3:%'";
     /// Drop every sign-in token set sealed under the data key.
     pub(super) FORGET_SIGN_IN_TOKENS = "UPDATE auth_providers SET provider_data = NULL \
         WHERE provider_data LIKE 'v3:%'";
 
-    /// Drop recovery codes that expired by a time.
+    /// Drop recovery codes that expired by a time, in milliseconds.
     pub(super) DELETE_EXPIRED_RECOVERY_CODES = "DELETE FROM auth_password_recovery_codes \
         WHERE expires_at <= ?1";
     /// Store one account's code, replacing its last one.
@@ -143,7 +151,8 @@ droppedneedle_kernel::sql! {
     /// Drop one account's code.
     pub(super) DELETE_USER_RECOVERY_CODE = "DELETE FROM auth_password_recovery_codes \
         WHERE user_id = ?1";
-    /// Consume one account's code while it is live.
+    /// Consume one account's code while it is live at a time, in
+    /// milliseconds.
     pub(super) CONSUME_RECOVERY_CODE = "DELETE FROM auth_password_recovery_codes \
         WHERE user_id = ?1 AND code_hash = ?2 AND expires_at > ?3";
 

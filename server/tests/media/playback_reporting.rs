@@ -111,8 +111,8 @@ impl RemoteReporters for FakeRemotes {
 /// forwarding to both scrobble services.
 const SEED: &str = "\
     INSERT INTO auth_users (id, display_name, created_at) VALUES \
-     ('user-1', 'Listener One', ''), ('user-hidden', 'Hidden', ''), \
-     ('user-offline', 'Offline', ''), ('user-broken', 'Broken', ''); \
+     ('user-1', 'Listener One', 0), ('user-hidden', 'Hidden', 0), \
+     ('user-offline', 'Offline', 0), ('user-broken', 'Broken', 0); \
     INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
      navidrome_handles_external_scrobbles, updated_at) VALUES ('user-1', 1, 1, 0, ''); \
     INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \

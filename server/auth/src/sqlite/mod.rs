@@ -18,15 +18,13 @@
 //!
 //! Conventions shared by every adapter:
 //!
-//! - Times are ISO-8601 TEXT on disk ([`super::times`]), unix seconds on the
-//!   ports. `expires_at` values that fail to parse are treated as expired
-//!   (fail closed); display and bookkeeping times that fail to parse degrade
-//!   to 0 (or `None` for optional fields). Auth decisions depend only on
-//!   expiry, revocation, and hashes, never on display times.
-//! - The local `provider_data` JSON is
-//!   `{"password_hash": ..., "scheme": "bcrypt"|"argon2id"}`. A missing
-//!   `scheme` means `bcrypt` (v2 rows predate the tag); corrupt JSON or a
-//!   missing hash reads as no credential, matching v2's verify-false shape.
+//! - Times are integer milliseconds on disk, whole unix seconds on the
+//!   ports ([`super::times::secs_to_ms`] and [`super::times::ms_to_secs`]).
+//!   A statement comparing a time binds milliseconds. Auth decisions depend
+//!   only on expiry, revocation, and hashes, never on display times.
+//! - The local credential is the `local` row's `password_hash` and
+//!   `hash_scheme`; a row with both NULL holds no password, and a recovery
+//!   code may give it its first one.
 //! - Federated `provider_data` is `Crypto` ciphertext of the token JSON,
 //!   sealed on every write and never decrypted on read (no port reads it).
 //! - A busy database (a lock, a full lane queue, no free reader in time)
@@ -49,7 +47,6 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use super::federated::FederatedError;
-use super::federated::password_import::HashScheme;
 use super::users::stores::StoreError;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
@@ -194,23 +191,10 @@ fn store_unavailable(error: impl std::fmt::Display) -> FederatedError {
     FederatedError::StoreUnavailable(error.to_string())
 }
 
-/// Parse a local `provider_data` document into `(scheme, hash)`. Missing
-/// `scheme` defaults to `bcrypt`; corrupt documents read as absent.
-fn parse_local_data(provider_data: &str) -> Option<(String, String)> {
-    let value: serde_json::Value = serde_json::from_str(provider_data).ok()?;
-    let hash = value.get("password_hash")?.as_str()?.to_owned();
-    let scheme = value
-        .get("scheme")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or(HashScheme::Bcrypt.as_tag())
-        .to_owned();
-    Some((scheme, hash))
-}
-
-/// Render a local `provider_data` document. Built with serde, never string
-/// concatenation, so hashes with quotes stay intact.
-fn render_local_data(scheme: &str, hash: &str) -> String {
-    serde_json::json!({ "password_hash": hash, "scheme": scheme }).to_string()
+/// A local row's `(hash_scheme, password_hash)` as `(scheme, hash)`, or
+/// `None` when the row holds no password.
+fn stored_password(scheme: Option<String>, hash: Option<String>) -> Option<(String, String)> {
+    scheme.zip(hash)
 }
 
 /// What an auth write fails with, inside the lane or inside a caller's

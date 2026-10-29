@@ -1,13 +1,12 @@
-//! UTC ISO-8601 conversion for the auth TEXT time columns.
+//! UTC ISO-8601 conversion, and the auth tables' millisecond times.
 //!
-//! The 0001 baseline keeps v2's TEXT time columns, and v2 wrote them as
-//! ISO-8601 with an explicit offset (`datetime.now(timezone.utc).isoformat()`).
-//! The v2 importer carries those values verbatim, so the v3 adapters read
-//! and write the same shape. Writes use whole seconds (`...+00:00`); reads
-//! accept the v2 fractional form plus `Z` and numeric offsets, truncating
-//! sub-second precision. Years 0000-9999 round-trip; anything else fails
-//! closed to `None`. No datetime crate is needed: the civil-date math below is
-//! the standard days-from-civil pair.
+//! v2 wrote its times as ISO-8601 with an explicit offset
+//! (`datetime.now(timezone.utc).isoformat()`). The auth tables store integer
+//! milliseconds; the v2 importer converts with [`parse_iso_ms`], the same
+//! rule migration 0101 applied to the rows it found. Reads accept the v2
+//! fractional form plus `Z` and numeric offsets. Years 0000-9999
+//! round-trip; anything else fails closed to `None`. No datetime crate is
+//! needed: the civil-date math below is the standard days-from-civil pair.
 
 /// Seconds per day.
 const DAY_SECS: i64 = 86_400;
@@ -25,13 +24,30 @@ pub fn to_iso(secs: i64) -> String {
     )
 }
 
+/// Unix seconds as the auth tables' integer milliseconds.
+pub fn secs_to_ms(secs: i64) -> i64 {
+    secs.saturating_mul(1_000)
+}
+
+/// The auth tables' integer milliseconds as whole unix seconds, rounded
+/// down, as the ports carry them.
+pub fn ms_to_secs(ms: i64) -> i64 {
+    ms.div_euclid(1_000)
+}
+
 /// Parse v2/v3 ISO-8601 text into unix epoch seconds, truncating fractions.
+pub fn parse_iso(raw: &str) -> Option<i64> {
+    parse_iso_ms(raw).map(ms_to_secs)
+}
+
+/// Parse v2/v3 ISO-8601 text into unix epoch milliseconds, keeping the
+/// first three fraction digits and truncating the rest.
 ///
 /// Accepts `YYYY-MM-DDTHH:MM:SS` with an optional `.fraction` and an optional
 /// offset (`Z`, `+HH:MM`, `+HHMM`, `+HH`, or nothing meaning UTC). A space may
 /// stand in for the `T`. Returns `None` for anything else, including
 /// impossible calendar dates and out-of-range fields.
-pub fn parse_iso(raw: &str) -> Option<i64> {
+pub fn parse_iso_ms(raw: &str) -> Option<i64> {
     let bytes = raw.trim().as_bytes();
     if bytes.len() < 19
         || bytes[4] != b'-'
@@ -63,10 +79,15 @@ pub fn parse_iso(raw: &str) -> Option<i64> {
         return None;
     }
     let mut rest = &bytes[19..];
+    let mut millis = 0;
     if rest.first() == Some(&b'.') {
         let frac_len = rest[1..].iter().take_while(|b| b.is_ascii_digit()).count();
         if frac_len == 0 || frac_len > 9 {
             return None;
+        }
+        for place in 0..3 {
+            let digit = rest.get(1 + place).filter(|_| place < frac_len);
+            millis = millis * 10 + digit.map_or(0, |b| i64::from(b - b'0'));
         }
         rest = &rest[1 + frac_len..];
     }
@@ -74,7 +95,9 @@ pub fn parse_iso(raw: &str) -> Option<i64> {
     let day_secs = hour * 3_600 + minute * 60 + second;
     days.checked_mul(DAY_SECS)?
         .checked_add(day_secs)?
-        .checked_sub(offset)
+        .checked_sub(offset)?
+        .checked_mul(1_000)?
+        .checked_add(millis)
 }
 
 /// Parse the optional trailing offset into seconds east of UTC.
@@ -194,6 +217,19 @@ mod tests {
             parse_iso("2026-09-28 12:34:56"),
             parse_iso("2026-09-28T12:34:56+00:00")
         );
+    }
+
+    #[test]
+    fn milliseconds_keep_three_fraction_digits() {
+        let whole = parse_iso_ms("2026-09-28T12:34:56+00:00").unwrap();
+        assert_eq!(whole % 1_000, 0);
+        assert_eq!(
+            parse_iso_ms("2026-09-28T12:34:56.123456+00:00"),
+            Some(whole + 123)
+        );
+        assert_eq!(parse_iso_ms("2026-09-28T12:34:56.5Z"), Some(whole + 500));
+        assert_eq!(parse_iso_ms("1969-12-31T23:59:59.25Z"), Some(-750));
+        assert_eq!(parse_iso("1969-12-31T23:59:59.25Z"), Some(-1));
     }
 
     #[test]

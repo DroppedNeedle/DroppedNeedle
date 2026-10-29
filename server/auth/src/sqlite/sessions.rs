@@ -7,10 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use rusqlite::OptionalExtension as _;
 use sqlx::Row as _;
 
-use super::{
-    AuthDb, is_write_conflict, op_error, parse_local_data, render_local_data, store_error,
-    store_unavailable,
-};
+use super::{AuthDb, is_write_conflict, op_error, store_error, store_unavailable, stored_password};
 use crate::federated::FederatedError;
 use crate::federated::password_import::HashScheme;
 use crate::passwords::StoredPassword;
@@ -18,10 +15,9 @@ use crate::session::store::{
     NewSession, SessionKind, SessionRecord, SessionStoreError, ValidSession,
 };
 use crate::session::tokens::{constant_time_eq, expires_at};
-use crate::times::{parse_iso, to_iso};
+use crate::times::{ms_to_secs, secs_to_ms};
 use crate::users::models::{ManagedSession, SessionOwner};
 use crate::users::roles::Role;
-use crate::users::services::COMPANION_LABEL_PREFIX;
 use crate::users::stores::StoreError;
 use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
 use droppedneedle_kernel::ids::IdGenerator;
@@ -39,9 +35,8 @@ const LAST_SEEN_TOUCH_SECS: i64 = 5 * 60;
 /// A lookup that finds `last_seen_at` older than [`LAST_SEEN_TOUCH_SECS`]
 /// hands the refresh to a background write it does not wait for, at most
 /// one in flight per session; a failed refresh is logged and the request is
-/// unaffected. Companion labels round-trip through the `user_agent` column
-/// with the shared `DroppedNeedle companion` prefix, and listings expose no
-/// token hashes.
+/// unaffected. A companion session's device name is its `label`, and
+/// listings expose no token hashes.
 #[derive(Clone)]
 pub struct Sessions {
     db: AuthDb,
@@ -139,19 +134,17 @@ impl Sessions {
             .db
             .lane()
             .write(Lane::Foreground, "auth.session.login", move |tx| {
-                let current: Option<Option<String>> = tx
+                let current: Option<(Option<String>, Option<String>)> = tx
                     .query_row(
-                        "SELECT provider_data FROM auth_providers \
+                        "SELECT hash_scheme, password_hash FROM auth_providers \
                          WHERE user_id = ? AND provider = 'local'",
                         rusqlite::params![record.user_id],
-                        |row| row.get(0),
+                        |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .optional()
                     .map_err(op_error)?;
                 let unchanged = current
-                    .flatten()
-                    .as_deref()
-                    .and_then(parse_local_data)
+                    .and_then(|(scheme, hash)| stored_password(scheme, hash))
                     .is_some_and(|(scheme, hash)| {
                         scheme == verified.scheme && hash == verified.hash
                     });
@@ -161,18 +154,15 @@ impl Sessions {
                 insert_token_row(tx, &record)?;
                 if let Some(new_hash) = rehash {
                     tx.execute(
-                        "UPDATE auth_providers SET provider_data = ? \
+                        "UPDATE auth_providers SET hash_scheme = ?, password_hash = ? \
                          WHERE user_id = ? AND provider = 'local'",
-                        rusqlite::params![
-                            render_local_data(HashScheme::Argon2id.as_tag(), &new_hash),
-                            record.user_id
-                        ],
+                        rusqlite::params![HashScheme::Argon2id.as_tag(), new_hash, record.user_id],
                     )
                     .map_err(op_error)?;
                 }
                 tx.execute(
                     "UPDATE auth_users SET last_login_at = ? WHERE id = ?",
-                    rusqlite::params![to_iso(record.issued_at), record.user_id],
+                    rusqlite::params![secs_to_ms(record.issued_at), record.user_id],
                 )
                 .map_err(op_error)?;
                 Ok(LoginWrite::Stored)
@@ -213,8 +203,8 @@ impl Sessions {
         // The owner's row comes in the same read: a token whose user is
         // gone matches nothing, and the role is the one for this request.
         let row = sqlx::query(
-            "SELECT t.id, t.user_id, t.token_hash, t.session_kind, t.user_agent, t.issued_at, \
-             t.expires_at, t.last_seen_at, t.revoked, u.username, \
+            "SELECT t.id, t.user_id, t.token_hash, t.session_kind, t.label, t.user_agent, \
+             t.issued_at, t.expires_at, t.last_seen_at, t.revoked, u.username, \
              COALESCE(u.username_display, u.username) AS username_display, u.role \
              FROM auth_tokens t JOIN auth_users u ON u.id = t.user_id WHERE t.token_hash = ?",
         )
@@ -237,29 +227,16 @@ impl Sessions {
         if row.get::<i64, _>("revoked") != 0 {
             return Ok(None);
         }
-        let expires_raw: String = row.get("expires_at");
-        if parse_iso(&expires_raw).is_none_or(|at| at <= now_unix) {
+        let expires_at = ms_to_secs(row.get("expires_at"));
+        if expires_at <= now_unix {
             return Ok(None);
         }
-        let kind = match row.get::<String, _>("session_kind").as_str() {
-            "standard" => SessionKind::Standard,
-            "companion" => SessionKind::Companion,
-            // The kind gates companion minting, so an unknown value rejects
-            // the session instead of guessing a privilege level.
-            _ => return Ok(None),
+        let Some(kind) = SessionKind::parse(&row.get::<String, _>("session_kind")) else {
+            return Ok(None);
         };
-        let issued_raw: String = row.get("issued_at");
-        let seen_raw: String = row.get("last_seen_at");
-        let last_seen_at = parse_iso(&seen_raw).unwrap_or(0);
+        let last_seen_at = ms_to_secs(row.get("last_seen_at"));
         let user_agent: Option<String> = row.get("user_agent");
-        let label = if kind == SessionKind::Companion {
-            user_agent
-                .as_deref()
-                .and_then(|agent| agent.strip_prefix(COMPANION_LABEL_PREFIX))
-                .map(str::to_owned)
-        } else {
-            None
-        };
+        let label: Option<String> = row.get("label");
         let id: String = row.get("id");
         if now_unix - last_seen_at >= LAST_SEEN_TOUCH_SECS {
             self.touch_later(id.clone(), now_unix);
@@ -272,8 +249,8 @@ impl Sessions {
                 token_hash: stored,
                 kind,
                 label,
-                issued_at: parse_iso(&issued_raw).unwrap_or(0),
-                expires_at: parse_iso(&expires_raw).unwrap_or(0),
+                issued_at: ms_to_secs(row.get("issued_at")),
+                expires_at,
                 last_seen_at,
                 revoked: false,
                 user_agent,
@@ -293,7 +270,7 @@ impl Sessions {
         }
         let (db, touching) = (self.db.clone(), Arc::clone(&self.touching));
         tokio::spawn(async move {
-            let (row, touched) = (id.clone(), to_iso(now_unix));
+            let (row, touched) = (id.clone(), secs_to_ms(now_unix));
             let outcome = db
                 .lane()
                 .write(Lane::Background, "auth.session.touch", move |tx| {
@@ -315,7 +292,7 @@ impl Sessions {
     /// tiebreak. Rows carry no token hashes.
     pub async fn list_for_user(&self, user_id: &str) -> Result<Vec<ManagedSession>, StoreError> {
         let rows = sqlx::query(
-            "SELECT id, user_id, session_kind, user_agent, issued_at, last_seen_at, \
+            "SELECT id, user_id, session_kind, label, user_agent, issued_at, last_seen_at, \
              expires_at FROM auth_tokens WHERE user_id = ? AND revoked = 0",
         )
         .bind(user_id)
@@ -326,26 +303,20 @@ impl Sessions {
         let mut sessions: Vec<ManagedSession> = rows
             .into_iter()
             .filter_map(|row| {
-                let expires_raw: String = row.get("expires_at");
-                let expires_at = parse_iso(&expires_raw)?;
+                let expires_at = ms_to_secs(row.get("expires_at"));
                 if expires_at <= now {
                     return None;
                 }
-                let kind = match row.get::<String, _>("session_kind").as_str() {
-                    "companion" => SessionKind::Companion,
-                    "standard" => SessionKind::Standard,
-                    _ => return None,
-                };
-                let issued_raw: String = row.get("issued_at");
-                let seen_raw: String = row.get("last_seen_at");
+                let kind = SessionKind::parse(&row.get::<String, _>("session_kind"))?;
+                let label: Option<String> = row.get("label");
                 let agent: Option<String> = row.get("user_agent");
                 Some(ManagedSession {
                     id: row.get("id"),
                     user_id: row.get("user_id"),
                     kind,
-                    label: agent.unwrap_or_default(),
-                    created_at: parse_iso(&issued_raw).unwrap_or(0),
-                    last_seen_at: parse_iso(&seen_raw).unwrap_or(0),
+                    label: label.or(agent).unwrap_or_default(),
+                    created_at: ms_to_secs(row.get("issued_at")),
+                    last_seen_at: ms_to_secs(row.get("last_seen_at")),
                     expires_at,
                 })
             })
@@ -400,13 +371,12 @@ impl Sessions {
         issued_at: i64,
         expires_at: i64,
     ) -> Result<ManagedSession, StoreError> {
-        let agent = format!("{COMPANION_LABEL_PREFIX}{label}");
         let (id, user_id) = (self.ids.new_id(), user_id.to_owned());
-        let (cid, cuser, chash, cagent) = (
+        let (cid, cuser, chash, clabel) = (
             id.clone(),
             user_id.clone(),
             token_hash.to_owned(),
-            agent.clone(),
+            label.to_owned(),
         );
         let outcome: Result<(), super::WriteError> = self
             .db
@@ -414,25 +384,25 @@ impl Sessions {
             .write(Lane::Foreground, "auth.sessions.replace", move |tx| {
                 tx.execute(
                     "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \
-                     last_seen_at, revoked, user_agent, session_kind) \
-                     VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'companion')",
+                     last_seen_at, revoked, session_kind, label) \
+                     VALUES (?, ?, ?, ?, ?, ?, 0, 'companion', ?)",
                     rusqlite::params![
                         cid,
                         cuser,
                         chash,
-                        to_iso(issued_at),
-                        to_iso(expires_at),
-                        to_iso(issued_at),
-                        cagent,
+                        secs_to_ms(issued_at),
+                        secs_to_ms(expires_at),
+                        secs_to_ms(issued_at),
+                        clabel,
                     ],
                 )
                 .map_err(op_error)?;
                 // Same transaction: the replace is atomic.
                 tx.execute(
                     "UPDATE auth_tokens SET revoked = 1 WHERE user_id = ? \
-                     AND user_agent = ? AND session_kind = 'companion' \
+                     AND label = ? AND session_kind = 'companion' \
                      AND revoked = 0 AND id != ?",
-                    rusqlite::params![cuser, cagent, cid],
+                    rusqlite::params![cuser, clabel, cid],
                 )
                 .map_err(op_error)?;
                 Ok(())
@@ -443,7 +413,7 @@ impl Sessions {
                 id,
                 user_id,
                 kind: SessionKind::Companion,
-                label: agent,
+                label: label.to_owned(),
                 created_at: issued_at,
                 last_seen_at: issued_at,
                 expires_at,
@@ -470,14 +440,11 @@ impl Sessions {
         let Some(row) = row else {
             return Ok(None);
         };
-        let expires_raw: String = row.get("expires_at");
-        if parse_iso(&expires_raw).is_none_or(|at| at <= self.db.now_unix()) {
+        if ms_to_secs(row.get("expires_at")) <= self.db.now_unix() {
             return Ok(None);
         }
-        let kind = match row.get::<String, _>("session_kind").as_str() {
-            "companion" => SessionKind::Companion,
-            "standard" => SessionKind::Standard,
-            _ => return Ok(None),
+        let Some(kind) = SessionKind::parse(&row.get::<String, _>("session_kind")) else {
+            return Ok(None);
         };
         Ok(Some(SessionOwner {
             session_id: row.get("id"),
@@ -510,7 +477,7 @@ impl Sessions {
             .write(Lane::Foreground, "auth.users.touch", move |tx| {
                 tx.execute(
                     "UPDATE auth_users SET last_login_at = ? WHERE id = ?",
-                    rusqlite::params![to_iso(now), user_id],
+                    rusqlite::params![secs_to_ms(now), user_id],
                 )
                 .map_err(op_error)?;
                 Ok(())
@@ -528,33 +495,30 @@ fn lock(touching: &Mutex<HashSet<String>>) -> MutexGuard<'_, HashSet<String>> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Insert one session row inside the caller's transaction. Companion
-/// labels are stored in `user_agent` behind the shared prefix.
+/// Insert one session row inside the caller's transaction. Only a
+/// companion session keeps a label.
 pub(super) fn insert_token_row(
     tx: &rusqlite::Transaction,
     record: &SessionRecord,
 ) -> Result<(), super::WriteError> {
-    let stored_agent = match (&record.kind, &record.label) {
-        (SessionKind::Companion, Some(label)) => Some(format!("{COMPANION_LABEL_PREFIX}{label}")),
-        _ => record.user_agent.clone(),
-    };
-    let kind = match record.kind {
-        SessionKind::Standard => "standard",
-        SessionKind::Companion => "companion",
+    let label = match record.kind {
+        SessionKind::Companion => record.label.as_deref(),
+        SessionKind::Standard => None,
     };
     tx.execute(
         "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \
-             last_seen_at, revoked, user_agent, session_kind) \
-             VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
+             last_seen_at, revoked, user_agent, session_kind, label) \
+             VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
         rusqlite::params![
             record.id,
             record.user_id,
             record.token_hash,
-            to_iso(record.issued_at),
-            to_iso(record.expires_at),
-            to_iso(record.last_seen_at),
-            stored_agent,
-            kind,
+            secs_to_ms(record.issued_at),
+            secs_to_ms(record.expires_at),
+            secs_to_ms(record.last_seen_at),
+            record.user_agent,
+            record.kind.as_str(),
+            label,
         ],
     )
     .map_err(op_error)?;
@@ -602,7 +566,7 @@ fn sweep_dead_tokens(tx: &rusqlite::Transaction, now_unix: i64) -> Result<(), su
     tx.execute(
         "DELETE FROM auth_tokens WHERE id IN (SELECT id FROM auth_tokens \
          WHERE revoked = 1 OR expires_at <= ? LIMIT ?)",
-        rusqlite::params![to_iso(now_unix), TOKEN_SWEEP_BATCH],
+        rusqlite::params![secs_to_ms(now_unix), TOKEN_SWEEP_BATCH],
     )
     .map_err(op_error)?;
     Ok(())

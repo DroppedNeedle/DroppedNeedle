@@ -287,7 +287,7 @@ async fn foreign_keys_bite_under_enforcement() {
     .await;
     assert!(orphan.is_err(), "orphan row must fail with FKs on");
 
-    sqlx::query("INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'T', 'now')")
+    sqlx::query("INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'T', 0)")
         .execute(&pool)
         .await
         .unwrap();
@@ -4813,7 +4813,7 @@ async fn recycle_bin_empties_table_is_added() {
     assert_migrated(&pool).await.unwrap();
     sqlx::raw_sql(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+         VALUES ('admin', 'Admin', 'admin', 0)",
     )
     .execute(&pool)
     .await
@@ -8391,8 +8391,10 @@ PRAGMA foreign_keys=ON;
     }
 
     /// A no-transaction file is recorded with the row sqlx's own `apply`
-    /// writes, the shipped migrations record the same rows under either
-    /// runner, and a second run changes no column.
+    /// writes, the shipped migrations sqlx can run record the same rows
+    /// under either runner, and a second run changes no column. sqlx fails
+    /// on a shipped no-transaction file's own `BEGIN`, so those are left out
+    /// of the comparison.
     #[tokio::test]
     async fn records_match_what_sqlx_writes() {
         let plain = set(vec![migration(
@@ -8407,11 +8409,18 @@ PRAGMA foreign_keys=ON;
         assert_eq!(records(&ours).await.len(), 1);
         assert_eq!(records(&ours).await, records(&by_sqlx).await);
 
+        let wrapped = set(MIGRATOR
+            .iter()
+            .filter(|migration| !migration.no_tx)
+            .cloned()
+            .collect());
         let by_sqlx = super::scratch_pool().await;
-        MIGRATOR.run(&by_sqlx).await.unwrap();
+        wrapped.run(&by_sqlx).await.unwrap();
+        let ours = super::scratch_pool().await;
+        run_migrations(&ours, &wrapped).await.unwrap();
+        assert_eq!(records(&ours).await, records(&by_sqlx).await);
         let ours = super::scratch_pool().await;
         run_migrations(&ours, &MIGRATOR).await.unwrap();
-        assert_eq!(records(&ours).await, records(&by_sqlx).await);
 
         let first = full_records(&ours).await;
         run_migrations(&ours, &MIGRATOR).await.unwrap();
@@ -8421,4 +8430,537 @@ PRAGMA foreign_keys=ON;
             "a second run changes nothing"
         );
     }
+}
+
+/// The auth enums are exactly what the auth tables' CHECKs list, in order.
+#[tokio::test]
+async fn auth_checks_list_exactly_the_code_values() {
+    use droppedneedle_auth::Role;
+    use droppedneedle_auth::federated::password_import::HashScheme;
+    use droppedneedle_auth::session::store::SessionKind;
+
+    let pool = migrated_pool().await;
+    let mut schemas = BTreeMap::new();
+    for table in ["auth_users", "auth_tokens", "auth_providers"] {
+        let sql: String = sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE name = ?")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        schemas.insert(table, sql);
+    }
+    let listed = |table: &str, column: &str| -> Vec<String> {
+        let sql = &schemas[table];
+        let marker = format!("CHECK({column} IN (");
+        let values = &sql[sql.find(&marker).expect("the column has a CHECK") + marker.len()..];
+        values[..values.find(')').expect("the list ends")]
+            .split(',')
+            .map(|value| value.trim().trim_matches('\'').to_owned())
+            .collect()
+    };
+    assert_eq!(
+        listed("auth_users", "role"),
+        Role::ALL.map(|role| role.as_str().to_owned())
+    );
+    assert_eq!(
+        listed("auth_tokens", "session_kind"),
+        SessionKind::ALL.map(|kind| kind.as_str().to_owned())
+    );
+    assert_eq!(
+        listed("auth_providers", "hash_scheme"),
+        HashScheme::ALL.map(|scheme| scheme.as_tag().to_owned())
+    );
+    for kind in SessionKind::ALL {
+        assert_eq!(SessionKind::parse(kind.as_str()), Some(kind));
+    }
+    assert_eq!(SessionKind::parse("superuser"), None);
+}
+
+/// Migration 0101 rebuilds the six auth tables as STRICT tables with
+/// millisecond times, the credential and the companion label in columns of
+/// their own, and app passwords under `auth_app_passwords`. Every row reads
+/// as it did: dead ones stay dead, live ones still work through the stores,
+/// and no row of any table that points at an account is lost or orphaned.
+#[tokio::test]
+async fn auth_rows_carry_onto_strict_tables_on_upgrade() {
+    use std::sync::Arc;
+
+    use droppedneedle_auth::prod::{
+        AppPasswords, AuthDb, OidcStates, RecoveryCodes, Sessions, Users,
+    };
+    use droppedneedle_auth::session::store::SessionKind;
+    use droppedneedle_auth::users::models::LocalCredential;
+    use droppedneedle_auth::users::services::COMPANION_LABEL_PREFIX;
+    use droppedneedle_kernel::clock::ManualClock;
+    use droppedneedle_kernel::db::Db;
+    use droppedneedle_kernel::ids::UuidGenerator;
+
+    /// 2026-10-29T00:00:00Z, the stores' clock.
+    const NOW: i64 = 1_793_232_000;
+    const REBUILT: [&str; 7] = [
+        "auth_users",
+        "auth_providers",
+        "auth_tokens",
+        "auth_password_recovery_codes",
+        "auth_oidc_states",
+        "connect_app_passwords",
+        "auth_app_passwords",
+    ];
+    type SchemaRow = (String, String, String, Option<String>);
+    async fn schema_rows(pool: &SqlitePool) -> Vec<SchemaRow> {
+        sqlx::query_as("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+    async fn counts(pool: &SqlitePool) -> BTreeMap<String, i64> {
+        let tables: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' \
+             AND name <> '_sqlx_migrations'",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        let mut out = BTreeMap::new();
+        for table in tables {
+            let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{table}\""))
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            let table = if table == "connect_app_passwords" {
+                "auth_app_passwords".to_owned()
+            } else {
+                table
+            };
+            out.insert(table, count);
+        }
+        out
+    }
+    async fn children(pool: &SqlitePool) -> Vec<(String, Option<String>)> {
+        sqlx::query_as(
+            "SELECT 'mark ' || local_track_id, user_id FROM library_user_play_marks \
+             UNION ALL SELECT 'bookmark ' || file_id, user_id FROM compat_bookmarks \
+             UNION ALL SELECT 'empty ' || id, actor_user_id FROM library_recycle_bin_empties \
+             UNION ALL SELECT 'exclusion ' || local_album_id, excluded_by_user_id \
+                 FROM library_management_exclusions \
+             UNION ALL SELECT 'manifest ' || id, sealed_by_user_id \
+                 FROM library_custom_edition_manifests \
+             UNION ALL SELECT 'dismissal ' || left_artist_id, dismissed_by_user_id \
+                 FROM library_artist_reconciliation_dismissals \
+             UNION ALL SELECT 'plays ' || local_album_id || ' ' || plays, user_id \
+                 FROM library_user_album_plays \
+             ORDER BY 1, 2",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    let dir = crate::common::ScratchDir::new("auth-0101");
+    let path = dir.join("app.db");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true)
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    run_migrations(&pool, &migrator_through(100)).await.unwrap();
+    let prefix = COMPANION_LABEL_PREFIX;
+    sqlx::raw_sql(&format!(
+        "INSERT INTO auth_users (id, display_name, role, created_at, last_login_at, username) \
+         VALUES ('ada', 'Ada', 'admin', '2024-01-01T00:00:00.123456+00:00', \
+             '2026-01-01T00:00:00Z', 'ada'), \
+         ('bob', 'Bob', 'superuser', 'now', '2026-01-01', 'bob'), \
+         ('cy', 'Cy', 'trusted', 'garbage', NULL, 'cy'), \
+         ('dee', 'Dee', 'user', '2026-02-30T00:00:00+00:00', '2026-03-01 10:00:00+0130', \
+             'dee'); \
+         INSERT INTO auth_providers (id, user_id, provider, provider_uid, provider_data, \
+             created_at) VALUES \
+         ('p-ada', 'ada', 'local', 'ada', '{{\"password_hash\": \"$2b$12$ada\"}}', \
+             '2024-01-01T00:00:00+00:00'), \
+         ('p-dee', 'dee', 'local', 'dee', \
+             '{{\"password_hash\": \"$argon2id$dee\", \"scheme\": \"argon2id\"}}', ''), \
+         ('p-cy', 'cy', 'local', 'cy', '{{not json', 'now'), \
+         ('p-cy-sso', 'cy', 'oidc', 'sub-cy', 'v3:sealed tokens', \
+             '2024-01-01T00:00:00+00:00'), \
+         ('p-bob', 'bob', 'local', 'bob', '{{\"password_hash\": \"h\", \"scheme\": \"md5\"}}', \
+             '2024-01-01T00:00:00+00:00'); \
+         INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, last_seen_at, \
+             revoked, user_agent, session_kind) VALUES \
+         ('t-live', 'ada', 'hash-live', '2026-10-01T00:00:00+00:00', \
+             '2099-01-01T00:00:00+00:00', '2026-10-28T23:59:00+00:00', 0, 'Firefox', \
+             'standard'), \
+         ('t-phone', 'ada', 'hash-phone', '2026-10-01T00:00:00+00:00', \
+             '2099-01-01T00:00:00+00:00', '2026-10-01T00:00:00+00:00', 0, \
+             '{prefix}Kitchen', 'companion'), \
+         ('t-spoof', 'bob', 'hash-spoof', '2026-10-01T00:00:00+00:00', \
+             '2099-01-01T00:00:00+00:00', 'x', 0, '{prefix}Spoof', 'standard'), \
+         ('t-kind', 'ada', 'hash-kind', '2026-10-01T00:00:00+00:00', \
+             '2099-01-01T00:00:00+00:00', '2026-10-01T00:00:00+00:00', 0, NULL, 'superuser'), \
+         ('t-two', 'ada', 'hash-two', '2026-10-01T00:00:00+00:00', \
+             '2099-01-01T00:00:00+00:00', '2026-10-01T00:00:00+00:00', 2, NULL, 'standard'), \
+         ('t-now', 'dee', 'hash-now', 'now', 'now', 'now', 0, NULL, 'standard'), \
+         ('t-day', 'dee', 'hash-day', '2026-10-01', '2099-01-01', '2026-10-01', 0, NULL, \
+             'standard'); \
+         INSERT INTO auth_password_recovery_codes (user_id, code_hash, created_at, expires_at) \
+         VALUES ('cy', 'code-live', '2026-10-28T23:55:00+00:00', '2099-01-01T00:00:00+00:00'), \
+         ('ada', 'code-old', '2020-01-01T00:00:00+00:00', '2020-01-01T00:15:00+00:00'), \
+         ('dee', 'code-now', 'now', 'now'); \
+         INSERT INTO auth_oidc_states (state, created_at, expires_at, code_verifier) VALUES \
+         ('s-live', '2026-10-28T23:59:00+00:00', '2099-01-01T00:00:00+00:00', 'verifier'), \
+         ('s-day', '2026-10-28', '2099-01-01', 'other'); \
+         INSERT INTO connect_app_passwords (id, user_id, name, secret_sha256, secret_encrypted, \
+             created_at, last_used_at, last_client, revoked) VALUES \
+         ('ap-live', 'ada', 'phone', 'sha-live', 'v3:secret', \
+             '2026-09-28T12:34:56.789+00:00', NULL, NULL, 0), \
+         ('ap-two', 'ada', 'old', 'sha-two', 'v3:other', 'now', 'garbage', 'Feishin', 2); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1), ('a2', 'B', 'b', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) \
+         VALUES ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, \
+             membership_source) \
+         VALUES ('t1', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'T', 't', 'T', 't', \
+             'flac', 'scan', 0, 'automatic'); \
+         INSERT INTO library_user_play_marks (user_id, local_track_id, marked_played_at) \
+         VALUES ('ada', 't1', 1), ('bob', 't1', 2); \
+         INSERT INTO compat_bookmarks (user_id, file_id, position_ms, created_at, changed_at) \
+         VALUES ('dee', 'f1', 5, 1, 1); \
+         INSERT INTO library_recycle_bin_empties (id, actor_user_id, before_at, deleted, \
+             freed_bytes, older_folders, kept, waited, kept_json) \
+         VALUES ('e1', 'bob', 1, 0, 0, 0, 0, 0, '[]'); \
+         INSERT INTO library_management_exclusions (local_album_id, reason, \
+             excluded_by_user_id, excluded_at) VALUES ('al1', 'hand', 'ada', 1); \
+         INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
+             release_group_mbid, album_title, album_artist_name, source_album_revision, \
+             input_revision, content_hash, sealed_by_user_id, sealed_at) \
+         VALUES ('m1', 'al1', 1, 'rg', 'T', 'A', 1, 'i', 'c', 'ada', 1); \
+         INSERT INTO library_artist_reconciliation_dismissals (left_artist_id, \
+             right_artist_id, left_artist_revision, right_artist_revision, \
+             dismissed_by_user_id, created_at, updated_at) \
+         VALUES ('a1', 'a2', 1, 1, 'ada', 1, 1);"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // An app password whose account is already gone: an old orphan, which
+    // the rebuild keeps as it is and must not mistake for a new one.
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = OFF; \
+         INSERT INTO connect_app_passwords (id, user_id, name, secret_sha256, \
+             secret_encrypted, created_at, revoked) \
+         VALUES ('ap-ghost', 'ghost', 'gone', 'sha-ghost', 'v3:gone', 'now', 0); \
+         PRAGMA foreign_keys = ON;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    async fn orphans(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as(
+            "SELECT CASE \"table\" WHEN 'connect_app_passwords' THEN 'auth_app_passwords' \
+             ELSE \"table\" END, parent FROM pragma_foreign_key_check ORDER BY 1, 2",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    let orphans_before = orphans(&pool).await;
+    assert_eq!(
+        orphans_before,
+        [("auth_app_passwords".to_owned(), "auth_users".to_owned())]
+    );
+    let schema_before = schema_rows(&pool).await;
+    let counts_before = counts(&pool).await;
+    let children_before = children(&pool).await;
+    assert_eq!(children_before.len(), 9, "every child is seeded");
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    // Outside the rebuilt tables, only the index renames differ.
+    let rebuilt = |row: &SchemaRow| row.0 == "table" && REBUILT.contains(&row.1.as_str());
+    let schema_after = schema_rows(&pool).await;
+    let gone: Vec<&str> = schema_before
+        .iter()
+        .filter(|row| !rebuilt(row) && !schema_after.contains(row))
+        .map(|row| row.1.as_str())
+        .collect();
+    let added: Vec<&str> = schema_after
+        .iter()
+        .filter(|row| !rebuilt(row) && !schema_before.contains(row))
+        .map(|row| row.1.as_str())
+        .collect();
+    assert_eq!(
+        gone,
+        [
+            "idx_auth_tokens_hash",
+            "idx_cap_user",
+            "sqlite_autoindex_connect_app_passwords_1",
+            "sqlite_autoindex_connect_app_passwords_2",
+        ]
+    );
+    assert_eq!(
+        added,
+        [
+            "idx_auth_app_passwords_user",
+            "sqlite_autoindex_auth_app_passwords_1",
+            "sqlite_autoindex_auth_app_passwords_2",
+        ]
+    );
+    assert_eq!(
+        counts(&pool).await,
+        counts_before,
+        "every table keeps its rows"
+    );
+    assert_eq!(
+        children(&pool).await,
+        children_before,
+        "every child keeps its user"
+    );
+    assert_eq!(
+        orphans(&pool).await,
+        orphans_before,
+        "the old orphan stays and no new one appears"
+    );
+
+    let users: Vec<(String, String, i64, Option<i64>)> =
+        sqlx::query_as("SELECT id, role, created_at, last_login_at FROM auth_users ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        users,
+        [
+            (
+                "ada".into(),
+                "admin".into(),
+                1_704_067_200_123,
+                Some(1_767_225_600_000)
+            ),
+            ("bob".into(), "user".into(), 0, None),
+            ("cy".into(), "trusted".into(), 0, None),
+            ("dee".into(), "user".into(), 0, Some(1_772_353_800_000)),
+        ],
+        "v2's fractional and offset times keep their instant; others read as before"
+    );
+    type Provider = (String, Option<String>, Option<String>, Option<String>, i64);
+    let providers: Vec<Provider> = sqlx::query_as(
+        "SELECT id, provider_data, hash_scheme, password_hash, created_at FROM auth_providers \
+         ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let in_2024 = 1_704_067_200_000;
+    assert_eq!(
+        providers,
+        [
+            (
+                "p-ada".into(),
+                None,
+                Some("bcrypt".into()),
+                Some("$2b$12$ada".into()),
+                in_2024
+            ),
+            ("p-bob".into(), None, None, None, in_2024),
+            ("p-cy".into(), None, None, None, 0),
+            (
+                "p-cy-sso".into(),
+                Some("v3:sealed tokens".into()),
+                None,
+                None,
+                in_2024
+            ),
+            (
+                "p-dee".into(),
+                None,
+                Some("argon2id".into()),
+                Some("$argon2id$dee".into()),
+                0
+            ),
+        ]
+    );
+    type Token = (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        i64,
+        i64,
+        i64,
+    );
+    let tokens: Vec<Token> = sqlx::query_as(
+        "SELECT id, session_kind, label, user_agent, revoked, expires_at, last_seen_at \
+         FROM auth_tokens ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let (far, seen) = (4_070_908_800_000, 1_790_812_800_000);
+    let spoof = format!("{prefix}Spoof");
+    assert_eq!(
+        tokens,
+        [
+            ("t-day".into(), "standard".into(), None, None, 0, 0, 0),
+            ("t-kind".into(), "standard".into(), None, None, 1, far, seen),
+            (
+                "t-live".into(),
+                "standard".into(),
+                None,
+                Some("Firefox".into()),
+                0,
+                far,
+                1_793_231_940_000
+            ),
+            ("t-now".into(), "standard".into(), None, None, 0, 0, 0),
+            (
+                "t-phone".into(),
+                "companion".into(),
+                Some("Kitchen".into()),
+                None,
+                0,
+                far,
+                seen
+            ),
+            (
+                "t-spoof".into(),
+                "standard".into(),
+                None,
+                Some(spoof),
+                0,
+                far,
+                0
+            ),
+            ("t-two".into(), "standard".into(), None, None, 1, far, seen),
+        ]
+    );
+    let passwords: Vec<(String, i64, Option<i64>, i64)> = sqlx::query_as(
+        "SELECT id, created_at, last_used_at, revoked FROM auth_app_passwords ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        passwords,
+        [
+            ("ap-ghost".into(), 0, None, 0),
+            ("ap-live".into(), 1_790_598_896_789, None, 0),
+            ("ap-two".into(), 0, None, 1),
+        ]
+    );
+    pool.close().await;
+
+    // The stores read the carried rows as before.
+    let db = Db::open_for_tests(&path).unwrap();
+    let auth = AuthDb::new(&db, Arc::new(ManualClock::at(NOW * 1000)));
+    let sessions = Sessions::new(&auth, Arc::new(UuidGenerator));
+    let live = sessions.lookup_valid("hash-live", NOW).await.unwrap();
+    let live = live.expect("a session made before still signs in");
+    assert_eq!(live.record.user_agent.as_deref(), Some("Firefox"));
+    let phone = sessions.lookup_valid("hash-phone", NOW).await.unwrap();
+    let phone = phone.expect("a companion made before still signs in");
+    assert_eq!(phone.record.kind, SessionKind::Companion);
+    assert_eq!(phone.record.label.as_deref(), Some("Kitchen"));
+    for dead in ["hash-kind", "hash-two", "hash-now", "hash-day"] {
+        assert!(
+            sessions.lookup_valid(dead, NOW).await.unwrap().is_none(),
+            "{dead} stays dead"
+        );
+    }
+    let spoofed = sessions.lookup_valid("hash-spoof", NOW).await.unwrap();
+    assert_eq!(spoofed.expect("a standard session").record.label, None);
+    let listed: Vec<(String, String)> = sessions
+        .list_for_user("ada")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|session| (session.id, session.label))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("t-live".to_owned(), "Firefox".to_owned()),
+            ("t-phone".to_owned(), "Kitchen".to_owned()),
+        ]
+    );
+    sessions
+        .replace_companion("ada", "hash-phone-2", "Kitchen", NOW, NOW + 60)
+        .await
+        .unwrap();
+    assert!(
+        sessions
+            .lookup_valid("hash-phone", NOW)
+            .await
+            .unwrap()
+            .is_none(),
+        "a remint under the label revokes the carried companion"
+    );
+
+    let users = Users::new(&auth);
+    let ada = users.login_credential("ada").await.unwrap().unwrap();
+    assert_eq!(
+        (ada.password.scheme.as_str(), ada.password.hash.as_str()),
+        ("bcrypt", "$2b$12$ada"),
+        "an untagged v2 hash reads as bcrypt"
+    );
+    let dee = users.login_credential("dee").await.unwrap().unwrap();
+    assert_eq!(dee.password.scheme, "argon2id");
+    for nobody in ["bob", "cy"] {
+        assert!(users.login_credential(nobody).await.unwrap().is_none());
+        assert!(users.local_credential(nobody).await.unwrap().is_none());
+    }
+    assert_eq!(
+        users.get_by_id("bob").await.unwrap().unwrap().role,
+        droppedneedle_auth::Role::User
+    );
+
+    let codes = RecoveryCodes::new(&auth);
+    for dead in ["code-old", "code-now"] {
+        assert!(codes.find_live_by_hash(dead, NOW).await.unwrap().is_none());
+    }
+    assert!(
+        codes
+            .find_live_by_hash("code-live", NOW)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    // Cy's local row holds no password: the code gives it its first one, in
+    // place, so the host's recovery code still lets the account in.
+    let first = LocalCredential {
+        id: "p-cy-new".to_owned(),
+        user_id: "cy".to_owned(),
+        scheme: "argon2id".to_owned(),
+        hash: "$argon2id$cy".to_owned(),
+    };
+    assert!(
+        users
+            .complete_recovery_first_password(first, "code-live", NOW)
+            .await
+            .unwrap()
+    );
+    let cy = users.local_credential("cy").await.unwrap().unwrap();
+    assert_eq!((cy.id.as_str(), cy.hash.as_str()), ("p-cy", "$argon2id$cy"));
+
+    let states = OidcStates::new(&auth);
+    assert_eq!(
+        states.consume_state("s-live").await.unwrap().as_deref(),
+        Some("verifier")
+    );
+    assert_eq!(states.consume_state("s-day").await.unwrap(), None);
+
+    let app = AppPasswords::new(&auth);
+    let phone = app.get_active_by_sha256("sha-live").await.unwrap();
+    assert_eq!(
+        phone.expect("an app password made before verifies").name,
+        "phone"
+    );
+    assert!(app.get_active_by_sha256("sha-two").await.unwrap().is_none());
 }

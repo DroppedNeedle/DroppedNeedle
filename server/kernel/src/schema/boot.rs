@@ -39,10 +39,14 @@
 //!    guards, each an insert into a temp table whose CHECK fails: unless
 //!    `(SELECT foreign_keys FROM pragma_foreign_keys) = 0`, and unless
 //!    `pragma_user_version` is still below this file's version (a restart
-//!    after the file's `COMMIT` must never run it again).
+//!    after the file's `COMMIT` must never run it again). Name each CHECK
+//!    (`CONSTRAINT guard_... CHECK (...)`), so a refusal at boot says
+//!    which guard fired.
 //! 3. Save the rows of `pragma_foreign_key_check` (table, rowid, parent,
 //!    fkid) into a temp table, duplicates kept, so an old orphan elsewhere
-//!    does not block the upgrade.
+//!    does not block the upgrade. A child copied into a table of a new name
+//!    is saved under that new name, the one its orphans report under after
+//!    the copy.
 //! 4. Per table: `CREATE TABLE x_new (...) STRICT`;
 //!    `INSERT INTO x_new (rowid, ...) SELECT rowid, <explicit cast or
 //!    conversion per column> FROM x` (the rowid only when x has one);

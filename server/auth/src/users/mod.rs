@@ -14,9 +14,8 @@
 //! origin check guards cookie mutations. The repositories are the
 //! concrete types in [`crate::sqlite`] and [`crate::avatars`]; hashing is
 //! [`Passwords`][prod-hasher] (bcrypt verify, Argon2id hash, rehash of a
-//! weaker hash on login). The `auth_providers` scheme tag lives in
-//! the `provider_data` JSON (`{"password_hash", "scheme"}`); no migration
-//! added a scheme column.
+//! weaker hash on login). The local password is the `auth_providers`
+//! row's `password_hash` and `hash_scheme`.
 //!
 //! [wiring-setup]: super::wiring::AuthSetup
 //! [prod-hasher]: super::passwords::Passwords

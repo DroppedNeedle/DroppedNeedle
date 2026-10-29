@@ -1922,7 +1922,7 @@ async fn a_folded_v2_split_comes_back_on_undo() {
          ('s1', 'musicbrainz', 'rec-1', 'release-split', 'rt-1', 'legacy_import', 5, 1), \
          ('s2', 'musicbrainz', 'rec-2', 'release-split', NULL, 'legacy_import', 5, 1); \
          INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+         VALUES ('curator', 'Curator', 'admin', 0); \
          INSERT INTO library_management_exclusions (local_album_id, reason, \
          excluded_by_user_id, excluded_at) VALUES ('split', 'administrator_choice', \
          'curator', 3); \
@@ -3125,7 +3125,7 @@ async fn no_release_choice_and_a_chosen_release_stay_apart() {
 
 /// A user for rows that must name a person.
 const PERSON: &str = "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) \
-                      VALUES ('u1', 'Person', 'admin', 'now');";
+                      VALUES ('u1', 'Person', 'admin', 0);";
 
 impl RegroupRig {
     /// One text value read by SQL, `None` for no row or NULL.
@@ -4814,7 +4814,7 @@ async fn a_missing_track_does_not_continue_without_proof() {
                     + &map_track(&t[1], Some(REL_R), Some(TRACK_X))
                     + &format!(
                         "INSERT INTO auth_users (id, display_name, role, created_at) \
-                         VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+                         VALUES ('curator', 'Curator', 'admin', 0); \
                          INSERT INTO library_custom_edition_manifests (id, local_album_id, \
                          version, release_group_mbid, album_title, album_artist_name, \
                          source_album_revision, input_revision, content_hash, \
@@ -5335,7 +5335,7 @@ async fn tell(name: &str, story: Story) -> (RegroupRig, String, String, String, 
     if story.custom_on_old {
         rig.run(&format!(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-             VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+             VALUES ('curator', 'Curator', 'admin', 0); \
              INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
              release_group_mbid, album_title, album_artist_name, source_album_revision, \
              input_revision, content_hash, sealed_by_user_id, sealed_at) VALUES ('m1', \
@@ -6228,7 +6228,7 @@ async fn a_scanned_file_is_placed_by_its_own_ids() {
             setup: |album, _| {
                 format!(
                     "INSERT INTO auth_users (id, display_name, role, created_at) \
-                     VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+                     VALUES ('curator', 'Curator', 'admin', 0); \
                      INSERT INTO library_custom_edition_manifests (id, local_album_id, \
                      version, release_group_mbid, album_title, album_artist_name, \
                      source_album_revision, input_revision, content_hash, \
@@ -7038,7 +7038,7 @@ async fn a_group_marked_distinct_is_not_merged() {
          UPDATE local_album_artists SET artist_mbid = '{MBID_X}' \
          WHERE local_artist_id IN ('{left}', '{right}'); \
          INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z'); \
+         VALUES ('admin', 'Admin', 'admin', 0); \
          INSERT INTO library_artist_reconciliation_dismissals (left_artist_id, \
          right_artist_id, left_artist_revision, right_artist_revision, dismissed_by_user_id, \
          created_at, updated_at) VALUES ('{left}', '{right}', 1, 1, 'admin', 1, 1);"

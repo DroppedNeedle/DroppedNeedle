@@ -198,7 +198,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
         .write(Lane::Foreground, "seed follows", |tx| {
             for user in ["u1", "u2"] {
                 tx.execute(
-                    "INSERT INTO auth_users (id, display_name, created_at) VALUES (?1, ?1, 'now')",
+                    "INSERT INTO auth_users (id, display_name, created_at) VALUES (?1, ?1, 0)",
                     [user],
                 )?;
                 tx.execute(

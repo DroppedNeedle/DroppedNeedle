@@ -161,13 +161,29 @@ async fn imported_counts_match_the_fixture() {
     // three app passwords, one recovery code, three follows, three
     // approvals with one reviewer nulled.
     let root = scratch_dir("counts");
-    let (_fixture, text) = repaired_export(&root);
+    let (fixture, text) = repaired_export(&root);
     let (v3_root, pool) = seeded_target(&root).await;
     let report = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
     assert_eq!(
         report.exit.code,
         droppedneedle_tool::r#import::ExitCode::OkWithDrops
     );
+    // v2's ISO times read back as the same instants, in milliseconds.
+    let alice: (i64, Option<i64>) =
+        sqlx::query_as("SELECT created_at, last_login_at FROM auth_users WHERE id = ?")
+            .bind(&fixture.alice_id)
+            .fetch_one(&pool)
+            .await
+            .expect("alice reads");
+    assert_eq!(alice, (1_704_067_200_000, Some(1_767_225_600_000)));
+    let code: (i64, i64) = sqlx::query_as(
+        "SELECT created_at, expires_at FROM auth_password_recovery_codes WHERE user_id = ?",
+    )
+    .bind(&fixture.alice_id)
+    .fetch_one(&pool)
+    .await
+    .expect("alice's code reads");
+    assert_eq!(code, (1_711_929_600_000, 1_806_537_600_000));
     let count = |entity: &str| report.entities.get(entity).expect("entity counted").clone();
     assert_eq!(count("user").imported, 2);
     assert_eq!(count("user").nulled_field, 2);
@@ -195,7 +211,7 @@ async fn imported_counts_match_the_fixture() {
     assert_eq!(lastfm.shared_secret.expose(), "lastfm-shared-plaintext");
 
     let revoked: Vec<(String, i64)> =
-        sqlx::query_as("SELECT name, revoked FROM connect_app_passwords WHERE revoked = 1")
+        sqlx::query_as("SELECT name, revoked FROM auth_app_passwords WHERE revoked = 1")
             .fetch_all(&pool)
             .await
             .expect("revoked rows read");
@@ -619,7 +635,7 @@ async fn seed_conflicts(pool: &sqlx::SqlitePool) {
     ] {
         sqlx::query(
             "INSERT INTO auth_users (id, display_name, email, role, created_at, username)
-             VALUES (?, ?, ?, 'user', '2026-01-01T00:00:00+00:00', ?)",
+             VALUES (?, ?, ?, 'user', 1767225600000, ?)",
         )
         .bind(id)
         .bind(username)
@@ -631,7 +647,7 @@ async fn seed_conflicts(pool: &sqlx::SqlitePool) {
     }
     sqlx::query(
         "INSERT INTO auth_users (id, display_name, role, created_at, username)
-         VALUES ('mallory-id', 'Mallory', 'user', '2026-01-01T00:00:00+00:00', 'mallory')",
+         VALUES ('mallory-id', 'Mallory', 'user', 1767225600000, 'mallory')",
     )
     .execute(pool)
     .await
@@ -640,7 +656,7 @@ async fn seed_conflicts(pool: &sqlx::SqlitePool) {
         "INSERT INTO auth_providers (id, user_id, provider, provider_uid, provider_data,
                                      created_at)
          VALUES ('prov-mallory', 'mallory-id', 'plex', 'plex-uid-bob',
-                 '{\"token\": \"mallory\"}', '2026-01-01T00:00:00+00:00')",
+                 '{\"token\": \"mallory\"}', 1767225600000)",
     )
     .execute(pool)
     .await
@@ -1055,14 +1071,19 @@ async fn login_rehashes(
     };
     use droppedneedle_auth::sqlite::{AuthDb, Sessions, Users};
 
-    let before: String = sqlx::query_scalar(
-        "SELECT provider_data FROM auth_providers WHERE user_id = ? AND provider = 'local'",
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await
-    .expect("provider row reads");
-    assert!(before.contains("$2b$"), "bcrypt carried verbatim: {before}");
+    async fn stored(pool: &sqlx::SqlitePool, user_id: &str) -> (String, String) {
+        sqlx::query_as(
+            "SELECT hash_scheme, password_hash FROM auth_providers \
+             WHERE user_id = ? AND provider = 'local'",
+        )
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .expect("provider row reads")
+    }
+    let (scheme, hash) = stored(pool, user_id).await;
+    assert_eq!(scheme, "bcrypt");
+    assert!(hash.starts_with("$2b$"), "bcrypt carried verbatim: {hash}");
 
     let auth_db = AuthDb::new(
         db,
@@ -1093,18 +1114,9 @@ async fn login_rehashes(
         .expect("v2 password logs in");
     assert_eq!(success.user_id, user_id);
 
-    let after: String = sqlx::query_scalar(
-        "SELECT provider_data FROM auth_providers WHERE user_id = ? AND provider = 'local'",
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await
-    .expect("provider row re-reads");
-    assert!(after.contains("$argon2id$"), "rehash persisted: {after}");
-    assert!(
-        after.contains("\"scheme\":\"argon2id\""),
-        "tag flipped: {after}"
-    );
+    let (scheme, hash) = stored(pool, user_id).await;
+    assert!(hash.starts_with("$argon2id$"), "rehash persisted: {hash}");
+    assert_eq!(scheme, "argon2id", "tag flipped");
 
     let denied = login
         .login(

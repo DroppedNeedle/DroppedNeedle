@@ -10,7 +10,7 @@
 //! Ported from v2's Subsonic and Jellyfin compat auth (`_user_dto`,
 //! `_authenticate`) and the app password service.
 //!
-//! Store: [`prod::ProdCompatPasswords`] reads `connect_app_passwords`
+//! Store: [`prod::ProdCompatPasswords`] reads `auth_app_passwords`
 //! (decrypting `secret_encrypted` for the Subsonic token scheme) and
 //! `auth_users`; `note_use` throttles `last_used_at` writes to one per
 //! ~5 minutes per secret.

@@ -25,6 +25,10 @@ pub enum HashScheme {
 }
 
 impl HashScheme {
+    /// Every scheme, in the order `auth_providers.hash_scheme`'s CHECK lists
+    /// them.
+    pub const ALL: [Self; 2] = [Self::Bcrypt, Self::Argon2id];
+
     /// Storage tag (`bcrypt` or `argon2id`).
     pub fn as_tag(&self) -> &'static str {
         match self {

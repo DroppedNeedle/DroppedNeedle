@@ -59,7 +59,7 @@ impl Rig {
                     for (id, name, role) in rows {
                         tx.execute(
                             "INSERT INTO auth_users (id, display_name, role, created_at) \
-                         VALUES (?1, ?2, ?3, '2024-01-01T00:00:00Z')",
+                         VALUES (?1, ?2, ?3, 0)",
                             rusqlite::params![id, name, role],
                         )?;
                     }

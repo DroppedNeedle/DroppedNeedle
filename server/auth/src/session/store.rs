@@ -17,6 +17,25 @@ pub enum SessionKind {
     Companion,
 }
 
+impl SessionKind {
+    /// Every kind, in the order `auth_tokens.session_kind`'s CHECK lists them.
+    pub const ALL: [Self; 2] = [Self::Standard, Self::Companion];
+
+    /// Storage form.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Companion => "companion",
+        }
+    }
+
+    /// Parse a stored kind. `None` for anything else: the kind gates
+    /// companion minting, so an unknown value never guesses a privilege.
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == value)
+    }
+}
+
 /// A standard session to store. The repository gives it its id, expires
 /// it [`SESSION_MAX_AGE_SECS`](super::tokens::SESSION_MAX_AGE_SECS) after
 /// `issued_at` and counts it as last seen then.

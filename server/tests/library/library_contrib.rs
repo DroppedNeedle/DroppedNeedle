@@ -161,7 +161,7 @@ impl Rig {
         rig.db
             .execute(
                 "INSERT INTO auth_users (id, display_name, created_at) \
-                 VALUES (?1, 'Curator', '2026-01-01T00:00:00Z')",
+                 VALUES (?1, 'Curator', 0)",
                 params![ACTOR],
             )
             .unwrap();

@@ -65,12 +65,12 @@ durable_jobs
 durable_loops
 
 [auth]
+auth_app_passwords
 auth_oidc_states
 auth_password_recovery_codes
 auth_providers
 auth_tokens
 auth_users
-connect_app_passwords
 
 [plugins]
 plugin_library_writes

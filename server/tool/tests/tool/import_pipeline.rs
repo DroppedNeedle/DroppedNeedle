@@ -64,22 +64,23 @@ async fn fresh_import_applies_everything() {
         .await
         .unwrap();
     assert_eq!(name, "User u1");
-    let data: String = sqlx::query_scalar(
-        "SELECT provider_data FROM auth_providers WHERE provider_uid = 'local:u1'",
+    let local: (Option<String>, String, String) = sqlx::query_as(
+        "SELECT provider_data, hash_scheme, password_hash FROM auth_providers \
+         WHERE provider_uid = 'local:u1'",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(
-        data.contains(BCRYPT_HASH),
+    assert_eq!(
+        local,
+        (None, "bcrypt".to_owned(), BCRYPT_HASH.to_owned()),
         "bcrypt hash must survive verbatim"
     );
-    let stored: String = sqlx::query_scalar(
-        "SELECT secret_encrypted FROM connect_app_passwords WHERE name = 'phone'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let stored: String =
+        sqlx::query_scalar("SELECT secret_encrypted FROM auth_app_passwords WHERE name = 'phone'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(
         stored.starts_with("v3:"),
         "app secret must be v3 ciphertext"
@@ -203,7 +204,7 @@ async fn follow_merge_never_downgrades() {
     let pool = migrated_pool().await;
     let (_dir, config_path, crypto) = scratch_config("follow-merge");
     sqlx::query(
-        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', '')",
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', 0)",
     )
     .execute(&pool)
     .await
@@ -539,7 +540,7 @@ async fn app_password_name_collision_disambiguates() {
     assert_eq!(report.exit.code, ExitCode::OkWithDrops);
     assert_eq!(report.entities["app_password"].conflict_kept_existing, 1);
     let names: Vec<String> = sqlx::query_scalar(
-        "SELECT name FROM connect_app_passwords WHERE user_id = 'u1' ORDER BY name",
+        "SELECT name FROM auth_app_passwords WHERE user_id = 'u1' ORDER BY name",
     )
     .fetch_all(&pool)
     .await
@@ -715,7 +716,7 @@ async fn reused_secret_keeps_first_registration() {
     assert_eq!(report.entities["app_password"].imported, 1);
     assert_eq!(report.entities["app_password"].conflict_kept_existing, 1);
     assert_eq!(count(&pool, "auth_users").await, 2);
-    assert_eq!(count(&pool, "connect_app_passwords").await, 1);
+    assert_eq!(count(&pool, "auth_app_passwords").await, 1);
 }
 
 #[tokio::test]
@@ -777,7 +778,7 @@ async fn pending_import_reopens_a_rejected_row() {
     let pool = migrated_pool().await;
     let (_dir, config_path, crypto) = scratch_config("rejected-reopen");
     sqlx::query(
-        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', '')",
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', 0)",
     )
     .execute(&pool)
     .await
@@ -815,7 +816,7 @@ async fn rejected_and_unknown_states_never_win_a_merge() {
     let pool = migrated_pool().await;
     let (_dir, config_path, _crypto) = scratch_config("rejected-kept");
     sqlx::query(
-        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', '')",
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', 0)",
     )
     .execute(&pool)
     .await
@@ -904,7 +905,7 @@ async fn unnamed_app_password_drops_counted() {
     assert_eq!(report.exit.code, ExitCode::OkWithDrops);
     assert_eq!(report.entities["app_password"].dropped_invalid, 1);
     assert_eq!(report.entities["app_password"].imported, 0);
-    assert_eq!(count(&pool, "connect_app_passwords").await, 0);
+    assert_eq!(count(&pool, "auth_app_passwords").await, 0);
     assert_eq!(count(&pool, "auth_users").await, 1);
 }
 

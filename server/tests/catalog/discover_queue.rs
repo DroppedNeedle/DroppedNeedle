@@ -584,7 +584,7 @@ async fn seed_user(db: &Db) {
     db.write(Lane::Foreground, "test.seed", |tx| {
         tx.execute(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
-                 VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z')",
+                 VALUES ('user-1', 'Ada', 'user', 0)",
             [],
         )?;
         Ok::<_, droppedneedle_kernel::db::DbError>(())

@@ -5,5 +5,5 @@ droppedneedle_kernel::sql! {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) INSERT_TEST_USER = "INSERT OR IGNORE INTO auth_users \
              (id, display_name, role, created_at) \
-             VALUES (?1, ?2, ?3, '2024-01-01T00:00:00Z')";
+             VALUES (?1, ?2, ?3, 0)";
 }

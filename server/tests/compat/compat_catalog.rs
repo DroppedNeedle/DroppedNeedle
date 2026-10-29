@@ -668,7 +668,7 @@ impl Rig {
             .write(Lane::Foreground, "seed", |tx| {
                 tx.execute_batch(
                     "INSERT INTO auth_users (id, display_name, role, created_at) \
-                     VALUES ('u1', 'User', 'user', '2024-01-01T00:00:00Z');",
+                     VALUES ('u1', 'User', 'user', 0);",
                 )?;
                 tx.execute_batch(LIBRARY)?;
                 Ok::<_, droppedneedle_kernel::db::DbError>(())

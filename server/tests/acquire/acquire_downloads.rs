@@ -49,7 +49,7 @@ fn scratch_store(dir: &std::path::Path) -> Connection {
     let conn = Connection::open(dir.join("brief.db")).unwrap();
     conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
     conn.execute(
-        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'brief', 'user', 'now')",
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'brief', 'user', 0)",
         [],
     )
     .unwrap();

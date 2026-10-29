@@ -907,7 +907,7 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
         .execute_batch(
             "DELETE FROM auth_providers WHERE provider = 'local' AND provider_uid = 'alice';
              INSERT INTO auth_providers (id, user_id, provider, provider_uid, created_at)
-             SELECT 'prov-alice-oidc', id, 'oidc', 'sub-alice', '2024-01-01T00:00:00+00:00'
+             SELECT 'prov-alice-oidc', id, 'oidc', 'sub-alice', 1704067200000
              FROM auth_users WHERE username = 'alice';",
         )
         .expect("alice is single sign-on only");
@@ -1361,7 +1361,7 @@ async fn same_id_user_conflict_keeps_existing_row() {
     sqlx::query(
         "INSERT INTO auth_users (id, display_name, email, role, created_at, username)
          VALUES (?, 'Old Alice', 'old@example.com', 'user',
-                 '2026-01-01T00:00:00+00:00', 'alice')",
+                 1767225600000, 'alice')",
     )
     .bind(&fixture.alice_id)
     .execute(&pool)
@@ -1395,7 +1395,7 @@ async fn same_id_user_conflict_keeps_existing_row() {
 async fn follow_conflict_merges_or_min_max() {
     let (fixture, export, pool, config_dir, _root) = merge_target("merge-follow").await;
     sqlx::query(
-        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', '')",
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', 0)",
     )
     .bind(&fixture.alice_id)
     .execute(&pool)
@@ -1440,7 +1440,7 @@ async fn follow_conflict_merges_or_min_max() {
 async fn approval_conflict_keeps_most_permissive() {
     let (fixture, export, pool, config_dir, _root) = merge_target("merge-approval").await;
     sqlx::query(
-        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', '')",
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', 0)",
     )
     .bind(&fixture.alice_id)
     .execute(&pool)
@@ -1496,7 +1496,7 @@ async fn restore_round_trips_and_refuses() {
         .expect("schema migrates");
     sqlx::query(
         "INSERT INTO auth_users (id, display_name, role, created_at)
-         VALUES ('restore-alice', 'Alice', 'admin', '2026-01-01T00:00:00+00:00')",
+         VALUES ('restore-alice', 'Alice', 'admin', 1767225600000)",
     )
     .execute(&pool)
     .await

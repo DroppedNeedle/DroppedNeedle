@@ -369,7 +369,7 @@ async fn store_failure_is_generic_never_an_auth_code() {
     crate::common::break_schema(
         rig.runtime().db(),
         "ALTER TABLE auth_users RENAME TO auth_users_gone; \
-         ALTER TABLE connect_app_passwords RENAME TO connect_app_passwords_gone;",
+         ALTER TABLE auth_app_passwords RENAME TO auth_app_passwords_gone;",
     )
     .await;
     let params = SubsonicParams::new(vec![("u", "alice"), ("p", "alice-secret")]);

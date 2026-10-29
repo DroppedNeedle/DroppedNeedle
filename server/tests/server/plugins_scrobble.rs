@@ -121,7 +121,7 @@ async fn mirror_user(runtime: &DbRuntime, user_id: &str) {
         .write(Lane::Foreground, "scrobble-test-seed", move |tx| {
             tx.execute(
                 "INSERT INTO auth_users (id, display_name, role, created_at)
-                 VALUES (?1, ?1, 'user', '2026-01-01T00:00:00Z')",
+                 VALUES (?1, ?1, 'user', 0)",
                 rusqlite::params![user_id],
             )?;
             Ok::<_, droppedneedle_kernel::db::DbError>(())

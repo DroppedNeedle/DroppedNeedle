@@ -43,7 +43,7 @@ crate::sql! {
                          THEN user_connections.connection_data ELSE '[]' END) AS tree
                  WHERE tree.type = 'text' AND tree.value LIKE 'v3:%'
                  UNION ALL
-                 SELECT secret_encrypted FROM connect_app_passwords
+                 SELECT secret_encrypted FROM auth_app_passwords
                  WHERE secret_encrypted LIKE 'v3:%'
                  UNION ALL
                  SELECT provider_data FROM auth_providers WHERE provider_data LIKE 'v3:%'";

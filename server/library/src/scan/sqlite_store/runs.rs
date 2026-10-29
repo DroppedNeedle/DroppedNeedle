@@ -963,7 +963,7 @@ mod tests {
         let check = |conn: &Connection| -> Result<(), ScanStoreError> {
             conn.execute_batch(
                 "INSERT INTO auth_users (id, display_name, created_at) VALUES
-                 ('u', 'U', '2026-01-01'), ('v', 'V', '2026-01-01');
+                 ('u', 'U', 0), ('v', 'V', 0);
              INSERT INTO local_artists (id, display_name, folded_name, kind, created_at,
                  updated_at) VALUES ('ar', 'Artist', 'artist', 'person', 1000, 1000);
              INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,

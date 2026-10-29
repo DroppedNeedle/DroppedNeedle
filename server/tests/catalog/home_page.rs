@@ -84,7 +84,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
     let seed = format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z'); \
+         VALUES ('user-1', 'Ada', 'user', 0); \
          INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
          VALUES ('a1', 'Aurora', 'aurora', 'group', 1, 1); \
          INSERT INTO local_artist_external_identities (local_artist_id, provider, \

@@ -1562,7 +1562,7 @@ fn retoken(rig: &CompatApp, secret: &str, token: &str) {
         .app
         .db()
         .execute(
-            "UPDATE connect_app_passwords SET secret_sha256 = ?1 WHERE secret_sha256 = ?2",
+            "UPDATE auth_app_passwords SET secret_sha256 = ?1 WHERE secret_sha256 = ?2",
             [hash(token), hash(secret)],
         )
         .expect("token changes");
