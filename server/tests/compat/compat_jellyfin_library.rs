@@ -868,6 +868,73 @@ async fn an_unlinked_artist_shows_their_album_mosaic() {
     rig.stop().await;
 }
 
+/// An app that listed an album before it was merged into another asks for
+/// its picture by the old id, with no credentials, and gets the picture of
+/// the album that holds it now.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_merged_album_shows_the_picture_of_the_album_that_holds_it() {
+    use crate::compat_subsonic_library::two_covers_for_radiohead;
+    let rig = CompatApp::start("jf-merged-picture").await;
+    let auth = finamp(&rig.secret);
+    two_covers_for_radiohead(&rig);
+    let mezzanine = album_id(&rig, &auth, "Mezzanine").await;
+    let ok_computer = album_id(&rig, &auth, "OK Computer").await;
+    rig.jellyfin_ids_caught_up().await;
+    let (teardrop, survivor): (String, String) = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT t.id, (SELECT local_album_id FROM local_tracks \
+             WHERE relative_path = 'Radiohead/OK Computer/01 Airbag.flac') \
+             FROM local_tracks t WHERE t.relative_path = 'Massive Attack/Mezzanine/04 Teardrop.m4a'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("the track and the album it joins");
+    let admin = rig.app.login_admin().await;
+    let admin = [("authorization", admin.as_str())];
+    let mut selection = json!({"track_ids": [teardrop], "target_album_id": survivor});
+    let (status, preview) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/library/albums/merge-preview",
+            &admin,
+            Some(selection.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    selection["preview_token"] = preview["preview_token"].clone();
+    let (status, merged) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/library/albums/merge",
+            &admin,
+            Some(selection),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{merged}");
+
+    let current = get(
+        &rig,
+        &format!("/jellyfin/Items/{ok_computer}/Images/Primary"),
+        None,
+    )
+    .await;
+    assert_eq!(current.status, StatusCode::OK);
+    let old = get(
+        &rig,
+        &format!("/jellyfin/Items/{mezzanine}/Images/Primary"),
+        None,
+    )
+    .await;
+    assert_eq!(old.status, StatusCode::OK);
+    assert_eq!(old.header("content-type"), current.header("content-type"));
+    assert_eq!(old.body, current.body);
+    rig.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn favorite_dialects_and_played_markers() {
     let rig = CompatApp::start("jf-favorites").await;

@@ -43,27 +43,22 @@ impl LiveSettings {
     }
 
     /// The section, or the defaults (both protocols off) when it cannot
-    /// be read: a broken config must never open the compat APIs.
+    /// be read: a broken config must never open the compat APIs. The
+    /// failure is logged once per revision.
     fn section(&self) -> ConnectApps {
-        self.connect_apps.get().map_or_else(
-            |error| {
-                tracing::warn!(%error, "connect_apps settings unreadable; compat APIs stay off");
-                ConnectApps::default()
-            },
-            |section| ConnectApps::clone(&section),
-        )
+        self.connect_apps
+            .read()
+            .map_or_else(ConnectApps::default, |section| ConnectApps::clone(&section))
     }
 
     /// Who may download library files. Admins only when the setting cannot
     /// be read: a broken config must never widen a permission.
     fn download_access(&self) -> DownloadAccess {
-        match self.security.get() {
-            Ok(security) => security.library_download_access,
-            Err(error) => {
-                tracing::warn!(%error, "security settings unreadable; compat downloads are admin-only");
-                DownloadAccess::Admin
-            }
-        }
+        self.security
+            .read()
+            .map_or(DownloadAccess::Admin, |security| {
+                security.library_download_access
+            })
     }
 
     /// Subsonic settings now.
@@ -99,13 +94,9 @@ impl LiveSettings {
     /// The stated public addresses now. Empty when the list cannot be
     /// read: then every app gets the address it used, as with no list.
     pub fn public_addresses(&self) -> Vec<Origin> {
-        match self.public_address.get() {
-            Ok(section) => section.stated(),
-            Err(error) => {
-                tracing::warn!(%error, "public address settings unreadable; apps get the address they used");
-                Vec::new()
-            }
-        }
+        self.public_address
+            .read()
+            .map_or_else(Vec::new, |section| section.stated())
     }
 }
 

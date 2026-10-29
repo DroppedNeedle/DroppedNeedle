@@ -915,17 +915,19 @@ impl CatalogIds {
     }
 
     /// Reverse lookup for a caller who has not signed in (the picture
-    /// address): current ids only, never an old one, and a miss answers at
-    /// once.
+    /// address): current ids only, never an old unkeyed one, and a miss
+    /// answers at once. An album or artist a merge retired comes back as
+    /// the one that holds it now, so an app that listed it still shows the
+    /// right picture; its id was handed out with the data key, so nobody
+    /// without an account can work it out.
     #[allow(clippy::wrong_self_convention)]
     pub async fn from_jf_anonymous(
         &self,
         jf_id: &str,
     ) -> Result<Option<(String, String)>, ReadFailed> {
-        let mut found = self.ids.resolve(&[jf_id.to_owned()], false).await?;
-        Ok(found
-            .pop()
-            .flatten()
-            .map(|(kind, internal)| (kind.as_str().to_owned(), internal)))
+        match self.ids.resolve(&[jf_id.to_owned()], false).await?.pop() {
+            Some(Some((kind, internal))) => self.current(kind, internal).await,
+            _ => Ok(None),
+        }
     }
 }

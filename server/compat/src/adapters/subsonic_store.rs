@@ -626,7 +626,8 @@ impl SubsonicStore {
         self.albums_for_caller(albums).await
     }
 
-    /// Starred albums page.
+    /// Starred albums page. A starred album that is gone is dropped
+    /// before paging, so every page but the last is full.
     pub async fn get_starred_albums(
         &self,
         user_id: &str,
@@ -638,11 +639,17 @@ impl SubsonicStore {
             .favorite_ids(user_id, "album")
             .await?
             .into_iter()
-            .skip(offset)
-            .take(limit)
             .map(|(id, _)| id)
             .collect::<Vec<_>>();
-        let albums = self.library.albums_in_order(&ids).await?;
+        let wanted = offset.saturating_add(limit);
+        let mut found = Vec::new();
+        for chunk in ids.chunks(500) {
+            if found.len() >= wanted {
+                break;
+            }
+            found.extend(self.library.albums_in_order(chunk).await?);
+        }
+        let albums = found.into_iter().skip(offset).take(limit).collect();
         self.albums_for_caller(albums).await
     }
 

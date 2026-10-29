@@ -2303,9 +2303,9 @@ fn rows_of(rig: &CompatApp, sql: &str) -> String {
 /// album's id, and starring the old id stars it. Jellyfin, signed in, for
 /// both ids the album was handed out under: the item answers with the
 /// current id and lists the album's tracks, also as the first request of
-/// a new process; with no token it is a 401. The picture address never
-/// opens an old id: an empty 404 in the process that listed it and as the
-/// first request after a restart.
+/// a new process; with no token it is a 401. The picture address answers
+/// the keyed id as the album that holds it now, in the process that listed
+/// it and as the first request after a restart, and never the unkeyed one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn merged_albums_keep_their_ids_in_player_apps() {
     let mut rig = CompatApp::start("compat-merged-albums").await;
@@ -2371,15 +2371,17 @@ async fn merged_albums_keep_their_ids_in_player_apps() {
             .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{id}");
     }
-    let (status, _, body) = picture(&rig, &keyed, None).await;
+    let (status, _, body) = picture(&rig, &unkeyed, None).await;
     assert_eq!((status, body.len()), (StatusCode::NOT_FOUND, 0));
     // The survivor has no picture in this library, and its miss names it.
-    let (status, _, body) = picture(&rig, &ok_computer_id, None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(
-        serde_json::from_slice::<Value>(&body).expect("a JSON answer"),
-        json!("OK Computer does not have an image of type Primary")
-    );
+    for id in [&ok_computer_id, &keyed] {
+        let (status, _, body) = picture(&rig, id, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).expect("a JSON answer"),
+            json!("OK Computer does not have an image of type Primary")
+        );
+    }
 
     merge_albums(&rig, &airbag, &achtung).await;
     let album = subsonic_ok(&rig, &format!("getAlbum?id={old}")).await;
@@ -2398,7 +2400,11 @@ async fn merged_albums_keep_their_ids_in_player_apps() {
     rig.app = rig.app.restart().await;
     rig.jellyfin_ids_caught_up().await;
     let (status, _, body) = picture(&rig, &keyed, None).await;
-    assert_eq!((status, body.len()), (StatusCode::NOT_FOUND, 0));
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).expect("a JSON answer"),
+        json!("Achtung Baby does not have an image of type Primary")
+    );
     rig.stop().await;
 }
 
