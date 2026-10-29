@@ -428,6 +428,10 @@ pub struct ManagementAttentionBundleView {
     pub bundle_id: String,
     pub file_count: i64,
     pub sample_paths: Vec<String>,
+    /// The folders the write took its files from, relative to their
+    /// library folder. For a download that is the hidden import folder
+    /// holding the downloaded files.
+    pub source_folders: Vec<String>,
 }
 
 /// The publish journal at a glance.
@@ -469,6 +473,7 @@ impl From<AttentionBundle> for ManagementAttentionBundleView {
             bundle_id: bundle.bundle_id,
             file_count: bundle.file_count,
             sample_paths: bundle.sample_paths,
+            source_folders: bundle.source_folders,
         }
     }
 }

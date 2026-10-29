@@ -23,6 +23,10 @@ pub struct AttentionBundle {
     pub file_count: i64,
     /// A few of the paths the write was putting files at.
     pub sample_paths: Vec<String>,
+    /// The folders the write took its files from, relative to their
+    /// library folder. For a download that is the hidden import folder
+    /// holding the downloaded files.
+    pub source_folders: Vec<String>,
 }
 
 /// The publish journal at a glance.
@@ -73,7 +77,19 @@ fn attention_bundle(row: &rusqlite::Row<'_>) -> rusqlite::Result<AttentionBundle
             .take(5)
             .map(str::to_owned)
             .collect(),
+        source_folders: source_folders(row.get::<_, Option<String>>(3)?.as_deref()),
     })
+}
+
+/// The distinct parent folders of newline-separated source paths, at most
+/// five. A file at the top of its library folder has none.
+fn source_folders(paths: Option<&str>) -> Vec<String> {
+    let folders: std::collections::BTreeSet<&str> = paths
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|path| path.rsplit_once('/').map(|(folder, _)| folder))
+        .collect();
+    folders.into_iter().take(5).map(str::to_owned).collect()
 }
 
 /// What closing a write does, said plainly: it records that the files
@@ -159,7 +175,8 @@ impl Management {
                 diagnostics.state_counts.insert(state, count);
             }
             let mut bundles = conn.prepare(&format!(
-                "SELECT bundle_id, COUNT(*), GROUP_CONCAT(dest_rel, char(10)) \
+                "SELECT bundle_id, COUNT(*), GROUP_CONCAT(dest_rel, char(10)), \
+                 GROUP_CONCAT(source_rel, char(10)) \
                  FROM library_publish_journal WHERE {attention} \
                  GROUP BY bundle_id ORDER BY bundle_id LIMIT ?1"
             ))?;

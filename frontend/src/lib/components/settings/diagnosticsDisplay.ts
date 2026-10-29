@@ -30,7 +30,11 @@ export const PROVIDER_LABELS: Readonly<Record<string, string>> = {
 	github: 'GitHub',
 	ticketmaster: 'Ticketmaster',
 	skiddle: 'Skiddle',
-	'open-meteo': 'Open-Meteo'
+	'open-meteo': 'Open-Meteo',
+	wikidata: 'Wikidata',
+	purchase: 'Purchase links',
+	plugins: 'Plugins',
+	previews: 'Previews'
 };
 
 export const PRIORITY_LABELS: Readonly<Record<RequestPriority, string>> = {

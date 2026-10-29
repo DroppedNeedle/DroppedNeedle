@@ -67,6 +67,7 @@ droppedneedle_kernel::sql! {
              picked_by_person = ?7 WHERE id = ?6";
     /// Reimport guard: a failed or partial task with an attempt whose handle
     /// still names its files and whose cleanup has not run.
+    /// The request history's `reimportable` filter repeats this test.
     pub(super) REIMPORTABLE = "SELECT EXISTS (SELECT 1 FROM download_tasks t \
              WHERE t.id = ?1 AND t.status IN ('failed', 'partial') \
                AND EXISTS (SELECT 1 FROM download_attempts a WHERE a.task_id = t.id \

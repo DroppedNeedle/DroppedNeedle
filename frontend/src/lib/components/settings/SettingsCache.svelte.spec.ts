@@ -6,7 +6,15 @@ const h = vi.hoisted(() => ({ clear: vi.fn() }));
 
 vi.mock('$lib/queries/settings/AdminCacheQueries.svelte', () => ({
 	getCacheStatsQuery: () => ({
-		data: { entries: 42, sources: [], provider_data_on: true, cover_images: 0, cover_bytes: 0 },
+		data: {
+			entries: 42,
+			sources: [],
+			provider_data_on: true,
+			cover_images: 0,
+			cover_bytes: 0,
+			database_bytes: 0,
+			wal_bytes: 0
+		},
 		isPending: false,
 		error: null,
 		refetch: vi.fn()
@@ -40,7 +48,7 @@ describe('SettingsCache', () => {
 
 	it('does nothing when the confirmation is declined', async () => {
 		await render(SettingsCache);
-		await page.getByRole('button', { name: 'Clear everything' }).click();
+		await page.getByRole('button', { name: 'Clear provider data' }).click();
 		await page
 			.getByRole('dialog', { name: 'Clear cache' })
 			.getByRole('button', { name: 'Cancel' })

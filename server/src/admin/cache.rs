@@ -8,6 +8,8 @@
 //! discover, home and queue pages built from it. Anything cleared is
 //! fetched or built again on demand.
 
+use std::path::Path;
+
 use droppedneedle_kernel::db::cache::CacheError;
 
 use super::{
@@ -22,12 +24,17 @@ use droppedneedle_catalog::reads::discover::cache as discover_pages;
 use droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache;
 use droppedneedle_providers::ProviderCacheStore;
 
-/// Rows and bytes per provider, whether the cache file is working, and the
-/// images on disk.
+/// Rows and bytes per provider, whether the cache file is working, the
+/// images on disk and the size of the database and its write-ahead log.
 pub async fn cache_stats(
     cache: &ProviderCacheStore,
+    db: Option<&AdminDb>,
     covers: Option<&ArtworkCache>,
 ) -> CacheStatsResponse {
+    let (database_bytes, wal_bytes) = match db {
+        Some(db) => database_sizes(db.db.path()).await,
+        None => (0, 0),
+    };
     let (cover_images, cover_bytes) = match covers {
         Some(covers) => covers.usage().await,
         None => (0, 0),
@@ -48,7 +55,24 @@ pub async fn cache_stats(
         provider_data_on: cache.is_on(),
         cover_images,
         cover_bytes,
+        database_bytes,
+        wal_bytes,
     }
+}
+
+/// The database file's size and its `-wal` file's size. A file that cannot
+/// be read counts as 0: the numbers are for display only.
+async fn database_sizes(path: &Path) -> (u64, u64) {
+    let mut wal = path.as_os_str().to_owned();
+    wal.push("-wal");
+    (file_size(path).await, file_size(Path::new(&wal)).await)
+}
+
+async fn file_size(path: &Path) -> u64 {
+    tokio::fs::metadata(path)
+        .await
+        .map(|metadata| metadata.len())
+        .unwrap_or(0)
 }
 
 /// Clear provider data, the images, or both (the default). Provider data

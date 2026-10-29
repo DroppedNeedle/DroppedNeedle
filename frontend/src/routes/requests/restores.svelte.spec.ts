@@ -1,13 +1,14 @@
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { RequestItem } from '$lib/queries/requests/types';
 import type { WantedRetryingItem, WantedWatchItem } from '$lib/queries/wanted/types';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { fakeApi } from '$lib/test/api';
+import { fakeApi, type FakeRoutes } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
 import ApprovalsTab from './ApprovalsTab.svelte';
+import HistoryTab from './HistoryTab.svelte';
 import WantedTab from './WantedTab.svelte';
 
 const now = Math.floor(Date.now() / 1000);
@@ -45,6 +46,11 @@ const trackApproval: RequestItem = {
 	requested_at: now - 3600,
 	requester_count: 0,
 	status: 'awaiting_approval'
+};
+
+const emptyHistory: FakeRoutes = {
+	'GET /api/v3/requests/history': { items: [], total: 0, page: 1, page_size: 20, total_pages: 1 },
+	'GET /api/v3/requests/wanted': { count: 0, items: [], retrying: [] }
 };
 
 function signIn(role: 'admin' | 'user') {
@@ -98,5 +104,32 @@ describe('requests restores', () => {
 		await expect
 			.element(page.getByRole('img', { name: 'Mezzanine' }))
 			.toHaveAttribute('data-src', expect.stringContaining('rg-mezzanine'));
+	});
+
+	it('lets an admin list the requests that can be reimported', async () => {
+		signIn('admin');
+		const api = fakeApi(emptyHistory);
+		await renderWithQuery(HistoryTab, { active: true });
+
+		await userEvent.selectOptions(
+			page.getByRole('combobox', { name: 'Filter by status' }),
+			'reimportable'
+		);
+		await expect
+			.poll(() => api.calls('GET /api/v3/requests/history').at(-1)?.query.get('status'))
+			.toBe('reimportable');
+	});
+
+	it('offers the reimport filter to admins only', async () => {
+		signIn('user');
+		fakeApi(emptyHistory);
+		await renderWithQuery(HistoryTab, { active: true });
+
+		await expect
+			.element(page.getByRole('combobox', { name: 'Filter by status' }))
+			.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('option', { name: 'Can reimport' }))
+			.not.toBeInTheDocument();
 	});
 });

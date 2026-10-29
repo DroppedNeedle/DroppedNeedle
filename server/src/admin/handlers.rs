@@ -108,7 +108,7 @@ pub async fn cache_stats(
     State(admin): State<AdminSetup>,
     _caller: Admin,
 ) -> Json<CacheStatsResponse> {
-    Json(super::cache::cache_stats(&admin.cache, admin.covers.as_ref()).await)
+    Json(super::cache::cache_stats(&admin.cache, admin.db.as_ref(), admin.covers.as_ref()).await)
 }
 
 /// Clear provider data, the cached images, or both.

@@ -312,7 +312,8 @@ machine and its data folders can run it.
 - **Cache tab buttons and tiles.** v2's cache was split into memory, disk
   metadata and library parts, each with its own count and its own clear
   button. Those parts no longer exist. Settings > Cache in v3 counts cached
-  provider answers and cached images, and clears the images or everything.
+  provider answers per source and cached images, shows the database size,
+  and clears the provider data or the images.
   Provider answers are kept in `metadata-cache.db` and survive a restart;
   saving a setting never clears them.
 - **Settings nothing used, and the cache and pacing knobs.** These v2

@@ -130,6 +130,9 @@ pub struct KindQuery {
     pub kind: Option<String>,
 }
 
+/// The history status filter for failed requests an admin can reimport.
+pub const REIMPORTABLE_FILTER: &str = "reimportable";
+
 /// History paging and filter query.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -138,7 +141,8 @@ pub struct HistoryQuery {
     pub page: Option<u32>,
     /// Rows per page (1..=100).
     pub page_size: Option<u32>,
-    /// Status filter.
+    /// Status filter: a request status, or `reimportable` (admins only)
+    /// for the failed requests whose downloaded files can be imported again.
     pub status: Option<String>,
     /// `newest` (default), `oldest`, or `status`.
     pub sort: Option<String>,

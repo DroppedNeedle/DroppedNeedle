@@ -647,6 +647,11 @@
 									<span class="min-w-0 text-sm"
 										>{bundle.file_count ?? 0} files{#if bundle.sample_paths?.length}: <span
 												class="font-mono text-xs break-all">{bundle.sample_paths.join(', ')}</span
+											>{/if}{#if bundle.source_folders?.length}<span
+												class="block text-xs text-base-content/70"
+												>From <span class="font-mono break-all"
+													>{bundle.source_folders.join(', ')}</span
+												></span
 											>{/if}</span
 									><Button
 										variant="warning"
@@ -679,6 +684,10 @@
 							>
 								{bundle.file_count ?? 0} files{#if bundle.sample_paths?.length}: <span
 										class="font-mono text-xs break-all">{bundle.sample_paths.join(', ')}</span
+									>{/if}{#if bundle.source_folders?.length}<span
+										class="block text-xs text-base-content/70"
+										>From <span class="font-mono break-all">{bundle.source_folders.join(', ')}</span
+										></span
 									>{/if}
 							</li>{/each}
 					</ul>

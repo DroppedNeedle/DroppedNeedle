@@ -90,6 +90,10 @@ pub struct CacheStatsResponse {
     pub cover_images: u64,
     /// Their total size in bytes.
     pub cover_bytes: u64,
+    /// Size of the database file in bytes, 0 when it cannot be read.
+    pub database_bytes: u64,
+    /// Size of its write-ahead log in bytes, 0 when there is none.
+    pub wal_bytes: u64,
 }
 
 /// What one provider holds in the cache file.

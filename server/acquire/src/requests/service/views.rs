@@ -6,9 +6,9 @@ use crate::downloads::state::TaskStatus;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{RequestRecord, RequestStatus, validate_mbid};
 use crate::requests::models::{
-    ActiveCountResponse, ActiveRequestsResponse, HistoryQuery, HistoryResponse, RequestItem,
-    RequestKind, WaitingReason, WantedActionResponse, WantedItem, WantedResponse,
-    WantedRetryingItem,
+    ActiveCountResponse, ActiveRequestsResponse, HistoryQuery, HistoryResponse,
+    REIMPORTABLE_FILTER, RequestItem, RequestKind, WaitingReason, WantedActionResponse, WantedItem,
+    WantedResponse, WantedRetryingItem,
 };
 use crate::requests::sqlite::WatchChange;
 use droppedneedle_auth::{Admin, Principal};
@@ -129,6 +129,12 @@ impl RequestsService {
                 )
             }
         };
+        // Reimporting is an admin action, so only admins filter on it.
+        if query.status.as_deref() == Some(REIMPORTABLE_FILTER) && !principal.is_admin() {
+            return Err(RequestsError::Forbidden {
+                message: "Only admins can filter on reimportable requests".to_owned(),
+            });
+        }
         let owner = (!principal.is_admin()).then_some(principal.user_id());
         let offset = page.saturating_sub(1).saturating_mul(page_size);
         let (rows, total) = self

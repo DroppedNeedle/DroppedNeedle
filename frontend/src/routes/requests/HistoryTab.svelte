@@ -113,6 +113,9 @@
 				<option value="failed">Failed</option>
 				<option value="cancelled">Cancelled</option>
 				<option value="rejected">Rejected</option>
+				{#if authStore.isAdmin}
+					<option value="reimportable">Can reimport</option>
+				{/if}
 			</select>
 
 			<select

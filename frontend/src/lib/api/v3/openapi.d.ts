@@ -11442,6 +11442,11 @@ export interface components {
             cover_images: number;
             /**
              * Format: int64
+             * @description Size of the database file in bytes, 0 when it cannot be read.
+             */
+            database_bytes: number;
+            /**
+             * Format: int64
              * @description Provider answers held.
              */
             entries: number;
@@ -11452,6 +11457,11 @@ export interface components {
             provider_data_on: boolean;
             /** @description Rows and bytes per provider. */
             sources: components["schemas"]["ProviderSourceStats"][];
+            /**
+             * Format: int64
+             * @description Size of its write-ahead log in bytes, 0 when there is none.
+             */
+            wal_bytes: number;
         };
         /** @description `POST /cache/sync/cancel` answer. */
         CacheSyncCancelResponse: {
@@ -16420,6 +16430,12 @@ export interface components {
             /** Format: int64 */
             file_count: number;
             sample_paths: string[];
+            /**
+             * @description The folders the write took its files from, relative to their
+             *     library folder. For a download that is the hidden import folder
+             *     holding the downloaded files.
+             */
+            source_folders: string[];
         };
         /** @description Catalog filter for a `filter` selection; empty matches everything. */
         ManagementCatalogFilterBody: {
@@ -43014,7 +43030,10 @@ export interface operations {
                 page?: number;
                 /** @description Rows per page (1..=100). */
                 page_size?: number;
-                /** @description Status filter. */
+                /**
+                 * @description Status filter: a request status, or `reimportable` (admins only)
+                 *     for the failed requests whose downloaded files can be imported again.
+                 */
                 status?: string;
                 /** @description `newest` (default), `oldest`, or `status`. */
                 sort?: string;

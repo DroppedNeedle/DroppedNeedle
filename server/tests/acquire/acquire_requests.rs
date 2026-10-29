@@ -34,7 +34,7 @@ use axum::{
 };
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::DownloadDispatch;
-use droppedneedle_acquire::downloads::state::TaskStatus;
+use droppedneedle_acquire::downloads::state::{AttemptState, TaskStatus};
 use droppedneedle_acquire::downloads::{PlannedAlbum, ReplaceVersion};
 use droppedneedle_acquire::follows::ImportArtist;
 use droppedneedle_acquire::requests::{
@@ -1103,6 +1103,48 @@ async fn history_pages_and_clears() {
     )
     .await;
     assert_eq!(owners["total"], 2);
+}
+
+// `status=reimportable` lists only the failed requests whose download kept
+// its files, and only for an admin.
+#[tokio::test]
+async fn history_filters_reimportable_for_admins() {
+    let (state, _db, dispatch) = setup().await;
+    for mbid in [MBID_A, MBID_B] {
+        ask(&state, TRUSTED, mbid).await;
+    }
+    let kept = dispatch.task(1).await;
+    let bare = dispatch.task(2).await;
+    let attempt_task = kept.clone();
+    dispatch
+        .dispatch
+        .journal()
+        .run("test.attempt", move |store| {
+            store.insert_attempt(
+                "kept-a0",
+                &attempt_task,
+                "soulseek",
+                0,
+                "",
+                r#"{"source":"soulseek","username":"peer","filenames":["a.flac"],"job_name":""}"#,
+                AttemptState::Preserved,
+                1_700_000_000.0,
+            )
+        })
+        .await
+        .expect("attempt recorded");
+    dispatch.fail(&kept).await;
+    dispatch.fail(&bare).await;
+
+    let uri = "/api/v3/requests/history?status=reimportable";
+    let (status, body) = call(&state, Method::GET, uri, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 1, "{body}");
+    assert_eq!(body["items"][0]["musicbrainz_id"], MBID_A);
+    assert_eq!(body["items"][0]["can_reimport"], true);
+
+    let (status, body) = call(&state, Method::GET, uri, Some(TRUSTED), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
 }
 
 // Missing principal is 401, a user on an admin queue is 403, a bad body is

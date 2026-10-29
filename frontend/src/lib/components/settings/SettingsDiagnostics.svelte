@@ -190,6 +190,22 @@
 		{/if}
 	</section>
 
+	{#if queueQuery.data?.checkpoint}
+		{@const checkpoint = queueQuery.data.checkpoint}
+		<section class="space-y-2" aria-label="Last checkpoint">
+			<h3 class="font-semibold">Last checkpoint</h3>
+			<p class="text-sm">
+				{new Date(checkpoint.at_unix * 1000).toLocaleTimeString()}, {checkpoint.mode}, write-ahead
+				log {formatBytes(checkpoint.wal_file_bytes)}{checkpoint.busy
+					? ', blocked by a lock'
+					: ''}{checkpoint.suspended ? ', background work paused' : ''}
+			</p>
+			{#if checkpoint.error}
+				<p class="text-sm text-error">Failed. The cause is in the server log.</p>
+			{/if}
+		</section>
+	{/if}
+
 	{#if queueQuery.data}
 		<section class="space-y-3" aria-label="Job queues">
 			<h3 class="font-semibold">Job queues</h3>

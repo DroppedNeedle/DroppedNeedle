@@ -334,7 +334,8 @@ droppedneedle_kernel::sql! {
     /// Writes made at or before `?1` (unix milliseconds) that recovery has
     /// neither finished nor undone, at most `?2`.
     pub(crate) RETRYING_BUNDLES = "SELECT j.bundle_id, COUNT(*), \
-             GROUP_CONCAT(j.dest_rel, char(10)) FROM library_publish_journal j \
+             GROUP_CONCAT(j.dest_rel, char(10)), GROUP_CONCAT(j.source_rel, char(10)) \
+             FROM library_publish_journal j \
              JOIN library_publish_operations o ON o.bundle_id = j.bundle_id \
              WHERE j.state IN ('prepared', 'staged', 'published', 'committed') \
              AND o.created_at <= ?1 \

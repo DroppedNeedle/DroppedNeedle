@@ -28208,7 +28208,7 @@
           {
             "name": "status",
             "in": "query",
-            "description": "Status filter.",
+            "description": "Status filter: a request status, or `reimportable` (admins only)\nfor the failed requests whose downloaded files can be imported again.",
             "required": false,
             "schema": {
               "type": "string"
@@ -38931,7 +38931,9 @@
           "sources",
           "provider_data_on",
           "cover_images",
-          "cover_bytes"
+          "cover_bytes",
+          "database_bytes",
+          "wal_bytes"
         ],
         "properties": {
           "cover_bytes": {
@@ -38944,6 +38946,12 @@
             "type": "integer",
             "format": "int64",
             "description": "Cover and artist images on disk.",
+            "minimum": 0
+          },
+          "database_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of the database file in bytes, 0 when it cannot be read.",
             "minimum": 0
           },
           "entries": {
@@ -38962,6 +38970,12 @@
               "$ref": "#/components/schemas/ProviderSourceStats"
             },
             "description": "Rows and bytes per provider."
+          },
+          "wal_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of its write-ahead log in bytes, 0 when there is none.",
+            "minimum": 0
           }
         }
       },
@@ -49889,7 +49903,8 @@
         "required": [
           "bundle_id",
           "file_count",
-          "sample_paths"
+          "sample_paths",
+          "source_folders"
         ],
         "properties": {
           "bundle_id": {
@@ -49904,6 +49919,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "source_folders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The folders the write took its files from, relative to their\nlibrary folder. For a download that is the hidden import folder\nholding the downloaded files."
           }
         }
       },

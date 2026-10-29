@@ -444,6 +444,8 @@ export interface LibraryManagementNeedsAttentionBundle {
 	file_count?: number;
 	// A few of the paths the write was putting files at.
 	sample_paths?: string[];
+	// The folders it took its files from, relative to their library folder.
+	source_folders?: string[];
 }
 
 export interface LibraryManagementImportBundleResolveResponse {

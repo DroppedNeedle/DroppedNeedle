@@ -88,8 +88,15 @@ droppedneedle_kernel::sql! {
          AND rr.user_id = ?1)) AND NOT EXISTS (SELECT 1 FROM request_history_dismissals d \
          WHERE d.musicbrainz_id_lower = rh.musicbrainz_id_lower AND d.user_id = ?1)))";
     /// History filter: kind `?2` and status `?3` when set, for member `?1`.
+    /// Status `reimportable` keeps the failed rows whose task passes the
+    /// downloads reimport guard (`REIMPORTABLE` in the downloads SQL).
     fragment HISTORY_FILTER = " WHERE (?2 IS NULL OR rh.request_kind = ?2) \
-         AND (?3 IS NULL OR rh.status = ?3) AND " + MEMBER_FILTER;
+         AND (?3 IS NULL OR rh.status = ?3 OR (?3 = 'reimportable' \
+           AND rh.status = 'failed' AND EXISTS (SELECT 1 FROM download_tasks t \
+             WHERE t.id = rh.download_task_id AND t.status IN ('failed', 'partial') \
+             AND EXISTS (SELECT 1 FROM download_attempts a WHERE a.task_id = t.id \
+               AND a.handle_json != '' \
+               AND a.state IN ('preserved', 'cleanup_pending'))))) AND " + MEMBER_FILTER;
     /// One row by its key (`?1`).
     pub(crate) RECORD_BY_KEY = RECORD_SELECT + " WHERE rh.musicbrainz_id_lower = ?1";
     /// One row's listeners, the owner included.

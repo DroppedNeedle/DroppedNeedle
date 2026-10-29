@@ -11,6 +11,8 @@
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import { formatBytes } from '$lib/utils/formatting';
+	import { formatCount, providerLabel } from './diagnosticsDisplay';
 
 	const statsQuery = getCacheStatsQuery();
 	const clearMutation = createClearCacheMutation();
@@ -21,6 +23,12 @@
 	let clearTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const stats = $derived(statsQuery.data ?? null);
+	const sources = $derived(
+		[...(stats?.sources ?? [])].sort((a, b) =>
+			providerLabel(a.source).localeCompare(providerLabel(b.source))
+		)
+	);
+	const providerBytes = $derived(sources.reduce((sum, source) => sum + source.bytes, 0));
 	const needsAdmin = $derived(
 		statsQuery.error instanceof ApiError &&
 			(statsQuery.error.status === 401 || statsQuery.error.status === 403)
@@ -37,23 +45,17 @@
 		clearTimer = type === 'success' ? setTimeout(() => (message = ''), 5000) : null;
 	}
 
-	function formatBytes(bytes: number): string {
-		if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-	}
-
-	const PROMPTS: Record<string, string> = {
-		all: 'Clear every cached provider response and image? They are fetched again on demand.',
-		covers: 'Delete the cached album covers and artist images? They are fetched again on demand.'
-	};
+	const PROMPTS = {
+		provider_data: 'Clear all cached provider data? It is fetched again on demand.',
+		covers: 'Clear the cached album covers and artist images? They are fetched again on demand.'
+	} as const;
 
 	// The clear waiting for the user to confirm it.
 	let pending = $state<{ body: CacheClearBody; prompt: string } | null>(null);
 	let confirming = $state(false);
 
-	function clear(body: CacheClearBody, prompt: string) {
-		pending = { body, prompt };
+	function clear(scope: keyof typeof PROMPTS) {
+		pending = { body: { scope }, prompt: PROMPTS[scope] };
 		confirming = true;
 	}
 
@@ -95,8 +97,7 @@
 		<CardTitle class="text-2xl mb-4">Cache management</CardTitle>
 	{/snippet}
 	<p class="text-base-content/70 mb-6">
-		Provider responses (MusicBrainz, Last.fm, ListenBrainz and the rest) are kept in memory, and
-		album covers and artist images on disk. Anything cleared is fetched again on demand.
+		Provider data and images are kept on disk. Anything cleared is fetched again on demand.
 	</p>
 
 	{#if statsQuery.isPending}
@@ -110,15 +111,50 @@
 	{:else if stats}
 		<div class="stats stats-vertical sm:stats-horizontal bg-base-100 mb-6 w-full">
 			<div class="stat">
-				<div class="stat-title">Cached provider responses</div>
-				<div class="stat-value text-primary">{stats.entries}</div>
+				<div class="stat-title">Provider data</div>
+				<div class="stat-value text-primary">{formatCount(stats.entries)}</div>
+				<div class="stat-desc">{formatBytes(providerBytes)}</div>
 			</div>
 			<div class="stat">
 				<div class="stat-title">Cached images</div>
-				<div class="stat-value text-primary">{stats.cover_images}</div>
-				<div class="stat-desc">{formatBytes(stats.cover_bytes)} on disk</div>
+				<div class="stat-value text-primary">{formatCount(stats.cover_images)}</div>
+				<div class="stat-desc">{formatBytes(stats.cover_bytes)}</div>
+			</div>
+			<div class="stat">
+				<div class="stat-title">Database</div>
+				<div class="stat-value text-primary">{formatBytes(stats.database_bytes)}</div>
+				<div class="stat-desc">Write-ahead log {formatBytes(stats.wal_bytes)}</div>
 			</div>
 		</div>
+
+		{#if !stats.provider_data_on}
+			<div role="alert" class="alert alert-warning mb-6">
+				<span>The provider data cache is off. Answers are fetched each time.</span>
+			</div>
+		{/if}
+
+		{#if sources.length > 0}
+			<div class="overflow-x-auto mb-6">
+				<table class="table table-sm" aria-label="Provider data by source">
+					<thead>
+						<tr>
+							<th scope="col">Source</th>
+							<th scope="col" class="text-right">Rows</th>
+							<th scope="col" class="text-right">Size</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each sources as source (source.source)}
+							<tr>
+								<td>{providerLabel(source.source)}</td>
+								<td class="text-right tabular-nums">{formatCount(source.rows)}</td>
+								<td class="text-right tabular-nums">{formatBytes(source.bytes)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
 
 		<div class="space-y-2 mb-6">
 			<h3 class="text-xl font-semibold">Library images</h3>
@@ -143,18 +179,18 @@
 				<Button
 					variant="outline"
 					size="sm"
-					onclick={() => clear({ scope: 'covers' }, PROMPTS.covers)}
+					onclick={() => clear('provider_data')}
+					disabled={clearMutation.isPending}
+				>
+					Clear provider data
+				</Button>
+				<Button
+					variant="outline"
+					size="sm"
+					onclick={() => clear('covers')}
 					disabled={clearMutation.isPending}
 				>
 					Clear images
-				</Button>
-				<Button
-					variant="danger"
-					size="sm"
-					onclick={() => clear({ scope: 'all' }, PROMPTS.all)}
-					loading={clearMutation.isPending}
-				>
-					Clear everything
 				</Button>
 			</div>
 		</div>
