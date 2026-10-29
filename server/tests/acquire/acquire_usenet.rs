@@ -543,20 +543,16 @@ async fn sab_abort_and_discard_ownership() {
     std::fs::remove_dir_all(&mount).ok();
 }
 
-/// Storage remap: `complete_dir` prefix strip, backslash folding for a
-/// Windows-native SAB, basename fallback; completed files enumerate
-/// audio only, confined to the mount.
+/// Storage remap, as the mount diagnosis reads it: `complete_dir` prefix
+/// strip, backslash folding for a Windows-native SAB, basename fallback.
 #[tokio::test]
-async fn sab_remap_and_completed_files() {
+async fn sab_storage_remap() {
     let mount = temp_dir("remap");
     write_file(&mount.join("job1/track.flac"), b"FLAC");
-    write_file(&mount.join("job1/cover.jpg"), b"JPEG");
-    write_file(&mount.join("job1/notes.txt"), b"notes");
-    write_file(&mount.join("job1/sub/nested.mp3"), b"MP3");
 
     // Prefix strip: the mock's complete_dir is /data/Downloads/complete.
-    let mock = SabnzbdMock::new();
-    mock.history_job(
+    let plain = SabnzbdMock::new();
+    plain.history_job(
         "nzo-1",
         "job1",
         "Completed",
@@ -564,46 +560,10 @@ async fn sab_remap_and_completed_files() {
         4,
         "",
     );
-    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let queue = queue_for(&mock, &base, mount.to_path_buf());
-    let mut files = queue
-        .list_completed_files(&handle("job1", "nzo-1"))
-        .await
-        .expect("files");
-    files.sort();
-    assert_eq!(
-        files,
-        vec![
-            mount.join("job1/sub/nested.mp3"),
-            mount.join("job1/track.flac")
-        ]
-    );
-
-    // Exact basenames resolve; sizes recover sanitised names.
-    let found = queue
-        .get_file_path(&handle("job1", "nzo-1"), "track.flac", None)
-        .await
-        .expect("lookup")
-        .expect("found");
-    assert_eq!(found, mount.join("job1/track.flac"));
-    let found = queue
-        .get_file_path(&handle("job1", "nzo-1"), "renamed.flac", Some(4))
-        .await
-        .expect("lookup")
-        .expect("found by size");
-    assert_eq!(found, mount.join("job1/track.flac"));
-    assert!(
-        queue
-            .get_file_path(&handle("job1", "nzo-1"), "missing.flac", Some(12345))
-            .await
-            .expect("lookup")
-            .is_none()
-    );
-
     // Backslash paths from a Windows-native SAB fold before the remap.
-    let mock = SabnzbdMock::new();
-    mock.state().complete_dir = "C:\\data\\complete".to_owned();
-    mock.history_job(
+    let windows = SabnzbdMock::new();
+    windows.state().complete_dir = "C:\\data\\complete".to_owned();
+    windows.history_job(
         "nzo-2",
         "job1",
         "Completed",
@@ -611,26 +571,41 @@ async fn sab_remap_and_completed_files() {
         4,
         "",
     );
-    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let queue = queue_for(&mock, &base, mount.to_path_buf());
-    let files = queue
-        .list_completed_files(&handle("job1", "nzo-2"))
-        .await
-        .expect("files");
-    assert_eq!(files.len(), 2);
-
     // Prefix mismatch falls back to the job-folder basename.
+    let elsewhere = SabnzbdMock::new();
+    elsewhere.history_job("nzo-3", "job1", "Completed", "/elsewhere/job1", 4, "");
+
+    for (mock, nzo) in [(plain, "nzo-1"), (windows, "nzo-2"), (elsewhere, "nzo-3")] {
+        let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
+        let queue = queue_for(&mock, &base, mount.to_path_buf());
+        let diagnosis = queue.diagnose_downloads_mount().await;
+        assert_eq!(diagnosis.resolvable_downloads, 1, "{nzo}");
+    }
+}
+
+/// A job folder that is a link (here to the downloads folder itself) is
+/// not read by the diagnosis, so it never counts as resolvable.
+#[cfg(unix)]
+#[tokio::test]
+async fn sab_diagnosis_never_walks_a_linked_job_folder() {
+    let mount = temp_dir("diag-link");
+    write_file(&mount.join("loose.flac"), b"FLAC");
+    std::os::unix::fs::symlink(".", mount.join("evil")).expect("link");
     let mock = SabnzbdMock::new();
-    mock.history_job("nzo-3", "job1", "Completed", "/elsewhere/job1", 4, "");
+    mock.history_job(
+        "nzo-evil",
+        "evil",
+        "Completed",
+        "/data/Downloads/complete/evil",
+        4,
+        "",
+    );
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let queue = queue_for(&mock, &base, mount.to_path_buf());
-    let files = queue
-        .list_completed_files(&handle("job1", "nzo-3"))
-        .await
-        .expect("files");
-    assert_eq!(files.len(), 2);
 
-    std::fs::remove_dir_all(&mount).ok();
+    let diagnosis = queue.diagnose_downloads_mount().await;
+    assert_eq!(diagnosis.sampled_downloads, 1);
+    assert_eq!(diagnosis.resolvable_downloads, 0);
 }
 
 /// A job whose storage is SABnzbd's complete folder itself names no job
@@ -661,8 +636,6 @@ async fn sab_storage_at_the_complete_folder_lands_nothing() {
         let material = queue.inspect_materialization(&job).await.expect("done");
         assert_eq!(material.state, "completed");
         assert_eq!(material.workspace_path, "", "{}", material.remote_storage);
-        let files = queue.list_completed_files(&job).await.expect("files");
-        assert!(files.is_empty(), "{}: {files:?}", material.remote_storage);
     }
     assert_eq!(
         queue.diagnose_downloads_mount().await.resolvable_downloads,
@@ -791,6 +764,42 @@ async fn sab_addurl_redaction() {
     assert!(err.to_string().contains("i=7"), "{err}");
 
     std::fs::remove_dir_all(&mount).ok();
+}
+
+/// A key echoed in a URL path, percent-encoded inside another URL's query,
+/// or as a JSON member is scrubbed like a plain `apikey=`, and a key
+/// written into a URL's last segment (DrunkenSlug's enclosure) still is.
+#[test]
+fn redaction_covers_path_encoded_and_json_keys() {
+    let cases = [
+        (
+            "fetch failed for https://dognzb.cr/fetch/5f1e2a/0123456789abcdef0123456789abcdef",
+            "fetch failed for https://dognzb.cr/fetch/5f1e2a/***",
+        ),
+        (
+            "url=https%3A%2F%2Fx%2Fapi%3Ft%3Dget%26apikey%3DSECRETKEY%26id%3D9 failed",
+            "url=https%3A%2F%2Fx%2Fapi%3Ft%3Dget%26apikey%3D***%26id%3D9 failed",
+        ),
+        (
+            r#"{"status": false, "apikey": "SECRETKEY", "error": "x"}"#,
+            r#"{"status": false, "apikey": "***", "error": "x"}"#,
+        ),
+        (
+            "https://drunkenslug.com/getnzb/93bc.nzb&i=1&r=PERUSERKEY",
+            "https://drunkenslug.com/getnzb/93bc.nzb&i=1&r=***",
+        ),
+        ("https://x/api;apikey=SECRET", "https://x/api;apikey=***"),
+        ("x%3Fi%3D1%26r%3DPERUSERKEY%26y", "x%3Fi%3D1%26r%3D***%26y"),
+        ("x%26link%3DTOKEN", "x%26link%3D***"),
+    ];
+    let leaks: Vec<String> = cases
+        .iter()
+        .map(|(text, _)| redact_query_secrets(text))
+        .zip(cases.iter())
+        .filter(|(got, (_, want))| got != want)
+        .map(|(got, (_, want))| format!("got {got}, want {want}"))
+        .collect();
+    assert!(leaks.is_empty(), "{leaks:#?}");
 }
 
 // ---------------------------------------------------------------------------

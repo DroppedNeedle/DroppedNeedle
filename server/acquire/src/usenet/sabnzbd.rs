@@ -18,6 +18,8 @@ use tokio::sync::Mutex;
 
 use super::policy::UsenetPolicy;
 use crate::client_error::{ClientError, Service, retry_after};
+use crate::landing::DownloadsFolder;
+use crate::landing::confine::{Place, place};
 use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
 
 pub use super::sabnzbd_models::{
@@ -146,29 +148,42 @@ const SECRET_QUERY_KEYS: [(&str, bool); 4] = [
     ("r", true),
 ];
 
-/// Scrub credential-looking query values from text SABnzbd or an indexer
-/// sent back: the Newznab enclosure URL carries the indexer's key and
-/// either may echo it. The keys are [`SECRET_QUERY_KEYS`], matched
-/// without a regex dependency.
+/// Shortest URL path segment read as a key. Indexer keys seen so far are
+/// 32 characters; a shorter path part (`getnzb`, `api`, a numeric id) is
+/// left alone.
+const PATH_KEY_MIN_LEN: usize = 20;
+
+/// Scrub credentials from text SABnzbd or an indexer sent back: the
+/// Newznab enclosure URL carries the indexer's key and either may echo it.
+/// A [`SECRET_QUERY_KEYS`] value is scrubbed as `key=value`, percent-encoded
+/// as `key%3Dvalue` (a URL nested in another's query) and as a JSON member
+/// `"key": "value"`. In an `http(s)` URL, a path segment that looks like a
+/// key (long, letters and digits) is scrubbed too, as an indexer may put
+/// its key in the path (`/fetch/<id>/<key>`). Matched without a regex
+/// dependency.
 pub fn redact_query_secrets(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut index = 0;
+    // Inside an `http(s)` URL, before its query or fragment.
+    let mut in_url_path = false;
     while index < bytes.len() {
-        if let Some(key_len) = match_secret_key(bytes, index) {
-            out.push_str(&text[index..index + key_len]);
-            index += key_len;
-            while index < bytes.len()
-                && !matches!(
-                    bytes[index],
-                    b'&' | b'\'' | b'"' | b' ' | b'\t' | b'\n' | b'\r'
-                )
-            {
-                index += 1;
-            }
+        if let Some((kept, end)) = secret_value_at(bytes, index) {
+            out.push_str(&text[index..index + kept]);
             out.push_str("***");
+            index = end;
+        } else if let Some(scheme_end) = url_scheme_end(bytes, index) {
+            out.push_str(&text[index..scheme_end]);
+            index = scheme_end;
+            in_url_path = true;
+        } else if let Some(end) = path_key_end(bytes, index).filter(|_| in_url_path) {
+            out.push_str("***");
+            index = end;
         } else {
             let ch = text[index..].chars().next().unwrap_or('\u{FFFD}');
+            if matches!(ch, '?' | '#' | '"' | '\'' | '<' | '>') || ch.is_whitespace() {
+                in_url_path = false;
+            }
             out.push(ch);
             index += ch.len_utf8();
         }
@@ -176,21 +191,123 @@ pub fn redact_query_secrets(text: &str) -> String {
     out
 }
 
-/// Length of a secret `key=` at `index`, case-insensitive. A key that
-/// must start a word does not match after an identifier
-/// char.
-fn match_secret_key(bytes: &[u8], index: usize) -> Option<usize> {
+/// A secret key at `index`, case-insensitive: how many bytes of key text
+/// to keep and where its value ends. A key that must start a word does
+/// not match after an identifier char; a percent-encoded `&`, `?` or `;`
+/// before it starts a word too.
+fn secret_value_at(bytes: &[u8], index: usize) -> Option<(usize, usize)> {
     let rest = &bytes[index..];
-    let starts_word =
-        index == 0 || !matches!(bytes[index - 1], b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_');
+    let encoded_separator = index >= 3
+        && [b"%26".as_slice(), b"%3F", b"%3B"]
+            .iter()
+            .any(|separator| starts_with_ignore_case(&bytes[index - 3..], separator));
+    let starts_word = index == 0
+        || encoded_separator
+        || !matches!(bytes[index - 1], b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_');
     SECRET_QUERY_KEYS.iter().find_map(|(key, anchored)| {
         let key = key.as_bytes();
-        let matches = rest.len() > key.len()
-            && rest[..key.len()].eq_ignore_ascii_case(key)
-            && rest[key.len()] == b'='
-            && (!anchored || starts_word);
-        matches.then_some(key.len() + 1)
+        if rest.len() <= key.len() || !rest[..key.len()].eq_ignore_ascii_case(key) {
+            return None;
+        }
+        if *anchored && !starts_word {
+            return None;
+        }
+        let after = index + key.len();
+        if bytes[after] == b'=' {
+            return Some((key.len() + 1, query_value_end(bytes, after + 1)));
+        }
+        if starts_with_ignore_case(&bytes[after..], b"%3D") {
+            return Some((key.len() + 3, query_value_end(bytes, after + 3)));
+        }
+        // A JSON member: `"key"`, a colon, then the value.
+        if index == 0 || bytes[index - 1] != b'"' || bytes[after] != b'"' {
+            return None;
+        }
+        let colon = skip_space(bytes, after + 1);
+        if bytes.get(colon) != Some(&b':') {
+            return None;
+        }
+        let start = skip_space(bytes, colon + 1);
+        if bytes.get(start) == Some(&b'"') {
+            return Some((start + 1 - index, json_string_end(bytes, start + 1)));
+        }
+        let end = start
+            + bytes[start..]
+                .iter()
+                .take_while(|byte| {
+                    !matches!(byte, b',' | b'}' | b']') && !byte.is_ascii_whitespace()
+                })
+                .count();
+        Some((start - index, end))
     })
+}
+
+/// End of a query value: `&` (plain or as `%26`), a quote or whitespace.
+fn query_value_end(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len()
+        && !matches!(bytes[index], b'&' | b'\'' | b'"')
+        && !bytes[index].is_ascii_whitespace()
+        && !starts_with_ignore_case(&bytes[index..], b"%26")
+    {
+        index += 1;
+    }
+    index
+}
+
+/// Where the quote closing a JSON string whose text starts at `index` is.
+fn json_string_end(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len() && bytes[index] != b'"' {
+        index += if bytes[index] == b'\\' { 2 } else { 1 };
+    }
+    index.min(bytes.len())
+}
+
+fn skip_space(bytes: &[u8], index: usize) -> usize {
+    index
+        + bytes
+            .get(index..)
+            .unwrap_or_default()
+            .iter()
+            .take_while(|byte| byte.is_ascii_whitespace())
+            .count()
+}
+
+fn starts_with_ignore_case(bytes: &[u8], prefix: &[u8]) -> bool {
+    bytes.len() >= prefix.len() && bytes[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
+/// When an `http://` or `https://` scheme starts at `index`, where it ends.
+fn url_scheme_end(bytes: &[u8], index: usize) -> Option<usize> {
+    let rest = &bytes[index..];
+    [b"https://".as_slice(), b"http://".as_slice()]
+        .into_iter()
+        .find(|scheme| starts_with_ignore_case(rest, scheme))
+        .map(|scheme| index + scheme.len())
+}
+
+/// When a URL path segment that looks like a key starts at `index`, where
+/// it ends. Only the segment's letters and digits are taken, so whatever
+/// follows them (`&r=...`, `;apikey=...`) is still scanned for keys.
+fn path_key_end(bytes: &[u8], index: usize) -> Option<usize> {
+    if index == 0 || bytes[index - 1] != b'/' {
+        return None;
+    }
+    let end = index
+        + bytes[index..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_alphanumeric())
+            .count();
+    let whole = bytes
+        .get(end)
+        .is_none_or(|byte| !matches!(byte, b'.' | b'-' | b'_' | b'%'));
+    (whole && looks_like_key(&bytes[index..end])).then_some(end)
+}
+
+fn looks_like_key(segment: &[u8]) -> bool {
+    segment.len() >= PATH_KEY_MIN_LEN
+        && segment.iter().all(u8::is_ascii_alphanumeric)
+        && segment.iter().any(u8::is_ascii_digit)
+        && segment.iter().any(u8::is_ascii_alphabetic)
 }
 
 // ---------------------------------------------------------------------------
@@ -695,17 +812,10 @@ const QUEUE_NOT_ACTIVE: [&str; 4] = ["queued", "grabbing", "propagating", "pause
 const HISTORY_LIMIT: u32 = 50;
 /// Failure-path-only bound for the suffix walk.
 const REMAP_WALK_BUDGET: usize = 10_000;
-/// Bound for the finished-folder audio enumeration.
-const ENUMERATE_BUDGET: usize = 10_000;
 /// Bound for the mount-has-files probe.
 const MOUNT_PROBE_BUDGET: usize = 5_000;
 /// History sample for mount diagnosis.
 const DIAGNOSIS_SAMPLE: usize = 3;
-
-/// Mirror of the importer's accepted audio set.
-const AUDIO_SUFFIXES: [&str; 9] = [
-    ".flac", ".mp3", ".m4a", ".m4b", ".mp4", ".ogg", ".oga", ".opus", ".wav",
-];
 
 /// Client-agnostic task correlation, Usenet half.
 #[derive(Debug, Clone, Default)]
@@ -1145,67 +1255,6 @@ impl SabnzbdQueue {
             .await
     }
 
-    /// Audio files of the finished job, on disk (the folder-based import
-    /// source).
-    pub async fn list_completed_files(
-        &self,
-        handle: &TaskHandle,
-    ) -> Result<Vec<PathBuf>, SabnzbdError> {
-        let slot = self.find_history_slot(handle).await?;
-        let Some(slot) = slot else {
-            return Ok(Vec::new());
-        };
-        if slot.storage.is_empty() {
-            return Ok(Vec::new());
-        }
-        let Some(local) = self.local_storage(&slot.storage).await else {
-            return Ok(Vec::new());
-        };
-        let mount = self.mount.clone();
-        Ok(
-            tokio::task::spawn_blocking(move || enumerate_audio(&mount, &local))
-                .await
-                .unwrap_or_default(),
-        )
-    }
-
-    /// Local path of one completed file: exact basename match first, then
-    /// a size match (the client may have sanitised the name).
-    pub async fn get_file_path(
-        &self,
-        handle: &TaskHandle,
-        remote_filename: &str,
-        size: Option<u64>,
-    ) -> Result<Option<PathBuf>, SabnzbdError> {
-        let files = self.list_completed_files(handle).await?;
-        let basename = remote_filename
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(remote_filename);
-        for path in &files {
-            if path.file_name().and_then(|name| name.to_str()) == Some(basename) {
-                return Ok(Some(path.clone()));
-            }
-        }
-        if let Some(expected) = size {
-            let files = files.clone();
-            let matched = tokio::task::spawn_blocking(move || {
-                files.into_iter().find(|path| {
-                    std::fs::metadata(path)
-                        .map(|meta| meta.len())
-                        .unwrap_or(u64::MAX)
-                        == expected
-                })
-            })
-            .await
-            .unwrap_or(None);
-            if matched.is_some() {
-                return Ok(matched);
-            }
-        }
-        Ok(None)
-    }
-
     /// Cross-check completions against the mount so a silently-wrong path
     /// is caught proactively. Never raises.
     pub async fn diagnose_downloads_mount(&self) -> MountDiagnosis {
@@ -1250,7 +1299,8 @@ impl SabnzbdQueue {
             let Some(local) = self.local_storage(&slot.storage).await else {
                 continue;
             };
-            if tokio::task::spawn_blocking(move || dir_has_file(&local))
+            let mount = self.mount.clone();
+            if tokio::task::spawn_blocking(move || dir_has_file(&mount, &local))
                 .await
                 .unwrap_or(false)
             {
@@ -1610,60 +1660,20 @@ fn suffix_walk(mount: &Path, relative: &[String]) -> Option<PathBuf> {
     best
 }
 
-/// Audio files under the finished job folder (bounded DFS), confined to
-/// the mount. Sync I/O the caller offloads.
-fn enumerate_audio(mount: &Path, folder: &Path) -> Vec<PathBuf> {
-    let mount = mount.canonicalize().unwrap_or_else(|_| mount.to_path_buf());
-    let root = match folder.canonicalize() {
-        Ok(root) => root,
-        Err(_) => return Vec::new(),
-    };
-    if !root.starts_with(&mount) || !root.is_dir() {
-        return Vec::new();
-    }
-    let mut out = Vec::new();
-    let mut stack = vec![root];
-    let mut seen = 0usize;
-    while let Some(current) = stack.pop() {
-        let entries = match std::fs::read_dir(&current) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        for entry in entries {
-            seen += 1;
-            if seen > ENUMERATE_BUDGET {
-                return out;
-            }
-            let Ok(entry) = entry else { continue };
-            let path = entry.path();
-            // Never follow a symlink: only the root was confinement-checked.
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            if kind.is_dir() {
-                stack.push(path);
-            } else if kind.is_file()
-                && path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .is_some_and(|ext| {
-                        AUDIO_SUFFIXES.contains(&format!(".{}", ext.to_ascii_lowercase()).as_str())
-                    })
-            {
-                out.push(path);
-            }
-        }
-    }
-    out
-}
-
-fn dir_has_file(folder: &Path) -> bool {
-    if !folder.is_dir() {
+/// Whether the job folder holds a file directly. The folder is placed
+/// against the mount first, so a job folder that is (or sits under) a link
+/// is never read, and a link inside it never counts as a file. Blocking.
+fn dir_has_file(mount: &Path, folder: &Path) -> bool {
+    let Place::Inside(real) = place(folder, &[DownloadsFolder::new(mount.to_path_buf())]) else {
         return false;
-    }
-    std::fs::read_dir(folder)
+    };
+    std::fs::read_dir(real)
         .map(|mut entries| {
-            entries.any(|entry| entry.map(|entry| entry.path().is_file()).unwrap_or(false))
+            entries.any(|entry| {
+                entry
+                    .and_then(|entry| entry.file_type())
+                    .is_ok_and(|kind| kind.is_file())
+            })
         })
         .unwrap_or(false)
 }
@@ -1682,12 +1692,15 @@ fn mount_has_any_file(mount: &Path) -> bool {
                 return true;
             }
             let Ok(entry) = entry else { continue };
-            let path = entry.path();
-            if path.is_file() {
+            // The entry's own type: a link is neither followed nor counted.
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_file() {
                 return true;
             }
-            if path.is_dir() {
-                stack.push(path);
+            if kind.is_dir() {
+                stack.push(entry.path());
             }
         }
     }
@@ -1697,22 +1710,6 @@ fn mount_has_any_file(mount: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(unix)]
-    #[test]
-    fn enumerate_never_follows_symlinks() {
-        let base = droppedneedle_kernel::db::scratch::ScratchDir::new("sab-enum").unwrap();
-        let mount = base.join("mount");
-        let outside = base.join("outside");
-        std::fs::create_dir_all(mount.join("release")).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
-        std::fs::write(mount.join("release/track.flac"), b"in").unwrap();
-        std::fs::write(outside.join("secret.flac"), b"out").unwrap();
-        std::os::unix::fs::symlink(&outside, mount.join("release/escape")).unwrap();
-        let found = enumerate_audio(&mount, &mount.join("release"));
-        assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].ends_with("track.flac"));
-    }
 
     #[test]
     fn a_storage_path_cannot_climb_out_of_the_mount() {

@@ -22,16 +22,39 @@ use std::io;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{Reported, lexical_absolute};
 
 /// One folder a client downloads into: the admin's root, which is resolved
 /// even through a link, and a subfolder below it, which may hold no link.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct DownloadsFolder {
     root: PathBuf,
     below: PathBuf,
+    /// Whether [`place`] has warned that the subfolder is a link. A landing
+    /// works on its own copy, so each landing warns once per folder, not
+    /// once per file.
+    link_warned: AtomicBool,
 }
+
+impl Clone for DownloadsFolder {
+    fn clone(&self) -> Self {
+        Self {
+            root: self.root.clone(),
+            below: self.below.clone(),
+            link_warned: AtomicBool::new(false),
+        }
+    }
+}
+
+impl PartialEq for DownloadsFolder {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root && self.below == other.below
+    }
+}
+
+impl Eq for DownloadsFolder {}
 
 /// Why a downloads folder has no usable real path right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +72,7 @@ impl DownloadsFolder {
         Self {
             root,
             below: PathBuf::new(),
+            link_warned: AtomicBool::new(false),
         }
     }
 
@@ -61,7 +85,11 @@ impl DownloadsFolder {
             .map(str::trim)
             .filter(|part| !part.is_empty() && *part != "." && *part != "..")
             .collect();
-        Self { root, below }
+        Self {
+            root,
+            below,
+            link_warned: AtomicBool::new(false),
+        }
     }
 
     /// The folder as configured: the root joined with the subfolder.
@@ -143,10 +171,12 @@ pub fn place(path: &Path, mounts: &[DownloadsFolder]) -> Place {
                 return None;
             }
             Err(FolderFault::Link) => {
-                tracing::warn!(
-                    folder = %mount.path().display(),
-                    "a downloads subfolder is a link; nothing in it is read"
-                );
+                if !mount.link_warned.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        folder = %mount.path().display(),
+                        "a downloads subfolder is a link; nothing in it is read"
+                    );
+                }
                 return None;
             }
         };

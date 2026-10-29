@@ -507,7 +507,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/requests/service/edition.rs", 1, AWAITED),
     ("acquire/src/search_jobs/mod.rs", 1, SEARCH),
     ("acquire/src/slskd/repository.rs", 3, AWAITED),
-    ("acquire/src/usenet/sabnzbd.rs", 6, AWAITED),
+    ("acquire/src/usenet/sabnzbd.rs", 4, AWAITED),
     ("acquire/src/downloads/worker/mod.rs", 1, LIBRARY_CHECK),
     ("acquire/src/downloads/worker/landings.rs", 2, WORKER_CHILD),
     ("acquire/src/downloads/worker/review.rs", 1, WORKER_CHILD),
