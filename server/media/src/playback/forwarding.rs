@@ -5,12 +5,13 @@
 //! `scrobble.listenbrainz`, keyed by the play's id, the id as payload), so
 //! a scrobble outlives a restart and an outage. [`ScrobbleJobs`] sends one:
 //! the request is built from the stored play, so every send of a play is
-//! the same request. A job fails for good when its play is gone, when the
-//! play is older than [`WINDOW_SECS`], when the user has turned that
-//! service off or unlinked it, when the service refuses the user's
-//! credential, and when it refuses the listen itself. Anything passing (no
-//! answer, 5xx, a rate limit, Last.fm's offline codes and daily limit,
-//! ListenBrainz's policy block) is tried again, backing off to once an
+//! the same request. A job fails for good when its play is gone or its
+//! stored time does not read, when the play is older than [`WINDOW_SECS`],
+//! when the user has turned that service off or unlinked it, when the
+//! service refuses the user's credential, and when it refuses the listen
+//! itself. Anything passing (no answer, 5xx, a rate limit, Last.fm's
+//! offline codes and daily limit, ListenBrainz's policy block, a service
+//! address that is not usable) is tried again, backing off to once an
 //! hour, after a longer wait the service named, while the play is inside
 //! the window. One user's failure goes back to wait its turn; other users'
 //! jobs go first.
@@ -32,13 +33,17 @@
 //! only time rule is the too-old and too-new ignore, so one failing play is
 //! never allowed to hold the rest back.
 //!
-//! Repeats: a crash after the service answered and before the job is
-//! marked done sends that play once more. ListenBrainz drops it: it stores
-//! listens with `ON CONFLICT (listened_at, user_id, recording_msid) DO
-//! NOTHING` (listenbrainz-server `listenstore/timescale_listenstore.py`,
-//! read 2026-10-21) and the body is the same. Last.fm documents nothing, so
-//! that one play may show twice. Each kind runs one job at a time, so a
-//! crash costs at most one play per service.
+//! Repeats: a send the service took but whose job was never marked done
+//! goes again. That happens three ways: a crash after the service answered;
+//! a graceful stop that drops a send in flight, which the next start runs
+//! again; and an answer that times out after the service already kept the
+//! play, which is retried like any lost answer. ListenBrainz drops the
+//! repeat: it stores listens with `ON CONFLICT (listened_at, user_id,
+//! recording_msid) DO NOTHING` (listenbrainz-server
+//! `listenstore/timescale_listenstore.py`, read 2026-10-21) and the body is
+//! the same. Last.fm documents nothing, so that one play may show twice.
+//! Each kind runs one job at a time, so each such event costs at most one
+//! play per service.
 //!
 //! **Now-playing** reports are not history: they stay in memory, one slot
 //! per user and service where the latest report wins, sent once by
@@ -64,7 +69,7 @@ use droppedneedle_kernel::jobs::queue::{
 use droppedneedle_providers::lastfm::{
     IgnoredReason, LastFmClient, LastFmCredentials, ScrobbleAnswer,
 };
-use droppedneedle_providers::listenbrainz::ListenBrainzClient;
+use droppedneedle_providers::listenbrainz::{self, ListenBrainzClient};
 use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority};
 
 use super::listening::LastFmSession;
@@ -85,8 +90,12 @@ pub const BACKOFF_CAP: Duration = Duration::from_secs(3600);
 /// this count, is what ends a waiting job.
 pub const MAX_ATTEMPTS: u32 = 400;
 
-/// The play's row is gone (the user was deleted).
+/// The play's row is not in the history any more. Nothing in the app
+/// removes one, so it was removed by hand.
 pub const PLAY_GONE: &str = "PLAY_GONE";
+/// The play's stored time does not read, so no service can be told when
+/// it was played.
+pub const PLAY_UNREADABLE: &str = "PLAY_UNREADABLE";
 /// The play is older than the window, or the service said it is too old.
 pub const WINDOW_PASSED: &str = "WINDOW_PASSED";
 /// The user turned forwarding to this service off.
@@ -95,8 +104,11 @@ pub const FORWARDING_OFF: &str = "FORWARDING_OFF";
 pub const NOT_LINKED: &str = "NOT_LINKED";
 /// The admin has Last.fm switched off.
 pub const LASTFM_OFF: &str = "LASTFM_OFF";
-/// The service refused the user's credential.
+/// The service refused the user's credential, or the stored credential
+/// cannot be sent.
 pub const CREDENTIAL_REFUSED: &str = "CREDENTIAL_REFUSED";
+/// The service's address is not a usable URL: waits for a fixed one.
+pub const ADDRESS_UNUSABLE: &str = "ADDRESS_UNUSABLE";
 /// The service refused the listen itself.
 pub const LISTEN_REFUSED: &str = "LISTEN_REFUSED";
 /// ListenBrainz switched the endpoint off upstream for now.
@@ -237,12 +249,14 @@ impl Courier {
             Ok(None) => return fail(PLAY_GONE),
             Err(error) => return store_failed(&error),
         };
-        if play
-            .played_at
-            .saturating_add(WINDOW_SECS)
-            .saturating_mul(1000)
-            < self.clock.now_ms()
-        {
+        let Some(played_at) = play.played_at else {
+            tracing::warn!(
+                play_id = %payload.play_id,
+                "scrobble's play has a stored time that does not read"
+            );
+            return fail(PLAY_UNREADABLE);
+        };
+        if played_at.saturating_add(WINDOW_SECS).saturating_mul(1000) < self.clock.now_ms() {
             return fail(WINDOW_PASSED);
         }
         let (prefs, links) = match self.store.forwarding(&play.user_id) {
@@ -273,7 +287,10 @@ impl Courier {
         // ends the job.
         match lastfm {
             None => match self.store.listenbrainz_token_checked(&play.user_id) {
-                Ok(Some(token)) => self.send_listen(&play, &token, job.attempt()).await,
+                Ok(Some(token)) => {
+                    self.send_listen(&play, played_at, &token, job.attempt())
+                        .await
+                }
                 Ok(None) => fail(NOT_LINKED),
                 Err(error) => store_failed(&error),
             },
@@ -283,7 +300,7 @@ impl Courier {
                     Ok(Some(session)) => {
                         let on_instance =
                             instance.is_some_and(|keys| keys.api_key == session.api_key);
-                        self.send_scrobble(&play, &session, on_instance, job.attempt())
+                        self.send_scrobble(&play, played_at, &session, on_instance, job.attempt())
                             .await
                     }
                     Ok(None) => fail(NOT_LINKED),
@@ -293,11 +310,17 @@ impl Courier {
         }
     }
 
-    async fn send_listen(&self, play: &StoredPlay, token: &str, attempt: u32) -> Outcome {
+    async fn send_listen(
+        &self,
+        play: &StoredPlay,
+        played_at: i64,
+        token: &str,
+        attempt: u32,
+    ) -> Outcome {
         let body = SubmitListens {
             listen_type: "single",
             payload: vec![Listen {
-                listened_at: Some(play.played_at),
+                listened_at: Some(played_at),
                 track_metadata: metadata(
                     &play.artist_name,
                     &play.track_name,
@@ -316,7 +339,16 @@ impl Courier {
             .await;
         match sent {
             Ok(()) => Outcome::Done,
-            // A stored token that cannot ride in a header.
+            // Nothing was sent. The address is the app's own, not the
+            // user's, so the play waits for it to be fixed.
+            Err(ProviderError::Invalid { reason, .. })
+                if reason == listenbrainz::UNUSABLE_ADDRESS =>
+            {
+                tracing::warn!("ListenBrainz address is not usable; the scrobble waits");
+                retry(ADDRESS_UNUSABLE, None)
+            }
+            // Nothing was sent: the stored token is empty or cannot ride
+            // in a header, and will never be taken.
             Err(ProviderError::Invalid { .. }) => fail(CREDENTIAL_REFUSED),
             Err(ProviderError::Disabled { .. }) => retry(POLICY_BLOCKED, None),
             Err(error) => self.answer(Service::ListenBrainz, &error, attempt),
@@ -326,11 +358,12 @@ impl Courier {
     async fn send_scrobble(
         &self,
         play: &StoredPlay,
+        played_at: i64,
         session: &LastFmSession,
         on_instance_key: bool,
         attempt: u32,
     ) -> Outcome {
-        let timestamp = play.played_at.to_string();
+        let timestamp = played_at.to_string();
         let duration = (play.duration_ms / 1_000).to_string();
         let mut params: Vec<(&str, &str)> = vec![
             ("artist", &play.artist_name),

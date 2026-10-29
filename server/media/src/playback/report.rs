@@ -158,8 +158,8 @@ impl Default for MixedDedup {
 
 /// Count one session play through the v2 `CompatScrobbleAdapter.scrobble`
 /// flow: live submissions (no explicit play time) consult the 5s
-/// mixed-report dedup and feed it; backdated ones like session stops
-/// bypass it; presence clears either way because the track is over.
+/// mixed-report dedup and feed it once saved; backdated ones like session
+/// stops bypass it; presence clears either way because the track is over.
 #[allow(clippy::too_many_arguments)]
 pub fn submit_session_scrobble(
     deps: &PlaybackDeps,
@@ -189,7 +189,8 @@ pub fn submit_session_scrobble(
         played_at: Some(played_at.unwrap_or(now)),
     };
     let response = submit_counted_play(deps, user_id, &report, Some(&track.track_id), now);
-    if played_at.is_none() {
+    // A play that was not saved is not seen: the client's retry counts it.
+    if played_at.is_none() && response.accepted {
         deps.mixed.record(key.clone(), now);
     }
     deps.presence.remove(presence);

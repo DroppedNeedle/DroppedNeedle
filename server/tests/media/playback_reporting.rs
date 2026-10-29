@@ -650,6 +650,50 @@ async fn mixed_report_dedup_counts_live_once() {
     assert_eq!(rig.plays(), 2);
 }
 
+/// A live play whose save fails is not remembered as seen: the client's
+/// retry records it, once, and a repeat of that retry is still dropped.
+#[tokio::test]
+async fn a_live_play_whose_save_failed_is_kept_on_retry() {
+    let rig = rig();
+    let track = rig
+        .deps
+        .store
+        .get_track("track-1")
+        .expect("the track is in the catalog");
+    let key = SessionKey {
+        user_id: "user-1".to_owned(),
+        client: "web".to_owned(),
+        track_id: track.track_id.clone(),
+    };
+    let presence = presence_key("user-1", "web");
+    rig.sql()
+        .execute_batch(
+            "CREATE TRIGGER refuse_play BEFORE INSERT ON library_play_history \
+             BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
+        )
+        .expect("trigger");
+    let failed = submit_session_scrobble(
+        &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
+    );
+    assert!(!failed.accepted);
+    assert_eq!(rig.plays(), 0);
+    rig.sql()
+        .execute_batch("DROP TRIGGER refuse_play")
+        .expect("trigger dropped");
+
+    let retried = submit_session_scrobble(
+        &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
+    );
+    assert!(retried.accepted);
+    assert_eq!(rig.plays(), 1);
+    assert_eq!(rig.scrobbles(), 1);
+    let repeated = submit_session_scrobble(
+        &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
+    );
+    assert!(repeated.accepted);
+    assert_eq!(rig.plays(), 1);
+}
+
 // ---------------------------------------------------------------------------
 // Presence
 // ---------------------------------------------------------------------------
@@ -1096,6 +1140,135 @@ async fn an_unreadable_last_fm_section_holds_the_scrobble() {
     assert_eq!(
         (held.state, held.last_error.as_deref()),
         (State::Queued, Some("SETTINGS_UNREADABLE"))
+    );
+    app.stop().await;
+}
+
+/// Every form Last.fm on loopback was sent; each is taken as a kept play.
+type LastFmForms = Arc<Mutex<Vec<Vec<(String, String)>>>>;
+
+async fn lastfm_scrobble(
+    axum::extract::State(forms): axum::extract::State<LastFmForms>,
+    axum::Form(form): axum::Form<Vec<(String, String)>>,
+) -> axum::response::Response {
+    forms.lock().expect("lock").push(form);
+    axum::response::Response::builder()
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"scrobbles":{"@attr":{"accepted":1,"ignored":0}}}"#,
+        ))
+        .expect("answer builds")
+}
+
+/// A Last.fm scrobble job sends the stored play as one form signed with
+/// the user's shared secret and carrying their session key, and is done
+/// once Last.fm keeps it.
+#[tokio::test]
+async fn a_last_fm_scrobble_is_a_signed_form_with_the_session_key() {
+    use droppedneedle_kernel::jobs::queue::{JobKind, State};
+
+    let forms = LastFmForms::default();
+    let router = Router::new()
+        .route("/2.0/", axum::routing::post(lastfm_scrobble))
+        .with_state(forms.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds");
+    let origin = format!("http://{}/2.0/", listener.local_addr().expect("addr"));
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    let outbound = droppedneedle::bootstrap::Outbound {
+        lastfm: origin,
+        ..crate::common::closed_outbound()
+    };
+    let app = TestApp::start_hooked_with("scrobble-lastfm-sent", outbound).await;
+    let admin = app.login_admin().await;
+    let (status, saved) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/lastfm",
+            &[("authorization", admin.as_str())],
+            Some(json!({"enabled": true, "api_key": "", "shared_secret": ""})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let user = app.login_user("listener").await;
+    let (crypto, _) =
+        droppedneedle_kernel::runtime_config::Crypto::load_or_generate(&app.config.config_dir())
+            .expect("the app's key reads");
+    let seal = |value: &str| crypto.encrypt(value).expect("secret seals");
+    let document = json!({
+        "configured": true,
+        "api_key": seal("lfm-key"),
+        "shared_secret": seal("lfm-secret"),
+        "username": "listener",
+        "session_key": seal("lfm-session"),
+    });
+    let db = app.db();
+    db.execute(
+        "INSERT INTO user_connections (user_id, service, connection_data, enabled, created_at, \
+         updated_at) VALUES (?1, 'lastfm', ?2, 1, '', '')",
+        [&user.user_id, &document.to_string()],
+    )
+    .expect("link stored");
+    db.execute(
+        "INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
+         navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 1, 0, 0, '') \
+         ON CONFLICT (user_id) DO UPDATE SET scrobble_to_lastfm = 1",
+        [&user.user_id],
+    )
+    .expect("prefs saved");
+    drop(db);
+
+    let (answer, played_at, play_id) = submit_play(&app, &user).await;
+    assert_eq!(answer["services"]["lastfm"]["queued"], true, "{answer}");
+    let (queue, _) = job_table(&app);
+    scrobble_job(
+        &app,
+        &queue,
+        JobKind::new("scrobble.lastfm"),
+        &play_id,
+        "the scrobble lands",
+        |row| row.state == State::Done,
+    )
+    .await;
+
+    let sent = forms.lock().expect("lock").clone();
+    assert_eq!(sent.len(), 1, "one form: {sent:?}");
+    let form: HashMap<&str, &str> = sent[0]
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    let timestamp = played_at.to_string();
+    for (key, value) in [
+        ("method", "track.scrobble"),
+        ("api_key", "lfm-key"),
+        ("sk", "lfm-session"),
+        ("artist", "Portishead"),
+        ("track", "Roads"),
+        ("album", "Dummy"),
+        ("timestamp", timestamp.as_str()),
+        ("duration", "240"),
+        ("mbid", RECORDING),
+    ] {
+        assert_eq!(form.get(key).copied(), Some(value), "{key}");
+    }
+    // Last.fm's signature: every parameter but format and the signature,
+    // sorted by name, each name then its value, then the shared secret.
+    let mut signed: Vec<_> = sent[0]
+        .iter()
+        .filter(|(key, _)| key != "format" && key != "api_sig")
+        .collect();
+    signed.sort();
+    let mut text: String = signed
+        .iter()
+        .map(|(key, value)| format!("{key}{value}"))
+        .collect();
+    text.push_str("lfm-secret");
+    assert_eq!(
+        form.get("api_sig").copied(),
+        Some(format!("{:x}", md5::compute(text.as_bytes())).as_str())
     );
     app.stop().await;
 }

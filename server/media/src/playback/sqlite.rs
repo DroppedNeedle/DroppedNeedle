@@ -60,8 +60,8 @@ pub struct StoredPlay {
     pub recording_mbid: Option<String>,
     /// Track length in milliseconds (0 when unknown).
     pub duration_ms: i64,
-    /// Play time, unix seconds.
-    pub played_at: i64,
+    /// Play time, unix seconds; `None` when the stored time does not read.
+    pub played_at: Option<i64>,
 }
 
 impl PlaybackStore {
@@ -119,7 +119,7 @@ impl PlaybackStore {
                                 album_name: row.get(3)?,
                                 recording_mbid: row.get(4)?,
                                 duration_ms: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
-                                played_at: 0,
+                                played_at: None,
                             },
                             row.get::<_, String>(6)?,
                         ))
@@ -128,9 +128,9 @@ impl PlaybackStore {
             })
             .await
             .map(|found| {
-                found.and_then(|(play, played_at)| {
-                    let played_at = parse_iso(&played_at)?;
-                    Some(StoredPlay { played_at, ..play })
+                found.map(|(play, played_at)| StoredPlay {
+                    played_at: parse_iso(&played_at),
+                    ..play
                 })
             })
     }

@@ -48,6 +48,9 @@ pub const MAX_TOKEN_LEN: usize = 1024;
 pub const SOURCE: &str = "listenbrainz";
 /// Largest ListenBrainz answer read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+/// The [`ProviderError::Invalid`] reason when the API root is not a usable
+/// URL, so a caller can tell it from a token that cannot be sent.
+pub const UNUSABLE_ADDRESS: &str = "the ListenBrainz address is not usable";
 
 /// ListenBrainz on the wire. A policy block is [`ProviderError::Disabled`];
 /// a 429 waits for `X-RateLimit-Reset-In`, else `Retry-After`, and never
@@ -87,7 +90,25 @@ fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
             retry_after: reset_in(reply, answer.now_unix).or_else(|| answer.retry_after()),
         });
     }
+    // A refusal that also spends the window goes back to `send`, which
+    // rests the bucket and then reads it as the refusal it is.
+    if (400..500).contains(&status) && window_spent(reply).is_some() {
+        return Ok(());
+    }
     standard_classify(answer)
+}
+
+/// The wait an answer names when it says the rate window is spent
+/// (`X-RateLimit-Remaining: 0` with a positive `X-RateLimit-Reset-In`).
+fn window_spent(reply: &Reply) -> Option<Duration> {
+    if reply.header("x-ratelimit-remaining").map(str::trim) != Some("0") {
+        return None;
+    }
+    reply
+        .header("x-ratelimit-reset-in")
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+        .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
 }
 
 /// Whether this answer is a deterministic upstream policy block rather
@@ -598,7 +619,7 @@ impl ListenBrainzClient {
         priority: RequestPriority,
     ) -> Result<(), ProviderError> {
         let request = Request::post_json(self.base()?, &["1", "submit-listens"], listens)
-            .map_err(|_| invalid("the ListenBrainz address is not usable"))?;
+            .map_err(|_| invalid(UNUSABLE_ADDRESS))?;
         if token.is_empty() {
             return Err(invalid("a submission needs a token"));
         }
@@ -703,7 +724,7 @@ impl ListenBrainzClient {
         creds: &ListenBrainzCredentials,
     ) -> Result<Request, ProviderError> {
         let request = Request::get(self.base()?, segments, query)
-            .map_err(|_| invalid("the ListenBrainz address is not usable"))?
+            .map_err(|_| invalid(UNUSABLE_ADDRESS))?
             .header("accept", "application/json")
             .header("content-type", "application/json");
         with_headers(request, creds.user_token.as_deref())
@@ -719,29 +740,33 @@ impl ListenBrainzClient {
     ) -> Result<Request, ProviderError> {
         let json = serde_json::to_vec(body).map_err(|_| invalid("the request did not encode"))?;
         let request = Request::post_json(self.base()?, segments, json)
-            .map_err(|_| invalid("the ListenBrainz address is not usable"))?
+            .map_err(|_| invalid(UNUSABLE_ADDRESS))?
             .header("accept", "application/json");
         with_headers(request, creds.user_token.as_deref())
     }
 
-    /// Send one request. An answer that says the rate window is spent
-    /// rests the bucket until the window resets, as the API docs ask.
+    /// Send one request. An answer that says the rate window is spent,
+    /// a refusal included, rests the bucket until the window resets, as
+    /// the API docs ask.
     async fn send(
         &self,
         request: Request,
         priority: RequestPriority,
     ) -> Result<Reply, ProviderError> {
         let reply = self.executor.send(request, priority).await?;
-        if reply.header("x-ratelimit-remaining").map(str::trim) == Some("0")
-            && let Some(wait) = reply
-                .header("x-ratelimit-reset-in")
-                .and_then(|value| value.trim().parse::<f64>().ok())
-                .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
-                .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
-        {
+        if let Some(wait) = window_spent(&reply) {
             self.executor
                 .limiter()
                 .cool_down(wait.min(SPEC.retry_after_cap));
+        }
+        // A refusal `classify` passed back for its headers (no other 4xx
+        // gets here). The standard rules read the time only for 429 and
+        // 503, and neither is passed back.
+        if (400..500).contains(&reply.status()) {
+            standard_classify(&Answer {
+                reply: &reply,
+                now_unix: 0,
+            })?;
         }
         Ok(reply)
     }
@@ -781,9 +806,7 @@ impl ListenBrainzClient {
     }
 
     fn base(&self) -> Result<&Url, ProviderError> {
-        self.base
-            .as_ref()
-            .ok_or_else(|| invalid("the ListenBrainz address is not usable"))
+        self.base.as_ref().ok_or_else(|| invalid(UNUSABLE_ADDRESS))
     }
 }
 
