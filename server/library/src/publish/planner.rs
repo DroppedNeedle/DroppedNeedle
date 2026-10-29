@@ -263,9 +263,10 @@ pub struct JoinedTrack {
 }
 
 impl Adoption {
-    /// What a resumed commit knows: the policy the bundle journaled for
-    /// the file (`journaled`, automatic when it holds none), and the
-    /// provenance the import recorded next to its staged copies.
+    /// What a resumed commit knows: the policy, join and track the bundle
+    /// journaled for the file (`journaled`, automatic when it holds none),
+    /// and the provenance the import recorded next to its staged copies,
+    /// whose join and track stand in only where the journal has none.
     pub fn recovered(
         journaled: Option<&Adoption>,
         download_task_id: Option<String>,
@@ -284,8 +285,8 @@ impl Adoption {
             download_task_id,
             source_path,
             ingest_source,
-            join,
-            track,
+            join: journaled.and_then(|adopt| adopt.join.clone()).or(join),
+            track: journaled.and_then(|adopt| adopt.track.clone()).or(track),
         }
     }
 

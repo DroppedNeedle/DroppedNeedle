@@ -241,7 +241,8 @@ pub(crate) fn save_album(
     Ok(written)
 }
 
-/// Save a track's match at `now`, guarded like the album's.
+/// Save a track's match at `now`, guarded like the album's. A file whose
+/// row it writes loses its match by hand.
 pub(crate) fn save_track(
     tx: &Transaction<'_>,
     identity: &TrackIdentity,
@@ -270,6 +271,8 @@ pub(crate) fn save_track(
             track = identity.local_track_id,
             "automatic identity not written over a person's track identity"
         );
+    } else {
+        super::person::forget_hand_match(tx, &identity.local_track_id)?;
     }
     Ok(written)
 }
@@ -296,11 +299,14 @@ fn most_held(albums: &[Option<String>]) -> Option<String> {
     best.map(|(album, _)| album.to_owned())
 }
 
-/// A value read back that does not decode: a column of the wrong type, or
-/// a value no Rust type here admits (an unknown decision source).
+/// A value read back that does not decode: a column of the wrong type, a
+/// number out of its type's range, or a value no Rust type here admits
+/// (an unknown decision source).
 fn does_not_decode(error: &rusqlite::Error) -> bool {
     matches!(
         error,
-        rusqlite::Error::FromSqlConversionFailure(..) | rusqlite::Error::InvalidColumnType(..)
+        rusqlite::Error::FromSqlConversionFailure(..)
+            | rusqlite::Error::InvalidColumnType(..)
+            | rusqlite::Error::IntegralValueOutOfRange(..)
     )
 }

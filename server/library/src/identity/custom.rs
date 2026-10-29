@@ -5,7 +5,9 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use super::person::{TrackRow, drop_satellite, seal_persons_album, upsert_track_identity};
+use super::person::{
+    TrackRow, drop_satellite, forget_hand_match, seal_persons_album, upsert_track_identity,
+};
 use super::sql;
 use super::undo::{record_and_keep, snapshot};
 use super::{IdentityError, PROVIDER, Refusal};
@@ -70,7 +72,8 @@ struct ManifestTrack {
 /// A person seals the album's files as they are under the release group:
 /// the album row becomes theirs on the group with no release, each file
 /// keeps a supported recording (or the one it had) off any release track,
-/// and a new manifest becomes the album's active custom edition. A queued
+/// and a new manifest becomes the album's active custom edition (the
+/// files' matches by hand end; the undo brings them back). A queued
 /// placement and the match state go; "leave unmanaged" stays. The album's
 /// open reviews settle as approved and automatic management looks again.
 /// Refused, with nothing written, when the release belongs to another
@@ -178,6 +181,7 @@ pub fn custom_edition(
             None => {
                 tx.prepare_cached(sql::DELETE_TRACK_ROW.text())?
                     .execute(params![track.id, PROVIDER])?;
+                forget_hand_match(tx, &track.id)?;
             }
         }
     }

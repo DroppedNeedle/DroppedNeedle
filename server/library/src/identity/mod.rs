@@ -22,7 +22,9 @@
 //! Beside the five tables the module also writes what only means something
 //! with a match: the queued placement of an album's files
 //! (`library_edition_remap_queue`), the active custom edition and its
-//! manifests, and the records of files matched by hand.
+//! manifests, and the records of files matched by hand. A file's record
+//! ends when anything but an undo replaces or clears the file's row, and
+//! the edition undo brings it back with the row.
 
 mod automatic;
 mod custom;
@@ -59,7 +61,7 @@ pub use person::{
     Approved, Chosen, Matched, Offer, Removal, approve, choose, confirm, hand_back, hand_match,
     leave_unmanaged, place, remove, unmatch,
 };
-pub(crate) use person::{TrackRow, upsert_track_identity};
+pub(crate) use person::{TrackRow, drop_edition, upsert_track_identity};
 pub use undo::{AutomaticUndo, AutomaticUndone, undo, undo_automatic};
 
 /// Why a person's identity command wrote nothing.

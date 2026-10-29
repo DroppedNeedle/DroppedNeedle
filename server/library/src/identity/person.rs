@@ -64,8 +64,8 @@ pub fn place(indexed: &[String], spots: &[Placed]) -> (Vec<Placed>, Vec<String>)
 pub(super) struct Fit {
     pub(super) placed: Vec<Placed>,
     pub(super) extra: Vec<String>,
-    /// Files a match by hand keeps on their track.
-    pub(super) by_hand: Vec<String>,
+    /// Files a match by hand keeps on their track, with that track.
+    pub(super) by_hand: Vec<(String, String)>,
 }
 
 /// Whether `release` is the album's current edition: the same id, or a
@@ -122,12 +122,14 @@ pub(super) fn fit(
     Ok(Fit {
         placed,
         extra,
-        by_hand: by_hand.into_iter().map(|(file, _)| file).collect(),
+        by_hand,
     })
 }
 
 /// Write a chosen edition's track rows: placed files as the person's on
-/// their release tracks, the rest keeping their recording, unplaced.
+/// their release tracks, the rest keeping their recording, unplaced. Each
+/// file written loses its match by hand; the files one keeps are not
+/// written.
 pub(super) fn write_choice_tracks(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -148,11 +150,28 @@ pub(super) fn write_choice_tracks(
                 now,
                 album_id,
             ])?;
+        forget_hand_match(tx, &placement.local_track_id)?;
     }
     for track_id in &fit.extra {
         tx.prepare_cached(sql::UNPLACE_CHOSEN_TRACK.text())?
             .execute(params![track_id, now, PROVIDER, album_id])?;
+        forget_hand_match(tx, track_id)?;
     }
+    Ok(())
+}
+
+/// Forget file `track_id`'s match by hand: a writer replaced or cleared
+/// the row it stood for. Only an undo puts one back.
+pub(crate) fn forget_hand_match(conn: &Connection, track_id: &str) -> rusqlite::Result<()> {
+    conn.prepare_cached(sql::FORGET_HAND_MATCH.text())?
+        .execute(params![track_id])?;
+    Ok(())
+}
+
+/// Forget the matches by hand of the album's indexed files.
+fn forget_album_hand_matches(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<()> {
+    tx.prepare_cached(sql::FORGET_ALBUM_HAND_MATCHES.text())?
+        .execute(params![album_id])?;
     Ok(())
 }
 
@@ -198,6 +217,8 @@ pub struct Chosen {
     pub placed: Vec<String>,
     /// Files the edition has no track for.
     pub extra: Vec<String>,
+    /// Release tracks a match by hand holds.
+    pub held_by_hand: Vec<String>,
 }
 
 /// A person chooses the album's edition: the album row becomes theirs on
@@ -206,17 +227,28 @@ pub struct Chosen {
 /// and an active custom edition go; a person's "leave unmanaged" stays
 /// ("Manage it again" is the one way back to management). With a person
 /// (`actor`), the album's open reviews settle as approved. Automatic
-/// management looks at the album again.
+/// management looks at the album again. `missing` lists the release
+/// tracks no file took, by id; the audit counts those a match by hand
+/// does not hold.
 pub fn choose(
     tx: &Transaction<'_>,
     album_id: &str,
     offer: &Offer,
     candidate_key: &str,
     actor: Option<&str>,
-    missing: usize,
+    missing: &[String],
     now: f64,
 ) -> Result<Chosen, IdentityError> {
     let fit = fit(tx, album_id, offer)?;
+    let held_by_hand: Vec<String> = fit.by_hand.iter().map(|(_, track)| track.clone()).collect();
+    let missing = missing
+        .iter()
+        .filter(|track| {
+            !held_by_hand
+                .iter()
+                .any(|held| held.eq_ignore_ascii_case(track))
+        })
+        .count();
     let before = snapshot(tx, album_id)?;
     let release = offer.release_mbid.as_str();
     seal_persons_album(
@@ -267,9 +299,10 @@ pub fn choose(
             .placed
             .iter()
             .map(|placement| placement.local_track_id.clone())
-            .chain(fit.by_hand.iter().cloned())
+            .chain(fit.by_hand.iter().map(|(file, _)| file.clone()))
             .collect(),
         extra: fit.extra,
+        held_by_hand,
     })
 }
 
@@ -337,12 +370,12 @@ fn make_persons(
 
 /// "Let DroppedNeedle choose": the album's edition goes back to automatic
 /// best fit. The album row and the person's track rows become automatic
-/// (rows the tags carried keep their source), a queued placement and an
-/// active custom edition go; the match state, "leave unmanaged" and files
-/// matched by hand stay. The undo is carried through the identification
+/// (rows the tags carried keep their source), a queued placement, an
+/// active custom edition and the matches by hand go; the match state and
+/// "leave unmanaged" stay. The undo is carried through the identification
 /// the caller queues in the same transaction, so it still brings the
-/// person's edition back after DroppedNeedle has picked again. Returns
-/// false when the album has no identity at all.
+/// person's edition back, matches by hand included, after DroppedNeedle
+/// has picked again. Returns false when the album has no identity at all.
 pub fn hand_back(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -357,6 +390,7 @@ pub fn hand_back(
         .execute(params![album_id, now, PROVIDER])?;
     tx.prepare_cached(sql::HAND_BACK_TRACKS.text())?
         .execute(params![album_id, now, PROVIDER])?;
+    forget_album_hand_matches(tx, album_id)?;
     for statement in [sql::DROP_REMAP, sql::DROP_CUSTOM] {
         drop_satellite(tx, album_id, statement)?;
     }
@@ -379,8 +413,9 @@ pub fn hand_back(
 }
 
 /// A person leaves the album unmanaged: the exact release goes, the release
-/// group stays as their choice, the files leave their release tracks, and
-/// Library Management keeps out until "Manage it again". A queued placement
+/// group stays as their choice, the files leave their release tracks (and
+/// their matches by hand), and Library Management keeps out until "Manage
+/// it again". A queued placement
 /// and an active custom edition go, and so does the match state while the
 /// album has a match. Refused as stale, with nothing changed, unless the
 /// identity revision is still `expected_identity_revision` (0 for an album
@@ -403,6 +438,7 @@ pub fn leave_unmanaged(
     }
     tx.prepare_cached(sql::UNPLACE_ALBUM_TRACKS.text())?
         .execute(params![album_id, now, PROVIDER])?;
+    forget_album_hand_matches(tx, album_id)?;
     tx.prepare_cached(sql::EXCLUDE_ALBUM.text())?
         .execute(params![album_id, actor, now])?;
     for statement in [sql::DROP_CUSTOM, sql::DROP_REMAP] {
@@ -440,33 +476,34 @@ pub enum Removal<'a> {
     },
     /// A person takes the match off from a review, whoever made it.
     Person { reason: &'a str, actor: &'a str },
-    /// Two albums became one: the edition of the one that goes is dropped
-    /// with no undo. The review the caller leaves is the way back.
-    Merge,
+}
+
+/// Two albums became one: the edition of the one that goes is dropped,
+/// with its match state, a queued placement, the active custom edition
+/// and both undos. Nothing of it can be undone; the review the caller
+/// leaves is the way back.
+pub(crate) fn drop_edition(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<()> {
+    delete_album_row(tx, album_id, Rows::Any)?;
+    for statement in [sql::CLEAR_FLAG, sql::DROP_REMAP, sql::DROP_CUSTOM] {
+        drop_satellite(tx, album_id, statement)?;
+    }
+    Ok(())
 }
 
 /// Take the album's edition off, with everything that only means something
-/// with it: the album row, a queued placement and the active custom
-/// edition, always; custom edition manifests, files matched by hand and
-/// "leave unmanaged" stay. A repair or a person also takes the files'
-/// matches off and marks the album unmatched with the reason, and the
-/// change can be undone like an edition choice (the automatic-edition undo
-/// is not brought back). A merge drops the match state and both undos.
-/// Returns the audit row id; `None` when there was nothing to remove (or a
-/// repair met a person's choice), and always for a merge.
+/// with it: the album row, the files' matches and their matches by hand, a
+/// queued placement and the active custom edition; custom edition
+/// manifests and "leave unmanaged" stay. The album is marked unmatched
+/// with the reason, and the change can be undone like an edition choice,
+/// matches by hand included (the automatic-edition undo is not brought
+/// back). Returns the audit row id; `None` when there was nothing to
+/// remove, or a repair met a person's choice.
 pub fn remove(
     tx: &Transaction<'_>,
     album_id: &str,
     removal: Removal<'_>,
     now: f64,
 ) -> rusqlite::Result<Option<String>> {
-    if let Removal::Merge = removal {
-        delete_album_row(tx, album_id, Rows::Any)?;
-        for statement in [sql::CLEAR_FLAG, sql::DROP_REMAP, sql::DROP_CUSTOM] {
-            drop_satellite(tx, album_id, statement)?;
-        }
-        return Ok(None);
-    }
     let before = snapshot(tx, album_id)?;
     let Some(identity) = before.identity.clone() else {
         return Ok(None);
@@ -484,10 +521,10 @@ pub fn remove(
             job_id,
         } => (reason, actor, job_id, "repair_detach", true),
         Removal::Person { reason, actor } => (reason, Some(actor), None, "review_detach", false),
-        Removal::Merge => return Ok(None),
     };
     tx.prepare_cached(sql::DELETE_ALBUM_TRACK_ROWS.text())?
         .execute(params![album_id, PROVIDER])?;
+    forget_album_hand_matches(tx, album_id)?;
     delete_album_row(tx, album_id, Rows::Any)?;
     for statement in [sql::DROP_REMAP, sql::DROP_CUSTOM] {
         drop_satellite(tx, album_id, statement)?;
@@ -705,7 +742,8 @@ pub(crate) struct TrackRow<'a> {
     pub decision_source: &'a str,
 }
 
-/// Write one track identity; an existing row takes the next revision.
+/// Write one track identity; an existing row takes the next revision and
+/// the file's match by hand ends.
 pub(crate) fn upsert_track_identity(
     tx: &Transaction<'_>,
     row: &TrackRow<'_>,
@@ -723,5 +761,5 @@ pub(crate) fn upsert_track_identity(
             row.decision_source,
             now,
         ])?;
-    Ok(())
+    forget_hand_match(tx, row.local_track_id)
 }

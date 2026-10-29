@@ -335,6 +335,7 @@ mod tests {
                 })
                 .collect(),
             unmatched_expected_tracks: Vec::new(),
+            unmatched_expected_track_ids: Vec::new(),
         }
     }
 

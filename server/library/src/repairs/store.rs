@@ -719,6 +719,22 @@ pub fn older_confirmation_albums(conn: &Connection) -> rusqlite::Result<Vec<Stri
 /// catalog number names.
 pub const EDITION_IDS_BACKFILL_KEY: &str = "edition-ids:v1:backfill";
 
+/// What a one-time pass found: the albums to identify again, and whether
+/// the pass is done for good, so its key is marked.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Backfill {
+    pub albums: Vec<String>,
+    pub settled: bool,
+}
+
+impl Backfill {
+    /// A pass that is done once it found an album.
+    pub fn found(albums: Vec<String>) -> Self {
+        let settled = !albums.is_empty();
+        Self { albums, settled }
+    }
+}
+
 /// Albums whose automatic match is confirmed on a release that states
 /// another barcode or catalog number than the one most of their files
 /// carry, while no file carries a MusicBrainz release ID. Identified again,
@@ -728,12 +744,22 @@ pub const EDITION_IDS_BACKFILL_KEY: &str = "edition-ids:v1:backfill";
 /// as in [`older_confirmation_albums`]. None while one of them is not
 /// ready to tell: a file whose edition tags the scan has not read yet, or
 /// a release whose document is still being fetched; the next look (at
-/// start or after a scan) asks again.
-pub fn edition_id_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+/// start or after a scan) asks again. Settled once a look saw at least one
+/// such album and none of them waited, whether or not one moved.
+pub fn edition_id_albums(conn: &Connection) -> rusqlite::Result<Backfill> {
     let mut stmt = conn.prepare(&format!(
         "SELECT a.id, i.release_mbid, EXISTS (SELECT 1 FROM library_artist_reconciliation_state s \
              WHERE s.local_album_id = a.id AND s.state = 'waiting_for_identity' \
-             AND s.reason_code = ?2) \
+             AND s.reason_code = ?2), \
+         EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+             AND NOT EXISTS (SELECT 1 FROM local_track_edition_tags h \
+                 WHERE h.local_track_id = t.id)), \
+         EXISTS (SELECT 1 FROM local_tracks t \
+             JOIN local_track_edition_tags h ON h.local_track_id = t.id \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+             AND (trim(COALESCE(h.barcode, '')) <> '' \
+                 OR trim(COALESCE(h.catalog_number, '')) <> '')) \
          FROM local_albums a \
          JOIN local_album_external_identities i \
              ON i.local_album_id = a.id AND i.provider = ?1 \
@@ -753,31 +779,42 @@ pub fn edition_id_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
                  OR trim(COALESCE(t.embedded_release_mbid, '')) != '')) \
          ORDER BY a.id"
     ))?;
-    let confirmed: Vec<(String, String, bool)> = stmt
+    // Album, its release, its document still fetching, a file whose
+    // edition tags are unread, a file with a barcode or catalog number.
+    type Candidate = (String, String, bool, bool, bool);
+    let confirmed: Vec<Candidate> = stmt
         .query_map(params![PROVIDER, RELEASE_DOCUMENT_MISSING], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })?
         .collect::<rusqlite::Result<_>>()?;
+    let candidates = confirmed.len();
     let mut files = conn.prepare(
-        "SELECT h.local_track_id IS NOT NULL, h.barcode, h.catalog_number \
-         FROM local_tracks t LEFT JOIN local_track_edition_tags h ON h.local_track_id = t.id \
+        "SELECT h.barcode, h.catalog_number \
+         FROM local_tracks t JOIN local_track_edition_tags h ON h.local_track_id = t.id \
          WHERE t.local_album_id = ?1 AND t.availability = 'indexed'",
     )?;
     let mut albums = Vec::new();
     let mut waiting = 0usize;
-    for (album, release, fetching) in confirmed {
-        let tags: Vec<(bool, Option<String>, Option<String>)> = files
-            .query_map(params![album], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        if tags.iter().any(|(read, _, _)| !read) {
+    for (album, release, fetching, unread, tagged) in confirmed {
+        if unread {
             waiting += 1;
             continue;
         }
+        if !tagged {
+            continue;
+        }
+        let tags: Vec<(Option<String>, Option<String>)> = files
+            .query_map(params![album], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
         let ids = edition_ids_of(
             tags.iter()
-                .map(|(_, barcode, catalog)| (barcode.as_deref(), catalog.as_deref())),
+                .map(|(barcode, catalog)| (barcode.as_deref(), catalog.as_deref())),
         );
         if ids.barcode.is_none() && ids.catalog_number.is_none() {
             continue;
@@ -797,9 +834,12 @@ pub fn edition_id_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
             waiting,
             "edition re-check waits for edition tags or release documents"
         );
-        return Ok(Vec::new());
+        return Ok(Backfill::default());
     }
-    Ok(albums)
+    Ok(Backfill {
+        albums,
+        settled: candidates > 0,
+    })
 }
 
 /// Every file names the same valid release group, and it is not `group`.

@@ -23325,8 +23325,8 @@ fn hand_match_world(db: &rusqlite::Connection, album: &str) -> (String, Vec<Stri
 /// track the matcher places another file on that has no stored row; a file
 /// already on a track; another album's file and a missing file; a track
 /// not on the edition; a custom edition; "Leave unmanaged". A track only a
-/// missing file holds can be taken. Its undo is refused once another
-/// edition was chosen, and the record stays.
+/// missing file holds can be taken. Choosing another edition ends the
+/// match, so its undo then finds none to take back.
 #[tokio::test]
 async fn a_match_by_hand_is_refused_with_nothing_changed() {
     let rig = Rig::start("lib-hand-match-refusals").await;
@@ -23489,7 +23489,7 @@ async fn a_match_by_hand_is_refused_with_nothing_changed() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let file_uri = format!("{edition}/files/{}", h.odd);
 
-    // Another edition chosen since: the match no longer stands.
+    // Another edition chosen since: the match and its record end.
     let mut other = h.fit.clone();
     other.id = REL_2.to_owned();
     rig.identify.set_recall(RecallResult {
@@ -23518,10 +23518,10 @@ async fn a_match_by_hand_is_refused_with_nothing_changed() {
             None,
         )
         .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], json!("NO_HAND_MATCH"));
     assert_eq!(hand_match_world(&db, album), world, "nothing changed");
-    assert!(hand_match_row(&db, &h.odd).is_some(), "the record stays");
+    assert!(hand_match_row(&db, &h.odd).is_none(), "the record ended");
     rig.stop().await;
 }
 

@@ -344,10 +344,9 @@ pub(super) fn drop_scattered(
 }
 
 /// Remove an album's edition and everything that hangs off it, with no
-/// undo ([`identity::Removal::Merge`]).
+/// undo ([`identity::drop_edition`]).
 pub(crate) fn drop_edition(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<()> {
-    identity::remove(tx, album_id, identity::Removal::Merge, 0.0)?;
-    Ok(())
+    identity::drop_edition(tx, album_id)
 }
 
 /// Leave a pending review saying why editions went. The dropped editions

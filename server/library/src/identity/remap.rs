@@ -13,7 +13,9 @@
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::person::{Fit, Offer, drop_satellite, fit, place, write_choice_tracks};
+use super::person::{
+    Fit, Offer, drop_satellite, fit, forget_hand_match, place, write_choice_tracks,
+};
 use super::reads::indexed_track_ids;
 use super::sql;
 use super::{IdentityError, PROVIDER, Refusal, TrackRow, upsert_track_identity};
@@ -271,7 +273,7 @@ pub fn queue_placement(tx: &Transaction<'_>, album_id: &str, now: f64) -> rusqli
 /// chosen release as a choice places them (every placed file the person's,
 /// with its position, naming the release as the album's identity row
 /// spells it; the rest keep their recording, unplaced; files matched by
-/// hand stay). The album's match, both undos, "leave
+/// hand stay, and every file written loses an old match by hand). The album's match, both undos, "leave
 /// unmanaged" and the custom edition are left as they are; a match state
 /// left by an earlier placement that failed (`CHOSEN_EDITION_*`) and the
 /// queue row go, and automatic management looks at the album again. The
@@ -318,8 +320,9 @@ pub fn place_choice(
 /// of it, merged in, stays unplaced). The other files the offer weighed
 /// are placed as an edition choice places them ([`place`]), each upserted
 /// as a `manual` placement naming the release as the album's identity row
-/// spells it; the rest keep their recording, unplaced. A match state left
-/// by an earlier placement that failed (`CHOSEN_EDITION_*`) goes. A file
+/// spells it; the rest keep their recording, unplaced. Each file written
+/// loses its match by hand. A match state left by an earlier placement
+/// that failed (`CHOSEN_EDITION_*`) goes. A file
 /// that joined the album after the offer was made keeps its row, and the
 /// queue row stays so the next try places it. Otherwise the queue row goes
 /// and automatic management looks at the album again, keeping a scan's
@@ -404,6 +407,7 @@ pub fn place_files(
     for track_id in &extra {
         tx.prepare_cached(sql::UNPLACE_CHOSEN_TRACK.text())?
             .execute(params![track_id, now, PROVIDER, album_id])?;
+        forget_hand_match(tx, track_id)?;
     }
     tx.prepare_cached(sql::CLEAR_CHOSEN_FLAG.text())?
         .execute(params![album_id])?;

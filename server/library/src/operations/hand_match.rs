@@ -8,9 +8,10 @@
 //! needs is kept in `library_track_hand_matches`, one row per file.
 //!
 //! A match stands while the file's identity is `manual` and names the
-//! row's release and release track. Choosing another edition, "Let
-//! DroppedNeedle choose" and "Leave unmanaged" change that identity, so
-//! the row then stands for nothing and is no longer offered for undo.
+//! row's release and release track. Anything but an undo that replaces or
+//! clears that identity (choosing another edition, "Let DroppedNeedle
+//! choose", "Leave unmanaged", taking the match off) ends the match and
+//! deletes its row; the edition undo brings both back.
 //!
 //! A match on an edition the app picked makes the edition the person's, as
 //! "Looks right" does, with the edition's undo kept; one carried from v2

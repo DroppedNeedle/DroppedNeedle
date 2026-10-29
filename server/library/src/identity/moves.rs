@@ -5,10 +5,12 @@
 //!
 //! Each runs in the caller's transaction, which moves the catalog revision
 //! as its own work requires; the rules of when to call them stay with the
-//! callers.
+//! callers. A file whose row one of them replaces or clears loses its
+//! match by hand.
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
+use super::person::forget_hand_match;
 use super::sql;
 use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
 
@@ -40,7 +42,9 @@ pub(crate) fn settle_tracks(
 ) -> rusqlite::Result<()> {
     let mut statement = tx.prepare_cached(sql::SETTLE_TRACK.text())?;
     for track_id in track_ids {
-        statement.execute(params![PROVIDER, release, track_id])?;
+        if statement.execute(params![PROVIDER, release, track_id])? > 0 {
+            forget_hand_match(tx, track_id)?;
+        }
     }
     Ok(())
 }
@@ -126,7 +130,7 @@ fn write_track(
             source,
             now,
         ])?;
-    Ok(())
+    forget_hand_match(tx, spot.local_track_id)
 }
 
 /// Clear the flag a chosen edition's placement left (`CHOSEN_EDITION_*`)
@@ -182,7 +186,7 @@ pub(crate) fn link(
     }
     let mut statement = tx.prepare_cached(sql::LINK_TRACK.text())?;
     for track in tracks {
-        statement.execute(params![
+        let written = statement.execute(params![
             track.local_track_id,
             PROVIDER,
             track.recording_mbid,
@@ -194,6 +198,9 @@ pub(crate) fn link(
             now,
             link.album_id,
         ])?;
+        if written > 0 {
+            forget_hand_match(tx, track.local_track_id)?;
+        }
     }
     Ok(())
 }
@@ -203,5 +210,5 @@ pub(crate) fn link(
 pub(crate) fn release_track(conn: &Connection, local_track_id: &str) -> rusqlite::Result<()> {
     conn.prepare_cached(sql::DELETE_TRACK_ROW.text())?
         .execute(params![local_track_id, PROVIDER])?;
-    Ok(())
+    forget_hand_match(conn, local_track_id)
 }

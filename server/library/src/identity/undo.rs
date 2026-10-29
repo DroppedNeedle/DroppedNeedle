@@ -12,7 +12,11 @@
 //! an identification, whose seal would move the revision before the person
 //! could use the undo. Their undo is marked carried, and the first
 //! automatic seal or retraction keys it to the revision it leaves and
-//! clears the mark.
+//! clears the mark. An administrator's undo of that seal keys it again, to
+//! the revision the administrator's undo leaves.
+//!
+//! The choice undo also keeps the album's matches by hand: a change that
+//! replaces a file's row ends its match, and the undo brings it back.
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use serde::{Deserialize, Serialize};
@@ -84,15 +88,32 @@ pub(crate) struct Hold {
     remap: Option<RemapRow>,
 }
 
-/// The album's hold before a change and as the change left it, and
-/// whether the undo is carried through the identification the change
-/// queued. A record without the mark is not carried.
+/// One file's match by hand, every column its record keeps.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct HandMatchRow {
+    local_track_id: String,
+    release_mbid: String,
+    release_track_mbid: String,
+    prior_identity_json: Option<String>,
+    matched_by_user_id: Option<String>,
+    matched_at: i64,
+}
+
+/// The album's hold before a change and as the change left it, whether
+/// the undo is carried through the identification the change queued, and
+/// the album's matches by hand before the change. A record without the
+/// mark is not carried; one kept before matches by hand were part of it
+/// leaves them as they are.
 #[derive(Debug, Serialize, Deserialize)]
 struct HoldChange {
+    #[serde(default)]
     before: Hold,
+    #[serde(default)]
     after: Hold,
     #[serde(default)]
     carried: bool,
+    #[serde(default)]
+    hand_matches: Option<Vec<HandMatchRow>>,
 }
 
 /// The album's "leave unmanaged" row, if it has one.
@@ -155,6 +176,50 @@ fn hold(conn: &Connection, album_id: &str) -> rusqlite::Result<Hold> {
     })
 }
 
+fn hand_matches(conn: &Connection, album_id: &str) -> rusqlite::Result<Vec<HandMatchRow>> {
+    conn.prepare_cached(sql::ALBUM_HAND_MATCHES.text())?
+        .query_map(params![album_id], |row| {
+            Ok(HandMatchRow {
+                local_track_id: row.get(0)?,
+                release_mbid: row.get(1)?,
+                release_track_mbid: row.get(2)?,
+                prior_identity_json: row.get(3)?,
+                matched_by_user_id: row.get(4)?,
+                matched_at: row.get(5)?,
+            })
+        })?
+        .collect()
+}
+
+/// Set each indexed file's match by hand to what `kept` holds for it: put
+/// back as it was, or forgotten.
+fn restore_hand_matches(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    kept: &[HandMatchRow],
+) -> rusqlite::Result<()> {
+    for track_id in indexed_track_ids(tx, album_id)? {
+        match kept.iter().find(|row| row.local_track_id == track_id) {
+            Some(row) => {
+                tx.prepare_cached(sql::KEEP_HAND_MATCH.text())?
+                    .execute(params![
+                        row.local_track_id,
+                        row.release_mbid,
+                        row.release_track_mbid,
+                        row.prior_identity_json,
+                        row.matched_by_user_id,
+                        row.matched_at,
+                    ])?;
+            }
+            None => {
+                tx.prepare_cached(sql::FORGET_HAND_MATCH.text())?
+                    .execute(params![track_id])?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn match_state_row(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<MatchStateRow>> {
     conn.prepare_cached(sql::MATCH_STATE_ROW.text())?
         .query_row(params![album_id], |row| {
@@ -175,6 +240,7 @@ pub(crate) struct Snapshot {
     pub(crate) tracks: Vec<PriorTrackIdentity>,
     pub(crate) state: Option<MatchStateRow>,
     hold: Hold,
+    hand_matches: Vec<HandMatchRow>,
 }
 
 impl Snapshot {
@@ -190,6 +256,7 @@ pub(crate) fn snapshot(conn: &Connection, album_id: &str) -> rusqlite::Result<Sn
         tracks: track_identity_rows(conn, album_id)?,
         state: match_state_row(conn, album_id)?,
         hold: hold(conn, album_id)?,
+        hand_matches: hand_matches(conn, album_id)?,
     })
 }
 
@@ -223,6 +290,7 @@ pub(crate) fn keep_choice_undo(
         before: before.hold.clone(),
         after: hold(tx, album_id)?,
         carried,
+        hand_matches: Some(before.hand_matches.clone()),
     })?;
     tx.prepare_cached(sql::KEEP_CHOICE_UNDO.text())?
         .execute(params![
@@ -362,7 +430,9 @@ fn put_match_state(
 
 /// Put back the match state an automatic acceptance replaced, when the
 /// acceptance that left identity revision `post_identity_revision` kept
-/// one, and use up that edition undo (the change it covers is gone).
+/// one, and use up that edition undo (the change it covers is gone). Only
+/// the acceptance's own undo is used up; another one at that revision is
+/// a person's the seal carried.
 pub(crate) fn restore_match_state(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -504,6 +574,9 @@ pub fn undo(
     put_match_state(tx, album_id, prior_state.as_ref())?;
     if let Some(change) = &held {
         restore_hold(tx, album_id, change, actor, now)?;
+        if let Some(kept) = &change.hand_matches {
+            restore_hand_matches(tx, album_id, kept)?;
+        }
     }
     for statement in [sql::FORGET_CHOICE_UNDO, sql::FORGET_AUTOMATIC_UNDO] {
         tx.prepare_cached(statement.text())?
@@ -553,10 +626,12 @@ pub struct AutomaticUndo<'a> {
 
 /// Put back what the album's last automatic edition replaced, column for
 /// column (v2's restore). With no earlier album identity, the album is
-/// left with no match and both undo rows go. Track rows a curator holds
-/// now are never rewritten, and pins are never touched. An identity
+/// left with no match and the automatic undo goes. Track rows a curator
+/// holds now are never rewritten, and pins are never touched. An identity
 /// check's acceptance also kept the album's match state in the edition
-/// undo it left: that is put back and the undo used up first.
+/// undo it left: that is put back and the undo used up first. A person's
+/// undo the seal carried is kept, keyed to the revision this undo leaves
+/// (0 with no match), so it still brings their edition back.
 pub fn undo_automatic(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -608,6 +683,9 @@ pub fn undo_automatic(
     } else {
         AutomaticUndone::ClearedToReview
     };
+    restore_match_state(tx, album_id, post_identity_revision)?;
+    tx.prepare_cached(sql::MARK_CARRIED.text())?
+        .execute(params![album_id, post_identity_revision])?;
     match &prior {
         Some(prior) => {
             tx.prepare_cached(sql::PUT_BACK_ALBUM_ROW.text())?
@@ -624,11 +702,9 @@ pub fn undo_automatic(
                 ])?;
         }
         None => {
-            // Use up the acceptance's own undo first: deleting the row
-            // takes every undo with it, and an older one must not outlive
-            // the row it was kept for.
-            restore_match_state(tx, album_id, post_identity_revision)?;
-            delete_album_row(tx, album_id, Rows::Any)?;
+            // The row is the automatic one (`fresh`); a carried undo stays,
+            // keyed to the album having no match.
+            delete_album_row(tx, album_id, Rows::Revisable)?;
         }
     }
     for track_id in indexed_track_ids(tx, album_id)? {
@@ -676,7 +752,12 @@ pub fn undo_automatic(
     tx.prepare_cached(sql::CONSUME_AUTOMATIC_UNDO.text())?
         .execute(params![undo_id, now, action])?;
     if outcome == AutomaticUndone::Restored {
-        restore_match_state(tx, album_id, post_identity_revision)?;
+        carry_undo(
+            tx,
+            album_id,
+            post_identity_revision,
+            identity_revision(tx, album_id)?,
+        )?;
     }
     crate::catalog_revision::bump_catalog(tx)?;
     Ok(outcome)

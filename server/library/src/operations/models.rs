@@ -77,6 +77,10 @@ pub struct ReidentificationCandidate {
     pub tracks: Vec<CandidateTrack>,
     /// Release track titles no local file took.
     pub unmatched_expected_tracks: Vec<String>,
+    /// The same release tracks by id, in the same order. A candidate
+    /// stored before they were kept has none.
+    #[serde(default)]
+    pub unmatched_expected_track_ids: Vec<String>,
 }
 
 /// What a re-identification evaluation found, kept on the job snapshot.

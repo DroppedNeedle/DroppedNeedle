@@ -168,6 +168,7 @@ fn placed_files(tx: &Transaction<'_>, placed: &[String]) -> rusqlite::Result<Vec
 /// A person (or, with no `actor`, a repair) chooses the album's edition
 /// ([`identity::choose`]). Any release can be chosen, from the album's own
 /// release group or another one, and the files need not fit it one to one.
+/// The missing titles leave out the release tracks a match by hand holds.
 pub fn choose(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -182,7 +183,7 @@ pub fn choose(
         &offer,
         &candidate.candidate_key,
         actor,
-        candidate.unmatched_expected_tracks.len(),
+        &candidate.unmatched_expected_track_ids,
         now,
     )?;
     Ok(EditionChoice {
@@ -191,8 +192,25 @@ pub fn choose(
         release_mbid: chosen.release_mbid,
         placed: placed_files(tx, &chosen.placed)?,
         extra_track_ids: chosen.extra,
-        missing_titles: candidate.unmatched_expected_tracks.clone(),
+        missing_titles: missing_titles(candidate, &chosen.held_by_hand),
     })
+}
+
+/// The titles of the candidate's missing release tracks that no match by
+/// hand holds (`held`). A candidate stored without the tracks' ids keeps
+/// every title.
+fn missing_titles(candidate: &ReidentificationCandidate, held: &[String]) -> Vec<String> {
+    let titles = &candidate.unmatched_expected_tracks;
+    let ids = &candidate.unmatched_expected_track_ids;
+    if ids.len() != titles.len() {
+        return titles.clone();
+    }
+    titles
+        .iter()
+        .zip(ids)
+        .filter(|(_, id)| !held.iter().any(|track| track.eq_ignore_ascii_case(id)))
+        .map(|(title, _)| title.clone())
+        .collect()
 }
 
 /// "Let DroppedNeedle choose": the edition goes back to automatic best fit
@@ -313,7 +331,7 @@ pub fn accept_automatic(
 /// import's catalog transaction, from the import's own match: each file is
 /// upserted as a `manual` placement on its release track, as
 /// [`place_files`] writes one, naming the release as the album's identity
-/// row spells it. Only when the album's match is a person's (chosen by
+/// row spells it (an old match by hand of the file ends). Only when the album's match is a person's (chosen by
 /// hand or carried from v2), names `release_mbid`, and no custom edition is
 /// active; otherwise nothing is placed. A release track another indexed
 /// file of the album already holds (naming the release or none) is never

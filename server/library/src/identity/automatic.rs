@@ -44,9 +44,12 @@ pub enum AutomaticOutcome {
 /// Seal identification's match on the album: the album row, the rows of
 /// the supported files it still holds (a person's track row stays), and
 /// the match flag (cleared for a confident match, set for a best guess).
-/// For an exact edition the rows it replaced are kept for undo. A person's
-/// album row is never replaced, and a match that already reads so is left
-/// as it is, its undo included.
+/// A file whose release track a person's row of another file holds keeps
+/// its recording, off the release. The revisable rows of the files it did
+/// not write that name another release leave it, as automatic, keeping
+/// their recording. For an exact edition the rows it replaced are kept
+/// for undo. A person's album row is never replaced, and a match that
+/// already reads so is left as it is, its undo included.
 pub fn seal_automatic(
     tx: &Transaction<'_>,
     seal: &AutomaticSeal,
@@ -81,20 +84,40 @@ pub fn seal_automatic(
     // The flag lands with the seal, so a best guess is never applied
     // without it (and a confident match never keeps a stale one).
     write_match_flag(tx, album, seal.flag.as_ref(), now)?;
+    let held = match seal.release_mbid.as_deref() {
+        Some(release) => persons_held(tx, album, release)?,
+        None => Vec::new(),
+    };
     for track in &seal.tracks {
         let Some(recording) = track.recording_mbid.as_deref() else {
             continue;
+        };
+        let taken = track
+            .release_track_mbid
+            .as_deref()
+            .is_some_and(|wanted| held_by_another(&held, &track.local_track_id, wanted));
+        let (release, release_track) = if taken {
+            (None, None)
+        } else {
+            (
+                seal.release_mbid.as_deref(),
+                track.release_track_mbid.as_deref(),
+            )
         };
         tx.prepare_cached(sql::SEAL_TRACK.text())?.execute(params![
             track.local_track_id,
             PROVIDER,
             recording,
-            seal.release_mbid,
-            track.release_track_mbid,
+            release,
+            release_track,
             now,
             album,
         ])?;
     }
+    // Every file the seal wrote names its release or none, so what still
+    // names another one is a file it did not write.
+    tx.prepare_cached(sql::SEAL_UNPLACE_ELSEWHERE.text())?
+        .execute(params![album, seal.release_mbid, now, PROVIDER])?;
     if album_changed && seal.release_mbid.is_some() {
         keep_automatic_undo(
             tx,
@@ -116,8 +139,10 @@ pub fn seal_automatic(
 
 /// Settle an album identification found no match for. When the new
 /// evidence `contradicted` the album's revisable match, that match goes
-/// (its track rows stay) and is kept as the album's edition undo, in the
-/// audit as withdrawn. An album left with no match is flagged
+/// and is kept as the album's edition undo, in the audit as withdrawn.
+/// With it go the automatic track rows that name its release, and the
+/// rows the tags carried leave that release, keeping their recording: the
+/// undo brings both back. An album left with no match is flagged
 /// unmatched with `flag`. A person's match is never removed.
 pub fn retract(
     tx: &Transaction<'_>,
@@ -133,6 +158,13 @@ pub fn retract(
     if contradicted {
         let replaced = snapshot(tx, album_id)?;
         if delete_album_row(tx, album_id, Rows::Revisable)? {
+            if let Some(release) = replaced
+                .identity
+                .as_ref()
+                .and_then(|row| row.release_mbid.as_deref())
+            {
+                clear_release_rows(tx, album_id, release, inputs.now)?;
+            }
             withdrawn(tx, album_id, &replaced, flag, inputs.now)?;
         }
     }
@@ -144,6 +176,23 @@ pub fn retract(
     }
     bump_if_changed(tx, before)?;
     Ok(AutomaticOutcome::Done)
+}
+
+/// What a retraction does to the album's track rows on the release it
+/// withdrew: automatic rows go, and rows the tags carried leave the
+/// release but keep their recording, which is still the files' own
+/// evidence.
+fn clear_release_rows(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    release: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    tx.prepare_cached(sql::DELETE_AUTOMATIC_ON_RELEASE.text())?
+        .execute(params![album_id, release, PROVIDER])?;
+    tx.prepare_cached(sql::UNPLACE_EMBEDDED_ON_RELEASE.text())?
+        .execute(params![album_id, release, now, PROVIDER])?;
+    Ok(())
 }
 
 /// Record a withdrawn automatic match in the audit and keep it as the
@@ -237,10 +286,12 @@ fn still_as_checked(
 /// Accept an exact edition a recheck found, as confirmed: the album row
 /// and the placed files' rows become automatic on the release, the other
 /// files leave their release tracks, a waiting placement and any match
-/// flag go; a file whose row is a person's keeps it. The rows it replaced
-/// are kept as both undos (the album page's edition undo and the
-/// automatic-edition undo), and either puts the earlier match state back. A person's choice, made now or carried over
-/// from v2, is never replaced, and an album that moved since the check
+/// flag go; a file whose row is a person's keeps it, and a file placed on
+/// a release track a person's row of another file holds leaves the
+/// release instead. The rows it replaced are kept as both undos (the album
+/// page's edition undo and the automatic-edition undo), and either puts
+/// the earlier match state back. A person's choice, made now or carried
+/// over from v2, is never replaced, and an album that moved since the check
 /// ([`Accepted::expected`]) is left as it is: `None` then. Returns the
 /// audit row id.
 pub fn accept_automatic(
@@ -261,6 +312,25 @@ pub fn accept_automatic(
     let prior = replaced.identity.clone();
     let prior_tracks = replaced.tracks.clone();
     let now = accepted.now;
+    let held = persons_held(tx, album_id, accepted.release_mbid)?;
+    let (placed, taken): (Vec<&Placed>, Vec<&Placed>) =
+        accepted.placed.iter().partition(|placement| {
+            !held_by_another(
+                &held,
+                &placement.local_track_id,
+                &placement.release_track_mbid,
+            )
+        });
+    let extra: Vec<&str> = accepted
+        .extra
+        .iter()
+        .map(String::as_str)
+        .chain(
+            taken
+                .iter()
+                .map(|placement| placement.local_track_id.as_str()),
+        )
+        .collect();
     tx.prepare_cached(sql::ACCEPT_ALBUM.text())?
         .execute(params![
             album_id,
@@ -269,7 +339,7 @@ pub fn accept_automatic(
             accepted.release_mbid,
             now
         ])?;
-    for placement in accepted.placed {
+    for placement in &placed {
         tx.prepare_cached(sql::PLACE_TRACK.text())?
             .execute(params![
                 placement.local_track_id,
@@ -283,7 +353,7 @@ pub fn accept_automatic(
                 album_id,
             ])?;
     }
-    for track_id in accepted.extra {
+    for track_id in &extra {
         tx.prepare_cached(sql::UNPLACE_TRACK.text())?
             .execute(params![track_id, now, PROVIDER, album_id])?;
     }
@@ -313,8 +383,8 @@ pub fn accept_automatic(
             after: serde_json::json!({
                 "release_group_mbid": accepted.release_group_mbid,
                 "release_mbid": accepted.release_mbid,
-                "placed": accepted.placed.len(),
-                "extra": accepted.extra.len(),
+                "placed": placed.len(),
+                "extra": extra.len(),
             }),
             reason: accepted.reason_code,
         },
@@ -334,6 +404,26 @@ fn input_moved(tx: &Transaction<'_>, album_id: &str, inputs: Inputs<'_>) -> rusq
     }
     offer_album(tx, album_id, (inputs.now * 1000.0) as i64)?;
     Ok(true)
+}
+
+/// The release tracks of `release` a person's row of one of the album's
+/// files holds, with that file.
+fn persons_held(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    release: &str,
+) -> rusqlite::Result<Vec<(String, String)>> {
+    tx.prepare_cached(sql::PERSONS_HELD_ON_RELEASE.text())?
+        .query_map(params![album_id, PROVIDER, release], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect()
+}
+
+/// Whether a person's row of a file other than `file` holds `track`.
+fn held_by_another(held: &[(String, String)], file: &str, track: &str) -> bool {
+    held.iter()
+        .any(|(holder, taken)| holder != file && taken.eq_ignore_ascii_case(track))
 }
 
 /// Who decided the album's match; `None` when it has none. A value no

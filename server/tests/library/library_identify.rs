@@ -2502,8 +2502,8 @@ async fn seal_automatic_replaces_an_embedded_match() {
 /// New evidence contradicts a match v2 took from the files' tags: the
 /// match goes like an automatic one, the album is flagged unmatched, both
 /// undo rows kept for it go (one could otherwise match the album's next
-/// match and put an older one back), the files' rows stay, and the
-/// catalog revision moves. The withdrawn match is kept as the album's
+/// match and put an older one back), the files' tags-carried rows leave
+/// its release but keep their recording, and the catalog revision moves. The withdrawn match is kept as the album's
 /// edition undo, keyed to the album having no match, and undo puts it
 /// back.
 #[tokio::test]
@@ -2527,7 +2527,7 @@ async fn a_withdrawn_match_keeps_one_undo() {
     assert_eq!(
         rig.identity_tables("album-1"),
         vec![
-            format!("track t1 {RECORDING_1} {RELEASE_A1} - -/- embedded 1"),
+            format!("track t1 {RECORDING_1} - - -/- embedded 2"),
             "flag unmatched CONFLICTING_TRACK_EVIDENCE".to_owned(),
             "choice undo 0".to_owned(),
         ]
@@ -2557,7 +2557,7 @@ async fn a_withdrawn_match_keeps_one_undo() {
         rig.identity_tables("album-1")[..2],
         [
             format!("album {GROUP_A} {RELEASE_A1} embedded 1"),
-            format!("track t1 {RECORDING_1} {RELEASE_A1} - -/- embedded 2"),
+            format!("track t1 {RECORDING_1} {RELEASE_A1} - -/- embedded 3"),
         ]
     );
 }
@@ -2898,6 +2898,7 @@ fn accept_automatic_keeps_a_v2_choice_and_seals_an_automatic_match() {
             })
             .collect(),
         unmatched_expected_tracks: Vec::new(),
+        unmatched_expected_track_ids: Vec::new(),
     };
     let before = rig.catalog_revision();
     let kept = rig.identity_tables("album-1");
@@ -3073,6 +3074,296 @@ fn undoing_back_to_no_match_leaves_no_undo() {
     assert_eq!(rig.identity_tables("album-1"), Vec::<String>::new());
 }
 
+/// An automatic placement never takes a release track that a person's row
+/// of another file holds on that release: an acceptance and a seal leave
+/// that file off the release, keeping its recording, so no release track
+/// is held twice.
+#[test]
+fn an_automatic_placement_never_takes_a_persons_track() {
+    use droppedneedle_library::operations::choice::accept_automatic;
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
+    rig.carried("album-1", RELEASE_A1, "automatic", 3);
+    rig.run(&format!(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+         VALUES ('t1', 'musicbrainz', '{RECORDING_1}', '{RELEASE_A1}', 'RT-T2', 'manual', 0);"
+    ));
+    let tracks = || -> Vec<String> {
+        rig.identity_tables("album-1")
+            .into_iter()
+            .filter(|line| line.starts_with("track "))
+            .collect()
+    };
+    let persons = format!("track t1 {RECORDING_1} {RELEASE_A1} RT-T2 -/- manual 1");
+
+    let candidate = offering(RELEASE_A1, &["t1", "t2"], &[]);
+    let accepted =
+        rig.change(|tx| accept_automatic(tx, "album-1", &candidate, "R", None, None, 1.0));
+    assert!(matches!(accepted, Ok(Some(_))), "{accepted:?}");
+    assert_eq!(tracks(), vec![persons.clone()]);
+
+    let sealed = rig.store.seal_automatic(&AutomaticSeal {
+        local_album_id: "album-1".to_owned(),
+        release_group_mbid: GROUP_A.to_owned(),
+        release_mbid: Some(RELEASE_A1.to_owned()),
+        tracks: vec![TrackIdentity {
+            local_track_id: "t2".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            recording_mbid: Some(RECORDING_2.to_owned()),
+            release_track_mbid: Some("rt-t2".to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        }],
+        flag: None,
+    });
+    assert_eq!(sealed.ok(), Some(true));
+    assert_eq!(
+        tracks(),
+        vec![
+            persons,
+            format!("track t2 {RECORDING_2} - - -/- automatic 1")
+        ]
+    );
+}
+
+/// An administrator's undo of an automatic seal uses up only an
+/// acceptance's own undo. A person's undo the seal carried (a hand back's,
+/// a repair's detach) is keyed to what the administrator's undo leaves, so
+/// it still brings the person's edition back: when the earlier match comes
+/// back and when the album is left with none.
+#[test]
+fn an_admin_undo_keeps_the_persons_undo() {
+    use droppedneedle_library::operations::{choice, decisions};
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.run(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator-1', 'Curator', 'admin', 0);",
+    );
+    let seal = |album: &str, track: &str| {
+        rig.store
+            .seal_automatic(&AutomaticSeal {
+                local_album_id: album.to_owned(),
+                release_group_mbid: GROUP_A.to_owned(),
+                release_mbid: Some(RELEASE_A1.to_owned()),
+                tracks: vec![TrackIdentity {
+                    local_track_id: track.to_owned(),
+                    provider: "musicbrainz".to_owned(),
+                    recording_mbid: Some(RECORDING_1.to_owned()),
+                    release_track_mbid: Some(format!("rt-{track}")),
+                    decision_source: DecisionSource::Automatic,
+                    row_revision: 1,
+                }],
+                flag: None,
+            })
+            .expect("seal lands")
+    };
+    let admin_undo = |album: &str| {
+        let (album_revision, identity_revision) =
+            decisions::live_automatic_edition_undo(&rig.db, album)
+                .expect("reads")
+                .expect("an automatic undo is live");
+        rig.change(|tx| {
+            decisions::undo_automatic_edition(
+                tx,
+                album,
+                album_revision,
+                identity_revision,
+                "curator-1",
+                2.0,
+            )
+            .map(|undone| undone.outcome)
+        })
+    };
+
+    // Handed back, sealed on A1, the administrator undoes the seal: the
+    // automatic A2 comes back, and the person's undo brings back their A2.
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.run(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('album-1', 'musicbrainz', '{GROUP_A}', '{RELEASE_A2}', 'manual', 0, 3); \
+         INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+         VALUES ('t1', 'musicbrainz', '{RECORDING_1}', '{RELEASE_A2}', 'rt-a2', 'manual', 0);"
+    ));
+    let handed = rig.change(|tx| choice::hand_back(tx, "album-1", "curator-1", 1.0));
+    assert_eq!(handed, Ok(()));
+    assert!(seal("album-1", "t1"));
+    assert_eq!(
+        admin_undo("album-1"),
+        Ok(droppedneedle_library::identity::AutomaticUndone::Restored)
+    );
+    let undone = rig.change(|tx| choice::undo(tx, "album-1", "curator-1", 3.0));
+    assert_eq!(undone, Ok(()));
+    assert_eq!(
+        rig.identity_tables("album-1")[..2],
+        [
+            format!("album {GROUP_A} {RELEASE_A2} manual 7"),
+            format!("track t1 {RECORDING_1} {RELEASE_A2} rt-a2 -/- manual 5"),
+        ]
+    );
+
+    // A repair took an exact match off, identification sealed it again,
+    // and the administrator's undo leaves no match: the repair's undo
+    // still brings the exact match back.
+    rig.seed_album(&album_facts("album-2", &[("t2", Some(RECORDING_1))]));
+    assert!(seal("album-2", "t2"));
+    let detached =
+        rig.change(|tx| choice::detach(tx, "album-2", "IDENTITY_FAILED_RECHECK", None, None, 1.0));
+    assert!(matches!(detached, Ok(Some(_))), "{detached:?}");
+    assert!(seal("album-2", "t2"));
+    assert_eq!(
+        admin_undo("album-2"),
+        Ok(droppedneedle_library::identity::AutomaticUndone::ClearedToReview)
+    );
+    let undone = rig.change(|tx| choice::undo(tx, "album-2", "curator-1", 3.0));
+    assert_eq!(undone, Ok(()));
+    assert_eq!(
+        rig.identity_tables("album-2")[..2],
+        [
+            format!("album {GROUP_A} {RELEASE_A1} automatic 1"),
+            format!("track t2 {RECORDING_1} {RELEASE_A1} rt-t2 -/- automatic 1"),
+        ]
+    );
+}
+
+/// A re-seal on another release takes the revisable rows of the files it
+/// did not write off the old release, keeping their recording, and the
+/// administrator's undo puts them back. A retraction deletes the automatic
+/// rows on the release it withdrew, leaves rows on another release, and
+/// the person's undo brings the deleted rows back.
+#[test]
+fn no_revisable_row_is_left_on_a_release_the_album_left() {
+    use droppedneedle_library::identify::models::{MatchFlag, MatchFlagState};
+    use droppedneedle_library::identity::{AutomaticUndone, Inputs, retract};
+    use droppedneedle_library::operations::{choice, decisions};
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.run(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator-1', 'Curator', 'admin', 0);",
+    );
+    let identity = |file: &str, recording: &str| TrackIdentity {
+        local_track_id: file.to_owned(),
+        provider: "musicbrainz".to_owned(),
+        recording_mbid: Some(recording.to_owned()),
+        release_track_mbid: Some(format!("rt-{file}")),
+        decision_source: DecisionSource::Automatic,
+        row_revision: 1,
+    };
+    let tracks = |album: &str| -> Vec<String> {
+        rig.identity_tables(album)
+            .into_iter()
+            .filter(|line| line.starts_with("track "))
+            .collect()
+    };
+
+    rig.seed_album(&album_facts(
+        "album-1",
+        &[
+            ("t1", Some(RECORDING_1)),
+            ("t2", Some(RECORDING_2)),
+            ("t3", Some(RECORDING_3)),
+        ],
+    ));
+    rig.run(&format!(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, decision_source, selected_at) \
+         VALUES ('t3', 'musicbrainz', '{RECORDING_3}', '{RELEASE_A1}', 'embedded', 0);"
+    ));
+    let seal = |release: &str, tracks: Vec<TrackIdentity>| {
+        rig.store
+            .seal_automatic(&AutomaticSeal {
+                local_album_id: "album-1".to_owned(),
+                release_group_mbid: GROUP_A.to_owned(),
+                release_mbid: Some(release.to_owned()),
+                tracks,
+                flag: None,
+            })
+            .expect("seal lands")
+    };
+    assert!(seal(
+        RELEASE_A1,
+        vec![identity("t1", RECORDING_1), identity("t2", RECORDING_2)]
+    ));
+    assert!(seal(RELEASE_A2, vec![identity("t1", RECORDING_1)]));
+    assert_eq!(
+        tracks("album-1"),
+        vec![
+            format!("track t1 {RECORDING_1} {RELEASE_A2} rt-t1 -/- automatic 2"),
+            format!("track t2 {RECORDING_2} - - -/- automatic 2"),
+            format!("track t3 {RECORDING_3} - - -/- automatic 2"),
+        ]
+    );
+    let (album_revision, identity_revision) =
+        decisions::live_automatic_edition_undo(&rig.db, "album-1")
+            .expect("reads")
+            .expect("an automatic undo is live");
+    let undone = rig.change(|tx| {
+        decisions::undo_automatic_edition(
+            tx,
+            "album-1",
+            album_revision,
+            identity_revision,
+            "curator-1",
+            2.0,
+        )
+        .map(|undone| undone.outcome)
+    });
+    assert_eq!(undone, Ok(AutomaticUndone::Restored));
+    assert_eq!(
+        tracks("album-1"),
+        vec![
+            format!("track t1 {RECORDING_1} {RELEASE_A1} rt-t1 -/- automatic 3"),
+            format!("track t2 {RECORDING_2} {RELEASE_A1} rt-t2 -/- automatic 3"),
+            format!("track t3 {RECORDING_3} {RELEASE_A1} - -/- embedded 3"),
+        ]
+    );
+
+    rig.seed_album(&album_facts(
+        "album-2",
+        &[("u1", Some(RECORDING_1)), ("u2", Some(RECORDING_2))],
+    ));
+    rig.run(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('album-2', 'musicbrainz', '{GROUP_A}', '{RELEASE_A1}', 'automatic', 0, 2); \
+         INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+         VALUES ('u1', 'musicbrainz', '{RECORDING_1}', '{RELEASE_A1}', 'rt-u1', 'automatic', 0), \
+         ('u2', 'musicbrainz', '{RECORDING_2}', '{RELEASE_A2}', 'rt-u2', 'automatic', 0);"
+    ));
+    let flag = MatchFlag {
+        state: MatchFlagState::Unmatched,
+        reason_code: "CONFLICTING_TRACK_EVIDENCE".to_owned(),
+        release_mbid: None,
+        candidates: Vec::new(),
+    };
+    let retracted = rig.change(|tx| {
+        let revision = identify::queue::album_input_revision(tx, "album-2")?;
+        let inputs = Inputs {
+            input_revision: &revision,
+            now: 1.0,
+        };
+        Ok(retract(tx, "album-2", true, &flag, inputs)?)
+    });
+    assert!(retracted.is_ok(), "{retracted:?}");
+    let on_a2 = format!("track u2 {RECORDING_2} {RELEASE_A2} rt-u2 -/- automatic 1");
+    assert_eq!(tracks("album-2"), vec![on_a2.clone()]);
+    let undone = rig.change(|tx| choice::undo(tx, "album-2", "curator-1", 2.0));
+    assert_eq!(undone, Ok(()));
+    assert_eq!(
+        tracks("album-2"),
+        vec![
+            format!("track u1 {RECORDING_1} {RELEASE_A1} rt-u1 -/- automatic 1"),
+            format!("track u2 {RECORDING_2} {RELEASE_A2} rt-u2 -/- automatic 2"),
+        ]
+    );
+}
+
 /// Merging an album into one whose match a person took off moves the
 /// merged album's edition across, and the undo rows the target kept go:
 /// they name revisions the moved match could reach, so either could put
@@ -3199,6 +3490,7 @@ fn the_existing_matches_repair_reports_a_v2_choice_as_a_persons() {
             position: Some(1),
         }],
         unmatched_expected_tracks: Vec::new(),
+        unmatched_expected_track_ids: Vec::new(),
     };
     let verdict = classify::existing_match(&identity, Some(&contradicted), 1, 1);
     assert_eq!(
@@ -3333,6 +3625,7 @@ fn offering(
             })
             .collect(),
         unmatched_expected_tracks: Vec::new(),
+        unmatched_expected_track_ids: Vec::new(),
     }
 }
 
@@ -3352,7 +3645,12 @@ fn offering(
 /// - undoing an automatic edition with nothing before it leaves no undo
 ///   for a later match to meet;
 /// - approving a review settles only that review, leaves the track rows,
-///   and queues the files to be placed as the curator's choice.
+///   and queues the files to be placed as the curator's choice;
+/// - a match by hand ends when a choice writes its file's row, and the
+///   choice's undo brings it back; choosing the edition again keeps a
+///   standing one and leaves its track out of the missing titles;
+/// - placing the files on a chosen edition ends an old match by hand of a
+///   file it writes.
 ///
 /// Every row is checked and every difference reported together.
 #[tokio::test]
@@ -3493,9 +3791,13 @@ async fn person_commands_leave_what_their_rule_says() {
              prior_track_identities_json, expected_post_album_revision, \
              expected_post_identity_revision, reason_code, created_at) \
              VALUES ('auto-{album}', '{album}', '[]', 1, 2, 'R', 0); \
+             INSERT INTO library_catalog_actions (id, action_kind, local_album_id, \
+             before_json, after_json, reason_code, created_at) \
+             VALUES ('accept-{album}', 'automatic_exact_edition', '{album}', '{{}}', '{{}}', \
+             'R', 0); \
              INSERT INTO library_edition_choice_undo (id, local_album_id, action_id, \
              prior_tracks_json, prior_match_state_json, expected_identity_revision, created_at) \
-             VALUES ('choice-{album}', '{album}', 'action-old', '[]', \
+             VALUES ('choice-{album}', '{album}', 'accept-{album}', '[]', \
              '{{\"state\":\"unconfirmed\",\"reason_code\":\"OLD\",\"candidates_json\":\"[]\"}}', \
              {choice_undo}, 0);"
         ));
@@ -3706,6 +4008,150 @@ async fn person_commands_leave_what_their_rule_says() {
             "choice undo 2".to_owned(),
             "exclusion administrator_choice".to_owned(),
             "review rev-j approved".to_owned(),
+        ],
+    );
+
+    // A person matches k2 by hand on their edition. Choosing that edition
+    // again keeps the match, and its track is not missing; choosing
+    // another one ends it, and undo brings it back; choosing the first
+    // edition again after another never brings an ended match back.
+    rig.seed_album(&album_facts(
+        "k",
+        &[("k1", Some(RECORDING_1)), ("k2", Some(RECORDING_2))],
+    ));
+    let choose = |release: &str, supported: &[&str], other: &[&str]| {
+        let mut candidate = offering(release, supported, other);
+        candidate.unmatched_expected_tracks = vec!["track k2".to_owned()];
+        candidate.unmatched_expected_track_ids = vec!["rt-k2".to_owned()];
+        rig.change(|tx| choice::choose(tx, "k", &candidate, Some("curator-1"), 1.0))
+            .map(|chosen| chosen.missing_titles)
+    };
+    let by_hand = || -> Vec<String> {
+        rig.identity_tables("k")
+            .into_iter()
+            .filter(|line| line.starts_with("hand match") || line.starts_with("track k2"))
+            .collect()
+    };
+    let matched = format!("track k2 {RECORDING_2} {RELEASE_A1} rt-k2 1/2");
+    assert!(choose(RELEASE_A1, &["k1"], &["k2"]).is_ok());
+    let hand = rig.change(|tx| {
+        Ok(droppedneedle_library::identity::hand_match(
+            tx,
+            &droppedneedle_library::identity::Matched {
+                album_id: "k",
+                track_id: "k2",
+                release_mbid: RELEASE_A1,
+                release_track_mbid: "rt-k2",
+                recording_mbid: RECORDING_2,
+                disc: 1,
+                position: 2,
+                actor: "curator-1",
+                now: 1.0,
+                now_ms: 1_000,
+            },
+        )?)
+    });
+    assert_eq!(hand, Ok(()));
+    let again = choose(RELEASE_A1, &["k1"], &["k2"]);
+    check(
+        "choosing the edition a match by hand stands on",
+        vec![format!("{again:?}")]
+            .into_iter()
+            .chain(by_hand())
+            .collect(),
+        vec![
+            format!("{:?}", Ok::<Vec<String>, String>(Vec::new())),
+            format!("{matched} manual 1"),
+            "hand match k2".to_owned(),
+        ],
+    );
+    assert!(choose(RELEASE_A2, &["k1", "k2"], &[]).is_ok());
+    check(
+        "choosing another edition ends the match by hand",
+        by_hand(),
+        vec![format!(
+            "track k2 {RECORDING_1} {RELEASE_A2} rt-k2 1/2 manual 2"
+        )],
+    );
+    let undone = rig.change(|tx| choice::undo(tx, "k", "curator-1", 2.0));
+    check(
+        "undo brings the match by hand back",
+        vec![format!("{undone:?}")]
+            .into_iter()
+            .chain(by_hand())
+            .collect(),
+        vec![
+            "Ok(())".to_owned(),
+            format!("{matched} manual 3"),
+            "hand match k2".to_owned(),
+        ],
+    );
+    assert!(choose(RELEASE_A2, &["k1", "k2"], &[]).is_ok());
+    assert!(choose(RELEASE_A1, &["k1", "k2"], &[]).is_ok());
+    check(
+        "an ended match by hand does not come back",
+        by_hand(),
+        vec![format!(
+            "track k2 {RECORDING_1} {RELEASE_A1} rt-k2 1/2 manual 5"
+        )],
+    );
+
+    // A queued choice places the files: a file it writes loses the record
+    // of a match by hand its row no longer stands for.
+    rig.seed_album(&album_facts(
+        "l",
+        &[("l1", Some(RECORDING_1)), ("l2", Some(RECORDING_2))],
+    ));
+    rig.run(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('l', 'musicbrainz', '{GROUP_A}', '{RELEASE_A1}', 'manual', 0, 2); \
+         INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, decision_source, selected_at) \
+         VALUES ('l1', 'musicbrainz', '{RECORDING_1}', 'manual', 0); \
+         INSERT INTO library_track_hand_matches (local_track_id, release_mbid, \
+         release_track_mbid, matched_at) VALUES ('l1', '{RELEASE_A1}', 'rt-l1', 0); \
+         INSERT INTO library_edition_remap_queue (local_album_id, release_mbid, origin, \
+         queued_at) VALUES ('l', '{RELEASE_A1}', 'album_pin', 0);"
+    ));
+    let spot =
+        |file: &str, recording: &str, position: u32| droppedneedle_library::identity::Placed {
+            local_track_id: file.to_owned(),
+            recording_mbid: recording.to_owned(),
+            release_track_mbid: format!("rt-{file}"),
+            disc: 1,
+            position,
+        };
+    let placed = rig.change(|tx| {
+        Ok(droppedneedle_library::identity::remap::place_choice(
+            tx,
+            &droppedneedle_library::identity::remap::PendingRemap {
+                local_album_id: "l".to_owned(),
+                release_mbid: RELEASE_A1.to_owned(),
+                chosen_by_user_id: None,
+                attempts: 0,
+                origin: droppedneedle_library::identity::remap::RemapOrigin::AlbumPin,
+            },
+            &droppedneedle_library::identity::Offer {
+                release_group_mbid: GROUP_A.to_owned(),
+                release_mbid: RELEASE_A1.to_owned(),
+                spots: vec![spot("l1", RECORDING_1, 1), spot("l2", RECORDING_2, 2)],
+                weighed: vec!["l1".to_owned(), "l2".to_owned()],
+            },
+            1.0,
+        )?)
+    });
+    check(
+        "place_choice",
+        vec![format!("{placed:?}")]
+            .into_iter()
+            .chain(rig.identity_tables("l"))
+            .collect(),
+        vec![
+            format!("{:?}", Ok::<_, String>((2usize, 0usize))),
+            format!("album {GROUP_A} {RELEASE_A1} manual 2"),
+            format!("track l1 {RECORDING_1} {RELEASE_A1} rt-l1 1/1 manual 2"),
+            format!("track l2 {RECORDING_2} {RELEASE_A1} rt-l2 1/2 manual 1"),
         ],
     );
 

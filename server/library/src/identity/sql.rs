@@ -140,6 +140,43 @@ droppedneedle_kernel::sql! {
              WHERE t.local_album_id = ?4 AND t.availability = 'indexed')";
     pub(super) DROP_REMAP =
         "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1";
+    /// The release tracks of release `?3` that a person's rows of the
+    /// album's (`?1`) indexed files hold (provider `?2`), with the file.
+    pub(super) PERSONS_HELD_ON_RELEASE = "SELECT t.id, i.release_track_mbid \
+             FROM " + ALBUM_TRACKS + " JOIN local_track_external_identities i \
+             ON i.local_track_id = t.id AND i.provider = ?2 \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
+             AND i.decision_source IN " + PERSONS + " \
+             AND lower(i.release_mbid) = lower(?3) \
+             AND trim(COALESCE(i.release_track_mbid, '')) <> ''";
+    /// Take the album's (`?1`) revisable rows that name a release other
+    /// than `?2` (any release, when `?2` is NULL) off it, as automatic, at
+    /// `?3` (provider `?4`); the recording stays.
+    pub(super) SEAL_UNPLACE_ELSEWHERE = "UPDATE local_track_external_identities \
+             SET release_mbid = NULL, release_track_mbid = NULL, medium_position = NULL, \
+             release_track_position = NULL, decision_source = 'automatic', selected_at = ?3, \
+             row_revision = row_revision + 1 \
+             WHERE provider = ?4 AND decision_source IN " + REVISABLE + " \
+             AND release_mbid IS NOT NULL \
+             AND (?2 IS NULL OR lower(release_mbid) <> lower(?2)) \
+             AND local_track_id IN (SELECT t.id FROM " + ALBUM_TRACKS + " \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed')";
+    /// Delete the album's (`?1`) automatic rows that name release `?2`
+    /// (provider `?3`).
+    pub(super) DELETE_AUTOMATIC_ON_RELEASE = "DELETE FROM local_track_external_identities \
+             WHERE provider = ?3 AND decision_source = 'automatic' \
+             AND lower(release_mbid) = lower(?2) \
+             AND local_track_id IN (SELECT t.id FROM " + ALBUM_TRACKS + " \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed')";
+    /// Take the album's (`?1`) rows the tags carried off release `?2`, at
+    /// `?3` (provider `?4`); the recording stays.
+    pub(super) UNPLACE_EMBEDDED_ON_RELEASE = "UPDATE local_track_external_identities \
+             SET release_mbid = NULL, release_track_mbid = NULL, medium_position = NULL, \
+             release_track_position = NULL, selected_at = ?3, row_revision = row_revision + 1 \
+             WHERE provider = ?4 AND decision_source = 'embedded' \
+             AND lower(release_mbid) = lower(?2) \
+             AND local_track_id IN (SELECT t.id FROM " + ALBUM_TRACKS + " \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed')";
 
     /// Clear the album's match flag.
     pub(super) CLEAR_FLAG = "DELETE FROM library_album_match_state WHERE local_album_id = ?1";
@@ -330,9 +367,17 @@ droppedneedle_kernel::sql! {
     pub(super) CHOICE_UNDO = "SELECT id, prior_identity_json, prior_tracks_json, \
              prior_match_state_json, expected_identity_revision, prior_hold_json \
              FROM library_edition_choice_undo WHERE local_album_id = ?1";
-    pub(super) CHOICE_UNDO_AT = "SELECT id, prior_match_state_json \
-             FROM library_edition_choice_undo \
-             WHERE local_album_id = ?1 AND expected_identity_revision = ?2";
+    /// The album's (`?1`) choice undo at revision `?2` that an automatic
+    /// acceptance kept for itself.
+    pub(super) CHOICE_UNDO_AT = "SELECT u.id, u.prior_match_state_json \
+             FROM library_edition_choice_undo u \
+             JOIN library_catalog_actions a ON a.id = u.action_id \
+             WHERE u.local_album_id = ?1 AND u.expected_identity_revision = ?2 \
+             AND a.action_kind = 'automatic_exact_edition'";
+    /// Mark the album's (`?1`) choice undo at revision `?2` carried.
+    pub(super) MARK_CARRIED = "UPDATE library_edition_choice_undo \
+             SET prior_hold_json = json_set(COALESCE(prior_hold_json, '{}'), '$.carried', \
+             json('true')) WHERE local_album_id = ?1 AND expected_identity_revision = ?2";
     pub(super) CONSUME_CHOICE_UNDO = "DELETE FROM library_edition_choice_undo WHERE id = ?1";
     pub(super) DELETE_EXCLUSION =
         "DELETE FROM library_management_exclusions WHERE local_album_id = ?1";
@@ -535,6 +580,18 @@ droppedneedle_kernel::sql! {
              matched_by_user_id = excluded.matched_by_user_id, matched_at = excluded.matched_at";
     pub(super) FORGET_HAND_MATCH =
         "DELETE FROM library_track_hand_matches WHERE local_track_id = ?1";
+    /// Forget the matches by hand of the album's (`?1`) indexed files.
+    pub(super) FORGET_ALBUM_HAND_MATCHES = "DELETE FROM library_track_hand_matches \
+             WHERE local_track_id IN (SELECT t.id FROM " + ALBUM_TRACKS + " \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed')";
+    /// The matches by hand of the album's (`?1`) indexed files, every
+    /// column an undo puts back.
+    pub(super) ALBUM_HAND_MATCHES = "SELECT h.local_track_id, h.release_mbid, \
+             h.release_track_mbid, h.prior_identity_json, h.matched_by_user_id, h.matched_at \
+             FROM library_track_hand_matches h JOIN " + ALBUM_TRACKS + " \
+             ON t.id = h.local_track_id \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
+             ORDER BY h.local_track_id";
     /// Write one track row (`?1` .. `?9`); an existing row takes the next
     /// revision.
     pub(super) UPSERT_TRACK = "INSERT INTO local_track_external_identities (local_track_id, \

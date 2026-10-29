@@ -86,6 +86,11 @@ fn candidate(
         })
         .collect();
     let various = facts.is_compilation || release.is_various_artists();
+    let missing: Vec<_> = matched
+        .missing
+        .iter()
+        .filter_map(|index| release.tracks.get(*index))
+        .collect();
     ReidentificationCandidate {
         candidate_key: evidence.candidate_key.clone(),
         automatic_safe,
@@ -108,12 +113,8 @@ fn candidate(
             name_class(&facts.album_artist_name, &release.artist_text())
         },
         tracks,
-        unmatched_expected_tracks: matched
-            .missing
-            .iter()
-            .filter_map(|index| release.tracks.get(*index))
-            .map(|track| track.title.clone())
-            .collect(),
+        unmatched_expected_tracks: missing.iter().map(|track| track.title.clone()).collect(),
+        unmatched_expected_track_ids: missing.iter().map(|track| track.id.clone()).collect(),
         evidence,
     }
 }
