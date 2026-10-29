@@ -1,5 +1,5 @@
 import { page, userEvent } from 'vitest/browser';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RequestItem } from '$lib/queries/requests/types';
 import type { WantedRetryingItem, WantedWatchItem } from '$lib/queries/wanted/types';
@@ -10,6 +10,13 @@ import { renderWithQuery } from '$lib/test/render';
 import ApprovalsTab from './ApprovalsTab.svelte';
 import HistoryTab from './HistoryTab.svelte';
 import WantedTab from './WantedTab.svelte';
+
+// The lazy loader would fetch the cover, and a failed fetch removes the image.
+// With it off, the cover keeps the URL it would fetch in data-src.
+vi.mock('$lib/utils/lazyImage', async (importOriginal) => ({
+	...(await importOriginal<Record<string, unknown>>()),
+	lazyImage: () => ({ destroy() {} })
+}));
 
 const now = Math.floor(Date.now() / 1000);
 
