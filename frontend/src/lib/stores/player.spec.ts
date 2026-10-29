@@ -40,10 +40,11 @@ vi.mock('$lib/player/createSource', () => ({
 	})
 }));
 
-vi.mock('$lib/player/jellyfinPlaybackApi', () => ({
-	startSession: vi.fn(async () => 'mock-session'),
-	reportProgress: vi.fn(async () => true),
-	reportStop: vi.fn(async () => true)
+vi.mock('$lib/player/playbackGateway', async (importActual) => ({
+	...(await importActual<typeof import('$lib/player/playbackGateway')>()),
+	startPlaybackSession: vi.fn(async () => ({ session: 'mock-session' })),
+	reportPlaybackProgress: vi.fn(async () => undefined),
+	stopPlaybackSession: vi.fn(async () => undefined)
 }));
 
 const storage = new Map<string, string>();
@@ -88,6 +89,8 @@ vi.mock('$lib/api/client', () => ({
 import { playerStore } from './player.svelte';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
 import { radioSession } from '$lib/stores/radioSession.svelte';
+import { startPlaybackSession, stopPlaybackSession } from '$lib/player/playbackGateway';
+import { streamUrlFor } from '$lib/player/streamUrl';
 
 function makeItem(overrides: Partial<QueueItem> = {}): QueueItem {
 	const id = overrides.trackSourceId ?? `vid-${Math.random().toString(36).slice(2, 6)}`;
@@ -100,7 +103,6 @@ function makeItem(overrides: Partial<QueueItem> = {}): QueueItem {
 		albumName: overrides.albumName ?? 'Test Album',
 		coverUrl: overrides.coverUrl ?? null,
 		sourceType: overrides.sourceType ?? 'local',
-		streamUrl: overrides.streamUrl ?? 'http://localhost/test.mp3',
 		availableSources: overrides.availableSources ?? ['local', 'jellyfin'],
 		sourceIds: overrides.sourceIds ?? { local: id, jellyfin: id },
 		duration: overrides.duration,
@@ -232,7 +234,7 @@ describe('playerStore queue methods', () => {
 		it('updates streamUrl for target source', () => {
 			playerStore.playQueue(makeItems(3));
 			playerStore.changeTrackSource(1, 'jellyfin');
-			expect(playerStore.queue[1].streamUrl).toBe('/api/v3/stream/jellyfin/vid-1');
+			expect(streamUrlFor(playerStore.queue[1])).toBe('/api/v3/stream/jellyfin/vid-1');
 		});
 	});
 
@@ -244,7 +246,7 @@ describe('playerStore queue methods', () => {
 			playerStore.updateQueueItemByPlaylistTrackId('pt-2', 'jellyfin', 'jf-new', 'opus');
 			expect(playerStore.queue[2].sourceType).toBe('jellyfin');
 			expect(playerStore.queue[2].trackSourceId).toBe('jf-new');
-			expect(playerStore.queue[2].streamUrl).toBe('/api/v3/stream/jellyfin/jf-new');
+			expect(streamUrlFor(playerStore.queue[2])).toBe('/api/v3/stream/jellyfin/jf-new');
 		});
 
 		it('skips currently playing track', () => {
@@ -471,26 +473,15 @@ describe('playerStore queue methods', () => {
 });
 
 describe('Jellyfin session lifecycle', () => {
-	let jellyfinApi: {
-		startSession: ReturnType<typeof vi.fn>;
-		reportProgress: ReturnType<typeof vi.fn>;
-		reportStop: ReturnType<typeof vi.fn>;
-	};
-
-	beforeEach(async () => {
+	beforeEach(() => {
 		localStorage.clear();
 		playerStore.stop();
 		vi.clearAllMocks();
 		vi.useFakeTimers();
 
-		jellyfinApi =
-			(await import('$lib/player/jellyfinPlaybackApi')) as unknown as typeof jellyfinApi;
-		jellyfinApi.startSession.mockResolvedValue('ps-123');
-
 		mockApiGet.mockResolvedValue({
 			url: 'http://jf/Audio/1/stream?static=true',
-			seekable: true,
-			playSessionId: 'ps-123'
+			seekable: true
 		});
 		mockApiHead.mockResolvedValue(new Response(null, { status: 200 }));
 	});
@@ -516,7 +507,6 @@ describe('Jellyfin session lifecycle', () => {
 		return makeItem({
 			sourceType: 'jellyfin',
 			trackSourceId: 'jf-1',
-			streamUrl: undefined,
 			...overrides
 		});
 	}
@@ -525,7 +515,7 @@ describe('Jellyfin session lifecycle', () => {
 		playerStore.playQueue([makeJellyfinItem()]);
 		await vi.advanceTimersByTimeAsync(0);
 
-		expect(jellyfinApi.startSession).toHaveBeenCalledWith('jf-1', undefined);
+		expect(startPlaybackSession).toHaveBeenCalledWith({ source: 'jellyfin', track_id: 'jf-1' });
 	});
 
 	it('calls reportStop when switching tracks', async () => {
@@ -542,33 +532,27 @@ describe('Jellyfin session lifecycle', () => {
 		playerStore.nextTrack();
 		await vi.advanceTimersByTimeAsync(0);
 
-		expect(jellyfinApi.reportStop).toHaveBeenCalledWith('jf-1', 'ps-123', expect.any(Number));
+		expect(stopPlaybackSession).toHaveBeenCalledWith({
+			source: 'jellyfin',
+			track_id: 'jf-1',
+			position_ms: expect.any(Number)
+		});
 	});
 });
 
 describe('beforeunload beacon', () => {
 	let addEventListenerSpy: ReturnType<typeof vi.fn>;
 	let sendBeaconMock: ReturnType<typeof vi.fn>;
-	let jellyfinApi: {
-		startSession: ReturnType<typeof vi.fn>;
-		reportProgress: ReturnType<typeof vi.fn>;
-		reportStop: ReturnType<typeof vi.fn>;
-	};
 
-	beforeEach(async () => {
+	beforeEach(() => {
 		localStorage.clear();
 		playerStore.stop();
 		vi.clearAllMocks();
 		vi.useFakeTimers();
 
-		jellyfinApi =
-			(await import('$lib/player/jellyfinPlaybackApi')) as unknown as typeof jellyfinApi;
-		jellyfinApi.startSession.mockResolvedValue('ps-beacon');
-
 		mockApiGet.mockResolvedValue({
 			url: 'http://jf/Audio/1/stream?static=true',
-			seekable: true,
-			playSessionId: 'ps-beacon'
+			seekable: true
 		});
 		mockApiHead.mockResolvedValue(new Response(null, { status: 200 }));
 
@@ -611,7 +595,6 @@ describe('beforeunload beacon', () => {
 		return makeItem({
 			sourceType: 'jellyfin',
 			trackSourceId: 'jf-beacon',
-			streamUrl: undefined,
 			...overrides
 		});
 	}

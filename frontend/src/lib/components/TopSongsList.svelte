@@ -68,7 +68,6 @@
 				albumName: song.release_name ?? '',
 				coverUrl: null,
 				sourceType: resolved.source as SourceType,
-				streamUrl: resolved.stream_url ?? undefined,
 				format: resolved.format ?? undefined,
 				duration: resolved.duration ?? undefined
 			});

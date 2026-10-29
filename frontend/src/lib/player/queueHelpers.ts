@@ -7,7 +7,6 @@ import type {
 } from '$lib/player/types';
 import type { RemoteTrack } from '$lib/queries/remotes/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
-import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 
 const CODEC_ALIASES: Record<string, string> = { alac: 'flac' };
@@ -74,13 +73,12 @@ export function compareDiscTrack(
 
 export function selectBestSource(
 	data: TrackSourceData
-): { sourceType: SourceType; trackSourceId: string; streamUrl: string; format?: string } | null {
+): { sourceType: SourceType; trackSourceId: string; format?: string } | null {
 	if (data.localTrack) {
 		const format = data.localTrack.format.toLowerCase();
 		return {
 			sourceType: 'local',
 			trackSourceId: String(data.localTrack.track_file_id),
-			streamUrl: gatewayStreamUrl('local', data.localTrack.track_file_id),
 			format
 		};
 	}
@@ -91,7 +89,6 @@ export function selectBestSource(
 	return {
 		sourceType: remote.source,
 		trackSourceId: key,
-		streamUrl: gatewayStreamUrl(remote.source, key),
 		format: REMOTE_FORMAT
 	};
 }
@@ -145,7 +142,6 @@ export function buildQueueItem(meta: TrackMeta, data: TrackSourceData): QueueIte
 		coverUrl: normalizedCoverUrl,
 		sourceType: best.sourceType,
 		artistId: meta.artistId,
-		streamUrl: best.streamUrl,
 		format: best.format,
 		availableSources: getAvailableSources(data),
 		sourceIds,
@@ -173,7 +169,6 @@ export function buildRemoteQueueItems(tracks: RemoteTrack[], meta: TrackMeta): Q
 				coverUrl: normalizedCoverUrl,
 				sourceType: t.source,
 				artistId: meta.artistId,
-				streamUrl: gatewayStreamUrl(t.source, key),
 				format: REMOTE_FORMAT,
 				availableSources: [t.source] as SourceType[],
 				recordingIds: recordingFor(t.source, t.recording_mbid),
@@ -198,7 +193,6 @@ export function buildQueueItemsFromLocal(tracks: LocalTrackInfo[], meta: TrackMe
 		coverRemoteUrl: meta.coverUrl?.startsWith('http') ? meta.coverUrl : null,
 		sourceType: 'local' as const,
 		artistId: meta.artistId,
-		streamUrl: gatewayStreamUrl('local', t.track_file_id),
 		format: t.format.toLowerCase(),
 		availableSources: ['local'] as SourceType[],
 		duration: t.duration_seconds ?? undefined
@@ -227,14 +221,6 @@ export function buildQueueItemsFromYouTube(
 	meta: TrackMeta
 ): QueueItem[] {
 	return tracks.map((t) => buildQueueItemFromYouTube(t, meta));
-}
-
-function resolveStreamUrl(sourceType: string, trackSourceId: string): string | undefined {
-	if (sourceType === 'local') return gatewayStreamUrl('local', trackSourceId);
-	if (sourceType === 'navidrome') return gatewayStreamUrl('navidrome', trackSourceId);
-	if (sourceType === 'jellyfin') return gatewayStreamUrl('jellyfin', trackSourceId);
-	if (sourceType === 'plex') return gatewayStreamUrl('plex', trackSourceId);
-	return undefined;
 }
 
 export function playlistTrackToQueueItem(track: PlaylistTrack): QueueItem | null {
@@ -266,7 +252,6 @@ export function playlistTrackToQueueItem(track: PlaylistTrack): QueueItem | null
 		coverUrl: track.cover_url,
 		sourceType,
 		artistId: track.artist_id ?? undefined,
-		streamUrl: resolveStreamUrl(sourceType, trackSourceId),
 		format: track.format ?? undefined,
 		availableSources,
 		sourceIds,
@@ -289,7 +274,6 @@ export function buildDiscoveryQueueFromLocal(tracks: NativeTrackListItem[]): Que
 		coverRemoteUrl: null,
 		sourceType: 'local' as const,
 		artistId: t.artist_id,
-		streamUrl: gatewayStreamUrl('local', t.id),
 		format: (t.format ?? '').toLowerCase(),
 		availableSources: ['local'] as SourceType[],
 		duration: t.duration_seconds ?? undefined
@@ -312,7 +296,6 @@ export function buildRemoteDiscoveryQueue(tracks: RemoteTrack[]): QueueItem[] {
 				albumName: t.album_name,
 				coverUrl: t.image_url ?? null,
 				sourceType: t.source,
-				streamUrl: gatewayStreamUrl(t.source, key),
 				format: REMOTE_FORMAT,
 				availableSources: [t.source] as SourceType[],
 				recordingIds: recordingFor(t.source, t.recording_mbid),

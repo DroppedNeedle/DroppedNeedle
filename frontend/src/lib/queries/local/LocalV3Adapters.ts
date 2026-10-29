@@ -1,6 +1,5 @@
 import { getApiUrl } from '$lib/api/api-utils';
 import { coverPath } from '$lib/api/covers';
-import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import type { QueueItem, SourceType } from '$lib/player/types';
 import type { components } from '$lib/api/v3/openapi';
 import type { CrateReason, CrateTrack, LocalAlbumSummary } from '$lib/types';
@@ -146,7 +145,6 @@ export function matchTrackToQueueItem(
 		coverRemoteUrl: null,
 		sourceType: 'local',
 		artistId: track.artist_id ?? undefined,
-		streamUrl: gatewayStreamUrl('local', track.id),
 		format: track.format.toLowerCase(),
 		availableSources: ['local'] as SourceType[],
 		duration: track.duration_seconds ?? undefined

@@ -8,6 +8,7 @@ import type { LocalTrackInfo, NativeTrackListItem } from '$lib/player/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
 import type { RemoteSource, RemoteTrack } from '$lib/queries/remotes/types';
 import type { TrackMeta, TrackSourceData } from './queueHelpers';
+import { streamUrlFor } from './streamUrl';
 import {
 	selectBestSource,
 	buildQueueItem,
@@ -132,7 +133,7 @@ describe('buildRemoteQueueItems', () => {
 	it('streams a Jellyfin track by its item id', () => {
 		expect.assertions(1);
 		const items = buildRemoteQueueItems([jellyfinTrack], baseMeta);
-		expect(items[0].streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
+		expect(streamUrlFor(items[0])).toBe('/api/v3/stream/jellyfin/jf-123');
 	});
 });
 
@@ -220,7 +221,7 @@ describe('buildDiscoveryQueueFromLocal', () => {
 		expect(item.albumName).toBe('Cross Album');
 		expect(item.albumId).toBe('local-album-9');
 		expect(item.sourceType).toBe('local');
-		expect(item.streamUrl).toBe('/api/v3/stream/local/file-7');
+		expect(streamUrlFor(item)).toBe('/api/v3/stream/local/file-7');
 		expect(item.coverUrl).toBe('/cover/local-album-9');
 		expect(item.format).toBe('flac');
 		expect(item.discNumber).toBe(2);
@@ -258,16 +259,16 @@ describe('playlistTrackToQueueItem', () => {
 		library_file_id: null
 	};
 
-	it('maps local track to QueueItem with correct streamUrl', () => {
+	it('maps local track to QueueItem with its stream address', () => {
 		expect.assertions(4);
 		const item = playlistTrackToQueueItem(basePlaylistTrack)!;
 		expect(item).not.toBeNull();
 		expect(item.sourceType).toBe('local');
-		expect(item.streamUrl).toBe('/api/v3/stream/local/42');
+		expect(streamUrlFor(item)).toBe('/api/v3/stream/local/42');
 		expect(item.trackName).toBe('Test Track');
 	});
 
-	it('maps jellyfin track to QueueItem with correct streamUrl', () => {
+	it('maps jellyfin track to QueueItem with its stream address', () => {
 		expect.assertions(3);
 		const track: PlaylistTrack = {
 			...basePlaylistTrack,
@@ -277,7 +278,7 @@ describe('playlistTrackToQueueItem', () => {
 		};
 		const item = playlistTrackToQueueItem(track)!;
 		expect(item.sourceType).toBe('jellyfin');
-		expect(item.streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
+		expect(streamUrlFor(item)).toBe('/api/v3/stream/jellyfin/jf-123');
 		expect(item.format).toBe('opus');
 	});
 
@@ -299,7 +300,7 @@ describe('playlistTrackToQueueItem', () => {
 		const item = playlistTrackToQueueItem(track)!;
 		expect(item.sourceType).toBe('local');
 		expect(item.trackSourceId).toBe('77');
-		expect(item.streamUrl).toBe('/api/v3/stream/local/77');
+		expect(streamUrlFor(item)).toBe('/api/v3/stream/local/77');
 		expect(item.sourceIds).toEqual({ jellyfin: 'jf-123', local: '77' });
 	});
 
@@ -316,7 +317,7 @@ describe('playlistTrackToQueueItem', () => {
 		expect(item).not.toBeNull();
 		expect(item.sourceType).toBe('local');
 		expect(item.trackSourceId).toBe('42');
-		expect(item.streamUrl).toBe('/api/v3/stream/local/42');
+		expect(streamUrlFor(item)).toBe('/api/v3/stream/local/42');
 		expect(item.sourceIds).toEqual({ local: '42' });
 	});
 

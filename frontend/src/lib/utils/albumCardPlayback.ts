@@ -1,5 +1,4 @@
 import { fetchLocalAlbumMatch, fetchRemoteAlbumMatch } from '$lib/queries/albumMatch';
-import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import { readIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 import { playerStore } from '$lib/stores/player.svelte';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
@@ -30,7 +29,6 @@ function buildLocalItems(tracks: LocalTrackInfo[], meta: AlbumCardMeta): QueueIt
 		coverUrl: cover,
 		sourceType: 'local' as const,
 		artistId: meta.artistId,
-		streamUrl: gatewayStreamUrl('local', t.track_file_id),
 		format: t.format.toLowerCase()
 	}));
 }
@@ -51,7 +49,6 @@ function buildRemoteItems(tracks: RemoteTrack[], meta: AlbumCardMeta): QueueItem
 				coverUrl: cover,
 				sourceType: t.source,
 				artistId: meta.artistId,
-				streamUrl: gatewayStreamUrl(t.source, key),
 				format: REMOTE_FORMAT,
 				recordingIds: recordingFor(t.source, t.recording_mbid),
 				plexRatingKey: t.source === 'plex' ? t.id : undefined

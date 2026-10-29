@@ -1,5 +1,4 @@
 import { playerStore } from '$lib/stores/player.svelte';
-import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import type { PlaybackMeta, QueueItem } from '$lib/player/types';
 import type { RemoteTrack } from '$lib/queries/remotes/types';
 import { getCoverUrl } from '$lib/utils/errorHandling';
@@ -40,7 +39,6 @@ export function launchRemotePlayback(
 		coverUrl: normalizedCoverUrl,
 		sourceType: t.source,
 		artistId: meta.artistId,
-		streamUrl: gatewayStreamUrl(t.source, key),
 		format: REMOTE_FORMAT,
 		recordingIds: recordingFor(t.source, t.recording_mbid),
 		plexRatingKey: t.source === 'plex' ? t.id : undefined

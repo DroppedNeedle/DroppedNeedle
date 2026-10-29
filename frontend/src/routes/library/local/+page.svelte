@@ -6,7 +6,6 @@
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
 	import { setQueueMutationToastsSuppressed } from '$lib/stores/playerUtils';
 	import { deckFocus } from '$lib/stores/deckFocus.svelte';
-	import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { formatBytes } from '$lib/utils/formatting';
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
@@ -139,7 +138,6 @@
 			coverUrl: crateCoverUrl(t),
 			coverRemoteUrl: t.cover_url?.startsWith('http') ? t.cover_url : null,
 			sourceType: 'local',
-			streamUrl: gatewayStreamUrl('local', t.track_file_id),
 			format: (t.format ?? '').toLowerCase()
 		};
 	}

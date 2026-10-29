@@ -112,7 +112,6 @@ export interface NowPlaying {
 	embedUrl?: string;
 	trackName?: string;
 	artistId?: string;
-	streamUrl?: string;
 	format?: string;
 	playlistTrackId?: string;
 	/** 30s preview stream (radio preview tier): never scrobbled/reported, fades out. */
@@ -143,14 +142,12 @@ export interface QueueItem {
 	coverRemoteUrl?: string | null;
 	sourceType: SourceType;
 	artistId?: string;
-	streamUrl?: string;
 	format?: string;
 	availableSources?: SourceType[];
 	sourceIds?: Partial<Record<SourceType, string>>;
 	/** MusicBrainz recording each source gave for its file, kept per source. */
 	recordingIds?: Partial<Record<SourceType, string>>;
 	duration?: number;
-	playSessionId?: string;
 	/** Plex ratingKey used for scrobble and now-playing calls. Streaming uses part_key in trackSourceId. */
 	plexRatingKey?: string;
 	queueOrigin?: QueueOrigin;

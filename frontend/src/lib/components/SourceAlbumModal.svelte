@@ -5,7 +5,6 @@
 	import { Shuffle, Play, ListPlus, ListStart, ListMusic, Info, Download } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
 	import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
-	import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 	import { downloadAlbumArchive, downloadTrackFile } from '$lib/utils/downloadActions';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
@@ -157,7 +156,6 @@
 					albumName: t.album_name,
 					coverUrl: t.image_url ?? null,
 					sourceType: 'jellyfin' as const,
-					streamUrl: gatewayStreamUrl('jellyfin', t.id),
 					format: REMOTE_FORMAT,
 					recordingIds: recordingFor('jellyfin', t.recording_mbid)
 				}));

@@ -1,6 +1,5 @@
 import type { QueueItem, SourceType } from '$lib/player/types';
 import { shuffleArray, stampOrigin } from './playerUtils';
-import { buildStreamUrlForSource } from './playerSourceResolver';
 
 export interface PlayQueueResult {
 	queue: QueueItem[];
@@ -68,14 +67,11 @@ export function changeItemSource(
 	const resolvedId = item.sourceIds?.[newSourceType];
 	if (!resolvedId) return { newQueue: queue, error: 'Source ID unavailable for this track' };
 
-	const streamUrl = buildStreamUrlForSource(newSourceType, resolvedId);
 	const newQueue = [...queue];
 	newQueue[index] = {
 		...item,
 		sourceType: newSourceType,
-		trackSourceId: resolvedId,
-		streamUrl,
-		playSessionId: undefined
+		trackSourceId: resolvedId
 	};
 	return { newQueue };
 }
@@ -92,15 +88,12 @@ export function updateItemByPlaylistTrackId(
 	const index = queue.findIndex((item) => item.playlistTrackId === playlistTrackId);
 	if (index < 0 || index === currentIndex) return null;
 
-	const streamUrl = buildStreamUrlForSource(newSourceType, newTrackSourceId);
 	const newQueue = [...queue];
 	newQueue[index] = {
 		...newQueue[index],
 		sourceType: newSourceType,
 		trackSourceId: newTrackSourceId,
-		streamUrl,
 		format: newFormat,
-		playSessionId: undefined,
 		plexRatingKey: newSourceType === 'plex' ? plexRatingKey : undefined
 	};
 	return newQueue;

@@ -45,8 +45,7 @@ describe('QueueDrawer.svelte', () => {
 				albumId: 'a1',
 				albumName: 'Album',
 				coverUrl: null,
-				sourceType: 'local',
-				streamUrl: 'http://test/1.mp3'
+				sourceType: 'local'
 			},
 			{
 				trackSourceId: 'v2',
@@ -56,8 +55,7 @@ describe('QueueDrawer.svelte', () => {
 				albumId: 'a1',
 				albumName: 'Album',
 				coverUrl: null,
-				sourceType: 'local',
-				streamUrl: 'http://test/2.mp3'
+				sourceType: 'local'
 			}
 		]);
 		const onclose = vi.fn();
@@ -82,8 +80,7 @@ describe('QueueDrawer.svelte', () => {
 					albumId: 'a1',
 					albumName: 'Album',
 					coverUrl: null,
-					sourceType: 'local',
-					streamUrl: 'http://test/1.mp3'
+					sourceType: 'local'
 				},
 				{
 					trackSourceId: 'v2',
@@ -93,8 +90,7 @@ describe('QueueDrawer.svelte', () => {
 					albumId: 'a1',
 					albumName: 'Album',
 					coverUrl: null,
-					sourceType: 'local',
-					streamUrl: 'http://test/2.mp3'
+					sourceType: 'local'
 				},
 				{
 					trackSourceId: 'v3',
@@ -104,8 +100,7 @@ describe('QueueDrawer.svelte', () => {
 					albumId: 'a1',
 					albumName: 'Album',
 					coverUrl: null,
-					sourceType: 'local',
-					streamUrl: 'http://test/3.mp3'
+					sourceType: 'local'
 				}
 			],
 			1

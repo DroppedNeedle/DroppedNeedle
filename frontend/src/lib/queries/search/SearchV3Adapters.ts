@@ -1,5 +1,4 @@
 import type { components } from '$lib/api/v3/openapi';
-import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import { normalizeDiscNumber } from '$lib/player/queueHelpers';
 import type { QueueItem } from '$lib/player/types';
 import type { Album, Artist, SearchRemoteStatus, SuggestResult } from '$lib/types';
@@ -142,7 +141,6 @@ export function searchSongQueueItem(song: SearchSong): QueueItem {
 		coverRemoteUrl: null,
 		sourceType: 'local',
 		artistId: detail.artist_id ?? undefined,
-		streamUrl: gatewayStreamUrl('local', song.id),
 		format: detail.format.toLowerCase(),
 		availableSources: ['local'],
 		duration: detail.duration_seconds ?? undefined

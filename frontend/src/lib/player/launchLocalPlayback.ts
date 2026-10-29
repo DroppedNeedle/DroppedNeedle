@@ -1,5 +1,4 @@
 import { playerStore } from '$lib/stores/player.svelte';
-import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import type { LocalTrackInfo, PlaybackMeta, QueueItem } from '$lib/player/types';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 
@@ -23,7 +22,6 @@ export function launchLocalPlayback(
 		coverRemoteUrl: meta.coverUrl?.startsWith('http') ? meta.coverUrl : null,
 		sourceType: 'local',
 		artistId: meta.artistId,
-		streamUrl: gatewayStreamUrl('local', t.track_file_id),
 		format: t.format.toLowerCase()
 	}));
 
