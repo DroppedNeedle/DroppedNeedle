@@ -2214,6 +2214,63 @@ fn replacement_of_a_changed_file_is_refused() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+/// A replace whose old track's row moved to another path after the plan
+/// is refused at commit, never committed with a row left on a file now in
+/// the bin: the old file stays, the new one is not placed, and the moved
+/// row keeps its new path.
+#[test]
+fn a_replace_whose_old_track_moved_is_refused() {
+    let fix = fixture("replace-moved");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let occupier = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+    std::fs::create_dir_all(occupier.parent().unwrap()).unwrap();
+    std::fs::write(&occupier, b"replaced-library-file").unwrap();
+    open_db(&fix)
+        .execute(
+            "UPDATE local_tracks SET relative_path = 'organized/a.flac' WHERE id = 'track-s'",
+            [],
+        )
+        .unwrap();
+    let bin = fix.dir.join("bin/entry/a.flac");
+    bundle.items[0].replaces = Some(publish::Replacement {
+        sha256: sha256_hex(b"replaced-library-file"),
+        track_id: Some("track-s".to_string()),
+        recycle_to: bin.display().to_string(),
+    });
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    // A scan moves the old track's row while the bundle is being written.
+    let db_path = fix.db_path.clone();
+    publisher.set_before_place(Some(Box::new(move |_| {
+        droppedneedle_kernel::db::open_connection(&db_path)
+            .unwrap()
+            .execute(
+                "UPDATE local_tracks SET relative_path = 'elsewhere/s.flac' WHERE id = 'track-s'",
+                [],
+            )
+            .unwrap();
+    })));
+
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+
+    assert!(matches!(err, PublishError::Catalog(_)), "got {err:?}");
+    assert_eq!(std::fs::read(&occupier).unwrap(), b"replaced-library-file");
+    assert!(
+        fix.sandbox
+            .resolve("music", "staging/a.flac")
+            .unwrap()
+            .exists()
+    );
+    assert!(!bin.exists(), "nothing reaches the bin");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    let conn = open_db(&fix);
+    assert_eq!(
+        track_row(&conn, "track-s"),
+        ("elsewhere/s.flac".to_string(), "indexed".to_string(), None)
+    );
+    assert_eq!(track_row(&conn, "track-a").0, "staging/a.flac");
+}
+
 /// A file in the way that a bundle replaces, planted at the bundle's
 /// first destination, with its bin entry `entry`.
 fn replace_into(fix: &Fixture, bundle: &mut PlanBundle, entry: &std::path::Path) -> PathBuf {
@@ -2564,6 +2621,43 @@ fn a_removal_whose_file_went_since_its_plan_reports_a_change() {
             .all(|journal| journal.state == JournalState::Compensated)
     );
     assert_eq!(track_row(&open_db(&fix), "track-a").1, "indexed");
+}
+
+/// Two tracks whose files are hard links to one inode go in one removal
+/// on the first try: setting the first aside moves the inode's change
+/// time, which does not count as a change to the second.
+#[test]
+fn a_removal_of_two_hard_links_to_one_file_removes_both() {
+    let fix = fixture("remove-hard-links");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let b = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+    std::fs::hard_link(&a, &b).unwrap();
+    let bytes = std::fs::read(&a).unwrap();
+    let bundle = removal_bundle(
+        &fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")],
+    );
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+
+    let outcome = publisher.publish(&sealed, &live, &BTreeMap::new());
+
+    assert_eq!(outcome.unwrap(), PublishOutcome::Committed);
+    assert!(!a.exists() && !b.exists(), "both names are gone");
+    let binned = files_under(&fix.dir.join("bin"));
+    assert_eq!(binned.len(), 2, "both reach the bin");
+    assert!(
+        binned
+            .iter()
+            .all(|path| std::fs::read(path).unwrap() == bytes)
+    );
+    let conn = open_db(&fix);
+    assert_eq!(track_row(&conn, "track-a").1, "missing");
+    assert_eq!(track_row(&conn, "track-b").1, "missing");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
 /// A removed file its recycle bin cannot take waits under its hidden name

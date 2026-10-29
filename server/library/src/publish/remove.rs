@@ -6,9 +6,11 @@
 //! whole identity again and seals each track's rows as they are.
 //! Publishing checks the whole identity once more just before each file
 //! moves, so a file saved since it was read stays where it is and the
-//! removal unwinds. Once the file is under its row's hidden name it is
-//! checked again without the change time, which the rename moves: a file
-//! swapped in that moment goes straight back. The commit marks
+//! removal unwinds; for a hard link to a file an earlier row already
+//! moved, that check leaves out the change time. Once the file is under
+//! its row's hidden name it is checked again without the change time,
+//! which the rename moves: a file swapped in that moment goes straight
+//! back. The commit marks
 //! the tracks missing, in the same transaction that checks their rows,
 //! and only after it does each file move into its bin entry. An unwind
 //! puts every set-aside file back; a copy that cannot go back is kept
@@ -267,6 +269,29 @@ pub(crate) fn file_of<'a>(removal: &'a Removal, journal: &FileJournal) -> Option
         .as_ref()
 }
 
+/// Whether the file a `remove` row moves is a hard link to the file of an
+/// earlier item of the same removal: one inode under two names. Setting
+/// the earlier one aside moves the inode's change time.
+pub(super) fn linked_to_earlier(removal: &Removal, journal: &FileJournal) -> bool {
+    let Some(track) = journal
+        .replaces
+        .as_ref()
+        .and_then(|replaced| replaced.track_id.as_deref())
+    else {
+        return false;
+    };
+    let Some(index) = removal.items.iter().position(|item| item.track_id == track) else {
+        return false;
+    };
+    let Some(file) = removal.items[index].file.as_ref() else {
+        return false;
+    };
+    removal.items[..index]
+        .iter()
+        .filter_map(|item| item.file.as_ref())
+        .any(|earlier| earlier.stat.dev == file.stat.dev && earlier.stat.ino == file.stat.ino)
+}
+
 /// Whether the set-aside file at `path` holds `sha256`: by identity when
 /// `known` still matches it as moved, else by reading it.
 pub(super) fn holds(path: &Path, sha256: &str, known: Option<FileStat>) -> bool {
@@ -281,9 +306,11 @@ pub(super) fn holds(path: &Path, sha256: &str, known: Option<FileStat>) -> bool 
 /// name, which is never touched. With `known` the file is checked by its
 /// whole identity just before it moves (a file changed since it was read
 /// refuses and stays), and again once it moved, change time aside, which
-/// the rename moves; without it, by its bytes. A file that no longer
-/// matches after the move goes straight back home and the removal
-/// refuses. `before_move` is a test seam.
+/// the rename moves; without it, by its bytes. `linked_earlier` (the file
+/// is a hard link an earlier row of the removal already moved) leaves the
+/// change time out of the first check too. A file that no longer matches
+/// after the move goes straight back home and the removal refuses.
+/// `before_move` is a test seam.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn set_aside(
     mode: PlacementMode,
@@ -293,6 +320,7 @@ pub(super) fn set_aside(
     aside: &Path,
     sha256: &str,
     known: Option<FileStat>,
+    linked_earlier: bool,
     seams: Seams,
     before_move: Option<&dyn Fn(&Path)>,
 ) -> Result<(), PublishError> {
@@ -307,8 +335,17 @@ pub(super) fn set_aside(
     let replaced = || {
         PublishError::Collision(format!("{root}:{rel} changed while it was being removed").into())
     };
-    if known.is_some_and(|known| FileStat::read(dest).ok() != Some(known)) {
-        return Err(replaced());
+    if let Some(known) = known {
+        let unchanged = FileStat::read(dest).is_ok_and(|now| {
+            if linked_earlier {
+                known.same_moved(&now)
+            } else {
+                now == known
+            }
+        });
+        if !unchanged {
+            return Err(replaced());
+        }
     }
     let original = Original {
         visible: dest,

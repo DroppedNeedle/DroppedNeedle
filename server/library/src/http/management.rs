@@ -59,6 +59,9 @@ impl From<ManagementError> for ApiError {
             }
             ManagementError::Store(cause) => ApiError::internal(cause),
             ManagementError::Busy(cause) => ApiError::unavailable(Unavailable::ServerBusy, cause),
+            error @ ManagementError::BinsUnknown => {
+                ApiError::unavailable(Unavailable::ServerBusy, error.to_string())
+            }
         }
     }
 }

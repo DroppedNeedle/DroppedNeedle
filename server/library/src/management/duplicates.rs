@@ -17,7 +17,7 @@ use super::reasons::ItemReason;
 use super::selection;
 use super::service::{JobSpec, Management, Refused, stale};
 use super::store::{self, Snapshot};
-use crate::mutations::{MutationError, NO_RECYCLE_BIN, REMOVAL_CHANGED};
+use crate::mutations::{MutationError, NO_RECYCLE_BIN, RECYCLE_BIN_UNKNOWN, REMOVAL_CHANGED};
 use crate::publish::planner::PlanKind;
 use rusqlite::OptionalExtension as _;
 
@@ -262,6 +262,9 @@ impl Management {
                         action: "Make the folder's .recycle a plain folder, or keep both files."
                             .to_owned(),
                     }));
+                }
+                Err(MutationError::Conflict(reason)) if reason.code == RECYCLE_BIN_UNKNOWN.code => {
+                    return Err(Refused::Busy(ManagementError::BinsUnknown));
                 }
                 Err(MutationError::Conflict(reason)) => {
                     return Err(Refused::Busy(ManagementError::Busy(

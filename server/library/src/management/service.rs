@@ -973,12 +973,17 @@ impl Management {
             // shutdown, with why it waits on its work, and the worker waits
             // before it takes it again. A put-back that fails leaves it to
             // its lease.
-            Err(ManagementError::Busy(cause)) => {
-                if super::logged_elsewhere(&cause) {
-                    tracing::debug!(job_id, "management job waits: {cause}");
-                } else {
-                    tracing::warn!(job_id, "management job waits: {cause}");
-                }
+            Err(error @ (ManagementError::Busy(_) | ManagementError::BinsUnknown)) => {
+                let cause = match &error {
+                    ManagementError::Busy(cause) => {
+                        tracing::warn!(job_id, "management job waits: {cause}");
+                        cause.clone()
+                    }
+                    other => {
+                        tracing::debug!(job_id, "management job waits: {other}");
+                        other.to_string()
+                    }
+                };
                 let released =
                     self.setup
                         .db
@@ -996,7 +1001,7 @@ impl Management {
                 if let Err(error) = released {
                     tracing::warn!(%error, job_id, "management job not put back; its lease brings it back");
                 }
-                Err(ManagementError::Busy(cause))
+                Err(error)
             }
             Err(error) => {
                 tracing::error!(%error, job_id, "management job failed");

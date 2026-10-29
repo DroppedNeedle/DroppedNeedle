@@ -724,6 +724,11 @@ pub enum ManagementError {
     /// The database was too busy to answer, or is shutting down.
     #[error("busy: {0}")]
     Busy(String),
+    /// No recycle bin is known while a setting cannot be read: the work
+    /// waits, as on a busy database. The bins' source logs this once per
+    /// change, so a wait on it is not logged again.
+    #[error("{}", crate::mutations::RECYCLE_BIN_UNKNOWN.message)]
+    BinsUnknown,
 }
 
 impl From<droppedneedle_kernel::db::DbError> for ManagementError {

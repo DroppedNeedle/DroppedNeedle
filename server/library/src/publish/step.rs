@@ -1005,6 +1005,10 @@ impl Run<'_> {
                     .known_removals
                     .then(|| removal_stat(Some(plan), journal))
                     .flatten();
+                let linked_earlier = plan
+                    .removal
+                    .as_ref()
+                    .is_some_and(|removal| super::remove::linked_to_earlier(removal, journal));
                 let set_aside = super::remove::set_aside(
                     self.sandbox.placement_mode(root),
                     self.root_dev(root),
@@ -1013,6 +1017,7 @@ impl Run<'_> {
                     aside,
                     &journal.staged_sha256,
                     known,
+                    linked_earlier,
                     self.seams,
                     self.hooks.before_set_aside,
                 );

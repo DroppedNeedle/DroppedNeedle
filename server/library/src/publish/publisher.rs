@@ -195,9 +195,7 @@ pub(super) fn commit_bundle(
         .map(|track| (track.track_id.as_str(), track.sealed.as_ref()))
         .collect();
     if let Some(moved) = super::planner::first_moved(conn, &sealed)? {
-        return Err(PublishError::Catalog(
-            format!("track {moved} changed under bundle {}", commit.bundle_id).into(),
-        ));
+        return Err(changed_under(moved, &commit.bundle_id));
     }
     crate::catalog_revision::bump_catalog(conn)?;
     let now = clock.now_secs();
@@ -228,7 +226,7 @@ pub(super) fn commit_bundle(
     let mut imported = Vec::new();
     for (track, written) in commit.tracks.iter().zip(&written) {
         if let Some((replaced, recycle_to)) = &track.replaces {
-            retire_replaced(conn, track, replaced, recycle_to, now)?;
+            retire_replaced(conn, &commit.bundle_id, track, replaced, recycle_to, now)?;
         }
         if let Some(adoption) = &track.adopt {
             let joined = adopt_track(conn, track, adoption)?;
@@ -305,9 +303,11 @@ pub(super) fn mark_missing(
 /// release track, the end of the next scan moves its plays, favorites and
 /// playlist entries to that track and its id opens it. Its path
 /// moves to a hidden name under the bundle, so the new file can hold the
-/// real one.
+/// real one. A track no longer where the plan saw it changed under the
+/// bundle, and the commit fails.
 fn retire_replaced(
     conn: &Connection,
+    bundle_id: &str,
     track: &TrackCommit,
     replaced: &str,
     recycle_to: &str,
@@ -319,7 +319,7 @@ fn retire_replaced(
         track.track_id,
         track.rel_path
     );
-    conn.execute(
+    let retired_rows = conn.execute(
         "UPDATE local_tracks SET availability = 'missing', missing_since = ?5, \
          relative_path = ?4, file_path = ?6, path_hash = ?7, \
          row_revision = row_revision + 1 \
@@ -334,6 +334,9 @@ fn retire_replaced(
             sha256_hex(retired.as_bytes())
         ],
     )?;
+    if retired_rows == 0 {
+        return Err(changed_under(replaced, bundle_id));
+    }
     // Its file is in the recycle bin: no record of it may make a file on
     // its album look like it took its place.
     conn.execute(
@@ -343,6 +346,11 @@ fn retire_replaced(
         rusqlite::params![replaced],
     )?;
     Ok(())
+}
+
+/// The commit's refusal of a track whose rows changed since the plan.
+fn changed_under(track_id: &str, bundle_id: &str) -> PublishError {
+    PublishError::Catalog(format!("track {track_id} changed under bundle {bundle_id}").into())
 }
 
 /// Free the destination of a track the commit moves. The file is already
