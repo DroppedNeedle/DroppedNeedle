@@ -215,12 +215,16 @@ pub fn identification_snapshot(
         // A running job whose lease ran out is not running: its worker is
         // gone and the next claim picks it up again, so it counts as queued.
         // A failure the album's later success settled is not counted, the
-        // same rule as the latest failure below.
+        // same rule as the latest failure below. Neither is a job that
+        // ended because its album changed (files moved mid-attempt, the
+        // album gone): nothing failed, and a newer job takes the album.
         let mut stmt = conn.prepare(
             "SELECT CASE WHEN j.state = 'running' AND NOT (j.lease_expires_ms > ?1) \
              THEN 'queued' ELSE j.state END AS live_state, COUNT(*) \
              FROM library_identify_jobs j \
-             WHERE NOT (j.state IN ('failed','attention') \
+             WHERE NOT (j.state = 'failed' \
+                 AND COALESCE(j.failure_code, '') IN ('INPUT_MOVED','ALBUM_GONE')) \
+             AND NOT (j.state IN ('failed','attention') \
                  AND EXISTS (SELECT 1 FROM library_identify_jobs later \
                      WHERE later.local_album_id = j.local_album_id \
                      AND later.state = 'succeeded' AND later.updated_ms > j.updated_ms)) \
@@ -287,12 +291,15 @@ pub fn identification_snapshot(
          AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
              WHERE r.local_album_id = j.local_album_id AND r.state = 'pending')",
     )?;
-    // A failure the album's own later success settled (a retry after its
-    // files moved mid-attempt) needs nobody's attention.
+    // A failure the album's own later success settled needs nobody's
+    // attention, and a job that ended because its album changed is no
+    // failure at all.
     snapshot.failure = conn
         .query_row(
             "SELECT j.id, j.updated_ms FROM library_identify_jobs j \
              WHERE j.state IN ('failed','attention') \
+             AND NOT (j.state = 'failed' \
+                 AND COALESCE(j.failure_code, '') IN ('INPUT_MOVED','ALBUM_GONE')) \
              AND NOT EXISTS (SELECT 1 FROM library_identify_jobs later \
                  WHERE later.local_album_id = j.local_album_id \
                  AND later.state = 'succeeded' AND later.updated_ms > j.updated_ms) \

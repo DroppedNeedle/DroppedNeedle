@@ -34,7 +34,8 @@ droppedneedle_kernel::sql! {
         "DELETE FROM library_edition_choice_undo WHERE local_album_id = ?1";
 
     /// Seal an automatic album match (`?1`, provider `?2`, group `?3`,
-    /// release `?4`, at `?5`), never over a person's.
+    /// release `?4`, at `?5`), never over a person's. A row that already
+    /// reads so is left as it is.
     pub(super) SEAL_ALBUM = "INSERT INTO local_album_external_identities (local_album_id, \
              provider, release_group_mbid, release_mbid, decision_source, selected_at, \
              row_revision) VALUES (?1, ?2, ?3, ?4, 'automatic', ?5, 1) \
@@ -43,10 +44,18 @@ droppedneedle_kernel::sql! {
              release_mbid = excluded.release_mbid, decision_source = 'automatic', \
              matcher_version = NULL, attempt_id = NULL, selected_by_user_id = NULL, \
              selected_at = excluded.selected_at, row_revision = row_revision + 1 \
-             WHERE local_album_external_identities.decision_source IN " + REVISABLE;
+             WHERE local_album_external_identities.decision_source IN " + REVISABLE + " \
+             AND (local_album_external_identities.decision_source <> 'automatic' \
+             OR local_album_external_identities.release_group_mbid \
+                 IS NOT excluded.release_group_mbid \
+             OR local_album_external_identities.release_mbid IS NOT excluded.release_mbid \
+             OR local_album_external_identities.matcher_version IS NOT NULL \
+             OR local_album_external_identities.attempt_id IS NOT NULL \
+             OR local_album_external_identities.selected_by_user_id IS NOT NULL)";
     /// Seal an automatic track match (`?1`, provider `?2`, recording `?3`,
     /// release `?4`, release track `?5`, at `?6`) on a file the album
-    /// (`?7`) holds, never over a person's.
+    /// (`?7`) holds, never over a person's. A row that already reads so is
+    /// left as it is.
     pub(super) SEAL_TRACK = "INSERT INTO local_track_external_identities (local_track_id, \
              provider, recording_mbid, release_mbid, release_track_mbid, decision_source, \
              selected_at, row_revision) \
@@ -58,7 +67,15 @@ droppedneedle_kernel::sql! {
              medium_position = NULL, release_track_position = NULL, \
              decision_source = 'automatic', attempt_id = NULL, \
              selected_at = excluded.selected_at, row_revision = row_revision + 1 \
-             WHERE local_track_external_identities.decision_source IN " + REVISABLE;
+             WHERE local_track_external_identities.decision_source IN " + REVISABLE + " \
+             AND (local_track_external_identities.decision_source <> 'automatic' \
+             OR local_track_external_identities.recording_mbid IS NOT excluded.recording_mbid \
+             OR local_track_external_identities.release_mbid IS NOT excluded.release_mbid \
+             OR local_track_external_identities.release_track_mbid \
+                 IS NOT excluded.release_track_mbid \
+             OR local_track_external_identities.medium_position IS NOT NULL \
+             OR local_track_external_identities.release_track_position IS NOT NULL \
+             OR local_track_external_identities.attempt_id IS NOT NULL)";
 
     /// Save an album's match. The write itself refuses to put an
     /// automatic or embedded row over a person's.
@@ -98,7 +115,7 @@ droppedneedle_kernel::sql! {
              row_revision = row_revision + 1";
     /// Place a file (`?1`) the album (`?9`) holds on its release track
     /// (provider `?2`, recording `?3`, release `?4`, release track `?5`,
-    /// disc `?6`, position `?7`, at `?8`).
+    /// disc `?6`, position `?7`, at `?8`), never over a person's row.
     pub(super) PLACE_TRACK = "INSERT INTO local_track_external_identities (local_track_id, \
              provider, recording_mbid, release_mbid, release_track_mbid, medium_position, \
              release_track_position, decision_source, selected_at, row_revision) \
@@ -110,13 +127,15 @@ droppedneedle_kernel::sql! {
              medium_position = excluded.medium_position, \
              release_track_position = excluded.release_track_position, \
              decision_source = excluded.decision_source, selected_at = excluded.selected_at, \
-             row_revision = row_revision + 1";
+             row_revision = row_revision + 1 \
+             WHERE local_track_external_identities.decision_source IN " + REVISABLE;
     /// Take a file (`?1`) the album (`?4`) holds off any release track, at
-    /// `?2` (provider `?3`).
+    /// `?2` (provider `?3`), unless the row is a person's.
     pub(super) UNPLACE_TRACK = "UPDATE local_track_external_identities SET release_mbid = NULL, \
              release_track_mbid = NULL, medium_position = NULL, \
              release_track_position = NULL, selected_at = ?2, \
              row_revision = row_revision + 1 WHERE local_track_id = ?1 AND provider = ?3 \
+             AND decision_source IN " + REVISABLE + " \
              AND local_track_id IN (SELECT t.id FROM " + ALBUM_TRACKS + " \
              WHERE t.local_album_id = ?4 AND t.availability = 'indexed')";
     pub(super) DROP_REMAP =
@@ -125,13 +144,18 @@ droppedneedle_kernel::sql! {
     /// Clear the album's match flag.
     pub(super) CLEAR_FLAG = "DELETE FROM library_album_match_state WHERE local_album_id = ?1";
     /// Set the album's match flag (`?1`, state `?2`, reason `?3`, release
-    /// `?4`, candidates `?5`, at `?6`).
+    /// `?4`, candidates `?5`, at `?6`). A flag that already reads so is
+    /// left as it is.
     pub(super) SET_FLAG = "INSERT INTO library_album_match_state (local_album_id, state, \
              reason_code, release_mbid, candidates_json, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
              ON CONFLICT (local_album_id) DO UPDATE SET state = excluded.state, \
              reason_code = excluded.reason_code, release_mbid = excluded.release_mbid, \
-             candidates_json = excluded.candidates_json, updated_at = excluded.updated_at";
+             candidates_json = excluded.candidates_json, updated_at = excluded.updated_at \
+             WHERE library_album_match_state.state IS NOT excluded.state \
+             OR library_album_match_state.reason_code IS NOT excluded.reason_code \
+             OR library_album_match_state.release_mbid IS NOT excluded.release_mbid \
+             OR library_album_match_state.candidates_json IS NOT excluded.candidates_json";
 
     /// Keep the automatic-edition undo for the album (`?5`, provider `?6`):
     /// what the seal replaced (`?2`, `?3`), keyed to the revisions it left,

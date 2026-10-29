@@ -2942,6 +2942,205 @@ fn accept_automatic_keeps_a_v2_choice_and_seals_an_automatic_match() {
     );
 }
 
+/// A recheck accepting an exact edition never rewrites a file a person
+/// matched by hand: the placed file keeps its recording and release
+/// track, and a file left off the release keeps its placement, both still
+/// `manual`.
+#[test]
+fn an_automatic_accept_leaves_a_persons_track_rows() {
+    use droppedneedle_library::operations::choice::accept_automatic;
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
+    rig.carried("album-1", RELEASE_A2, "automatic", 3);
+    rig.run(&format!(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+         VALUES ('t1', 'musicbrainz', '{RECORDING_1}', '{RELEASE_A2}', 'rt-a2-1', \
+         'manual', 0), ('t2', 'musicbrainz', '{RECORDING_1}', '{RELEASE_A2}', 'rt-a2-2', \
+         'manual', 0);"
+    ));
+    let mut candidate = offering(RELEASE_A1, &["t1"], &["t2"]);
+    candidate.evidence.track_evidence[0].recording_mbid = Some(RECORDING_2.to_owned());
+
+    let accepted =
+        rig.change(|tx| accept_automatic(tx, "album-1", &candidate, "R", None, None, 1.0));
+
+    assert!(matches!(accepted, Ok(Some(_))), "{accepted:?}");
+    assert_eq!(
+        rig.identity_tables("album-1")[..3],
+        [
+            format!("album {GROUP_A} {RELEASE_A1} automatic 4"),
+            format!("track t1 {RECORDING_1} {RELEASE_A2} rt-a2-1 -/- manual 1"),
+            format!("track t2 {RECORDING_1} {RELEASE_A2} rt-a2-2 -/- manual 1"),
+        ]
+    );
+}
+
+/// Identification sealing the match an album already holds writes
+/// nothing: no row revision moves, the automatic-edition undo stays the
+/// one the first seal kept, a best guess's flag stays as it was, and the
+/// catalog revision stays put. A person's hand-back undo still carried
+/// through identification answers to the match from then on: the seal
+/// clears its carried mark even when the match is unchanged.
+#[test]
+fn resealing_an_unchanged_match_writes_nothing() {
+    use droppedneedle_library::identify::models::{MatchFlag, MatchFlagState};
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts(
+        "album-1",
+        &[("t1", Some(RECORDING_1)), ("t2", Some(RECORDING_2))],
+    ));
+    let seal = AutomaticSeal {
+        local_album_id: "album-1".to_owned(),
+        release_group_mbid: GROUP_A.to_owned(),
+        release_mbid: Some(RELEASE_A2.to_owned()),
+        tracks: [("t1", RECORDING_1), ("t2", RECORDING_2)]
+            .iter()
+            .map(|(file, recording)| TrackIdentity {
+                local_track_id: (*file).to_owned(),
+                provider: "musicbrainz".to_owned(),
+                recording_mbid: Some((*recording).to_owned()),
+                release_track_mbid: Some(format!("rt-{file}")),
+                decision_source: DecisionSource::Automatic,
+                row_revision: 0,
+            })
+            .collect(),
+        flag: Some(MatchFlag {
+            state: MatchFlagState::Unconfirmed,
+            reason_code: "BEST_GUESS".to_owned(),
+            release_mbid: Some(RELEASE_A2.to_owned()),
+            candidates: Vec::new(),
+        }),
+    };
+    assert!(rig.store.seal_automatic(&seal).expect("seal lands"));
+    let state = || {
+        let mut lines = rig.identity_tables("album-1");
+        lines.extend(rig.texts(
+            "SELECT 'undo ' || id || ' ' || created_at FROM library_automatic_edition_undo \
+             WHERE local_album_id = ?1 \
+             UNION ALL SELECT 'flag at ' || updated_at FROM library_album_match_state \
+             WHERE local_album_id = ?1",
+            "album-1",
+        ));
+        lines
+    };
+    let sealed = state();
+    let revision = rig.catalog_revision();
+
+    assert!(rig.store.seal_automatic(&seal).expect("seal lands"));
+
+    assert_eq!(state(), sealed);
+    assert_eq!(rig.catalog_revision(), revision);
+
+    rig.run(
+        "INSERT INTO library_edition_choice_undo (id, local_album_id, action_id, \
+         prior_tracks_json, prior_hold_json, expected_identity_revision, created_at) \
+         VALUES ('choice-album-1', 'album-1', 'action-old', '[]', '{\"carried\":true}', 1, 0);",
+    );
+    assert!(rig.store.seal_automatic(&seal).expect("seal lands"));
+    assert!(
+        rig.identity_tables("album-1")
+            .contains(&"choice undo 1".to_owned()),
+        "the carried mark clears: {:?}",
+        rig.identity_tables("album-1")
+    );
+}
+
+/// Undoing an automatic acceptance on an album that had no match before
+/// takes the album back to no match, and leaves neither undo row behind:
+/// one kept for the acceptance could otherwise put its match back over
+/// the album's next one.
+#[test]
+fn undoing_back_to_no_match_leaves_no_undo() {
+    use droppedneedle_library::operations::choice;
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
+    rig.run(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator-1', 'Curator', 'admin', 0);",
+    );
+    let candidate = offering(RELEASE_A1, &["t1", "t2"], &[]);
+    let accepted =
+        rig.change(|tx| choice::accept_automatic(tx, "album-1", &candidate, "R", None, None, 1.0));
+    assert!(matches!(accepted, Ok(Some(_))), "{accepted:?}");
+
+    let undone = rig.change(|tx| choice::undo(tx, "album-1", "curator-1", 2.0));
+
+    assert_eq!(undone, Ok(()));
+    assert_eq!(rig.identity_tables("album-1"), Vec::<String>::new());
+}
+
+/// Merging an album into one whose match a person took off moves the
+/// merged album's edition across, and the undo rows the target kept go:
+/// they name revisions the moved match could reach, so either could put
+/// the removed match back over it.
+#[test]
+fn a_moved_edition_drops_the_targets_undo_rows() {
+    use droppedneedle_library::corrections::Corrections;
+    use droppedneedle_library::corrections::models::{
+        ApplyMeta, MembershipKind, MembershipRequest,
+    };
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.seed_album(&album_facts("album-2", &[("t2", Some(RECORDING_2))]));
+    rig.carried("album-1", RELEASE_A1, "automatic", 1);
+    rig.run(
+        "DELETE FROM library_automatic_edition_undo WHERE local_album_id = 'album-1'; \
+         DELETE FROM library_edition_choice_undo WHERE local_album_id = 'album-1'; \
+         INSERT INTO library_automatic_edition_undo (id, local_album_id, \
+         prior_track_identities_json, expected_post_album_revision, \
+         expected_post_identity_revision, reason_code, created_at) \
+         VALUES ('auto-album-2', 'album-2', '[]', 1, 1, 'OLD', 0); \
+         INSERT INTO library_edition_choice_undo (id, local_album_id, action_id, \
+         prior_tracks_json, expected_identity_revision, created_at) \
+         VALUES ('choice-album-2', 'album-2', 'action-old', '[]', 1, 0);",
+    );
+    let corrections = Corrections::new(
+        droppedneedle_kernel::db::Db::open_for_tests(&rig.path()).expect("db opens"),
+        droppedneedle_library::settings::LibrarySettings::new(
+            &crate::common::config_store(&rig._dir.join("settings")),
+            None,
+        ),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    let request = MembershipRequest {
+        kind: MembershipKind::Merge,
+        album_id: None,
+        track_ids: vec!["t1".to_owned()],
+        expected_album_revisions: Default::default(),
+        target_album_id: Some("album-2".to_owned()),
+        title: None,
+        album_artist_name: None,
+        identity_choice: Default::default(),
+    };
+    let preview = corrections
+        .preview_membership(&request, "admin")
+        .expect("previewed");
+
+    corrections
+        .apply_membership(
+            &request,
+            &ApplyMeta {
+                preview_token: preview.token,
+                idempotency_key: None,
+                actor: "admin".to_owned(),
+            },
+        )
+        .expect("merged");
+
+    assert_eq!(
+        rig.identity_tables("album-2")
+            .into_iter()
+            .filter(|line| line.contains("undo") || line.starts_with("album"))
+            .collect::<Vec<_>>(),
+        vec![format!("album {GROUP_A} {RELEASE_A1} automatic 2")]
+    );
+}
+
 /// The existing-matches repair never rechecks an edition carried over from
 /// v2 for removal, and reports one whose files contradict its release as a
 /// person's identity, never as safe to detach.
@@ -3035,6 +3234,13 @@ async fn an_attempt_on_files_that_moved_writes_nothing_and_queues_them() {
     );
     assert_eq!(queued.len(), 1, "the new files are queued: {queued:?}");
     assert_ne!(queued[0], "job-1");
+    let activity = droppedneedle_library::activity::store::identification_snapshot(&rig.db, 0.0)
+        .expect("activity reads");
+    assert_eq!(
+        (activity.failed, activity.failure),
+        (0, None),
+        "files that moved are no failure"
+    );
 }
 
 /// The attempt's lease lapsed and another worker claimed the job while it

@@ -45,7 +45,8 @@ pub enum AutomaticOutcome {
 /// the supported files it still holds (a person's track row stays), and
 /// the match flag (cleared for a confident match, set for a best guess).
 /// For an exact edition the rows it replaced are kept for undo. A person's
-/// album row is never replaced.
+/// album row is never replaced, and a match that already reads so is left
+/// as it is, its undo included.
 pub fn seal_automatic(
     tx: &Transaction<'_>,
     seal: &AutomaticSeal,
@@ -70,11 +71,12 @@ pub fn seal_automatic(
         seal.release_mbid,
         now
     ])?;
-    if written != 1 {
+    let album_changed = written == 1;
+    if !album_changed && !album_source(tx, album)?.is_some_and(DecisionSource::is_revisable) {
         return Ok(AutomaticOutcome::PersonsChoice);
     }
     // A person's undo carried through this identification now answers to
-    // the match it sealed.
+    // the match it sealed, changed or not.
     carry_undo(tx, album, prior_revision, identity_revision(tx, album)?)?;
     // The flag lands with the seal, so a best guess is never applied
     // without it (and a confident match never keeps a stale one).
@@ -93,7 +95,7 @@ pub fn seal_automatic(
             album,
         ])?;
     }
-    if seal.release_mbid.is_some() {
+    if album_changed && seal.release_mbid.is_some() {
         keep_automatic_undo(
             tx,
             album,
@@ -235,9 +237,9 @@ fn still_as_checked(
 /// Accept an exact edition a recheck found, as confirmed: the album row
 /// and the placed files' rows become automatic on the release, the other
 /// files leave their release tracks, a waiting placement and any match
-/// flag go. The rows it replaced are kept as both undos (the album page's
-/// edition undo and the automatic-edition undo), and either puts the
-/// earlier match state back. A person's choice, made now or carried over
+/// flag go; a file whose row is a person's keeps it. The rows it replaced
+/// are kept as both undos (the album page's edition undo and the
+/// automatic-edition undo), and either puts the earlier match state back. A person's choice, made now or carried over
 /// from v2, is never replaced, and an album that moved since the check
 /// ([`Accepted::expected`]) is left as it is: `None` then. Returns the
 /// audit row id.

@@ -356,8 +356,9 @@ impl SqliteIdentifyStore {
     }
 
     /// Run `work` and land `job` after it on one transaction. Files that
-    /// moved land the job as `INPUT_MOVED`, a terminal failure: the job
-    /// the move queued takes over. A lost lease rolls `work` back too.
+    /// moved end the job as `INPUT_MOVED`: the job the move queued takes
+    /// over, and the activity feed does not count it as a failure. A lost
+    /// lease rolls `work` back too.
     fn land_with(
         &self,
         label: &'static str,
