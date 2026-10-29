@@ -14,7 +14,7 @@ pub mod template;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use boot::apply_migrations_blocking;
-pub use boot::{SchemaError, apply_migrations, assert_migrated, latest_version};
+pub use boot::{SchemaError, apply_migrations, assert_migrated, latest_version, run_migrations};
 
 /// The migrations in `server/migrations`, embedded and applied in version
 /// order by [`apply_migrations`].

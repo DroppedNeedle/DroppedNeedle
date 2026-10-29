@@ -8,7 +8,9 @@ use std::time::Instant;
 
 use droppedneedle_kernel::db::statement::{Declared, Schema, StatementFile};
 use droppedneedle_kernel::db::{DbConfig, open_runtime};
-use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations, assert_migrated, latest_version};
+use droppedneedle_kernel::schema::{
+    MIGRATOR, apply_migrations, assert_migrated, latest_version, run_migrations,
+};
 use regex::Regex;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -326,7 +328,7 @@ async fn every_earlier_version_upgrades_and_keeps_data() {
             locking: true,
             no_tx: false,
         };
-        through.run(&pool).await.unwrap();
+        run_migrations(&pool, &through).await.unwrap();
         sqlx::query(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('u1', 'Kept', 'user', '2024-01-01T00:00:00+00:00')",
@@ -7790,5 +7792,633 @@ async fn reviews_gain_a_revision_on_upgrade() {
     ] {
         sqlx::query(change).execute(&pool).await.unwrap();
         assert_eq!(revision().await.1, expected, "{change}");
+    }
+}
+
+/// The runner's `-- no-transaction` path and the table-rebuild recipe in the
+/// kernel's `schema::boot` module doc, proven on a parent that cascade,
+/// restrict and set-null children point at.
+mod rebuild {
+    use std::borrow::Cow;
+    use std::path::{Path, PathBuf};
+
+    use droppedneedle_kernel::schema::{MIGRATOR, SchemaError, run_migrations};
+    use regex::Regex;
+    use sqlx::SqlitePool;
+    use sqlx::migrate::{MigrateError, Migration, MigrationType, Migrator};
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+
+    use crate::common::ScratchDir;
+
+    const BASE: &str = r#"
+CREATE TABLE p (id TEXT PRIMARY KEY, name TEXT NOT NULL) STRICT;
+CREATE INDEX p_name ON p (name);
+CREATE TABLE p_log (id TEXT NOT NULL, name TEXT NOT NULL) STRICT;
+CREATE TRIGGER p_renamed AFTER UPDATE OF name ON p
+BEGIN INSERT INTO p_log (id, name) VALUES (NEW.id, NEW.name); END;
+CREATE TABLE c_cascade (id INTEGER PRIMARY KEY,
+    p_id TEXT NOT NULL REFERENCES p (id) ON DELETE CASCADE) STRICT;
+CREATE INDEX c_cascade_p ON c_cascade (p_id);
+CREATE TABLE c_restrict (id INTEGER PRIMARY KEY,
+    p_id TEXT NOT NULL REFERENCES p (id) ON DELETE RESTRICT) STRICT;
+CREATE INDEX c_restrict_p ON c_restrict (p_id);
+CREATE TABLE c_set_null (id INTEGER PRIMARY KEY,
+    p_id TEXT REFERENCES p (id) ON DELETE SET NULL) STRICT;
+CREATE INDEX c_set_null_p ON c_set_null (p_id);
+CREATE TABLE c_keyed (p_id TEXT NOT NULL REFERENCES p (id) ON DELETE CASCADE,
+    tag TEXT NOT NULL, PRIMARY KEY (p_id, tag)) STRICT, WITHOUT ROWID;
+CREATE TABLE other (id INTEGER PRIMARY KEY) STRICT;
+CREATE TABLE other_child (id INTEGER PRIMARY KEY, other_id INTEGER REFERENCES other (id)) STRICT;
+CREATE INDEX other_child_other ON other_child (other_id);
+PRAGMA user_version = 1;
+"#;
+
+    const RECIPE: &str = r#"-- no-transaction
+PRAGMA foreign_keys=OFF;
+BEGIN IMMEDIATE;
+CREATE TEMP TABLE rebuild_guard (ok INTEGER NOT NULL CHECK (ok = 1)) STRICT;
+INSERT INTO rebuild_guard SELECT (SELECT foreign_keys FROM pragma_foreign_keys) = 0;
+INSERT INTO rebuild_guard SELECT (SELECT user_version FROM pragma_user_version) < 2;
+CREATE TEMP TABLE rebuild_orphans AS
+    SELECT "table" AS child, rowid AS row, parent, fkid FROM pragma_foreign_key_check;
+CREATE TABLE p_new (id TEXT PRIMARY KEY, name TEXT NOT NULL,
+    added_at INTEGER NOT NULL DEFAULT 0) STRICT;
+INSERT INTO p_new (rowid, id, name, added_at) SELECT rowid, id, name, 0 FROM p;
+DROP TABLE p;
+ALTER TABLE p_new RENAME TO p;
+CREATE INDEX p_name ON p (name);
+CREATE TRIGGER p_renamed AFTER UPDATE OF name ON p
+BEGIN INSERT INTO p_log (id, name) VALUES (NEW.id, NEW.name); END;
+INSERT INTO rebuild_guard SELECT NOT EXISTS (
+    SELECT 1 FROM (
+        SELECT "table" AS child, rowid AS row, parent, fkid, COUNT(*) AS n
+        FROM pragma_foreign_key_check GROUP BY 1, 2, 3, 4) AS now
+    WHERE now.n > (SELECT COUNT(*) FROM rebuild_orphans AS before
+        WHERE before.child = now.child AND before.row IS now.row
+            AND before.parent = now.parent AND before.fkid = now.fkid));
+DROP TABLE rebuild_guard;
+DROP TABLE rebuild_orphans;
+PRAGMA user_version = 2;
+COMMIT;
+PRAGMA foreign_keys=ON;
+"#;
+
+    const FK_OFF_GUARD: &str =
+        "INSERT INTO rebuild_guard SELECT (SELECT foreign_keys FROM pragma_foreign_keys) = 0;\n";
+
+    fn migration(version: i64, sql: &str, no_tx: bool) -> Migration {
+        Migration::new(
+            version,
+            Cow::Owned(format!("step {version}")),
+            MigrationType::Simple,
+            Cow::Owned(sql.to_owned()),
+            no_tx,
+        )
+    }
+
+    fn set(migrations: Vec<Migration>) -> Migrator {
+        Migrator {
+            migrations: Cow::Owned(migrations),
+            ..Migrator::DEFAULT
+        }
+    }
+
+    fn base() -> Migrator {
+        set(vec![migration(1, BASE, false)])
+    }
+
+    fn rebuilt_by(recipe: &str, no_tx: bool) -> Migrator {
+        set(vec![migration(1, BASE, false), migration(2, recipe, no_tx)])
+    }
+
+    /// A file database with one connection and foreign keys on, as boot
+    /// opens it.
+    async fn file_pool(dir: &ScratchDir) -> (SqlitePool, PathBuf) {
+        let path = dir.join("rebuild.db");
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .foreign_keys(true)
+            .journal_mode(SqliteJournalMode::Wal);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        (pool, path)
+    }
+
+    /// Parents inserted out of key order, so rowid order is not key order.
+    async fn seed(pool: &SqlitePool, restrict: bool) {
+        let mut sql = String::from(
+            "INSERT INTO p (id, name) VALUES ('c', 'Cee'), ('a', 'Ay'), ('b', 'Bee');
+             INSERT INTO c_cascade (id, p_id) VALUES (1, 'a'), (2, 'b'), (3, 'c');
+             INSERT INTO c_set_null (id, p_id) VALUES (1, 'a'), (2, 'c');",
+        );
+        if restrict {
+            sql.push_str("INSERT INTO c_restrict (id, p_id) VALUES (1, 'b'), (2, 'c');");
+        }
+        sqlx::raw_sql(&sql).execute(pool).await.unwrap();
+    }
+
+    /// One orphan in a table the rebuild never touches.
+    async fn seed_unrelated_orphan(pool: &SqlitePool) {
+        sqlx::raw_sql(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO other_child (id, other_id) VALUES (1, 99);
+             PRAGMA foreign_keys = ON;",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    type Child = (i64, Option<String>);
+
+    async fn rows(pool: &SqlitePool, sql: &str) -> Vec<Child> {
+        sqlx::query_as(sql).fetch_all(pool).await.unwrap()
+    }
+
+    async fn children(pool: &SqlitePool) -> Vec<Vec<Child>> {
+        let mut all = Vec::new();
+        for table in ["c_cascade", "c_restrict", "c_set_null"] {
+            all.push(rows(pool, &format!("SELECT id, p_id FROM {table} ORDER BY id")).await);
+        }
+        all
+    }
+
+    /// Every schema row except the rebuilt table's own `CREATE TABLE`.
+    async fn schema_but_p(pool: &SqlitePool) -> Vec<(String, String, String, String)> {
+        sqlx::query_as(
+            "SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_schema \
+             WHERE NOT (type = 'table' AND name = 'p') ORDER BY type, name",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn scalar(pool: &SqlitePool, sql: &str) -> i64 {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+
+    async fn recorded(pool: &SqlitePool) -> Vec<(i64, i64)> {
+        sqlx::query_as("SELECT version, execution_time FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    /// Every row of every table and the stamp, read over a connection of
+    /// its own.
+    fn snapshot(path: &Path) -> Vec<String> {
+        let connection = rusqlite::Connection::open(path).unwrap();
+        let stamp: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let mut out = vec![format!("user_version {stamp}")];
+        let schema: Vec<(String, String, Option<String>)> = connection
+            .prepare("SELECT type, name, sql FROM sqlite_schema ORDER BY type, name")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        for (kind, name, sql) in schema {
+            out.push(format!("{kind} {name} {sql:?}"));
+            if kind != "table" {
+                continue;
+            }
+            let mut statement = connection
+                .prepare(&format!("SELECT * FROM \"{name}\""))
+                .unwrap();
+            let width = statement.column_count();
+            let mut table: Vec<String> = statement
+                .query_map([], |row| {
+                    (0..width)
+                        .map(|at| row.get::<_, rusqlite::types::Value>(at))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map(|values| format!("{name} {values:?}"))
+                })
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            table.sort();
+            out.extend(table);
+        }
+        out
+    }
+
+    fn execute_failure(error: SchemaError) -> String {
+        match error {
+            SchemaError::Migrate(MigrateError::ExecuteMigration(error, 2)) => error.to_string(),
+            other => panic!("expected migration 2 to fail, got {other:?}"),
+        }
+    }
+
+    /// The recipe rebuilds the parent through the production runner: every
+    /// child row stays and points at its parent, the rest of the schema is
+    /// unchanged, rowid order holds, foreign keys are back on for the same
+    /// connection, and the keys still act.
+    #[tokio::test]
+    async fn the_recipe_rebuilds_a_parent_and_keeps_every_child() {
+        let dir = ScratchDir::new("rebuild-keep");
+        let (pool, _) = file_pool(&dir).await;
+        run_migrations(&pool, &base()).await.unwrap();
+        seed(&pool, true).await;
+        let children_before = children(&pool).await;
+        let schema_before = schema_but_p(&pool).await;
+        let order_before = rows(&pool, "SELECT rowid, id FROM p ORDER BY rowid").await;
+
+        run_migrations(&pool, &rebuilt_by(RECIPE, true))
+            .await
+            .unwrap();
+
+        assert_eq!(children(&pool).await, children_before, "no child row moved");
+        assert_eq!(
+            scalar(&pool, "SELECT COUNT(*) FROM pragma_foreign_key_check").await,
+            0,
+            "every child points at its parent"
+        );
+        assert_eq!(
+            schema_but_p(&pool).await,
+            schema_before,
+            "indexes, triggers and the children's schema are unchanged"
+        );
+        assert_eq!(
+            rows(&pool, "SELECT rowid, id FROM p ORDER BY rowid").await,
+            order_before
+        );
+        assert_eq!(scalar(&pool, "PRAGMA foreign_keys").await, 1);
+        assert_eq!(scalar(&pool, "PRAGMA user_version").await, 2);
+        assert_eq!(
+            super::column_names(&pool, "p").await,
+            ["id", "name", "added_at"],
+            "the rebuild took effect"
+        );
+        let recorded = recorded(&pool).await;
+        assert_eq!(recorded.len(), 2);
+        assert!(recorded[1].1 >= 0, "a file that ran records its time");
+
+        sqlx::query("DELETE FROM p WHERE id = 'a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            scalar(&pool, "SELECT COUNT(*) FROM c_cascade WHERE p_id = 'a'").await,
+            0,
+            "the cascade fires"
+        );
+        assert_eq!(
+            rows(&pool, "SELECT id, p_id FROM c_set_null WHERE id = 1").await,
+            [(1, None)],
+            "set null fires"
+        );
+        assert!(
+            sqlx::query("DELETE FROM p WHERE id = 'b'")
+                .execute(&pool)
+                .await
+                .is_err(),
+            "restrict still refuses"
+        );
+        sqlx::query("UPDATE p SET name = 'Cy' WHERE id = 'c'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            scalar(&pool, "SELECT COUNT(*) FROM p_log").await,
+            1,
+            "the trigger fires"
+        );
+    }
+
+    /// An old orphan in another table does not block the rebuild; a rebuild
+    /// that makes a new orphan is refused and leaves the database exactly
+    /// as it was, its stamp and migration records included.
+    #[tokio::test]
+    async fn an_old_orphan_upgrades_and_a_new_one_is_refused() {
+        let dir = ScratchDir::new("rebuild-orphan");
+        let (pool, _) = file_pool(&dir).await;
+        run_migrations(&pool, &base()).await.unwrap();
+        seed(&pool, true).await;
+        seed_unrelated_orphan(&pool).await;
+        run_migrations(&pool, &rebuilt_by(RECIPE, true))
+            .await
+            .unwrap();
+        assert_eq!(scalar(&pool, "PRAGMA user_version").await, 2);
+
+        let dir = ScratchDir::new("rebuild-new-orphan");
+        let (pool, path) = file_pool(&dir).await;
+        run_migrations(&pool, &base()).await.unwrap();
+        seed(&pool, true).await;
+        seed_unrelated_orphan(&pool).await;
+        let before = snapshot(&path);
+        let orphaning = RECIPE.replace("0 FROM p;", "0 FROM p WHERE id <> 'a';");
+        assert_ne!(orphaning, RECIPE);
+
+        let error = run_migrations(&pool, &rebuilt_by(&orphaning, true))
+            .await
+            .unwrap_err();
+        assert!(
+            execute_failure(error).contains("CHECK constraint failed"),
+            "the guard after the copy refuses"
+        );
+        assert_eq!(snapshot(&path), before, "the database is as it was");
+        assert_eq!(
+            scalar(&pool, "PRAGMA foreign_keys").await,
+            1,
+            "the pool's next connection has foreign keys on"
+        );
+    }
+
+    /// A WITHOUT ROWID child reports every orphan with a NULL rowid, so one
+    /// old orphan there must not let a new one through.
+    #[tokio::test]
+    async fn a_new_orphan_behind_an_old_one_without_rowid_is_refused() {
+        let dir = ScratchDir::new("rebuild-keyed-orphan");
+        let (pool, path) = file_pool(&dir).await;
+        run_migrations(&pool, &base()).await.unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO p (id, name) VALUES ('c', 'Cee'), ('a', 'Ay'), ('b', 'Bee');
+             INSERT INTO c_keyed (p_id, tag) VALUES ('a', 'x'), ('b', 'x');
+             PRAGMA foreign_keys = OFF;
+             INSERT INTO c_keyed (p_id, tag) VALUES ('gone', 'x');
+             PRAGMA foreign_keys = ON;",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let before = snapshot(&path);
+        let orphaning = RECIPE.replace("0 FROM p;", "0 FROM p WHERE id <> 'a';");
+
+        let error = run_migrations(&pool, &rebuilt_by(&orphaning, true))
+            .await
+            .unwrap_err();
+        assert!(execute_failure(error).contains("CHECK constraint failed"));
+        assert_eq!(snapshot(&path), before, "the database is as it was");
+    }
+
+    /// The naive versions of the recipe fail, so each step it adds is
+    /// needed.
+    #[tokio::test]
+    async fn the_naive_rebuilds_fail() {
+        // Without the first line and its own BEGIN and COMMIT, the file runs
+        // inside sqlx's transaction, where foreign_keys=OFF does nothing and
+        // DROP TABLE empties the children. The guard that foreign keys are
+        // off is what catches that, so it goes too.
+        let wrapped = RECIPE
+            .replace("-- no-transaction\n", "")
+            .replace("BEGIN IMMEDIATE;\n", "")
+            .replace("COMMIT;\n", "")
+            .replace(FK_OFF_GUARD, "");
+        let dir = ScratchDir::new("rebuild-naive-wrapped");
+        let (pool, _) = file_pool(&dir).await;
+        run_migrations(&pool, &base()).await.unwrap();
+        seed(&pool, false).await;
+        run_migrations(&pool, &rebuilt_by(&wrapped, false))
+            .await
+            .unwrap();
+        assert_eq!(
+            scalar(&pool, "SELECT COUNT(*) FROM c_cascade").await,
+            0,
+            "the children cascade"
+        );
+        assert_eq!(
+            scalar(&pool, "SELECT COUNT(*) FROM c_set_null WHERE p_id IS NULL").await,
+            2,
+            "the set-null children lose their parent"
+        );
+
+        // With that guard kept, the same wrapped file is refused instead.
+        let guarded = wrapped.replace(
+            "CREATE TEMP TABLE rebuild_orphans",
+            &format!("{FK_OFF_GUARD}CREATE TEMP TABLE rebuild_orphans"),
+        );
+        let dir = ScratchDir::new("rebuild-naive-guarded");
+        let (pool, _) = file_pool(&dir).await;
+        run_migrations(&pool, &base()).await.unwrap();
+        seed(&pool, true).await;
+        let error = run_migrations(&pool, &rebuilt_by(&guarded, false))
+            .await
+            .unwrap_err();
+        assert!(execute_failure(error).contains("CHECK constraint failed"));
+        assert_eq!(scalar(&pool, "SELECT COUNT(*) FROM c_cascade").await, 3);
+
+        // Renaming the old table first: SQLite rewrites every child's
+        // REFERENCES to the old name, so its drop leaves them pointing at
+        // nothing, and the guard after the copy refuses.
+        let renamed_first = RECIPE.replace(
+            "DROP TABLE p;\nALTER TABLE p_new RENAME TO p;\n",
+            "ALTER TABLE p RENAME TO p_old;\nALTER TABLE p_new RENAME TO p;\nDROP TABLE p_old;\n",
+        );
+        assert_ne!(renamed_first, RECIPE);
+        let dir = ScratchDir::new("rebuild-naive-renamed");
+        let (pool, path) = file_pool(&dir).await;
+        run_migrations(&pool, &base()).await.unwrap();
+        seed(&pool, true).await;
+        let before = snapshot(&path);
+        let error = run_migrations(&pool, &rebuilt_by(&renamed_first, true))
+            .await
+            .unwrap_err();
+        assert!(execute_failure(error).contains("CHECK constraint failed"));
+        assert_eq!(snapshot(&path), before);
+        // Without that guard it commits, and the children name the old table.
+        let after_copy =
+            Regex::new(r"(?s)INSERT INTO rebuild_guard SELECT NOT EXISTS \(.*?\);\n").unwrap();
+        let unguarded = after_copy.replace(&renamed_first, "").into_owned();
+        assert_ne!(unguarded, renamed_first);
+        run_migrations(&pool, &rebuilt_by(&unguarded, true))
+            .await
+            .unwrap();
+        let child: String =
+            sqlx::query_scalar("SELECT sql FROM sqlite_schema WHERE name = 'c_cascade'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(child.contains("p_old"), "{child}");
+
+        // The recipe under sqlx's own runner fails on its nested BEGIN.
+        let dir = ScratchDir::new("rebuild-naive-sqlx");
+        let (pool, path) = file_pool(&dir).await;
+        run_migrations(&pool, &base()).await.unwrap();
+        seed(&pool, true).await;
+        let before = snapshot(&path);
+        let error = rebuilt_by(RECIPE, true).run(&pool).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot start a transaction within a transaction"),
+            "{error}"
+        );
+        assert_eq!(snapshot(&path), before);
+    }
+
+    /// A crash between the file's COMMIT and its record: the next run
+    /// records it without running it again (the file's own guard would
+    /// refuse a second run). A stamp past an unrecorded file refuses with
+    /// nothing recorded.
+    #[tokio::test]
+    async fn a_committed_file_is_recorded_once_and_a_stamp_past_it_refuses() {
+        let dir = ScratchDir::new("rebuild-crash");
+        let (pool, _) = file_pool(&dir).await;
+        run_migrations(&pool, &base()).await.unwrap();
+        seed(&pool, true).await;
+        sqlx::raw_sql(RECIPE).execute(&pool).await.unwrap();
+        let first = recorded(&pool).await;
+        assert_eq!(first.len(), 1, "committed, not recorded");
+
+        let mut again = pool.acquire().await.unwrap();
+        let rerun = sqlx::raw_sql(RECIPE).execute(&mut *again).await;
+        again.close().await.unwrap();
+        assert!(
+            rerun
+                .unwrap_err()
+                .to_string()
+                .contains("CHECK constraint failed"),
+            "the file refuses to run twice"
+        );
+
+        run_migrations(&pool, &rebuilt_by(RECIPE, true))
+            .await
+            .unwrap();
+        assert_eq!(recorded(&pool).await, [first[0], (2, -1)]);
+        assert_eq!(scalar(&pool, "SELECT COUNT(*) FROM c_cascade").await, 3);
+        assert_eq!(scalar(&pool, "PRAGMA foreign_keys").await, 1);
+
+        let dir = ScratchDir::new("rebuild-ahead");
+        let (pool, _) = file_pool(&dir).await;
+        run_migrations(&pool, &base()).await.unwrap();
+        sqlx::query("PRAGMA user_version = 3")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let error = run_migrations(&pool, &rebuilt_by(RECIPE, true))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                SchemaError::StampAhead {
+                    version: 2,
+                    stamp: 3
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(recorded(&pool).await.len(), 1, "nothing recorded");
+    }
+
+    /// What is wrong with a no-transaction file's shape, by the recipe.
+    fn shape_problems(migration: &Migration) -> Vec<String> {
+        let lines: Vec<&str> = migration
+            .sql
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        let mut problems = Vec::new();
+        let opening = [
+            "-- no-transaction",
+            "PRAGMA foreign_keys=OFF;",
+            "BEGIN IMMEDIATE;",
+        ];
+        if lines.get(..3) != Some(&opening[..]) {
+            problems.push("does not open with the recipe's three lines".to_owned());
+        }
+        let commits: Vec<usize> = (0..lines.len())
+            .filter(|at| lines[*at] == "COMMIT;")
+            .collect();
+        let stamp = format!("PRAGMA user_version = {};", migration.version);
+        match commits[..] {
+            [at] if at > 0 && lines[at - 1] == stamp => {}
+            [_] => problems.push(format!("COMMIT is not preceded by `{stamp}`")),
+            _ => problems.push(format!("has {} COMMIT lines, not one", commits.len())),
+        }
+        if lines.last() != Some(&"PRAGMA foreign_keys=ON;") {
+            problems.push("does not end with `PRAGMA foreign_keys=ON;`".to_owned());
+        }
+        problems
+    }
+
+    /// Every shipped no-transaction migration has the recipe's shape, and
+    /// every migration that sets foreign keys is one.
+    #[test]
+    fn no_transaction_migrations_follow_the_recipe() {
+        assert_eq!(
+            shape_problems(&migration(2, RECIPE, true)),
+            Vec::<String>::new()
+        );
+        assert_eq!(shape_problems(&migration(3, RECIPE, true)).len(), 1);
+
+        let sets_foreign_keys = Regex::new(r"(?i)PRAGMA\s+foreign_keys\s*=").unwrap();
+        let mut wrong = Vec::new();
+        for migration in MIGRATOR.iter() {
+            if migration.no_tx {
+                for problem in shape_problems(migration) {
+                    wrong.push(format!("{}: {problem}", migration.version));
+                }
+            } else if sets_foreign_keys.is_match(&migration.sql) {
+                wrong.push(format!(
+                    "{}: sets foreign_keys without `-- no-transaction`",
+                    migration.version
+                ));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    type Record = (i64, String, bool, Vec<u8>);
+
+    async fn records(pool: &SqlitePool) -> Vec<Record> {
+        sqlx::query_as(
+            "SELECT version, description, success, checksum FROM _sqlx_migrations ORDER BY version",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    type FullRecord = (i64, String, String, bool, Vec<u8>, i64);
+
+    async fn full_records(pool: &SqlitePool) -> Vec<FullRecord> {
+        sqlx::query_as(
+            "SELECT version, description, installed_on, success, checksum, execution_time \
+             FROM _sqlx_migrations ORDER BY version",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    /// A no-transaction file is recorded with the row sqlx's own `apply`
+    /// writes, the shipped migrations record the same rows under either
+    /// runner, and a second run changes no column.
+    #[tokio::test]
+    async fn records_match_what_sqlx_writes() {
+        let plain = set(vec![migration(
+            1,
+            "-- no-transaction\nCREATE TABLE t (x INTEGER) STRICT;\nPRAGMA user_version = 1;\n",
+            true,
+        )]);
+        let by_sqlx = super::scratch_pool().await;
+        plain.run(&by_sqlx).await.unwrap();
+        let ours = super::scratch_pool().await;
+        run_migrations(&ours, &plain).await.unwrap();
+        assert_eq!(records(&ours).await.len(), 1);
+        assert_eq!(records(&ours).await, records(&by_sqlx).await);
+
+        let by_sqlx = super::scratch_pool().await;
+        MIGRATOR.run(&by_sqlx).await.unwrap();
+        let ours = super::scratch_pool().await;
+        run_migrations(&ours, &MIGRATOR).await.unwrap();
+        assert_eq!(records(&ours).await, records(&by_sqlx).await);
+
+        let first = full_records(&ours).await;
+        run_migrations(&ours, &MIGRATOR).await.unwrap();
+        assert_eq!(
+            full_records(&ours).await,
+            first,
+            "a second run changes nothing"
+        );
     }
 }

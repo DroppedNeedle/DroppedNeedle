@@ -137,7 +137,9 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
         .create_if_missing(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
     let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-    older.run(&pool).await.unwrap();
+    droppedneedle_kernel::schema::run_migrations(&pool, &older)
+        .await
+        .unwrap();
     pool.close().await;
 
     let runtime = open_runtime(&DbConfig::new(&db_path)).await.unwrap();
