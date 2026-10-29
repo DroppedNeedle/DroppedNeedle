@@ -151,7 +151,7 @@ pub async fn get_run(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown bundle id, or one a curator did not apply"),
-        (status = 409, description = "Undo blocked for a file"),
+        (status = 409, description = "Undo blocked for a file, or the library is off"),
     )
 )]
 pub async fn manage_undo(

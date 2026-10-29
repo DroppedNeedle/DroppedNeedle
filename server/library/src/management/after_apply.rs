@@ -229,6 +229,11 @@ impl Management {
         bundle_id: &str,
         only_by: Option<&str>,
     ) -> Result<crate::manage::AppliedBundle, crate::service::ServiceError> {
+        if self.library_off() {
+            return Err(crate::service::ServiceError::Conflict {
+                message: super::service::LIBRARY_OFF.to_owned(),
+            });
+        }
         let applied = self.setup.publishing.undo_bundle(bundle_id, only_by)?;
         if let Err(error) = self.bundle_undone(bundle_id) {
             tracing::warn!(%error, bundle_id, "undone bundle not recorded for automatic management");

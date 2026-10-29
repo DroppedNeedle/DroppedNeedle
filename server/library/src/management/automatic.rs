@@ -51,6 +51,9 @@ pub const SCAN_HELD_BACK: &str = "SCAN_HELD_BACK";
 #[derive(Debug, Clone, Default)]
 pub struct Settle {
     started_at: Option<f64>,
+    /// The library was switched off at the last look, so the pause and
+    /// the resume are each logged once.
+    library_off: bool,
 }
 
 /// Whether the app writes an album's files by itself, and whether it is
@@ -485,6 +488,20 @@ impl Management {
         if now - started_at < SETTLE_SECONDS {
             return Ok(false);
         }
+        // While the library is switched off nothing new is planned: the
+        // albums wait in the queue for the first look after it is back on.
+        let off = self.library_off();
+        if off != settle.library_off {
+            settle.library_off = off;
+            if off {
+                tracing::info!("automatic management paused: the library is switched off");
+            } else {
+                tracing::info!("automatic management resumed: the library is switched on");
+            }
+        }
+        if off {
+            return Ok(false);
+        }
         if planner::manage_unconfirmed(&self.setup) {
             self.setup
                 .db
@@ -506,6 +523,9 @@ impl Management {
     /// landed since. A busy read
     /// is an error, never an empty queue. Blocking.
     fn look_at_due(&self, now: f64, settled_before: Option<f64>) -> Result<bool, ManagementError> {
+        if self.library_off() {
+            return Ok(false);
+        }
         let due: Option<(String, i64)> =
             self.setup
                 .db

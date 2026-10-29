@@ -92,6 +92,11 @@ pub(super) fn stale(message: &str) -> ManagementError {
     ManagementError::Conflict(message.to_owned())
 }
 
+/// The refusal while the library-wide switch is off: the same answer a
+/// scan gets (409 `CONFLICT`).
+pub(super) const LIBRARY_OFF: &str = "The local library is switched off, so no files can be changed. \
+     Turn it on under Settings > Library.";
+
 impl Management {
     pub fn new(setup: &LibrarySetup) -> Self {
         Self {
@@ -107,6 +112,21 @@ impl Management {
     ) -> Self {
         self.shutdown = Some(shutdown);
         self
+    }
+
+    /// Whether the library-wide switch is off. Nothing new is planned or
+    /// written while it is; recovery and read-only views still run.
+    pub(super) fn library_off(&self) -> bool {
+        !self.setup.core.live_registry().enabled()
+    }
+
+    /// Refuse new file work while the library is switched off, as a scan
+    /// request is refused.
+    pub(super) fn refuse_while_off(&self) -> Result<(), ManagementError> {
+        if self.library_off() {
+            return Err(ManagementError::Conflict(LIBRARY_OFF.to_owned()));
+        }
+        Ok(())
     }
 
     /// The stored settings, with every profile's field list complete even
@@ -283,6 +303,7 @@ impl Management {
     /// same idempotency key made (with a fresh token) when it asked for
     /// the same thing. Blocking.
     pub(super) fn start_job(&self, spec: JobSpec<'_>) -> Result<PreviewHandle, ManagementError> {
+        self.refuse_while_off()?;
         let profile_json = serde_json::to_string(spec.pinned)?;
         let now = self.setup.clock.now_secs();
         // A job no person asked for is the automatic worker's.
@@ -614,6 +635,7 @@ impl Management {
                 "An apply request key is required.".to_owned(),
             ));
         }
+        self.refuse_while_off()?;
         let snapshot = self.snapshot(job_id)?;
         self.check_token(&snapshot, actor, &request.preview_token)?;
         refuse_activation(&snapshot)?;
@@ -786,6 +808,7 @@ impl Management {
         idempotency_key: &str,
         actor: &str,
     ) -> Result<PreviewHandle, ManagementError> {
+        self.refuse_while_off()?;
         let source = self.snapshot(job_id)?;
         if source.job.row_revision != expected_row_revision {
             return Err(stale(
@@ -941,10 +964,11 @@ impl Management {
     }
 
     /// Requeue the management jobs whose worker vanished, then claim and
-    /// run the next queued one under `worker`, never while a scan runs.
-    /// True when a job was worked on. Blocking.
+    /// run the next queued one under `worker`, never while a scan runs or
+    /// the library is switched off. True when a job was worked on.
+    /// Blocking.
     pub fn run_next(&self, worker: &str) -> Result<bool, ManagementError> {
-        if !self.setup.coordinator.current().is_empty() {
+        if !self.setup.coordinator.current().is_empty() || self.library_off() {
             return Ok(false);
         }
         let now = self.setup.clock.now_secs();
@@ -1169,6 +1193,20 @@ impl Management {
                 files = changed.len(),
                 "automatic management stepped back from the album"
             );
+        } else if finished && automatic && self.library_off() {
+            // The automatic worker looks at the albums again once the
+            // library is back on and applies the preview then.
+            tracing::info!(
+                job_id,
+                "the library is switched off; the automatic preview waits for it"
+            );
+            for album in &albums {
+                super::automatic::queue_automatic_management(
+                    &self.setup.db,
+                    &*self.setup.clock,
+                    album,
+                );
+            }
         } else if finished
             && automatic
             && let Err(error) = self.apply_automatic(job_id, &summary)
@@ -1228,6 +1266,13 @@ impl Management {
                 job_id,
                 blocked = summary.blocked_count,
                 "automatic management preview has blocked files; it waits for review"
+            );
+            return Ok(false);
+        }
+        if self.library_off() {
+            tracing::info!(
+                job_id,
+                "the library is switched off; the automatic preview waits for review"
             );
             return Ok(false);
         }
@@ -1732,8 +1777,8 @@ impl Management {
     }
 
     /// Write the queued albums of an applying job one at a time. A scan
-    /// that starts in between hands the job back to the queue until the
-    /// scan is done.
+    /// that starts in between, or the library being switched off, hands
+    /// the job back to the queue until that is over.
     fn apply_work(&self, job_id: &str, worker: &str) -> Result<(), ManagementError> {
         let snapshot = self.snapshot(job_id)?;
         let undo = snapshot.job_mode().is_some_and(JobMode::restores);
@@ -1755,7 +1800,9 @@ impl Management {
             if self.checkpoint(job_id, worker)? {
                 return Ok(());
             }
-            if !self.setup.coordinator.current().is_empty() {
+            // A scan starting or the library being switched off hands the
+            // job back between albums; it goes on when that is over.
+            if !self.setup.coordinator.current().is_empty() || self.library_off() {
                 self.setup.db.write_blocking(
                     Lane::Background,
                     "management.apply_work_release",

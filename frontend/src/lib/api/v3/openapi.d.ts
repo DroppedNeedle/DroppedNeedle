@@ -34823,7 +34823,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Undo blocked for a file */
+            /** @description Undo blocked for a file, or the library is off */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -35019,7 +35019,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Settings or library folders changed */
+            /** @description Settings or library folders changed, or the library is off */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -35088,7 +35088,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The preview or settings changed */
+            /** @description The preview or settings changed, or the library is off */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -35780,7 +35780,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Not a finished apply, or nothing to undo */
+            /** @description Not a finished apply, nothing to undo, or the library is off */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -35840,7 +35840,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Settings or library policy changed since the page loaded */
+            /** @description Settings or library policy changed since the page loaded, or the library is off */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -35962,7 +35962,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Preview expired, stale, or nothing to write */
+            /** @description Preview expired, stale, or nothing to write, or the library is off */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -36383,7 +36383,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Settings or library folders changed */
+            /** @description Settings or library folders changed, or the library is off */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -45023,7 +45023,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Settings or library folders changed */
+            /** @description Settings or library folders changed, or the library is off */
             409: {
                 headers: {
                     [name: string]: unknown;

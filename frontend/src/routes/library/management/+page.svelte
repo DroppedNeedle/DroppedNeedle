@@ -214,17 +214,18 @@
 			</div>
 		{:else if activeTab === 'organize'}
 			<div role="tabpanel" id="management-panel-organize" aria-labelledby="management-tab-organize">
-				{#if !libraryEnabled}
+				{#if settingsQuery.isLoading}
+					<div class="skeleton h-64 rounded-box"></div>
+				{:else if !libraryEnabled}
 					<div class="alert alert-warning">
 						<FolderCog class="h-5 w-5" />
 						<div class="min-w-0 flex-1">
 							<strong>The local library is disabled</strong>
 							<p class="text-sm">
-								File organization is paused. Existing catalog data and playback keep working. Enable
-								the library in
+								No files are changed while it is off. Turn it on in
 								<a class="link link-primary" href={withBasePath('/settings?tab=library')}
 									>Settings</a
-								> to run organization again.
+								> to organize files again.
 							</p>
 						</div>
 					</div>

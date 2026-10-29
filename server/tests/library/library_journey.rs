@@ -8966,12 +8966,71 @@ async fn library_management_tools_journey() {
     assert_eq!(reset.job.state.as_str(), "succeeded");
     assert_eq!(overrides(&library), 0, "the kept value is gone");
 
-    // Write once, then back to the original.
+    use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+    let switch = |on: bool| {
+        library
+            .settings
+            .store()
+            .update_secret_blocking::<TypedLibrary, String, _>(move |stored| {
+                let mut settings = stored.into_inner();
+                settings.enabled = on;
+                Ok(settings)
+            })
+            .expect("library switch saved");
+        library.core.refresh_registry();
+    };
+    fn refused_while_off<T: std::fmt::Debug>(
+        result: Result<T, droppedneedle_library::management::models::ManagementError>,
+    ) {
+        match result {
+            Err(droppedneedle_library::management::models::ManagementError::Conflict(message)) => {
+                assert!(message.contains("switched off"), "{message}");
+            }
+            other => panic!("expected the library-off refusal, got {other:?}"),
+        }
+    }
+
+    // Write once, then back to the original. The apply, queued before the
+    // library is switched off, writes nothing while it is off and
+    // finishes once it is back on.
     let once = management
         .create_tag_edit(edit(TagEditMode::WriteOnce, "Once", "edit-once"), "admin")
         .expect("write-once preview");
     assert!(management_step(&library).await, "write-once planning runs");
-    management_apply(&library, &once).await;
+    let queued = management
+        .apply(
+            &once.job_id,
+            droppedneedle_library::management::service::ApplyRequest {
+                preview_token: once.preview_token.clone(),
+                expected_row_revision: management
+                    .detail(&once.job_id)
+                    .expect("detail")
+                    .job
+                    .row_revision,
+                idempotency_key: "apply-once".to_owned(),
+                confirmation: true,
+            },
+            "admin",
+        )
+        .expect("apply queued");
+    assert_eq!(queued.state.as_str(), "queued");
+    switch(false);
+    assert!(
+        !management_step(&library).await,
+        "a queued apply waits while the library is off"
+    );
+    assert_eq!(title(&file), original[&TagField::Title]);
+    switch(true);
+    while management_step(&library).await {}
+    assert_eq!(
+        management
+            .detail(&once.job_id)
+            .expect("detail")
+            .job
+            .state
+            .as_str(),
+        "succeeded"
+    );
     assert_eq!(title(&file), vec!["Once".to_owned()]);
     let restore = management
         .create_restore_preview(
@@ -9014,6 +9073,69 @@ async fn library_management_tools_journey() {
             .needs_attention_count,
         0
     );
+
+    // With the library switched off, a preview, an apply and an undo are
+    // refused as a scan is (409 CONFLICT), and nothing is written.
+    let album_preview = |key: &str| droppedneedle_library::management::service::PreviewRequest {
+        selection: Selection {
+            kind: SelectionKind::Albums,
+            ids: vec![album.clone()],
+            catalog_filter: None,
+        },
+        profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+        expected_settings_revision: revision(),
+        expected_policy_revision: policy.clone(),
+        idempotency_key: Some(key.to_owned()),
+        target_root_id: None,
+        overrides: None,
+    };
+    let ready = management
+        .create_preview(album_preview("before-off"), "admin")
+        .expect("preview while on");
+    assert!(management_step(&library).await, "planning runs");
+    let ready_revision = management
+        .detail(&ready.job_id)
+        .expect("detail")
+        .job
+        .row_revision;
+    switch(false);
+    refused_while_off(management.create_preview(album_preview("while-off"), "admin"));
+    refused_while_off(management.apply(
+        &ready.job_id,
+        droppedneedle_library::management::service::ApplyRequest {
+            preview_token: ready.preview_token.clone(),
+            expected_row_revision: ready_revision,
+            idempotency_key: "apply-while-off".to_owned(),
+            confirmation: true,
+        },
+        "admin",
+    ));
+    let once_revision = management
+        .detail(&once.job_id)
+        .expect("detail")
+        .job
+        .row_revision;
+    refused_while_off(management.undo_preview(
+        &once.job_id,
+        once_revision,
+        "undo-while-off",
+        "admin",
+    ));
+    assert!(!management_step(&library).await, "nothing was queued");
+    assert_eq!(
+        management
+            .detail(&ready.job_id)
+            .expect("detail")
+            .job
+            .state
+            .as_str(),
+        "ready"
+    );
+    assert_eq!(read_fields(&file).expect("tags"), original);
+    switch(true);
+    management
+        .discard(&ready.job_id, ready_revision)
+        .expect("preview discarded");
 
     // A confirmed dry run turns automatic management on for the folder.
     let mut proposed = library
@@ -9097,6 +9219,14 @@ async fn library_management_tools_journey() {
         ("succeeded", Some("ACTIVATION_CONFIRMED")),
         "a confirmed dry run is done"
     );
+
+    // While the library is switched off the worker plans nothing; the
+    // album waits and is managed on the first look after it is back on.
+    switch(false);
+    library.identification.queue_automatic_management(&album);
+    assert!(!automatic_next(&library).await, "no look while off");
+    assert!(!management_step(&library).await, "nothing was planned");
+    switch(true);
 
     // The album is then managed without asking: moved by the profile.
     library.identification.queue_automatic_management(&album);

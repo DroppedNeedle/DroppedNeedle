@@ -497,7 +497,7 @@ pub struct ManagementUndoPreviewBody {
         (status = 400, description = "Bad selection, profile or destination"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
-        (status = 409, description = "Settings or library policy changed since the page loaded"),
+        (status = 409, description = "Settings or library policy changed since the page loaded, or the library is off"),
     )
 )]
 pub async fn create_management_preview(
@@ -680,7 +680,7 @@ pub async fn discard_management_preview(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown job"),
-        (status = 409, description = "Preview expired, stale, or nothing to write"),
+        (status = 409, description = "Preview expired, stale, or nothing to write, or the library is off"),
     )
 )]
 pub async fn apply_management_preview(
@@ -832,7 +832,7 @@ pub async fn list_management_operation_results(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown job"),
-        (status = 409, description = "Not a finished apply, or nothing to undo"),
+        (status = 409, description = "Not a finished apply, nothing to undo, or the library is off"),
     )
 )]
 pub async fn create_management_undo_preview(
