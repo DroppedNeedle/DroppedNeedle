@@ -19,8 +19,10 @@
 //! call [`read_file_lyrics`], so a track marked as having lyrics is one
 //! that can be served.
 
+use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
-use std::io::Read as _;
+use std::io::{Read as _, Seek as _, SeekFrom};
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 
@@ -73,7 +75,10 @@ pub enum LyricsRefused {
 }
 
 /// Shape plain and synced lyrics text into lines. Synced text wins when it
-/// has any line; empty lines are dropped. `None` when nothing is left.
+/// has any line. LRC reads as Jellyfin reads it: a line with several stamps
+/// (`[00:12][00:45]Chorus`) gives one line per stamp, a stamped line with
+/// no text stays as a blank line, and lines come out in time order. Plain
+/// empty lines are dropped. `None` when no line has text.
 pub fn parse_lyrics(
     plain: Option<&str>,
     synced: Option<&str>,
@@ -104,30 +109,38 @@ pub fn parse_lyrics(
             synced: false,
         }));
     }
-    let mut lines: Vec<(String, Option<i64>)> = Vec::new();
+    // Each line with the time it sorts by. An unstamped text line sorts
+    // with the stamped line above it, so it keeps its place.
+    let mut keyed: Vec<(i64, String, Option<i64>)> = Vec::new();
+    let mut above = i64::MIN;
     for raw in synced.lines() {
         let line = raw.trim();
         if line.is_empty() {
             continue;
         }
         match parse_lrc_line(line) {
-            Some((text, start_ms)) => {
-                if !text.is_empty() {
-                    lines.push((text, Some(start_ms)));
+            Some((text, starts)) => {
+                above = starts.first().copied().unwrap_or(above);
+                for start in starts {
+                    keyed.push((start, text.clone(), Some(start)));
                 }
             }
             None => {
                 if !line.starts_with('[') {
-                    lines.push((line.to_owned(), None));
+                    keyed.push((above, line.to_owned(), None));
                 }
             }
         }
     }
-    if lines.is_empty() {
+    if keyed.iter().all(|(_, text, _)| text.is_empty()) {
         return Ok(None);
     }
+    keyed.sort_by_key(|(key, _, _)| *key);
     Ok(Some(Lyrics {
-        lines,
+        lines: keyed
+            .into_iter()
+            .map(|(_, text, start)| (text, start))
+            .collect(),
         synced: true,
     }))
 }
@@ -145,15 +158,25 @@ pub fn parse_lyrics_text(text: &str) -> Result<Option<Lyrics>, LyricsRefused> {
     }
 }
 
-/// Parse one `[mm:ss.xx] text` LRC line into text and start milliseconds.
-/// Returns None for tag lines (`[ar:...]`) and malformed stamps.
-#[must_use]
-pub fn parse_lrc_line(line: &str) -> Option<(String, i64)> {
-    if !line.starts_with('[') {
-        return None;
+/// Parse one LRC line, `[mm:ss.xx]` stamps then text, into the text and
+/// each stamp's start in milliseconds (at least one). `None` for tag lines
+/// (`[ar:...]`) and a malformed first stamp.
+fn parse_lrc_line(line: &str) -> Option<(String, Vec<i64>)> {
+    let mut starts = Vec::new();
+    let mut rest = line;
+    while let Some((start, after)) = parse_lrc_stamp(rest) {
+        starts.push(start);
+        rest = after.trim_start();
     }
-    let end = line.find(']')?;
-    let stamp = &line[1..end];
+    (!starts.is_empty()).then(|| (rest.trim_end().to_owned(), starts))
+}
+
+/// One leading `[mm:ss.xx]` stamp: its start in milliseconds and the text
+/// after it.
+fn parse_lrc_stamp(line: &str) -> Option<(i64, &str)> {
+    let inner = line.strip_prefix('[')?;
+    let end = inner.find(']')?;
+    let stamp = &inner[..end];
     let (minutes_raw, rest) = stamp.split_once(':')?;
     let minutes: i64 = minutes_raw.parse().ok()?;
     let (seconds_raw, fraction_raw) = match rest.split_once('.') {
@@ -182,8 +205,10 @@ pub fn parse_lrc_line(line: &str) -> Option<(String, i64)> {
             }
         }
     };
-    let text = line[end + 1..].trim().to_owned();
-    Some((text, minutes * 60_000 + seconds * 1_000 + fraction_ms))
+    Some((
+        minutes * 60_000 + seconds * 1_000 + fraction_ms,
+        &inner[end + 1..],
+    ))
 }
 
 /// The lyrics `audio` carries: its `.lrc` file first, then its tag. `None`
@@ -192,8 +217,17 @@ pub fn parse_lrc_line(line: &str) -> Option<(String, i64)> {
 /// async workers.
 #[must_use]
 pub fn read_file_lyrics(audio: &Path) -> Option<(LyricsSource, Lyrics)> {
+    let sidecars = audio.parent().map(Sidecars::list).unwrap_or_default();
+    read_lyrics_beside(audio, sidecars.for_track(audio))
+}
+
+/// [`read_file_lyrics`] with the `.lrc` file already found (from a
+/// [`Sidecars`] listing of the track's folder), so a sweep lists each
+/// folder once.
+#[must_use]
+pub fn read_lyrics_beside(audio: &Path, sidecar: Option<&Path>) -> Option<(LyricsSource, Lyrics)> {
     let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if let Some(lyrics) = sidecar_path(audio).and_then(|path| read_sidecar(&path)) {
+        if let Some(lyrics) = sidecar.and_then(read_sidecar) {
             return Some((LyricsSource::Sidecar, lyrics));
         }
         read_tag_lyrics(audio).map(|lyrics| (LyricsSource::Tag, lyrics))
@@ -204,29 +238,71 @@ pub fn read_file_lyrics(audio: &Path) -> Option<(LyricsSource, Lyrics)> {
     })
 }
 
-/// The regular file beside `audio` named `<stem>.lrc`, the extension in
-/// any case. Links are skipped, as the walk skips them.
-fn sidecar_path(audio: &Path) -> Option<PathBuf> {
-    let dir = audio.parent()?;
-    let stem = audio.file_stem()?;
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(error) => {
-            tracing::debug!(%error, dir = %dir.display(), "lyrics: folder not listed");
-            return None;
-        }
-    };
-    for entry in entries.flatten() {
-        let name = PathBuf::from(entry.file_name());
-        let matches = name.file_stem() == Some(stem)
-            && name
+/// The `.lrc` files of one folder (the extension in any case), regular
+/// files only: links are skipped, as the walk skips them.
+#[derive(Debug, Default)]
+pub struct Sidecars {
+    /// By stem. Where two differ only in the extension's case, the first
+    /// by name wins.
+    by_stem: BTreeMap<OsString, PathBuf>,
+}
+
+impl Sidecars {
+    /// List `dir` once. A folder or entry that cannot be read is logged and
+    /// left out.
+    #[must_use]
+    pub fn list(dir: &Path) -> Self {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) => {
+                tracing::debug!(%error, dir = %dir.display(), "lyrics: folder not listed");
+                return Self::default();
+            }
+        };
+        let mut paths = Vec::new();
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    tracing::debug!(%error, dir = %dir.display(), "lyrics: folder entry skipped");
+                    continue;
+                }
+            };
+            let path = entry.path();
+            if !path
                 .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("lrc"));
-        if matches && entry.file_type().is_ok_and(|kind| kind.is_file()) {
-            return Some(entry.path());
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("lrc"))
+            {
+                continue;
+            }
+            match entry.file_type() {
+                Ok(kind) if kind.is_file() => paths.push(path),
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::debug!(%error, path = %path.display(), "lyrics file skipped");
+                }
+            }
         }
+        paths.sort();
+        let mut by_stem = BTreeMap::new();
+        for path in paths {
+            if let Some(stem) = path.file_stem() {
+                by_stem.entry(stem.to_owned()).or_insert(path);
+            }
+        }
+        Self { by_stem }
     }
-    None
+
+    /// The `.lrc` file named like `audio`: the same stem, exactly.
+    #[must_use]
+    pub fn for_track(&self, audio: &Path) -> Option<&Path> {
+        self.by_stem.get(audio.file_stem()?).map(PathBuf::as_path)
+    }
+
+    /// Every `.lrc` file a track could take, in stem order.
+    pub fn paths(&self) -> impl Iterator<Item = &Path> {
+        self.by_stem.values().map(PathBuf::as_path)
+    }
 }
 
 /// Open for reading without following a link in the last component.
@@ -319,9 +395,7 @@ fn tag_lyrics_values(audio: &Path, format: AudioFormat) -> Result<Vec<String>, S
     const KEYS: [ItemKey; 2] = [ItemKey::Lyrics, ItemKey::UnsyncLyrics];
     let mut file = open_no_follow(audio, 0).map_err(|error| error.to_string())?;
     if format == AudioFormat::Aac {
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
+        let bytes = ape_tail(&mut file).map_err(|error| error.to_string())?;
         let items = super::read::parse_apev2(&bytes).unwrap_or_default();
         let mut values = Vec::new();
         for key in KEYS {
@@ -333,7 +407,15 @@ fn tag_lyrics_values(audio: &Path, format: AudioFormat) -> Result<Vec<String>, S
         }
         return Ok(values);
     }
-    let tagged = lofty::read_from(&mut file).map_err(|error| error.to_string())?;
+    let options = lofty::config::ParseOptions::new()
+        .read_properties(false)
+        .read_cover_art(false);
+    let tagged = lofty::probe::Probe::new(std::io::BufReader::new(file))
+        .options(options)
+        .guess_file_type()
+        .map_err(|error| error.to_string())?
+        .read()
+        .map_err(|error| error.to_string())?;
     let mut values = Vec::new();
     for key in KEYS {
         for tag in tagged.tags() {
@@ -341,6 +423,38 @@ fn tag_lyrics_values(audio: &Path, format: AudioFormat) -> Result<Vec<String>, S
         }
     }
     Ok(values)
+}
+
+/// Largest APEv2 tag read from the end of an AAC file. It can hold a
+/// cover, so it is allowed more room than the lyrics alone.
+const MAX_APE_TAG_BYTES: u64 = 32 * 1024 * 1024;
+
+/// The APEv2 tag at the end of `file`, footer included, or nothing when
+/// the file does not end in one. Only the tag is read, never the audio.
+fn ape_tail(file: &mut File) -> std::io::Result<Vec<u8>> {
+    let length = file.seek(SeekFrom::End(0))?;
+    if length < 32 {
+        return Ok(Vec::new());
+    }
+    let mut footer = [0u8; 32];
+    file.seek(SeekFrom::Start(length - 32))?;
+    file.read_exact(&mut footer)?;
+    if &footer[..8] != b"APETAGEX" {
+        return Ok(Vec::new());
+    }
+    let tag_size = u64::from(u32::from_le_bytes([
+        footer[12], footer[13], footer[14], footer[15],
+    ]));
+    // A size that counts the header too is read whole: the parser tries
+    // both starts.
+    let wanted = tag_size.saturating_add(32).min(length);
+    if wanted > MAX_APE_TAG_BYTES {
+        return Ok(Vec::new());
+    }
+    file.seek(SeekFrom::Start(length - wanted))?;
+    let mut bytes = Vec::new();
+    file.take(wanted).read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -351,27 +465,19 @@ mod tests {
     fn lrc_stamps_parse_to_milliseconds() {
         assert_eq!(
             parse_lrc_line("[01:02.34] hello"),
-            Some(("hello".to_owned(), 62_340))
+            Some(("hello".to_owned(), vec![62_340]))
         );
-        assert_eq!(parse_lrc_line("[00:00.5] x"), Some(("x".to_owned(), 500)));
+        assert_eq!(
+            parse_lrc_line("[00:00.5] x"),
+            Some(("x".to_owned(), vec![500]))
+        );
         assert_eq!(parse_lrc_line("[ar:Someone]"), None);
         assert_eq!(parse_lrc_line("[99:99.99] x"), None);
         assert_eq!(parse_lrc_line("no stamp"), None);
     }
 
     #[test]
-    fn text_with_timestamps_is_synced_and_empty_lines_drop() {
-        let synced = parse_lyrics_text("[ar:A]\n[00:01.00]One\n[00:02.00]\n[00:03.00]Two\n")
-            .unwrap()
-            .unwrap();
-        assert!(synced.synced);
-        assert_eq!(
-            synced.lines,
-            [
-                ("One".to_owned(), Some(1_000)),
-                ("Two".to_owned(), Some(3_000))
-            ]
-        );
+    fn plain_text_drops_empty_lines_and_caps_hold() {
         let plain = parse_lyrics_text("One\n\n  Two  ").unwrap().unwrap();
         assert!(!plain.synced);
         assert_eq!(

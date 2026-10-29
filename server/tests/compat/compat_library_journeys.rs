@@ -3236,6 +3236,7 @@ async fn lyrics_come_from_the_file_first() {
         "Lyrics": [
             {"Text": "Paper lanterns over the quiet field", "Start": 0},
             {"Text": "Velvet engines hum a borrowed tune", "Start": 4_000_000},
+            {"Text": "", "Start": 8_000_000},
             {"Text": "Every window counts the passing moon", "Start": 12_000_000},
         ],
     });

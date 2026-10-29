@@ -4028,6 +4028,34 @@ fn chapters_move_to_v24_readable() {
 }
 
 // ---------------------------------------------------------------------------
+// Lyrics
+// ---------------------------------------------------------------------------
+
+/// A `.lrc` reads as Jellyfin reads it: a line stamped twice is sung twice,
+/// in time order, and a stamped blank line stays, so the line before it
+/// stops showing through the gap.
+#[test]
+fn lrc_repeated_stamps_expand_and_blank_timed_lines_stay() {
+    let (dir, audio) = temp_copy("flac_full_01.flac", "lyrics-lrc");
+    std::fs::write(
+        dir.join("flac_full_01.lrc"),
+        "[ar:Someone]\n[00:12.00][00:45.00]Chorus\n[00:20.00]\n",
+    )
+    .unwrap();
+    let (source, lyrics) = tags::lyrics::read_file_lyrics(&audio).unwrap();
+    assert_eq!(source, tags::lyrics::LyricsSource::Sidecar);
+    assert!(lyrics.synced);
+    assert_eq!(
+        lyrics.lines,
+        [
+            ("Chorus".to_owned(), Some(12_000)),
+            (String::new(), Some(20_000)),
+            ("Chorus".to_owned(), Some(45_000)),
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Scan and the tag editor read one file the same way
 // ---------------------------------------------------------------------------
 

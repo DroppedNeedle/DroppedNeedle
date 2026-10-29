@@ -100,12 +100,14 @@ struct Checked {
     found: Option<FoundArt>,
 }
 
-/// Everything the sweep reads from the database up front.
+/// Everything the art and lyrics sweeps read from the database up front,
+/// in one read they share.
 #[derive(Default)]
-struct Snapshot {
-    albums: Vec<(String, Vec<TrackFile>)>,
+pub(super) struct Snapshot {
+    pub(super) albums: Vec<(String, Vec<TrackFile>)>,
     current: HashMap<String, CurrentArt>,
     checks: HashMap<String, String>,
+    pub(super) lyrics_checks: HashMap<String, String>,
 }
 
 impl SqliteScanStore {
@@ -119,10 +121,18 @@ impl SqliteScanStore {
         &self,
         stop: &dyn Fn() -> bool,
     ) -> Result<ArtworkSweep, ScanStoreError> {
+        Ok(self.sweep_artwork(&self.sweep_snapshot()?, stop))
+    }
+
+    /// The album art sweep over a snapshot already read.
+    pub(super) fn sweep_artwork(
+        &self,
+        snapshot: &Snapshot,
+        stop: &dyn Fn() -> bool,
+    ) -> ArtworkSweep {
         // The slice clock starts at the first album that needs reading, so
         // the signature pass over unchanged albums never uses it up.
         let mut started: Option<std::time::Instant> = None;
-        let snapshot = self.artwork_snapshot()?;
         let mut sweep = ArtworkSweep {
             complete: true,
             ..ArtworkSweep::default()
@@ -144,7 +154,7 @@ impl SqliteScanStore {
                 .filter(|art| art.source == "folder")
                 .and_then(|art| art.locator.as_deref())
                 .map(Path::new);
-            let signature = album_signature(tracks, &dirs, current_folder);
+            let signature = album_signature(tracks, &dirs, current_folder.as_slice());
             if snapshot.checks.get(album_id) == Some(&signature) {
                 continue;
             }
@@ -153,7 +163,7 @@ impl SqliteScanStore {
             let found = find_art(tracks, &dirs);
             // Sign with the image actually found, so the next sweep (which
             // signs with the stored folder image) sees the same value.
-            let signature = album_signature(tracks, &dirs, found_folder(&found));
+            let signature = album_signature(tracks, &dirs, found_folder(&found).as_slice());
             pending.push(Checked {
                 album_id: album_id.clone(),
                 signature,
@@ -173,12 +183,12 @@ impl SqliteScanStore {
                 "album art sweep finished"
             );
         }
-        Ok(sweep)
+        sweep
     }
 
-    fn artwork_snapshot(&self) -> Result<Snapshot, ScanStoreError> {
-        self.read_long(&RunStop::never(), "scan_artwork_snapshot", |conn| {
-            Ok(artwork_snapshot(conn)?)
+    pub(super) fn sweep_snapshot(&self) -> Result<Snapshot, ScanStoreError> {
+        self.read_long(&RunStop::never(), "scan_sweep_snapshot", |conn| {
+            Ok(sweep_snapshot(conn)?)
         })
     }
 
@@ -322,14 +332,10 @@ pub(super) fn album_dirs(tracks: &[TrackFile]) -> Vec<PathBuf> {
     dirs
 }
 
-/// Hash of what decides an album's art: track ids and stat revisions,
-/// folder modification times, and the folder image's size and time. The
-/// lyrics sweep signs with no folder image.
-pub(super) fn album_signature(
-    tracks: &[TrackFile],
-    dirs: &[PathBuf],
-    folder_image: Option<&Path>,
-) -> String {
+/// Hash of what decides an album's art or lyrics: track ids and stat
+/// revisions, folder modification times, and the size and time of each of
+/// `files` (the folder image, or the `.lrc` files beside the tracks).
+pub(super) fn album_signature(tracks: &[TrackFile], dirs: &[PathBuf], files: &[&Path]) -> String {
     let mut hasher = Sha256::new();
     for track in tracks {
         hasher.update(track.id.as_bytes());
@@ -341,9 +347,9 @@ pub(super) fn album_signature(
         hasher.update(dir.to_string_lossy().as_bytes());
         hasher.update(stat_stamp(dir).as_bytes());
     }
-    if let Some(image) = folder_image {
-        hasher.update(image.to_string_lossy().as_bytes());
-        hasher.update(stat_stamp(image).as_bytes());
+    for file in files {
+        hasher.update(file.to_string_lossy().as_bytes());
+        hasher.update(stat_stamp(file).as_bytes());
     }
     hex(&hasher.finalize())
 }
@@ -450,8 +456,8 @@ fn hex(digest: &[u8]) -> String {
     out
 }
 
-/// What the sweep reads up front, in one read.
-fn artwork_snapshot(conn: &rusqlite::Connection) -> rusqlite::Result<Snapshot> {
+/// What the sweeps read up front, in one read.
+fn sweep_snapshot(conn: &rusqlite::Connection) -> rusqlite::Result<Snapshot> {
     let mut snapshot = Snapshot {
         albums: album_tracks(conn)?,
         ..Snapshot::default()
@@ -475,6 +481,12 @@ fn artwork_snapshot(conn: &rusqlite::Connection) -> rusqlite::Result<Snapshot> {
     let mut rows = checks.query([])?;
     while let Some(row) = rows.next()? {
         snapshot.checks.insert(row.get(0)?, row.get(1)?);
+    }
+    let mut checks =
+        conn.prepare("SELECT local_album_id, signature FROM local_album_lyrics_checks")?;
+    let mut rows = checks.query([])?;
+    while let Some(row) = rows.next()? {
+        snapshot.lyrics_checks.insert(row.get(0)?, row.get(1)?);
     }
     Ok(snapshot)
 }

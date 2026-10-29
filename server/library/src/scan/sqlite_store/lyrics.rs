@@ -5,26 +5,29 @@
 //! `.lrc` file beside it, or a lyrics tag. It reads them with the same
 //! function that serves them, so a marked track can be served.
 //!
-//! It works like the album art sweep and shares its album list, folders and
-//! signature: an album is read again only when its tracks' stat revisions
-//! or its folders' modification times changed. Adding, removing or renaming
-//! a `.lrc` file changes its folder's time, so no new walk is needed.
-//! Editing one in place does not; serving always reads the file as it is
-//! now, so only an edit that empties the file leaves a stale mark.
+//! It works like the album art sweep and shares its snapshot, folders and
+//! signature: an album is read again only when its tracks' stat revisions,
+//! its folders' modification times or the size and time of a `.lrc` file
+//! in its track folders changed. Adding, removing or renaming a `.lrc`
+//! file changes its folder's time; editing one in place changes its own,
+//! so a `.lrc` fixed in place is marked and served after the next sweep.
+//! Each track folder is listed once per album.
 //!
 //! The sweep only reads music files and never follows a link. It gives way
 //! to scans and shutdown between albums, and after a slice of reading,
 //! exactly as the art sweep does.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use rusqlite::params;
 
 use super::artwork::{
-    MIN_PER_SLICE, SWEEP_SLICE, TrackFile, WRITE_BATCH, album_dirs, album_signature, album_tracks,
+    ArtworkSweep, MIN_PER_SLICE, SWEEP_SLICE, Snapshot, TrackFile, WRITE_BATCH, album_dirs,
+    album_signature,
 };
-use super::{Lane, RunStop, ScanStoreError, SqliteScanStore};
-use crate::tags::lyrics::{LyricsSource, read_file_lyrics};
+use super::{Lane, ScanStoreError, SqliteScanStore};
+use crate::tags::lyrics::{LyricsSource, Sidecars, read_lyrics_beside};
 
 /// What one sweep did.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -37,9 +40,6 @@ pub struct LyricsSweep {
     pub complete: bool,
 }
 
-/// Every live album with its indexed tracks.
-type Albums = Vec<(String, Vec<TrackFile>)>;
-
 /// One album's result, waiting to be written.
 struct Checked {
     album_id: String,
@@ -48,6 +48,18 @@ struct Checked {
 }
 
 impl SqliteScanStore {
+    /// The album art sweep then the lyrics sweep, over one read of the
+    /// catalog.
+    pub fn refresh_album_sweeps(
+        &self,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<(ArtworkSweep, LyricsSweep), ScanStoreError> {
+        let snapshot = self.sweep_snapshot()?;
+        let artwork = self.sweep_artwork(&snapshot, stop);
+        let lyrics = self.sweep_lyrics(&snapshot, stop);
+        Ok((artwork, lyrics))
+    }
+
     /// Record which tracks carry lyrics, for every album whose files
     /// changed since the last sweep. File reads happen outside the store
     /// lock; writes go in small transactions. `stop` is polled between
@@ -57,22 +69,26 @@ impl SqliteScanStore {
         &self,
         stop: &dyn Fn() -> bool,
     ) -> Result<LyricsSweep, ScanStoreError> {
+        Ok(self.sweep_lyrics(&self.sweep_snapshot()?, stop))
+    }
+
+    fn sweep_lyrics(&self, snapshot: &Snapshot, stop: &dyn Fn() -> bool) -> LyricsSweep {
         let mut started: Option<std::time::Instant> = None;
-        let (albums, checks) = self.lyrics_snapshot()?;
         let mut sweep = LyricsSweep {
             complete: true,
             ..LyricsSweep::default()
         };
         let mut pending = Vec::new();
-        for (album_id, tracks) in &albums {
+        for (album_id, tracks) in &snapshot.albums {
             let slice_spent = started.is_some_and(|at| at.elapsed() >= SWEEP_SLICE)
                 && sweep.checked >= MIN_PER_SLICE;
             if stop() || slice_spent {
                 sweep.complete = false;
                 break;
             }
-            let signature = album_signature(tracks, &album_dirs(tracks), None);
-            if checks.get(album_id) == Some(&signature) {
+            let sidecars = track_sidecars(tracks);
+            let signature = lyrics_signature(tracks, &sidecars);
+            if snapshot.lyrics_checks.get(album_id) == Some(&signature) {
                 continue;
             }
             started.get_or_insert_with(std::time::Instant::now);
@@ -80,7 +96,13 @@ impl SqliteScanStore {
             let marks = tracks
                 .iter()
                 .filter_map(|track| {
-                    read_file_lyrics(&track.path).map(|(source, _)| (track.id.clone(), source))
+                    let sidecar = track
+                        .path
+                        .parent()
+                        .and_then(|dir| sidecars.get(dir))
+                        .and_then(|listed| listed.for_track(&track.path));
+                    read_lyrics_beside(&track.path, sidecar)
+                        .map(|(source, _)| (track.id.clone(), source))
                 })
                 .collect();
             pending.push(Checked {
@@ -101,22 +123,7 @@ impl SqliteScanStore {
                 "lyrics sweep finished"
             );
         }
-        Ok(sweep)
-    }
-
-    /// The albums with their tracks, and each album's last signature.
-    fn lyrics_snapshot(&self) -> Result<(Albums, HashMap<String, String>), ScanStoreError> {
-        self.read_long(&RunStop::never(), "scan_lyrics_snapshot", |conn| {
-            let albums = album_tracks(conn)?;
-            let mut checks = HashMap::new();
-            let mut statement =
-                conn.prepare("SELECT local_album_id, signature FROM local_album_lyrics_checks")?;
-            let mut rows = statement.query([])?;
-            while let Some(row) = rows.next()? {
-                checks.insert(row.get(0)?, row.get(1)?);
-            }
-            Ok((albums, checks))
-        })
+        sweep
     }
 
     /// Write one batch of results and clear it. A failed batch is logged
@@ -160,5 +167,57 @@ impl SqliteScanStore {
             }
         }
         pending.clear();
+    }
+}
+
+/// The `.lrc` files of each folder the album's tracks live in, each folder
+/// listed once.
+fn track_sidecars(tracks: &[TrackFile]) -> HashMap<PathBuf, Sidecars> {
+    let mut listed: HashMap<PathBuf, Sidecars> = HashMap::new();
+    for track in tracks {
+        if let Some(dir) = track.path.parent()
+            && !listed.contains_key(dir)
+        {
+            listed.insert(dir.to_path_buf(), Sidecars::list(dir));
+        }
+    }
+    listed
+}
+
+/// The album signature with every `.lrc` file of its track folders, so an
+/// edit in place brings the album back.
+fn lyrics_signature(tracks: &[TrackFile], sidecars: &HashMap<PathBuf, Sidecars>) -> String {
+    let dirs = album_dirs(tracks);
+    let mut files: Vec<&Path> = sidecars.values().flat_map(Sidecars::paths).collect();
+    files.sort();
+    album_signature(tracks, &dirs, &files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `.lrc` rewritten in place leaves its folder's time alone, so only
+    /// its own stat can bring the album back to the sweep.
+    #[test]
+    fn a_lrc_edited_in_place_changes_the_signature() {
+        let dir = std::env::temp_dir().join(format!("dn-lyrics-sign-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let lrc = dir.join("01 Song.LRC");
+        std::fs::write(&lrc, "").unwrap();
+        let tracks = [TrackFile {
+            id: "t1".to_owned(),
+            path: dir.join("01 Song.flac"),
+            stat_revision: "r1".to_owned(),
+        }];
+        let folder_time = |dir: &Path| std::fs::metadata(dir).unwrap().modified().unwrap();
+        let before_time = folder_time(&dir);
+        let before = lyrics_signature(&tracks, &track_sidecars(&tracks));
+
+        std::fs::write(&lrc, "[00:01.00]Fixed\n").unwrap();
+        assert_eq!(folder_time(&dir), before_time, "the folder reads unchanged");
+        let after = lyrics_signature(&tracks, &track_sidecars(&tracks));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_ne!(before, after);
     }
 }

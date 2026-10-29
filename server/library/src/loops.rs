@@ -806,14 +806,10 @@ impl Scans {
                 || self.core.wakeups.revision("scan") != revision
                 || (polls.get() % 32 == 0 && !self.coordinator.current().is_empty())
         };
-        let artwork = self.scan_store.refresh_album_artwork(&give_way);
-        let lyrics = self.scan_store.refresh_track_lyrics(&give_way);
-        match (artwork, lyrics) {
-            (Ok(artwork), Ok(lyrics)) => artwork.complete && lyrics.complete,
-            (artwork, lyrics) => {
-                for error in [artwork.err(), lyrics.err()].into_iter().flatten() {
-                    tracing::warn!(%error, "library sweep could not read the catalog");
-                }
+        match self.scan_store.refresh_album_sweeps(&give_way) {
+            Ok((artwork, lyrics)) => artwork.complete && lyrics.complete,
+            Err(error) => {
+                tracing::warn!(%error, "library sweep could not read the catalog");
                 false
             }
         }
