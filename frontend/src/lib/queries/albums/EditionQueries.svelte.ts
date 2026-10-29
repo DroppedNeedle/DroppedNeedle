@@ -1,3 +1,4 @@
+import { applyEffects, catalogChanged } from '$lib/queries/effects';
 import { createInfiniteQuery, createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
@@ -10,7 +11,6 @@ import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
 import { RequestQueryKeyFactory } from '$lib/queries/requests/RequestQueryKeyFactory';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
-import { invalidateLibraryManagementSurfaces } from '$lib/queries/library-management/LibraryManagementInvalidation';
 import {
 	FavoriteQueryKeyFactory,
 	PlaylistQueryKeyFactory
@@ -422,7 +422,7 @@ export function confirmAlbumEdition() {
 // what Library Management lists and holds.
 function invalidateHeldEditionScope(target: EditionTarget): void {
 	invalidateEditionScope(target);
-	void invalidateLibraryManagementSurfaces();
+	void applyEffects(catalogChanged(authStore.user?.id));
 }
 
 // Keep the files as they are, as a custom edition of the release's group

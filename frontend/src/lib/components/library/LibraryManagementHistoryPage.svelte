@@ -1,12 +1,10 @@
 <script lang="ts">
 	import '$lib/components/library/library-management.css';
-	import { onMount } from 'svelte';
 	import { ArrowRight, FolderCog, History, ShieldAlert } from 'lucide-svelte';
 
 	import BackButton from '$lib/components/BackButton.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { createLibraryManagementEvents } from '$lib/queries/library-management/LibraryManagementEvents';
 	import {
 		getLibraryManagementOperationsQuery,
 		getLibraryManagementSettingsQuery
@@ -46,12 +44,6 @@
 
 	const historyItems = $derived(historyQuery.data?.pages.flatMap((page) => page.items) ?? []);
 	const roots = $derived(policyQuery.data?.library_roots ?? []);
-
-	onMount(() => {
-		const events = createLibraryManagementEvents();
-		events.start();
-		return events.stop;
-	});
 
 	function dateBoundary(value: string, end: boolean): number | undefined {
 		if (!value) return undefined;

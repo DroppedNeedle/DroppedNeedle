@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { applyEffects, catalogChanged } from '$lib/queries/effects';
 	import { goto } from '$app/navigation';
 	import {
 		TriangleAlert,
@@ -21,7 +22,6 @@
 	import ContributionMusicBrainzReview from '$lib/components/library/ContributionMusicBrainzReview.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLibraryContributionQuery } from '$lib/queries/libraryContributions/LibraryContributionQueries.svelte';
-	import { invalidateLibraryCatalog } from '$lib/queries/library/LibraryCatalogInvalidation';
 	import {
 		cancelLibraryContributionMutation,
 		rebuildLibraryContributionMutation,
@@ -100,7 +100,7 @@
 			!linkCatalogSwept
 		) {
 			linkCatalogSwept = true;
-			void invalidateLibraryCatalog();
+			void applyEffects(catalogChanged(authStore.user?.id));
 		}
 		lastObservedLink = { id, state };
 	});

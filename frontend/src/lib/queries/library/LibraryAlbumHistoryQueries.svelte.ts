@@ -1,9 +1,10 @@
+import { applyEffects, catalogChanged } from '$lib/queries/effects';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 
@@ -33,7 +34,7 @@ export const getAlbumHistoryQuery = (
 export function undoAlbumFold() {
 	return createMutation(() => ({
 		mutationFn: (undoId: string) => api.v3.POST(LibraryV3Api.undoAlbumFold(undoId)),
-		onSettled: () => invalidateLibraryCatalog()
+		onSettled: () => applyEffects(catalogChanged(authStore.user?.id))
 	}));
 }
 
@@ -43,6 +44,6 @@ export function undoAlbumFold() {
 export function undoArtistRepair() {
 	return createMutation(() => ({
 		mutationFn: (undoId: string) => api.v3.POST(LibraryV3Api.undoArtistRepair(undoId)),
-		onSettled: () => invalidateLibraryCatalog()
+		onSettled: () => applyEffects(catalogChanged(authStore.user?.id))
 	}));
 }

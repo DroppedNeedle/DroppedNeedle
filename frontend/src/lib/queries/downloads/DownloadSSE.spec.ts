@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MuxEventListener, MuxEventStream } from '$lib/queries/events/MuxEventStream';
+import type { EventDispatcher } from '$lib/queries/events/dispatcher';
 import { setDownloadScope } from './downloadScope.svelte';
 
 const { invalidate } = vi.hoisted(() => ({ invalidate: vi.fn().mockResolvedValue(undefined) }));
@@ -7,26 +7,23 @@ vi.mock('$lib/queries/QueryClient', () => ({
 	invalidateQueriesWithPersister: invalidate
 }));
 
-// Stands in for the tab's shared event stream.
-function fakeMux() {
-	const listeners = new Map<string, Set<MuxEventListener>>();
-	const mux: MuxEventStream = {
-		connect: () => undefined,
-		disconnect: () => undefined,
-		on(name, listener) {
+// Stands in for the server events dispatcher.
+function fakeEvents() {
+	const listeners = new Map<string, Set<(data: unknown) => void>>();
+	const events = {
+		start: () => undefined,
+		stop: () => undefined,
+		on(name: string, listener: (data: unknown) => void) {
 			let set = listeners.get(name);
 			if (!set) listeners.set(name, (set = new Set()));
 			set.add(listener);
 			return () => set.delete(listener);
-		},
-		onConnect: () => () => undefined,
-		isConnected: true
-	};
+		}
+	} as unknown as EventDispatcher;
 	function emit(name: string, data: unknown) {
-		const ev = { data: JSON.stringify(data) } as MessageEvent;
-		for (const listener of listeners.get(name) ?? []) listener(ev);
+		for (const listener of listeners.get(name) ?? []) listener(data);
 	}
-	return { mux, emit };
+	return { events, emit };
 }
 
 beforeEach(() => {
@@ -44,8 +41,8 @@ const { createDownloadStream } = await import('./DownloadSSE.svelte');
 
 describe('createDownloadStream', () => {
 	it('applies its own task progress and coalesces source changes', () => {
-		const { mux, emit } = fakeMux();
-		const stream = createDownloadStream(mux);
+		const { events, emit } = fakeEvents();
+		const stream = createDownloadStream(events);
 		stream.start('task');
 		emit('download_progress', { task_id: 'task', status: 'downloading', bytes_downloaded: 1 });
 		for (let i = 2; i < 100; i++) {
@@ -61,8 +58,8 @@ describe('createDownloadStream', () => {
 	});
 
 	it('fences events across same-user role changes', () => {
-		const { mux, emit } = fakeMux();
-		const stream = createDownloadStream(mux);
+		const { events, emit } = fakeEvents();
+		const stream = createDownloadStream(events);
 		stream.start('task');
 		setDownloadScope('user', 'admin');
 		emit('download_progress', { task_id: 'task', status: 'processing', bytes_downloaded: 5 });

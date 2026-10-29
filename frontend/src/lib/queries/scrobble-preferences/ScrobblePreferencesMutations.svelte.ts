@@ -28,7 +28,7 @@ export const createUpdateScrobblePreferencesMutation = () =>
 	}));
 
 // kicks off a background build; playlist queries are invalidated by the
-// personal_mix_refreshed SSE handler (FollowingEvents) when the build lands
+// personal_mix_refreshed event (queries/events/dispatcher.ts) when the build lands
 export const createRefreshPersonalMixMutation = () =>
 	createMutation(() => ({
 		mutationFn: () => api.v3.POST(SCROBBLE_PREFERENCES_ENDPOINTS.refreshPersonalMixV3())

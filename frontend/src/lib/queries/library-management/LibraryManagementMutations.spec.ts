@@ -25,8 +25,9 @@ vi.mock('$lib/stores/toast', () => ({
 	toastStore: { show: vi.fn() }
 }));
 
-vi.mock('./LibraryManagementInvalidation', () => ({
-	invalidateLibraryManagementSurfaces: invalidate
+vi.mock('$lib/queries/effects', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/queries/effects')>()),
+	applyEffects: invalidate
 }));
 
 import { api } from '$lib/api/client';

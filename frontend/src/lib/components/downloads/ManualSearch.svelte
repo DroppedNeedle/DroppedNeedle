@@ -1,14 +1,12 @@
 <script lang="ts">
 	import { Radar, Search, X } from 'lucide-svelte';
 
-	import { muxEventStream } from '$lib/queries/events/MuxEventStream';
 	import {
 		cancelSearch,
 		dismissSearch,
 		getSearchJobQuery,
 		pickSearchCandidate,
 		policyBreak,
-		refreshSearchJob,
 		type CandidateRefusal,
 		type SearchCandidate
 	} from '$lib/queries/downloads/SearchQueries.svelte';
@@ -24,20 +22,6 @@
 	const pick = pickSearchCandidate();
 	const dismiss = dismissSearch();
 	const cancel = cancelSearch();
-
-	// The owner hears `search_job_updated` when the search finishes, fails or
-	// is picked from; the job query refetches then.
-	$effect(() => {
-		const id = jobId;
-		return muxEventStream.on('search_job_updated', (event) => {
-			try {
-				const data = JSON.parse((event as MessageEvent<string>).data) as { job_id?: string };
-				if (data.job_id === id) refreshSearchJob(id);
-			} catch {
-				refreshSearchJob(id);
-			}
-		});
-	});
 
 	let showAll = $state(false);
 	let pickingIndex = $state<number | null>(null);

@@ -8,15 +8,16 @@ import { REQUESTS_ENDPOINTS, type HistoryParams } from './endpoints';
 import { RequestQueryKeyFactory } from './RequestQueryKeyFactory';
 import { STALE_LIVE } from '$lib/queries/staleTime';
 
-// Live progress list: polls on a short cadence while the tab is visible so
-// download states advance without a manual refresh.
+// Live progress list: `downloads.changed` refreshes it as download states move;
+// the interval is a safety net for a missed event and for changes no download
+// event announces.
 export const getActiveRequestsQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		queryKey: RequestQueryKeyFactory.active(authStore.user?.id),
 		queryFn: ({ signal }) => api.v3.GET(REQUESTS_ENDPOINTS.active(), { signal }),
 		enabled: getEnabled() && !!authStore.user?.id,
 		staleTime: STALE_LIVE,
-		refetchInterval: 5_000,
+		refetchInterval: 60_000,
 		refetchIntervalInBackground: false
 	}));
 

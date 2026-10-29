@@ -86,11 +86,11 @@ describe('download queue queries', () => {
 		});
 	});
 
-	it('uses one visibility-aware compact summary owner with active and idle cadences', async () => {
+	it('keeps a 60 s safety poll on the compact summary', async () => {
 		const opts = getDownloadActivitySummaryQueryOptions() as unknown as {
 			queryFn: (a: { signal?: AbortSignal }) => unknown;
 			queryKey: readonly unknown[];
-			refetchInterval: (query: { state: { data?: { active_count: number } } }) => number;
+			refetchInterval: number;
 			refetchIntervalInBackground: boolean;
 			refetchOnReconnect: string;
 			refetchOnWindowFocus: string | undefined;
@@ -100,8 +100,7 @@ describe('download queue queries', () => {
 		await opts.queryFn({ signal: undefined });
 
 		expect(mockGet.mock.calls.at(-1)?.[0]).toBe('/api/v3/downloads/activity-summary');
-		expect(opts.refetchInterval({ state: { data: { active_count: 1 } } })).toBe(60_000);
-		expect(opts.refetchInterval({ state: { data: { active_count: 0 } } })).toBe(120_000);
+		expect(opts.refetchInterval).toBe(60_000);
 		expect(opts.refetchIntervalInBackground).toBe(false);
 		expect(opts.refetchOnReconnect).toBe('always');
 		// no focus-'always' - invalidations + the interval own freshness

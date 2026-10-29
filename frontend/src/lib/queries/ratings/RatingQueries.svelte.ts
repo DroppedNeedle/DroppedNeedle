@@ -1,9 +1,9 @@
+import { applyEffects, catalogChanged } from '$lib/queries/effects';
 import { createMutation, createQuery, type QueryKey } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
-import { invalidateLibraryCatalog } from '$lib/queries/library/LibraryCatalogInvalidation';
 import {
 	invalidateQueriesWithPersister,
 	queryClient,
@@ -109,7 +109,7 @@ export function setRating() {
 		},
 		onSuccess: (answer, vars) => {
 			// The item was merged: move the page to its current ids.
-			if (answer.item_id !== vars.itemId) void invalidateLibraryCatalog();
+			if (answer.item_id !== vars.itemId) void applyEffects(catalogChanged(authStore.user?.id));
 		},
 		onSettled: () => {
 			// A later click is still saving: its own settle reads the result.

@@ -1,3 +1,4 @@
+import { applyEffects, catalogChanged } from '$lib/queries/effects';
 import { createMutation } from '@tanstack/svelte-query';
 import { goto } from '$app/navigation';
 import { withBasePath } from '$lib/utils/basePath';
@@ -7,7 +8,6 @@ import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 import type { ReleaseDraft } from '$lib/types';
-import { invalidateLibraryCatalog } from '$lib/queries/library/LibraryCatalogInvalidation';
 import {
 	invalidateQueriesWithPersister,
 	setQueryDataWithPersister
@@ -202,7 +202,7 @@ export const attachExistingMusicBrainzReleaseMutation = () =>
 			}),
 		onSuccess: async (contribution) => {
 			await saveContribution(contribution);
-			await invalidateLibraryCatalog();
+			await applyEffects(catalogChanged(authStore.user?.id));
 			toastStore.show({ message: 'Album linked to MusicBrainz', type: 'success' });
 		},
 		onError: async (error, input) =>

@@ -21,10 +21,6 @@ vi.mock(
 	async () => (await import('./libraryManagementPreviewTestFixtures')).libraryQueriesMock
 );
 vi.mock(
-	'$lib/queries/library-management/LibraryManagementEvents',
-	async () => (await import('./libraryManagementPreviewTestFixtures')).eventsMock
-);
-vi.mock(
 	'$lib/queries/library-management/LibraryManagementQueries.svelte',
 	async () => (await import('./libraryManagementPreviewTestFixtures')).queriesMock
 );

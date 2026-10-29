@@ -1,10 +1,7 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { fetchNowPlayingSnapshot, type NowPlayingEntry } from '$lib/player/playbackGateway';
-import {
-	muxEventStream,
-	type MuxEventStream,
-	type MuxUnsubscribe
-} from '$lib/queries/events/MuxEventStream';
+import { serverEvents, type EventDispatcher } from '$lib/queries/events/dispatcher';
+import type { MuxUnsubscribe } from '$lib/queries/events/MuxEventStream';
 
 // Client view over one presence row: the v3 entry plus client-only fields.
 // audio_codec/bitrate are v2-only and stay absent on v3 rows (the quality
@@ -54,7 +51,7 @@ const MAX_INTERPOLATION_ADVANCE_MS = 12_000;
 
 type InterpolationBasis = { serverProgress: number; updatedAt: number };
 
-export function createNowPlayingStore(mux: MuxEventStream = muxEventStream) {
+export function createNowPlayingStore(events: EventDispatcher = serverEvents) {
 	let sessions = $state<NowPlayingSession[]>([]);
 	let unsubSnapshot: MuxUnsubscribe | null = null;
 	let tickTimer: ReturnType<typeof setInterval> | undefined;
@@ -113,14 +110,9 @@ export function createNowPlayingStore(mux: MuxEventStream = muxEventStream) {
 		});
 	}
 
-	function onSnapshot(event: MessageEvent): void {
-		try {
-			// same entry shape as GET /now-playing: optional fields may be absent
-			const data = JSON.parse(event.data) as { sessions?: NowPlayingEntry[] };
-			applySnapshot((data.sessions ?? []).map(nowPlayingEntryToSession));
-		} catch {
-			// ignore a malformed frame; the next snapshot supersedes it
-		}
+	// same entry shape as GET /now-playing: optional fields may be absent
+	function onSnapshot(data: { sessions?: NowPlayingEntry[] }): void {
+		applySnapshot((data.sessions ?? []).map(nowPlayingEntryToSession));
 	}
 
 	async function hydrate(): Promise<void> {
@@ -136,7 +128,7 @@ export function createNowPlayingStore(mux: MuxEventStream = muxEventStream) {
 		if (running) return;
 		running = true;
 		void hydrate();
-		unsubSnapshot = mux.on('snapshot', onSnapshot as EventListener);
+		unsubSnapshot = events.on('snapshot', onSnapshot);
 		tickTimer = setInterval(tick, TICK_MS);
 	}
 

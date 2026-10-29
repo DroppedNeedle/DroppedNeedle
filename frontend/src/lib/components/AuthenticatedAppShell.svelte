@@ -43,9 +43,7 @@
 	import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
 	import { createNavigationProgressController } from '$lib/utils/navigationProgress';
 	import type { Component, Snippet } from 'svelte';
-	import { createFollowingEvents } from '$lib/queries/following/FollowingEvents';
-	import { createLibraryActivityEvents } from '$lib/queries/library/LibraryActivityEvents';
-	import { createDownloadEvents } from '$lib/queries/downloads/DownloadEvents';
+	import { serverEvents } from '$lib/queries/events/dispatcher';
 	import { muxEventStream } from '$lib/queries/events/MuxEventStream';
 	import LibraryActivityStrip from '$lib/components/library/LibraryActivityStrip.svelte';
 	import TopBar from '$lib/components/shell/TopBar.svelte';
@@ -61,10 +59,6 @@
 
 	let { children }: { children: Snippet } = $props();
 	type PlaylistModalComponent = Component<Record<string, never>, PlaylistModalHandle>;
-
-	const followingEvents = createFollowingEvents();
-	const libraryActivityEvents = createLibraryActivityEvents();
-	const downloadEvents = createDownloadEvents();
 
 	let audioElement = $state<HTMLAudioElement | undefined>(undefined);
 	let PlaylistModal = $state<PlaylistModalComponent | null>(null);
@@ -231,25 +225,20 @@
 		const sessionUserId = authStore.user?.id;
 		if (!sessionUserId) return;
 		untrack(() => {
-			followingEvents.start();
-			libraryActivityEvents.start(authStore.isAdmin, sessionUserId);
-			downloadEvents.start();
+			serverEvents.start({ userId: sessionUserId, isAdmin: authStore.isAdmin });
 			// presence is server-driven now (the backend polls upstream servers itself),
 			// so it no longer waits on integration status
 			nowPlayingStore.start();
 			nowPlayingReporter.start();
-			// The tab's single multiplexed stream; connect last so the gated
-			// consumer starts (library activity's admin direct-refresh gate)
-			// see a disconnected mux and refresh exactly once via the first
-			// open instead of doubling with a direct refresh. syncStatus
-			// connects deferred after this on purpose - it has no gate and its
+			// The tab's single multiplexed stream; connect last so the
+			// dispatcher starts on a disconnected stream and refreshes exactly
+			// once via the first open instead of doubling with a direct
+			// refresh. syncStatus connects deferred after this on purpose - its
 			// seed/generation guard covers either order.
 			muxEventStream.connect();
 		});
 		return () => {
-			followingEvents.stop();
-			libraryActivityEvents.stop();
-			downloadEvents.stop();
+			serverEvents.stop();
 			nowPlayingStore.stop();
 			nowPlayingReporter.stop();
 			muxEventStream.disconnect();

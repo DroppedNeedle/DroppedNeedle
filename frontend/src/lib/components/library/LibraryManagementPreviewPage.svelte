@@ -1,7 +1,6 @@
 <script lang="ts">
 	import '$lib/components/library/library-management.css';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
 	import {
 		ArrowRight,
 		BookOpenCheck,
@@ -19,7 +18,6 @@
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { LIBRARY_MANAGEMENT_ENDPOINTS } from '$lib/queries/library-management/endpoints';
-	import { createLibraryManagementEvents } from '$lib/queries/library-management/LibraryManagementEvents';
 	import {
 		getLibraryManagementPlanItemsQuery,
 		getLibraryManagementPreviewQuery,
@@ -166,12 +164,6 @@
 				? 'Apply is disabled: the private apply token is missing and resuming it failed.'
 				: 'Apply is disabled: resuming your private apply token.';
 		return 'Apply is disabled for this preview.';
-	});
-
-	onMount(() => {
-		const events = createLibraryManagementEvents();
-		events.start();
-		return events.stop;
 	});
 
 	$effect(() => {

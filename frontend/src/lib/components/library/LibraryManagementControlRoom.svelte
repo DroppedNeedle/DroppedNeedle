@@ -1,8 +1,8 @@
 <script lang="ts">
+	import { applyEffects, catalogChanged } from '$lib/queries/effects';
 	import '$lib/components/library/library-management.css';
 	import { replaceState } from '$app/navigation';
 	import { page } from '$app/state';
-	import { onMount } from 'svelte';
 	import { SvelteURL } from 'svelte/reactivity';
 	import {
 		TriangleAlert,
@@ -20,7 +20,6 @@
 	import OperationJobStrip from './OperationJobStrip.svelte';
 	import RetagPairCard from './RetagPairCard.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { invalidateLibraryManagementSurfaces } from '$lib/queries/library-management/LibraryManagementInvalidation';
 	import {
 		STALE_INPUT_HINT,
 		groupFailedOperationsByAlbum,
@@ -28,7 +27,6 @@
 	} from './LibraryWorkPresentation';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { createLibraryManagementEvents } from '$lib/queries/library-management/LibraryManagementEvents';
 	import { withBasePath } from '$lib/utils/basePath';
 	import {
 		controlLibraryManagementOperationMutation,
@@ -170,12 +168,6 @@
 		return new Date(millis).toLocaleDateString(undefined, { dateStyle: 'medium' });
 	}
 
-	onMount(() => {
-		const events = createLibraryManagementEvents();
-		events.start();
-		return events.stop;
-	});
-
 	function runnerModeFromUrl(): RunnerMode | null {
 		const requested = page.url.searchParams.get('runner');
 		return requested === 'manage' || requested === 'baseline_restore' ? requested : null;
@@ -243,7 +235,7 @@
 				failed += 1;
 			}
 		}
-		await invalidateLibraryManagementSurfaces().catch(() => undefined);
+		await applyEffects(catalogChanged(authStore.user?.id)).catch(() => undefined);
 		bulkPending = false;
 		const summary =
 			`Retried ${succeeded} of ${targets.length} stale ${targets.length === 1 ? 'preview' : 'previews'}` +
@@ -258,7 +250,7 @@
 		resolvingBundleId = bundleId;
 		try {
 			const result = await resolveImportBundle.mutateAsync({ bundleId });
-			await invalidateLibraryManagementSurfaces().catch(() => undefined);
+			await applyEffects(catalogChanged(authStore.user?.id)).catch(() => undefined);
 			toastStore.show({
 				message: result.note,
 				type: 'success'
@@ -296,7 +288,7 @@
 				failed += 1;
 			}
 		}
-		await invalidateLibraryManagementSurfaces().catch(() => undefined);
+		await applyEffects(catalogChanged(authStore.user?.id)).catch(() => undefined);
 		bulkPending = false;
 		const summary =
 			`Dismissed ${succeeded} of ${targets.length} stale ${targets.length === 1 ? 'preview' : 'previews'}` +

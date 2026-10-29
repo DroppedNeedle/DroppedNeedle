@@ -90,17 +90,12 @@ vi.mock('$lib/stores/nowPlayingSessions.svelte', () => ({
 vi.mock('$lib/stores/nowPlayingReporter.svelte', () => ({
 	nowPlayingReporter: { start: vi.fn(), stop: vi.fn() }
 }));
-const { followingEventsMock } = vi.hoisted(() => ({
-	followingEventsMock: { start: vi.fn(), stop: vi.fn() }
+const { serverEventsMock } = vi.hoisted(() => ({
+	serverEventsMock: { start: vi.fn(), stop: vi.fn(), on: vi.fn(() => () => {}) }
 }));
-vi.mock('$lib/queries/following/FollowingEvents', () => ({
-	createFollowingEvents: vi.fn(() => followingEventsMock)
-}));
-const { libraryActivityEventsMock } = vi.hoisted(() => ({
-	libraryActivityEventsMock: { start: vi.fn(), stop: vi.fn() }
-}));
-vi.mock('$lib/queries/library/LibraryActivityEvents', () => ({
-	createLibraryActivityEvents: vi.fn(() => libraryActivityEventsMock)
+vi.mock('$lib/queries/events/dispatcher', () => ({
+	serverEvents: serverEventsMock,
+	createEventDispatcher: vi.fn(() => serverEventsMock)
 }));
 const { muxMock } = vi.hoisted(() => ({
 	muxMock: {
@@ -358,16 +353,13 @@ describe('+layout.svelte auth-reactive session state (#155)', () => {
 		await renderLayout();
 		await vi.waitFor(() => expect(nowPlayingStore.start).toHaveBeenCalled());
 		expect(nowPlayingReporter.start).toHaveBeenCalled();
-		expect(followingEventsMock.start).toHaveBeenCalled();
+		expect(serverEventsMock.start).toHaveBeenCalledWith({ userId: testUser().id, isAdmin: false });
 		await vi.waitFor(() => expect(syncStatusMock.connect).toHaveBeenCalled());
 		await vi.waitFor(() => expect(muxMock.connect).toHaveBeenCalled());
-		// consumers start before the mux connects so their starts see a
-		// disconnected mux and refresh exactly once via the first open.
-		// libraryActivityEvents is the order-sensitive one: its admin
-		// direct-refresh gate depends on starting while disconnected.
+		// the dispatcher starts before the mux connects so it sees a
+		// disconnected mux and refreshes exactly once via the first open.
 		const lastStart = Math.max(
-			vi.mocked(followingEventsMock.start).mock.invocationCallOrder[0],
-			vi.mocked(libraryActivityEventsMock.start).mock.invocationCallOrder[0],
+			vi.mocked(serverEventsMock.start).mock.invocationCallOrder[0],
 			vi.mocked(nowPlayingStore.start).mock.invocationCallOrder[0]
 		);
 		expect(lastStart).toBeLessThan(muxMock.connect.mock.invocationCallOrder[0]);
@@ -390,7 +382,7 @@ describe('+layout.svelte auth-reactive session state (#155)', () => {
 		authStore.clear();
 		await vi.waitFor(() => expect(nowPlayingStore.stop).toHaveBeenCalled());
 		expect(nowPlayingReporter.stop).toHaveBeenCalled();
-		expect(followingEventsMock.stop).toHaveBeenCalled();
+		expect(serverEventsMock.stop).toHaveBeenCalled();
 		expect(muxMock.disconnect).toHaveBeenCalled();
 	});
 

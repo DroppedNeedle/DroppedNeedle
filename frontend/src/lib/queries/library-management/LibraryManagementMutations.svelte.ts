@@ -1,3 +1,5 @@
+import { applyEffects, catalogChanged } from '$lib/queries/effects';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
@@ -10,7 +12,6 @@ import { toOperationResponse } from '$lib/queries/library/libraryOperationAdapte
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 
-import { invalidateLibraryManagementSurfaces } from './LibraryManagementInvalidation';
 import { LibraryManagementQueryKeyFactory } from './LibraryManagementQueryKeyFactory';
 import type {
 	LibraryManagementActivationConfirmRequest,
@@ -40,7 +41,7 @@ const showActionError = (fallback: string) => (error: Error) => {
 };
 
 const showQueued = (message: string) => async () => {
-	await invalidateLibraryManagementSurfaces();
+	await applyEffects(catalogChanged(authStore.user?.id));
 	toastStore.show({ message, type: 'success' });
 };
 
@@ -48,7 +49,7 @@ export const updateLibraryManagementSettingsMutation = () =>
 	createMutation(() => ({
 		mutationFn: (request: LibraryManagementSettingsUpdateRequest) =>
 			api.v3.PUT(LIBRARY_MANAGEMENT_ENDPOINTS.settings(), request),
-		onSuccess: invalidateLibraryManagementSurfaces
+		onSuccess: () => applyEffects(catalogChanged(authStore.user?.id))
 	}));
 
 export const previewLibraryManagementSettingsImpactMutation = () =>
@@ -67,14 +68,14 @@ export const copyLibraryManagementProfileMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileCopyRequest }) =>
 			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.copyProfile(input.profileId), input.request),
-		onSuccess: invalidateLibraryManagementSurfaces
+		onSuccess: () => applyEffects(catalogChanged(authStore.user?.id))
 	}));
 
 export const deleteLibraryManagementProfileMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileDeleteRequest }) =>
 			api.v3.DELETE(LIBRARY_MANAGEMENT_ENDPOINTS.profile(input.profileId), input.request),
-		onSuccess: invalidateLibraryManagementSurfaces
+		onSuccess: () => applyEffects(catalogChanged(authStore.user?.id))
 	}));
 
 export const exportLibraryManagementProfileMutation = () =>
@@ -93,7 +94,7 @@ export const importLibraryManagementProfileMutation = () =>
 	createMutation(() => ({
 		mutationFn: (request: LibraryManagementProfileImportRequest) =>
 			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.profileImports(), request),
-		onSuccess: invalidateLibraryManagementSurfaces
+		onSuccess: () => applyEffects(catalogChanged(authStore.user?.id))
 	}));
 
 export const createLibraryManagementActivationPreviewMutation = () =>
@@ -101,7 +102,7 @@ export const createLibraryManagementActivationPreviewMutation = () =>
 		mutationFn: (request: LibraryManagementActivationPreviewRequest) =>
 			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.activationPreviews(), request),
 		onSuccess: async (result) => {
-			await invalidateLibraryManagementSurfaces();
+			await applyEffects(catalogChanged(authStore.user?.id));
 			toastStore.show({
 				message: result.existing ? 'Active dry run resumed' : 'Activation dry run queued',
 				type: 'success'
@@ -250,7 +251,7 @@ export const handBackLibraryAlbumMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { albumId: string }) =>
 			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.handBackAlbum(input.albumId)),
-		onSuccess: invalidateLibraryManagementSurfaces,
+		onSuccess: () => applyEffects(catalogChanged(authStore.user?.id)),
 		// Unreadable files are a state the page shows beside the button, not a toast.
 		onError: (error: Error) => {
 			if (handBackRefusalMessage(error) !== null) return;
@@ -263,7 +264,7 @@ export const handBackLibraryAlbumMutation = () =>
 export const handBackAllLibraryAlbumsMutation = () =>
 	createMutation(() => ({
 		mutationFn: () => api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.handBackAll()),
-		onSuccess: invalidateLibraryManagementSurfaces,
+		onSuccess: () => applyEffects(catalogChanged(authStore.user?.id)),
 		onError: showActionError('Could not hand these albums back')
 	}));
 
@@ -279,7 +280,7 @@ export const controlLibraryManagementOperationMutation = (action: 'pause' | 'res
 				})
 			),
 		onSuccess: async () => {
-			await invalidateLibraryManagementSurfaces();
+			await applyEffects(catalogChanged(authStore.user?.id));
 			toastStore.show({ message: `Organization ${action} requested`, type: 'success' });
 		},
 		onError: showActionError(`Could not ${action} this organization operation`)

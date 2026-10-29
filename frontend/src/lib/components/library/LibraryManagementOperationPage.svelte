@@ -16,7 +16,6 @@
 	import BackButton from '$lib/components/BackButton.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { LIBRARY_MANAGEMENT_ENDPOINTS } from '$lib/queries/library-management/endpoints';
-	import { createLibraryManagementEvents } from '$lib/queries/library-management/LibraryManagementEvents';
 	import {
 		controlLibraryManagementOperationMutation,
 		createLibraryManagementUndoPreviewMutation
@@ -218,15 +217,10 @@
 	});
 
 	onMount(() => {
-		const events = createLibraryManagementEvents();
-		events.start();
 		const timer = window.setInterval(() => {
 			nowSeconds = Date.now() / 1000;
 		}, 30_000);
-		return () => {
-			window.clearInterval(timer);
-			events.stop();
-		};
+		return () => window.clearInterval(timer);
 	});
 
 	async function control(action: 'pause' | 'resume'): Promise<void> {

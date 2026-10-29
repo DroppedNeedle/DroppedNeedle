@@ -1,9 +1,10 @@
+import { applyEffects, catalogChanged } from '$lib/queries/effects';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { toastStore } from '$lib/stores/toast';
-import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 
@@ -43,7 +44,7 @@ export function joinRetagPair() {
 				expected_identity_revisions: input.expectedIdentityRevisions
 			}),
 		onSuccess: async () => {
-			await invalidateLibraryCatalog();
+			await applyEffects(catalogChanged(authStore.user?.id));
 			toastStore.show({ message: 'Albums joined', type: 'success' });
 		},
 		onError: (error) =>
@@ -58,7 +59,7 @@ export function dismissRetagPair() {
 			newAlbumId: string;
 		}): Promise<components['schemas']['RetagPairDismissResponse']> =>
 			api.v3.POST(LibraryV3Api.dismissRetagPair(input.oldAlbumId, input.newAlbumId)),
-		onSuccess: invalidateLibraryCatalog,
+		onSuccess: () => applyEffects(catalogChanged(authStore.user?.id)),
 		onError: (error) =>
 			toastStore.show({
 				message: errorMessage(error, 'Could not keep the albums apart'),

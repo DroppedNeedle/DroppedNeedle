@@ -1,8 +1,5 @@
-import {
-	muxEventStream,
-	type MuxEventStream,
-	type MuxUnsubscribe
-} from '$lib/queries/events/MuxEventStream';
+import { serverEvents, type EventDispatcher } from '$lib/queries/events/dispatcher';
+import type { MuxUnsubscribe } from '$lib/queries/events/MuxEventStream';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { getDownloadScope } from './downloadScope.svelte';
@@ -54,14 +51,6 @@ interface DownloadStreamState {
 	status: string | null;
 	source: DownloadSourceUpdate | null;
 	done: boolean;
-}
-
-function parse(event: Event): Record<string, unknown> {
-	try {
-		return JSON.parse((event as MessageEvent).data) as Record<string, unknown>;
-	} catch {
-		return {};
-	}
 }
 
 function nullableNumber(
@@ -131,11 +120,11 @@ function parseSourceUpdate(
 	};
 }
 
-// Live progress for one task, read from the tab's shared event stream: the
-// worker sends `download_progress` to the task owner after every poll. Status
-// changes reach the cards through the queue list, which `downloads.changed`
-// refreshes (see DownloadEvents), so this only carries bytes and source.
-export function createDownloadStream(mux: MuxEventStream = muxEventStream) {
+// Live progress for one task, read from the server's events: the worker sends
+// `download_progress` to the task owner after every poll. Status changes reach
+// the cards through the queue list, which `downloads.changed` refreshes, so
+// this only carries bytes and source.
+export function createDownloadStream(events: EventDispatcher = serverEvents) {
 	let state = $state<DownloadStreamState>({
 		progress: null,
 		status: null,
@@ -155,9 +144,9 @@ export function createDownloadStream(mux: MuxEventStream = muxEventStream) {
 		state = { progress: null, status: null, source: null, done: false };
 		const scope = getDownloadScope();
 		streamScope = scope;
-		const unsubscribe = mux.on('download_progress', (e) => {
+		const unsubscribe = events.on('download_progress', (progress) => {
 			if (scope !== getDownloadScope()) return;
-			const d = parse(e);
+			const d = progress as unknown as Record<string, unknown>;
 			if (d.task_id !== taskId) return;
 			const sourceUpdate = parseSourceUpdate(d, state.source);
 			if (

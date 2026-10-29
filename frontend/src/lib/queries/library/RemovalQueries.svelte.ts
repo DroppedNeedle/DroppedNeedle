@@ -1,3 +1,4 @@
+import { applyEffects, catalogChanged } from '$lib/queries/effects';
 import { createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
@@ -9,7 +10,6 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
 import { AlbumMatchKeyFactory } from '$lib/queries/AlbumMatchQueryKeyFactory';
 import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
-import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 
@@ -62,7 +62,7 @@ export function putBackRemoval() {
 				: [];
 			if (releaseGroupMbid) libraryStore.addMbid(releaseGroupMbid);
 			await Promise.allSettled([
-				invalidateLibraryCatalog(),
+				applyEffects(catalogChanged(authStore.user?.id)),
 				...[WantedQueryKeyFactory.list(userId), ...albumPage].map((queryKey) =>
 					invalidateQueriesWithPersister({ queryKey })
 				)

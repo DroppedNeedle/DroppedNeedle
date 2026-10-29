@@ -17,9 +17,6 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	LAST_USER_ID_KEY: 'test:last-user',
 	authStore: { isAdmin: true, user: { id: 'admin-1' } }
 }));
-vi.mock('$lib/queries/library-management/LibraryManagementEvents', () => ({
-	createLibraryManagementEvents: () => ({ start: vi.fn(), stop: vi.fn() })
-}));
 vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () => ({
 	getLibraryManagementOperationQuery: () => h.operation,
 	getLibraryManagementOperationResultsQuery: () => h.results

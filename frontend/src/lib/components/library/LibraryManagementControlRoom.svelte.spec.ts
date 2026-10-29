@@ -88,8 +88,9 @@ vi.mock('$lib/api/client', () => ({
 	api: { get: h.apiGet, post: h.apiPost }
 }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
-vi.mock('$lib/queries/library-management/LibraryManagementInvalidation', () => ({
-	invalidateLibraryManagementSurfaces: h.invalidate
+vi.mock('$lib/queries/effects', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/queries/effects')>()),
+	applyEffects: h.invalidate
 }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
 	LAST_USER_ID_KEY: 'test:last-user',
@@ -136,9 +137,6 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryScanScheduleQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryAlbumStatusQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getAlbumSearchQuery: () => ({ data: undefined, isLoading: false, isError: false })
-}));
-vi.mock('$lib/queries/library-management/LibraryManagementEvents', () => ({
-	createLibraryManagementEvents: () => ({ start: vi.fn(), stop: vi.fn() })
 }));
 vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () => ({
 	getLibraryManagementSettingsQuery: () => ({

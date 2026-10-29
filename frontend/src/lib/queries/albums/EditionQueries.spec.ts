@@ -25,10 +25,6 @@ vi.mock('$lib/queries/QueryClient', () => ({
 	queryClient: { getQueryData: () => h.cached }
 }));
 
-vi.mock('$lib/queries/library-management/LibraryManagementInvalidation', () => ({
-	invalidateLibraryManagementSurfaces: h.invalidate
-}));
-
 vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: { user: { id: 'user-a' } }
 }));

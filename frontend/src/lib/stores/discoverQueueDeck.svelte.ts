@@ -7,7 +7,8 @@
  * change saves the deck through the query cache so a reload resumes it.
  */
 import { isAbortError } from '$lib/utils/errorHandling';
-import { invalidateDiscoverRecommendations } from '$lib/queries/discover/DiscoverInvalidation';
+import { applyEffects, recommendationsChanged } from '$lib/queries/effects';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { recordDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
 import {
 	fetchDiscoverQueue,
@@ -394,7 +395,7 @@ function createDiscoverQueueDeck() {
 			}
 			if (key !== requestKey()) return;
 			this.removeByMbid(item.musicbrainz_id);
-			if (saved) await invalidateDiscoverRecommendations();
+			if (saved) await applyEffects(recommendationsChanged(authStore.user?.id));
 		},
 
 		markCurrentRequested(): void {

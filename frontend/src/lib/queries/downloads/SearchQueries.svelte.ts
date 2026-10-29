@@ -24,7 +24,7 @@ type DismissSearchResponse = components['schemas']['DismissSearchResponse'];
 type ActionResponse = components['schemas']['DownloadActionResponse'];
 
 // Safety net for a missed `search_job_updated` event while the search runs.
-const SEARCHING_POLL_MS = 5_000;
+const SEARCHING_POLL_MS = 60_000;
 
 function errorMessage(err: unknown, fallback: string): string {
 	return err instanceof Error && err.message ? err.message : fallback;
@@ -47,11 +47,6 @@ export const getSearchJobQueryOptions = (jobId: string) =>
 
 export const getSearchJobQuery = (jobId: () => string) =>
 	createQuery(() => getSearchJobQueryOptions(jobId()));
-
-/** Refetch a job when the event stream says it moved. */
-export function refreshSearchJob(jobId: string) {
-	void invalidateJob(jobId);
-}
 
 export function startAlbumSearch() {
 	return createMutation(() => ({
