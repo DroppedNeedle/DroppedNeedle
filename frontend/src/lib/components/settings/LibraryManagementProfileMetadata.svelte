@@ -10,6 +10,7 @@
 		MetadataManagementSettings
 	} from '$lib/queries/library-management/types';
 	import Input from '$lib/ui/Input.svelte';
+	import SelectField from '$lib/ui/SelectField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	interface Props {
@@ -117,31 +118,30 @@
 							<span class="text-xs font-medium">{field.label}</span>
 							<small class="text-[0.7rem] text-base-content/55">{sourceNote(field)}</small>
 						</span>
-						<select
-							class="select select-sm"
-							value={fieldMode(field.name)}
-							onchange={(event) =>
-								setFieldMode(field.name, event.currentTarget.value as ManagementFieldMode)}
-							aria-label={`Mode for ${field.label}`}
-						>
-							{#each field.modes as mode (mode)}
-								<option value={mode}>{modeLabels[mode]}</option>
-							{/each}
-							{#if fieldMode(field.name) === 'preserve'}
-								<option value="preserve">{modeLabels.preserve}</option>
-							{/if}
-						</select>
+						<SelectField
+							bare
+							size="sm"
+							label={`Mode for ${field.label}`}
+							options={[
+								...field.modes.map((mode) => ({ value: mode, label: modeLabels[mode] })),
+								...(fieldMode(field.name) === 'preserve' && !field.modes.includes('preserve')
+									? [{ value: 'preserve' as const, label: modeLabels.preserve }]
+									: [])
+							]}
+							bind:value={() => fieldMode(field.name), (mode) => setFieldMode(field.name, mode)}
+						/>
 						{#if field.clearable && entry?.mode === 'replace'}
 							<span
 								class="tooltip"
 								data-tip="Clear this field when the selected release has no value"
 							>
-								<input
-									type="checkbox"
-									class="checkbox checkbox-sm"
-									checked={entry.clear_when_canonical_missing}
-									onchange={(event) => setFieldClear(field.name, event.currentTarget.checked)}
-									aria-label={`Clear ${field.label} when the release has no value`}
+								<ToggleRow
+									bare
+									label={`Clear ${field.label} when the release has no value`}
+									bind:checked={
+										() => entry.clear_when_canonical_missing,
+										(clear) => setFieldClear(field.name, clear)
+									}
 								/>
 							</span>
 						{:else}

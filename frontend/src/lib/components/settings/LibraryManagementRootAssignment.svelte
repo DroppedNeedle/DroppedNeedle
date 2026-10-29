@@ -13,11 +13,11 @@
 
 	import LibraryManagementProfilePicker from './LibraryManagementProfilePicker.svelte';
 	import LibraryManagementRootPlacement from './LibraryManagementRootPlacement.svelte';
-	import { emptyOverrides, type ManagementSettingsDraft } from './managementSettingsDraft.svelte';
+	import { emptyOverrides, type ManagementSettings } from './managementSettingsDraft.svelte';
 
 	interface Props {
 		root: LibraryRootSettings;
-		settings: ManagementSettingsDraft;
+		settings: ManagementSettings;
 		/** One line on whether management is on, pending or paused here. */
 		status: string;
 	}
@@ -122,74 +122,55 @@
 		</div>
 	</div>
 	<div class="mt-3 grid gap-2 md:grid-cols-3" aria-label={`Automatic triggers for ${root.label}`}>
-		<label class="management-trigger"
-			><input
-				type="checkbox"
-				class="checkbox checkbox-sm"
+		<div class="management-trigger">
+			<ToggleRow
+				label="Acquisitions"
+				description="Applies to new Soulseek and Usenet downloads."
 				disabled={!assignment.enabled}
-				checked={assignment.automatic_acquisitions}
-				onchange={(event) =>
-					update((value) => ({
-						...value,
-						automatic_acquisitions: event.currentTarget.checked
-					}))}
-			/><span
-				><strong>Acquisitions</strong><small>Applies to new Soulseek and Usenet downloads.</small
-				></span
-			></label
-		>
-		<label class="management-trigger"
-			><input
-				type="checkbox"
-				class="checkbox checkbox-sm"
+				bind:checked={
+					() => assignment.automatic_acquisitions,
+					(on) => update((value) => ({ ...value, automatic_acquisitions: on }))
+				}
+			/>
+		</div>
+		<div class="management-trigger">
+			<ToggleRow
+				label="Drop & Free imports"
+				description="Only identified, mapped files."
 				disabled={!assignment.enabled}
-				checked={assignment.automatic_drop_imports}
-				onchange={(event) =>
-					update((value) => ({
-						...value,
-						automatic_drop_imports: event.currentTarget.checked
-					}))}
-			/><span
-				><strong>Drop & Free imports</strong><small>Only identified, mapped files.</small></span
-			></label
-		>
-		<label class="management-trigger"
-			><input
-				type="checkbox"
-				class="checkbox checkbox-sm"
+				bind:checked={
+					() => assignment.automatic_drop_imports,
+					(on) => update((value) => ({ ...value, automatic_drop_imports: on }))
+				}
+			/>
+		</div>
+		<div class="management-trigger">
+			<ToggleRow
+				label="Scan-discovered"
+				description="Off by default. Accepted release and track identity required."
 				disabled={!assignment.enabled}
-				checked={assignment.automatic_scan_discovered}
-				onchange={(event) =>
-					update((value) => ({
-						...value,
-						automatic_scan_discovered: event.currentTarget.checked,
-						automatic_custom_editions: event.currentTarget.checked
-							? value.automatic_custom_editions
-							: false
-					}))}
-			/><span
-				><strong>Scan-discovered</strong><small
-					>Off by default. Accepted release and track identity required.</small
-				></span
-			></label
-		>
-		<label class="management-trigger pl-6"
-			><input
-				type="checkbox"
-				class="checkbox checkbox-sm"
+				bind:checked={
+					() => assignment.automatic_scan_discovered,
+					(on) =>
+						update((value) => ({
+							...value,
+							automatic_scan_discovered: on,
+							automatic_custom_editions: on ? value.automatic_custom_editions : false
+						}))
+				}
+			/>
+		</div>
+		<div class="management-trigger">
+			<ToggleRow
+				label="Include Custom editions"
+				description="Requires a current sealed manifest and a fresh dry run."
 				disabled={!assignment.enabled || !assignment.automatic_scan_discovered}
-				checked={assignment.automatic_custom_editions}
-				onchange={(event) =>
-					update((value) => ({
-						...value,
-						automatic_custom_editions: event.currentTarget.checked
-					}))}
-			/><span
-				><strong>Include Custom editions</strong><small
-					>Requires a current sealed manifest and a fresh dry run.</small
-				></span
-			></label
-		>
+				bind:checked={
+					() => assignment.automatic_custom_editions,
+					(on) => update((value) => ({ ...value, automatic_custom_editions: on }))
+				}
+			/>
+		</div>
 	</div>
 	<details class="mt-3 rounded-xl border border-base-content/10 p-3">
 		<summary class="cursor-pointer text-xs font-semibold">Per-root profile overrides</summary>

@@ -29,7 +29,7 @@ import type {
 } from '$lib/queries/library-management/types';
 import { createUuid } from '$lib/utils/uuid';
 
-import type { ManagementSettingsDraft } from './managementSettingsDraft.svelte';
+import type { ManagementSettings } from './managementSettingsDraft.svelte';
 
 export class ActivationWizard {
 	/** The settings every dry run covers and the confirmation saves. */
@@ -52,7 +52,7 @@ export class ActivationWizard {
 	readonly #create = createLibraryManagementActivationPreviewMutation();
 	readonly #confirm = confirmLibraryManagementActivationMutation();
 	readonly #stop = controlLibraryManagementOperationMutation('stop');
-	readonly #settings: ManagementSettingsDraft;
+	readonly #settings: ManagementSettings;
 	readonly #policyRevision: () => string;
 
 	readonly active = $derived(Boolean(this.draft && this.rootIds.length > 0));
@@ -85,7 +85,7 @@ export class ActivationWizard {
 		)
 	);
 
-	constructor(settings: ManagementSettingsDraft, policyRevision: () => string) {
+	constructor(settings: ManagementSettings, policyRevision: () => string) {
 		this.#settings = settings;
 		this.#policyRevision = policyRevision;
 	}
@@ -133,7 +133,7 @@ export class ActivationWizard {
 			const handle = await this.#create.mutateAsync({
 				root_id: rootId,
 				settings: this.draft,
-				expected_settings_revision: this.#settings.sourceRevision,
+				expected_settings_revision: this.#settings.revision,
 				expected_policy_revision: this.#policyRevision(),
 				idempotency_key: createUuid()
 			});
@@ -212,7 +212,7 @@ export class ActivationWizard {
 			const saved = await this.#confirm.mutateAsync({
 				settings: this.draft,
 				proofs: this.proofs,
-				expected_settings_revision: this.#settings.sourceRevision,
+				expected_settings_revision: this.#settings.revision,
 				confirmation: true
 			});
 			this.#settings.accept(saved);
@@ -254,7 +254,7 @@ export class ActivationWizard {
 			session.sourceRevision === settingsRevision &&
 			session.policyRevision === this.#policyRevision()
 		) {
-			this.#settings.draft = structuredClone(session.draft);
+			this.#settings.replaceDraft(session.draft);
 			this.draft = structuredClone(session.activationDraft);
 			this.rootIds = [...session.rootIds];
 			this.index = session.rootIndex;
@@ -275,7 +275,7 @@ export class ActivationWizard {
 			return;
 		}
 		rememberLibraryManagementActivationSession(userId, {
-			sourceRevision: this.#settings.sourceRevision,
+			sourceRevision: this.#settings.revision,
 			policyRevision: this.#policyRevision(),
 			draft: $state.snapshot(current),
 			activationDraft: $state.snapshot(this.draft),

@@ -28,6 +28,7 @@
 	import Card from '$lib/ui/Card.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import TextAreaField from '$lib/ui/TextAreaField.svelte';
 
 	interface Props {
 		shareProfile: LibraryManagementProfile | null;
@@ -315,11 +316,13 @@
 						<summary class="cursor-pointer text-xs font-semibold text-base-content/65"
 							>Show text code</summary
 						>
-						<textarea
-							class="textarea mt-2 h-28 w-full resize-y font-mono text-[11px]"
+						<TextAreaField
+							label="Profile share code"
+							mono
 							readonly
-							aria-label="Profile share code"
-							value={shareResult.share_code}></textarea>
+							rows={4}
+							value={shareResult.share_code}
+						/>
 					</details>
 				</Card>
 				<p class="flex items-center gap-2 font-mono text-[10px] text-base-content/40">
@@ -409,18 +412,15 @@
 						/>
 					</section>
 					<section class="flex flex-col">
-						<label for="management-profile-code" class="text-sm font-semibold"
-							>Or paste a text code</label
-						>
-						<p class="mt-1 text-xs text-base-content/50">
-							Codes begin with DNLP1:. Pasting a code replaces the selected file.
-						</p>
-						<textarea
-							id="management-profile-code"
-							class="textarea mt-3 min-h-36 flex-1 resize-y font-mono text-xs"
+						<TextAreaField
+							label="Or paste a text code"
+							help="Codes begin with DNLP1:. Pasting a code replaces the selected file."
+							mono
+							rows={6}
 							placeholder="DNLP1:…"
 							value={importFilename ? '' : importContent}
-							oninput={(event) => updateContent(event.currentTarget.value)}></textarea>
+							oninput={updateContent}
+						/>
 					</section>
 				</div>
 				{#if importError}<div class="alert alert-error mt-4 text-sm" role="alert">

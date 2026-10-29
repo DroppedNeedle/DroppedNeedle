@@ -1,6 +1,9 @@
 <!--
 	A labelled multi-line text box that grows with its text, for values a
 	person should read whole: scripts, lists, notes.
+	For a list kept one value per line, pass `value` without binding and
+	parse the text in `oninput`: the box keeps what was typed (a trailing
+	blank line included) while the list holds only the parsed values.
 -->
 <script lang="ts">
 	import Field from './Field.svelte';
@@ -16,6 +19,9 @@
 		/** Rows shown when the text is shorter. */
 		rows?: number;
 		disabled?: boolean;
+		readonly?: boolean;
+		/** Called with the text after each edit. */
+		oninput?: (text: string) => void;
 	}
 
 	let {
@@ -26,7 +32,9 @@
 		placeholder,
 		mono = false,
 		rows = 2,
-		disabled = false
+		disabled = false,
+		readonly = false,
+		oninput
 	}: Props = $props();
 </script>
 
@@ -39,6 +47,8 @@
 			{rows}
 			{placeholder}
 			{disabled}
+			{readonly}
+			oninput={(event) => oninput?.(event.currentTarget.value)}
 			bind:value></textarea>
 	{/snippet}
 </Field>

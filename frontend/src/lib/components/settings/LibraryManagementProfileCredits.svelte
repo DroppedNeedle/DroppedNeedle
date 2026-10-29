@@ -11,7 +11,7 @@
 		MetadataManagementSettings
 	} from '$lib/queries/library-management/types';
 	import Button from '$lib/ui/Button.svelte';
-	import Field from '$lib/ui/Field.svelte';
+	import TextAreaField from '$lib/ui/TextAreaField.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import NumberField from '$lib/ui/NumberField.svelte';
@@ -123,20 +123,20 @@
 			>
 				<div class="management-choice-grid mt-3" aria-label="Relationship credit types">
 					{#each relationshipTypes as relationship (relationship.value)}
-						<label>
-							<input
-								type="checkbox"
-								class="checkbox checkbox-sm"
-								checked={metadata.relationships.types.includes(relationship.value)}
-								onchange={(event) =>
-									(metadata.relationships.types = toggled(
-										metadata.relationships.types,
-										relationship.value,
-										event.currentTarget.checked
-									))}
+						<div class="management-trigger">
+							<ToggleRow
+								label={relationship.label}
+								bind:checked={
+									() => metadata.relationships.types.includes(relationship.value),
+									(on) =>
+										(metadata.relationships.types = toggled(
+											metadata.relationships.types,
+											relationship.value,
+											on
+										))
+								}
 							/>
-							<span>{relationship.label}</span>
-						</label>
+						</div>
 					{/each}
 				</div>
 			</LibraryManagementEditorAdvanced>
@@ -151,20 +151,15 @@
 		{#if genres.enabled}
 			<div class="management-choice-grid sm:col-span-2" aria-label="Genre sources">
 				{#each genreSources as source (source.value)}
-					<label>
-						<input
-							type="checkbox"
-							class="checkbox checkbox-sm"
-							checked={genres.sources.includes(source.value)}
-							onchange={(event) =>
-								(genres.sources = toggled(
-									genres.sources,
-									source.value,
-									event.currentTarget.checked
-								))}
+					<div class="management-trigger">
+						<ToggleRow
+							label={source.label}
+							bind:checked={
+								() => genres.sources.includes(source.value),
+								(on) => (genres.sources = toggled(genres.sources, source.value, on))
+							}
 						/>
-						<span>{source.label}</span>
-					</label>
+					</div>
 				{/each}
 			</div>
 			<SelectField
@@ -218,37 +213,25 @@
 						description="Use one value where multi-values are lossy."
 						bind:checked={genres.write_primary_only_for_constrained_formats}
 					/>
-					<Field label="Genre allowlist (one per line)">
-						{#snippet children(control)}
-							<textarea
-								{...control}
-								class="textarea min-h-24 w-full"
-								value={genres.allowlist.join('\n')}
-								oninput={(event) => (genres.allowlist = lines(event.currentTarget.value))}
-							></textarea>
-						{/snippet}
-					</Field>
-					<Field label="Genre denylist (one per line)">
-						{#snippet children(control)}
-							<textarea
-								{...control}
-								class="textarea min-h-24 w-full"
-								value={genres.denylist.join('\n')}
-								oninput={(event) => (genres.denylist = lines(event.currentTarget.value))}
-							></textarea>
-						{/snippet}
-					</Field>
+					<TextAreaField
+						label="Genre allowlist (one per line)"
+						rows={4}
+						value={genres.allowlist.join('\n')}
+						oninput={(text) => (genres.allowlist = lines(text))}
+					/>
+					<TextAreaField
+						label="Genre denylist (one per line)"
+						rows={4}
+						value={genres.denylist.join('\n')}
+						oninput={(text) => (genres.denylist = lines(text))}
+					/>
 					<div class="sm:col-span-2">
-						<Field label="Preferred casing (one per line)">
-							{#snippet children(control)}
-								<textarea
-									{...control}
-									class="textarea min-h-20 w-full"
-									value={genres.preferred_casing.join('\n')}
-									oninput={(event) => (genres.preferred_casing = lines(event.currentTarget.value))}
-								></textarea>
-							{/snippet}
-						</Field>
+						<TextAreaField
+							label="Preferred casing (one per line)"
+							rows={3}
+							value={genres.preferred_casing.join('\n')}
+							oninput={(text) => (genres.preferred_casing = lines(text))}
+						/>
 					</div>
 					<div class="space-y-2 sm:col-span-2">
 						<div class="flex items-center justify-between">

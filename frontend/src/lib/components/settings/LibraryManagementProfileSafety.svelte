@@ -13,7 +13,7 @@
 		LibraryManagementProfile,
 		MetadataManagementSettings
 	} from '$lib/queries/library-management/types';
-	import Field from '$lib/ui/Field.svelte';
+	import TextAreaField from '$lib/ui/TextAreaField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	interface Props {
@@ -57,16 +57,13 @@
 			subtitle="Tags a write never changes"
 		>
 			<div class="mt-3">
-				<Field label="Always preserve fields (one per line)">
-					{#snippet children(control)}
-						<textarea
-							{...control}
-							class="textarea min-h-20 w-full font-mono text-xs"
-							value={metadata.preserve_fields.join('\n')}
-							oninput={(event) => (metadata.preserve_fields = lines(event.currentTarget.value))}
-						></textarea>
-					{/snippet}
-				</Field>
+				<TextAreaField
+					label="Always preserve fields (one per line)"
+					mono
+					rows={3}
+					value={metadata.preserve_fields.join('\n')}
+					oninput={(text) => (metadata.preserve_fields = lines(text))}
+				/>
 			</div>
 		</LibraryManagementEditorAdvanced>
 		<div class="sm:col-span-2">

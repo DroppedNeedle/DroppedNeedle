@@ -45,59 +45,39 @@
 				bind:checked={enrichment.lyrics.enabled}
 			/>
 			<fieldset class="mt-2 grid gap-3" disabled={!enrichment.lyrics.enabled}>
-				<label class="management-master-toggle">
-					<input
-						type="checkbox"
-						class="checkbox checkbox-sm"
+				<div class="management-master-toggle">
+					<ToggleRow
+						label="Write plain lyrics"
+						description="Uses Picard-compatible lyrics tags in every admitted format."
 						bind:checked={enrichment.lyrics.write_plain}
 					/>
-					<span
-						><strong>Write plain lyrics</strong><small
-							>Uses Picard-compatible lyrics tags in every admitted format.</small
-						></span
-					>
-				</label>
-				<label class="management-master-toggle">
-					<input
-						type="checkbox"
-						class="checkbox checkbox-sm"
+				</div>
+				<div class="management-master-toggle">
+					<ToggleRow
+						label="Write synchronized lyrics"
+						description="Preferred when safely supported; plain lyrics remain the fallback."
 						bind:checked={enrichment.lyrics.write_synced}
 					/>
-					<span
-						><strong>Write synchronized lyrics</strong><small
-							>Preferred when safely supported; plain lyrics remain the fallback.</small
-						></span
-					>
-				</label>
+				</div>
 				<LibraryManagementEditorAdvanced
 					title="Advanced lyrics behavior"
 					subtitle="Preservation and safety gates"
 				>
 					<div class="mt-3 grid gap-3">
-						<label class="management-master-toggle">
-							<input
-								type="checkbox"
-								class="checkbox checkbox-sm"
+						<div class="management-master-toggle">
+							<ToggleRow
+								label="Preserve existing lyrics"
+								description="Fill only empty selected lyrics fields instead of replacing them."
 								bind:checked={enrichment.lyrics.preserve_existing}
 							/>
-							<span
-								><strong>Preserve existing lyrics</strong><small
-									>Fill only empty selected lyrics fields instead of replacing them.</small
-								></span
-							>
-						</label>
-						<label class="management-master-toggle">
-							<input
-								type="checkbox"
-								class="checkbox checkbox-sm"
+						</div>
+						<div class="management-master-toggle">
+							<ToggleRow
+								label="Require lyrics"
+								description="Hold the release when no selected lyrics format has an exact match."
 								bind:checked={enrichment.lyrics.required}
 							/>
-							<span
-								><strong>Require lyrics</strong><small
-									>Hold the release when no selected lyrics format has an exact match.</small
-								></span
-							>
-						</label>
+						</div>
 					</div>
 				</LibraryManagementEditorAdvanced>
 			</fieldset>
@@ -125,30 +105,20 @@
 					subtitle="Album coherence and safety gates"
 				>
 					<div class="mt-3 grid gap-3">
-						<label class="management-master-toggle">
-							<input
-								type="checkbox"
-								class="checkbox checkbox-sm"
+						<div class="management-master-toggle">
+							<ToggleRow
+								label="Album-aware analysis"
+								description="Calculate coherent track and album gain/peak values."
 								bind:checked={enrichment.replaygain.album_aware}
 							/>
-							<span
-								><strong>Album-aware analysis</strong><small
-									>Calculate coherent track and album gain/peak values.</small
-								></span
-							>
-						</label>
-						<label class="management-master-toggle">
-							<input
-								type="checkbox"
-								class="checkbox checkbox-sm"
+						</div>
+						<div class="management-master-toggle">
+							<ToggleRow
+								label="Require ReplayGain"
+								description="Hold the whole unit when the selected values are unavailable."
 								bind:checked={enrichment.replaygain.required}
 							/>
-							<span
-								><strong>Require ReplayGain</strong><small
-									>Hold the whole unit when the selected values are unavailable.</small
-								></span
-							>
-						</label>
+						</div>
 					</div>
 				</LibraryManagementEditorAdvanced>
 			</fieldset>

@@ -16,11 +16,12 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import SelectField from '$lib/ui/SelectField.svelte';
 
-	import { profileAspects, type ManagementSettingsDraft } from './managementSettingsDraft.svelte';
+	import { profileAspects, type ManagementSettings } from './managementSettingsDraft.svelte';
 
 	interface Props {
-		settings: ManagementSettingsDraft;
+		settings: ManagementSettings;
 		roots: LibraryRootSettings[];
 		onedit: (profileId: string) => void;
 		onshare: (profile: LibraryManagementProfile) => void;
@@ -43,19 +44,19 @@
 
 	async function createProfileCopy(): Promise<void> {
 		if (!settings.draft || !settings.copySourceProfileId || !newProfileName.trim()) return;
-		settings.saveError = '';
+		settings.error = '';
 		try {
 			const result = await copyProfile.mutateAsync({
 				profileId: settings.copySourceProfileId,
 				request: {
 					name: newProfileName.trim(),
-					expected_settings_revision: settings.sourceRevision
+					expected_settings_revision: settings.revision
 				}
 			});
 			settings.acceptCopy(result);
 			onedit(result.profile.id);
 		} catch (error) {
-			settings.saveError = error instanceof Error ? error.message : 'Could not create the profile.';
+			settings.error = error instanceof Error ? error.message : 'Could not create the profile.';
 		}
 	}
 
@@ -73,7 +74,7 @@
 		try {
 			const saved = await deleteProfile.mutateAsync({
 				profileId: deleteTarget.id,
-				request: { expected_settings_revision: settings.sourceRevision }
+				request: { expected_settings_revision: settings.revision }
 			});
 			settings.acceptDelete(saved, deletedProfileId);
 			deleteDialog.close();
@@ -218,15 +219,17 @@
 					Copies every saved value without changing root assignments or enabling automation.
 				</p>
 			</div>
-			<select
-				class="select select-sm min-w-52"
+			<SelectField
+				bare
+				size="sm"
+				class="min-w-60"
+				label="Profile to copy"
+				options={settings.profiles.map((profile) => ({
+					value: profile.id,
+					label: `${profile.name}${profile.preset_origin ? ' · preset based' : ' · custom'}`
+				}))}
 				bind:value={settings.copySourceProfileId}
-				aria-label="Profile to copy"
-			>
-				{#each settings.profiles as profile (profile.id)}<option value={profile.id}
-						>{profile.name}{profile.preset_origin ? ' · preset based' : ' · custom'}</option
-					>{/each}
-			</select>
+			/>
 			<Input size="sm" class="min-w-52" label="New profile name" bind:value={newProfileName} />
 			<Button
 				variant="outline"
@@ -239,14 +242,14 @@
 				variant="outline"
 				size="sm"
 				icon={FileUp}
-				disabled={settings.hasUnsaved}
-				title={settings.hasUnsaved
+				disabled={settings.dirty}
+				title={settings.dirty
 					? 'Save or discard current organization changes before importing.'
 					: undefined}
 				onclick={onimport}>Import profile</Button
 			>
 		</div>
-		{#if settings.hasUnsaved}<p class="text-xs text-warning">
+		{#if settings.dirty}<p class="text-xs text-warning">
 				Save or discard current organization changes before importing a profile.
 			</p>{/if}
 	</section>

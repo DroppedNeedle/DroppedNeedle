@@ -1,8 +1,9 @@
 <!--
 	The Automation tab of Library Management: profiles, where writes are
-	allowed, retention, and the save bar. Saving checks the change first; a
-	change that widens what automatic work writes goes through the activation
-	wizard's dry runs instead of saving straight away.
+	allowed, retention, and the save bar. The profile list, the root cards and
+	the profile editor edit one settings-section draft. Saving checks the
+	change first; a change that widens what automatic work writes goes
+	through the activation wizard's dry runs instead of saving straight away.
 -->
 <script lang="ts">
 	import '$lib/components/library/library-management.css';
@@ -14,8 +15,7 @@
 		FolderCog,
 		History,
 		RefreshCw,
-		ShieldAlert,
-		Sparkles
+		ShieldAlert
 	} from 'lucide-svelte';
 
 	import LibraryManagementActivationDialog from './LibraryManagementActivationDialog.svelte';
@@ -25,28 +25,29 @@
 	import LibraryManagementPurgeDialog from './LibraryManagementPurgeDialog.svelte';
 	import LibraryManagementRootAssignment from './LibraryManagementRootAssignment.svelte';
 	import { ActivationWizard } from './activationWizard.svelte';
-	import { ManagementSettingsDraft, writesAutomatically } from './managementSettingsDraft.svelte';
+	import { createManagementSettings, writesAutomatically } from './managementSettingsDraft.svelte';
+	import { ApiError } from '$lib/api/errors';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import type { LibraryRootSettings } from '$lib/queries/library/LibraryOperationsTypes';
 	import {
 		getLibraryManagementActivationHealthQuery,
-		getLibraryManagementOperationsQuery,
-		getLibraryManagementSettingsQuery
+		getLibraryManagementOperationsQuery
 	} from '$lib/queries/library-management/LibraryManagementQueries.svelte';
 	import {
 		previewLibraryManagementSettingsImpactMutation,
-		updateLibraryManagementSettingsMutation,
 		validateLibraryManagementSettingsMutation
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import type {
 		LibraryManagementProfile,
 		LibraryManagementProfileImportResponse,
-		LibraryManagementSettings,
 		ManagementScriptSettings
 	} from '$lib/queries/library-management/types';
 	import Button from '$lib/ui/Button.svelte';
 	import NumberField from '$lib/ui/NumberField.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
+	import UnsavedChangesGuard from '$lib/ui/UnsavedChangesGuard.svelte';
 
 	interface Props {
 		roots: LibraryRootSettings[];
@@ -54,10 +55,8 @@
 	}
 
 	let { roots, policyRevision }: Props = $props();
-	const settingsQuery = getLibraryManagementSettingsQuery(
-		() => authStore.user?.id,
-		() => authStore.isAdmin
-	);
+	const settings = createManagementSettings();
+	const section = settings.section;
 	const operationsQuery = getLibraryManagementOperationsQuery(
 		() => authStore.user?.id,
 		() => ({ limit: 20 })
@@ -66,11 +65,9 @@
 		() => authStore.user?.id,
 		() => authStore.isAdmin
 	);
-	const updateSettings = updateLibraryManagementSettingsMutation();
 	const validateSettings = validateLibraryManagementSettingsMutation();
 	const impactSettings = previewLibraryManagementSettingsImpactMutation();
 
-	const settings = new ManagementSettingsDraft();
 	const wizard = new ActivationWizard(settings, () => policyRevision);
 
 	let selectedProfileId = $state<string | null>(null);
@@ -79,28 +76,26 @@
 	let managementHeading = $state<HTMLHeadingElement>();
 	let activationDialog = $state<ReturnType<typeof LibraryManagementActivationDialog>>();
 
-	// Loads the settings for the signed-in admin and resumes their wizard; a
-	// different admin starts clean. After that, a newer revision replaces the draft.
+	// Resumes the signed-in admin's wizard once their settings have loaded; a
+	// different admin starts clean.
 	$effect(() => {
-		const response = settingsQuery.data;
+		const response = settings.query.data;
+		const loaded = settings.draft !== undefined;
 		const userId = authStore.user?.id ?? null;
-		if (userId !== untrack(() => wizard.sessionUser)) {
-			wizard.clear();
-			wizard.sessionUser = null;
-			if (!userId || !response) return;
-			settings.load(response);
-			wizard.restore(userId, response.settings_revision);
-			return;
-		}
-		if (response) settings.sync(response);
+		if (userId === untrack(() => wizard.sessionUser)) return;
+		wizard.clear();
+		wizard.sessionUser = null;
+		if (!userId || !response || !loaded) return;
+		wizard.restore(userId, response.settings_revision);
 	});
 
 	$effect(() => {
 		wizard.persist(authStore.user?.id);
 	});
 
-	const saving = $derived(
-		updateSettings.isPending || validateSettings.isPending || impactSettings.isPending
+	const saving = $derived(section.saving || validateSettings.isPending || impactSettings.isPending);
+	const saveStatus = $derived(
+		settings.error ? { tone: 'error' as const, message: settings.error } : section.status
 	);
 	const operationHistory = $derived(
 		operationsQuery.data?.pages.flatMap((page) => page.items) ?? []
@@ -149,21 +144,35 @@
 		return saved.enabled ? 'Configured; automatic triggers off' : 'Off';
 	}
 
-	async function reviewAndSave(
-		proposed: LibraryManagementSettings,
-		opener: HTMLElement | null = null
-	): Promise<void> {
-		settings.saveError = '';
+	function checkFailure(error: unknown): string {
+		if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+			return error.message;
+		}
+		return 'Could not check the change. Try again.';
+	}
+
+	/**
+	 * Checks the draft and saves it, or, when the change widens what automatic
+	 * work writes, starts the activation wizard's dry runs instead. True when
+	 * it saved or handed over to the wizard.
+	 */
+	async function reviewAndSave(opener: HTMLElement | null): Promise<boolean> {
+		const proposed = settings.snapshot();
+		if (!proposed) return false;
+		settings.error = '';
 		try {
 			await validateSettings.mutateAsync({
 				settings: proposed,
-				expected_settings_revision: settings.sourceRevision
+				expected_settings_revision: settings.revision
 			});
 			const impact = await impactSettings.mutateAsync({
 				settings: proposed,
-				expected_settings_revision: settings.sourceRevision
+				expected_settings_revision: settings.revision
 			});
-			if (impact.stale) throw new Error('Organization settings changed. Reload and try again.');
+			if (impact.stale) {
+				settings.error = 'These settings changed elsewhere. Discard to load them.';
+				return false;
+			}
 			const activeAffected = impact.affected_root_ids.filter((rootId) => {
 				const assignment = proposed.root_assignments.find((value) => value.root_id === rootId);
 				return Boolean(assignment && writesAutomatically(assignment));
@@ -171,19 +180,33 @@
 			if (impact.preview_required && activeAffected.length > 0) {
 				wizard.begin(proposed, activeAffected);
 				activationDialog?.show(opener);
-				return;
+				return true;
 			}
-			const saved = await updateSettings.mutateAsync({
-				settings: proposed,
-				expected_settings_revision: settings.sourceRevision
-			});
-			settings.accept(saved);
-			wizard.reset();
 		} catch (error) {
-			settings.saveError =
-				error instanceof Error ? error.message : 'Could not save organization settings.';
-			throw error;
+			settings.error = checkFailure(error);
+			return false;
 		}
+		await section.save();
+		if (section.status?.tone === 'error') return false;
+		wizard.reset();
+		return true;
+	}
+
+	/** Saves the draft, first stopping a dry run that no longer covers it. */
+	async function saveChanges(opener: HTMLElement | null): Promise<void> {
+		if (wizard.active && !wizard.coversDraft) {
+			if (wizard.pending) return;
+			if (wizard.canStop) {
+				await wizard.stopRun();
+				if (wizard.error) return;
+			}
+			wizard.reset();
+		}
+		await reviewAndSave(opener);
+	}
+
+	function focusedElement(): HTMLElement | null {
+		return document.activeElement instanceof HTMLElement ? document.activeElement : null;
 	}
 
 	async function saveProfile(
@@ -191,49 +214,38 @@
 		namingScripts: ManagementScriptSettings[],
 		taggingScripts: ManagementScriptSettings[]
 	): Promise<void> {
-		if (!settings.draft) return;
-		const proposed = {
-			...$state.snapshot(settings.draft),
-			profiles: settings.draft.profiles.map((value) => (value.id === profile.id ? profile : value)),
-			naming_scripts: namingScripts,
-			tagging_scripts: taggingScripts
-		};
-		await reviewAndSave(proposed);
-		selectedProfileId = null;
+		const draft = settings.draft;
+		const before = settings.snapshot();
+		if (!draft || !before) return;
+		draft.profiles = draft.profiles.map((value) => (value.id === profile.id ? profile : value));
+		draft.naming_scripts = namingScripts;
+		draft.tagging_scripts = taggingScripts;
+		if (await reviewAndSave(null)) {
+			selectedProfileId = null;
+			return;
+		}
+		// A refused save leaves the change in the editor only, so closing it drops it.
+		draft.profiles = before.profiles;
+		draft.naming_scripts = before.naming_scripts;
+		draft.tagging_scripts = before.tagging_scripts;
+		throw new Error(saveStatus?.message ?? 'Could not save this profile.');
 	}
 
 	function acceptImportedProfile(result: LibraryManagementProfileImportResponse): void {
-		if (!settings.draft) return;
 		settings.acceptImport(result);
 		selectedProfileId = result.profile.id;
-	}
-
-	async function restartActivationReview(opener: HTMLElement): Promise<void> {
-		if (!settings.draft || wizard.pending) return;
-		if (wizard.canStop) {
-			await wizard.stopRun();
-			if (wizard.error) return;
-		}
-		const proposed = $state.snapshot(settings.draft);
-		wizard.reset();
-		await reviewAndSave(proposed, opener).catch(() => undefined);
 	}
 
 	function startFreshActivation(opener: HTMLElement): void {
 		if (
 			!settings.persisted ||
-			settings.hasUnsaved ||
+			settings.dirty ||
 			wizard.pending ||
 			staleActivationRootIds.length === 0
 		)
 			return;
 		wizard.beginFresh($state.snapshot(settings.persisted), [...staleActivationRootIds]);
 		activationDialog?.show(opener);
-	}
-
-	function saveDraft(event: MouseEvent & { currentTarget: HTMLElement }): void {
-		if (!settings.draft) return;
-		void reviewAndSave($state.snapshot(settings.draft), event.currentTarget).catch(() => undefined);
 	}
 
 	function focusHeading(): void {
@@ -244,6 +256,8 @@
 		if (!authStore.isAdmin) selectedProfileId = null;
 	});
 </script>
+
+<UnsavedChangesGuard />
 
 <section class="management-settings-shell" aria-labelledby="library-management-title">
 	<header class="management-settings-header">
@@ -272,256 +286,264 @@
 		</span>
 	</header>
 
-	{#if settingsQuery.isLoading}
-		<div class="space-y-3 p-5">
-			<div class="skeleton h-28 rounded-xl"></div>
-			<div class="skeleton h-48 rounded-xl"></div>
-		</div>
-	{:else if settingsQuery.isError || !settings.draft}
-		<div class="m-5 alert alert-error">Could not load organization settings.</div>
-	{:else}
-		{@const draft = settings.draft}
-		<div class="space-y-6 p-5 sm:p-6">
-			<LibraryManagementProfileList
-				{settings}
-				{roots}
-				onedit={(profileId) => (selectedProfileId = profileId)}
-				onshare={(profile) => (shareTarget = profile)}
-				onimport={() => (importProfileOpen = true)}
-				focusFallback={focusHeading}
-			/>
+	<QueryBoundary query={section} what="the automation settings">
+		{#snippet loading()}
+			<div class="space-y-3 p-5">
+				<div class="skeleton h-28 rounded-xl"></div>
+				<div class="skeleton h-48 rounded-xl"></div>
+			</div>
+		{/snippet}
+		{#snippet children(draft)}
+			<div class="space-y-6 p-5 sm:p-6">
+				<LibraryManagementProfileList
+					{settings}
+					{roots}
+					onedit={(profileId) => (selectedProfileId = profileId)}
+					onshare={(profile) => (shareTarget = profile)}
+					onimport={() => (importProfileOpen = true)}
+					focusFallback={focusHeading}
+				/>
 
-			<section class="space-y-3" aria-labelledby="management-roots-title">
-				<div>
-					<p class="management-step">02 · Root automation</p>
-					<h3 id="management-roots-title" class="font-display text-lg font-semibold">
-						Choose where writes are allowed
-					</h3>
-					<p class="text-xs text-base-content/55">
-						Scanning reads and identifies. These controls separately allow future writes in each
-						root.
-					</p>
-				</div>
-				<div class="space-y-3">
-					{#each roots as root (root.id)}
-						<LibraryManagementRootAssignment
-							{root}
-							{settings}
-							status={rootManagementStatus(root.id)}
-						/>
-					{/each}
-				</div>
-			</section>
-
-			<details class="management-retention-panel">
-				<summary
-					><span class="management-editor-icon"><History class="h-4 w-4" /></span><span
-						><strong>Retention and refresh</strong><small>Advanced recovery settings</small></span
-					><ChevronRight class="ml-auto h-4 w-4 management-editor-chevron" /></summary
-				>
-				<div class="mt-4 grid gap-x-4 gap-y-2 sm:grid-cols-2">
-					<NumberField
-						label="Undo snapshots (days)"
-						min={1}
-						max={3650}
-						bind:value={draft.undo_retention_days}
-					/>
-					<NumberField
-						label="Preview lifetime (hours)"
-						min={1}
-						max={168}
-						bind:value={draft.preview_retention_hours}
-					/>
-					<div class="py-2 sm:col-span-2">
-						<ToggleRow
-							label="Post-commit refresh"
-							description="Refresh DroppedNeedle and selected media servers."
-							bind:checked={draft.external_refresh.enabled}
-						/>
+				<section class="space-y-3" aria-labelledby="management-roots-title">
+					<div>
+						<p class="management-step">02 · Root automation</p>
+						<h3 id="management-roots-title" class="font-display text-lg font-semibold">
+							Choose where writes are allowed
+						</h3>
+						<p class="text-xs text-base-content/55">
+							Scanning reads and identifies. These controls separately allow future writes in each
+							root.
+						</p>
 					</div>
-					{#if draft.external_refresh.enabled}
-						<div class="management-choice-grid sm:col-span-2" aria-label="External refresh targets">
-							<label
-								><input
-									type="checkbox"
-									class="checkbox checkbox-sm"
-									bind:checked={draft.external_refresh.plex_enabled}
-								/><span>Plex</span></label
+					<div class="space-y-3">
+						{#each roots as root (root.id)}
+							<LibraryManagementRootAssignment
+								{root}
+								{settings}
+								status={rootManagementStatus(root.id)}
+							/>
+						{/each}
+					</div>
+				</section>
+
+				<details class="management-retention-panel">
+					<summary
+						><span class="management-editor-icon"><History class="h-4 w-4" /></span><span
+							class="flex flex-col"
+							><strong>Retention and refresh</strong><small class="text-xs text-base-content/55"
+								>Advanced recovery settings</small
+							></span
+						><ChevronRight class="ml-auto h-4 w-4 management-editor-chevron" /></summary
+					>
+					<div class="mt-4 grid gap-x-4 gap-y-2 sm:grid-cols-2">
+						<NumberField
+							label="Undo snapshots (days)"
+							min={1}
+							max={3650}
+							bind:value={draft.undo_retention_days}
+						/>
+						<NumberField
+							label="Preview lifetime (hours)"
+							min={1}
+							max={168}
+							bind:value={draft.preview_retention_hours}
+						/>
+						<div class="py-2 sm:col-span-2">
+							<ToggleRow
+								label="Post-commit refresh"
+								description="Refresh DroppedNeedle and selected media servers."
+								bind:checked={draft.external_refresh.enabled}
+							/>
+						</div>
+						{#if draft.external_refresh.enabled}
+							<div
+								class="management-choice-grid sm:col-span-2"
+								aria-label="External refresh targets"
 							>
-							<label
-								><input
-									type="checkbox"
-									class="checkbox checkbox-sm"
-									bind:checked={draft.external_refresh.jellyfin_enabled}
-								/><span>Jellyfin</span></label
+								<div class="management-trigger">
+									<ToggleRow label="Plex" bind:checked={draft.external_refresh.plex_enabled} />
+								</div>
+								<div class="management-trigger">
+									<ToggleRow
+										label="Jellyfin"
+										bind:checked={draft.external_refresh.jellyfin_enabled}
+									/>
+								</div>
+								<div class="management-trigger">
+									<ToggleRow
+										label="Navidrome"
+										bind:checked={draft.external_refresh.navidrome_enabled}
+									/>
+								</div>
+							</div>
+						{/if}
+						<LibraryManagementPurgeDialog onerror={(message) => (settings.error = message)} />
+					</div>
+				</details>
+
+				<div class="management-save-bar" aria-live="polite">
+					{#if wizard.active}
+						<div class="management-save-bar__notice">
+							<div>
+								<strong class="text-sm">
+									{#if !wizard.coversDraft}Configuration changed after this dry run started{:else if !currentActivationRoot}Activation
+										awaits final confirmation{:else if wizard.ready}Dry run ready for review{:else if activationPreview?.control_request === 'stop'}Dry
+										run stopping{:else if wizard.stalled}Dry run interrupted{:else if activationPreview?.state === 'queued'}Dry
+										run queued{:else if activationPreview?.state === 'running'}Dry run planning{:else if ['failed', 'stopped', 'cancelled'].includes(activationPreview?.state ?? '')}Dry
+										run needs attention{:else}Activation dry run continues{/if}
+								</strong>
+								<p class="text-xs text-base-content/50">
+									{#if !wizard.coversDraft}The existing result cannot authorize the settings now
+										shown. Restart the review to create one current dry run.{:else if currentActivationRoot}{currentActivationRoot.label}
+										{#if (activationPreview?.summary.item_count ?? 0) > 0}
+											· {(activationPreview?.summary.item_count ?? 0).toLocaleString()}
+											files found · {(
+												activationPreview?.summary.bundle_count ?? 0
+											).toLocaleString()}
+											release bundles{:else}
+											· Discovering files and release bundles{/if}{:else}Every required dry run is
+										accepted. Automatic writes are still off.{/if}
+								</p>
+							</div>
+							{#if !wizard.coversDraft}<Button
+									variant="warning"
+									size="sm"
+									icon={RefreshCw}
+									disabled={wizard.pending}
+									onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
+										void saveChanges(event.currentTarget)}>Restart review</Button
+								>
+							{:else}<Button
+									variant="warning"
+									size="sm"
+									onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
+										activationDialog?.show(event.currentTarget)}
+									>{#if currentActivationRoot && activationPreview?.state === 'running' && !wizard.stalled}<span
+											class="loading loading-spinner loading-sm"
+											aria-hidden="true"
+										></span>{/if}<ShieldAlert class="h-4 w-4" /> View dry run</Button
+								>
+							{/if}
+						</div>
+					{:else if remoteActivation}
+						<div class="management-save-bar__notice">
+							<div>
+								<strong class="text-sm">
+									{remoteActivation.operation.state === 'ready'
+										? 'Write-access dry run ready'
+										: 'Write-access dry run in progress'}
+								</strong>
+								<p class="text-xs text-base-content/50">
+									{roots.find((root) => root.id === remoteActivation.target_root_id)?.label ??
+										'This root'} · {remoteActivation.profile_name} · {remoteActivation.operation
+										.state === 'ready'
+										? 'Ready to review'
+										: 'Discovering files and release bundles'}
+								</p>
+							</div>
+							<Button
+								variant="warning"
+								size="sm"
+								icon={ShieldAlert}
+								href={`/library/management/previews/${encodeURIComponent(remoteActivation.operation.id)}`}
+								>Review dry run</Button
 							>
-							<label
-								><input
-									type="checkbox"
-									class="checkbox checkbox-sm"
-									bind:checked={draft.external_refresh.navidrome_enabled}
-								/><span>Navidrome</span></label
+						</div>
+					{:else if activationHealthQuery.isError}
+						<div class="management-save-bar__notice">
+							<div>
+								<strong class="text-sm">Could not check activation status</strong>
+								<p class="text-xs text-base-content/50">
+									Automatic writes may be paused. Retry the status check.
+								</p>
+							</div>
+							<Button
+								variant="warning"
+								size="sm"
+								icon={RefreshCw}
+								disabled={activationHealthQuery.isFetching}
+								onclick={() => void activationHealthQuery.refetch()}>Retry status check</Button
+							>
+						</div>
+					{:else if activationHealthQuery.isLoading}
+						<div class="management-save-bar__notice">
+							<div>
+								<strong class="text-sm">Checking activation status…</strong>
+								<p class="text-xs text-base-content/50">
+									Confirming every automatic root still matches its dry run.
+								</p>
+							</div>
+						</div>
+					{:else if blockedActivationRootIds.length > 0}
+						<div class="management-save-bar__notice">
+							<div>
+								<strong class="text-sm">Automatic writes paused: needs attention</strong>
+								<p class="text-xs text-base-content/50">
+									{#if blockedActivationRootLabels.length === 1}
+										{blockedActivationRootLabels[0]} needs attention before automatic writes can resume.
+										Check the library roots and the assignment below, then recheck.
+									{:else}
+										{blockedActivationRootLabels.length} roots need attention before automatic writes
+										can resume. Check the library roots and assignments below, then recheck.
+									{/if}
+								</p>
+								{#if blockedActivationReason}
+									<p class="mt-1 text-xs text-base-content/50">{blockedActivationReason}</p>
+								{/if}
+							</div>
+							<Button
+								variant="warning"
+								size="sm"
+								icon={RefreshCw}
+								disabled={activationHealthQuery.isFetching}
+								onclick={() => void activationHealthQuery.refetch()}>Recheck</Button
+							>
+						</div>
+					{:else if staleActivationRootIds.length > 0}
+						<div class="management-save-bar__notice">
+							<div>
+								<strong class="text-sm">Automatic writes paused: dry run needed</strong>
+								<p class="text-xs text-base-content/50">
+									{#if staleActivationRootLabels.length === 1}
+										{staleActivationRootLabels[0]} no longer matches its confirmed dry run. Run a fresh
+										dry run to resume automatic writes.
+									{:else}
+										{staleActivationRootLabels.length} roots no longer match their confirmed dry run.
+										Run a fresh dry run to resume automatic writes.
+									{/if}
+								</p>
+							</div>
+							<Button
+								variant="warning"
+								size="sm"
+								icon={ShieldAlert}
+								disabled={wizard.pending || activationHealthQuery.isFetching || settings.dirty}
+								onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
+									startFreshActivation(event.currentTarget)}>Run a fresh dry run</Button
 							>
 						</div>
 					{/if}
-					<LibraryManagementPurgeDialog onerror={(message) => (settings.saveError = message)} />
+					<SaveBar
+						{...section.bar}
+						{saving}
+						status={saveStatus}
+						saveLabel="Validate and save"
+						onsave={() => saveChanges(focusedElement())}
+						ondiscard={() => {
+							settings.error = '';
+							section.discard();
+						}}
+					/>
 				</div>
-			</details>
-
-			{#if settings.saveError}<div class="alert alert-error text-sm" role="alert">
-					{settings.saveError}
-				</div>{/if}
-			<div class="management-save-bar" aria-live="polite">
-				{#if wizard.active}
-					<div>
-						<strong class="text-sm">
-							{#if !wizard.coversDraft}Configuration changed after this dry run started{:else if !currentActivationRoot}Activation
-								awaits final confirmation{:else if wizard.ready}Dry run ready for review{:else if activationPreview?.control_request === 'stop'}Dry
-								run stopping{:else if wizard.stalled}Dry run interrupted{:else if activationPreview?.state === 'queued'}Dry
-								run queued{:else if activationPreview?.state === 'running'}Dry run planning{:else if ['failed', 'stopped', 'cancelled'].includes(activationPreview?.state ?? '')}Dry
-								run needs attention{:else}Activation dry run continues{/if}
-						</strong>
-						<p class="text-xs text-base-content/50">
-							{#if !wizard.coversDraft}The existing result cannot authorize the settings now shown.
-								Restart the review to create one current dry run.{:else if currentActivationRoot}{currentActivationRoot.label}
-								{#if (activationPreview?.summary.item_count ?? 0) > 0}
-									· {(activationPreview?.summary.item_count ?? 0).toLocaleString()}
-									files found · {(activationPreview?.summary.bundle_count ?? 0).toLocaleString()}
-									release bundles{:else}
-									· Discovering files and release bundles{/if}{:else}Every required dry run is
-								accepted. Automatic writes are still off.{/if}
-						</p>
-					</div>
-					{#if !wizard.coversDraft}<Button
-							variant="warning"
-							icon={RefreshCw}
-							disabled={wizard.pending}
-							onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
-								void restartActivationReview(event.currentTarget)}>Restart review</Button
-						>
-					{:else}<Button
-							variant="warning"
-							onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
-								activationDialog?.show(event.currentTarget)}
-							>{#if currentActivationRoot && activationPreview?.state === 'running' && !wizard.stalled}<span
-									class="loading loading-spinner loading-sm"
-									aria-hidden="true"
-								></span>{/if}<ShieldAlert class="h-4 w-4" /> View dry run</Button
-						>
-					{/if}
-				{:else if settings.hasUnsaved}
-					<div>
-						<strong class="text-sm">Review configuration changes</strong>
-						<p class="text-xs text-base-content/50">
-							Trigger-only changes save immediately. Changes to file-writing scope require a current
-							dry run.
-						</p>
-					</div>
-					<Button variant="warning" icon={Sparkles} loading={saving} onclick={saveDraft}
-						>Validate and save</Button
-					>
-				{:else if remoteActivation}
-					<div>
-						<strong class="text-sm">
-							{remoteActivation.operation.state === 'ready'
-								? 'Write-access dry run ready'
-								: 'Write-access dry run in progress'}
-						</strong>
-						<p class="text-xs text-base-content/50">
-							{roots.find((root) => root.id === remoteActivation.target_root_id)?.label ??
-								'This root'} · {remoteActivation.profile_name} · {remoteActivation.operation
-								.state === 'ready'
-								? 'Ready to review'
-								: 'Discovering files and release bundles'}
-						</p>
-					</div>
-					<Button
-						variant="warning"
-						icon={ShieldAlert}
-						href={`/library/management/previews/${encodeURIComponent(remoteActivation.operation.id)}`}
-						>Review dry run</Button
-					>
-				{:else if activationHealthQuery.isError}
-					<div>
-						<strong class="text-sm">Could not check activation status</strong>
-						<p class="text-xs text-base-content/50">
-							Automatic writes may be paused. Retry the status check.
-						</p>
-					</div>
-					<Button
-						variant="warning"
-						icon={RefreshCw}
-						disabled={activationHealthQuery.isFetching}
-						onclick={() => void activationHealthQuery.refetch()}>Retry status check</Button
-					>
-				{:else if activationHealthQuery.isLoading}
-					<div>
-						<strong class="text-sm">Checking activation status…</strong>
-						<p class="text-xs text-base-content/50">
-							Confirming every automatic root still matches its dry run.
-						</p>
-					</div>
-					<Button variant="ghost" loading>Checking</Button>
-				{:else if blockedActivationRootIds.length > 0}
-					<div>
-						<strong class="text-sm">Automatic writes paused: needs attention</strong>
-						<p class="text-xs text-base-content/50">
-							{#if blockedActivationRootLabels.length === 1}
-								{blockedActivationRootLabels[0]} needs attention before automatic writes can resume. Check
-								the library roots and the assignment below, then recheck.
-							{:else}
-								{blockedActivationRootLabels.length} roots need attention before automatic writes can
-								resume. Check the library roots and assignments below, then recheck.
-							{/if}
-						</p>
-						{#if blockedActivationReason}
-							<p class="mt-1 text-xs text-base-content/50">{blockedActivationReason}</p>
-						{/if}
-					</div>
-					<Button
-						variant="warning"
-						icon={RefreshCw}
-						disabled={activationHealthQuery.isFetching}
-						onclick={() => void activationHealthQuery.refetch()}>Recheck</Button
-					>
-				{:else if staleActivationRootIds.length > 0}
-					<div>
-						<strong class="text-sm">Automatic writes paused: dry run needed</strong>
-						<p class="text-xs text-base-content/50">
-							{#if staleActivationRootLabels.length === 1}
-								{staleActivationRootLabels[0]} no longer matches its confirmed dry run. Run a fresh dry
-								run to resume automatic writes.
-							{:else}
-								{staleActivationRootLabels.length} roots no longer match their confirmed dry run. Run
-								a fresh dry run to resume automatic writes.
-							{/if}
-						</p>
-					</div>
-					<Button
-						variant="warning"
-						icon={ShieldAlert}
-						disabled={wizard.pending || activationHealthQuery.isFetching}
-						onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
-							startFreshActivation(event.currentTarget)}>Run a fresh dry run</Button
-					>
-				{:else}
-					<div>
-						<strong class="text-sm">Configuration saved</strong>
-						<p class="text-xs text-base-content/50">
-							Change a profile, assignment, or automatic trigger to review an update.
-						</p>
-					</div>
-					<Button variant="ghost" icon={Check} disabled>Saved</Button>
-				{/if}
 			</div>
-		</div>
-	{/if}
+		{/snippet}
+	</QueryBoundary>
 </section>
 
 {#if selectedProfile}
 	<LibraryManagementProfileEditor
 		profile={selectedProfile}
-		managedFields={settingsQuery.data?.managed_fields ?? []}
+		managedFields={settings.query.data?.managed_fields ?? []}
 		namingScripts={settings.draft?.naming_scripts ?? []}
 		taggingScripts={settings.draft?.tagging_scripts ?? []}
 		{saving}
@@ -533,7 +555,7 @@
 <LibraryManagementProfileSharing
 	shareProfile={shareTarget}
 	importOpen={importProfileOpen}
-	settingsRevision={settings.sourceRevision}
+	settingsRevision={settings.revision}
 	onshareclose={() => (shareTarget = null)}
 	onimportclose={() => (importProfileOpen = false)}
 	onimported={acceptImportedProfile}
@@ -571,35 +593,18 @@
 	}
 
 	.management-retention-panel {
+		padding: 1rem;
 		border: 1px solid color-mix(in oklab, var(--color-base-content) 11%, transparent);
 		border-radius: 0.9rem;
 		background: color-mix(in oklab, var(--color-base-100) 88%, var(--color-base-200));
 	}
 
-	.management-save-bar {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-		padding: 0.85rem 1rem;
-		border: 1px dashed color-mix(in oklab, var(--color-base-content) 16%, transparent);
-		border-radius: 0.9rem;
-		background: color-mix(in oklab, var(--color-base-200) 58%, transparent);
-	}
-
-	.management-retention-panel {
-		padding: 1rem;
-	}
-
 	.management-retention-panel > summary {
+		display: flex;
 		align-items: center;
 		gap: 0.7rem;
 		list-style: none;
 		cursor: pointer;
-	}
-
-	.management-retention-panel > summary {
-		display: flex;
 	}
 
 	.management-retention-panel > summary::-webkit-details-marker {
@@ -610,11 +615,23 @@
 		position: sticky;
 		bottom: 0.75rem;
 		z-index: 2;
-		border-style: solid;
-		border-color: color-mix(in oklab, var(--color-library-manage) 22%, transparent);
+		display: grid;
+		gap: 0.75rem;
+		padding: 0.85rem 1rem;
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 22%, transparent);
+		border-radius: 0.9rem;
 		background: color-mix(in oklab, var(--color-base-100) 92%, transparent);
 		box-shadow: 0 0.75rem 2rem color-mix(in oklab, var(--color-base-content) 8%, transparent);
 		backdrop-filter: blur(0.75rem);
+	}
+
+	.management-save-bar__notice {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding-bottom: 0.75rem;
+		border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
 	}
 
 	@media (max-width: 639px) {
@@ -623,7 +640,7 @@
 			flex-direction: column;
 		}
 
-		.management-save-bar {
+		.management-save-bar__notice {
 			align-items: stretch;
 			flex-direction: column;
 		}

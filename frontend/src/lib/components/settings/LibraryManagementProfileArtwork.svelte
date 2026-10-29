@@ -7,7 +7,7 @@
 	import LibraryManagementEditorSection from './LibraryManagementEditorSection.svelte';
 	import { lines } from './managementProfileLists';
 	import type { ArtworkManagementSettings } from '$lib/queries/library-management/types';
-	import Field from '$lib/ui/Field.svelte';
+	import TextAreaField from '$lib/ui/TextAreaField.svelte';
 	import NumberField from '$lib/ui/NumberField.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
@@ -95,16 +95,13 @@
 					bind:checked={artwork.never_replace_with_smaller}
 				/>
 				<div class="sm:col-span-2">
-					<Field label="Existing cover files (one pattern per line)">
-						{#snippet children(control)}
-							<textarea
-								{...control}
-								class="textarea min-h-24 w-full font-mono text-xs"
-								value={artwork.local_file_patterns.join('\n')}
-								oninput={(event) =>
-									(artwork.local_file_patterns = lines(event.currentTarget.value))}></textarea>
-						{/snippet}
-					</Field>
+					<TextAreaField
+						label="Existing cover files (one pattern per line)"
+						mono
+						rows={4}
+						value={artwork.local_file_patterns.join('\n')}
+						oninput={(text) => (artwork.local_file_patterns = lines(text))}
+					/>
 				</div>
 			</div>
 		</LibraryManagementEditorAdvanced>

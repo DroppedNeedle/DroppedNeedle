@@ -11,6 +11,7 @@
 		OrganizationManagementSettings
 	} from '$lib/queries/library-management/types';
 	import Field from '$lib/ui/Field.svelte';
+	import TextAreaField from '$lib/ui/TextAreaField.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import NumberField from '$lib/ui/NumberField.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
@@ -178,16 +179,13 @@
 		<LibraryManagementEditorAdvanced title="Sidecars" subtitle="Files that move with the album">
 			<div class="mt-3 grid gap-3 sm:grid-cols-2">
 				<div class="sm:col-span-2">
-					<Field label="Sidecar patterns (one per line)">
-						{#snippet children(control)}
-							<textarea
-								{...control}
-								class="textarea min-h-24 w-full font-mono text-xs"
-								value={organization.sidecar_patterns.join('\n')}
-								oninput={(event) =>
-									(organization.sidecar_patterns = lines(event.currentTarget.value))}></textarea>
-						{/snippet}
-					</Field>
+					<TextAreaField
+						label="Sidecar patterns (one per line)"
+						mono
+						rows={4}
+						value={organization.sidecar_patterns.join('\n')}
+						oninput={(text) => (organization.sidecar_patterns = lines(text))}
+					/>
 				</div>
 			</div>
 		</LibraryManagementEditorAdvanced>

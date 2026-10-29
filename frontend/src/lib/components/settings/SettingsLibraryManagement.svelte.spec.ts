@@ -113,8 +113,7 @@ describe('SettingsLibraryManagement', () => {
 		await expect
 			.element(page.getByRole('combobox', { name: 'Management profile for Archive' }))
 			.not.toBeInTheDocument();
-		await expect.element(page.getByText('Configuration saved')).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Saved' })).toBeDisabled();
+		await expect.element(page.getByRole('button', { name: 'Validate and save' })).toBeDisabled();
 
 		await page.getByRole('button', { name: 'Edit' }).click();
 		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
@@ -201,7 +200,7 @@ describe('SettingsLibraryManagement', () => {
 			.not.toBeInTheDocument();
 	});
 
-	it('surfaces a server-side activation dry run instead of an inert save action', async () => {
+	it('surfaces a server-side activation dry run beside the save bar', async () => {
 		h.operations = {
 			data: {
 				pages: [
@@ -227,15 +226,10 @@ describe('SettingsLibraryManagement', () => {
 		await expect
 			.element(page.getByRole('link', { name: 'Review dry run' }))
 			.toHaveAttribute('href', '/library/management/previews/preview-remote');
-		await expect
-			.element(page.getByRole('button', { name: 'Validate and save' }))
-			.not.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Validate and save' })).toBeDisabled();
 
 		await page.getByRole('checkbox', { name: /Configure file organization/ }).click();
-		await expect.element(page.getByRole('button', { name: 'Validate and save' })).toBeVisible();
-		await expect
-			.element(page.getByRole('link', { name: 'Review dry run' }))
-			.not.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Validate and save' })).toBeEnabled();
 	});
 
 	it('does not advance the preset version when resetting metadata', async () => {

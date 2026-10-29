@@ -5,6 +5,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
+	import TextAreaField from '$lib/ui/TextAreaField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import { createUuid } from '$lib/utils/uuid';
 
@@ -164,14 +165,13 @@
 					bind:value={() => selectedScript.name, (name) => updateScript({ name })}
 				/>
 			</div>
-			<label class="mt-3 grid gap-1 text-xs">
-				<span class="font-semibold">Source</span>
-				<textarea
-					class="textarea min-h-32 w-full font-mono text-xs leading-relaxed"
-					value={selectedScript.source}
-					oninput={(event) => updateScript({ source: event.currentTarget.value })}
-					aria-label={`${kind} script source`}></textarea>
-			</label>
+			<TextAreaField
+				label={`${kind === 'naming' ? 'Naming' : 'Tagging'} script source`}
+				mono
+				rows={6}
+				value={selectedScript.source}
+				oninput={(source) => updateScript({ source })}
+			/>
 			{#if localProblem}
 				<p class="mt-2 text-xs text-error" role="alert">{localProblem}</p>
 			{:else}
