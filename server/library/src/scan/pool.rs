@@ -1,15 +1,27 @@
-//! Bounded blocking/CPU pool for filesystem and tag work.
+//! Bounded blocking pools.
 //!
-//! v2 runs directory walks, root probes, and tag reads on threads outside
-//! the event loop (`asyncio.to_thread`, a single-worker probe executor).
-//! This pool is the same idea with an explicit bound: at most `max_workers`
-//! blocking jobs run at once, and every job rides `spawn_blocking` so the
-//! async executor never stalls on disk I/O.
+//! At most `max_workers` jobs of one pool run at once, and every job rides
+//! `spawn_blocking`, so the async executor never stalls on disk or CPU
+//! work. The library builds two: one for walks, watcher snapshots and tag
+//! reads ([`IO_WORKERS`]), one for Chromaprint and release matching
+//! ([`cpu_workers`]). Kept apart, identification cannot hold the permits a
+//! scan waits on.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::sync::Semaphore;
+
+/// Jobs the IO pool runs at once: walks, watcher snapshots, tag reads.
+pub const IO_WORKERS: usize = 4;
+
+/// Jobs the CPU pool runs at once: one fewer than the cores, so a scan
+/// and the request path keep one, and never fewer than one.
+pub fn cpu_workers() -> usize {
+    std::thread::available_parallelism()
+        .map_or(1, |cores| cores.get().saturating_sub(1))
+        .max(1)
+}
 
 /// Bounded pool over `spawn_blocking`. Clone is cheap; all clones share one
 /// semaphore, so the bound holds process-wide per pool.

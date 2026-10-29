@@ -24,7 +24,6 @@ use droppedneedle_library::identify::models::{
 };
 use droppedneedle_library::identify::providers::{IdentifyProviders, RecallOutcome};
 use droppedneedle_library::wiring::LibrarySetup;
-use droppedneedle_providers::musicbrainz::Criticality;
 use tokio::sync::oneshot;
 
 use crate::common::library::TestSql as _;
@@ -44,7 +43,7 @@ impl IdentifyProviders for EmptyRecall {
         Box::pin(async move {
             RecallOutcome {
                 result: RecallResult::default(),
-                recall_criticality: Some(Criticality::IdentityCritical),
+                scored: Default::default(),
             }
         })
     }
@@ -79,7 +78,7 @@ impl IdentifyProviders for SignalOnFirstRecall {
         Box::pin(async move {
             RecallOutcome {
                 result: RecallResult::default(),
-                recall_criticality: Some(Criticality::IdentityCritical),
+                scored: Default::default(),
             }
         })
     }

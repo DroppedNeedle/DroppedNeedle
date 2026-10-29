@@ -39,7 +39,7 @@ use super::repairs::service::{RepairWorker, Repairs};
 use super::scan::coordinator::{
     LibraryScanCoordinator, ResolverSource, ScanEventPublisher, SharedResolver,
 };
-use super::scan::pool::BlockingPool;
+use super::scan::pool::{BlockingPool, IO_WORKERS, cpu_workers};
 use super::scan::roots::RootRegistry;
 use super::scan::sqlite_store::SqliteScanStore;
 use super::scan::watcher::{DirtyScopes, WatcherState, WorkWakeups};
@@ -68,10 +68,10 @@ pub struct Endpoints {
 pub(crate) type RootDirs = Arc<dyn Fn() -> HashMap<String, PathBuf> + Send + Sync>;
 
 /// What the identify providers are built from, once the bundle's
-/// stores, pool, and roots exist.
+/// stores, CPU pool, and roots exist.
 struct ProviderParts {
     store: Arc<SqliteIdentifyStore>,
-    pool: BlockingPool,
+    cpu: BlockingPool,
     roots: SharedResolver,
     library: Live<TypedLibrary>,
 }
@@ -275,8 +275,6 @@ pub struct LibrarySetup {
     pub scan_store: Arc<SqliteScanStore>,
     /// Scan coordinator over the wired seams.
     pub coordinator: Arc<ScanCoordinator>,
-    /// Blocking pool shared by scan and the watcher.
-    pub pool: BlockingPool,
     /// Dirty scope marks (Hook B).
     pub dirty: DirtyScopes,
     /// Work wakeups shared by the supervisor and the watcher.
@@ -411,13 +409,14 @@ impl LibrarySetup {
                     acoustid,
                     parts.library,
                     parts.roots,
-                    parts.pool,
+                    parts.cpu.clone(),
                     parts.store.clone(),
                 );
                 Arc::new(super::identify::providers::LiveProviders::new(
                     musicbrainz,
                     parts.store,
                     fingerprints,
+                    parts.cpu,
                 ))
             }),
         };
@@ -455,12 +454,16 @@ impl LibrarySetup {
         let registry = core.registry.clone();
         let root_dirs = core.root_dirs.clone();
         let identify_store = Arc::new(SqliteIdentifyStore::new(db.clone(), platform.clock.clone()));
-        let pool = BlockingPool::new(4);
+        // Walks, watcher snapshots and tag reads on one pool; Chromaprint
+        // and release matching on another, so identification never holds
+        // the permits a scan waits on.
+        let io = BlockingPool::new(IO_WORKERS);
+        let cpu = BlockingPool::new(cpu_workers());
         let wakeups = core.wakeups.clone();
         let coordinator = Arc::new(
             ScanCoordinator::new(
                 scan_store.clone(),
-                pool.clone(),
+                io.clone(),
                 Arc::new(LoftyTagReader),
                 registry.clone(),
                 platform.clock.clone(),
@@ -482,7 +485,7 @@ impl LibrarySetup {
         );
         let providers = make_providers(ProviderParts {
             store: identify_store.clone(),
-            pool: pool.clone(),
+            cpu: cpu.clone(),
             roots: (*registry).clone(),
             library: settings.library.clone(),
         });
@@ -508,7 +511,7 @@ impl LibrarySetup {
                 import_acoustid,
                 settings.library.clone(),
                 (*registry).clone(),
-                pool.clone(),
+                cpu,
                 identify_store.clone(),
             ));
         let scans = Scans {
@@ -516,7 +519,7 @@ impl LibrarySetup {
             scan_store: scan_store.clone(),
             core: core.clone(),
             settings: settings.clone(),
-            pool: pool.clone(),
+            pool: io,
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
         };
         let activity = Activity {
@@ -559,7 +562,6 @@ impl LibrarySetup {
             db: db.clone(),
             scan_store,
             coordinator,
-            pool,
             dirty: core.dirty.clone(),
             wakeups,
             identify_store,

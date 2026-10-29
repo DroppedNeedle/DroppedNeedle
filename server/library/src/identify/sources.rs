@@ -1246,7 +1246,7 @@ impl FingerprintSource for NoFingerprints {
     }
 }
 
-/// Chromaprint on the blocking pool plus batched AcoustID lookups, at
+/// Chromaprint on the CPU pool plus batched AcoustID lookups, at
 /// background priority: identification and imports are background work.
 /// Prints are kept per track and file revision, so a file is decoded once.
 pub struct AcoustIdFingerprints {
@@ -1394,7 +1394,7 @@ impl AcoustIdFingerprints {
 }
 
 impl AcoustIdFingerprints {
-    /// Chromaprint each file on the blocking pool: (id, print, seconds).
+    /// Chromaprint each file on the CPU pool: (id, print, seconds).
     async fn print(&self, jobs: Vec<(String, PathBuf)>) -> Vec<(String, String, u32)> {
         let printed = futures_util::future::join_all(jobs.into_iter().map(|(id, path)| {
             let pool = self.pool.clone();

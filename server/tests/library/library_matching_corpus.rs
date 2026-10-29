@@ -297,6 +297,7 @@ fn live_providers(replay: &Arc<Replay>) -> (ScratchDir, Arc<SqliteIdentifyStore>
         ),
         store.clone(),
         NoFingerprints,
+        droppedneedle_library::scan::BlockingPool::new(2),
     ));
     (dir, store, providers)
 }

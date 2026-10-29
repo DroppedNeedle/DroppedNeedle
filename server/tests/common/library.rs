@@ -24,7 +24,6 @@ use droppedneedle_library::operations::service::Operations;
 use droppedneedle_library::repairs::service::RepairWorker;
 use droppedneedle_library::wiring::{LibraryCore, LibraryPorts, LibraryServices, LibrarySetup};
 use droppedneedle_providers::Providers;
-use droppedneedle_providers::musicbrainz::Criticality;
 
 type Recall = Box<dyn Fn(&LocalAlbumFacts) -> RecallResult + Send>;
 
@@ -112,7 +111,7 @@ fn outcome(result: RecallResult) -> Pin<Box<dyn Future<Output = RecallOutcome> +
     Box::pin(async move {
         RecallOutcome {
             result,
-            recall_criticality: Some(Criticality::IdentityCritical),
+            scored: Default::default(),
         }
     })
 }

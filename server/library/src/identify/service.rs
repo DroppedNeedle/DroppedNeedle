@@ -21,7 +21,7 @@ use super::models::{
     MatchFlag, MatchFlagState, RecallResult, ReviewState, TrackIdentity,
 };
 use super::providers::{
-    IdentifyProviders, RELEASE_UNREADABLE, RELEASES_UNREADABLE, RecallOutcome,
+    IdentifyProviders, RELEASE_UNREADABLE, RELEASES_UNREADABLE, RecallOutcome, Scored,
     TAGGED_RELEASE_UNREADABLE,
 };
 use super::queue::{PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
@@ -228,7 +228,8 @@ impl IdentifyService {
         };
         let named = named_group(&facts, current.as_ref());
         let RecallOutcome {
-            result: mut recall, ..
+            result: mut recall,
+            scored,
         } = self
             .deps
             .providers
@@ -320,6 +321,7 @@ impl IdentifyService {
         let (ranking, decision) = self.ranked(
             &facts,
             &recall,
+            scored,
             Held {
                 release: held.as_deref(),
                 doubted_group: doubted.as_deref(),
@@ -536,7 +538,13 @@ impl IdentifyService {
     /// preferences do not read.
     pub fn rank(&self, facts: &LocalAlbumFacts, recall: &RecallResult) -> Option<Ranking> {
         let preferences = self.preferences()?;
-        let (ranking, _) = self.ranked(facts, recall, Held::default(), &preferences);
+        let (ranking, _) = self.ranked(
+            facts,
+            recall,
+            Scored::default(),
+            Held::default(),
+            &preferences,
+        );
         Some(ranking)
     }
 
@@ -549,7 +557,8 @@ impl IdentifyService {
         }
     }
 
-    /// Score every recalled release and decide. Candidates come back
+    /// Score every recalled release and decide; a release recall already
+    /// scored with the same inputs keeps that match. Candidates come back
     /// chosen edition first, then by distance and edition order (see
     /// `candidate_order`), so of two equally close guesses the one the
     /// files complete comes first. `held.release` is the edition the album
@@ -561,17 +570,20 @@ impl IdentifyService {
         &self,
         facts: &LocalAlbumFacts,
         recall: &RecallResult,
+        mut scored: Scored,
         held: Held<'_>,
         preferences: &Preferences,
     ) -> (Ranking, Decision) {
-        let local = local_album(
-            facts,
-            &heard_on_candidates(&recall.fingerprint_support, &recall.releases),
-        );
+        let heard = heard_on_candidates(&recall.fingerprint_support, &recall.releases);
+        let local = local_album(facts, &heard);
         let matches: Vec<_> = recall
             .releases
             .iter()
-            .map(|release| match_release(&local, release, &recall.recording_aliases))
+            .map(|release| {
+                scored
+                    .take(release, &heard, &recall.recording_aliases)
+                    .unwrap_or_else(|| match_release(&local, release, &recall.recording_aliases))
+            })
             .collect();
         let tagged = local.tagged_release();
         let named = recall.named_group.as_deref();

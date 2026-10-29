@@ -176,6 +176,7 @@ fn rig_on(routes: HashMap<String, RawResponse>, down: bool, source: Source) -> R
             ),
             store.clone(),
             NoFingerprints,
+            droppedneedle_library::scan::BlockingPool::new(2),
         )),
     });
     Rig {

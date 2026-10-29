@@ -2436,7 +2436,7 @@ impl identify::providers::IdentifyProviders for DuringRecall {
         Box::pin(async move {
             identify::providers::RecallOutcome {
                 result,
-                recall_criticality: None,
+                scored: Default::default(),
             }
         })
     }
@@ -2765,6 +2765,7 @@ async fn a_merged_group_is_followed() {
         identify::sources::Prioritised::new(MergedGroups, MergedGroups),
         rig.store.clone(),
         identify::sources::NoFingerprints,
+        droppedneedle_library::scan::BlockingPool::new(2),
     );
     let facts = album_facts("album-1", &[("t1", None)]);
 
@@ -2803,6 +2804,7 @@ async fn a_moved_release_names_its_own_group() {
         identify::sources::Prioritised::new(MergedGroups, MergedGroups),
         rig.store.clone(),
         identify::sources::NoFingerprints,
+        droppedneedle_library::scan::BlockingPool::new(2),
     ));
     let mut facts = album_facts("album-1", &[("t1", Some(RECORDING_1))]);
     facts.tracks[0].release_mbid = Some(RELEASE_B1.to_owned());
@@ -3775,7 +3777,7 @@ impl identify::providers::IdentifyProviders for HeldRecall {
         Box::pin(async move {
             identify::providers::RecallOutcome {
                 result,
-                recall_criticality: None,
+                scored: Default::default(),
             }
         })
     }
@@ -3792,7 +3794,7 @@ impl identify::providers::IdentifyProviders for HeldRecall {
         Box::pin(async move {
             identify::providers::RecallOutcome {
                 result,
-                recall_criticality: None,
+                scored: Default::default(),
             }
         })
     }
