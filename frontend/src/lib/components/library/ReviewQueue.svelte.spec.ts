@@ -36,6 +36,23 @@ function review(id: string, title: string, reasonCode: string): Review {
 	};
 }
 
+const EDITION: RouteData<'GET /api/v3/library/albums/{album_id}/edition'> = {
+	album_id: 'album-r1',
+	candidates: [],
+	edition_kind: 'none',
+	files_by_itself: false,
+	keeps_own_tags: false,
+	identifying: false,
+	identity_revision: 0,
+	placing: null,
+	reason: { code: 'UNIDENTIFIED', message: 'Not identified yet.', action: '' },
+	release_group_mbid: null,
+	release_mbid: null,
+	state: 'unidentified',
+	undo_available: false,
+	writing: false
+};
+
 const REVIEWS = [review('r1', 'Kid A', 'EDITION_MERGED'), review('r2', 'Amnesiac', 'REPAIR')];
 
 // Answers like the server: only the reviews of the asked reason.
@@ -116,6 +133,8 @@ describe('review queue', () => {
 				roots: [],
 				warnings: []
 			},
+			'GET /api/v3/library/albums/{album_id}/edition': EDITION,
+			'GET /api/v3/library/albums/{album_id}/history': { items: [] },
 			'POST /api/v3/library/reviews/{id}/exclude': {
 				...REVIEWS[0],
 				state: 'excluded',
@@ -138,5 +157,50 @@ describe('review queue', () => {
 			expected_revision: 3
 		});
 		expect(native).not.toHaveBeenCalled();
+	});
+
+	it('uses the release every selected review shares for all of them', async () => {
+		signIn('admin');
+		h.page.url = new URL('http://localhost/library/review?state=pending');
+		const shared = {
+			candidate_key: 'rg:shared',
+			release_group_mbid: 'rg',
+			release_mbid: 'shared',
+			album_title: 'Shared Release',
+			album_artist_name: 'Someone',
+			lowest_score: 0.8
+		};
+		const api = fakeApi({
+			'GET /api/v3/library/reviews': (request) => reviews(request.query),
+			'GET /api/v3/settings/library/policy-tree': { policy_revision: '1', roots: [], warnings: [] },
+			'POST /api/v3/library/reviews/bulk-preview': (request) => ({
+				matched: 2,
+				eligible: 2,
+				skipped: [],
+				preview_token: (request.body as { candidate_key: string | null }).candidate_key
+					? 'token-shared'
+					: 'token-best',
+				shared_candidates: [shared]
+			}),
+			'POST /api/v3/library/reviews/bulk-apply': { applied: 2, skipped: [] }
+		});
+		await renderWithQuery(ReviewQueue, {});
+
+		await page.getByRole('checkbox', { name: 'Select Kid A' }).click();
+		await page.getByRole('checkbox', { name: 'Select Amnesiac' }).click();
+		await page.getByRole('button', { name: 'Use a shared release' }).click();
+		const dialog = page.getByRole('dialog', { name: 'Use a shared release' });
+		await expect.element(dialog.getByRole('radio', { name: /Shared Release/ })).toBeChecked();
+
+		await dialog.getByRole('button', { name: 'Use this release' }).click();
+		await vi.waitFor(() =>
+			expect(api.calls('POST /api/v3/library/reviews/bulk-apply')).toHaveLength(1)
+		);
+		expect(api.calls('POST /api/v3/library/reviews/bulk-apply')[0].body).toMatchObject({
+			action: 'accept',
+			review_ids: ['r1', 'r2'],
+			candidate_key: 'rg:shared',
+			preview_token: 'token-shared'
+		});
 	});
 });

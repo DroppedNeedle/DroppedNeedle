@@ -19464,7 +19464,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "Preview a bulk change: how many reviews it changes, which it skips and\nwhy, and the token that applies exactly this change. The token is good\nfor 15 minutes, and only for the person who previewed.",
+        "summary": "Preview a bulk change: how many reviews it changes, which it skips and\nwhy, the releases every selected review shares, and the token that\napplies exactly this change. The token is good for 15 minutes, and only\nfor the person who previewed.",
         "operationId": "preview_bulk_reviews",
         "requestBody": {
           "content": {
@@ -60306,7 +60306,8 @@
           "matched",
           "eligible",
           "skipped",
-          "preview_token"
+          "preview_token",
+          "shared_candidates"
         ],
         "properties": {
           "eligible": {
@@ -60324,6 +60325,13 @@
           "preview_token": {
             "type": "string",
             "description": "Pass back to apply exactly this change."
+          },
+          "shared_candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SharedCandidateView"
+            },
+            "description": "Releases every selected pending, unpinned review lists, best\nweakest score first; accept one for them all with its\n`candidate_key`. Empty when they share none."
           },
           "skipped": {
             "type": "array",
@@ -63149,6 +63157,43 @@
           }
         }
       },
+      "SharedCandidateView": {
+        "type": "object",
+        "description": "A release every selected review lists.",
+        "required": [
+          "candidate_key",
+          "release_group_mbid",
+          "album_title",
+          "album_artist_name",
+          "lowest_score"
+        ],
+        "properties": {
+          "album_artist_name": {
+            "type": "string"
+          },
+          "album_title": {
+            "type": "string"
+          },
+          "candidate_key": {
+            "type": "string",
+            "description": "Accept the selection with this key."
+          },
+          "lowest_score": {
+            "type": "number",
+            "format": "double",
+            "description": "Its weakest match score across the selected reviews."
+          },
+          "release_group_mbid": {
+            "type": "string"
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ShelfSource": {
         "type": "string",
         "description": "Where a shelf's rows came from.",
@@ -64723,6 +64768,20 @@
           },
           "local_track_id": {
             "type": "string"
+          },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The MusicBrainz recording the file matched, when it matched one."
+          },
+          "release_track_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release's track it matched, when it matched one."
           },
           "title": {
             "type": "string",

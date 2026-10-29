@@ -432,6 +432,67 @@ pub struct BulkPlan {
     /// Names exactly this action over exactly these reviews at these
     /// revisions; the preview token covers it.
     pub material: String,
+    /// Releases every review a named accept could change lists.
+    pub shared: Vec<SharedCandidate>,
+}
+
+/// A release every selected review lists, so one accept can use it for
+/// them all.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SharedCandidate {
+    pub candidate_key: String,
+    pub release_group_mbid: String,
+    pub release_mbid: Option<String>,
+    pub album_title: String,
+    pub album_artist_name: String,
+    /// Its weakest score across the reviews.
+    pub lowest_score: f64,
+}
+
+/// The releases every pending, unpinned review in `rows` lists, the one
+/// with the best weakest score first. Settled and pinned reviews are left
+/// out, as an accept skips them anyway; empty when none are left or they
+/// share nothing.
+pub fn shared_candidates(rows: &[ReviewRow]) -> Vec<SharedCandidate> {
+    let mut open = rows
+        .iter()
+        .filter(|row| row.review.state == ReviewState::Pending && !row.manual_identity);
+    let Some(first) = open.next() else {
+        return Vec::new();
+    };
+    let mut shared: Vec<SharedCandidate> = first
+        .review
+        .candidates
+        .iter()
+        .map(|candidate| SharedCandidate {
+            candidate_key: candidate.candidate_key.clone(),
+            release_group_mbid: candidate.release_group_mbid.clone(),
+            release_mbid: candidate.release_mbid.clone(),
+            album_title: candidate.album_title.clone(),
+            album_artist_name: candidate.album_artist_name.clone(),
+            lowest_score: candidate.score,
+        })
+        .collect();
+    for row in open {
+        shared.retain_mut(|kept| {
+            let score = row
+                .review
+                .candidates
+                .iter()
+                .filter(|candidate| candidate.candidate_key == kept.candidate_key)
+                .map(|candidate| candidate.score)
+                .reduce(f64::min);
+            match score {
+                Some(score) => {
+                    kept.lowest_score = kept.lowest_score.min(score);
+                    true
+                }
+                None => false,
+            }
+        });
+    }
+    shared.sort_by(|a, b| b.lowest_score.total_cmp(&a.lowest_score));
+    shared
 }
 
 /// Work out which selected reviews a bulk action changes. Only pending
@@ -508,6 +569,7 @@ pub fn plan_bulk(
         items,
         skipped: tally.skipped,
         material,
+        shared: shared_candidates(rows),
     }
 }
 
@@ -726,4 +788,66 @@ fn audit(
     )?;
     bump_catalog(tx)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identify::models::CandidateEvidence;
+
+    fn candidate(release: &str, score: f64) -> CandidateEvidence {
+        CandidateEvidence {
+            candidate_key: format!("rg:{release}"),
+            release_group_mbid: "rg".to_owned(),
+            release_mbid: Some(release.to_owned()),
+            album_title: format!("Album {release}"),
+            album_artist_name: "Artist".to_owned(),
+            track_evidence: Vec::new(),
+            score,
+            reason_code: "CLOSE".to_owned(),
+            distance: 1.0 - score,
+            penalties: Vec::new(),
+        }
+    }
+
+    fn row(id: &str, candidates: Vec<CandidateEvidence>) -> ReviewRow {
+        ReviewRow {
+            review: ReviewItem {
+                id: id.to_owned(),
+                local_album_id: format!("album-{id}"),
+                reason_code: "AMBIGUOUS".to_owned(),
+                candidates,
+                state: ReviewState::Pending,
+                resolved_by_user_id: None,
+                selected_candidate_key: None,
+            },
+            album_title: String::new(),
+            artist_name: String::new(),
+            created_ms: 0,
+            updated_ms: 0,
+            manual_identity: false,
+            tracks: Vec::new(),
+            row_revision: 1,
+        }
+    }
+
+    /// Two reviews that list one release in common offer exactly that
+    /// release, at its weaker score; two with nothing in common offer none.
+    #[test]
+    fn shared_candidates_are_the_releases_every_review_lists() {
+        let sharing = [
+            row("a", vec![candidate("one", 0.9), candidate("two", 0.8)]),
+            row("b", vec![candidate("three", 0.95), candidate("one", 0.7)]),
+        ];
+        let shared = shared_candidates(&sharing);
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared[0].candidate_key, "rg:one");
+        assert!((shared[0].lowest_score - 0.7).abs() < f64::EPSILON);
+
+        let apart = [
+            row("a", vec![candidate("one", 0.9)]),
+            row("b", vec![candidate("two", 0.9)]),
+        ];
+        assert!(shared_candidates(&apart).is_empty());
+    }
 }

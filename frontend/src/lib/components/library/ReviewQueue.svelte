@@ -36,11 +36,13 @@
 		previewBulkLibraryReviews,
 		applyBulkLibraryReviews,
 		type BulkReviewAction,
+		type BulkReviewResult,
 		type BulkReviewSelection,
 		type ReviewAction
 	} from '$lib/queries/library/LibraryReviewMutations.svelte';
 	import ReviewFilterBar from './review/ReviewFilterBar.svelte';
 	import ReviewItem from './review/ReviewItem.svelte';
+	import ReviewSharedRelease from './review/ReviewSharedRelease.svelte';
 	import { REVIEW_VIEWS, ReviewFilters } from './review/reviewFilters.svelte';
 
 	const PAGE = 25;
@@ -204,7 +206,7 @@
 	let bulkSelection = $state<BulkReviewSelection | null>(null);
 	let bulkOpen = $state(false);
 
-	async function startBulk(action: BulkReviewAction, reasonCode?: string): Promise<void> {
+	async function previewBulk(action: BulkReviewAction, reasonCode?: string): Promise<boolean> {
 		const selection: BulkReviewSelection = reasonCode
 			? { action, reviewIds: [], filter: { ...filter, reasonCode } }
 			: { action, reviewIds: allMatching ? [] : selected, filter };
@@ -212,18 +214,35 @@
 		applyBulk.reset();
 		try {
 			await preview.mutateAsync(selection);
-			bulkOpen = true;
+			return true;
 		} catch (error) {
 			failure(error, 'Could not preview the change.');
+			return false;
 		}
+	}
+
+	async function startBulk(action: BulkReviewAction, reasonCode?: string): Promise<void> {
+		if (await previewBulk(action, reasonCode)) bulkOpen = true;
 	}
 
 	async function confirmBulk(): Promise<void> {
 		if (!bulkSelection || !preview.data) return;
-		const result = await applyBulk.mutateAsync({
-			selection: bulkSelection,
-			previewToken: preview.data.preview_token
-		});
+		bulkDone(
+			await applyBulk.mutateAsync({
+				selection: bulkSelection,
+				previewToken: preview.data.preview_token
+			})
+		);
+	}
+
+	// One release for the whole selection, from those every review lists.
+	let sharedOpen = $state(false);
+
+	async function startShared(): Promise<void> {
+		if (await previewBulk('accept')) sharedOpen = true;
+	}
+
+	function bulkDone(result: BulkReviewResult): void {
 		const left = result.skipped.reduce((sum, group) => sum + group.count, 0);
 		toastStore.show({
 			message: `Changed ${plural(result.applied, 'review')}${left ? `; ${left} left alone` : ''}.`,
@@ -347,6 +366,9 @@
 			>
 			<Button size="sm" disabled={preview.isPending} onclick={() => void startBulk('accept')}
 				>{BULK_LABEL.accept}</Button
+			>
+			<Button size="sm" disabled={preview.isPending} onclick={() => void startShared()}
+				>Use a shared release</Button
 			>
 			{#if authStore.isAdmin}
 				<Button
@@ -496,6 +518,13 @@
 		{/if}
 	{/if}
 </ConfirmDialog>
+
+<ReviewSharedRelease
+	bind:open={sharedOpen}
+	selection={bulkSelection}
+	plan={preview.data ?? null}
+	ondone={bulkDone}
+/>
 
 <ConfirmDialog
 	bind:open={retryOpen}

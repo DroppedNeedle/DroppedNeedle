@@ -131,6 +131,8 @@ export function retryPendingLibraryReviews() {
 }
 
 export type BulkReviewAction = components['schemas']['BulkAction'];
+export type BulkReviewPreview = components['schemas']['ReviewBulkPreviewResponse'];
+export type BulkReviewResult = components['schemas']['ReviewBulkResponse'];
 
 /** Which reviews a bulk change takes: picked by hand, or every match of a filter. */
 export interface BulkReviewSelection {

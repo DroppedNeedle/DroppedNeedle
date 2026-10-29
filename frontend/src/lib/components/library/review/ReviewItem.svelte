@@ -1,6 +1,6 @@
 <!--
-	One identification review: the album, why it waits, and when opened the
-	releases it could be and the actions the caller may take.
+	One identification review: the album, why it waits, and when opened what
+	it rests on and the actions the caller may take.
 -->
 <script lang="ts">
 	import { ChevronDown, ChevronRight } from 'lucide-svelte';
@@ -9,6 +9,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { LibraryReview } from '$lib/queries/library/LibraryReviewQueries.svelte';
 	import type { ReviewAction } from '$lib/queries/library/LibraryReviewMutations.svelte';
+	import ReviewEvidence from './ReviewEvidence.svelte';
 
 	interface Props {
 		review: LibraryReview;
@@ -47,10 +48,6 @@
 		rejected: 'Kept as tagged',
 		excluded: 'Excluded'
 	};
-
-	function percent(score: number): string {
-		return `${Math.round(Math.max(0, Math.min(1, score)) * 100)}%`;
-	}
 </script>
 
 <li class="rounded-box border border-base-content/10 bg-base-100">
@@ -95,61 +92,7 @@
 
 	{#if open}
 		<div class="space-y-3 border-t border-base-content/10 p-3">
-			{#if review.candidates.length}
-				<ul class="space-y-2">
-					{#each review.candidates as candidate (candidate.candidate_key)}
-						<li
-							class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-base-200 px-3 py-2"
-						>
-							<div class="min-w-0">
-								<p class="truncate text-sm font-medium">{candidate.album_title}</p>
-								<p class="truncate text-xs text-base-content/60">
-									{candidate.album_artist_name}
-									{#if candidate.score > 0}· {percent(candidate.score)} fit{/if}
-									{#if candidate.supported_tracks}· {candidate.supported_tracks} tracks agree{/if}
-									{#if candidate.contradictory_tracks}· {candidate.contradictory_tracks} disagree{/if}
-								</p>
-								{#if candidate.track_evidence.length}
-									<details class="mt-1 text-xs">
-										<summary class="cursor-pointer text-base-content/60">How each file fits</summary
-										>
-										<ul class="mt-1 space-y-0.5">
-											{#each candidate.track_evidence as evidence (evidence.local_track_id)}
-												<li class="flex items-center gap-2">
-													<span
-														class="badge badge-xs {evidence.classification === 'supported'
-															? 'badge-success'
-															: evidence.classification === 'contradictory'
-																? 'badge-error'
-																: 'badge-ghost'}">{evidence.classification}</span
-													>
-													<span class="truncate">{evidence.title || evidence.local_track_id}</span>
-													{#if evidence.evidence_kinds.length}<span class="text-base-content/50"
-															>({evidence.evidence_kinds.join(', ')})</span
-														>{/if}
-												</li>
-											{/each}
-										</ul>
-									</details>
-								{/if}
-							</div>
-							{#if authStore.isTrusted && review.state === 'pending'}
-								<Button
-									variant="primary"
-									size="xs"
-									disabled={busy}
-									onclick={() => onchoose(candidate.candidate_key)}>Use this release</Button
-								>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			{:else}
-				<p class="text-sm text-base-content/60">
-					No candidates were kept with this review. Retry identification, or pick an edition from
-					the album page.
-				</p>
-			{/if}
+			<ReviewEvidence {review} {busy} {onchoose} />
 
 			<div class="flex flex-wrap gap-2">
 				{#if review.state === 'pending'}

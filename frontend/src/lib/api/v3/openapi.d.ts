@@ -5197,8 +5197,9 @@ export interface paths {
         put?: never;
         /**
          * Preview a bulk change: how many reviews it changes, which it skips and
-         *     why, and the token that applies exactly this change. The token is good
-         *     for 15 minutes, and only for the person who previewed.
+         *     why, the releases every selected review shares, and the token that
+         *     applies exactly this change. The token is good for 15 minutes, and only
+         *     for the person who previewed.
          */
         post: operations["preview_bulk_reviews"];
         delete?: never;
@@ -20876,6 +20877,12 @@ export interface components {
             matched: number;
             /** @description Pass back to apply exactly this change. */
             preview_token: string;
+            /**
+             * @description Releases every selected pending, unpinned review lists, best
+             *     weakest score first; accept one for them all with its
+             *     `candidate_key`. Empty when they share none.
+             */
+            shared_candidates: components["schemas"]["SharedCandidateView"][];
             /** @description Reviews it would leave alone, grouped by why. */
             skipped: components["schemas"]["SkippedReviews"][];
         };
@@ -22058,6 +22065,20 @@ export interface components {
             /** @description True when no users exist yet and setup must run. */
             setup_required: boolean;
         };
+        /** @description A release every selected review lists. */
+        SharedCandidateView: {
+            album_artist_name: string;
+            album_title: string;
+            /** @description Accept the selection with this key. */
+            candidate_key: string;
+            /**
+             * Format: double
+             * @description Its weakest match score across the selected reviews.
+             */
+            lowest_score: number;
+            release_group_mbid: string;
+            release_mbid?: string | null;
+        };
         /**
          * @description Where a shelf's rows came from.
          * @enum {string}
@@ -22709,6 +22730,10 @@ export interface components {
             /** @description What the verdict rests on (`recording_id`, `title`, `length`, ...). */
             evidence_kinds: string[];
             local_track_id: string;
+            /** @description The MusicBrainz recording the file matched, when it matched one. */
+            recording_mbid?: string | null;
+            /** @description The release's track it matched, when it matched one. */
+            release_track_mbid?: string | null;
             /** @description The file's title as the library shows it. */
             title: string;
         };

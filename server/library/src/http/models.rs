@@ -171,6 +171,23 @@ pub struct TrackEvidenceView {
     pub classification: EvidenceClass,
     /// What the verdict rests on (`recording_id`, `title`, `length`, ...).
     pub evidence_kinds: Vec<String>,
+    /// The MusicBrainz recording the file matched, when it matched one.
+    pub recording_mbid: Option<String>,
+    /// The release's track it matched, when it matched one.
+    pub release_track_mbid: Option<String>,
+}
+
+/// A release every selected review lists.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SharedCandidateView {
+    /// Accept the selection with this key.
+    pub candidate_key: String,
+    pub release_group_mbid: String,
+    pub release_mbid: Option<String>,
+    pub album_title: String,
+    pub album_artist_name: String,
+    /// Its weakest match score across the selected reviews.
+    pub lowest_score: f64,
 }
 
 /// How many reviews one reason holds.
@@ -270,6 +287,10 @@ pub struct ReviewBulkPreviewResponse {
     pub skipped: Vec<SkippedReviews>,
     /// Pass back to apply exactly this change.
     pub preview_token: String,
+    /// Releases every selected pending, unpinned review lists, best
+    /// weakest score first; accept one for them all with its
+    /// `candidate_key`. Empty when they share none.
+    pub shared_candidates: Vec<SharedCandidateView>,
 }
 
 /// What a bulk review change did.

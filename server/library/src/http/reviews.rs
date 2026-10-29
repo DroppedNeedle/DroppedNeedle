@@ -26,8 +26,8 @@ use super::blocking;
 use super::models::{
     ApproveBody, CandidateView, IdentityView, PenaltyView, ReasonCount, ReviewActionBody,
     ReviewBulkPreviewResponse, ReviewBulkResponse, ReviewResolveResponse, ReviewRetryAllResponse,
-    ReviewRetryBody, ReviewStateCounts, ReviewView, ReviewsResponse, SkippedReviews,
-    TrackEvidenceView,
+    ReviewRetryBody, ReviewStateCounts, ReviewView, ReviewsResponse, SharedCandidateView,
+    SkippedReviews, TrackEvidenceView,
 };
 use super::operations::{OperationView, job_view};
 use crate::identify::models::{AlbumIdentity, CandidateEvidence, ReviewState};
@@ -161,6 +161,8 @@ fn evidence_view(row: &ReviewRow, candidate: &CandidateEvidence) -> Vec<TrackEvi
                 .unwrap_or_default(),
             classification: evidence.classification,
             evidence_kinds: evidence.evidence_kinds.clone(),
+            recording_mbid: evidence.recording_mbid.clone(),
+            release_track_mbid: evidence.release_track_mbid.clone(),
         })
         .collect()
 }
@@ -653,8 +655,9 @@ fn bulk_request(
 }
 
 /// Preview a bulk change: how many reviews it changes, which it skips and
-/// why, and the token that applies exactly this change. The token is good
-/// for 15 minutes, and only for the person who previewed.
+/// why, the releases every selected review shares, and the token that
+/// applies exactly this change. The token is good for 15 minutes, and only
+/// for the person who previewed.
 #[utoipa::path(
     post,
     tag = "library management",
@@ -681,6 +684,18 @@ pub async fn preview_bulk_reviews(
         eligible: u32::try_from(plan.items.len()).unwrap_or(u32::MAX),
         skipped: skipped_view(plan.skipped),
         preview_token: token,
+        shared_candidates: plan
+            .shared
+            .into_iter()
+            .map(|shared| SharedCandidateView {
+                candidate_key: shared.candidate_key,
+                release_group_mbid: shared.release_group_mbid,
+                release_mbid: shared.release_mbid,
+                album_title: shared.album_title,
+                album_artist_name: shared.album_artist_name,
+                lowest_score: shared.lowest_score,
+            })
+            .collect(),
     }))
 }
 
