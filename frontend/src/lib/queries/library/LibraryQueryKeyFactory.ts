@@ -6,30 +6,36 @@ export type LibraryV3UserId = string | null | undefined;
 // A long list's params, without its cursor: a list's pages share one key.
 export interface LibraryV3AlbumsParams {
 	limit: number;
-	sort: 'name' | 'date_added' | 'year' | 'artist' | 'random' | 'rediscover';
-	order: 'asc' | 'desc';
+	sort?: 'name' | 'date_added' | 'year' | 'artist' | 'random' | 'rediscover';
+	order?: 'asc' | 'desc';
 	q?: string;
 	artistId?: string;
 	decade?: number;
 	format?: string;
+	/** Only the caller's favourites; without a sort, the newest first. */
+	favorites?: boolean;
 }
 
 export interface LibraryV3ArtistsParams {
 	limit: number;
-	sort: 'name' | 'album_count' | 'appearance_count' | 'date_added';
-	order: 'asc' | 'desc';
+	sort?: 'name' | 'album_count' | 'appearance_count' | 'date_added';
+	order?: 'asc' | 'desc';
 	q?: string;
 	scope?: 'all' | 'album_artists' | 'contributors';
+	/** Only the caller's favourites; without a sort, the newest first. */
+	favorites?: boolean;
 }
 
 export interface LibraryV3TracksParams {
 	limit: number;
-	sort: 'title' | 'date_added' | 'artist' | 'album' | 'random';
-	order: 'asc' | 'desc';
+	sort?: 'title' | 'date_added' | 'artist' | 'album' | 'random';
+	order?: 'asc' | 'desc';
 	q?: string;
 	albumId?: string;
 	artistId?: string;
 	genre?: string;
+	/** Only the caller's favourites; without a sort, the newest first. */
+	favorites?: boolean;
 }
 
 /** A stored review state, `resolved` (approved or dismissed) or `all`. */

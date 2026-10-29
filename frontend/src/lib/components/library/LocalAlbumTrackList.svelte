@@ -2,6 +2,7 @@
 	import { Play } from 'lucide-svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
+	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { formatBytes, formatDurationSec } from '$lib/utils/formatting';
@@ -18,10 +19,35 @@
 		trackRatings?: Record<string, number>;
 		/** Rate a track, or clear it with 0. Rows show stars only with this. */
 		onRateTrack?: (trackId: string, rating: number) => void;
+		/** Heart or unheart a track. Rows show the heart beside the stars. */
+		onFavoriteTrack?: (trackId: string, favorite: boolean) => void;
 	}
 
-	let { tracks, notes, getTrackMenuItems, trackRatings = {}, onRateTrack }: Props = $props();
+	let {
+		tracks,
+		notes,
+		getTrackMenuItems,
+		trackRatings = {},
+		onRateTrack,
+		onFavoriteTrack
+	}: Props = $props();
 </script>
+
+{#snippet rateAndHeart(track: NativeTrackListItem)}
+	{#if onRateTrack}
+		<RatingStars
+			value={trackRatings[track.id] ?? 0}
+			label={track.title}
+			onchange={(rating) => onRateTrack(track.id, rating)}
+		/>
+	{/if}
+	{#if onFavoriteTrack}
+		<FavoriteHeart
+			favorite={track.favorite ?? false}
+			onchange={(favorite) => onFavoriteTrack(track.id, favorite)}
+		/>
+	{/if}
+{/snippet}
 
 <ol
 	class="mt-3 divide-y divide-base-content/10 overflow-hidden rounded-box border border-base-content/10 bg-base-100"
@@ -47,27 +73,15 @@
 				{#if notes?.get(track.id)}
 					<p class="text-xs text-info">{notes.get(track.id)}</p>
 				{/if}
-				{#if onRateTrack}
-					<div class="sm:hidden">
-						<RatingStars
-							value={trackRatings[track.id] ?? 0}
-							label={track.title}
-							onchange={(rating) => onRateTrack(track.id, rating)}
-						/>
-					</div>
+				{#if onRateTrack || onFavoriteTrack}
+					<div class="flex items-center sm:hidden">{@render rateAndHeart(track)}</div>
 				{/if}
 			</div>
 			{#if track.format}<span class="hidden text-xs uppercase text-base-content/40 sm:block"
 					>{track.format}</span
 				>{/if}
-			{#if onRateTrack}
-				<div class="hidden sm:block">
-					<RatingStars
-						value={trackRatings[track.id] ?? 0}
-						label={track.title}
-						onchange={(rating) => onRateTrack(track.id, rating)}
-					/>
-				</div>
+			{#if onRateTrack || onFavoriteTrack}
+				<div class="hidden items-center sm:flex">{@render rateAndHeart(track)}</div>
 			{/if}
 			<span class="text-xs tabular-nums text-base-content/45"
 				>{formatDurationSec(track.duration_seconds)}</span

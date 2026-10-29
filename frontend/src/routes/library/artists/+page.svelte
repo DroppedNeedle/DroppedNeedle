@@ -12,23 +12,32 @@
 	import { getLibraryArtistsInfiniteQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import type { ArtistSort, LibraryArtistScope, LibraryArtistSummary } from '$lib/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
-	import { ChevronLeft, Disc3, Mic, Search, UsersRound, X } from 'lucide-svelte';
+	import { ChevronLeft, Disc3, Heart, Mic, Search, UsersRound, X } from 'lucide-svelte';
 
 	const SEARCH_DEBOUNCE_MS = 300;
+
+	// `hearted` is the favourites' own order: the newest heart first.
+	type Sort = ArtistSort | 'hearted';
 
 	const browse = $derived.by(() => {
 		const view = page.url.searchParams.get('view') === 'contributors' ? 'contributors' : 'albums';
 		const scope: LibraryArtistScope = view === 'contributors' ? 'contributors' : 'album';
-		const rawSort = page.url.searchParams.get('sort') as ArtistSort | null;
-		const validSorts: ArtistSort[] =
-			scope === 'contributors'
-				? ['name', 'appearance_count', 'date_added']
-				: ['name', 'album_count', 'date_added'];
+		const favorites = page.url.searchParams.get('favorites') === '1';
+		const rawSort = page.url.searchParams.get('sort') as Sort | null;
+		const validSorts: Sort[] = [
+			...(favorites ? (['hearted'] as const) : []),
+			...(scope === 'contributors'
+				? (['name', 'appearance_count', 'date_added'] as const)
+				: (['name', 'album_count', 'date_added'] as const))
+		];
+		const defaultSort: Sort = favorites ? 'hearted' : 'name';
 		return {
 			view,
 			scope,
+			favorites,
+			defaultSort,
 			q: page.url.searchParams.get('q') ?? '',
-			sortBy: rawSort && validSorts.includes(rawSort) ? rawSort : 'name',
+			sortBy: rawSort && validSorts.includes(rawSort) ? rawSort : defaultSort,
 			sortOrder: page.url.searchParams.get('order') === 'desc' ? 'desc' : 'asc'
 		} as const;
 	});
@@ -37,7 +46,8 @@
 		sortBy: browse.sortBy,
 		sortOrder: browse.sortOrder,
 		q: browse.q,
-		scope: browse.scope
+		scope: browse.scope,
+		favorites: browse.favorites
 	});
 	const artistsQuery = getLibraryArtistsInfiniteQuery(() => params);
 
@@ -92,10 +102,17 @@
 
 	function handleSortChange(event: Event): void {
 		const [sort, order] = (event.target as HTMLSelectElement).value.split(':') as [
-			ArtistSort,
+			Sort,
 			'asc' | 'desc'
 		];
-		setParams({ sort: sort === 'name' ? null : sort, order: order === 'asc' ? null : order });
+		setParams({
+			sort: sort === browse.defaultSort ? null : sort,
+			order: order === 'asc' ? null : order
+		});
+	}
+
+	function toggleFavorites(): void {
+		setParams({ favorites: browse.favorites ? null : '1', sort: null, order: null });
 	}
 </script>
 
@@ -110,7 +127,9 @@
 		/>
 		<div>
 			<p class="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Your collection</p>
-			<h1 class="text-3xl font-black tracking-tight">Artists</h1>
+			<h1 class="text-3xl font-black tracking-tight">
+				{browse.favorites ? 'Favourite Artists' : 'Artists'}
+			</h1>
 			<p class="mt-1 text-sm text-base-content/60">
 				{browse.scope === 'album'
 					? 'The artists who own releases in your library.'
@@ -175,12 +194,19 @@
 				/>
 			{/if}
 		</div>
+		<Button
+			variant={browse.favorites ? 'primary' : 'outline'}
+			icon={Heart}
+			aria-pressed={browse.favorites}
+			onclick={toggleFavorites}>Favourites</Button
+		>
 		<select
 			class="select"
 			value="{browse.sortBy}:{browse.sortOrder}"
 			onchange={handleSortChange}
 			aria-label="Sort artists"
 		>
+			{#if browse.favorites}<option value="hearted:asc">Recently favourited</option>{/if}
 			<option value="name:asc">Name A-Z</option>
 			<option value="name:desc">Name Z-A</option>
 			{#if browse.scope === 'album'}
@@ -208,14 +234,20 @@
 		<div class="flex min-h-100 flex-col items-center justify-center text-center">
 			<Mic class="mb-4 h-12 w-12 text-base-content/35" strokeWidth={1.5} />
 			<h2 class="mb-2 text-2xl font-semibold">
-				{browse.q ? 'No matching artists' : 'Nothing in this view yet'}
+				{browse.q
+					? 'No matching artists'
+					: browse.favorites
+						? 'No favourites here yet'
+						: 'Nothing in this view yet'}
 			</h2>
 			<p class="max-w-md text-base-content/65">
 				{browse.q
 					? 'Try a different search term.'
-					: browse.scope === 'album'
-						? 'Album artists appear here as releases are added to your library.'
-						: 'Track-level guests and featured artists will appear here.'}
+					: browse.favorites
+						? 'Tap the heart on an artist to add them here.'
+						: browse.scope === 'album'
+							? 'Album artists appear here as releases are added to your library.'
+							: 'Track-level guests and featured artists will appear here.'}
 			</p>
 		</div>
 	{:else}

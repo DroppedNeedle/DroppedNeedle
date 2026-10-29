@@ -381,7 +381,8 @@ pub struct SetFavoriteBody {
 pub struct FavoriteStatusResponse {
     /// Favorited kind.
     pub kind: String,
-    /// Favorited item id.
+    /// The id the favourite is stored under: the item's current id, which
+    /// differs from the one sent after a merge.
     pub item_id: String,
     /// Current state.
     pub favorited: bool,

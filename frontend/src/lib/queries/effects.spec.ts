@@ -148,7 +148,10 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	],
 	editionPlansChanged: [key(U, 'library', 'catalog', 'edition', 'job', 'plan')],
 	albumHistoryChanged: [key(U, 'library', 'catalog', 'album-history', 'job')],
-	favoritesChanged: [key(U, 'favorites')],
+	favoritesChanged: [
+		{ key: [U, 'library', 'catalog'], mark: true },
+		{ key: [U, 'library', 'album'], mark: true }
+	],
 	downloadTaskListChanged: [{ key: [U, 'downloads', 'tasks', 'anon', 0], exact: true }],
 	downloadActivityChanged: [{ key: [U, 'downloads', 'tasks', 'anon', 0, 'activity'], exact: true }],
 	heldFilesChanged: [{ key: [U, 'downloads', 'tasks', 'anon', 0, 'held'] }],

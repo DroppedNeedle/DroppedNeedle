@@ -71,6 +71,36 @@ impl Rig {
         Self { dir, runtime }
     }
 
+    /// The library album `alb-1` and its track `trk-9`, which favourites
+    /// need: a heart on an id no library item holds is refused.
+    async fn seed_library(&self) {
+        self.runtime
+            .db()
+            .write(
+                droppedneedle_kernel::db::Lane::Foreground,
+                "seed library",
+                |tx| {
+                    tx.execute_batch(
+                        "INSERT INTO local_artists (id, display_name, folded_name, kind, \
+                         created_at, updated_at) VALUES ('art-1', 'Aurora', 'aurora', 'group', 1, 1); \
+                         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+                         ('alb-1', 'r1', 'g1', 'First Light', 'first light', 'art-1', 'automatic', 1, 1); \
+                         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+                         relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
+                         title, title_folded, album_title, album_title_folded, file_format, \
+                         availability, ingest_source, imported_at, membership_source) VALUES \
+                         ('trk-9', 'alb-1', 'r1', '/m/t9.flac', 't9.flac', 'h9', 1, 1, 's9', 'Opener', \
+                         'opener', 'First Light', 'first light', 'flac', 'indexed', 'scan', 1, \
+                         'automatic');",
+                    )?;
+                    Ok::<_, droppedneedle_kernel::db::DbError>(())
+                },
+            )
+            .await
+            .unwrap();
+    }
+
     async fn boot(dir: &ScratchDir) -> DbRuntime {
         open_runtime(&DbConfig::new(&dir.join("app.db")))
             .await
@@ -337,6 +367,7 @@ async fn cross_user_writes_are_refused_by_the_store() {
 #[tokio::test]
 async fn playlists_favorites_and_follows_survive_a_restart() {
     let rig = Rig::open().await;
+    rig.seed_library().await;
     let app = rig.app();
 
     let (_, created) = call(
@@ -503,6 +534,7 @@ async fn playlist_input_validation() {
 #[tokio::test]
 async fn favorites_stay_per_user() {
     let rig = Rig::open().await;
+    rig.seed_library().await;
     let app = rig.app();
     for (kind, item) in [("album", "alb-1"), ("track", "trk-9")] {
         let (status, body) = call(

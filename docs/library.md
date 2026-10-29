@@ -15,6 +15,7 @@ How DroppedNeedle scans your music, works out which album and edition each folde
 - [Downloading from the library](#downloading-from-the-library)
 - [Lyrics](#lyrics)
 - [Ratings](#ratings)
+- [Favourites](#favourites)
 - [Adding a missing album to MusicBrainz](#adding-a-missing-album-to-musicbrainz)
 
 ## Browsing
@@ -106,6 +107,12 @@ You can give an album 1 to 5 stars on its page, and each of its tracks that has 
 Ratings are kept per account, and they are the same ratings Subsonic apps show and set: a rating given in either place shows in the other. In a Subsonic app, setting 0 stars clears your rating. Subsonic apps also show the average of every user's rating of an item; on a server with few users, that average can give your rating away. The web app shows only your own.
 
 The "highest rated" album list in Subsonic apps shows the albums you rated, best first. When albums, artists or tracks are merged, their ratings move to the one that stays; if you rated both, the one that stays keeps its rating. Jellyfin apps don't show ratings.
+
+## Favourites
+
+The heart beside the stars adds an album, a track that has a file in your library, or an artist to your favourites; click it again to take it off. To see them, turn on Favourites on the Albums, Artists or Tracks list, or open the Favourites tile on the Library page. The list starts with your newest favourite, and the sort menu still works. On the Tracks list, Play All and Shuffle play only your favourites while the filter is on.
+
+Favourites are kept per account, and they are the same list player apps use: a heart in the web app is a star in Subsonic apps and a favourite in Jellyfin apps, and the other way round. When albums, artists or tracks are merged, their favourites move to the one that stays. Favourites on a Jellyfin or Navidrome server you linked are that server's own and are shown on its page, apart from these.
 
 ## Adding a missing album to MusicBrainz
 

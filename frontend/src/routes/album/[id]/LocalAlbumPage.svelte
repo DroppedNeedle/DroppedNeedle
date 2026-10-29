@@ -17,6 +17,8 @@
 	import Card from '$lib/ui/Card.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
 	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings/RatingQueries.svelte';
+	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
+	import { setFavorite } from '$lib/queries/library/FavoriteMutations.svelte';
 	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
 	import {
 		getAlbumEditionStatusQuery,
@@ -70,6 +72,7 @@
 			: null
 	);
 	const rate = setRating();
+	const heart = setFavorite();
 
 	// The edition plan's word on single files, read under the plate's keys.
 	const userId = () => authStore.user?.id;
@@ -234,13 +237,19 @@
 						>
 					{/if}
 				</p>
-				<RatingStars
-					size="md"
-					class="mt-2 -ml-1"
-					value={ratingOf(ratingsQuery.data, 'album', album.id)}
-					label={album.title}
-					onchange={(rating) => rate.mutate({ kind: 'album', itemId: album.id, rating })}
-				/>
+				<div class="mt-2 -ml-1 flex items-center">
+					<RatingStars
+						size="md"
+						value={ratingOf(ratingsQuery.data, 'album', album.id)}
+						label={album.title}
+						onchange={(rating) => rate.mutate({ kind: 'album', itemId: album.id, rating })}
+					/>
+					<FavoriteHeart
+						size="md"
+						favorite={album.favorite ?? false}
+						onchange={(favorited) => heart.mutate({ kind: 'album', itemId: album.id, favorited })}
+					/>
+				</div>
 				<div class="mt-4">
 					<EditionPlate copies={[album]} />
 				</div>
@@ -328,6 +337,8 @@
 					getTrackMenuItems={getLocalTrackMenuItems}
 					trackRatings={ratingsQuery.data?.tracks}
 					onRateTrack={(trackId, rating) => rate.mutate({ kind: 'track', itemId: trackId, rating })}
+					onFavoriteTrack={(trackId, favorited) =>
+						heart.mutate({ kind: 'track', itemId: trackId, favorited })}
 				/>
 			{/if}
 		</section>

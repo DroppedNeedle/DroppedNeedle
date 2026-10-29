@@ -1562,9 +1562,19 @@ async fn caller_keyed_state_stays_with_its_caller() {
         assert!(status.is_success(), "{what}: {status} {body}");
     };
 
-    // Favourites.
-    let album = "00000000-0000-0000-0005-000000000001";
+    // Favourites and ratings, on a library album.
+    app.db()
+        .execute_batch(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+             VALUES ('own-artist', 'Someone', 'someone', 'person', 0, 0); \
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) VALUES \
+             ('own-album', 'root-1', 'g-own', 'Something', 'something', 'own-artist', 'manual', 0, 0);",
+        )
+        .expect("library album seeds");
+    let album = "own-album";
     let favorite = format!("/api/v3/favorites/album/{album}");
+    let hearted = "/api/v3/library/albums?favorites=true";
     let (status, body) = call(
         &app,
         &ada,
@@ -1580,6 +1590,9 @@ async fn caller_keyed_state_stays_with_its_caller() {
         !body.to_string().contains(album),
         "B sees A's favourite: {body}"
     );
+    let (status, body) = call(&app, &bob, "GET", hearted, None).await;
+    ok(status, &body, "B lists favourite albums");
+    assert_eq!(body["items"], json!([]), "B sees A's favourite album");
     let (status, body) = call(
         &app,
         &bob,
@@ -1589,22 +1602,13 @@ async fn caller_keyed_state_stays_with_its_caller() {
     )
     .await;
     ok(status, &body, "B unfavourites");
-    let (_, body) = call(&app, &ada, "GET", "/api/v3/favorites", None).await;
-    assert!(
-        body.to_string().contains(album),
+    let (_, body) = call(&app, &ada, "GET", hearted, None).await;
+    assert_eq!(
+        body["items"][0]["id"],
+        json!(album),
         "B's write took A's favourite: {body}"
     );
 
-    // Ratings, on a library album.
-    app.db()
-        .execute_batch(
-            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
-             VALUES ('own-artist', 'Someone', 'someone', 'person', 0, 0); \
-             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-             album_artist_id, grouping_source, created_at, updated_at) VALUES \
-             ('own-album', 'root-1', 'g-own', 'Something', 'something', 'own-artist', 'manual', 0, 0);",
-        )
-        .expect("library album seeds");
     let rating = "/api/v3/ratings/album/own-album";
     let lookup = Some(json!({"album_ids": ["own-album"]}));
     let (status, body) = call(&app, &ada, "PUT", rating, Some(json!({"rating": 4}))).await;

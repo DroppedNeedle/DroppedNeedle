@@ -10,6 +10,14 @@ use crate::reads::collections::models::{
     FavoriteCounts, FavoriteItem, FavoriteListResponse, FavoriteStatusResponse,
 };
 use crate::reads::collections::store::favorites::KINDS;
+use crate::reads::library::stores::StoreError as LibraryStoreError;
+
+fn library_error(error: LibraryStoreError) -> CollectionsError {
+    match error {
+        LibraryStoreError::Busy(operation) => CollectionsError::Busy { operation },
+        LibraryStoreError::Internal(cause) => CollectionsError::internal(&cause),
+    }
+}
 
 /// Validated kind or 400.
 fn clean_kind(raw: &str) -> Result<&'static str, CollectionsError> {
@@ -54,7 +62,11 @@ impl CollectionsService<'_> {
         })
     }
 
-    /// Favorite or unfavorite one item. Idempotent both ways.
+    /// Favorite or unfavorite the item `item_id` names now, as Subsonic's
+    /// `star` does: the old id of a merged album or artist, or of a track
+    /// that continued into another, acts on the item that holds it. An id
+    /// no live album or artist, or no streamable track, holds is not found,
+    /// and nothing is written. Idempotent both ways.
     pub async fn set_favorite(
         &self,
         user_id: &str,
@@ -64,17 +76,44 @@ impl CollectionsService<'_> {
         name: Option<String>,
     ) -> Result<FavoriteStatusResponse, CollectionsError> {
         let kind = clean_kind(kind)?;
+        let current = self.live_id(kind, item_id).await?;
         self.set_favorites(
             user_id,
-            &[(kind.to_owned(), item_id.to_owned(), name)],
+            &[(kind.to_owned(), current.clone(), name)],
             favorited,
         )
         .await?;
         Ok(FavoriteStatusResponse {
             kind: kind.to_owned(),
-            item_id: item_id.to_owned(),
+            item_id: current,
             favorited,
         })
+    }
+
+    /// The id of the live album, artist or streamable track `item_id` names
+    /// now, or not found.
+    async fn live_id(&self, kind: &str, item_id: &str) -> Result<String, CollectionsError> {
+        let items = &self.state.items;
+        let current = items
+            .current_id(kind, item_id)
+            .await
+            .map_err(library_error)?;
+        // `current_id` names only a live album; artists and tracks are
+        // checked below.
+        let current = match (kind, current) {
+            ("album", Some(current)) => return Ok(current),
+            ("album", None) => return Err(CollectionsError::NotFound),
+            (_, current) => current.unwrap_or_else(|| item_id.to_owned()),
+        };
+        let live = items
+            .existing(kind, std::slice::from_ref(&current))
+            .await
+            .map_err(library_error)?;
+        if live.contains(&current) {
+            Ok(current)
+        } else {
+            Err(CollectionsError::NotFound)
+        }
     }
 
     /// Favorite or unfavorite several `(kind, id, name)` items at once.

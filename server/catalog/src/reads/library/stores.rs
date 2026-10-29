@@ -57,6 +57,8 @@ droppedneedle_kernel::sql_choice! {
         Random,
         /// Oldest imports first.
         Rediscover,
+        /// When the caller favorited it. Lists the caller's favourites only.
+        Favorited,
     }
 }
 
@@ -71,6 +73,8 @@ droppedneedle_kernel::sql_choice! {
         AppearanceCount,
         /// First import time.
         DateAdded,
+        /// When the caller favorited it. Lists the caller's favourites only.
+        Favorited,
     }
 }
 
@@ -87,6 +91,8 @@ droppedneedle_kernel::sql_choice! {
         Album,
         /// One seeded shuffle per walk.
         Random,
+        /// When the caller favorited it. Lists the caller's favourites only.
+        Favorited,
     }
 }
 
@@ -118,6 +124,8 @@ pub struct AlbumFilter {
     pub decade: Option<i64>,
     /// Restrict to one primary track format, already lowercased.
     pub format: Option<String>,
+    /// Restrict to this user's favourites.
+    pub favorites_of: Option<String>,
 }
 
 /// Track list filter.
@@ -131,6 +139,8 @@ pub struct TrackFilter {
     pub artist_id: Option<String>,
     /// Restrict to one genre tag, case folded.
     pub genre: Option<String>,
+    /// Restrict to this user's favourites.
+    pub favorites_of: Option<String>,
 }
 
 /// One library album with its streamable-only aggregates: what the album

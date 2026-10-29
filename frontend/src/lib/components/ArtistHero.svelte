@@ -11,6 +11,7 @@
 	import HeroBackdrop from './HeroBackdrop.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
+	import FavoriteHeart from './FavoriteHeart.svelte';
 	import { outsideLink } from './outsideLink';
 	import { getArtistImageCreditQuery } from '$lib/queries/artist/ArtistImageCreditQuery.svelte';
 
@@ -25,6 +26,10 @@
 		rating?: number;
 		/** Rate the library artist, or clear it with 0. The stars show only with this. */
 		onrate?: (rating: number) => void;
+		/** Whether the caller favorited the library artist. */
+		favorite?: boolean;
+		/** Heart or unheart the library artist. The heart shows beside the stars. */
+		onfavorite?: (favorite: boolean) => void;
 	}
 
 	let {
@@ -33,7 +38,9 @@
 		refreshing = false,
 		onrefresh,
 		rating = 0,
-		onrate
+		onrate,
+		favorite = false,
+		onfavorite
 	}: Props = $props();
 
 	let heroGradient = $state(DEFAULT_GRADIENT);
@@ -157,8 +164,11 @@
 					{/if}
 
 					{#if onrate}
-						<div class="mt-2">
+						<div class="mt-2 flex items-center">
 							<RatingStars size="md" value={rating} label={artist.name} onchange={onrate} />
+							{#if onfavorite}
+								<FavoriteHeart size="md" {favorite} onchange={onfavorite} />
+							{/if}
 						</div>
 					{/if}
 

@@ -46,6 +46,7 @@
 	import { mergeArtistReleasePages } from '$lib/queries/artist/artistReleasePages';
 	import { mergeArtistImages } from '$lib/queries/catalog/catalogAdapters';
 	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings/RatingQueries.svelte';
+	import { setFavorite } from '$lib/queries/library/FavoriteMutations.svelte';
 
 	interface Props {
 		data: { artistId: string; primarySource: MusicSource };
@@ -59,6 +60,7 @@
 		localArtist ? { artistIds: [localArtist.id] } : null
 	);
 	const rate = setRating();
+	const heart = setFavorite();
 
 	// svelte-ignore state_referenced_locally
 	let activeSource = new PersistedState<MusicSource>(
@@ -380,6 +382,10 @@
 						rating={localArtist ? ratingOf(ratingsQuery.data, 'artist', localArtist.id) : 0}
 						onrate={localArtist
 							? (rating) => rate.mutate({ kind: 'artist', itemId: localArtist.id, rating })
+							: undefined}
+						favorite={localArtist?.favorite ?? false}
+						onfavorite={localArtist
+							? (favorited) => heart.mutate({ kind: 'artist', itemId: localArtist.id, favorited })
 							: undefined}
 					/>
 

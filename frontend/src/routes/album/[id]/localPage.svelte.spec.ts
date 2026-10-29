@@ -1,6 +1,6 @@
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fakeApi, type FakeApi, type RouteData } from '$lib/test/api';
+import { apiError, fakeApi, type FakeApi, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
 vi.mock('$app/state', () => ({
@@ -206,5 +206,44 @@ describe('local album page and its edition', () => {
 		expect(
 			tracks.compareDocumentPosition(history.element()) & Node.DOCUMENT_POSITION_FOLLOWING
 		).toBeTruthy();
+	});
+});
+
+describe('local album page heart', () => {
+	it("shows the album's flag, saves a change and puts back one that fails", async () => {
+		const api = fakeLibrary({ downloadAllowed: true });
+		let favorite = true;
+		api.use({
+			'GET /api/v3/library/albums/{id}': () => ({ ...album, favorite }),
+			'PUT /api/v3/favorites/{kind}/{item_id}': ({ params, body }) => {
+				favorite = (body as { favorited: boolean }).favorited;
+				return { kind: params.kind ?? '', item_id: params.item_id ?? '', favorited: favorite };
+			}
+		});
+		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
+
+		const remove = page.getByRole('button', { name: 'Remove from favourites' });
+		await remove.click();
+		await expect.element(remove).not.toBeInTheDocument();
+		await expect.poll(() => api.calls('PUT /api/v3/favorites/{kind}/{item_id}').length).toBe(1);
+		const [saved] = api.calls('PUT /api/v3/favorites/{kind}/{item_id}');
+		expect([saved?.params, saved?.body]).toEqual([
+			{ kind: 'album', item_id: album.id },
+			{ favorited: false }
+		]);
+
+		let fail = () => {};
+		api.use({
+			'PUT /api/v3/favorites/{kind}/{item_id}': () =>
+				new Promise((resolve) => {
+					fail = () => resolve(apiError(500, 'INTERNAL'));
+				})
+		});
+		// The album's heart comes before the track rows'.
+		await page.getByRole('button', { name: 'Add to favourites' }).first().click();
+		await expect.element(remove).toBeVisible();
+		await expect.poll(() => api.calls('PUT /api/v3/favorites/{kind}/{item_id}').length).toBe(2);
+		fail();
+		await expect.element(remove).not.toBeInTheDocument();
 	});
 });

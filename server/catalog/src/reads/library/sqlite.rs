@@ -203,7 +203,32 @@ fn first_total(totals: &[u64]) -> u64 {
     totals.first().copied().unwrap_or(0)
 }
 
+/// The user a list page binds first: the one whose favourites it lists, or
+/// none for a list over everything.
+fn favorites_value(favorites_of: Option<&str>, sort_needs_it: bool) -> Option<Value> {
+    (favorites_of.is_some() || sort_needs_it).then(|| text(favorites_of))
+}
+
 impl LocalCatalog {
+    /// [`Self::totals`], except over one user's favourites: a heart does not
+    /// move the catalog revision, so those totals are counted every time.
+    async fn list_totals<F>(
+        &self,
+        key: String,
+        favorites: bool,
+        name: &'static str,
+        count: F,
+    ) -> Result<Vec<u64>, StoreError>
+    where
+        F: FnOnce(&rusqlite::Connection) -> rusqlite::Result<Vec<u64>> + Send + 'static,
+    {
+        if favorites {
+            self.read(name, count).await
+        } else {
+            self.totals(key, name, count).await
+        }
+    }
+
     /// One page of albums plus the match total, remembered per catalog
     /// revision.
     pub async fn list_albums(
@@ -215,8 +240,13 @@ impl LocalCatalog {
         after: &After,
     ) -> Result<KeyedPage<AlbumRecord>, StoreError> {
         let keys = sql::album_keys(sort, descending);
+        let favorites_of = filter.favorites_of.clone();
         let filter_values = album_filter_values(filter);
         let mut values = Vec::new();
+        values.extend(favorites_value(
+            favorites_of.as_deref(),
+            sort == AlbumSort::Favorited,
+        ));
         if sort == AlbumSort::Random {
             values.extend(sql::shuffle_values(after.seed));
         }
@@ -225,7 +255,11 @@ impl LocalCatalog {
             values.extend(sql::after_values(&keys, key));
         }
         values.push(count(limit.saturating_add(1)));
-        let text = sql::album_page(sort, descending, after.key.is_some());
+        let text = if favorites_of.is_some() {
+            sql::favorite_album_page(sort, descending, after.key.is_some())
+        } else {
+            sql::album_page(sort, descending, after.key.is_some())
+        };
         // Page the keys first: filtering and ordering touch albums only,
         // so the track aggregation below runs over the page, never the
         // catalog.
@@ -233,11 +267,19 @@ impl LocalCatalog {
             .album_key_page("library.albums.list", text, values, keys.len(), limit)
             .await?;
         let total = self
-            .totals(
+            .list_totals(
                 format!("albums {filter:?}"),
+                favorites_of.is_some(),
                 "library.albums.count",
                 move |conn| {
-                    let total: i64 = scalar(conn, sql::ALBUM_COUNT.text(), &filter_values)?;
+                    let total: i64 = match favorites_of {
+                        Some(user) => {
+                            let mut values = vec![Value::Text(user)];
+                            values.extend(filter_values);
+                            scalar(conn, sql::FAVORITE_ALBUM_COUNT.text(), &values)?
+                        }
+                        None => scalar(conn, sql::ALBUM_COUNT.text(), &filter_values)?,
+                    };
                     Ok(vec![unsigned(total)])
                 },
             )
@@ -400,30 +442,44 @@ impl LocalCatalog {
             })
             .await?;
         let artists = self.hydrate_artists(&ids).await?;
-        let (total, led, contributors) = self.artist_totals(scope, q).await?;
+        let (total, led, contributors) = self.artist_totals(scope, q, None).await?;
         Ok((artists, total, led, contributors))
     }
 
     /// One page of artists in scope from a cursor, plus the album-artist
-    /// and contributor totals. Totals honor `q` and are remembered per
-    /// catalog revision.
+    /// and contributor totals. Totals honor `q` and, over everyone's
+    /// artists, are remembered per catalog revision. `favorites_of` narrows
+    /// the page and its totals to that user's favourites.
+    #[allow(clippy::too_many_arguments)]
     pub async fn artist_list(
         &self,
         scope: ArtistScope,
         q: Option<&str>,
+        favorites_of: Option<&str>,
         sort: ArtistSort,
         descending: bool,
         limit: u64,
         after: &After,
     ) -> Result<ArtistKeyedListing, StoreError> {
-        let keys = sql::artist_keys(scope, sort, descending);
+        let keys = if favorites_of.is_some() {
+            sql::favorite_artist_keys(sort, descending)
+        } else {
+            sql::artist_keys(scope, sort, descending)
+        };
         let width = keys.len();
-        let mut values = name_filter(q);
+        let mut values: Vec<Value> = favorites_value(favorites_of, sort == ArtistSort::Favorited)
+            .into_iter()
+            .collect();
+        values.extend(name_filter(q));
         if let Some(key) = &after.key {
             values.extend(sql::after_values(&keys, key));
         }
         values.push(count(limit.saturating_add(1)));
-        let text = sql::artist_page(scope, sort, descending, after.key.is_some());
+        let text = if favorites_of.is_some() {
+            sql::favorite_artist_page(scope, sort, descending, after.key.is_some())
+        } else {
+            sql::artist_page(scope, sort, descending, after.key.is_some())
+        };
         // Page the ids first; counts aggregate over the page below.
         let keyed = self
             .read("library.artists.list", move |conn| {
@@ -436,24 +492,40 @@ impl LocalCatalog {
             .await?;
         let (ids, next) = split_page(keyed, limit);
         let items = self.hydrate_artists(&ids).await?;
-        let (total, led, contributors) = self.artist_totals(scope, q).await?;
+        let (total, led, contributors) = self.artist_totals(scope, q, favorites_of).await?;
         Ok((KeyedPage { items, total, next }, led, contributors))
     }
 
-    /// Artists in scope, album artists and contributors matching `q`,
-    /// remembered per catalog revision.
+    /// Artists in scope, album artists and contributors matching `q`, among
+    /// one user's favourites when `favorites_of` names one. Totals over
+    /// everyone's artists are remembered per catalog revision.
     async fn artist_totals(
         &self,
         scope: ArtistScope,
         q: Option<&str>,
+        favorites_of: Option<&str>,
     ) -> Result<(u64, u64, u64), StoreError> {
-        let names = name_filter(q);
+        let mut names: Vec<Value> = favorites_of
+            .map(|user| text(Some(user)))
+            .into_iter()
+            .collect();
+        names.extend(name_filter(q));
+        let favorites = favorites_of.is_some();
         let totals = self
-            .totals(
+            .list_totals(
                 format!("artists {scope:?} {q:?}"),
+                favorites,
                 "library.artists.count",
                 move |conn| {
-                    let mut statement = conn.prepare_cached(sql::ARTIST_TOTALS.text())?;
+                    let (totals, scope_count) = if favorites {
+                        (
+                            sql::FAVORITE_ARTIST_TOTALS,
+                            sql::favorite_artist_scope_count(scope),
+                        )
+                    } else {
+                        (sql::ARTIST_TOTALS, sql::artist_scope_count(scope))
+                    };
+                    let mut statement = conn.prepare_cached(totals.text())?;
                     let (all, led, contributors): (i64, i64, i64) = statement
                         .query_row(rusqlite::params_from_iter(&names), |row| {
                             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
@@ -461,7 +533,7 @@ impl LocalCatalog {
                     let total = if matches!(scope, ArtistScope::All) {
                         all
                     } else {
-                        scalar(conn, &sql::artist_scope_count(scope), &names)?
+                        scalar(conn, &scope_count, &names)?
                     };
                     Ok(vec![unsigned(total), unsigned(led), unsigned(contributors)])
                 },
@@ -695,7 +767,12 @@ impl LocalCatalog {
             .map(|search| ListLen::new(search.short_words.len()));
         let keys = sql::track_keys(sort, descending);
         let width = keys.len();
+        let favorites_of = filter.favorites_of.clone();
         let mut values = Vec::new();
+        values.extend(favorites_value(
+            favorites_of.as_deref(),
+            sort == TrackSort::Favorited,
+        ));
         if sort == TrackSort::Random {
             values.extend(sql::shuffle_values(after.seed));
         }
@@ -705,9 +782,13 @@ impl LocalCatalog {
         }
         values.push(count(limit.saturating_add(1)));
         let after_cursor = after.key.is_some();
-        let text = match short {
-            Some(short) => sql::track_page_words(short, sort, descending, after_cursor),
-            None => sql::track_page_like(sort, descending, after_cursor),
+        let text = match (short, favorites_of.is_some()) {
+            (Some(short), false) => sql::track_page_words(short, sort, descending, after_cursor),
+            (Some(short), true) => {
+                sql::favorite_track_page_words(short, sort, descending, after_cursor)
+            }
+            (None, false) => sql::track_page_like(sort, descending, after_cursor),
+            (None, true) => sql::favorite_track_page_like(sort, descending, after_cursor),
         };
         let keyed = self
             .read("library.tracks.list", move |conn| {
@@ -720,7 +801,8 @@ impl LocalCatalog {
         let unfiltered = filter.q.is_none()
             && filter.album_id.is_none()
             && filter.artist_id.is_none()
-            && filter.genre.is_none();
+            && filter.genre.is_none()
+            && favorites_of.is_none();
         // Unfiltered, the maintained exact count of indexed tracks
         // (migration 0005) answers.
         let total = if unfiltered {
@@ -731,17 +813,22 @@ impl LocalCatalog {
                 .await?;
             unsigned(total)
         } else {
+            let favorites = favorites_of.is_some();
+            let mut count_values: Vec<Value> = favorites_of.map(Value::Text).into_iter().collect();
+            count_values.extend(filter_values);
             let totals = self
-                .totals(
+                .list_totals(
                     format!("tracks {filter:?}"),
+                    favorites,
                     "library.tracks.count",
                     move |conn| {
-                        let total: i64 = match short {
-                            Some(short) => {
-                                scalar(conn, &sql::track_count_words(short), &filter_values)?
-                            }
-                            None => scalar(conn, sql::TRACK_COUNT_LIKE.text(), &filter_values)?,
+                        let text = match (short, favorites) {
+                            (Some(short), false) => sql::track_count_words(short),
+                            (Some(short), true) => sql::favorite_track_count_words(short),
+                            (None, false) => sql::TRACK_COUNT_LIKE.text().to_owned(),
+                            (None, true) => sql::FAVORITE_TRACK_COUNT_LIKE.text().to_owned(),
                         };
+                        let total: i64 = scalar(conn, &text, &count_values)?;
                         Ok(vec![unsigned(total)])
                     },
                 )

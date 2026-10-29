@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Disc3, Users, Music2, ArrowUpRight } from 'lucide-svelte';
+	import { Disc3, Heart, Users, Music2, ArrowUpRight } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import {
@@ -284,6 +284,30 @@
 		</div>
 		<ArrowUpRight
 			class="relative h-6 w-6 shrink-0 text-base-content/25 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-info"
+		/>
+	</a>
+
+	<a
+		href={withBasePath('/library/albums?favorites=1')}
+		class="group relative col-span-1 flex items-center gap-4 overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-r from-error/15 via-error/5 to-base-200/40 px-6 py-5 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-error/40 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-error focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none sm:col-span-2 sm:gap-8 sm:px-8"
+		aria-label="Browse your favourite albums"
+	>
+		<div
+			aria-hidden="true"
+			class="pointer-events-none absolute -top-12 right-1/3 h-44 w-44 rounded-full bg-error/15 blur-3xl transition-transform duration-500 group-hover:scale-125"
+		></div>
+		<div class="relative min-w-0 flex-1">
+			<div class="text-4xl leading-none font-black tabular-nums sm:text-5xl">
+				{stats.favorite_albums.toLocaleString()}
+			</div>
+			<div
+				class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-base-content/55 uppercase"
+			>
+				<Heart class="h-3.5 w-3.5 fill-current text-error" /> Favourites
+			</div>
+		</div>
+		<ArrowUpRight
+			class="relative h-6 w-6 shrink-0 text-base-content/25 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-error"
 		/>
 	</a>
 </div>

@@ -153,6 +153,9 @@ pub struct AlbumQuery {
     /// Restrict to one primary track format, e.g. `flac`. Blank reads as
     /// absent; matching is case-insensitive.
     pub format: Option<String>,
+    /// Only the caller's favourites. Without `sort`, the newest favourite
+    /// comes first, and `order=asc` puts the oldest first.
+    pub favorites: Option<bool>,
 }
 
 /// Page query for an artist's albums and appearances.
@@ -252,6 +255,9 @@ pub struct ArtistQuery {
     pub q: Option<String>,
     /// `all`, `album_artists`, or `contributors`. Default `all`.
     pub scope: Option<String>,
+    /// Only the caller's favourites. Without `sort`, the newest favourite
+    /// comes first, and `order=asc` puts the oldest first.
+    pub favorites: Option<bool>,
 }
 
 /// One catalog track. Only streamable tracks are listed; missing or
@@ -394,6 +400,9 @@ pub struct TrackQuery {
     pub artist_id: Option<String>,
     /// Restrict to one genre tag, case folded.
     pub genre: Option<String>,
+    /// Only the caller's favourites. Without `sort`, the newest favourite
+    /// comes first, and `order=asc` puts the oldest first.
+    pub favorites: Option<bool>,
 }
 
 /// Library totals. Track and size totals count streamable tracks only.

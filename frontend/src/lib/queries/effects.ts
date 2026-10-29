@@ -40,10 +40,7 @@ import { SettingsQueryKeyFactory } from '$lib/queries/settings/SettingsQueryKeyF
 import { SourcePlaylistQueryKeyFactory } from '$lib/queries/source-playlists/SourcePlaylistQueryKeyFactory';
 import { SpotifyQueryKeyFactory } from '$lib/queries/spotify/SpotifyQueryKeyFactory';
 import { SystemQueryKeyFactory } from '$lib/queries/system/SystemQueryKeyFactory';
-import {
-	FavoriteQueryKeyFactory,
-	PlaylistQueryKeyFactory
-} from '$lib/queries/playlists/PlaylistQueryKeyFactory';
+import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 import type { RemoteSource } from '$lib/queries/remotes/types';
 
 type UserId = string | null | undefined;
@@ -389,8 +386,14 @@ export const EFFECTS = {
 	albumHistoryChanged: (userId: UserId, localId: string): Sweep[] => [
 		{ key: LibraryQueryKeyFactory.catalog.albumHistory(userId, localId) }
 	],
-	/** The caller's favourites. */
-	favoritesChanged: (userId: UserId): Sweep[] => [{ key: FavoriteQueryKeyFactory.user(userId) }],
+	/**
+	 * The caller's favourites. Their flags ride on the library's views, which
+	 * a heart patches in place, so those are only marked stale.
+	 */
+	favoritesChanged: (userId: UserId): Sweep[] => [
+		{ key: LibraryQueryKeyFactory.catalog.root(userId), mark: true },
+		{ key: LibraryQueryKeyFactory.albumPrefix(userId), mark: true }
+	],
 	/** The caller's task list itself, not the lists nested under it. */
 	downloadTaskListChanged: (userId: UserId): Sweep[] => [
 		{ key: DownloadQueryKeyFactory.tasks(userId), exact: true }

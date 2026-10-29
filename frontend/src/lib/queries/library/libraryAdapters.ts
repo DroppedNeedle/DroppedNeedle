@@ -52,7 +52,8 @@ export function toAlbumSummary(album: AlbumView): LibraryAlbumSummary {
 		sort_name: null,
 		original_release_date: null,
 		contribution_id: album.contribution_id ?? null,
-		contribution_state: (album.contribution_state as ContributionState | null | undefined) ?? null
+		contribution_state: (album.contribution_state as ContributionState | null | undefined) ?? null,
+		favorite: album.favorite
 	};
 }
 
@@ -100,7 +101,8 @@ export function toArtistSummary(artist: ArtistView): LibraryArtistSummary {
 		appearance_track_count: artist.appearance_track_count,
 		library_relationship: relationship(artist),
 		date_added: artist.date_added ?? null,
-		row_revision: 0
+		row_revision: 0,
+		favorite: artist.favorite
 	};
 }
 
@@ -113,7 +115,8 @@ export function toLibraryStats(stats: StatsView): LibraryStats {
 		format_breakdown: stats.format_breakdown,
 		review_count: stats.review_count,
 		local_only_count: stats.local_only_count,
-		last_scan_at: stats.last_scan_at ?? null
+		last_scan_at: stats.last_scan_at ?? null,
+		favorite_albums: stats.favorite_albums
 	};
 }
 

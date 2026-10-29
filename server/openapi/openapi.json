@@ -7129,6 +7129,7 @@
           "collections"
         ],
         "summary": "Favorite or unfavorite one item.",
+        "description": "Acts on the caller's own favourites, the ones Subsonic apps star and\nJellyfin apps mark. The old id of a merged item acts on the item it went\ninto, and the answer names that id.",
         "operationId": "set_favorite_handler",
         "parameters": [
           {
@@ -7143,7 +7144,7 @@
           {
             "name": "item_id",
             "in": "path",
-            "description": "Favorited item id",
+            "description": "Local id of the item",
             "required": true,
             "schema": {
               "type": "string"
@@ -7183,6 +7184,16 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No live item holds the id",
             "content": {
               "application/json": {
                 "schema": {
@@ -8832,6 +8843,15 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "favorites",
+            "in": "query",
+            "description": "Only the caller's favourites. Without `sort`, the newest favourite\ncomes first, and `order=asc` puts the oldest first.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -12397,6 +12417,15 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "favorites",
+            "in": "query",
+            "description": "Only the caller's favourites. Without `sort`, the newest favourite\ncomes first, and `order=asc` puts the oldest first.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -21282,6 +21311,15 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "favorites",
+            "in": "query",
+            "description": "Only the caller's favourites. Without `sort`, the newest favourite\ncomes first, and `order=asc` puts the oldest first.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -44736,7 +44774,7 @@
           },
           "item_id": {
             "type": "string",
-            "description": "Favorited item id."
+            "description": "The id the favourite is stored under: the item's current id, which\ndiffers from the one sent after a merge."
           },
           "kind": {
             "type": "string",

@@ -74,10 +74,12 @@ fn page(
     Ok((limit, offset))
 }
 
-/// Parse `asc`/`desc`.
-fn descending(order: Option<&str>) -> Result<bool, LibraryFailure> {
+/// Parse `asc`/`desc`. Absent is ascending, except in the favourites order,
+/// which starts from the newest.
+fn descending(order: Option<&str>, favorited: bool) -> Result<bool, LibraryFailure> {
     match order {
-        None | Some("asc") => Ok(false),
+        None => Ok(favorited),
+        Some("asc") => Ok(false),
         Some("desc") => Ok(true),
         Some(other) => Err(LibraryFailure::InvalidInput(format!(
             "unknown order '{other}': want asc or desc"
@@ -85,8 +87,23 @@ fn descending(order: Option<&str>) -> Result<bool, LibraryFailure> {
     }
 }
 
-fn album_sort(sort: Option<&str>) -> Result<AlbumSort, LibraryFailure> {
+/// The user whose favourites a list is narrowed to, if asked.
+fn favorites_of(favorites: Option<bool>, user_id: &str) -> Option<String> {
+    favorites.unwrap_or(false).then(|| user_id.to_owned())
+}
+
+/// The cursor tag of a list: its order, and whether it lists favourites.
+fn list_order(order: String, favorites: bool) -> String {
+    if favorites {
+        format!("{order}/favorites")
+    } else {
+        order
+    }
+}
+
+fn album_sort(sort: Option<&str>, favorites: bool) -> Result<AlbumSort, LibraryFailure> {
     match sort {
+        None if favorites => Ok(AlbumSort::Favorited),
         None | Some("name") => Ok(AlbumSort::Name),
         Some("date_added") => Ok(AlbumSort::DateAdded),
         Some("year") => Ok(AlbumSort::Year),
@@ -99,8 +116,9 @@ fn album_sort(sort: Option<&str>) -> Result<AlbumSort, LibraryFailure> {
     }
 }
 
-fn artist_sort(sort: Option<&str>) -> Result<ArtistSort, LibraryFailure> {
+fn artist_sort(sort: Option<&str>, favorites: bool) -> Result<ArtistSort, LibraryFailure> {
     match sort {
+        None if favorites => Ok(ArtistSort::Favorited),
         None | Some("name") => Ok(ArtistSort::Name),
         Some("album_count") => Ok(ArtistSort::AlbumCount),
         Some("appearance_count") => Ok(ArtistSort::AppearanceCount),
@@ -111,8 +129,9 @@ fn artist_sort(sort: Option<&str>) -> Result<ArtistSort, LibraryFailure> {
     }
 }
 
-fn track_sort(sort: Option<&str>) -> Result<TrackSort, LibraryFailure> {
+fn track_sort(sort: Option<&str>, favorites: bool) -> Result<TrackSort, LibraryFailure> {
     match sort {
+        None if favorites => Ok(TrackSort::Favorited),
         None | Some("title") => Ok(TrackSort::Title),
         Some("date_added") => Ok(TrackSort::DateAdded),
         Some("artist") => Ok(TrackSort::Artist),
@@ -286,10 +305,12 @@ pub async fn list_albums(
         artist_id: query.artist_id.clone(),
         decade: check_decade(query.decade)?,
         format: clean_format(query.format.as_deref()),
+        favorites_of: favorites_of(query.favorites, user_id),
     };
-    let sort = album_sort(query.sort.as_deref())?;
-    let descending = descending(query.order.as_deref())?;
-    let order = format!("albums/{sort:?}/{descending}");
+    let favorites = filter.favorites_of.is_some();
+    let sort = album_sort(query.sort.as_deref(), favorites)?;
+    let descending = descending(query.order.as_deref(), sort == AlbumSort::Favorited)?;
+    let order = list_order(format!("albums/{sort:?}/{descending}"), favorites);
     let after = start(
         query.after.as_deref(),
         &order,
@@ -408,24 +429,37 @@ pub async fn list_artists(
     let (limit, _) = page(query.limit, None, 50, 200)?;
     let q = clean_q(query.q.as_deref());
     let scope = artist_scope(query.scope.as_deref())?;
-    let sort = artist_sort(query.sort.as_deref())?;
-    let descending = descending(query.order.as_deref())?;
+    let favorites_of = favorites_of(query.favorites, user_id);
+    let favorites = favorites_of.is_some();
+    let sort = artist_sort(query.sort.as_deref(), favorites)?;
+    let descending = descending(query.order.as_deref(), sort == ArtistSort::Favorited)?;
     // The count sorts' cursors hold the kept counts, the negated count when
     // most come first; the tag turns a cursor from before them into a 400.
     let kept = match sort {
         ArtistSort::AlbumCount | ArtistSort::AppearanceCount => "/kept",
-        ArtistSort::Name | ArtistSort::DateAdded => "",
+        ArtistSort::Name | ArtistSort::DateAdded | ArtistSort::Favorited => "",
     };
-    let order = format!("artists/{scope:?}/{sort:?}/{descending}{kept}");
-    let after = start(
-        query.after.as_deref(),
-        &order,
-        sql::artist_keys(scope, sort, descending).len(),
-        false,
-    )?;
+    let order = list_order(
+        format!("artists/{scope:?}/{sort:?}/{descending}{kept}"),
+        favorites,
+    );
+    let keys = if favorites {
+        sql::favorite_artist_keys(sort, descending)
+    } else {
+        sql::artist_keys(scope, sort, descending)
+    };
+    let after = start(query.after.as_deref(), &order, keys.len(), false)?;
     let (page, album_artist_total, contributor_total) = deps
         .catalog
-        .artist_list(scope, q.as_deref(), sort, descending, limit, &after)
+        .artist_list(
+            scope,
+            q.as_deref(),
+            favorites_of.as_deref(),
+            sort,
+            descending,
+            limit,
+            &after,
+        )
         .await?;
     let ids: Vec<String> = page.items.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "artist", &ids).await?;
@@ -515,10 +549,12 @@ pub async fn list_tracks(
         album_id: query.album_id.clone(),
         artist_id: query.artist_id.clone(),
         genre: clean_q(query.genre.as_deref()),
+        favorites_of: favorites_of(query.favorites, user_id),
     };
-    let sort = track_sort(query.sort.as_deref())?;
-    let descending = descending(query.order.as_deref())?;
-    let order = format!("tracks/{sort:?}/{descending}");
+    let favorites = filter.favorites_of.is_some();
+    let sort = track_sort(query.sort.as_deref(), favorites)?;
+    let descending = descending(query.order.as_deref(), sort == TrackSort::Favorited)?;
+    let order = list_order(format!("tracks/{sort:?}/{descending}"), favorites);
     let after = start(
         query.after.as_deref(),
         &order,
@@ -1034,11 +1070,11 @@ mod tests {
 
     #[test]
     fn unknown_sorts_fail_with_guidance() {
-        assert!(album_sort(Some("nope")).is_err());
-        assert!(artist_sort(Some("nope")).is_err());
-        assert!(track_sort(Some("nope")).is_err());
+        assert!(album_sort(Some("nope"), false).is_err());
+        assert!(artist_sort(Some("nope"), false).is_err());
+        assert!(track_sort(Some("nope"), false).is_err());
         assert!(artist_scope(Some("nope")).is_err());
-        assert!(descending(Some("sideways")).is_err());
+        assert!(descending(Some("sideways"), false).is_err());
     }
 
     #[test]
@@ -1065,7 +1101,7 @@ mod tests {
 
     #[test]
     fn artist_sort_parses() {
-        assert_eq!(album_sort(Some("artist")), Ok(AlbumSort::Artist));
+        assert_eq!(album_sort(Some("artist"), false), Ok(AlbumSort::Artist));
     }
 
     #[test]

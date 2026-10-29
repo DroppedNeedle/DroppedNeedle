@@ -3002,6 +3002,82 @@ async fn web_and_subsonic_apps_share_one_rating() {
     rig.stop().await;
 }
 
+/// One web favourite call as `session`: its status and answer.
+async fn favorite_on_web(
+    rig: &CompatApp,
+    session: &str,
+    kind: &str,
+    id: &str,
+    favorited: bool,
+) -> (StatusCode, Value) {
+    rig.app
+        .call(
+            "PUT",
+            &format!("/api/v3/favorites/{kind}/{id}"),
+            &[("authorization", session)],
+            Some(json!({ "favorited": favorited })),
+        )
+        .await
+}
+
+/// A heart set on the web is the star a Subsonic app shows, and the web's
+/// favourites list holds it. An unknown id is a 404 that stores nothing,
+/// and a merged album's old id acts on the album it went into.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn web_and_subsonic_apps_share_one_favorite() {
+    let rig = CompatApp::start("compat-web-favorites").await;
+    let (_, album, _) = catalog_ids(&rig, "Radiohead/OK Computer/01 Airbag.flac");
+    let (teardrop, mezzanine, _) = catalog_ids(&rig, "Massive Attack/Mezzanine/04 Teardrop.m4a");
+    let mine = rig.subsonic_auth("web-favorites");
+    let web = player_web_session(&rig).await;
+    let starred =
+        || async { subsonic(&rig, "getStarred2", &mine).await["starred2"]["album"].clone() };
+
+    let (status, body) = favorite_on_web(&rig, &web, "album", &album, true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({"kind": "album", "item_id": album, "favorited": true})
+    );
+    assert_eq!(starred().await[0]["id"], json!(format!("al-{album}")));
+    let (status, listed) = rig
+        .app
+        .call(
+            "GET",
+            "/api/v3/library/albums?favorites=true",
+            &[("authorization", web.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["items"][0]["id"], json!(album), "{listed}");
+    assert_eq!(listed["items"][0]["favorite"], true, "{listed}");
+
+    for kind in ["album", "artist", "track"] {
+        let (status, body) = favorite_on_web(&rig, &web, kind, "no-such-item", true).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{kind}: {body}");
+    }
+    let stored: i64 = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = 'no-such-item'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("favourites read");
+    assert_eq!(stored, 0);
+
+    merge_albums(&rig, &teardrop, &album).await;
+    let (status, body) = favorite_on_web(&rig, &web, "album", &mezzanine, false).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["item_id"], json!(album));
+    let left = starred().await;
+    assert!(left.as_array().is_none_or(Vec::is_empty), "{left}");
+    rig.stop().await;
+}
+
 /// LRCLIB as the lyrics lookup sees it, counting every lookup: synced
 /// lyrics for "Paranoid Android", nothing for anything else.
 async fn counted_lyrics_server() -> (

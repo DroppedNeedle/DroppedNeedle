@@ -544,6 +544,8 @@ export interface TargetNativeTrack {
 	cover_available: boolean;
 	current_tier: string | null;
 	below_cutoff: boolean;
+	/** Whether the caller favorited it, where the read says. */
+	favorite?: boolean;
 }
 
 export type NativeTrackListItem = TargetNativeTrack;
@@ -570,6 +572,8 @@ export interface LibraryAlbumSummary {
 	original_release_date: string | null;
 	contribution_id: string | null;
 	contribution_state: ContributionState | null;
+	/** Whether the caller favorited it, where the read says. */
+	favorite?: boolean;
 }
 
 export interface LibraryAlbumDetail extends LibraryAlbumSummary {
@@ -869,6 +873,8 @@ export interface LibraryArtistSummary {
 	library_relationship: LibraryArtistRelationship;
 	date_added: number | null;
 	row_revision: number;
+	/** Whether the caller favorited it, where the read says. */
+	favorite?: boolean;
 }
 
 export interface NativeArtistsResponse {
@@ -951,6 +957,8 @@ export interface LibraryStats {
 	review_count: number;
 	local_only_count: number;
 	last_scan_at: number | null;
+	/** Albums the caller favorited. */
+	favorite_albums: number;
 }
 
 export type ScanFrequency =

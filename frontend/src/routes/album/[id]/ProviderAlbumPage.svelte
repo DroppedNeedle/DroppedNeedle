@@ -32,6 +32,7 @@
 	} from '$lib/queries/library/LibraryQueries.svelte';
 	import LocalAlbumPage from './LocalAlbumPage.svelte';
 	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings/RatingQueries.svelte';
+	import { setFavorite } from '$lib/queries/library/FavoriteMutations.svelte';
 
 	const integrations = useIntegrationStatus();
 
@@ -72,6 +73,7 @@
 			: null
 	);
 	const rate = setRating();
+	const heart = setFavorite();
 	const retagPairsQuery = getRetagPairsQuery(() => authStore.isAdmin);
 	const retagPairs = $derived(
 		localAlbumId
@@ -177,6 +179,10 @@
 				rating={ratingOf(ratingsQuery.data, 'album', localAlbumId)}
 				onrate={localAlbumId
 					? (rating) => rate.mutate({ kind: 'album', itemId: localAlbumId, rating })
+					: undefined}
+				favorite={localAlbumQuery.data?.favorite ?? false}
+				onfavorite={localAlbumQuery.data
+					? (favorited) => heart.mutate({ kind: 'album', itemId: localAlbumId, favorited })
 					: undefined}
 				onrequest={state.handleRequest}
 				ondelete={state.handleDeleteClick}
@@ -313,6 +319,8 @@
 						trackRatings={ratingsQuery.data?.tracks}
 						onRateTrack={(trackId, rating) =>
 							rate.mutate({ kind: 'track', itemId: trackId, rating })}
+						onFavoriteTrack={(trackId, favorited) =>
+							heart.mutate({ kind: 'track', itemId: trackId, favorited })}
 						onPlaySourceTrack={state.playSourceTrack}
 						onTrackGenerated={state.handleTrackGenerated}
 						onQuotaUpdate={state.handleQuotaUpdate}

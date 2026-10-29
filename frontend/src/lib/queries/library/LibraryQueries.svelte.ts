@@ -128,10 +128,12 @@ export const getLibraryAlbumsInfiniteQuery = (getParams: Getter<LibraryV3AlbumsP
 	});
 
 export interface LibraryArtistsParams {
-	sortBy: ArtistSort;
+	/** `hearted` is the favourites' own order: the newest heart first. */
+	sortBy: ArtistSort | 'hearted';
 	sortOrder: 'asc' | 'desc';
 	q: string;
 	scope: LibraryArtistScope;
+	favorites?: boolean;
 }
 
 const ARTISTS_PAGE_SIZE = 48;
@@ -139,10 +141,10 @@ const ARTISTS_PAGE_SIZE = 48;
 function artistParams(params: LibraryArtistsParams): LibraryV3ArtistsParams {
 	return {
 		limit: ARTISTS_PAGE_SIZE,
-		sort: params.sortBy,
-		order: params.sortOrder,
+		...(params.sortBy === 'hearted' ? {} : { sort: params.sortBy, order: params.sortOrder }),
 		q: params.q || undefined,
-		scope: params.scope === 'contributors' ? 'contributors' : 'album_artists'
+		scope: params.scope === 'contributors' ? 'contributors' : 'album_artists',
+		...(params.favorites ? { favorites: true } : {})
 	};
 }
 

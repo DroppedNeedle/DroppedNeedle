@@ -223,7 +223,7 @@ it('matches a file by hand and undoes it, refreshing what the carry can move, re
 				['user:user-a', 'library', 'catalog', 'album-tracks', 'local-1'],
 				['user:user-a', 'library', 'catalog', 'album-copies'],
 				['user:user-a', 'library', 'catalog', 'album-history', 'local-1'],
-				['user:user-a', 'favorites'],
+				['user:user-a', 'library', 'catalog'],
 				['user:user-a', 'playlists']
 			])
 		);

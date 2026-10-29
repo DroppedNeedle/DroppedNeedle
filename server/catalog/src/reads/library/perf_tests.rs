@@ -389,6 +389,7 @@ async fn album_pages_match_the_fixture() {
             artist_id: artist.map(str::to_owned),
             decade,
             format: format.map(str::to_owned),
+            favorites_of: None,
         };
     let filters: [(AlbumFilter, &[&str]); 7] = [
         (AlbumFilter::default(), &["al1", "al2", "al3", "al4", "al5"]),
@@ -538,7 +539,7 @@ async fn walk_artists(
     loop {
         let (page, led, contributors) = fixture
             .catalog
-            .artist_list(scope, q, sort, descending, limit, &after)
+            .artist_list(scope, q, None, sort, descending, limit, &after)
             .await
             .expect("lists");
         ids.extend(page.items.iter().map(|artist| artist.id.clone()));
@@ -620,6 +621,7 @@ async fn artist_pages_match_the_fixture() {
             .artist_list(
                 ArtistScope::All,
                 Some(q),
+                None,
                 ArtistSort::Name,
                 false,
                 50,
@@ -637,6 +639,7 @@ async fn artist_pages_match_the_fixture() {
         .catalog
         .artist_list(
             ArtistScope::All,
+            None,
             None,
             ArtistSort::Name,
             false,
@@ -925,6 +928,7 @@ async fn track_search_matches_the_fixture() {
         album_id: album.map(str::to_owned),
         artist_id: artist.map(str::to_owned),
         genre: genre.map(str::to_owned),
+        favorites_of: None,
     };
     for filter in [
         narrowed(Some("al1"), None, None),
@@ -3432,7 +3436,7 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
         q: Some("zzz-no-such-thing-zzz".to_owned()),
         ..Default::default()
     };
-    let artists = |scope, sort| catalog.artist_list(scope, None, sort, true, 48, &first);
+    let artists = |scope, sort| catalog.artist_list(scope, None, None, sort, true, 48, &first);
     match name {
         "library_albums" | "local_albums" => {
             catalog
@@ -3448,7 +3452,15 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
         }
         "library_artists" => {
             catalog
-                .artist_list(ArtistScope::All, None, ArtistSort::Name, false, 50, &first)
+                .artist_list(
+                    ArtistScope::All,
+                    None,
+                    None,
+                    ArtistSort::Name,
+                    false,
+                    50,
+                    &first,
+                )
                 .await
                 .expect("lists");
         }

@@ -4,8 +4,11 @@ import type { LibraryAlbumStatus, NativeTrackListItem } from '$lib/types';
 import type { LibraryV3TracksParams } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 
-/** Track list orders the v3 catalog serves. */
-export type LibraryTrackSort = 'recent' | 'title' | 'artist' | 'album' | 'random';
+/**
+ * Track list orders the v3 catalog serves. `hearted` is the favourites' own
+ * order, the newest heart first.
+ */
+export type LibraryTrackSort = 'recent' | 'title' | 'artist' | 'album' | 'random' | 'hearted';
 
 /** One page of the track list; `next` reads the page after it. */
 export interface LibraryTrackPage {
@@ -18,13 +21,19 @@ export interface LibraryTrackPage {
 export function libraryTrackParams(
 	limit: number,
 	sort: LibraryTrackSort,
-	q: string = ''
+	q: string = '',
+	favorites = false
 ): LibraryV3TracksParams {
 	return {
 		limit,
-		sort: sort === 'recent' ? 'date_added' : sort,
-		order: sort === 'recent' ? 'desc' : 'asc',
-		...(q ? { q } : {})
+		...(sort === 'hearted'
+			? {}
+			: {
+					sort: sort === 'recent' ? 'date_added' : sort,
+					order: sort === 'recent' ? 'desc' : 'asc'
+				}),
+		...(q ? { q } : {}),
+		...(favorites ? { favorites: true } : {})
 	};
 }
 
@@ -59,7 +68,8 @@ export function toNativeTrack(track: components['schemas']['TrackView']): Native
 		date_added: track.date_added ?? null,
 		cover_available: track.cover_available,
 		current_tier: null,
-		below_cutoff: false
+		below_cutoff: false,
+		favorite: track.favorite
 	};
 }
 

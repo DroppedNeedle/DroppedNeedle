@@ -37,6 +37,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
+	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
 
 	interface Props {
 		album: AlbumBasicInfo;
@@ -65,6 +66,10 @@
 		rating?: number;
 		/** Rate the local album, or clear it with 0. The stars show only with this. */
 		onrate?: (rating: number) => void;
+		/** Whether the caller favorited the local album. */
+		favorite?: boolean;
+		/** Heart or unheart the local album. The heart shows beside the stars. */
+		onfavorite?: (favorite: boolean) => void;
 		onrequest: () => void;
 		ondelete: () => void;
 		onrefresh: () => void;
@@ -93,6 +98,8 @@
 		downloadAllowed = true,
 		rating = 0,
 		onrate,
+		favorite = false,
+		onfavorite,
 		onrequest,
 		ondelete,
 		onrefresh,
@@ -266,13 +273,12 @@
 			</div>
 
 			{#if onrate}
-				<RatingStars
-					size="md"
-					class="-ml-1 self-start"
-					value={rating}
-					label={album.title}
-					onchange={onrate}
-				/>
+				<div class="-ml-1 flex items-center self-start">
+					<RatingStars size="md" value={rating} label={album.title} onchange={onrate} />
+					{#if onfavorite}
+						<FavoriteHeart size="md" {favorite} onchange={onfavorite} />
+					{/if}
+				</div>
 			{/if}
 
 			{#if localCopies.length > 0 && localCopies.every((copy) => copy.track_count === 0)}

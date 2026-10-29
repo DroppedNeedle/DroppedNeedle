@@ -46,12 +46,13 @@ export const LibraryV3Api = {
 			query: {
 				limit: params.limit,
 				...(after ? { after } : {}),
-				sort: params.sort,
-				order: params.order,
+				...(params.sort ? { sort: params.sort } : {}),
+				...(params.order ? { order: params.order } : {}),
 				...(params.q ? { q: params.q } : {}),
 				...(params.artistId ? { artist_id: params.artistId } : {}),
 				...(params.decade !== undefined ? { decade: params.decade } : {}),
-				...(params.format ? { format: params.format } : {})
+				...(params.format ? { format: params.format } : {}),
+				...(params.favorites ? { favorites: true } : {})
 			}
 		}),
 	artists: (params: LibraryV3ArtistsParams, after: string | null = null) =>
@@ -59,10 +60,11 @@ export const LibraryV3Api = {
 			query: {
 				limit: params.limit,
 				...(after ? { after } : {}),
-				sort: params.sort,
-				order: params.order,
+				...(params.sort ? { sort: params.sort } : {}),
+				...(params.order ? { order: params.order } : {}),
 				...(params.q ? { q: params.q } : {}),
-				...(params.scope ? { scope: params.scope } : {})
+				...(params.scope ? { scope: params.scope } : {}),
+				...(params.favorites ? { favorites: true } : {})
 			}
 		}),
 	albumDetail: (albumId: string) => v3('/api/v3/library/albums/{id}', { path: { id: albumId } }),
@@ -184,15 +186,18 @@ export const LibraryV3Api = {
 			query: {
 				limit: params.limit,
 				...(after ? { after } : {}),
-				sort: params.sort,
-				order: params.order,
+				...(params.sort ? { sort: params.sort } : {}),
+				...(params.order ? { order: params.order } : {}),
 				...(params.q ? { q: params.q } : {}),
 				...(params.albumId ? { album_id: params.albumId } : {}),
 				...(params.artistId ? { artist_id: params.artistId } : {}),
-				...(params.genre ? { genre: params.genre } : {})
+				...(params.genre ? { genre: params.genre } : {}),
+				...(params.favorites ? { favorites: true } : {})
 			}
 		}),
 	lyrics: (trackId: string) => v3('/api/v3/library/tracks/{id}/lyrics', { path: { id: trackId } }),
+	favorite: (kind: 'album' | 'artist' | 'track', itemId: string) =>
+		v3('/api/v3/favorites/{kind}/{item_id}', { path: { kind, item_id: itemId } }),
 	recentlyAdded: (limit: number) => v3('/api/v3/library/recently-added', { query: { limit } }),
 	stats: () => v3('/api/v3/library/stats'),
 	decades: () => v3('/api/v3/library/decades'),

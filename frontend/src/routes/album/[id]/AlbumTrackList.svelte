@@ -29,6 +29,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
+	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { LibraryFileMeta, DownloadTask, HeldFileInEntry } from '$lib/types';
 	import TrackRequestButton from '$lib/components/downloads/TrackRequestButton.svelte';
@@ -77,6 +78,8 @@
 		trackRatings?: Record<string, number>;
 		/** Rate a local track, or clear it with 0. Rows with a file show stars only with this. */
 		onRateTrack?: (trackId: string, rating: number) => void;
+		/** Heart or unheart a local track. Rows with a file show the heart beside the stars. */
+		onFavoriteTrack?: (trackId: string, favorite: boolean) => void;
 		onPlaySourceTrack: (
 			source: 'jellyfin' | 'local' | 'navidrome' | 'plex',
 			trackPosition: number,
@@ -127,6 +130,7 @@
 		releaseMbid = null,
 		trackRatings = {},
 		onRateTrack,
+		onFavoriteTrack,
 		onPlaySourceTrack,
 		onTrackGenerated,
 		onQuotaUpdate,
@@ -316,12 +320,18 @@
 							{/if}
 						{/if}
 						{#if rateTrack && libMeta}
-							<div class="hidden sm:block">
+							<div class="hidden items-center sm:flex">
 								<RatingStars
 									value={trackRatings[libMeta.id] ?? 0}
 									label={track.title}
 									onchange={(rating) => rateTrack(libMeta.id, rating)}
 								/>
+								{#if onFavoriteTrack}
+									<FavoriteHeart
+										favorite={libMeta.favorite ?? false}
+										onchange={(favorite) => onFavoriteTrack(libMeta.id, favorite)}
+									/>
+								{/if}
 							</div>
 						{/if}
 						<div class="text-base-content/60 text-sm shrink-0">
@@ -513,12 +523,18 @@
 								<span class="text-info">{editionRow.note}</span>
 							{/if}
 							{#if rateTrack && libMeta}
-								<div class="sm:hidden">
+								<div class="flex items-center sm:hidden">
 									<RatingStars
 										value={trackRatings[libMeta.id] ?? 0}
 										label={track.title}
 										onchange={(rating) => rateTrack(libMeta.id, rating)}
 									/>
+									{#if onFavoriteTrack}
+										<FavoriteHeart
+											favorite={libMeta.favorite ?? false}
+											onchange={(favorite) => onFavoriteTrack(libMeta.id, favorite)}
+										/>
+									{/if}
 								</div>
 							{/if}
 						</div>

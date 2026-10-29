@@ -78,13 +78,14 @@ export function createLibraryTrackQueue(hooks: LibraryTrackQueueHooks) {
 	async function play(
 		sort: LibraryTrackSort,
 		q: string,
+		favorites: boolean,
 		shuffle: boolean,
 		first: LibraryTrackPage | null
 	): Promise<LibraryTrackQueueStart> {
 		abort();
 		const ac = new AbortController();
 		controller = ac;
-		const params = libraryTrackParams(BATCH_SIZE, sort, q);
+		const params = libraryTrackParams(BATCH_SIZE, sort, q, favorites);
 		let page: LibraryTrackPage;
 		try {
 			page = first ?? (await fetchLibraryTracks(params, null, ac.signal));
@@ -118,11 +119,18 @@ export function createLibraryTrackQueue(hooks: LibraryTrackQueueHooks) {
 		get progressText() {
 			return loading ? `Loading ${loaded.toLocaleString()} of ${total.toLocaleString()}` : null;
 		},
-		/** Plays the list in `sort` order, continuing after `first` when given. */
-		playAll: (sort: LibraryTrackSort, q: string, first: LibraryTrackPage | null = null) =>
-			play(sort, q, false, first),
-		/** Plays the list shuffled. */
-		shuffleAll: (q: string) => play('random', q, true, null),
+		/**
+		 * Plays the list in `sort` order, only the favourites when asked,
+		 * continuing after `first` when given.
+		 */
+		playAll: (
+			sort: LibraryTrackSort,
+			q: string,
+			first: LibraryTrackPage | null = null,
+			favorites = false
+		) => play(sort, q, favorites, false, first),
+		/** Plays the list shuffled, only the favourites when asked. */
+		shuffleAll: (q: string, favorites = false) => play('random', q, favorites, true, null),
 		abort
 	};
 }

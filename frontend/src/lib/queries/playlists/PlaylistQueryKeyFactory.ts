@@ -14,16 +14,3 @@ export const PlaylistQueryKeyFactory = {
 	sources: (userId: PlaylistV3UserId, id: string) =>
 		[...PlaylistQueryKeyFactory.root(userId), 'sources', id] as const
 };
-
-export type FavoriteV3UserId = string | null | undefined;
-
-export type FavoriteV3Kind = 'album' | 'artist' | 'track';
-
-// Favorite flags ride on library views, so invalidation for this root pairs
-// with the library v3 root (see the favorites mutation briefs).
-export const FavoriteQueryKeyFactory = {
-	feature: 'favorites',
-	user: (userId: FavoriteV3UserId) => key(userScope(userId), 'favorites'),
-	list: (userId: FavoriteV3UserId, kind: FavoriteV3Kind | null) =>
-		[...FavoriteQueryKeyFactory.user(userId), 'list', kind] as const
-};

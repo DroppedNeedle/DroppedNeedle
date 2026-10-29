@@ -25,6 +25,7 @@
 		ListStart,
 		LoaderCircle,
 		Music2,
+		Heart,
 		Search,
 		X
 	} from 'lucide-svelte';
@@ -36,11 +37,12 @@
 	let searchQuery = $state('');
 	let searchTerm = $state('');
 	let sort = $state<LibraryTrackSort>('recent');
+	let favorites = $state(false);
 	let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 	$effect(() => () => clearTimeout(searchTimeout));
 
 	const tracksQuery = getLibraryTracksInfiniteQuery(() =>
-		libraryTrackParams(PAGE_SIZE, sort, searchTerm)
+		libraryTrackParams(PAGE_SIZE, sort, searchTerm, favorites)
 	);
 	const pages = $derived(tracksQuery.data?.pages ?? []);
 	// A track can move between pages while they load (a scan renames it):
@@ -83,6 +85,11 @@
 		sort = (e.target as HTMLSelectElement).value as LibraryTrackSort;
 	}
 
+	function toggleFavorites() {
+		favorites = !favorites;
+		sort = favorites ? 'hearted' : 'recent';
+	}
+
 	function playTrack(index: number) {
 		queue.abort();
 		const items = buildDiscoveryQueueFromLocal(tracks);
@@ -92,15 +99,20 @@
 
 	// Plays what is loaded, then the rest of the list after the last page.
 	function playAll() {
-		void queue.playAll(sort, searchTerm, {
-			items: tracks,
-			total,
-			next: pages.at(-1)?.next ?? null
-		});
+		void queue.playAll(
+			sort,
+			searchTerm,
+			{
+				items: tracks,
+				total,
+				next: pages.at(-1)?.next ?? null
+			},
+			favorites
+		);
 	}
 
 	function shuffleAll() {
-		void queue.shuffleAll(searchTerm);
+		void queue.shuffleAll(searchTerm, favorites);
 	}
 
 	function addTrackToQueue(track: NativeTrackListItem) {
@@ -143,7 +155,7 @@
 			onclick={() => goto(withBasePath('/library'))}
 		/>
 		<div>
-			<h1 class="text-3xl font-bold">All Tracks</h1>
+			<h1 class="text-3xl font-bold">{favorites ? 'Favourite Tracks' : 'All Tracks'}</h1>
 			<p class="text-base-content/70 text-sm mt-1">
 				{total.toLocaleString()}
 				{total === 1 ? 'track' : 'tracks'}
@@ -171,7 +183,14 @@
 				/>
 			{/if}
 		</div>
+		<Button
+			variant={favorites ? 'primary' : 'outline'}
+			icon={Heart}
+			aria-pressed={favorites}
+			onclick={toggleFavorites}>Favourites</Button
+		>
 		<select class="select" value={sort} onchange={handleSortChange} aria-label="Sort tracks">
+			{#if favorites}<option value="hearted">Recently favourited</option>{/if}
 			<option value="recent">Recently added</option>
 			<option value="title">Title</option>
 			<option value="artist">Artist</option>
@@ -201,9 +220,15 @@
 		{#snippet empty()}
 			<div class="flex flex-col items-center justify-center py-20 text-base-content/50">
 				<Music2 class="mb-4 h-12 w-12 opacity-20" />
-				<p class="text-lg font-medium">{searchTerm ? 'No matches' : 'No tracks yet'}</p>
+				<p class="text-lg font-medium">
+					{searchTerm ? 'No matches' : favorites ? 'No favourites yet' : 'No tracks yet'}
+				</p>
 				<p class="mt-1 text-sm">
-					{searchTerm ? 'Try another search term.' : 'Scan your library to see tracks here.'}
+					{searchTerm
+						? 'Try another search term.'
+						: favorites
+							? 'Tap the heart on a track to add it here.'
+							: 'Scan your library to see tracks here.'}
 				</p>
 			</div>
 		{/snippet}

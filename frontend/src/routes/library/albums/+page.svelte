@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { ChevronLeft, Disc3, Search, X } from 'lucide-svelte';
+	import { ChevronLeft, Disc3, Heart, Search, X } from 'lucide-svelte';
 	import { getLibraryAlbumsInfiniteQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import type { LibraryV3AlbumsParams } from '$lib/queries/library/LibraryQueryKeyFactory';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
@@ -13,33 +13,41 @@
 
 	const PAGE_SIZE = 50;
 	const SEARCH_DEBOUNCE_MS = 300;
-	const VALID_SORTS: AlbumSort[] = ['recent', 'title', 'artist'];
+	// `hearted` is the favourites' own order: the newest heart first.
+	type Sort = AlbumSort | 'hearted';
+	const VALID_SORTS: Sort[] = ['recent', 'title', 'artist'];
 	const FORMATS = ['flac', 'mp3', 'm4a', 'opus', 'ogg'];
 
 	// browse state lives in the url so it's shareable and back-button stable
 	const params = $derived.by(() => {
 		const sp = page.url.searchParams;
-		const rawSort = (sp.get('sort') ?? 'recent') as AlbumSort;
+		const favorites = sp.get('favorites') === '1';
+		const rawSort = sp.get('sort') as Sort | null;
+		const valid =
+			rawSort && (VALID_SORTS.includes(rawSort) || (favorites && rawSort === 'hearted'));
 		return {
-			sort: VALID_SORTS.includes(rawSort) ? rawSort : 'recent',
+			sort: valid ? rawSort : favorites ? 'hearted' : 'recent',
 			q: sp.get('q') ?? '',
-			format: sp.get('format') ?? ''
+			format: sp.get('format') ?? '',
+			favorites
 		};
 	});
 
 	// The url keeps the v1 sort vocabulary so shared links survive; it maps
 	// onto the v3 catalog sorts one row below.
-	const SORT_MAP: Record<AlbumSort, Pick<LibraryV3AlbumsParams, 'sort' | 'order'>> = {
+	const SORT_MAP: Record<Sort, Pick<LibraryV3AlbumsParams, 'sort' | 'order'>> = {
 		recent: { sort: 'date_added', order: 'desc' },
 		title: { sort: 'name', order: 'asc' },
-		artist: { sort: 'artist', order: 'asc' }
+		artist: { sort: 'artist', order: 'asc' },
+		hearted: {}
 	};
 
 	const albumsQuery = getLibraryAlbumsInfiniteQuery(() => ({
 		limit: PAGE_SIZE,
 		...SORT_MAP[params.sort],
 		...(params.q ? { q: params.q } : {}),
-		...(params.format ? { format: params.format } : {})
+		...(params.format ? { format: params.format } : {}),
+		...(params.favorites ? { favorites: true } : {})
 	}));
 	// An album can move between pages while they load (a scan renames it):
 	// keep its first appearance.
@@ -82,6 +90,10 @@
 		clearTimeout(searchTimeout);
 		setParams({ q: null });
 	}
+
+	function toggleFavorites() {
+		setParams({ favorites: params.favorites ? null : '1', sort: null });
+	}
 </script>
 
 <svelte:head><title>Albums · Library</title></svelte:head>
@@ -94,7 +106,7 @@
 			onclick={() => goto(withBasePath('/library'))}
 		/>
 		<div>
-			<h1 class="text-3xl font-bold">All Albums</h1>
+			<h1 class="text-3xl font-bold">{params.favorites ? 'Favourite Albums' : 'All Albums'}</h1>
 			<p class="text-base-content/70 text-sm mt-1">
 				{total}
 				{total === 1 ? 'album' : 'albums'}
@@ -122,12 +134,19 @@
 				/>
 			{/if}
 		</div>
+		<Button
+			variant={params.favorites ? 'primary' : 'outline'}
+			icon={Heart}
+			aria-pressed={params.favorites}
+			onclick={toggleFavorites}>Favourites</Button
+		>
 		<select
 			class="select"
 			value={params.sort}
 			onchange={(e) => setParams({ sort: (e.target as HTMLSelectElement).value })}
 			aria-label="Sort albums"
 		>
+			{#if params.favorites}<option value="hearted">Recently Favourited</option>{/if}
 			<option value="recent">Newest First</option>
 			<option value="title">Title A-Z</option>
 			<option value="artist">Artist A-Z</option>
@@ -159,11 +178,15 @@
 	{:else if albums.length === 0}
 		<div class="flex flex-col items-center justify-center min-h-100 text-center">
 			<Disc3 class="h-12 w-12 text-base-content/40 mb-4" strokeWidth={1.5} />
-			<h2 class="text-2xl font-semibold mb-2">No albums found</h2>
+			<h2 class="text-2xl font-semibold mb-2">
+				{params.favorites && !params.q && !params.format ? 'No favourites yet' : 'No albums found'}
+			</h2>
 			<p class="text-base-content/70 mb-4">
 				{params.q || params.format
 					? 'Try a different search or filter.'
-					: "Your library doesn't contain any albums yet."}
+					: params.favorites
+						? 'Tap the heart on an album to add it here.'
+						: "Your library doesn't contain any albums yet."}
 			</p>
 		</div>
 	{:else}

@@ -2460,7 +2460,12 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Favorite or unfavorite one item. */
+        /**
+         * Favorite or unfavorite one item.
+         * @description Acts on the caller's own favourites, the ones Subsonic apps star and
+         *     Jellyfin apps mark. The old id of a merged item acts on the item it went
+         *     into, and the answer names that id.
+         */
         put: operations["set_favorite_handler"];
         post?: never;
         delete?: never;
@@ -14011,7 +14016,10 @@ export interface components {
         FavoriteStatusResponse: {
             /** @description Current state. */
             favorited: boolean;
-            /** @description Favorited item id. */
+            /**
+             * @description The id the favourite is stored under: the item's current id, which
+             *     differs from the one sent after a merge.
+             */
             item_id: string;
             /** @description Favorited kind. */
             kind: string;
@@ -28795,7 +28803,7 @@ export interface operations {
             path: {
                 /** @description Kind: album, artist, or track */
                 kind: string;
-                /** @description Favorited item id */
+                /** @description Local id of the item */
                 item_id: string;
             };
             cookie?: never;
@@ -28826,6 +28834,15 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No live item holds the id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -29842,6 +29859,11 @@ export interface operations {
                  *     absent; matching is case-insensitive.
                  */
                 format?: string;
+                /**
+                 * @description Only the caller's favourites. Without `sort`, the newest favourite
+                 *     comes first, and `order=asc` puts the oldest first.
+                 */
+                favorites?: boolean;
             };
             header?: never;
             path?: never;
@@ -32370,6 +32392,11 @@ export interface operations {
                 q?: string;
                 /** @description `all`, `album_artists`, or `contributors`. Default `all`. */
                 scope?: string;
+                /**
+                 * @description Only the caller's favourites. Without `sort`, the newest favourite
+                 *     comes first, and `order=asc` puts the oldest first.
+                 */
+                favorites?: boolean;
             };
             header?: never;
             path?: never;
@@ -38596,6 +38623,11 @@ export interface operations {
                 artist_id?: string;
                 /** @description Restrict to one genre tag, case folded. */
                 genre?: string;
+                /**
+                 * @description Only the caller's favourites. Without `sort`, the newest favourite
+                 *     comes first, and `order=asc` puts the oldest first.
+                 */
+                favorites?: boolean;
             };
             header?: never;
             path?: never;

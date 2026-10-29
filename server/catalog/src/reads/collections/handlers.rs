@@ -490,19 +490,24 @@ pub async fn list_favorites_handler(
 }
 
 /// Favorite or unfavorite one item.
+///
+/// Acts on the caller's own favourites, the ones Subsonic apps star and
+/// Jellyfin apps mark. The old id of a merged item acts on the item it went
+/// into, and the answer names that id.
 #[utoipa::path(
     put,
     path = "/api/v3/favorites/{kind}/{item_id}",
     tag = "collections",
     params(
         ("kind" = String, Path, description = "Kind: album, artist, or track"),
-        ("item_id" = String, Path, description = "Favorited item id")
+        ("item_id" = String, Path, description = "Local id of the item")
     ),
     request_body = SetFavoriteBody,
     responses(
         (status = 200, description = "Favorite status", body = FavoriteStatusResponse),
         (status = 400, description = "Bad kind or body"),
         (status = 401, description = "Not authenticated"),
+        (status = 404, description = "No live item holds the id"),
     )
 )]
 pub async fn set_favorite_handler(
