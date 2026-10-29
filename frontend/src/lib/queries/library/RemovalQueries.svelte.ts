@@ -1,15 +1,19 @@
-import { applyEffects, catalogChanged } from '$lib/queries/effects';
-import { createMutation, createQuery } from '@tanstack/svelte-query';
+import {
+	albumHeaderChanged,
+	albumRemovalsChanged,
+	albumReread,
+	applyEffects,
+	catalogChanged,
+	createAppMutation,
+	wantedChanged
+} from '$lib/queries/effects';
+import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-import { WantedQueryKeyFactory } from '$lib/queries/wanted/WantedQueryKeyFactory';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
-import { AlbumMatchKeyFactory } from '$lib/queries/AlbumMatchQueryKeyFactory';
-import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 
@@ -32,9 +36,7 @@ export const getAlbumRemovalsQuery = (getAlbumId: Getter<string>) =>
 
 /** Read the album's removals again, after a removal or a put-back. */
 export function invalidateAlbumRemovals(): Promise<void> {
-	return invalidateQueriesWithPersister({
-		queryKey: LibraryQueryKeyFactory.catalog.albumRemovalsPrefix(authStore.user?.id)
-	});
+	return applyEffects(albumRemovalsChanged(authStore.user?.id));
 }
 
 // Put one removal's files back. The album's tracks are listed again, so
@@ -42,7 +44,7 @@ export function invalidateAlbumRemovals(): Promise<void> {
 // group. A refusal reads the removals again, since one is
 // usually stale.
 export function putBackRemoval() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({
 			albumId,
 			removalId
@@ -51,22 +53,15 @@ export function putBackRemoval() {
 			removalId: string;
 			releaseGroupMbid?: string | null;
 		}): Promise<PutBackAnswer> => api.v3.POST(LibraryV3Api.putBackRemoval(albumId, removalId)),
-		onSuccess: async (_answer, { releaseGroupMbid }) => {
+		onSuccess: (_answer, { releaseGroupMbid }) => {
+			if (releaseGroupMbid) libraryStore.addMbid(releaseGroupMbid);
+		},
+		effects: (_answer, { releaseGroupMbid }) => {
 			const userId = authStore.user?.id;
 			const albumPage = releaseGroupMbid
-				? [
-						AlbumQueryKeyFactory.basic(userId, releaseGroupMbid),
-						AlbumQueryKeyFactory.tracks(userId, releaseGroupMbid),
-						AlbumMatchKeyFactory.album(userId, releaseGroupMbid)
-					]
+				? [albumHeaderChanged(userId, releaseGroupMbid), albumReread(userId, releaseGroupMbid)]
 				: [];
-			if (releaseGroupMbid) libraryStore.addMbid(releaseGroupMbid);
-			await Promise.allSettled([
-				applyEffects(catalogChanged(authStore.user?.id)),
-				...[WantedQueryKeyFactory.list(userId), ...albumPage].map((queryKey) =>
-					invalidateQueriesWithPersister({ queryKey })
-				)
-			]);
+			return [catalogChanged(userId), wantedChanged(userId), ...albumPage];
 		},
 		onError: () => invalidateAlbumRemovals()
 	}));

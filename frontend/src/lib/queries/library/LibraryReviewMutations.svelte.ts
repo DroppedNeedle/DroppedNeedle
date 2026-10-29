@@ -1,42 +1,36 @@
-import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
-import { SearchQueryKeyFactory } from '$lib/queries/search/SearchQueryKeyFactory';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
-import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
-import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api, reviewFilterQuery } from './LibraryV3Api';
 import type { LibraryReviewParams } from './LibraryQueryKeyFactory';
-import { everyScope } from '$lib/queries/keys';
+import {
+	anyLibraryActivityChanged,
+	applyEffects,
+	catalogChanged,
+	createAppMutation,
+	type Effect,
+	libraryOperationsChanged,
+	reviewsChanged,
+	searchResultsChanged
+} from '$lib/queries/effects';
 
-// Two-layer sweep: the review-local layer (reviews, activity, operations)
-// always runs; the catalog layer (library, artist, home, discover) runs only
-// for actions that change what the library shows.
-async function invalidateReviewState(options?: { catalog?: boolean }): Promise<void> {
-	await Promise.all([
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.reviewsPrefix() }),
-		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'activity')),
-		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'operations')),
-		invalidateQueriesWithPersister({ queryKey: SearchQueryKeyFactory.v3.root(authStore.user?.id) }),
-		...(options?.catalog
-			? [
-					invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature)),
-					invalidateQueriesWithPersister(everyScope(ArtistQueryKeyFactory.feature)),
-					invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature)),
-					invalidateQueriesWithPersister(everyScope(DiscoverQueryKeyFactory.feature))
-				]
-			: [])
-	]);
+// Two layers: the review-local one (reviews, activity, operations, search)
+// always; the catalog one only for actions that change what the library shows.
+function reviewState(options?: { catalog?: boolean }): Effect[] {
+	const userId = authStore.user?.id;
+	return [
+		reviewsChanged(),
+		anyLibraryActivityChanged(),
+		libraryOperationsChanged(),
+		searchResultsChanged(userId),
+		...(options?.catalog ? [catalogChanged(userId)] : [])
+	];
 }
 
 // A refused single action usually means the review changed under the
 // person: the list reloads so they decide on what it shows now.
-const reloadReviews = () =>
-	invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.reviewsPrefix() });
+const reloadReviews = () => applyEffects(reviewsChanged());
 
 export type ReviewAction = 'keep_tagged' | 'dismiss' | 'detach' | 'exclude' | 'restore';
 
@@ -73,29 +67,29 @@ function post({ reviewId, revision, action }: ReviewActionInput) {
 
 /** Settle one review. `keep_tagged` and `dismiss` leave the catalog as it is. */
 export function actOnLibraryReview() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: async (input: ReviewActionInput) => {
 			await post(input);
 		},
-		onSuccess: async (_result, input) => {
-			const catalog = input.action !== 'dismiss' && input.action !== 'keep_tagged';
-			await invalidateReviewState({ catalog });
+		onSuccess: (_result, input) => {
 			toastStore.show({ message: ACTION_TOAST[input.action], type: 'success' });
 		},
+		effects: (_result, input) =>
+			reviewState({ catalog: input.action !== 'dismiss' && input.action !== 'keep_tagged' }),
 		onError: reloadReviews
 	}));
 }
 
 export function acceptLibraryReviewCandidate() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: async (input: { reviewId: string; revision: number; candidateKey: string }) => {
 			await api.v3.POST(LibraryV3Api.approveReview(input.reviewId), {
 				candidate_key: input.candidateKey,
 				expected_revision: input.revision
 			});
 		},
-		onSuccess: async () => {
-			await invalidateReviewState({ catalog: true });
+		effects: () => reviewState({ catalog: true }),
+		onSuccess: () => {
 			toastStore.show({ message: 'Release selected', type: 'success' });
 		},
 		onError: reloadReviews
@@ -103,14 +97,14 @@ export function acceptLibraryReviewCandidate() {
 }
 
 export function retryLibraryReview() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (input: { reviewId: string; revision: number; confirmLocalMetadata?: boolean }) =>
 			api.v3.POST(LibraryV3Api.retryReview(input.reviewId), {
 				expected_revision: input.revision,
 				confirm_local_metadata: input.confirmLocalMetadata ?? false
 			}),
-		onSuccess: async () => {
-			await invalidateReviewState();
+		effects: () => reviewState(),
+		onSuccess: () => {
 			toastStore.show({ message: 'Identification started again', type: 'success' });
 		},
 		onError: reloadReviews
@@ -119,7 +113,7 @@ export function retryLibraryReview() {
 
 /** Start identification again for every album with a pending review. */
 export function retryPendingLibraryReviews() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (input: {
 			confirmLocalMetadata: boolean;
 			filter?: Omit<LibraryReviewParams, 'limit'>;
@@ -132,9 +126,7 @@ export function retryPendingLibraryReviews() {
 				root_ids: input.rootIds ?? [],
 				preview: input.preview ?? false
 			}),
-		onSuccess: async (result) => {
-			if (!result.preview) await invalidateReviewState();
-		}
+		effects: (result) => (result.preview ? [] : reviewState())
 	}));
 }
 
@@ -159,18 +151,17 @@ function bulkBody(selection: BulkReviewSelection, previewToken?: string) {
 }
 
 export function previewBulkLibraryReviews() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (selection: BulkReviewSelection) =>
 			api.v3.POST(LibraryV3Api.bulkReviewPreview(), bulkBody(selection))
 	}));
 }
 
 export function applyBulkLibraryReviews() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (input: { selection: BulkReviewSelection; previewToken: string }) =>
 			api.v3.POST(LibraryV3Api.bulkReviewApply(), bulkBody(input.selection, input.previewToken)),
-		onSuccess: async (_result, input) => {
-			await invalidateReviewState({ catalog: input.selection.action !== 'keep_tagged' });
-		}
+		effects: (_result, input) => reviewState({ catalog: input.selection.action !== 'keep_tagged' })
 	}));
 }

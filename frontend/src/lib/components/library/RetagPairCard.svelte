@@ -8,8 +8,6 @@
 
 	import { ApiError } from '$lib/api/errors';
 	import { getAlbumEditionsQuery } from '$lib/queries/albums/EditionQueries.svelte';
-	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-	import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 	import {
 		dismissRetagPair,
 		joinRetagPair,
@@ -87,12 +85,9 @@
 	);
 	const mergeBlocked = $derived(pair.editions_differ && keep === null);
 
-	async function settleRefusal(error: unknown): Promise<void> {
+	function settleRefusal(error: unknown): void {
 		if (!(error instanceof ApiError) || error.status < 400 || error.status >= 500) return;
 		refusal = error.message;
-		if (error.status === 409) {
-			await invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.retagPairs() });
-		}
 	}
 
 	async function merge(): Promise<void> {
@@ -112,7 +107,7 @@
 				await goto(withBasePath(`/album/${encodeURIComponent(joined.album_id)}`));
 			}
 		} catch (error) {
-			await settleRefusal(error);
+			settleRefusal(error);
 		}
 	}
 
@@ -121,7 +116,7 @@
 		try {
 			await dismiss.mutateAsync({ oldAlbumId: oldAlbum.id, newAlbumId: newAlbum.id });
 		} catch (error) {
-			await settleRefusal(error);
+			settleRefusal(error);
 		}
 	}
 </script>

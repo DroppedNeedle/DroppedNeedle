@@ -29,11 +29,10 @@
 		getBasicArtistQuery,
 		getExtendedArtistQuery,
 		getSimilarArtistsQuery,
+		refreshArtist,
 		updateArtistReleaseInCache
 	} from '$lib/queries/artist/ArtistQueries.svelte';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
-	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-	import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
 	import { PAGE_SOURCE_KEYS } from '$lib/constants';
 	import { PersistedState } from 'runed';
 	import SimpleSourceSwitcher from '$lib/components/SimpleSourceSwitcher.svelte';
@@ -236,7 +235,7 @@
 	);
 
 	async function handleRefreshClick() {
-		invalidateQueriesWithPersister({ queryKey: ArtistQueryKeyFactory.basic(data.artistId) });
+		void refreshArtist(data.artistId);
 	}
 
 	const providerReleaseRequest = requestAlbum();
@@ -267,7 +266,7 @@
 	}
 
 	function handleReleaseRemoved() {
-		void invalidateQueriesWithPersister({ queryKey: ArtistQueryKeyFactory.basic(data.artistId) });
+		void refreshArtist(data.artistId);
 	}
 
 	function handleLoadMoreReleases() {

@@ -45,8 +45,7 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	removeEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
 	matchEditionFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	unmatchEditionFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	getWaitingAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
-	invalidateAlbumEdition: () => Promise.resolve()
+	getWaitingAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 
 vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({

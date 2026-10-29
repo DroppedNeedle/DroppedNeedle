@@ -3,7 +3,6 @@ import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { AUTH_ENDPOINTS } from './endpoints';
 
 vi.mock('@tanstack/svelte-query', () => ({
-	createMutation: vi.fn((factory: () => Record<string, unknown>) => factory()),
 	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
 }));
 
@@ -13,21 +12,27 @@ vi.mock('$lib/api/client', () => ({
 	}
 }));
 
-vi.mock('../QueryClient', () => ({
-	invalidateQueriesWithPersister: vi.fn()
+// The real effects module loads the cache helpers; stub them.
+vi.mock('$lib/queries/QueryClient', () => ({
+	invalidateQueriesWithPersister: vi.fn(),
+	setQueryDataWithPersister: vi.fn()
+}));
+
+vi.mock('$lib/queries/effects', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/queries/effects')>()),
+	createAppMutation: vi.fn((factory: () => Record<string, unknown>) => factory())
 }));
 
 import { api } from '$lib/api/client';
-import { createMutation, createQuery } from '@tanstack/svelte-query';
-import { invalidateQueriesWithPersister } from '../QueryClient';
+import { createQuery } from '@tanstack/svelte-query';
+import { createAppMutation, userImportCandidatesChanged, type Effect } from '../effects';
 
 const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
 const mockPost = vi.mocked(api.v3.POST) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
-const mockCreateMutation = vi.mocked(createMutation);
+const mockCreateMutation = vi.mocked(createAppMutation);
 const mockCreateQuery = vi.mocked(createQuery);
-const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -60,21 +65,19 @@ describe('createImportUsersMutation', () => {
 		});
 	});
 
-	it('onSuccess invalidates the importCandidates key for the imported provider', async () => {
+	it("declares the imported provider's candidates changed", async () => {
 		const { authStore } = await import('$lib/stores/authStore.svelte');
 		authStore.setUser({ id: 'admin-1', role: 'admin' } as never);
 		const { createImportUsersMutation } = await import('./UserImportMutations.svelte');
 		createImportUsersMutation();
 
-		const onSuccess = lastMutationOpts().onSuccess as (r: unknown, v: unknown) => unknown;
-		await onSuccess(
-			{ imported: [], conflicts: [], skipped: [], total_imported: 0 },
-			{ provider: 'plex', provider_uids: [] }
-		);
-
-		expect(mockInvalidate).toHaveBeenCalledWith({
-			queryKey: AuthQueryKeyFactory.importCandidates('admin-1', 'plex')
-		});
+		const effects = lastMutationOpts().effects as (r: unknown, v: unknown) => Effect[];
+		expect(
+			effects(
+				{ imported: [], conflicts: [], skipped: [], total_imported: 0 },
+				{ provider: 'plex', provider_uids: [] }
+			)
+		).toEqual([userImportCandidatesChanged('admin-1', 'plex')]);
 		authStore.clear();
 	});
 });

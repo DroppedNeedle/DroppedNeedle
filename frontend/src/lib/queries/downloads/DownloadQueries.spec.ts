@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
+import { downloadPolicyChanged, type Effect } from '$lib/queries/effects';
 
 vi.mock('@tanstack/svelte-query', () => ({
 	createQuery: vi.fn((factory: () => unknown) => factory()),
-	createMutation: vi.fn((factory: () => unknown) => factory()),
 	queryOptions: vi.fn((opts: unknown) => opts)
 }));
 
@@ -17,6 +16,11 @@ vi.mock('$lib/api/client', () => ({
 			POST: (...args: unknown[]) => mockPost(...args)
 		}
 	}
+}));
+
+vi.mock('$lib/queries/effects', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/queries/effects')>()),
+	createAppMutation: vi.fn((factory: () => unknown) => factory())
 }));
 
 const { mockInvalidate } = vi.hoisted(() => ({ mockInvalidate: vi.fn() }));
@@ -70,20 +74,10 @@ describe('download queue queries', () => {
 		mockAddRequested.mockClear();
 	});
 
-	it('invalidates policy and policy summary with the persister after saving', async () => {
-		mockInvalidate.mockClear();
-		const mutation = saveDownloadPolicy() as unknown as {
-			onSuccess: () => Promise<void>;
-		};
+	it('declares the policy and its summary changed after saving', () => {
+		const mutation = saveDownloadPolicy() as unknown as { effects: () => Effect[] };
 
-		await mutation.onSuccess();
-
-		expect(mockInvalidate).toHaveBeenNthCalledWith(1, {
-			queryKey: DownloadQueryKeyFactory.policy()
-		});
-		expect(mockInvalidate).toHaveBeenNthCalledWith(2, {
-			queryKey: DownloadQueryKeyFactory.policySummary()
-		});
+		expect(mutation.effects()).toEqual([downloadPolicyChanged()]);
 	});
 
 	it('keeps a 60 s safety poll on the compact summary', async () => {

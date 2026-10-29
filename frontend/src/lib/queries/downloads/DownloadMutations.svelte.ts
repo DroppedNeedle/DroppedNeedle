@@ -1,11 +1,6 @@
-import { createMutation } from '@tanstack/svelte-query';
-
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
-import { RequestQueryKeyFactory } from '$lib/queries/requests/RequestQueryKeyFactory';
 import type { IntakeResponse, TrackIntakeResponse } from '$lib/queries/requests/types';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { readIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
@@ -18,9 +13,15 @@ import {
 	requestStatusCopy
 } from '$lib/utils/acquisitionLabels';
 import { albumRequestOutcome } from '$lib/utils/requestOutcome';
-import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
-import { everyScope } from '$lib/queries/keys';
+import {
+	albumStatusChanged,
+	anyDownloadChanged,
+	anyRequestChanged,
+	applyEffects,
+	createAppMutation,
+	downloadsChanged
+} from '$lib/queries/effects';
 
 interface AlbumRequestInput {
 	release_group_mbid: string;
@@ -45,10 +46,7 @@ interface TrackRequestInput {
 	release_id?: string | null;
 }
 
-const invalidateTasks = () =>
-	invalidateQueriesWithPersister({
-		queryKey: DownloadQueryKeyFactory.tasks(authStore.user?.id)
-	});
+const tasks = () => [downloadsChanged(authStore.user?.id)];
 
 // A request accepted while no download source is set up waits for one; the
 // toast says so instead of claiming a search began.
@@ -61,21 +59,15 @@ function errorMessage(err: unknown, fallback: string): string {
 	return err instanceof Error && err.message ? err.message : fallback;
 }
 
-// One consolidated request surface means one invalidation pair (Acquisition plan):
-// an accepted/dispatched/duplicate album answer may have created tasks or history
-// rows. DownloadQueryKeyFactory.all already prefixes tasks/activity/held/policy.
-async function invalidateRequestSurface(): Promise<void> {
-	await Promise.all([
-		invalidateQueriesWithPersister(everyScope(DownloadQueryKeyFactory.feature)),
-		invalidateQueriesWithPersister(everyScope(RequestQueryKeyFactory.feature))
-	]);
-}
+// An accepted, dispatched or duplicate album answer may have created tasks or
+// history rows, in the caller's views and the admin's.
+const requestSurface = () => [anyDownloadChanged(), anyRequestChanged()];
 
 // One click, one toast, one cache path (Acquisition "Request surfaces"). The
 // response status is mapped to the spec's four copy lines by albumRequestOutcome;
 // the summary sentence comes from the response when the backend carries one.
 export function requestAlbum() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: async (input: AlbumRequestInput): Promise<IntakeResponse> => {
 			const initiatingUserId = authStore.user?.id;
 			let data: IntakeResponse;
@@ -107,8 +99,6 @@ export function requestAlbum() {
 			if (data.success) {
 				libraryStore.addRequested(input.release_group_mbid);
 			}
-			void invalidateRequestSurface();
-
 			if (!data.success) {
 				toastStore.show({ message: data.message || 'Request failed', type: 'error' });
 				return data;
@@ -129,7 +119,8 @@ export function requestAlbum() {
 				type: outcome === 'duplicate_active' || outcome === 'in_library' ? 'info' : 'success'
 			});
 			return data;
-		}
+		},
+		effects: requestSurface
 	}));
 }
 
@@ -146,7 +137,7 @@ export interface BatchRequestResult {
 // Discography/discovery bulk requests. Counts are rendered verbatim by
 // batchRequestCopy - skipped and over-limit albums are never claimed as queued.
 export function requestBatch() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: async (input: {
 			items: BatchAlbumItem[];
 			monitorArtist?: boolean;
@@ -172,7 +163,6 @@ export function requestBatch() {
 						libraryStore.addRequested(item.musicbrainz_id);
 					}
 				}
-				void invalidateRequestSurface();
 				toastStore.show({
 					message: batchRequestCopy(response.requested, response.skipped, response.overflow),
 					type: 'info'
@@ -188,12 +178,14 @@ export function requestBatch() {
 				toastStore.show({ message: detail, type: 'error' });
 				return { success: false, requested: 0, skipped: 0, overflow: 0, error: detail };
 			}
-		}
+		},
+		effects: (result) => (result.error === undefined ? requestSurface() : [])
 	}));
 }
 
 export function requestTrack() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: tasks,
 		mutationFn: (input: TrackRequestInput) =>
 			api.v3.POST(REQUESTS_ENDPOINTS.requestTrack(), {
 				recording_mbid: input.recording_mbid,
@@ -217,7 +209,6 @@ export function requestTrack() {
 								: 'Track requested - searching for downloads',
 				type: 'success'
 			});
-			void invalidateTasks();
 		},
 		onError: (err: unknown) =>
 			toastStore.show({ message: errorMessage(err, 'Track request failed'), type: 'error' })
@@ -225,11 +216,11 @@ export function requestTrack() {
 }
 
 export function cancelDownload() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: tasks,
 		mutationFn: (id: string) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.cancel(id)),
 		onSuccess: () => {
 			toastStore.show({ message: 'Download cancelled', type: 'info' });
-			void invalidateTasks();
 		},
 		onError: (err: unknown) =>
 			toastStore.show({ message: errorMessage(err, 'Failed to cancel download'), type: 'error' })
@@ -242,17 +233,17 @@ interface NextSourceInput {
 }
 
 export function tryNextSource() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: tasks,
 		mutationFn: (input: NextSourceInput) =>
 			api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.nextSource(input.id), {
 				expected_candidate_index: input.candidateIndex
 			}),
 		onSuccess: () => {
 			toastStore.show({ message: 'Trying the next source', type: 'info' });
-			void invalidateTasks();
 		},
 		onError: (err: unknown) => {
-			void invalidateTasks();
+			void applyEffects(...tasks());
 			toastStore.show({
 				message: errorMessage(err, 'Could not switch sources'),
 				type: 'error'
@@ -264,11 +255,11 @@ export function tryNextSource() {
 // Stop a scheduled auto-retry. Cancelling the failed/partial task drops it out of the
 // retry sweep (status -> cancelled); a manual Retry is still available afterwards.
 export function stopAutoRetry() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: tasks,
 		mutationFn: (id: string) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.cancel(id)),
 		onSuccess: () => {
 			toastStore.show({ message: 'Stopped retrying', type: 'info' });
-			void invalidateTasks();
 		},
 		onError: (err: unknown) =>
 			toastStore.show({ message: errorMessage(err, 'Failed to stop retrying'), type: 'error' })
@@ -276,11 +267,11 @@ export function stopAutoRetry() {
 }
 
 export function retryDownload() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: tasks,
 		mutationFn: (id: string) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.retry(id)),
 		onSuccess: () => {
 			toastStore.show({ message: 'Download retry initiated', type: 'info' });
-			void invalidateTasks();
 		},
 		onError: (err: unknown) =>
 			toastStore.show({ message: errorMessage(err, 'Failed to retry download'), type: 'error' })
@@ -294,14 +285,14 @@ function pluralDownloads(n: number): string {
 }
 
 export function clearFinished() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: tasks,
 		mutationFn: () => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.clear()),
 		onSuccess: (data: { cleared: number }) => {
 			toastStore.show({
 				message: data.cleared > 0 ? `Cleared ${pluralDownloads(data.cleared)}` : 'Nothing to clear',
 				type: 'info'
 			});
-			void invalidateTasks();
 		},
 		onError: (err: unknown) =>
 			toastStore.show({ message: errorMessage(err, 'Failed to clear downloads'), type: 'error' })
@@ -309,7 +300,8 @@ export function clearFinished() {
 }
 
 export function stopAllRetries() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: tasks,
 		mutationFn: () => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.stopAllRetries()),
 		onSuccess: (data: { stopped: number }) => {
 			toastStore.show({
@@ -319,7 +311,6 @@ export function stopAllRetries() {
 						: 'No retries to stop',
 				type: 'info'
 			});
-			void invalidateTasks();
 		},
 		onError: (err: unknown) =>
 			toastStore.show({ message: errorMessage(err, 'Failed to stop retries'), type: 'error' })
@@ -327,7 +318,8 @@ export function stopAllRetries() {
 }
 
 export function retryAllFailed() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: tasks,
 		mutationFn: () => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.retryAllFailed()),
 		onSuccess: (data: { retried: number }) => {
 			toastStore.show({
@@ -335,19 +327,10 @@ export function retryAllFailed() {
 					data.retried > 0 ? `Retrying ${pluralDownloads(data.retried)}` : 'Nothing to retry',
 				type: 'info'
 			});
-			void invalidateTasks();
 		},
 		onError: (err: unknown) =>
 			toastStore.show({ message: errorMessage(err, 'Failed to retry downloads'), type: 'error' })
 	}));
-}
-
-function invalidateAlbum(releaseGroupMbid?: string | null) {
-	if (releaseGroupMbid) {
-		void invalidateQueriesWithPersister({
-			queryKey: LibraryQueryKeyFactory.album(authStore.user?.id, releaseGroupMbid)
-		});
-	}
 }
 
 interface ReimportInput {
@@ -359,9 +342,9 @@ interface ReimportInput {
 // kept, so the worker checks the downloads mount again without
 // re-searching.
 export function reimportDownload() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (input: ReimportInput) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.reimport(input.id)),
-		onSuccess: (data, input: ReimportInput) => {
+		onSuccess: (data) => {
 			if (data.status === 'completed') {
 				toastStore.show({ message: 'Import complete', type: 'success' });
 			} else if (data.status === 'partial') {
@@ -375,10 +358,14 @@ export function reimportDownload() {
 					type: 'error'
 				});
 			}
-			void invalidateTasks();
-			void invalidateQueriesWithPersister(everyScope(RequestQueryKeyFactory.feature));
-			invalidateAlbum(input.release_group_mbid);
 		},
+		effects: (_data, input: ReimportInput) => [
+			...tasks(),
+			anyRequestChanged(),
+			...(input.release_group_mbid
+				? [albumStatusChanged(authStore.user?.id, input.release_group_mbid)]
+				: [])
+		],
 		onError: (err: unknown) =>
 			toastStore.show({ message: errorMessage(err, 'Failed to reimport download'), type: 'error' })
 	}));

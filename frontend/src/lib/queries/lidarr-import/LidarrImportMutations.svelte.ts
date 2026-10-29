@@ -1,49 +1,39 @@
-import { createMutation } from '@tanstack/svelte-query';
-
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-import { notifyPendingApprovalCountChanged } from '$lib/utils/requestsApi';
 
-import { LidarrImportQueryKeyFactory } from './LidarrImportQueryKeyFactory';
 import { LIDARR_IMPORT_ENDPOINTS } from './endpoints';
 import type { LidarrImportConnection } from './types';
-import { everyScope } from '$lib/queries/keys';
+import {
+	anyFollowChanged,
+	createAppMutation,
+	homeChanged,
+	lidarrCandidatesChanged,
+	lidarrSettingsChanged
+} from '$lib/queries/effects';
 
 // The connection form renders errors inline, so save/test don't toast here.
 export const saveLidarrConfigMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (connection: LidarrImportConnection) =>
 			api.v3.PUT(LIDARR_IMPORT_ENDPOINTS.config(), connection),
-		onSuccess: async () => {
-			await invalidateQueriesWithPersister({ queryKey: LidarrImportQueryKeyFactory.config() });
-		}
+		effects: () => [lidarrSettingsChanged()]
 	}));
 
 export const testLidarrMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (connection: LidarrImportConnection) =>
 			api.v3.POST(LIDARR_IMPORT_ENDPOINTS.test(), connection)
 	}));
 
 export const importFromLidarrMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (selectedMbids: string[]) =>
 			api.v3.POST(LIDARR_IMPORT_ENDPOINTS.import(), {
 				selected_mbids: selectedMbids
 			}),
-		onSuccess: async () => {
-			// Follows changed: sweep the whole following prefix (artists list + new-release
-			// views) and re-annotate the candidate list's already_following. Home surfaces
-			// followed new releases, so invalidate it too (cross-domain rule).
-			await invalidateQueriesWithPersister(everyScope('following'));
-			await invalidateQueriesWithPersister({
-				queryKey: LidarrImportQueryKeyFactory.candidates(authStore.user?.id)
-			});
-			await invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature));
-			// Import is admin-only, so the importer's own auto-download is live immediately;
-			// the pending-approval badge refresh stays as a harmless no-op.
-			notifyPendingApprovalCountChanged();
-		}
+		// Follows changed: the whole following prefix (artists list, new-release
+		// views, the approvals count) and the candidates' already_following. Home
+		// surfaces followed new releases, so it refreshes too.
+		effects: () => [anyFollowChanged(), lidarrCandidatesChanged(authStore.user?.id), homeChanged()]
 	}));

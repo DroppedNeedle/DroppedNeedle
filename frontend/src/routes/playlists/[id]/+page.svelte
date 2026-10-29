@@ -14,11 +14,12 @@
 	} from '$lib/queries/playlists/PlaylistV3Queries.svelte';
 	import {
 		deletePlaylistV3,
+		forgetPlaylistSources,
+		refreshPlaylist,
 		setPlaylistVisibilityV3
 	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
 	import { toPageDetail } from '$lib/queries/playlists/playlistV3Adapter';
-	import { invalidateQueriesWithPersister, queryClient } from '$lib/queries/QueryClient';
-	import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
+	import { queryClient } from '$lib/queries/QueryClient';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -137,9 +138,7 @@
 				return;
 			}
 			applySourcesMap(sources);
-			await invalidateQueriesWithPersister({
-				queryKey: PlaylistQueryKeyFactory.detail(authStore.user?.id, playlistId)
-			});
+			await refreshPlaylist(playlistId);
 		} catch {
 			// non-critical - tracks keep their stored available_sources
 		}
@@ -147,11 +146,7 @@
 
 	async function forgetSources(playlistId: string) {
 		try {
-			await invalidateQueriesWithPersister(
-				{ queryKey: PlaylistQueryKeyFactory.sources(authStore.user?.id, playlistId), exact: true },
-				undefined,
-				{ removePersisted: true }
-			);
+			await forgetPlaylistSources(playlistId);
 		} catch {
 			// the kept answer only goes stale on its own later
 		}
@@ -240,9 +235,6 @@
 		deleting = true;
 		try {
 			await deleteMutation.mutateAsync(playlist.id);
-			await invalidateQueriesWithPersister({
-				queryKey: PlaylistQueryKeyFactory.list(authStore.user?.id)
-			});
 			toastStore.show({ message: 'Playlist deleted', type: 'success' });
 			await goto(withBasePath('/playlists'));
 		} catch {

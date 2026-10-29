@@ -1,6 +1,6 @@
-import { applyEffects, catalogChanged } from '$lib/queries/effects';
+import { applyEffects, catalogChanged, createAppMutation } from '$lib/queries/effects';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { createMutation, createQuery } from '@tanstack/svelte-query';
+import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
@@ -32,9 +32,10 @@ export const getAlbumHistoryQuery = (
 // album comes back as its own, so every catalog view refreshes; a refusal
 // refreshes too, as the history it was offered from is stale.
 export function undoAlbumFold() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (undoId: string) => api.v3.POST(LibraryV3Api.undoAlbumFold(undoId)),
-		onSettled: () => applyEffects(catalogChanged(authStore.user?.id))
+		effects: () => [catalogChanged(authStore.user?.id)],
+		onError: () => applyEffects(catalogChanged(authStore.user?.id))
 	}));
 }
 
@@ -42,8 +43,9 @@ export function undoAlbumFold() {
 // by its history entry's undo_id. The album's artist changes everywhere
 // it shows, so every catalog view refreshes, on a refusal too.
 export function undoArtistRepair() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (undoId: string) => api.v3.POST(LibraryV3Api.undoArtistRepair(undoId)),
-		onSettled: () => applyEffects(catalogChanged(authStore.user?.id))
+		effects: () => [catalogChanged(authStore.user?.id)],
+		onError: () => applyEffects(catalogChanged(authStore.user?.id))
 	}));
 }

@@ -1,14 +1,8 @@
-import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+import { useQueryClient } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
-import { ArtistQueryKeyFactory } from '../artist/ArtistQueryKeyFactory';
-import { DiscoverQueryKeyFactory } from '../discover/DiscoverQueryKeyFactory';
-import { HomeQueryKeyFactory } from '../HomeQueryKeyFactory';
-import { WantedQueryKeyFactory } from '../wanted/WantedQueryKeyFactory';
-import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
-import { LOCAL_KEYS } from '../local/LocalV3Keys';
-import { AlbumMatchKeyFactory } from '../AlbumMatchQueryKeyFactory';
+import { setQueryDataWithPersister } from '../QueryClient';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 import type {
@@ -17,10 +11,22 @@ import type {
 	LibraryAlbumStatus,
 	LibraryScanSchedule
 } from '$lib/types';
-import { everyScope } from '$lib/queries/keys';
+import {
+	albumLocalCopyChanged,
+	albumRemovalsChanged,
+	albumStatusChanged,
+	anyWantedChanged,
+	applyEffects,
+	catalogChanged,
+	createAppMutation,
+	editionPlansChanged,
+	libraryCountsChanged,
+	localChanged,
+	scanScheduleChanged
+} from '$lib/queries/effects';
 
 export function removeLibraryAlbum() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({ mbid, stopWanted }: { mbid: string; stopWanted: boolean }) =>
 			api.v3.DELETE(LibraryV3Api.removeAlbum(mbid, stopWanted)) as Promise<
 				AlbumRemoveResponse | TargetCatalogRemovalResponse
@@ -53,20 +59,8 @@ export function removeLibraryAlbum() {
 			} catch (error) {
 				console.error('Album removal cache update failed', error);
 			}
-			const refreshes = await Promise.allSettled([
-				invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature)),
-				invalidateQueriesWithPersister(everyScope(ArtistQueryKeyFactory.feature)),
-				invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature)),
-				invalidateQueriesWithPersister(everyScope(DiscoverQueryKeyFactory.feature)),
-				invalidateQueriesWithPersister(everyScope(WantedQueryKeyFactory.feature)),
-				invalidateQueriesWithPersister(everyScope(LOCAL_KEYS.feature))
-			]);
-			for (const refresh of refreshes) {
-				if (refresh.status === 'rejected') {
-					console.error('Album removal cache refresh failed', refresh.reason);
-				}
-			}
-		}
+		},
+		effects: () => [catalogChanged(authStore.user?.id), anyWantedChanged()]
 	}));
 }
 
@@ -76,28 +70,26 @@ export function removeLibraryAlbum() {
 const RESCAN_REFRESH_DELAYS_MS = [2500, 6000];
 
 export function rescanAlbum() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (mbid: string) => api.v3.POST(LibraryV3Api.rescanAlbum(mbid)),
 		onSuccess: (_data, mbid) => {
-			const invalidate = () =>
-				invalidateQueriesWithPersister({
-					queryKey: LibraryQueryKeyFactory.album(authStore.user?.id, mbid)
-				});
-			void invalidate();
-			for (const delay of RESCAN_REFRESH_DELAYS_MS) setTimeout(() => void invalidate(), delay);
-		}
+			const status = albumStatusChanged(authStore.user?.id, mbid);
+			for (const delay of RESCAN_REFRESH_DELAYS_MS) {
+				setTimeout(() => void applyEffects(status), delay);
+			}
+		},
+		effects: (_data, mbid) => [albumStatusChanged(authStore.user?.id, mbid)]
 	}));
 }
 
 export function saveLibraryScanSchedule() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (schedule: LibraryScanSchedule) =>
 			api.v3.PUT(LibraryV3Api.schedule(), {
 				scan_frequency: schedule.scan_frequency,
 				daily_scan_time: schedule.daily_scan_time
 			}),
-		onSuccess: () =>
-			invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.scanSchedule() })
+		effects: () => [scanScheduleChanged()]
 	}));
 }
 
@@ -107,20 +99,23 @@ export function saveLibraryScanSchedule() {
 // AND the local-library lists, in the cache of the page that removed it.
 export function removeLibraryTrack() {
 	const client = useQueryClient();
-	return createMutation(() => ({
-		mutationFn: ({ fileId }: { fileId: string; albumMbid: string }) =>
-			api.v3.DELETE(LibraryV3Api.removeTrack(fileId)),
-		onSuccess: async (_data, { albumMbid }) => {
-			const userId = authStore.user?.id;
-			for (const queryKey of [
-				LibraryQueryKeyFactory.album(userId, albumMbid),
-				AlbumMatchKeyFactory.local(userId, albumMbid),
-				LibraryQueryKeyFactory.catalog.stats(userId),
-				LibraryQueryKeyFactory.catalog.albumRemovalsPrefix(userId)
-			]) {
-				await invalidateQueriesWithPersister({ queryKey }, undefined, { client });
+	return createAppMutation(
+		() => ({
+			// `albumId`, the library album's own id, also refreshes its edition plans.
+			mutationFn: ({ fileId }: { fileId: string; albumMbid: string; albumId?: string }) =>
+				api.v3.DELETE(LibraryV3Api.removeTrack(fileId)),
+			effects: (_data, { albumMbid, albumId }) => {
+				const userId = authStore.user?.id;
+				return [
+					albumStatusChanged(userId, albumMbid),
+					albumLocalCopyChanged(userId, albumMbid),
+					libraryCountsChanged(userId),
+					albumRemovalsChanged(userId),
+					localChanged(),
+					...(albumId ? [editionPlansChanged(userId, albumId)] : [])
+				];
 			}
-			await invalidateQueriesWithPersister(everyScope(LOCAL_KEYS.feature), undefined, { client });
-		}
-	}));
+		}),
+		client
+	);
 }

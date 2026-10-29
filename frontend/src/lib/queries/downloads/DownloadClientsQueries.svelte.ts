@@ -1,13 +1,18 @@
-import { createMutation, createQuery, queryOptions } from '@tanstack/svelte-query';
+import { createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
-import { everyScope } from '$lib/queries/keys';
+import {
+	createAppMutation,
+	downloadPolicyChanged,
+	downloadReadinessChanged,
+	sourcePriorityChanged,
+	usenetSettingsChanged,
+	wantedSettingsChanged
+} from '$lib/queries/effects';
 
 export type DownloadPolicySettings = components['schemas']['DownloadPolicyView'];
 export type SabnzbdConnectionSettings = components['schemas']['SabnzbdConnection'];
@@ -23,11 +28,10 @@ const sourcePriorityOptions = () =>
 export const getSourcePriorityQuery = () => createQuery(() => sourcePriorityOptions());
 
 export function saveSourcePriority() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (order: string[]) =>
 			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.sourcePriority(), { order }),
-		onSuccess: () =>
-			invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sourcePriority() })
+		effects: () => [sourcePriorityChanged()]
 	}));
 }
 
@@ -61,38 +65,27 @@ const policyOptions = () =>
 export const getDownloadPolicyQuery = (getEnabled: () => boolean = () => true) =>
 	createQuery(() => ({ ...policyOptions(), enabled: getEnabled() }));
 
-async function invalidateClients() {
-	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbd() });
-	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbdStatus() });
-	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
-	await invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature));
-}
-
 export function saveSabnzbdConfig() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (config: SabnzbdConnectionSettings) =>
 			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdConfig(), config),
-		onSuccess: invalidateClients
+		effects: () => [usenetSettingsChanged(), downloadReadinessChanged()]
 	}));
 }
 
 export function testSabnzbd() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (config: SabnzbdConnectionSettings) =>
 			api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdTest(), config)
 	}));
 }
 
 export function saveDownloadPolicy() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (policy: DownloadPolicySettings) =>
 			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.policy(), policy),
-		onSuccess: async () => {
-			await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.policy() });
-			await invalidateQueriesWithPersister({
-				queryKey: DownloadQueryKeyFactory.policySummary()
-			});
-		}
+		effects: () => [downloadPolicyChanged()]
 	}));
 }
 
@@ -105,10 +98,9 @@ const wantedSettingsOptions = () =>
 export const getWantedSettingsQuery = () => createQuery(() => wantedSettingsOptions());
 
 export function saveWantedSettings() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (settings: WantedWatcherSettings) =>
 			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.wanted(), settings),
-		onSuccess: () =>
-			invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.wantedSettings() })
+		effects: () => [wantedSettingsChanged()]
 	}));
 }

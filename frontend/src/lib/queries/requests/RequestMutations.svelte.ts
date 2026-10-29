@@ -1,17 +1,17 @@
-import { createMutation } from '@tanstack/svelte-query';
-
 import { api } from '$lib/api/client';
-import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 import type { RequestKind } from './types';
-import { notifyPendingApprovalCountChanged } from '$lib/utils/requestsApi';
 
-import { invalidateQueriesWithPersister } from '../QueryClient';
-import { DownloadQueryKeyFactory } from '../downloads/DownloadQueryKeyFactory';
 import { REQUESTS_ENDPOINTS } from './endpoints';
-import { RequestQueryKeyFactory } from './RequestQueryKeyFactory';
-import { everyScope } from '$lib/queries/keys';
+import {
+	albumStatusChanged,
+	anyDownloadChanged,
+	anyRequestChanged,
+	createAppMutation,
+	type Effect,
+	pendingApprovalsChanged
+} from '$lib/queries/effects';
 
 export interface RequestActionVars {
 	mbid: string;
@@ -31,14 +31,15 @@ function errorMessage(err: unknown, fallback: string): string {
 // approvals read the same rows) plus the downloads prefix (the queue mirrors
 // active rows). Mutations that move an album row also refresh that album's
 // library key so the album page shows the new state (download-to-library).
-async function invalidateRequestSurface(mbids: string[] = []): Promise<void> {
-	await invalidateQueriesWithPersister(everyScope(RequestQueryKeyFactory.feature));
-	await invalidateQueriesWithPersister(everyScope(DownloadQueryKeyFactory.feature));
-	for (const mbid of mbids) {
-		await invalidateQueriesWithPersister({
-			queryKey: LibraryQueryKeyFactory.album(authStore.user?.id, mbid)
-		});
-	}
+// Those that change what waits for an admin refresh the approval count too.
+function requestSurface(mbids: string[], approvals: boolean): Effect[] {
+	const userId = authStore.user?.id;
+	return [
+		anyRequestChanged(),
+		anyDownloadChanged(),
+		...mbids.map((mbid) => albumStatusChanged(userId, mbid)),
+		...(approvals ? [pendingApprovalsChanged(userId)] : [])
+	];
 }
 
 function sameUser(contextUserId: string | undefined): boolean {
@@ -46,16 +47,18 @@ function sameUser(contextUserId: string | undefined): boolean {
 }
 
 export const createCancelRequestMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: RequestActionVars) =>
 			api.v3.DELETE(REQUESTS_ENDPOINTS.cancel(vars.mbid, vars.kind)),
 		onMutate: () => ({ userId: authStore.user?.id }),
-		onSuccess: async (data, vars, context) => {
+		// Track rows carry no album context in v3, so only album rows refresh
+		// a library key.
+		effects: (_data, vars, context) =>
+			sameUser(context.userId)
+				? requestSurface(vars.kind === 'album' ? [vars.mbid] : [], true)
+				: [],
+		onSuccess: (data, _vars, context) => {
 			if (!sameUser(context.userId)) return;
-			// Track rows carry no album context in v3, so only album rows refresh
-			// a library key.
-			await invalidateRequestSurface(vars.kind === 'album' ? [vars.mbid] : []);
-			notifyPendingApprovalCountChanged();
 			toastStore.show({ message: data.message || 'Request cancelled', type: 'info' });
 		},
 		onError: (err) =>
@@ -66,14 +69,16 @@ export const createCancelRequestMutation = () =>
 	}));
 
 export const createRetryRequestMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: RequestActionVars) =>
 			api.v3.POST(REQUESTS_ENDPOINTS.retry(vars.mbid, vars.kind)),
 		onMutate: () => ({ userId: authStore.user?.id }),
-		onSuccess: async (data, vars, context) => {
+		effects: (_data, vars, context) =>
+			sameUser(context.userId)
+				? requestSurface(vars.kind === 'album' ? [vars.mbid] : [], true)
+				: [],
+		onSuccess: (data, _vars, context) => {
 			if (!sameUser(context.userId)) return;
-			await invalidateRequestSurface(vars.kind === 'album' ? [vars.mbid] : []);
-			notifyPendingApprovalCountChanged();
 			toastStore.show({ message: data.message || 'Request retried', type: 'success' });
 		},
 		onError: (err) =>
@@ -83,12 +88,12 @@ export const createRetryRequestMutation = () =>
 // A single found only on its album: fetch it again and take the album's
 // track as the song.
 export const createFromAlbumMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (recordingMbid: string) => api.v3.POST(REQUESTS_ENDPOINTS.fromAlbum(recordingMbid)),
 		onMutate: () => ({ userId: authStore.user?.id }),
-		onSuccess: async (data, _mbid, context) => {
+		effects: (_data, _mbid, context) => (sameUser(context.userId) ? requestSurface([], false) : []),
+		onSuccess: (data, _vars, context) => {
 			if (!sameUser(context.userId)) return;
-			await invalidateRequestSurface();
 			toastStore.show({ message: data.message || 'Getting it from the album', type: 'success' });
 		},
 		onError: (err) =>
@@ -99,14 +104,16 @@ export const createFromAlbumMutation = () =>
 	}));
 
 export const createApproveRequestMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: RequestActionVars) =>
 			api.v3.POST(REQUESTS_ENDPOINTS.approve(vars.mbid, vars.kind)),
 		onMutate: () => ({ userId: authStore.user?.id }),
-		onSuccess: async (data, vars, context) => {
+		effects: (_data, vars, context) =>
+			sameUser(context.userId)
+				? requestSurface(vars.kind === 'album' ? [vars.mbid] : [], true)
+				: [],
+		onSuccess: (data, _vars, context) => {
 			if (!sameUser(context.userId)) return;
-			await invalidateRequestSurface(vars.kind === 'album' ? [vars.mbid] : []);
-			notifyPendingApprovalCountChanged();
 			toastStore.show({ message: data.message || 'Request approved', type: 'success' });
 		},
 		onError: (err) =>
@@ -117,14 +124,16 @@ export const createApproveRequestMutation = () =>
 	}));
 
 export const createRejectRequestMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: RequestActionVars) =>
 			api.v3.POST(REQUESTS_ENDPOINTS.reject(vars.mbid, vars.kind)),
 		onMutate: () => ({ userId: authStore.user?.id }),
-		onSuccess: async (data, vars, context) => {
+		effects: (_data, vars, context) =>
+			sameUser(context.userId)
+				? requestSurface(vars.kind === 'album' ? [vars.mbid] : [], true)
+				: [],
+		onSuccess: (data, _vars, context) => {
 			if (!sameUser(context.userId)) return;
-			await invalidateRequestSurface(vars.kind === 'album' ? [vars.mbid] : []);
-			notifyPendingApprovalCountChanged();
 			toastStore.show({ message: data.message || 'Request rejected', type: 'info' });
 		},
 		onError: (err) =>
@@ -135,17 +144,17 @@ export const createRejectRequestMutation = () =>
 	}));
 
 export const createBatchCancelRequestsMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: BatchCancelVars) =>
 			api.v3.POST(REQUESTS_ENDPOINTS.batchCancel(), {
 				musicbrainz_ids: vars.mbids,
 				kind: vars.kind
 			}),
 		onMutate: () => ({ userId: authStore.user?.id }),
-		onSuccess: async (data, vars, context) => {
+		effects: (_data, vars, context) =>
+			sameUser(context.userId) ? requestSurface(vars.kind === 'album' ? vars.mbids : [], true) : [],
+		onSuccess: (data, _vars, context) => {
 			if (!sameUser(context.userId)) return;
-			await invalidateRequestSurface(vars.kind === 'album' ? vars.mbids : []);
-			notifyPendingApprovalCountChanged();
 			toastStore.show({
 				message:
 					data.message ||
@@ -163,13 +172,13 @@ export const createBatchCancelRequestsMutation = () =>
 	}));
 
 export const createClearHistoryMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: RequestActionVars) =>
 			api.v3.DELETE(REQUESTS_ENDPOINTS.clearHistory(vars.mbid, vars.kind)),
 		onMutate: () => ({ userId: authStore.user?.id }),
-		onSuccess: async (_data, _vars, context) => {
+		effects: (_data, _vars, context) => (sameUser(context.userId) ? requestSurface([], false) : []),
+		onSuccess: (_data, _vars, context) => {
 			if (!sameUser(context.userId)) return;
-			await invalidateRequestSurface();
 			toastStore.show({ message: 'Removed from history', type: 'info' });
 		},
 		onError: (err) =>

@@ -1,12 +1,7 @@
 import { api } from '$lib/api/client';
-import { createMutation } from '@tanstack/svelte-query';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
-import {
-	invalidateQueriesWithPersister,
-	queryClient,
-	setQueryDataWithPersister
-} from '../QueryClient';
+import { queryClient, setQueryDataWithPersister } from '../QueryClient';
 import { FollowQueryKeyFactory } from './FollowQueryKeyFactory';
 import { CONCERT_ENDPOINTS, FOLLOW_ENDPOINTS } from './endpoints';
 import { toFollowStatus } from './FollowAdapters';
@@ -17,6 +12,12 @@ import type {
 	FollowStatus,
 	UnseenCountResponse
 } from './types';
+import {
+	applyEffects,
+	concertsChanged,
+	createAppMutation,
+	followedArtistsChanged
+} from '$lib/queries/effects';
 
 const NOT_FOLLOWING: FollowStatus = {
 	followed: false,
@@ -28,14 +29,10 @@ function statusKey(mbid: string) {
 	return FollowQueryKeyFactory.status(authStore.user?.id, mbid);
 }
 
-function invalidateFollowedArtists(): Promise<void> {
-	return invalidateQueriesWithPersister({
-		queryKey: FollowQueryKeyFactory.artists(authStore.user?.id)
-	});
-}
+const followedArtists = () => [followedArtistsChanged(authStore.user?.id)];
 
 export const createSetFollowMutation = (getMbid: () => string) =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: async (followed: boolean) =>
 			toFollowStatus(await api.v3.PUT(FOLLOW_ENDPOINTS.setFollow(getMbid()), { followed })),
 		onMutate: async (followed: boolean) => {
@@ -51,19 +48,19 @@ export const createSetFollowMutation = (getMbid: () => string) =>
 		},
 		onError: (_err, _followed, ctx) => {
 			if (ctx) void setQueryDataWithPersister<FollowStatus>(statusKey(getMbid()), ctx.prev);
+			void applyEffects(...followedArtists());
 		},
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<FollowStatus>(statusKey(getMbid()), data);
 		},
-		onSettled: () => {
-			void invalidateFollowedArtists();
-		}
+		effects: followedArtists
 	}));
 
 // fired on New Releases page mount; writes count 0 into the persisted cache
 // so the badge clears without waiting for a refetch
 export const createMarkNewReleasesSeenMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: () => api.v3.POST(FOLLOW_ENDPOINTS.markNewReleasesSeen()),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<UnseenCountResponse>(
@@ -75,7 +72,7 @@ export const createMarkNewReleasesSeenMutation = () =>
 
 // replace-all semantics: the city manager submits its full list in order
 export const createReplaceEventCitiesMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (cities: EventCity[]) =>
 			api.v3.PUT(CONCERT_ENDPOINTS.concertCities(), { items: cities }),
 		onSuccess: (data) => {
@@ -83,14 +80,9 @@ export const createReplaceEventCitiesMutation = () =>
 				FollowQueryKeyFactory.concertCities(authStore.user?.id),
 				data
 			);
-			// the city set changes what the concerts list and badge count contain
-			void invalidateQueriesWithPersister({
-				queryKey: FollowQueryKeyFactory.concerts(authStore.user?.id)
-			});
-			void invalidateQueriesWithPersister({
-				queryKey: FollowQueryKeyFactory.concertsUnseen(authStore.user?.id)
-			});
 		},
+		// the city set changes what the concerts list and badge count contain
+		effects: () => [concertsChanged(authStore.user?.id)],
 		onError: () => {
 			toastStore.show({ message: "Couldn't save your cities.", type: 'error' });
 		}
@@ -99,7 +91,8 @@ export const createReplaceEventCitiesMutation = () =>
 // fired on Upcoming Events page mount; writes count 0 into the persisted
 // cache so the badge clears without waiting for a refetch
 export const createMarkConcertsSeenMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: () => api.v3.POST(CONCERT_ENDPOINTS.markConcertsSeen()),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<UnseenCountResponse>(
@@ -111,19 +104,18 @@ export const createMarkConcertsSeenMutation = () =>
 
 // mbid is the mutation variable so one instance serves every card in the hub
 export const createUnfollowMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: async (mbid: string) =>
 			toFollowStatus(await api.v3.PUT(FOLLOW_ENDPOINTS.setFollow(mbid), { followed: false })),
 		onSuccess: (data, mbid) => {
 			void setQueryDataWithPersister<FollowStatus>(statusKey(mbid), data);
 		},
-		onSettled: () => {
-			void invalidateFollowedArtists();
-		}
+		onError: () => void applyEffects(...followedArtists()),
+		effects: followedArtists
 	}));
 
 export const createSetAutoDownloadMutation = (getMbid: () => string) =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: async (enabled: boolean) =>
 			toFollowStatus(await api.v3.PUT(FOLLOW_ENDPOINTS.autoDownload(getMbid()), { enabled })),
 		onMutate: async (enabled: boolean) => {
@@ -145,6 +137,7 @@ export const createSetAutoDownloadMutation = (getMbid: () => string) =>
 		},
 		onError: (_err, _enabled, ctx) => {
 			if (ctx) void setQueryDataWithPersister<FollowStatus>(statusKey(getMbid()), ctx.prev);
+			void applyEffects(...followedArtists());
 		},
 		onSuccess: (data, enabled) => {
 			void setQueryDataWithPersister<FollowStatus>(statusKey(getMbid()), data);
@@ -155,7 +148,5 @@ export const createSetAutoDownloadMutation = (getMbid: () => string) =>
 				});
 			}
 		},
-		onSettled: () => {
-			void invalidateFollowedArtists();
-		}
+		effects: followedArtists
 	}));

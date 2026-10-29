@@ -1,14 +1,15 @@
-import { applyEffects, catalogChanged } from '$lib/queries/effects';
-import { createMutation, createQuery, type QueryKey } from '@tanstack/svelte-query';
+import {
+	applyEffects,
+	catalogChanged,
+	createAppMutation,
+	ratingsChanged
+} from '$lib/queries/effects';
+import { createQuery, type QueryKey } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
-import {
-	invalidateQueriesWithPersister,
-	queryClient,
-	setQueryDataWithPersister
-} from '../QueryClient';
+import { queryClient, setQueryDataWithPersister } from '../QueryClient';
 import { RatingQueryKeyFactory, type RatingKind } from './RatingQueryKeyFactory';
 import { RatingV3Api } from './RatingV3Api';
 
@@ -85,7 +86,7 @@ function withRating(lookup: RatingLookup, { kind, itemId, rating }: RateVars): R
 const SET_RATING = ['set-rating'] as const;
 
 export function setRating() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationKey: SET_RATING,
 		scope: { id: 'ratings' },
 		mutationFn: ({ kind, itemId, rating }: RateVars) =>
@@ -107,16 +108,13 @@ export function setRating() {
 			}
 			toastStore.show({ message: "Couldn't save the rating.", type: 'error' });
 		},
-		onSuccess: (answer, vars) => {
-			// The item was merged: move the page to its current ids.
-			if (answer.item_id !== vars.itemId) void applyEffects(catalogChanged(authStore.user?.id));
-		},
+		// The item was merged: move the page to its current ids.
+		effects: (answer, vars) =>
+			answer.item_id !== vars.itemId ? [catalogChanged(authStore.user?.id)] : [],
 		onSettled: () => {
 			// A later click is still saving: its own settle reads the result.
 			if (queryClient.isMutating({ mutationKey: SET_RATING }) > 1) return;
-			void invalidateQueriesWithPersister({
-				queryKey: RatingQueryKeyFactory.user(authStore.user?.id)
-			});
+			void applyEffects(ratingsChanged(authStore.user?.id));
 		}
 	}));
 }

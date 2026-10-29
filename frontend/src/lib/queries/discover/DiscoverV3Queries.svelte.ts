@@ -6,6 +6,7 @@ import type { components } from '$lib/api/v3/openapi';
 import { STALE_SLOW } from '$lib/queries/staleTime';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { readNow } from '../readNow';
+import { applyEffects, discoverRadioChanged } from '../effects';
 import { DiscoverV3Api } from './DiscoverV3Api';
 import {
 	DiscoverQueryKeyFactory,
@@ -74,6 +75,10 @@ export interface DiscoverV3RadioInput {
 	source?: ListenSource | null;
 	enabled?: boolean;
 }
+
+/** Reads one radio station again, every page of it. */
+export const refreshDiscoverRadio = (seedType: string, seedId: string) =>
+	applyEffects(discoverRadioChanged(authStore.user?.id, seedType, seedId));
 
 export const getDiscoverRadioV3Query = (getParams: Getter<DiscoverV3RadioInput>) =>
 	createQuery(() => {

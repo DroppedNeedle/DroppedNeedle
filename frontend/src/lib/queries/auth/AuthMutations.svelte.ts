@@ -1,5 +1,5 @@
 import { api } from '$lib/api/client';
-import { createMutation } from '@tanstack/svelte-query';
+import { createAppMutation } from '$lib/queries/effects';
 import { AUTH_ENDPOINTS } from './endpoints';
 import type {
 	JellyfinLoginVars,
@@ -14,39 +14,46 @@ import type {
 /** Recovery redemption is public; code generation uses the authenticated admin client. */
 
 export const createLocalLoginMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (vars: LocalLoginVars) => api.v3.POST(AUTH_ENDPOINTS.login, vars)
 	}));
 
 export const createPasswordRecoveryResetMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (vars: PasswordRecoveryResetVars) =>
 			api.v3.POST(AUTH_ENDPOINTS.passwordRecoveryReset, vars)
 	}));
 
 export const createPasswordRecoveryCodeMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (userId: string): Promise<PasswordRecoveryCodeResponse> =>
 			api.v3.POST(AUTH_ENDPOINTS.adminPasswordRecovery(userId))
 	}));
 
 export const createJellyfinLoginMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (vars: JellyfinLoginVars) => api.v3.POST(AUTH_ENDPOINTS.jellyfinLogin, vars)
 	}));
 
 export const createSetupMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (vars: SetupVars) => api.v3.POST(AUTH_ENDPOINTS.setup, vars)
 	}));
 
 export const createOidcExchangeMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (vars: OidcExchangeVars) => api.v3.POST(AUTH_ENDPOINTS.oidcExchange, vars)
 	}));
 
 export const createOidcAuthorizeMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (): Promise<OidcAuthorizeResponse> => api.v3.POST(AUTH_ENDPOINTS.oidcAuthorize)
 	}));
 

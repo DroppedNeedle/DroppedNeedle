@@ -1,13 +1,15 @@
-import { createMutation, createQuery, queryOptions } from '@tanstack/svelte-query';
+import { createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
-import { everyScope } from '$lib/queries/keys';
+import {
+	createAppMutation,
+	downloadReadinessChanged,
+	slskdSettingsChanged
+} from '$lib/queries/effects';
 
 export type DownloadClientConfig = components['schemas']['SlskdConnection'];
 
@@ -30,21 +32,18 @@ export const getDownloadClientStatusQuery = () =>
 	createQuery(() => getDownloadClientStatusQueryOptions());
 
 export function saveDownloadClientConfig() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (config: DownloadClientConfig) =>
 			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.slskdConfig(), config),
-		onSuccess: async () => {
-			await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientConfig() });
-			await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
-			// Home reads integration_status.download_client; invalidate or its
-			// "Configure Download Client" prompt lingers until the cache expires
-			await invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature));
-		}
+		// Home reads integration_status.download_client; refresh it or its
+		// "Configure Download Client" prompt lingers until the cache expires
+		effects: () => [slskdSettingsChanged(), downloadReadinessChanged()]
 	}));
 }
 
 export function testDownloadClient() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (config: DownloadClientConfig) =>
 			api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.slskdTest(), config)
 	}));

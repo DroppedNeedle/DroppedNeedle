@@ -1,15 +1,11 @@
-import { createMutation, createQuery } from '@tanstack/svelte-query';
+import { createQuery } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import {
-	invalidateQueriesWithPersister,
-	setQueryDataWithPersister
-} from '$lib/queries/QueryClient';
-import { LyricsQueryKeyFactory } from '$lib/queries/lyrics/LyricsQueryKeyFactory';
+import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { SettingsQueryKeyFactory } from './SettingsQueryKeyFactory';
 import { SETTINGS_ENDPOINTS } from './endpoints';
-import { everyScope } from '$lib/queries/keys';
+import { createAppMutation, lyricsChanged } from '$lib/queries/effects';
 
 export type LyricsSettings = components['schemas']['LyricsSettings'];
 
@@ -22,10 +18,9 @@ export const getLyricsSettingsQuery = () =>
 
 /** Saves the switch, then drops cached lyrics so an open panel asks again. */
 export const createSaveLyricsSettingsMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (body: LyricsSettings) => api.v3.PUT(SETTINGS_ENDPOINTS.lyrics(), body),
-		onSuccess: async (saved: LyricsSettings) => {
-			await setQueryDataWithPersister(SettingsQueryKeyFactory.lyrics(authStore.user?.id), saved);
-			await invalidateQueriesWithPersister(everyScope(LyricsQueryKeyFactory.feature));
-		}
+		onSuccess: (saved: LyricsSettings) =>
+			setQueryDataWithPersister(SettingsQueryKeyFactory.lyrics(authStore.user?.id), saved),
+		effects: () => [lyricsChanged()]
 	}));

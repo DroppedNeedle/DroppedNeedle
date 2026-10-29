@@ -1,11 +1,10 @@
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { createMutation, createQuery } from '@tanstack/svelte-query';
+import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
-import { invalidateQueriesWithPersister } from '../QueryClient';
-import { PlaylistQueryKeyFactory } from '../playlists/PlaylistQueryKeyFactory';
 import { SPOTIFY_ENDPOINTS } from './endpoints';
 import { SpotifyQueryKeyFactory } from './SpotifyQueryKeyFactory';
+import { createAppMutation, playlistsChanged, spotifyPlaylistsChanged } from '$lib/queries/effects';
 
 export const getSpotifyPlaylistsQuery = () =>
 	createQuery(() => ({
@@ -22,18 +21,14 @@ interface ImportSpotifyPlaylistInput {
 }
 
 export const createImportSpotifyPlaylistMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		// The name seeds the internal playlist record the import fills.
 		mutationFn: (input: ImportSpotifyPlaylistInput) =>
 			api.v3.POST(SPOTIFY_ENDPOINTS.importPlaylist(input.id), { name: input.name }),
-		onSuccess: () => {
-			invalidateQueriesWithPersister({
-				queryKey: PlaylistQueryKeyFactory.root(authStore.user?.id)
-			});
-			invalidateQueriesWithPersister({
-				queryKey: SpotifyQueryKeyFactory.playlists(authStore.user?.id)
-			});
-		}
+		effects: () => [
+			playlistsChanged(authStore.user?.id),
+			spotifyPlaylistsChanged(authStore.user?.id)
+		]
 	}));
 
 /** The address Spotify sends the browser back to, for the saved redirect origin. */

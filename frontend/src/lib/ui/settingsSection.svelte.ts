@@ -21,8 +21,7 @@
 import { untrack } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { ApiError } from '$lib/api/errors';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
+import { applyEffects, integrationStatusChanged } from '$lib/queries/effects';
 import { authStore } from '$lib/stores/authStore.svelte';
 
 interface QueryLike<T> {
@@ -287,9 +286,7 @@ export function createSettingsSection<T extends object>(
 
 async function refreshIntegration() {
 	try {
-		await invalidateQueriesWithPersister({
-			queryKey: HomeQueryKeyFactory.integrationStatus(authStore.user?.id)
-		});
+		await applyEffects(integrationStatusChanged(authStore.user?.id));
 	} catch {
 		// The dots catch up on the next page load.
 	}

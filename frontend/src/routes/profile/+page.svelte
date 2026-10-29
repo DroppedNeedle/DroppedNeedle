@@ -28,8 +28,7 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-	import { ConnectionsQueryKeyFactory } from '$lib/queries/connections/ConnectionsQueryKeyFactory';
+	import { refreshConnections } from '$lib/queries/connections/ConnectionsMutations.svelte';
 
 	const userId = authStore.user?.id ?? '';
 	const profileQuery = getProfileQuery(() => authStore.user?.id ?? '');
@@ -157,9 +156,7 @@
 		const spotify = page.url.searchParams.get('spotify');
 		if (spotify === 'connected') {
 			toastStore.show({ message: 'Spotify connected successfully', type: 'success' });
-			await invalidateQueriesWithPersister({
-				queryKey: ConnectionsQueryKeyFactory.list(authStore.user?.id)
-			});
+			await refreshConnections();
 			if (browser) history.replaceState({}, '', withBasePath('/profile'));
 		} else if (spotify === 'error') {
 			toastStore.show({ message: 'Spotify connection failed. Please try again.', type: 'error' });

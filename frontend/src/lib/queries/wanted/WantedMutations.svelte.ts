@@ -1,16 +1,10 @@
 import { api } from '$lib/api/client';
-import { createMutation } from '@tanstack/svelte-query';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
-import { invalidateQueriesWithPersister } from '../QueryClient';
-import { WantedQueryKeyFactory } from './WantedQueryKeyFactory';
 import { WANTED_ENDPOINTS } from './endpoints';
+import { applyEffects, createAppMutation, wantedChanged } from '$lib/queries/effects';
 
-function invalidateWanted(): Promise<void> {
-	return invalidateQueriesWithPersister({
-		queryKey: WantedQueryKeyFactory.list(authStore.user?.id)
-	});
-}
+const wanted = () => [wantedChanged(authStore.user?.id)];
 
 export interface WantedActionVars {
 	mbid: string;
@@ -19,7 +13,7 @@ export interface WantedActionVars {
 
 // mbid is the mutation variable so one instance serves every card in the tab
 export const createStopWatchMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: ({ mbid }: WantedActionVars) => api.v3.POST(WANTED_ENDPOINTS.stop(mbid)),
 		onSuccess: (_data, { albumTitle }) => {
 			toastStore.show({
@@ -29,14 +23,13 @@ export const createStopWatchMutation = () =>
 		},
 		onError: (_err, { albumTitle }) => {
 			toastStore.show({ message: `Couldn't stop watching ${albumTitle}.`, type: 'error' });
+			void applyEffects(...wanted());
 		},
-		onSettled: () => {
-			void invalidateWanted();
-		}
+		effects: wanted
 	}));
 
 export const createResumeWatchMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: ({ mbid }: WantedActionVars) => api.v3.POST(WANTED_ENDPOINTS.resume(mbid)),
 		onSuccess: (_data, { albumTitle }) => {
 			toastStore.show({
@@ -46,17 +39,15 @@ export const createResumeWatchMutation = () =>
 		},
 		onError: (_err, { albumTitle }) => {
 			toastStore.show({ message: `Couldn't resume watching ${albumTitle}.`, type: 'error' });
+			void applyEffects(...wanted());
 		},
-		onSettled: () => {
-			void invalidateWanted();
-		}
+		effects: wanted
 	}));
 
 // silent badge acknowledgment (the mark-seen pattern) - no toast on purpose
 export const createMarkWantedSeenMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: ({ mbid }: WantedActionVars) => api.v3.POST(WANTED_ENDPOINTS.seen(mbid)),
-		onSettled: () => {
-			void invalidateWanted();
-		}
+		onError: () => void applyEffects(...wanted()),
+		effects: wanted
 	}));

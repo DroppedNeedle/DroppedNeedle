@@ -3,14 +3,9 @@ import { v3 } from '$lib/api/v3/endpoint';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { SectionPrefsResponse, SectionPrefsUpdate } from '$lib/types';
 import { createQuery } from '@tanstack/svelte-query';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
-import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
-import {
-	invalidateQueriesWithPersister,
-	setQueryDataWithPersister
-} from '$lib/queries/QueryClient';
+import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { SectionPrefsQueryKeyFactory } from './SectionPrefsQueryKeyFactory';
-import { everyScope } from '$lib/queries/keys';
+import { anyDiscoverChanged, applyEffects, homeChanged } from '$lib/queries/effects';
 
 const SECTION_PREFS_ENDPOINT = () => v3('/api/v3/me/section-prefs');
 
@@ -39,8 +34,8 @@ export async function saveSectionPrefs(update: SectionPrefsUpdate): Promise<void
 	// the home/discover responses are filtered server-side, so their caches are stale
 	// now; sidebar prefs are client-only chrome read straight from the prefs cache
 	if (update.page === 'home') {
-		await invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature));
+		await applyEffects(homeChanged());
 	} else if (update.page === 'discover') {
-		await invalidateQueriesWithPersister(everyScope(DiscoverQueryKeyFactory.feature));
+		await applyEffects(anyDiscoverChanged());
 	}
 }

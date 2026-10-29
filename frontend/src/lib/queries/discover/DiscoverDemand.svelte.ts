@@ -1,4 +1,3 @@
-import { createMutation } from '@tanstack/svelte-query';
 import { untrack } from 'svelte';
 import { api } from '$lib/api/client';
 import {
@@ -8,6 +7,7 @@ import {
 import type { MusicBrainzSourceMode } from '$lib/queries/musicbrainz/types';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { DiscoverActivity } from '$lib/types';
+import { createAppMutation } from '../effects';
 import { DiscoverV3Api } from './DiscoverV3Api';
 
 // Discover demand: the server records which discovery surfaces a user
@@ -45,8 +45,9 @@ export function useDiscoverActivity(
 	getActivity: () => DiscoverActivity | null,
 	getElement?: () => HTMLElement | undefined
 ): void {
-	const mutation = createMutation(() => ({
+	const mutation = createAppMutation(() => ({
 		retry: false,
+		effects: () => [],
 		mutationFn: (activity: DiscoverActivity) => recordDiscoverActivity(activity)
 	}));
 	$effect(() => {

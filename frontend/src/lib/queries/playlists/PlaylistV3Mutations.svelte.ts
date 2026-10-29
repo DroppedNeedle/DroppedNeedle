@@ -1,11 +1,14 @@
-import { createMutation } from '@tanstack/svelte-query';
-
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { PlaylistQueryKeyFactory, type PlaylistV3UserId } from './PlaylistQueryKeyFactory';
 import { PlaylistV3Api } from './PlaylistV3Api';
+import {
+	applyEffects,
+	createAppMutation,
+	playlistChanged,
+	playlistListChanged,
+	playlistSourcesDropped
+} from '$lib/queries/effects';
 
 export type UpdatePlaylistBodyV3 = components['schemas']['UpdatePlaylistBody'];
 export type AddTracksBodyV3 = components['schemas']['AddTracksBody'];
@@ -13,45 +16,40 @@ export type PlaylistSummaryV3 = components['schemas']['PlaylistSummary'];
 export type CheckTracksBodyV3 = components['schemas']['CheckTracksBody'];
 export type CheckTracksResponseV3 = components['schemas']['CheckTracksResponse'];
 export type TrackInputV3 = components['schemas']['TrackInput'];
-function invalidateList(userId: PlaylistV3UserId): Promise<unknown> {
-	return invalidateQueriesWithPersister({
-		queryKey: PlaylistQueryKeyFactory.list(userId)
-	});
-}
+const list = () => [playlistListChanged(authStore.user?.id)];
+const detail = (id: string) => [playlistChanged(authStore.user?.id, id)];
+const listAndDetail = (id: string) => [...list(), ...detail(id)];
 
-function invalidateDetail(userId: PlaylistV3UserId, id: string): Promise<unknown> {
-	return invalidateQueriesWithPersister({
-		queryKey: PlaylistQueryKeyFactory.detail(userId, id)
-	});
-}
+/** Reads one playlist again, after its tracks' sources were healed. */
+export const refreshPlaylist = (id: string) => applyEffects(...detail(id));
 
-function invalidateListAndDetail(userId: PlaylistV3UserId, id: string): Promise<unknown> {
-	return Promise.all([invalidateList(userId), invalidateDetail(userId, id)]);
-}
+/** Drops one playlist's kept source answer, so the next visit asks again. */
+export const forgetPlaylistSources = (id: string) =>
+	applyEffects(playlistSourcesDropped(authStore.user?.id, id));
 
 export const createPlaylistV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (name: string) => api.v3.POST(PlaylistV3Api.create(), { name }),
-		onSuccess: () => invalidateList(authStore.user?.id)
+		effects: list
 	}));
 
 export const updatePlaylistV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: { id: string } & UpdatePlaylistBodyV3) =>
 			api.v3.PUT(PlaylistV3Api.detail(vars.id), {
 				name: vars.name
 			}),
-		onSuccess: (_data, vars) => invalidateListAndDetail(authStore.user?.id, vars.id)
+		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
 export const deletePlaylistV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (id: string) => api.v3.DELETE(PlaylistV3Api.detail(id)),
-		onSuccess: (_data, id) => invalidateListAndDetail(authStore.user?.id, id)
+		effects: (_data, id) => listAndDetail(id)
 	}));
 
 export const addPlaylistTracksV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: { id: string } & AddTracksBodyV3) =>
 			api.v3.POST(PlaylistV3Api.tracks(vars.id), {
 				tracks: vars.tracks,
@@ -59,27 +57,27 @@ export const addPlaylistTracksV3 = () =>
 					? { position: vars.position }
 					: {})
 			}),
-		onSuccess: (_data, vars) => invalidateListAndDetail(authStore.user?.id, vars.id)
+		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
 export const removePlaylistTrackV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; trackId: string }) =>
 			api.v3.DELETE(PlaylistV3Api.track(vars.id, vars.trackId)),
-		onSuccess: (_data, vars) => invalidateListAndDetail(authStore.user?.id, vars.id)
+		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
 export const removePlaylistTracksV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; trackIds: string[] }) =>
 			api.v3.POST(PlaylistV3Api.removeTracks(vars.id), {
 				track_ids: vars.trackIds
 			}),
-		onSuccess: (_data, vars) => invalidateListAndDetail(authStore.user?.id, vars.id)
+		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
 export const updatePlaylistTrackV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: {
 			id: string;
 			trackId: string;
@@ -95,27 +93,27 @@ export const updatePlaylistTrackV3 = () =>
 					: {})
 			}),
 		// Retargeting a source changes no list tile, so the detail alone refreshes.
-		onSuccess: (_data, vars) => invalidateDetail(authStore.user?.id, vars.id)
+		effects: (_data, vars) => detail(vars.id)
 	}));
 
 export const reorderPlaylistTrackV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; trackId: string; newPosition: number }) =>
 			api.v3.PATCH(PlaylistV3Api.reorderTrack(vars.id), {
 				track_id: vars.trackId,
 				new_position: vars.newPosition
 			}),
 		// Order changes no list tile, so the detail alone refreshes.
-		onSuccess: (_data, vars) => invalidateDetail(authStore.user?.id, vars.id)
+		effects: (_data, vars) => detail(vars.id)
 	}));
 
 export const setPlaylistVisibilityV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; isPublic: boolean }) =>
 			api.v3.PATCH(PlaylistV3Api.visibility(vars.id), {
 				is_public: vars.isPublic
 			}),
-		onSuccess: (_data, vars) => invalidateListAndDetail(authStore.user?.id, vars.id)
+		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
 async function fileToBase64(file: File): Promise<string> {
@@ -126,23 +124,24 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 export const uploadPlaylistCoverV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: async (vars: { id: string; file: File }) =>
 			api.v3.POST(PlaylistV3Api.cover(vars.id), {
 				content_type: vars.file.type,
 				image_base64: await fileToBase64(vars.file)
 			}),
-		onSuccess: (_data, vars) => invalidateListAndDetail(authStore.user?.id, vars.id)
+		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
 export const deletePlaylistCoverV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (id: string) => api.v3.DELETE(PlaylistV3Api.cover(id)),
-		onSuccess: (_data, id) => invalidateListAndDetail(authStore.user?.id, id)
+		effects: (_data, id) => listAndDetail(id)
 	}));
 
 export const checkPlaylistTracksV3 = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		// Pure read: membership answers are never cached, so no invalidation.
 		mutationFn: (body: CheckTracksBodyV3) => api.v3.POST(PlaylistV3Api.checkTracks(), body)
 	}));

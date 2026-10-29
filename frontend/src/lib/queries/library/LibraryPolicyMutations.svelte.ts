@@ -1,21 +1,21 @@
-import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { ApiError } from '$lib/api/errors';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
-import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 import { toTargetLibrarySettings } from './libraryAdapters';
 import type { LibraryRestoreRootsRequest, TypedLibrarySettings } from './LibraryOperationsTypes';
-import { everyScope } from '$lib/queries/keys';
+import {
+	anyLibraryActivityChanged,
+	createAppMutation,
+	libraryOperationsChanged,
+	libraryPoliciesChanged
+} from '$lib/queries/effects';
 
-async function invalidatePolicies(): Promise<void> {
-	await Promise.all([
-		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.policyPrefix() }),
-		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'operations')),
-		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'activity'))
-	]);
-}
+const policies = () => [
+	libraryPoliciesChanged(),
+	libraryOperationsChanged(),
+	anyLibraryActivityChanged()
+];
 
 function serverErrorMessage(error: unknown, fallback: string): string {
 	if (error instanceof ApiError && error.message) return error.message;
@@ -23,7 +23,8 @@ function serverErrorMessage(error: unknown, fallback: string): string {
 }
 
 export function previewLibraryPolicyImpact() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (input: {
 			settings: TypedLibrarySettings;
 			expected_policy_revision: string | null;
@@ -32,13 +33,13 @@ export function previewLibraryPolicyImpact() {
 }
 
 export function saveTargetLibrarySettings() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: async (input: {
 			settings: TypedLibrarySettings;
 			expected_policy_revision: string;
 		}) => toTargetLibrarySettings(await api.v3.PUT(LibraryV3Api.settings(), input)),
-		onSuccess: async () => {
-			await invalidatePolicies();
+		effects: policies,
+		onSuccess: () => {
 			toastStore.show({ message: 'Library policies saved', type: 'success' });
 		},
 		onError: (error) =>
@@ -50,11 +51,11 @@ export function saveTargetLibrarySettings() {
 }
 
 export function restoreLibraryRoots() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: async (input: LibraryRestoreRootsRequest) =>
 			toTargetLibrarySettings(await api.v3.POST(LibraryV3Api.restoreRoots(), input)),
-		onSuccess: async () => {
-			await invalidatePolicies();
+		effects: policies,
+		onSuccess: () => {
 			toastStore.show({ message: 'Library roots restored', type: 'success' });
 		},
 		onError: (error) =>
@@ -66,7 +67,8 @@ export function restoreLibraryRoots() {
 }
 
 export function previewLibraryPolicyApply() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (input: { scope_ids: string[]; expected_policy_revision: string }) =>
 			api.v3.POST(LibraryV3Api.policyApplyPreview(), input)
 	}));

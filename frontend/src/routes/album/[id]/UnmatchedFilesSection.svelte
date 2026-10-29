@@ -4,10 +4,7 @@
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 	import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
-	import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
-	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { formatCountdown } from '$lib/queries/downloads/downloadStatus';
-	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type { UnmatchedFile } from './albumEdition';
 	import Button from '$lib/ui/Button.svelte';
@@ -36,12 +33,9 @@
 		confirmingId = null;
 		if (activeId === file.id) stopPreview();
 		remove.mutate(
-			{ fileId: file.id, albumMbid },
+			{ fileId: file.id, albumMbid, albumId },
 			{
 				onSuccess: () => {
-					void invalidateQueriesWithPersister({
-						queryKey: LibraryQueryKeyFactory.catalog.editionPlanPrefix(authStore.user?.id, albumId)
-					});
 					toastStore.show({ message: 'File removed', type: 'success' });
 				},
 				onError: () => toastStore.show({ message: "Couldn't remove this file", type: 'error' })

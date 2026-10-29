@@ -50,7 +50,7 @@ type EditionQueryOptions = {
 type EditionMutationOptions = {
 	mutationFn: (variables: Record<string, unknown>) => Promise<unknown>;
 	onSuccess: (data: unknown, variables: Record<string, unknown>) => Promise<unknown>;
-	onSettled: (data: unknown, error: unknown, variables: Record<string, unknown>) => unknown;
+	onError: (error: unknown, variables: Record<string, unknown>) => unknown;
 };
 
 beforeEach(() => {
@@ -213,7 +213,8 @@ it('matches a file by hand and undoes it, refreshing what the carry can move, re
 		[unmatch, new Error('refused')]
 	] as const) {
 		h.invalidate.mockClear();
-		await done.onSettled(error ? undefined : {}, error, variables);
+		if (error) await done.onError(error, variables);
+		else await done.onSuccess({}, variables);
 		const invalidated = h.invalidate.mock.calls.map(([arg]) => arg.queryKey);
 		expect(invalidated).toEqual(
 			expect.arrayContaining([

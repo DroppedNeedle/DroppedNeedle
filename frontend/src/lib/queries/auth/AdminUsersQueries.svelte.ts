@@ -1,11 +1,11 @@
-import { createMutation, createQuery, keepPreviousData } from '@tanstack/svelte-query';
+import { createQuery, keepPreviousData } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import type { V3Body } from '$lib/api/v3/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { invalidateQueriesWithPersister } from '../QueryClient';
+import { createAppMutation, usersChanged } from '../effects';
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { AUTH_ENDPOINTS } from './endpoints';
 
@@ -13,8 +13,7 @@ export type AdminUser = components['schemas']['UserResponse'];
 type CreateUserBody = V3Body<'/api/v3/admin/users', 'post'>;
 type RoleBody = V3Body<'/api/v3/admin/users/{id}/role', 'put'>;
 
-const refreshUsers = () =>
-	invalidateQueriesWithPersister({ queryKey: AuthQueryKeyFactory.adminUsers(authStore.user?.id) });
+const refreshUsers = () => [usersChanged(authStore.user?.id)];
 
 /** One page of the server's accounts, oldest first. */
 export const getAdminUsersQuery = (getPage: Getter<{ limit: number; offset: number }>) =>
@@ -29,21 +28,21 @@ export const getAdminUsersQuery = (getPage: Getter<{ limit: number; offset: numb
 	});
 
 export const createSetUserRoleMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: ({ userId, role }: { userId: string; role: RoleBody['role'] }) =>
 			api.v3.PUT(AUTH_ENDPOINTS.adminUserRole(userId), { role }),
-		onSuccess: refreshUsers
+		effects: refreshUsers
 	}));
 
 /** Creates a local account; it always signs in with a username and password. */
 export const createAdminUserMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (body: CreateUserBody) => api.v3.POST(AUTH_ENDPOINTS.adminCreateUser, body),
-		onSuccess: refreshUsers
+		effects: refreshUsers
 	}));
 
 export const createDeleteUserMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (userId: string) => api.v3.DELETE(AUTH_ENDPOINTS.adminUser(userId)),
-		onSuccess: refreshUsers
+		effects: refreshUsers
 	}));

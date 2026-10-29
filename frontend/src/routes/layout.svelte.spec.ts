@@ -141,11 +141,6 @@ vi.mock('$lib/utils/lazyImage', () => ({
 	lazyImage: vi.fn(() => ({ destroy: vi.fn(), update: vi.fn() })),
 	resetLazyImage: vi.fn()
 }));
-vi.mock('$lib/utils/requestsApi', () => ({
-	fetchActiveRequestCount: vi.fn().mockResolvedValue(0),
-	fetchActiveRequests: vi.fn().mockResolvedValue({ items: [] }),
-	fetchRequestHistory: vi.fn().mockResolvedValue({ items: [], total: 0 })
-}));
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	requestBatch: () => ({ mutateAsync: batchRequestMock })
 }));

@@ -1,13 +1,15 @@
-import { createMutation, createQuery, queryOptions } from '@tanstack/svelte-query';
+import { createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
-import { everyScope } from '$lib/queries/keys';
+import {
+	createAppMutation,
+	downloadReadinessChanged,
+	usenetSettingsChanged
+} from '$lib/queries/effects';
 
 export type IndexerSettings = components['schemas']['NewznabIndexer'];
 export type IndexerTestResult = components['schemas']['IndexerTestResponse'];
@@ -21,42 +23,39 @@ const getIndexersQueryOptions = () =>
 
 export const getIndexersQuery = () => createQuery(() => getIndexersQueryOptions());
 
-async function invalidateIndexers() {
-	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.indexers() });
-	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
-	// Home reads integration_status; an added/removed indexer changes it.
-	await invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature));
-}
+// Home reads integration_status; an added/removed indexer changes it.
+const usenetChanged = () => [usenetSettingsChanged(), downloadReadinessChanged()];
 
 export function saveIndexerMutation() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (indexer: IndexerSettings) =>
 			indexer.id
 				? api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(indexer.id), indexer)
 				: api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), indexer),
-		onSuccess: invalidateIndexers
+		effects: usenetChanged
 	}));
 }
 
 export function deleteIndexerMutation() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (id: string) => api.v3.DELETE(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(id)),
-		onSuccess: invalidateIndexers
+		effects: usenetChanged
 	}));
 }
 
 export function reorderIndexersMutation() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (orderedIds: string[]) =>
 			api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexersReorder(), {
 				ordered_ids: orderedIds
 			}),
-		onSuccess: invalidateIndexers
+		effects: usenetChanged
 	}));
 }
 
 export function testIndexerMutation() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (indexer: IndexerSettings) =>
 			api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexersTest(), indexer)
 	}));
@@ -71,25 +70,13 @@ const getSearchBackendQueryOptions = () =>
 export const getSearchBackendQuery = () => createQuery(() => getSearchBackendQueryOptions());
 
 export function saveSearchBackendMutation() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (backend: UsenetSearchBackendName) =>
 			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.searchBackend(), {
 				backend
 			}),
-		onSuccess: async () => {
-			// Switching backends flips readiness: sweep the SABnzbd-shape set so
-			// status surfaces and Home refresh alongside the selector. The own key
-			// is listed explicitly (it nests under indexers(), so the prefix sweep
-			// below already covers it - this survives a future key move).
-			await invalidateQueriesWithPersister({
-				queryKey: DownloadQueryKeyFactory.searchBackend()
-			});
-			await invalidateIndexers();
-			await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.prowlarr() });
-			await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbd() });
-			await invalidateQueriesWithPersister({
-				queryKey: DownloadQueryKeyFactory.sabnzbdStatus()
-			});
-		}
+		// Switching backends flips readiness, so status surfaces and Home
+		// refresh alongside the selector.
+		effects: usenetChanged
 	}));
 }

@@ -15,8 +15,10 @@ vi.mock('$lib/queries/musicbrainz/sourceScope.svelte', () => ({
 		`${h.source.source_mode}:${h.source.source_id}:${h.source.generation}`,
 	setMusicBrainzSourceScope: h.setSource
 }));
-vi.mock('@tanstack/svelte-query', () => ({
-	createMutation: (factory: () => { mutationFn: (value: DiscoverActivity) => Promise<void> }) => ({
+vi.mock('$lib/queries/effects', () => ({
+	createAppMutation: (
+		factory: () => { mutationFn: (value: DiscoverActivity) => Promise<void> }
+	) => ({
 		mutate: (value: DiscoverActivity) => {
 			void factory().mutationFn(value);
 		}

@@ -1,9 +1,8 @@
-import { createMutation } from '@tanstack/svelte-query';
-
 import { toastStore } from '$lib/stores/toast';
 
 import { startPlexFlow } from './PlexFlowApi';
 import type { PlexPurpose, PlexStartBody } from './types';
+import { createAppMutation } from '$lib/queries/effects';
 
 export interface PlexStartVars {
 	purpose: PlexPurpose;
@@ -15,7 +14,8 @@ function errorMessage(err: unknown, fallback: string): string {
 
 // Minting a pin changes no state, so start carries no invalidation.
 export const createPlexStartMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (vars: PlexStartVars): Promise<PlexStartBody> => startPlexFlow(vars.purpose),
 		onError: (err) =>
 			toastStore.show({

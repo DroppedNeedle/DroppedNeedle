@@ -14,12 +14,13 @@ import {
 	type RemoteRandomParams,
 	type RemoteTrackParams
 } from './endpoints';
-import { invalidateQueriesWithPersister, queryClient } from '../QueryClient';
+import { queryClient } from '../QueryClient';
 import { readNow } from '../readNow';
 import { RemoteQueryKeyFactory } from './RemoteQueryKeyFactory';
 import { remoteApi } from './remoteApi';
 import type { RemoteAlbumPage, RemoteFolders, RemoteSource, RemoteTrack } from './types';
 import { PERSIST, type CacheMeta } from '$lib/queries/persistedCache';
+import { applyEffects, remoteSourceChanged } from '$lib/queries/effects';
 
 type Source = Getter<RemoteSource>;
 type Enabled = Getter<boolean>;
@@ -356,7 +357,7 @@ export function navidromeFolderScope(userId: string | null | undefined): string 
 
 /** Reloads everything shown for one server, for a page's refresh button. */
 export const refreshRemoteSource = (source: RemoteSource) =>
-	invalidateQueriesWithPersister({ queryKey: RemoteQueryKeyFactory.source(userId(), source) });
+	applyEffects(remoteSourceChanged(userId(), source));
 
 /** A mix seeded from one item, for the play button that starts it. */
 export const fetchRemoteMix = (source: RemoteSource, id: string, params: RemoteMixParams) =>

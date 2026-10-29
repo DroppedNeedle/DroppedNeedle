@@ -1,19 +1,21 @@
 // Read and save hooks for the settings sections that are one form each.
 // Every save answers with the section as stored, secrets masked, and that
 // answer replaces the cached copy.
-import { createMutation, createQuery } from '@tanstack/svelte-query';
+import { createQuery } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import {
-	invalidateQueriesWithPersister,
-	setQueryDataWithPersister
-} from '$lib/queries/QueryClient';
-import { FollowQueryKeyFactory } from '$lib/queries/following/FollowQueryKeyFactory';
+import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { PLEX_ENDPOINTS } from '$lib/queries/plex/endpoints';
 import { SPOTIFY_ENDPOINTS } from '$lib/queries/spotify/endpoints';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { SettingsQueryKeyFactory } from './SettingsQueryKeyFactory';
 import { SETTINGS_ENDPOINTS } from './endpoints';
+import {
+	anyArtistChanged,
+	concertsChanged,
+	createAppMutation,
+	type Effect
+} from '$lib/queries/effects';
 
 type Schemas = components['schemas'];
 export type AdvancedSettings = Schemas['AdvancedSettings'];
@@ -36,7 +38,7 @@ function section<T>(
 	name: string,
 	read: (signal: AbortSignal) => Promise<T>,
 	write: (body: T) => Promise<T>,
-	afterSave?: () => Promise<unknown>
+	effects: () => Effect[] = () => []
 ) {
 	const keys = {
 		saved: (userId: string | null | undefined) => SettingsQueryKeyFactory.section(userId, name)
@@ -49,12 +51,10 @@ function section<T>(
 				queryFn: ({ signal }) => read(signal)
 			})),
 		save: () =>
-			createMutation(() => ({
+			createAppMutation(() => ({
 				mutationFn: write,
-				onSuccess: async (saved: T) => {
-					await setQueryDataWithPersister(keys.saved(authStore.user?.id), saved);
-					await afterSave?.();
-				}
+				onSuccess: (saved: T) => setQueryDataWithPersister(keys.saved(authStore.user?.id), saved),
+				effects
 			}))
 	};
 }
@@ -83,13 +83,7 @@ const events = section<EventsSettings>(
 	'events',
 	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.events(), { signal }),
 	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.events(), body),
-	async () => {
-		const userId = authStore.user?.id;
-		await invalidateQueriesWithPersister({ queryKey: FollowQueryKeyFactory.concerts(userId) });
-		await invalidateQueriesWithPersister({
-			queryKey: FollowQueryKeyFactory.concertsUnseen(userId)
-		});
-	}
+	() => [concertsChanged(authStore.user?.id)]
 );
 export const EventsSettingsQueryKeyFactory = events.keys;
 export const getEventsSettingsQuery = events.query;
@@ -126,7 +120,8 @@ export const createSaveNavidromeSettingsMutation = navidrome.save;
 const releasePreferences = section<ReleasePreferences>(
 	'preferences',
 	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.preferences(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.preferences(), body)
+	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.preferences(), body),
+	() => [anyArtistChanged()]
 );
 export const getReleasePreferencesQuery = releasePreferences.query;
 export const createSaveReleasePreferencesMutation = releasePreferences.save;
@@ -187,38 +182,44 @@ export const createSaveYouTubeSettingsMutation = youtube.save;
 
 /** Checks the entered connection without saving it. */
 export const createVerifyNavidromeMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (body: NavidromeSettings) => api.v3.POST(SETTINGS_ENDPOINTS.navidromeVerify(), body)
 	}));
 
 /** Checks the entered provider without saving it. */
 export const createVerifyOidcMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (body: OidcSettings) => api.v3.POST(SETTINGS_ENDPOINTS.oidcVerify(), body)
 	}));
 
 /** Checks the entered connection and lists its libraries, without saving. */
 export const createVerifyPlexMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (body: PlexSettings) => api.v3.POST(PLEX_ENDPOINTS.verify(), body)
 	}));
 
 /** Checks the entered API key without saving it. */
 export const createVerifyYouTubeMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (body: YouTubeSettings) => api.v3.POST(SETTINGS_ENDPOINTS.youtubeVerify(), body)
 	}));
 
 /** Checks the breached-password file without saving the section. */
 export const createVerifyHibpMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (body: SecuritySettings) =>
 			api.v3.POST(SETTINGS_ENDPOINTS.securityVerifyHibp(), body)
 	}));
 
 /** Tries one events source's key without saving it. */
 export const createTestEventsSourceMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: ({
 			provider,
 			body
@@ -236,6 +237,7 @@ export const createTestEventsSourceMutation = () =>
 
 /** Writes the playlists to Navidrome, from the saved settings. */
 export const createNavidromePlaylistSyncMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: () => api.v3.POST(SETTINGS_ENDPOINTS.navidromePlaylistSync())
 	}));

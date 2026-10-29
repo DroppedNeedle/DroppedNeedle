@@ -61,10 +61,8 @@ import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory'
 import { refreshAlbum } from '$lib/queries/catalog/AlbumMutations.svelte';
 import { getLocalAlbumMatchQuery, getRemoteAlbumMatchQuery } from '$lib/queries/albumMatch';
 import { AlbumMatchKeyFactory } from '$lib/queries/AlbumMatchQueryKeyFactory';
-import {
-	invalidateQueriesWithPersister,
-	setQueryDataWithPersister
-} from '$lib/queries/QueryClient';
+import { albumCopiesChanged, albumCopiesStale, applyEffectsIn } from '$lib/queries/effects';
+import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 
 /** An edition track row, with where the edition fetch is with it. */
 export interface FetchedEditionRow extends EditionTrackRow {
@@ -380,11 +378,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	function refreshSourcesAfterDownload(): void {
 		const albumId = albumIdGetter();
 		if (!albumId) return;
-		void invalidateQueriesWithPersister(
-			{ queryKey: AlbumMatchKeyFactory.album(userId(), albumId) },
-			undefined,
-			{ client }
-		);
+		void applyEffectsIn(client, [albumCopiesChanged(userId(), albumId)]);
 	}
 
 	// external servers (Jellyfin/Navidrome/Plex) index newly-imported files on their own schedule, so
@@ -515,11 +509,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		setShowDeleteModal: (v) => (showDeleteModal = v),
 		onRequestSuccess: () => {
 			// the sources' copies are read again on the next visit
-			void invalidateQueriesWithPersister(
-				{ queryKey: AlbumMatchKeyFactory.album(userId(), albumIdGetter()), refetchType: 'none' },
-				undefined,
-				{ client }
-			).catch(() => undefined);
+			void applyEffectsIn(client, [albumCopiesStale(userId(), albumIdGetter())]).catch(
+				() => undefined
+			);
 			// pick up the freshly-created download task so the header strip + polling kick in
 			void downloadsQuery.refetch();
 		}

@@ -1,5 +1,3 @@
-import { createMutation } from '@tanstack/svelte-query';
-
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
@@ -13,6 +11,7 @@ import type {
 	MusicBrainzSettingsResponse,
 	MusicBrainzSettingsUpdate
 } from './types';
+import { createAppMutation } from '$lib/queries/effects';
 
 interface MusicBrainzMutationContext {
 	userId: string | null;
@@ -54,7 +53,8 @@ const cacheSettingsResponse = async (
 };
 
 export const saveMusicBrainzSettings = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: async (settings: MusicBrainzSettingsUpdate) =>
 			toMusicBrainzSettings(await api.v3.PUT(MUSICBRAINZ_ENDPOINTS.settings(), settings)),
 		onMutate: captureMusicBrainzUser,
@@ -62,7 +62,8 @@ export const saveMusicBrainzSettings = () =>
 	}));
 
 export const consentBrainzMash = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: async (binding: BrainzMashBinding) =>
 			toMusicBrainzSettings(await api.v3.POST(MUSICBRAINZ_ENDPOINTS.brainzMashConsent(), binding)),
 		onMutate: captureMusicBrainzUser,
@@ -70,7 +71,8 @@ export const consentBrainzMash = () =>
 	}));
 
 export const testMusicBrainzConnection = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: async (request: BrainzMashBinding | MusicBrainzSettingsUpdate) =>
 			toMusicBrainzSettings(await api.v3.POST(MUSICBRAINZ_ENDPOINTS.verify(), request)),
 		onMutate: captureMusicBrainzUser,
@@ -78,7 +80,8 @@ export const testMusicBrainzConnection = () =>
 	}));
 
 export const stageBrainzMash = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: async () =>
 			toMusicBrainzSettings(await api.v3.POST(MUSICBRAINZ_ENDPOINTS.brainzMashStage())),
 		onMutate: captureMusicBrainzUser,
@@ -86,7 +89,8 @@ export const stageBrainzMash = () =>
 	}));
 
 export const activateBrainzMash = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: async (binding: BrainzMashBinding) =>
 			toMusicBrainzSettings(await api.v3.POST(MUSICBRAINZ_ENDPOINTS.activate(), binding)),
 		onMutate: captureMusicBrainzUser,

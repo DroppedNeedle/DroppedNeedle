@@ -1,10 +1,10 @@
-import { createMutation, createQuery } from '@tanstack/svelte-query';
+import { createQuery } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { SettingsQueryKeyFactory } from './SettingsQueryKeyFactory';
 import { ADMIN_CACHE_ENDPOINTS } from './endpoints';
+import { applyEffects, cacheStatsChanged, createAppMutation } from '$lib/queries/effects';
 
 export type CacheClearBody = components['schemas']['CacheClearBody'];
 
@@ -16,15 +16,14 @@ export const getCacheStatsQuery = () =>
 	}));
 
 export const createPrecacheRunMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: () => api.v3.POST(ADMIN_CACHE_ENDPOINTS.precacheRun())
 	}));
 
 export const createClearCacheMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (body: CacheClearBody) => api.v3.POST(ADMIN_CACHE_ENDPOINTS.clear(), body),
-		onSettled: () =>
-			invalidateQueriesWithPersister({
-				queryKey: SettingsQueryKeyFactory.cacheStats(authStore.user?.id)
-			})
+		effects: () => [cacheStatsChanged(authStore.user?.id)],
+		onError: () => applyEffects(cacheStatsChanged(authStore.user?.id))
 	}));

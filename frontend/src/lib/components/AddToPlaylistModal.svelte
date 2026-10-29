@@ -8,9 +8,6 @@
 		isRedactedPlaylist,
 		type PlaylistSummary
 	} from '$lib/api/playlists';
-	import { authStore } from '$lib/stores/authStore.svelte';
-	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-	import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 	import { fetchPlaylistListV3 } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
 	import {
 		addPlaylistTracksV3,
@@ -31,14 +28,6 @@
 
 	const CHECK_CHUNK = 1000;
 	const reducedMotion = browser && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-	// Creating a playlist / adding tracks here changes the user's playlist list and
-	// track counts; invalidate the user-scoped list query so /playlists reflects it.
-	function invalidatePlaylistList() {
-		void invalidateQueriesWithPersister({
-			queryKey: PlaylistQueryKeyFactory.list(authStore.user?.id)
-		});
-	}
 
 	const createMutation = createPlaylistV3();
 	const addTracksMutation = addPlaylistTracksV3();
@@ -157,7 +146,6 @@
 			playlists = playlists.map((p) =>
 				p.id === playlist.id ? { ...p, track_count: p.track_count + trackData.length } : p
 			);
-			invalidatePlaylistList();
 			const addedCount = trackData.length;
 			if (existingIndices.size > 0) {
 				showStatus(
@@ -190,7 +178,6 @@
 			const allIndices = Array.from({ length: trackCount }, (_, i) => i);
 			membership = { ...membership, [detail.id]: allIndices };
 			playlists = [{ ...detail, track_count: trackData.length }, ...playlists];
-			invalidatePlaylistList();
 			newName = '';
 			showStatus(`Pressed "${name}" and filed the tracks.`, 'success');
 		} catch {

@@ -4,10 +4,10 @@
 	import HomeSection from '$lib/components/HomeSection.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
-	import { getDiscoverRadioV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
-	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-	import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
-	import { authStore } from '$lib/stores/authStore.svelte';
+	import {
+		getDiscoverRadioV3Query,
+		refreshDiscoverRadio
+	} from '$lib/queries/discover/DiscoverV3Queries.svelte';
 	import { ChevronDown, Radio, RefreshCw } from 'lucide-svelte';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import DiscoveryShelfActions from '$lib/components/discover/DiscoveryShelfActions.svelte';
@@ -40,9 +40,7 @@
 	}
 
 	async function handleRefresh() {
-		await invalidateQueriesWithPersister({
-			queryKey: DiscoverQueryKeyFactory.v3.radio(authStore.user?.id, seedType, seedId, {})
-		});
+		await refreshDiscoverRadio(seedType, seedId);
 	}
 
 	const TILT_TRANSITION =

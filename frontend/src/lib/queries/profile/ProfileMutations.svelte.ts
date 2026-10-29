@@ -1,9 +1,6 @@
 import { api } from '$lib/api/client';
-import { createMutation } from '@tanstack/svelte-query';
 import { toAuthUser, type AuthSessionUser } from '$lib/queries/auth/types';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { invalidateQueriesWithPersister } from '../QueryClient';
-import { ProfileQueryKeyFactory } from './ProfileQueryKeyFactory';
 import { PROFILE_ENDPOINTS } from './endpoints';
 import type {
 	ChangePasswordVars,
@@ -12,6 +9,7 @@ import type {
 	SetPasswordVars,
 	UsernameUpdateVars
 } from './types';
+import { createAppMutation, profileChanged } from '$lib/queries/effects';
 
 /**
  * Profile self-service mutations. Each returns the updated user
@@ -19,39 +17,43 @@ import type {
  * the topbar name/avatar and the change-vs-set-password branch correct - and
  * invalidate the user-scoped profile query so the card refreshes.
  */
-async function applyUser(userId: string, user: AuthSessionUser): Promise<void> {
+function applyUser(user: AuthSessionUser): void {
 	authStore.setUser(toAuthUser(user));
-	await invalidateQueriesWithPersister({ queryKey: ProfileQueryKeyFactory.profile(userId) });
 }
 
 export const createUpdateDisplayNameMutation = (userId: string) =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: DisplayNameUpdateVars) => api.v3.PATCH(PROFILE_ENDPOINTS.update(), vars),
-		onSuccess: (user: AuthSessionUser) => applyUser(userId, user)
+		onSuccess: applyUser,
+		effects: () => [profileChanged(userId)]
 	}));
 
 export const createUpdateUsernameMutation = (userId: string) =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: UsernameUpdateVars) => api.v3.PUT(PROFILE_ENDPOINTS.updateUsername(), vars),
-		onSuccess: (user: AuthSessionUser) => applyUser(userId, user)
+		onSuccess: applyUser,
+		effects: () => [profileChanged(userId)]
 	}));
 
 export const createUpdateEmailMutation = (userId: string) =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: EmailUpdateVars) => api.v3.PUT(PROFILE_ENDPOINTS.updateEmail(), vars),
-		onSuccess: (user: AuthSessionUser) => applyUser(userId, user)
+		onSuccess: applyUser,
+		effects: () => [profileChanged(userId)]
 	}));
 
 export const createChangePasswordMutation = (userId: string) =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: ChangePasswordVars) => api.v3.POST(PROFILE_ENDPOINTS.changePassword(), vars),
-		onSuccess: (user: AuthSessionUser) => applyUser(userId, user)
+		onSuccess: applyUser,
+		effects: () => [profileChanged(userId)]
 	}));
 
 export const createSetPasswordMutation = (userId: string) =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (vars: SetPasswordVars) => api.v3.POST(PROFILE_ENDPOINTS.setPassword(), vars),
-		onSuccess: (user: AuthSessionUser) => applyUser(userId, user)
+		onSuccess: applyUser,
+		effects: () => [profileChanged(userId)]
 	}));
 
 /** v3 takes the avatar as JSON (`content_type` + base64), not multipart, so
@@ -69,7 +71,7 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 export const createUploadAvatarMutation = (userId: string) =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: async (file: File) => {
 			const image_base64 = await fileToBase64(file);
 			return api.v3.POST(PROFILE_ENDPOINTS.avatarUpload(), {
@@ -77,5 +79,6 @@ export const createUploadAvatarMutation = (userId: string) =>
 				image_base64
 			});
 		},
-		onSuccess: (user: AuthSessionUser) => applyUser(userId, user)
+		onSuccess: applyUser,
+		effects: () => [profileChanged(userId)]
 	}));

@@ -1,5 +1,23 @@
-import { applyEffects, catalogChanged } from '$lib/queries/effects';
-import { createInfiniteQuery, createMutation, createQuery } from '@tanstack/svelte-query';
+import {
+	albumGroupChanged,
+	albumHistoryChanged,
+	albumRemovalsChanged,
+	albumStatusChanged,
+	anyRequestChanged,
+	applyEffects,
+	catalogChanged,
+	createAppMutation,
+	downloadsChanged,
+	editionChanged,
+	editionPlansChanged,
+	type Effect,
+	favoritesChanged,
+	identityPreparationsChanged,
+	playlistsChanged,
+	ratingsChanged,
+	repairsChanged
+} from '$lib/queries/effects';
+import { createInfiniteQuery, createQuery, skipToken } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
@@ -8,20 +26,13 @@ import type { components } from '$lib/api/v3/openapi';
 import { STALE_LIVE, STALE_SLOW } from '$lib/queries/staleTime';
 import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
 import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
-import { RequestQueryKeyFactory } from '$lib/queries/requests/RequestQueryKeyFactory';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
-import {
-	FavoriteQueryKeyFactory,
-	PlaylistQueryKeyFactory
-} from '$lib/queries/playlists/PlaylistQueryKeyFactory';
-import { RatingQueryKeyFactory } from '$lib/queries/ratings/RatingQueryKeyFactory';
-import { invalidateQueriesWithPersister, queryClient } from '$lib/queries/QueryClient';
+import { queryClient } from '$lib/queries/QueryClient';
 import { PROVIDER } from '$lib/queries/persistedCache';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
 import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
-import { everyScope } from '$lib/queries/keys';
 
 // Choosing an edition is for curators; the list of a group's editions is
 // open to any authenticated user.
@@ -60,7 +71,7 @@ export const getEditionTracksQuery = (
 // Switch a live request to another edition (curators). The answer says
 // whether it switched or the download had already started.
 export function switchRequestedEdition() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (input: {
 			group: string;
 			release: string;
@@ -73,14 +84,13 @@ export function switchRequestedEdition() {
 				album: input.albumTitle,
 				release_mbid: input.release
 			}),
-		onSettled: () => {
-			void invalidateQueriesWithPersister(everyScope(RequestQueryKeyFactory.feature));
-		}
+		effects: () => [anyRequestChanged()],
+		onError: () => void applyEffects(anyRequestChanged())
 	}));
 }
 
 export function acquireEdition() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({
 			mbid,
 			copyId,
@@ -93,14 +103,10 @@ export function acquireEdition() {
 		// The acquire starts a download task: show it in the queue, the album's
 		// download strip, its edition fetch and its library status now, not on
 		// the next poll.
-		onSuccess: (_data, { mbid }) => {
-			void invalidateQueriesWithPersister({
-				queryKey: DownloadQueryKeyFactory.tasksPrefix(authStore.user?.id)
-			});
-			void invalidateQueriesWithPersister({
-				queryKey: LibraryQueryKeyFactory.album(authStore.user?.id, mbid)
-			});
-		}
+		effects: (_data, { mbid }) => [
+			downloadsChanged(authStore.user?.id),
+			albumStatusChanged(authStore.user?.id, mbid)
+		]
 	}));
 }
 
@@ -155,7 +161,7 @@ export const getEditionFetchQuery = (
 					(landedCount(after) > landedCount(before) ||
 						(editionFetchLive(before) && !editionFetchLive(after)))
 				) {
-					invalidateEditionScope({ userId, localId, rgMbid: group });
+					void applyEffects(...editionScope({ userId, localId, rgMbid: group }));
 				}
 				return answer;
 			}
@@ -169,7 +175,6 @@ export type EditionStatus = components['schemas']['EditionStatusView'];
 export type EditionChoice = components['schemas']['EditionChoiceView'];
 export type WaitingAlbums = components['schemas']['Page_WaitingAlbumView'];
 
-const editionKey = LibraryQueryKeyFactory.catalog.edition;
 const editionPlanKey = LibraryQueryKeyFactory.catalog.editionPlan;
 
 // While the files are placed or written, or the album is identified, the
@@ -189,7 +194,7 @@ export const getAlbumEditionStatusQuery = (
 	createQuery(() => {
 		const userId = getUserId();
 		const localId = getLocalId();
-		const queryKey = editionKey(userId, localId);
+		const queryKey = LibraryQueryKeyFactory.catalog.edition(userId, localId);
 		return {
 			queryKey,
 			enabled: getEnabled() && !!userId && !!localId,
@@ -208,9 +213,7 @@ export const getAlbumEditionStatusQuery = (
 						(before.writing && !status.writing) ||
 						before.release_mbid !== status.release_mbid)
 				) {
-					void invalidateQueriesWithPersister({
-						queryKey: LibraryQueryKeyFactory.catalog.editionPlanPrefix(userId, localId)
-					});
+					void applyEffects(editionPlansChanged(userId, localId));
 				}
 				return status;
 			}
@@ -244,7 +247,7 @@ export const getEditionPlanQuery = (
 // recycle bin. Never runs on its own. The album's removals list it for
 // Put back.
 export function removeEditionExtras() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
 			trackIds,
@@ -258,12 +261,9 @@ export function removeEditionExtras() {
 				track_ids: trackIds,
 				expected_identity_revision: identityRevision
 			}),
-		onSuccess: (_data, { localId }) => {
+		effects: (_data, { localId }) => {
 			const userId = authStore.user?.id;
-			invalidateEditionScope({ userId, localId });
-			void invalidateQueriesWithPersister({
-				queryKey: LibraryQueryKeyFactory.catalog.albumRemovalsPrefix(userId)
-			});
+			return [...editionScope({ userId, localId }), albumRemovalsChanged(userId)];
 		}
 	}));
 }
@@ -272,21 +272,19 @@ export function removeEditionExtras() {
 // A match can carry a missing track's plays, stars, ratings and playlist entries
 // to the file, for every listener, so those lists refresh too. A refusal
 // means the plan on screen was stale, so it is read again either way.
-function invalidateHandMatchScope(localId: string): void {
+function handMatchScope(localId: string): Effect[] {
 	const userId = authStore.user?.id;
-	invalidateEditionScope({ userId, localId });
-	for (const queryKey of [
-		LibraryQueryKeyFactory.catalog.albumHistory(userId, localId),
-		FavoriteQueryKeyFactory.user(userId),
-		RatingQueryKeyFactory.user(userId),
-		PlaylistQueryKeyFactory.root(userId)
-	]) {
-		void invalidateQueriesWithPersister({ queryKey });
-	}
+	return [
+		...editionScope({ userId, localId }),
+		albumHistoryChanged(userId, localId),
+		favoritesChanged(userId),
+		ratingsChanged(userId),
+		playlistsChanged(userId)
+	];
 }
 
 export function matchEditionFile() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
 			trackId,
@@ -302,12 +300,13 @@ export function matchEditionFile() {
 				release_track_mbid: releaseTrackMbid,
 				expected_identity_revision: identityRevision
 			}),
-		onSettled: (_data, _error, { localId }) => invalidateHandMatchScope(localId)
+		effects: (_data, { localId }) => handMatchScope(localId),
+		onError: (_error, { localId }) => applyEffects(...handMatchScope(localId))
 	}));
 }
 
 export function unmatchEditionFile() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
 			trackId,
@@ -317,7 +316,8 @@ export function unmatchEditionFile() {
 			trackId: string;
 			identityRevision: number;
 		}) => api.v3.DELETE(LibraryV3Api.editionFileUnmatch(localId, trackId, identityRevision)),
-		onSettled: (_data, _error, { localId }) => invalidateHandMatchScope(localId)
+		effects: (_data, { localId }) => handMatchScope(localId),
+		onError: (_error, { localId }) => applyEffects(...handMatchScope(localId))
 	}));
 }
 
@@ -356,32 +356,19 @@ function assertLocalAlbumId(localId: string, rgMbid?: string): void {
  * album pages read, and, for the group it left and the one it joined, the
  * album page's cached header and tracklist and the group's editions.
  */
-function invalidateEditionScope(
+function editionScope(
 	{ userId, localId, rgMbid }: EditionTarget,
 	joinedGroup?: string | null
-): void {
-	const keys: (readonly unknown[])[] = [
-		editionKey(userId, localId),
-		LibraryQueryKeyFactory.catalog.albumDetail(userId, localId),
-		LibraryQueryKeyFactory.catalog.albumTracksPrefix(userId, localId),
-		LibraryQueryKeyFactory.catalog.albumCopiesPrefix(userId),
-		LibraryQueryKeyFactory.albumPrefix(userId),
-		LibraryQueryKeyFactory.catalog.unconfirmedPrefix(userId)
-	];
+): Effect[] {
+	const effects = [editionChanged(userId, localId)];
 	for (const group of new Set([rgMbid, joinedGroup])) {
-		if (!group) continue;
-		keys.push(
-			AlbumQueryKeyFactory.basic(userId, group),
-			AlbumQueryKeyFactory.tracks(userId, group),
-			AlbumQueryKeyFactory.editions(userId, group),
-			AlbumQueryKeyFactory.purchaseOptions(group)
-		);
+		if (group) effects.push(albumGroupChanged(userId, group));
 	}
-	for (const queryKey of keys) void invalidateQueriesWithPersister({ queryKey });
+	return effects;
 }
 
 export function chooseAlbumEdition() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
 			rgMbid,
@@ -394,41 +381,40 @@ export function chooseAlbumEdition() {
 				expected_identity_revision: identityRevision
 			});
 		},
-		onSuccess: (choice, variables) => invalidateEditionScope(variables, choice.release_group_mbid)
+		effects: (choice, variables) => editionScope(variables, choice.release_group_mbid)
 	}));
 }
 
 export function handBackAlbumEdition() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({ localId, rgMbid, identityRevision }: GuardedEditionTarget) => {
 			assertLocalAlbumId(localId, rgMbid);
 			return api.v3.DELETE(LibraryV3Api.editionHandBack(localId, identityRevision));
 		},
-		onSuccess: (_d, variables) => invalidateEditionScope(variables)
+		effects: (_d, variables) => editionScope(variables)
 	}));
 }
 
 export function confirmAlbumEdition() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({ localId, identityRevision }: GuardedEditionTarget) =>
 			api.v3.POST(LibraryV3Api.editionConfirm(localId), {
 				expected_identity_revision: identityRevision
 			}),
-		onSuccess: (_d, variables) => invalidateEditionScope(variables)
+		effects: (_d, variables) => editionScope(variables)
 	}));
 }
 
 // An edition change that may set or lift "leave unmanaged" also changes
 // what Library Management lists and holds.
-function invalidateHeldEditionScope(target: EditionTarget): void {
-	invalidateEditionScope(target);
-	void applyEffects(catalogChanged(authStore.user?.id));
+function heldEditionScope(target: EditionTarget): Effect[] {
+	return [...editionScope(target), catalogChanged(authStore.user?.id)];
 }
 
 // Keep the files as they are, as a custom edition of the release's group
 // (admins). The revision is the edition status's `identity_revision`.
 export function sealCustomEdition() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
 			rgMbid,
@@ -441,14 +427,14 @@ export function sealCustomEdition() {
 				expected_identity_revision: identityRevision
 			});
 		},
-		onSuccess: (_d, variables) => invalidateHeldEditionScope(variables)
+		effects: (_d, variables) => heldEditionScope(variables)
 	}));
 }
 
 // Drop the exact edition and keep Library Management away from the album
 // (admins); "Manage it again" lifts it.
 export function leaveAlbumUnmanaged() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
 			rgMbid,
@@ -459,7 +445,7 @@ export function leaveAlbumUnmanaged() {
 				expected_identity_revision: identityRevision
 			});
 		},
-		onSuccess: (_d, variables) => invalidateHeldEditionScope(variables)
+		effects: (_d, variables) => heldEditionScope(variables)
 	}));
 }
 
@@ -468,8 +454,8 @@ export function leaveAlbumUnmanaged() {
  * elsewhere (an identity report's undo): the album page, its edition plate
  * and sheet, and the unconfirmed list.
  */
-export function invalidateAlbumEdition(userId: EditionUserId, localId: string): void {
-	invalidateEditionScope({ userId, localId });
+export function albumEditionChanged(userId: EditionUserId, localId: string): Effect[] {
+	return editionScope({ userId, localId });
 }
 
 // Writing the chosen edition's tags into its files, in a folder the app
@@ -504,18 +490,22 @@ export const getTagWriteQuery = (
 			retry: false,
 			refetchInterval: (query: { state: { data?: TagWriteJob } }) =>
 				tagWriteMoving(query.state.data) ? TAG_WRITE_POLL_MS : false,
-			queryFn: ({ signal }: { signal: AbortSignal }): Promise<TagWriteJob> =>
-				api.v3.GET(LibraryV3Api.editionTagWrite(localId, jobId), { signal })
+			// No job, no read: a refresh after a write must not fetch an empty id.
+			queryFn: jobId
+				? ({ signal }: { signal: AbortSignal }): Promise<TagWriteJob> =>
+						api.v3.GET(LibraryV3Api.editionTagWrite(localId, jobId), { signal })
+				: skipToken
 		};
 	});
 
 /** A tag write or its undo finished: everything that shows the files is stale. */
 export function tagWriteFinished(target: EditionTarget): void {
-	invalidateHeldEditionScope(target);
+	void applyEffects(...heldEditionScope(target));
 }
 
 export function previewEditionTags() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: ({
 			localId,
 			rgMbid,
@@ -535,7 +525,7 @@ export function previewEditionTags() {
 }
 
 export function writeEditionTags() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
 			jobId,
@@ -551,12 +541,12 @@ export function writeEditionTags() {
 				expected_row_revision: rowRevision,
 				idempotency_key: `apply-${jobId}`
 			}),
-		onSuccess: (_job, variables) => invalidateHeldEditionScope(variables)
+		effects: (_job, variables) => heldEditionScope(variables)
 	}));
 }
 
 export function undoTagWrite() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
 			jobId,
@@ -566,23 +556,21 @@ export function undoTagWrite() {
 				expected_row_revision: rowRevision,
 				idempotency_key: `undo-${jobId}`
 			}),
-		onSuccess: (_queued, variables) => invalidateHeldEditionScope(variables)
+		effects: (_queued, variables) => heldEditionScope(variables)
 	}));
 }
 
 export function undoAlbumEdition() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({ localId, identityRevision }: GuardedEditionTarget) =>
 			api.v3.POST(LibraryV3Api.editionUndo(localId), {
 				expected_identity_revision: identityRevision
 			}),
-		onSuccess: (_d, variables) => {
-			invalidateHeldEditionScope(variables);
-			// Identity reports list this album's change too.
-			void invalidateQueriesWithPersister({
-				queryKey: LibraryQueryKeyFactory.identityPreparationsPrefix(variables.userId)
-			});
-			void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.repairsPrefix() });
-		}
+		// Identity reports list this album's change too.
+		effects: (_d, variables) => [
+			...heldEditionScope(variables),
+			identityPreparationsChanged(variables.userId ?? undefined),
+			repairsChanged()
+		]
 	}));
 }

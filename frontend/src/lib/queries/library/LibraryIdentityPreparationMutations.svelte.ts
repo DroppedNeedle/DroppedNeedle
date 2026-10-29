@@ -1,44 +1,28 @@
-import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
-import { SearchQueryKeyFactory } from '$lib/queries/search/SearchQueryKeyFactory';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
-import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { createUuid } from '$lib/utils/uuid';
-import { invalidateAlbumEdition } from '$lib/queries/albums/EditionQueries.svelte';
-import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
+import { albumEditionChanged } from '$lib/queries/albums/EditionQueries.svelte';
 import { LibraryV3Api } from './LibraryV3Api';
 import { toOperationResponse } from './libraryOperationAdapters';
-import { everyScope } from '$lib/queries/keys';
+import {
+	anyLibraryActivityChanged,
+	catalogChanged,
+	createAppMutation,
+	type Effect,
+	identityPreparationsChanged
+} from '$lib/queries/effects';
 
-async function invalidateIdentityPreparation(
-	userId: string | undefined,
-	catalogChanged = false
-): Promise<void> {
-	await Promise.all([
-		invalidateQueriesWithPersister({
-			queryKey: LibraryQueryKeyFactory.identityPreparationsPrefix(userId)
-		}),
-		invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature, 'activity')),
-		...(catalogChanged
-			? [
-					invalidateQueriesWithPersister(everyScope(LibraryQueryKeyFactory.feature)),
-					invalidateQueriesWithPersister(everyScope(ArtistQueryKeyFactory.feature)),
-					invalidateQueriesWithPersister(everyScope(HomeQueryKeyFactory.feature)),
-					invalidateQueriesWithPersister(everyScope(DiscoverQueryKeyFactory.feature)),
-					invalidateQueriesWithPersister({
-						queryKey: SearchQueryKeyFactory.v3.root(authStore.user?.id)
-					})
-				]
-			: [])
-	]);
+function identityPreparation(userId: string | undefined, catalog = false): Effect[] {
+	return [
+		identityPreparationsChanged(userId),
+		anyLibraryActivityChanged(),
+		...(catalog ? [catalogChanged(authStore.user?.id)] : [])
+	];
 }
 
 export function createLibraryIdentityPreparation(getUserId: () => string | undefined) {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: async (rootIds: string[]) =>
 			toOperationResponse(
 				await api.v3.POST(LibraryV3Api.identityPreparations(), {
@@ -46,8 +30,8 @@ export function createLibraryIdentityPreparation(getUserId: () => string | undef
 					root_ids: rootIds
 				})
 			),
-		onSuccess: async () => {
-			await invalidateIdentityPreparation(getUserId());
+		effects: () => identityPreparation(getUserId()),
+		onSuccess: () => {
 			toastStore.show({ message: 'Identity preparation started', type: 'success' });
 		},
 		onError: () =>
@@ -56,7 +40,7 @@ export function createLibraryIdentityPreparation(getUserId: () => string | undef
 }
 
 export function applyLibraryIdentityPreparation(getUserId: () => string | undefined) {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
 			toOperationResponse(
 				await api.v3.POST(LibraryV3Api.applyIdentityPreparation(input.jobId), {
@@ -64,8 +48,8 @@ export function applyLibraryIdentityPreparation(getUserId: () => string | undefi
 					confirmation: true
 				})
 			),
-		onSuccess: async () => {
-			await invalidateIdentityPreparation(getUserId(), true);
+		effects: () => identityPreparation(getUserId(), true),
+		onSuccess: () => {
 			toastStore.show({ message: 'Exact-release mappings accepted', type: 'success' });
 		},
 		onError: () =>
@@ -74,15 +58,15 @@ export function applyLibraryIdentityPreparation(getUserId: () => string | undefi
 }
 
 export function discardLibraryIdentityPreparation(getUserId: () => string | undefined) {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
 			toOperationResponse(
 				await api.v3.POST(LibraryV3Api.discardIdentityPreparation(input.jobId), {
 					expected_row_revision: input.expectedRevision
 				})
 			),
-		onSuccess: async () => {
-			await invalidateIdentityPreparation(getUserId());
+		effects: () => identityPreparation(getUserId()),
+		onSuccess: () => {
 			toastStore.show({ message: 'Identity report dismissed', type: 'success' });
 		},
 		onError: () =>
@@ -91,7 +75,7 @@ export function discardLibraryIdentityPreparation(getUserId: () => string | unde
 }
 
 export function undoLibraryAutomaticEdition(getUserId: () => string | undefined) {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (input: {
 			albumId: string;
 			expectedAlbumRevision: number;
@@ -101,9 +85,11 @@ export function undoLibraryAutomaticEdition(getUserId: () => string | undefined)
 				expected_album_revision: input.expectedAlbumRevision,
 				expected_identity_revision: input.expectedIdentityRevision
 			}),
-		onSuccess: async (_data, input) => {
-			invalidateAlbumEdition(getUserId(), input.albumId);
-			await invalidateIdentityPreparation(getUserId(), true);
+		effects: (_data, input) => [
+			...albumEditionChanged(getUserId(), input.albumId),
+			...identityPreparation(getUserId(), true)
+		],
+		onSuccess: () => {
 			toastStore.show({ message: 'Automatic edition acceptance undone', type: 'success' });
 		},
 		onError: () =>

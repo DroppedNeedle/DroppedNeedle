@@ -1,6 +1,5 @@
-import { applyEffects, catalogChanged } from '$lib/queries/effects';
+import { catalogChanged, createAppMutation } from '$lib/queries/effects';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { toastStore } from '$lib/stores/toast';
 import { LibraryV3Api } from './LibraryV3Api';
@@ -28,15 +27,15 @@ export interface ArtistMergePreviewInput {
 }
 
 export function reenableAlbumManagement() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (input: { albumId: string; expectedRevision: number }) =>
 			api.v3.POST(LibraryV3Api.reenableManagement(input.albumId), {
 				expected_exclusion_revision: input.expectedRevision
 			}),
-		onSuccess: async () => {
-			await applyEffects(catalogChanged(authStore.user?.id));
+		onSuccess: () => {
 			toastStore.show({ message: 'File organization re-enabled', type: 'success' });
 		},
+		effects: () => [catalogChanged(authStore.user?.id)],
 		onError: (error) =>
 			toastStore.show({
 				message: error instanceof Error ? error.message : 'Could not re-enable file organization',
@@ -79,7 +78,8 @@ const errorMessage = (error: unknown, fallback: string) =>
 // Album organization: the preview runs the change and rolls it back, so it
 // shows exactly what applying does; the token it returns applies only that.
 export function previewAlbumMembership(kind: MembershipKind) {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (input: {
 			albumId: string;
 			request: MembershipPreviewInput;
@@ -89,7 +89,7 @@ export function previewAlbumMembership(kind: MembershipKind) {
 }
 
 export function applyAlbumMembership(kind: MembershipKind) {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (input: {
 			albumId: string;
 			request: MembershipPreviewInput;
@@ -100,10 +100,10 @@ export function applyAlbumMembership(kind: MembershipKind) {
 				preview_token: input.previewToken,
 				idempotency_key: createUuid()
 			}),
-		onSuccess: async () => {
-			await applyEffects(catalogChanged(authStore.user?.id));
+		onSuccess: () => {
 			toastStore.show({ message: 'Album organization updated', type: 'success' });
 		},
+		effects: () => [catalogChanged(authStore.user?.id)],
 		onError: (error) =>
 			toastStore.show({
 				message: errorMessage(error, 'Album organization changed; preview it again'),
@@ -113,7 +113,8 @@ export function applyAlbumMembership(kind: MembershipKind) {
 }
 
 export function previewArtistMerge() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (input: ArtistMergePreviewInput): Promise<ArtistMergePreviewResponse> =>
 			api.v3.POST(LibraryV3Api.artistMergePreview(), input),
 		onError: (error) =>
@@ -125,7 +126,7 @@ export function previewArtistMerge() {
 }
 
 export function applyArtistMerge() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: (
 			input: ArtistMergePreviewInput & {
 				preview_token: string;
@@ -136,10 +137,10 @@ export function applyArtistMerge() {
 				...input,
 				idempotency_key: createUuid()
 			}),
-		onSuccess: async () => {
-			await applyEffects(catalogChanged(authStore.user?.id));
+		onSuccess: () => {
 			toastStore.show({ message: 'Artists merged', type: 'success' });
 		},
+		effects: () => [catalogChanged(authStore.user?.id)],
 		onError: (error) =>
 			toastStore.show({
 				message: errorMessage(error, 'The artists changed; preview the merge again'),

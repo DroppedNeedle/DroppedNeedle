@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-vi.mock('@tanstack/svelte-query', () => ({
-	createMutation: vi.fn((factory: () => Record<string, unknown>) => factory())
+vi.mock('$lib/queries/effects', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/queries/effects')>()),
+	createAppMutation: vi.fn((factory: () => Record<string, unknown>) => factory())
 }));
 
 vi.mock('$lib/api/client', () => ({
@@ -17,17 +18,9 @@ vi.mock('$lib/stores/toast', () => ({
 	toastStore: { show: vi.fn() }
 }));
 
-vi.mock('../QueryClient', () => ({
-	invalidateQueriesWithPersister: vi.fn(),
-	setQueryDataWithPersister: vi.fn()
-}));
-
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { invalidateQueriesWithPersister } from '../QueryClient';
-import { DownloadQueryKeyFactory } from '../downloads/DownloadQueryKeyFactory';
-import { LibraryQueryKeyFactory } from '../library/LibraryQueryKeyFactory';
-import { RequestQueryKeyFactory } from './RequestQueryKeyFactory';
+import { albumStatusChanged, type Effect } from '../effects';
 import { REQUESTS_ENDPOINTS } from './endpoints';
 import {
 	createApproveRequestMutation,
@@ -41,12 +34,11 @@ const mockPost = vi.mocked(api.v3.POST) as unknown as Mock<
 const mockDelete = vi.mocked(api.v3.DELETE) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
-const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);
 
 type MutationResult<Vars> = {
 	mutationFn: (vars: Vars) => Promise<unknown>;
 	onMutate?: (vars: Vars) => { userId: string | undefined };
-	onSuccess?: (data: unknown, vars: Vars, context: { userId: string | undefined }) => unknown;
+	effects: (data: unknown, vars: Vars, context: { userId: string | undefined }) => Effect[];
 	onError?: (err: unknown, vars: Vars) => unknown;
 };
 
@@ -59,21 +51,16 @@ beforeEach(() => {
 	setUser({ id: 'userA' });
 });
 
-type Filter = {
-	queryKey?: readonly unknown[];
-	predicate?: (query: { queryKey: unknown[] }) => boolean;
-};
+const names = (effects: Effect[]) => effects.map((effect) => effect.name);
 
-/** Whether any invalidation reached this key, by key prefix or by predicate. */
-function swept(queryKey: readonly unknown[]): boolean {
-	return mockInvalidate.mock.calls.some(([filter]) => {
-		const { queryKey: prefix, predicate } = (filter ?? {}) as Filter;
-		if (predicate) return predicate({ queryKey: Array.from(queryKey) });
-		return (
-			!!prefix && prefix.every((part, i) => JSON.stringify(part) === JSON.stringify(queryKey[i]))
-		);
-	});
-}
+// Every request action refreshes the requests, the downloads, the album it
+// moved and the approvals count.
+const SURFACE = [
+	'anyRequestChanged',
+	'anyDownloadChanged',
+	'albumStatusChanged',
+	'pendingApprovalsChanged'
+];
 
 describe('createCancelRequestMutation', () => {
 	it('cancels by mbid, then sweeps requests, downloads, and the album key', async () => {
@@ -88,23 +75,19 @@ describe('createCancelRequestMutation', () => {
 		expect(mockDelete).toHaveBeenCalledWith(REQUESTS_ENDPOINTS.cancel('mbid-1', 'album'));
 
 		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
-		await mutation.onSuccess?.({ success: true }, vars, context);
-		expect(swept(RequestQueryKeyFactory.active('userA'))).toBe(true);
-		expect(swept(DownloadQueryKeyFactory.tasks('userA'))).toBe(true);
-		expect(swept(LibraryQueryKeyFactory.album('userA', 'mbid-1'))).toBe(true);
+		const effects = mutation.effects({ success: true }, vars, context);
+		expect(names(effects)).toEqual(SURFACE);
+		expect(effects).toContainEqual(albumStatusChanged('userA', 'mbid-1'));
 	});
 
-	it('skips invalidation when the user changed mid-flight', async () => {
+	it('declares nothing changed when the user changed mid-flight', () => {
 		const mutation = createCancelRequestMutation() as unknown as MutationResult<{
 			mbid: string;
 			kind: 'album';
 		}>;
-		await mutation.onSuccess?.(
-			{ success: true },
-			{ mbid: 'mbid-1', kind: 'album' },
-			{ userId: 'userB' }
-		);
-		expect(mockInvalidate).not.toHaveBeenCalled();
+		expect(
+			mutation.effects({ success: true }, { mbid: 'mbid-1', kind: 'album' }, { userId: 'userB' })
+		).toEqual([]);
 	});
 });
 
@@ -121,10 +104,9 @@ describe('createApproveRequestMutation', () => {
 		expect(mockPost).toHaveBeenCalledWith(REQUESTS_ENDPOINTS.approve('mbid-3', 'album'));
 
 		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
-		await mutation.onSuccess?.({ success: true }, vars, context);
-		expect(swept(RequestQueryKeyFactory.active('userA'))).toBe(true);
-		expect(swept(DownloadQueryKeyFactory.tasks('userA'))).toBe(true);
-		expect(swept(LibraryQueryKeyFactory.album('userA', 'mbid-3'))).toBe(true);
+		const effects = mutation.effects({ success: true }, vars, context);
+		expect(names(effects)).toEqual(SURFACE);
+		expect(effects).toContainEqual(albumStatusChanged('userA', 'mbid-3'));
 	});
 });
 
@@ -141,7 +123,6 @@ describe('createRejectRequestMutation', () => {
 		expect(mockPost).toHaveBeenCalledWith(REQUESTS_ENDPOINTS.reject('mbid-4', 'album'));
 
 		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
-		await mutation.onSuccess?.({ success: true }, vars, context);
-		expect(swept(RequestQueryKeyFactory.active('userA'))).toBe(true);
+		expect(names(mutation.effects({ success: true }, vars, context))).toEqual(SURFACE);
 	});
 });

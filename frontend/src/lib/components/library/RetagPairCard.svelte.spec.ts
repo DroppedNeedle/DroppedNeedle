@@ -9,14 +9,12 @@ const h = vi.hoisted(() => {
 	return {
 		join: vi.fn(),
 		dismiss: vi.fn(),
-		goto: vi.fn(),
-		invalidate: vi.fn()
+		goto: vi.fn()
 	};
 });
 
 vi.mock('$app/navigation', () => ({ goto: h.goto }));
 vi.mock('$lib/stores/authStore.svelte', () => ({ authStore: { user: { id: 'admin-1' } } }));
-vi.mock('$lib/queries/QueryClient', () => ({ invalidateQueriesWithPersister: h.invalidate }));
 vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	getAlbumEditionsQuery: (_user: () => string, group: () => string) => ({
 		get data() {
@@ -73,7 +71,6 @@ beforeEach(() => {
 	h.join.mockReset().mockResolvedValue({ album_id: 'new' });
 	h.dismiss.mockReset().mockResolvedValue({ dismissed: true });
 	h.goto.mockReset();
-	h.invalidate.mockReset();
 });
 
 describe('RetagPairCard', () => {
@@ -180,7 +177,7 @@ describe('RetagPairCard', () => {
 		expect(h.join).not.toHaveBeenCalled();
 	});
 
-	it('shows a 409 in place and refetches the pairs', async () => {
+	it('shows a 409 in place', async () => {
 		h.join.mockRejectedValue(
 			new ApiError(
 				409,
@@ -195,9 +192,6 @@ describe('RetagPairCard', () => {
 		await expect
 			.element(page.getByRole('alert'))
 			.toHaveTextContent("An album's edition changed since this was shown. Look again.");
-		expect(h.invalidate).toHaveBeenCalledWith({
-			queryKey: expect.arrayContaining(['retag-pairs'])
-		});
 	});
 
 	it('goes to the album that stays when the page showed the other one', async () => {

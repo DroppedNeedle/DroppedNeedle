@@ -1,20 +1,17 @@
-import { createMutation } from '@tanstack/svelte-query';
-
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 
-import { PluginQueryKeyFactory } from './PluginQueryKeyFactory';
 import { PLUGIN_ENDPOINTS } from './endpoints';
-import { everyScope } from '$lib/queries/keys';
+import { createAppMutation, pluginsChanged } from '$lib/queries/effects';
 
 export type PluginInstallPreview = components['schemas']['PluginInstallPreview'];
 export type PluginInstallRequest = components['schemas']['PluginInstallRequest'];
 
 /** Download and check a repository without installing it. */
 export const previewPluginInstallMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
+		effects: () => [],
 		mutationFn: (request: PluginInstallRequest) =>
 			api.v3.POST(PLUGIN_ENDPOINTS.installPreview(), request),
 		onError: (error: Error) => {
@@ -27,19 +24,19 @@ export const previewPluginInstallMutation = () =>
 
 /** Install exactly the commit the admin previewed. */
 export const installPreviewedPluginMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (preview: PluginInstallPreview & { repository_url: string }) =>
 			api.v3.POST(PLUGIN_ENDPOINTS.install(), {
 				repository_url: preview.repository_url,
 				commit: preview.commit
 			}),
-		onSuccess: async (plugin) => {
+		onSuccess: (plugin) => {
 			toastStore.show({
 				message: `Installed ${plugin.display_name}. Enable it below when you are ready.`,
 				type: 'success'
 			});
-			await invalidateQueriesWithPersister(everyScope(PluginQueryKeyFactory.feature));
 		},
+		effects: () => [pluginsChanged()],
 		onError: (error: Error) => {
 			toastStore.show({ message: error.message || 'Install failed.', type: 'error' });
 		}
@@ -47,17 +44,17 @@ export const installPreviewedPluginMutation = () =>
 
 /** Move an installed plugin to its newest release (or the same ref). */
 export const updatePluginFromSourceMutation = () =>
-	createMutation(() => ({
+	createAppMutation(() => ({
 		mutationFn: (name: string) => api.v3.POST(PLUGIN_ENDPOINTS.update(name), {}),
-		onSuccess: async (result) => {
+		onSuccess: (result) => {
 			toastStore.show({
 				message: result.updated
 					? `${result.plugin.display_name} updated to ${result.plugin.version}.`
 					: `${result.plugin.display_name} is already up to date.`,
 				type: result.updated ? 'success' : 'info'
 			});
-			await invalidateQueriesWithPersister(everyScope(PluginQueryKeyFactory.feature));
 		},
+		effects: () => [pluginsChanged()],
 		onError: (error: Error) => {
 			toastStore.show({ message: error.message || 'Update failed.', type: 'error' });
 		}

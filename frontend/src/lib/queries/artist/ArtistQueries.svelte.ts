@@ -7,6 +7,7 @@ import type { ReleaseGroup } from '$lib/types';
 import type { MusicSource } from '$lib/stores/musicSource';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { setQueryDataWithPersister } from '../QueryClient';
+import { applyEffects, artistChanged } from '../effects';
 import { readNow } from '../readNow';
 import { toArtistInfoBasic, toArtistReleases } from '../catalog/catalogAdapters';
 import { CATALOG_ENDPOINTS } from '../catalog/endpoints';
@@ -158,6 +159,9 @@ export const getArtistReleasesInfiniteQuery = (getArtistId: Getter<string>) =>
 			}
 		};
 	});
+
+/** Reads one artist's header again. */
+export const refreshArtist = (artistId: string) => applyEffects(artistChanged(artistId));
 
 type ArtistReleasesInfiniteQuery = ReturnType<typeof getArtistReleasesInfiniteQuery>;
 

@@ -1,8 +1,8 @@
-import { createMutation, createQuery } from '@tanstack/svelte-query';
+import { createQuery } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
+import { createAppMutation, userQuotaChanged } from '$lib/queries/effects';
 
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { AUTH_ENDPOINTS } from './endpoints';
@@ -27,10 +27,9 @@ export const getUserQuotaQuery = (userId: () => string, enabled: () => boolean) 
 	}));
 
 export function saveUserQuota() {
-	return createMutation(() => ({
+	return createAppMutation(() => ({
 		mutationFn: ({ userId, override }: { userId: string; override: UserQuotaOverride }) =>
 			api.v3.PUT(AUTH_ENDPOINTS.userQuota(userId), override),
-		onSuccess: (_data, { userId }) =>
-			invalidateQueriesWithPersister({ queryKey: AuthQueryKeyFactory.userQuota(userId) })
+		effects: (_data, { userId }) => [userQuotaChanged(userId)]
 	}));
 }

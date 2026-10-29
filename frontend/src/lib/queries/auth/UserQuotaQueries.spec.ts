@@ -1,27 +1,32 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
-	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory()),
-	createMutation: vi.fn((factory: () => Record<string, unknown>) => factory())
+	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
 }));
 
 vi.mock('$lib/api/client', () => ({
 	api: { v3: { GET: vi.fn(), PUT: vi.fn() } }
 }));
 
+// The real effects module loads the cache helpers; stub them.
 vi.mock('$lib/queries/QueryClient', () => ({
-	invalidateQueriesWithPersister: vi.fn()
+	invalidateQueriesWithPersister: vi.fn(),
+	setQueryDataWithPersister: vi.fn()
+}));
+
+vi.mock('$lib/queries/effects', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/queries/effects')>()),
+	createAppMutation: vi.fn((factory: () => Record<string, unknown>) => factory())
 }));
 
 import { api } from '$lib/api/client';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
+import { userQuotaChanged, type Effect } from '$lib/queries/effects';
 import { AUTH_ENDPOINTS } from './endpoints';
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { getUserQuotaQuery, saveUserQuota } from './UserQuotaQueries.svelte';
 
 const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
 const mockPut = vi.mocked(api.v3.PUT) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
-const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);
 
 type QueryResult = {
 	queryKey?: unknown;
@@ -32,7 +37,7 @@ type QueryResult = {
 
 type MutationResult = {
 	mutationFn: (vars: { userId: string; override: Record<string, unknown> }) => Promise<unknown>;
-	onSuccess?: (data: unknown, vars: { userId: string }) => unknown;
+	effects: (data: unknown, vars: { userId: string }) => Effect[];
 };
 
 beforeEach(() => {
@@ -76,7 +81,7 @@ describe('getUserQuotaQuery', () => {
 });
 
 describe('saveUserQuota', () => {
-	it('writes the override block, then refreshes that user quota row', async () => {
+	it('writes the override block and declares that user quota row changed', async () => {
 		mockPut.mockResolvedValue({ quota_override: {} });
 		const mutation = saveUserQuota() as unknown as MutationResult;
 		const override = { max_requests: 25 };
@@ -84,9 +89,6 @@ describe('saveUserQuota', () => {
 		await mutation.mutationFn({ userId: 'user-9', override });
 
 		expect(mockPut).toHaveBeenCalledWith(AUTH_ENDPOINTS.userQuota('user-9'), override);
-		await mutation.onSuccess?.({}, { userId: 'user-9' });
-		expect(mockInvalidate).toHaveBeenCalledWith({
-			queryKey: AuthQueryKeyFactory.userQuota('user-9')
-		});
+		expect(mutation.effects({}, { userId: 'user-9' })).toEqual([userQuotaChanged('user-9')]);
 	});
 });

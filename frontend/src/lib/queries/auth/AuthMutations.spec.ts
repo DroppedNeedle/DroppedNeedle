@@ -3,8 +3,11 @@ import { AUTH_ENDPOINTS } from './endpoints';
 import { toAuthUser } from './types';
 
 vi.mock('@tanstack/svelte-query', () => ({
-	createMutation: vi.fn((factory: () => Record<string, unknown>) => factory()),
 	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
+}));
+
+vi.mock('$lib/queries/effects', () => ({
+	createAppMutation: vi.fn((factory: () => Record<string, unknown>) => factory())
 }));
 
 vi.mock('$lib/api/client', () => ({
@@ -12,7 +15,8 @@ vi.mock('$lib/api/client', () => ({
 }));
 
 import { api } from '$lib/api/client';
-import { createMutation, createQuery } from '@tanstack/svelte-query';
+import { createQuery } from '@tanstack/svelte-query';
+import { createAppMutation } from '$lib/queries/effects';
 
 const mockV3Get = vi.mocked(api.v3.GET) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
@@ -23,7 +27,7 @@ const mockV3Post = vi.mocked(api.v3.POST) as unknown as Mock<
 const mockAuthenticatedV3Post = vi.mocked(api.v3.POST) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
-const mockCreateMutation = vi.mocked(createMutation);
+const mockCreateMutation = vi.mocked(createAppMutation);
 const mockCreateQuery = vi.mocked(createQuery);
 
 beforeEach(() => {

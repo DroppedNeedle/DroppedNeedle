@@ -8,7 +8,7 @@ const mockShareMutate = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockResolveMutate = vi.fn();
 const mockRenameMutate = vi.fn();
-const mockInvalidate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockForgetSources = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock('$lib/api/playlists', () => ({
 	isRedactedPlaylist: (p: { is_redacted?: boolean } | null | undefined) => p?.is_redacted === true,
@@ -51,16 +51,18 @@ vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
 	removePlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	removePlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	updatePlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	reorderPlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false })
+	reorderPlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	refreshPlaylist: vi.fn().mockResolvedValue(undefined),
+	forgetPlaylistSources: mockForgetSources
 }));
 
-// A real client with no persister; the invalidation helper is a spy.
+// A real client with no persister.
 vi.mock('$lib/queries/QueryClient', async () => {
 	const { QueryClient } = await import('@tanstack/svelte-query');
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return {
 		queryClient,
-		invalidateQueriesWithPersister: mockInvalidate,
+		invalidateQueriesWithPersister: vi.fn(),
 		setQueryDataWithPersister: async (key: readonly unknown[], data: unknown): Promise<void> => {
 			// eslint-disable-next-line no-restricted-syntax -- this stands in for the helper itself
 			queryClient.setQueryData(key, data);
@@ -254,11 +256,7 @@ describe('Playlist detail page', () => {
 		});
 		// Empty resolve maps are never fresh, so the kept answer is dropped.
 		await vi.waitFor(() => {
-			expect(mockInvalidate).toHaveBeenCalledWith(
-				{ queryKey: PlaylistQueryKeyFactory.sources(undefined, 'pl-1'), exact: true },
-				undefined,
-				{ removePersisted: true }
-			);
+			expect(mockForgetSources).toHaveBeenCalledWith('pl-1');
 		});
 	});
 });

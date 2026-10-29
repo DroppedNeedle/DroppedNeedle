@@ -1,7 +1,6 @@
 import { serverEvents, type EventDispatcher } from '$lib/queries/events/dispatcher';
 import type { MuxUnsubscribe } from '$lib/queries/events/MuxEventStream';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
+import { applyEffects, downloadActivityChanged } from '$lib/queries/effects';
 import { getDownloadScope } from './downloadScope.svelte';
 
 let structuralRefreshGeneration: number | null = null;
@@ -13,10 +12,7 @@ function refreshObservedActivity() {
 	setTimeout(() => {
 		if (structuralRefreshGeneration === scope.generation) structuralRefreshGeneration = null;
 		if (!scope.userId || scope !== getDownloadScope()) return;
-		void invalidateQueriesWithPersister({
-			queryKey: DownloadQueryKeyFactory.activity(scope.userId),
-			exact: true
-		}).catch(() => undefined);
+		void applyEffects(downloadActivityChanged(scope.userId)).catch(() => undefined);
 	}, 100);
 }
 

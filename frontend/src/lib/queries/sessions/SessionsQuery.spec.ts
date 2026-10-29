@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
-	createMutation: vi.fn((factory: () => Record<string, unknown>) => factory()),
 	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory()),
 	queryOptions: vi.fn((opts: Record<string, unknown>) => opts)
 }));
@@ -15,15 +14,20 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 
-vi.mock('../QueryClient', () => ({
+// The real effects module loads the cache helpers; stub them.
+vi.mock('$lib/queries/QueryClient', () => ({
 	invalidateQueriesWithPersister: vi.fn(),
 	setQueryDataWithPersister: vi.fn()
 }));
 
+vi.mock('$lib/queries/effects', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/queries/effects')>()),
+	createAppMutation: vi.fn((factory: () => Record<string, unknown>) => factory())
+}));
+
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { invalidateQueriesWithPersister } from '../QueryClient';
-import { SessionsQueryKeyFactory } from './SessionsQueryKeyFactory';
+import { sessionsChanged, type Effect } from '../effects';
 import { SESSIONS_ENDPOINTS } from './endpoints';
 import { getSessionsQuery, getSessionsQueryOptions } from './SessionsQuery.svelte';
 import { createRevokeSessionMutation } from './SessionsMutations.svelte';
@@ -32,7 +36,6 @@ const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) =>
 const mockDelete = vi.mocked(api.v3.DELETE) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
-const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);
 
 type QueryResult = {
 	queryKey?: unknown;
@@ -43,7 +46,7 @@ type QueryResult = {
 type MutationResult = {
 	mutationFn: (vars: unknown) => Promise<unknown>;
 	onMutate?: (vars: unknown) => { userId: string | undefined };
-	onSuccess?: (data: unknown, vars: unknown, context: { userId: string | undefined }) => unknown;
+	effects: (data: unknown, vars: unknown, context: { userId: string | undefined }) => Effect[];
 };
 
 function setUser(user: { id: string } | null) {
@@ -80,7 +83,7 @@ describe('getSessionsQuery', () => {
 });
 
 describe('createRevokeSessionMutation', () => {
-	it('revokes by id then invalidates the sessions list', async () => {
+	it('revokes by id and declares the sessions list changed', async () => {
 		mockDelete.mockResolvedValue(undefined);
 		const mutation = createRevokeSessionMutation() as unknown as MutationResult;
 		const vars = { id: 'sess-9', label: 'Office laptop' };
@@ -89,17 +92,13 @@ describe('createRevokeSessionMutation', () => {
 		expect(mockDelete).toHaveBeenCalledWith(SESSIONS_ENDPOINTS.revoke('sess-9'));
 
 		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
-		await mutation.onSuccess?.(undefined, vars, context);
-		expect(mockInvalidate).toHaveBeenCalledWith({
-			queryKey: SessionsQueryKeyFactory.list('userA')
-		});
+		expect(mutation.effects(undefined, vars, context)).toEqual([sessionsChanged('userA')]);
 	});
 
-	it('skips invalidation when the user changed mid-flight', async () => {
+	it('declares nothing changed when the user changed mid-flight', () => {
 		const mutation = createRevokeSessionMutation() as unknown as MutationResult;
 		const vars = { id: 'sess-9', label: 'Office laptop' };
 
-		await mutation.onSuccess?.(undefined, vars, { userId: 'userB' });
-		expect(mockInvalidate).not.toHaveBeenCalled();
+		expect(mutation.effects(undefined, vars, { userId: 'userB' })).toEqual([]);
 	});
 });

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-vi.mock('@tanstack/svelte-query', () => ({
-	createMutation: vi.fn((factory: () => Record<string, unknown>) => factory())
+vi.mock('$lib/queries/effects', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/queries/effects')>()),
+	createAppMutation: vi.fn((factory: () => Record<string, unknown>) => factory())
 }));
 
 vi.mock('$lib/api/client', () => ({
@@ -23,8 +24,8 @@ import { api } from '$lib/api/client';
 import { removeLibraryAlbum, saveLibraryScanSchedule } from './LibraryMutations.svelte';
 import { LibraryV3Api } from './LibraryV3Api';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { WantedQueryKeyFactory } from '../wanted/WantedQueryKeyFactory';
-import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
+import { setQueryDataWithPersister } from '../QueryClient';
+import type { Effect } from '../effects';
 
 // The typed client's DELETE resolves to the response body; the mock stands in for it.
 const mockDelete = vi.mocked(api.v3.DELETE) as unknown as ReturnType<typeof vi.fn>;
@@ -35,7 +36,7 @@ beforeEach(() => {
 });
 
 describe('album removal mutation', () => {
-	it('clears exact membership and invalidates every affected cache tree', async () => {
+	it('clears exact membership and declares the catalog and wanted changed', async () => {
 		const result = {
 			success: true,
 			album_mbid: 'rg-1',
@@ -50,6 +51,7 @@ describe('album removal mutation', () => {
 				data: typeof result,
 				input: { mbid: string; stopWanted: boolean }
 			) => Promise<void>;
+			effects: () => Effect[];
 		};
 
 		const input = { mbid: 'release-1', stopWanted: true };
@@ -63,13 +65,10 @@ describe('album removal mutation', () => {
 			LibraryQueryKeyFactory.album(undefined, 'release-1'),
 			expect.any(Function)
 		);
-		expect(invalidateQueriesWithPersister).toHaveBeenCalledTimes(6);
-		const swept = vi
-			.mocked(invalidateQueriesWithPersister)
-			.mock.calls.some(([filter]) =>
-				filter?.predicate?.({ queryKey: WantedQueryKeyFactory.list('u') } as never)
-			);
-		expect(swept).toBe(true);
+		expect(mutation.effects().map((effect) => effect.name)).toEqual([
+			'catalogChanged',
+			'anyWantedChanged'
+		]);
 	});
 
 	it('does not report cache housekeeping failures as removal failures', async () => {
@@ -82,7 +81,6 @@ describe('album removal mutation', () => {
 		};
 		mockDelete.mockResolvedValueOnce(result);
 		vi.mocked(setQueryDataWithPersister).mockRejectedValueOnce(new Error('IndexedDB unavailable'));
-		vi.mocked(invalidateQueriesWithPersister).mockRejectedValueOnce(new Error('refresh failed'));
 		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 		const mutation = removeLibraryAlbum() as unknown as {
 			mutationFn: (input: { mbid: string; stopWanted: boolean }) => Promise<typeof result>;
@@ -96,8 +94,7 @@ describe('album removal mutation', () => {
 		const data = await mutation.mutationFn(input);
 
 		await expect(mutation.onSuccess(data, input)).resolves.toBeUndefined();
-		expect(invalidateQueriesWithPersister).toHaveBeenCalledTimes(6);
-		expect(consoleError).toHaveBeenCalledTimes(2);
+		expect(consoleError).toHaveBeenCalledTimes(1);
 		consoleError.mockRestore();
 	});
 });

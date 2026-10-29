@@ -4,13 +4,10 @@
 		createSaveReleasePreferencesMutation,
 		getReleasePreferencesQuery
 	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
-	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-	import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardActions from '$lib/ui/CardActions.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
-	import { everyScope } from '$lib/queries/keys';
 
 	const DEFAULT_PREFERENCES: UserPreferences = {
 		primary_types: ['album', 'ep', 'single'],
@@ -116,8 +113,8 @@
 		if (success) {
 			saveMessage = 'Saved. Artist pages and search results will refresh automatically.';
 
-			// these prefs change which releases show on artist pages + search
-			await invalidateQueriesWithPersister(everyScope(ArtistQueryKeyFactory.feature));
+			// these prefs change which releases show on search; the save itself
+			// refreshes artist pages
 			window.dispatchEvent(new CustomEvent('search-refresh'));
 
 			setTimeout(() => {

@@ -1,3 +1,9 @@
+import {
+	anyLibraryChanged,
+	applyEffects,
+	downloadTaskListChanged,
+	heldFilesChanged
+} from '$lib/queries/effects';
 import { getDownloadScope } from './downloadScope.svelte';
 import type { DownloadActivitySummary } from '$lib/types';
 
@@ -12,6 +18,21 @@ export interface DownloadActivityActions {
 	refreshDetails: boolean;
 	landedMbids: string[];
 	invalidateLibrary: boolean;
+}
+
+/**
+ * Refreshes what a move in the caller's active downloads makes stale: the
+ * task list, the held files and, once an album landed, the library.
+ */
+export function refreshAfterDownloadActivity(
+	userId: string,
+	actions: DownloadActivityActions
+): Promise<void> {
+	return applyEffects(
+		downloadTaskListChanged(userId),
+		heldFilesChanged(userId),
+		...(actions.invalidateLibrary ? [anyLibraryChanged()] : [])
+	);
 }
 
 export function createDownloadActivityObservation(): DownloadActivityObservation {
