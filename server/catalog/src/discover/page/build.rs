@@ -48,7 +48,13 @@ use crate::discover::sections::{self, Dedupe, Input, Page, SectionDef};
 
 /// Bound on any one upstream read in a build.
 const TASK_TIMEOUT: Duration = Duration::from_secs(25);
-/// Room past [`TASK_TIMEOUT`] for the Daily Mixes, which stop at it
+/// Bound on the Daily Mixes as a whole. They are built one after another,
+/// each from some 36 reads (three seeds, their similar artists and those
+/// artists' albums), so against a provider paced near one read a second
+/// [`TASK_TIMEOUT`] does not fit a single cold mix. The page builds in
+/// the background, so the longer bound keeps no one waiting.
+const MIXES_BUDGET: Duration = Duration::from_secs(120);
+/// Room past [`MIXES_BUDGET`] for the Daily Mixes, which stop at it
 /// themselves; the outer bound only catches a read that never returns.
 const MIXES_GRACE: Duration = Duration::from_secs(5);
 /// Bound on the Last.fm route into Top Picks during a ListenBrainz outage.
@@ -208,6 +214,19 @@ async fn bounded_by<T: Default>(
             T::default()
         }
     }
+}
+
+/// The outer bound on building one section.
+fn section_bound(key: SectionKey) -> Duration {
+    match key {
+        SectionKey::DailyMixes => MIXES_BUDGET + MIXES_GRACE,
+        _ => TASK_TIMEOUT,
+    }
+}
+
+/// When the Daily Mixes started at `now` stop building more.
+fn mixes_deadline(now: tokio::time::Instant) -> tokio::time::Instant {
+    now + MIXES_BUDGET
 }
 
 /// Run `builds` one after another until `deadline`, keeping what
@@ -409,12 +428,13 @@ impl Builder<'_> {
                 .filter(|def| def.dedupe != Dedupe::Artists)
                 .map(|def| async {
                     let name = def.key.name();
-                    let bound = match def.key {
-                        SectionKey::DailyMixes => TASK_TIMEOUT + MIXES_GRACE,
-                        _ => TASK_TIMEOUT,
-                    };
-                    let content =
-                        bounded_by(&self.ask, &name, bound, self.section(def.key, &ctx)).await;
+                    let content = bounded_by(
+                        &self.ask,
+                        &name,
+                        section_bound(def.key),
+                        self.section(def.key, &ctx),
+                    )
+                    .await;
                     (def.key, content)
                 }),
         )
@@ -1052,7 +1072,7 @@ impl Builder<'_> {
         if let Some(mixes) = self.memo.mixes(&key).await {
             return mixes;
         }
-        let deadline = tokio::time::Instant::now() + TASK_TIMEOUT;
+        let deadline = mixes_deadline(tokio::time::Instant::now());
         let ask = self.ask.watched();
         let (mixes, finished) = self
             .build_daily_mixes(
@@ -2442,7 +2462,9 @@ pub async fn mark_ownership(db: &Db, page: &mut DiscoverResponse) {
 
 #[cfg(test)]
 mod tests {
-    use super::{in_order_until, mix_split};
+    use super::{
+        SectionKey, TASK_TIMEOUT, in_order_until, mix_split, mixes_deadline, section_bound,
+    };
 
     /// The second mix never finishes: the first is kept, the third is not
     /// reached, and the set is reported incomplete. The deadline has
@@ -2457,6 +2479,31 @@ mod tests {
             Some(n)
         });
         assert_eq!(in_order_until(deadline, builds).await, (vec![1], false));
+    }
+
+    /// Three mixes of 30 s each, as a cold build against a provider paced
+    /// near one read a second takes: all of them fit the mixes' bound,
+    /// though each alone runs past the bound on one read.
+    #[tokio::test(start_paused = true)]
+    async fn slow_mixes_all_fit_their_own_bound() {
+        let builds = [1, 2, 3].map(|n| async move {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Some(n)
+        });
+        let deadline = mixes_deadline(tokio::time::Instant::now());
+        assert_eq!(
+            in_order_until(deadline, builds).await,
+            (vec![1, 2, 3], true)
+        );
+    }
+
+    /// The outer bound leaves the mixes room to stop at their own deadline;
+    /// every other shelf keeps the bound on one read.
+    #[test]
+    fn the_mixes_shelf_is_bounded_past_its_deadline() {
+        let now = tokio::time::Instant::now();
+        assert!(now + section_bound(SectionKey::DailyMixes) > mixes_deadline(now));
+        assert_eq!(section_bound(SectionKey::TopPicks), TASK_TIMEOUT);
     }
 
     #[test]
