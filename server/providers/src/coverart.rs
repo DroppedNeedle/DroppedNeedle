@@ -36,15 +36,27 @@ pub const TRANSPORT_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
 /// Redirect hops followed for one request before giving up.
 pub const MAX_REDIRECT_HOPS: usize = 5;
 
-/// The archive on the wire: standard statuses, a second's rest after a
-/// rate limit that names no wait, and at most 30 seconds for one that
-/// does.
+/// The archive on the wire: standard statuses, and at most 30 seconds for
+/// a rate limit that names its wait.
+///
+/// The archive's API page documents no rate limit, only that some
+/// endpoints answer 503 to a user over a limit (Cover_Art_Archive/API, read
+/// 2026-10-18). A headerless 429 is the MetaBrainz gateway's answer (seen
+/// 2026-10-20 from api.listenbrainz.org, lasting tens of minutes), and a
+/// burst of cover fetches has met a five-minute refusal from every
+/// MetaBrainz host, this one included. So a 429 that names no wait rests
+/// the row at least a minute, then at least two, doubling while they keep
+/// coming (jittered upward, by at most the same again), up to fifteen
+/// minutes.
 pub static SPEC: Spec = Spec {
     source: SOURCE,
     health_key: SOURCE,
     timeout: Duration::from_secs(30),
     max_body: TRANSPORT_MAX_BODY_BYTES,
-    retry_after_default: Backoff::Fixed(Duration::from_secs(1)),
+    retry_after_default: Backoff::ExponentialAtLeast {
+        base: Duration::from_secs(60),
+        max: Duration::from_secs(15 * 60),
+    },
     retry_after_cap: Duration::from_secs(30),
     classify: standard_classify,
 };

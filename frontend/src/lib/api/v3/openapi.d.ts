@@ -23816,7 +23816,7 @@ export interface components {
         };
         /** @description Today's YouTube search budget. */
         YouTubeQuotaStatus: {
-            /** @description UTC date the numbers belong to, YYYY-MM-DD. */
+            /** @description Quota day the numbers belong to (it starts at 08:00 UTC), YYYY-MM-DD. */
             date: string;
             /**
              * Format: int64
@@ -25206,6 +25206,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Last.fm is down (PROVIDER_UNAVAILABLE, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     more_by_artist: {
@@ -25450,6 +25459,15 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description ListenBrainz is down (PROVIDER_UNAVAILABLE, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25793,6 +25811,15 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Last.fm is down (PROVIDER_UNAVAILABLE, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -27063,6 +27090,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     album_preview: {
@@ -27110,6 +27146,15 @@ export interface operations {
             };
             /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -27369,8 +27414,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description A music provider failed */
-            502: {
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -27428,6 +27473,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     enrich_queue_item: {
@@ -27462,6 +27516,15 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -27560,6 +27623,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     ignored_releases: {
@@ -27639,8 +27711,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description MusicBrainz or YouTube failed */
-            502: {
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -27869,6 +27941,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     youtube_track_search: {
@@ -27930,6 +28011,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     discover_radio: {
@@ -27981,8 +28071,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description A music provider failed */
-            502: {
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -28041,8 +28131,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description A music provider failed */
-            502: {
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -28072,6 +28162,15 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -28124,6 +28223,15 @@ export interface operations {
             };
             /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -29596,6 +29704,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     integration_status: {
@@ -29627,6 +29744,15 @@ export interface operations {
             };
             /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -29690,6 +29816,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     trending_artists: {
@@ -29746,6 +29881,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     your_top_albums: {
@@ -29795,6 +29939,15 @@ export interface operations {
             };
             /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -46187,6 +46340,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description MusicBrainz is down (PROVIDER_UNAVAILABLE, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     get_navidrome: {
@@ -47349,6 +47511,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description YouTube is down or its daily quota is spent (PROVIDER_UNAVAILABLE, with retry_after) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     generate_track_link: {
@@ -47420,6 +47591,15 @@ export interface operations {
             };
             /** @description YouTube failed */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description YouTube is down or its daily quota is spent (PROVIDER_UNAVAILABLE, with retry_after) */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -41,21 +41,34 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 /// declines with HTTP 503 (MusicBrainz_API/Rate_Limiting, read
 /// 2026-10-18), so a 503 is a rate limit here; one that names no wait
 /// rests the bucket for a second.
+///
+/// A 429 is not on that page: it comes from the MetaBrainz gateway in
+/// front of every MetaBrainz host (seen 2026-10-20: an HTML 429 from
+/// openresty with `x-mb-gateway` and no `Retry-After`, for every read from
+/// one address), which does not clear in seconds. One that names no wait
+/// rests the bucket at least a minute, then at least two, doubling while
+/// they keep coming (jittered upward, by at most the same again), up to
+/// fifteen minutes.
 pub static OFFICIAL: Spec = Spec {
     source: SOURCE,
     health_key: "musicbrainz",
     timeout: TIMEOUT,
     max_body: MAX_BODY_BYTES,
-    retry_after_default: Backoff::Fixed(Duration::from_secs(1)),
+    retry_after_default: Backoff::ExponentialAtLeast {
+        base: Duration::from_secs(60),
+        max: Duration::from_secs(15 * 60),
+    },
     retry_after_cap: Duration::from_secs(60),
     classify: official_classify,
 };
 
+/// The rest after an official 503 that names no wait.
+const OFFICIAL_503_REST: Duration = Duration::from_secs(1);
+
 /// BrainzMash. A 429 rests the bucket for the wait it names, or backs off
 /// from one second to a minute while 429s keep naming none.
-/// A 503 is a dead mirror, not a rate signal, so
-/// it sets no cooldown. Failures count toward the mirror's own health
-/// entry.
+/// A 503 is a dead mirror, not a rate signal: it rests the bucket only for
+/// a wait it names. Failures count toward the mirror's own health entry.
 pub static BRAINZMASH: Spec = Spec {
     source: SOURCE,
     health_key: "musicbrainz-brainzmash",
@@ -84,17 +97,19 @@ fn official_classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
     if answer.reply.status() == 503 {
         return Err(ProviderError::RateLimited {
             provider: SOURCE,
-            retry_after: answer.retry_after(),
+            retry_after: Some(answer.retry_after().unwrap_or(OFFICIAL_503_REST)),
         });
     }
     standard_classify(answer)
 }
 
+/// A BrainzMash 503 is an outage, not a rate signal; the wait it names,
+/// when it names one, is passed on to the caller.
 fn brainzmash_classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
     if answer.reply.status() == 503 {
         return Err(ProviderError::Unavailable {
             provider: SOURCE,
-            retry_after: None,
+            retry_after: answer.retry_after(),
         });
     }
     standard_classify(answer)

@@ -21,14 +21,23 @@
 //! Rate limits, seen on 2026-10-18 per GitHub's REST rate-limit page: a 403
 //! or 429 with `x-ratelimit-remaining: 0` waits until `x-ratelimit-reset`
 //! (unix seconds); any other 403 or 429 with `retry-after` waits that long;
-//! with neither, wait at least a minute.
+//! with neither, wait at least a minute. A 403 with no rate-limit headers at
+//! all is a secondary limit and rests that minute; one that reports
+//! allowance left is a refusal.
+//!
+//! A renamed or transferred repository answers its old address with a
+//! redirect to the new one. It is followed on the same host or on
+//! `api.github.com`, so the update check keeps working after a rename.
 
 use std::time::{Duration, Instant};
 
 use crate::RequestPriority;
 use crate::client::{decode, parse_base, unusable_base};
 use crate::error::ProviderError;
-use crate::executor::{Answer, Backoff, Executor, Request, Spec, Url, standard_classify};
+use crate::executor::{
+    Answer, Backoff, Executor, RedirectRule, Redirects, Request, Spec, Url, never_foreign,
+    standard_classify,
+};
 
 mod models;
 
@@ -55,15 +64,16 @@ pub static SPEC: Spec = Spec {
     classify,
 };
 
-/// A 403 or 429 that says the allowance is spent, or names a wait, is a
-/// rate limit; any other 403 is a refusal.
+/// A 403 or 429 that says the allowance is spent, names a wait, or carries
+/// no rate-limit header at all is a rate limit; a 403 that reports
+/// allowance left is a refusal.
 fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
     let reply = answer.reply;
     if matches!(reply.status(), 403 | 429) {
-        let spent = reply
-            .header("x-ratelimit-remaining")
-            .is_some_and(|remaining| remaining.trim() == "0");
-        if spent || reply.header("retry-after").is_some() {
+        let remaining = reply.header("x-ratelimit-remaining");
+        let spent = remaining.is_some_and(|remaining| remaining.trim() == "0");
+        let named_wait = reply.header("retry-after").is_some();
+        if spent || named_wait || remaining.is_none() {
             return Err(ProviderError::RateLimited {
                 provider: SOURCE,
                 retry_after: answer.retry_after(),
@@ -71,6 +81,33 @@ fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
         }
     }
     standard_classify(answer)
+}
+
+/// Redirects stay on the host that sent them, or go to the API host.
+static HOPS: RedirectRule = RedirectRule {
+    max_hops: 3,
+    next: next_hop,
+    foreign: never_foreign,
+};
+
+/// The hop from `from` to `to`, when it stays on `from`'s origin or goes to
+/// `https://api.github.com`. Credentials and fragments are never followed.
+fn next_hop(from: &Url, to: &Url) -> Option<Url> {
+    if !to.username().is_empty() || to.password().is_some() {
+        return None;
+    }
+    let same_origin = to.origin() == from.origin();
+    let api_host = to.scheme() == "https"
+        && to.port().is_none()
+        && to
+            .domain()
+            .is_some_and(|host| host.eq_ignore_ascii_case("api.github.com"));
+    if !(same_origin || api_host) {
+        return None;
+    }
+    let mut next = to.clone();
+    next.set_fragment(None);
+    Some(next)
 }
 
 /// One published release, as the update check reads it.
@@ -127,7 +164,9 @@ impl GitHubClient {
                 self.memo_put(releases.clone()).await;
                 releases
             }
-            Err(error @ ProviderError::RateLimited { .. }) => {
+            // The executor has already logged an outage once; only what it
+            // passed over quietly is worth a warning here.
+            Err(error) if error.trips_breaker() => {
                 tracing::debug!(%error, "github releases skipped");
                 Vec::new()
             }
@@ -172,7 +211,8 @@ impl GitHubClient {
         let url = self.url.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
         let request = Request::get(url, &[], &[])
             .map_err(|_| unusable_base(SOURCE))?
-            .header("accept", "application/vnd.github+json");
+            .header("accept", "application/vnd.github+json")
+            .redirects(Redirects::Follow(&HOPS));
         let reply = self.executor.send(request, priority).await?;
         let list: ReleaseList = decode(&reply)?;
         Ok(list

@@ -3,39 +3,11 @@
  * of the outbound calls table and the polling gate.
  */
 import type { components } from '$lib/api/v3/openapi';
+import { PROVIDER_NAMES } from '$lib/utils/serviceError';
 
 type ProviderCallsView = components['schemas']['ProviderCallsView'];
 type RequestPriority = components['schemas']['RequestPriority'];
 type CallOutcome = components['schemas']['CallOutcome'];
-
-/** Display names for the rate rows; an unknown row falls back to its name. */
-export const PROVIDER_LABELS: Readonly<Record<string, string>> = {
-	musicbrainz: 'MusicBrainz',
-	brainzmash: 'BrainzMash',
-	'musicbrainz-mirror': 'MusicBrainz mirror',
-	listenbrainz: 'ListenBrainz',
-	lastfm: 'Last.fm',
-	audiodb: 'AudioDB',
-	'audiodb-premium': 'AudioDB premium',
-	'audiodb-media': 'AudioDB images',
-	acoustid: 'AcoustID',
-	coverartarchive: 'Cover Art Archive',
-	'wikimedia-api': 'Wikimedia',
-	'wikimedia-media': 'Wikimedia images',
-	discogs: 'Discogs',
-	itunes: 'iTunes',
-	deezer: 'Deezer',
-	lrclib: 'LRCLIB',
-	youtube: 'YouTube',
-	github: 'GitHub',
-	ticketmaster: 'Ticketmaster',
-	skiddle: 'Skiddle',
-	'open-meteo': 'Open-Meteo',
-	wikidata: 'Wikidata',
-	purchase: 'Purchase links',
-	plugins: 'Plugins',
-	previews: 'Previews'
-};
 
 export const PRIORITY_LABELS: Readonly<Record<RequestPriority, string>> = {
 	user_initiated: 'User',
@@ -69,7 +41,7 @@ export function humanizeWireValue(value: string): string {
 }
 
 export function providerLabel(provider: string): string {
-	return PROVIDER_LABELS[provider] ?? humanizeWireValue(provider);
+	return PROVIDER_NAMES[provider] ?? humanizeWireValue(provider);
 }
 
 export function formatCount(count: number): string {

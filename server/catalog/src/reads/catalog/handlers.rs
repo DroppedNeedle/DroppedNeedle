@@ -213,6 +213,7 @@ pub async fn top_albums(
         (status = 200, description = "Last.fm data; empty when Last.fm is not set up", body = LastFmArtistEnrichment),
         (status = 400, description = "Not a MusicBrainz id"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Last.fm is down (PROVIDER_UNAVAILABLE, with retry_after when known)"),
     )
 )]
 pub async fn artist_lastfm(
@@ -389,6 +390,7 @@ pub async fn album_refresh(
         (status = 200, description = "Similar albums", body = SimilarAlbumsResponse),
         (status = 400, description = "Not a MusicBrainz id or bad count"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "ListenBrainz is down (PROVIDER_UNAVAILABLE, with retry_after when known)"),
     )
 )]
 pub async fn similar_albums(
@@ -440,6 +442,7 @@ pub async fn more_by_artist(
         (status = 200, description = "Last.fm data; empty when Last.fm is not set up", body = LastFmAlbumEnrichment),
         (status = 400, description = "Not a MusicBrainz id"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Last.fm is down (PROVIDER_UNAVAILABLE, with retry_after when known)"),
     )
 )]
 pub async fn album_lastfm(

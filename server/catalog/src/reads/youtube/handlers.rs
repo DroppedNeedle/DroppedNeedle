@@ -53,6 +53,7 @@ pub fn routes() -> Routes<YouTubeLinks> {
         (status = 404, description = "YouTube had no video for the album"),
         (status = 429, description = "Today's search budget is spent (RATE_LIMITED)"),
         (status = 502, description = "YouTube failed"),
+        (status = 503, description = "YouTube is down or its daily quota is spent (PROVIDER_UNAVAILABLE, with retry_after)"),
         (status = 409, description = "YouTube search is not set up (NOT_CONFIGURED)"),
     )
 )]
@@ -194,6 +195,7 @@ pub async fn save_manual_link(
         (status = 404, description = "YouTube had no video for the track"),
         (status = 429, description = "Today's search budget is spent (RATE_LIMITED)"),
         (status = 502, description = "YouTube failed"),
+        (status = 503, description = "YouTube is down or its daily quota is spent (PROVIDER_UNAVAILABLE, with retry_after)"),
         (status = 409, description = "YouTube search is not set up (NOT_CONFIGURED)"),
     )
 )]

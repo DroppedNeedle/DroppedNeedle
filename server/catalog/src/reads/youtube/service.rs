@@ -12,7 +12,7 @@ use crate::reads::discover::youtube::LiveYouTube;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_providers::ProviderError;
-use droppedneedle_providers::youtube::utc_date;
+use droppedneedle_providers::youtube::quota_date;
 
 use super::models::{
     YouTubeLink, YouTubeLinkGenerateRequest, YouTubeLinkUpdateRequest, YouTubeManualLinkRequest,
@@ -101,7 +101,7 @@ impl YouTubeLinks {
     /// Today's search budget. While search is switched off or has no key
     /// there is nothing to spend, which reads as a zero budget.
     pub async fn quota(&self) -> YouTubeQuotaStatus {
-        let date = utc_date(self.clock.now_unix());
+        let date = quota_date(self.clock.now_unix());
         match self.search.quota().await {
             Some(quota) => quota_status(quota, date),
             None => YouTubeQuotaStatus {

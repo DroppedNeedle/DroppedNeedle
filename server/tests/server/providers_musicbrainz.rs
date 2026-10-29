@@ -427,9 +427,9 @@ async fn rate_limit_surfaces_retry_after_and_degrades_best_effort() {
         matches!(
             error,
             ProviderError::RateLimited {
-                retry_after: None,
+                retry_after: Some(wait),
                 ..
-            }
+            } if wait == Duration::from_secs(1)
         ),
         "got {error:?}"
     );

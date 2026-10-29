@@ -465,9 +465,10 @@ fn brainzmash() -> MbSource {
     }
 }
 
-/// The MusicBrainz rules: the official 503 is its rate limit; a BrainzMash
-/// 429 that names no wait rests the mirror anyway, and a page meeting a
-/// long rest is answered at once.
+/// The MusicBrainz rules: the official 503 is its rate limit and a
+/// headerless official 429 (the MetaBrainz gateway) rests a minute or more,
+/// growing; a BrainzMash 429 that names no wait rests the mirror anyway,
+/// and a page meeting a long rest is answered at once.
 #[tokio::test(start_paused = true)]
 async fn musicbrainz_hooks() {
     let wire = Arc::new(ScriptedWire::new());
@@ -484,16 +485,47 @@ async fn musicbrainz_hooks() {
         matches!(
             error,
             ProviderError::RateLimited {
-                retry_after: None,
+                retry_after: Some(wait),
                 ..
-            }
+            } if wait == Duration::from_secs(1)
         ),
-        "official 503 is a rate limit: {error:?}"
+        "official 503 is a rate limit of a second: {error:?}"
     );
     assert!(
         providers.limiter("musicbrainz").unwrap().cooling_for() > Duration::ZERO,
         "and rests the bucket"
     );
+
+    // Three headerless 429s in a row: at least a minute, then two, then
+    // four, each jittered upward by at most the same again.
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &official,
+        429,
+        &[("content-type", "text/html")],
+        "<html>429</html>",
+    );
+    let providers = providers_over(&wire);
+    let reads = providers
+        .musicbrainz
+        .fixed(MbSource::official(), RequestPriority::BackgroundSync);
+    let mut rests = Vec::new();
+    for _ in 0..3 {
+        reads
+            .lookup_release(RELEASE, &[], Criticality::IdentityCritical)
+            .await
+            .expect_err("429");
+        rests.push(providers.limiter("musicbrainz").unwrap().cooling_for());
+    }
+    assert_eq!(wire.sent().len(), 3, "one request per rest");
+    for (n, rest) in rests.iter().enumerate() {
+        let full = Duration::from_secs(60 << n);
+        assert!(
+            (full..=full * 2).contains(rest),
+            "headerless 429 number {}: rests {rest:?}, want {full:?} to twice that",
+            n + 1
+        );
+    }
 
     let wire = Arc::new(ScriptedWire::new());
     let mirror = format!("{}/release/{RELEASE}", musicbrainz::BRAINZMASH_API_BASE);
@@ -1018,12 +1050,11 @@ async fn acoustid_hooks() {
 }
 
 /// GitHub: a 403 that says the allowance is spent rests until
-/// `x-ratelimit-reset`, one that names a wait rests that long, and any
-/// other 403 is a refusal. Ticketmaster: a 429 naming the spent daily
-/// allowance rests until `Rate-Limit-Reset` (unix milliseconds), or an hour
-/// when it names none, and the key its body echoes never reaches the error.
+/// `x-ratelimit-reset`, one that names a wait rests that long, one with no
+/// rate-limit header at all rests a minute, and one that reports allowance
+/// left is a refusal.
 #[tokio::test(start_paused = true)]
-async fn github_and_ticketmaster_hooks() {
+async fn github_hooks() {
     use droppedneedle_kernel::clock::Clock as _;
     use droppedneedle_providers::github;
 
@@ -1048,6 +1079,20 @@ async fn github_and_ticketmaster_hooks() {
             answer(403, &[("retry-after", "30")], "{}"),
             |error| matches!(error, ProviderError::RateLimited { retry_after: Some(wait), .. } if *wait == Duration::from_secs(30)),
             Duration::from_secs(30),
+        ),
+        (
+            "403 with no rate-limit headers (a secondary limit)",
+            answer(403, &[], "{}"),
+            |error| {
+                matches!(
+                    error,
+                    ProviderError::RateLimited {
+                        retry_after: None,
+                        ..
+                    }
+                )
+            },
+            Duration::from_secs(60),
         ),
         (
             "plain 403",
@@ -1079,6 +1124,15 @@ async fn github_and_ticketmaster_hooks() {
             "{name}: rests {cooling:?}, expected {rest:?}"
         );
     }
+}
+
+/// Ticketmaster: a 429 naming the spent daily allowance rests until
+/// `Rate-Limit-Reset` (unix milliseconds), or an hour when it names none,
+/// and the key its body echoes reaches no error, answer or log line.
+#[test]
+fn ticketmaster_quota_hook() {
+    use droppedneedle_kernel::clock::Clock as _;
+    use droppedneedle_kernel::error::ApiError;
 
     let quota = r#"{"fault": {"faultstring": "Rate limit quota violation. Quota limit exceeded. Identifier : TM-SECRET", "detail": {"errorcode": "policies.ratelimit.QuotaViolation"}}}"#;
     let reset_ms = ((SystemClock.now_unix() + 120) * 1000).to_string();
@@ -1102,18 +1156,27 @@ async fn github_and_ticketmaster_hooks() {
             scripted,
         );
         let providers = providers_over(&wire);
-        let error = providers
-            .ticketmaster
-            .search_attractions("TM-SECRET", "Radiohead", RequestPriority::UserInitiated)
-            .await
-            .expect_err(name);
+        let (error, logs) = crate::common::logs::capture_logs(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(providers.ticketmaster.search_attractions(
+                    "TM-SECRET",
+                    "Radiohead",
+                    RequestPriority::UserInitiated,
+                ))
+                .expect_err(name)
+        });
         assert!(
             matches!(error, ProviderError::RateLimited { retry_after: Some(wait), .. } if wait <= rest && wait + Duration::from_secs(2) >= rest),
             "{name}: got {error:?}"
         );
+        let answered = ApiError::from(error.clone());
+        let seen = format!("{error} {error:?} {answered:?} {logs}");
         assert!(
-            !format!("{error} {error:?}").contains("TM-SECRET"),
-            "{name}: the key leaked"
+            !seen.contains("TM-SECRET"),
+            "{name}: the key leaked: {seen}"
         );
         assert_eq!(wire.sent().len(), 1, "{name}: requests sent");
         assert!(
@@ -1126,6 +1189,122 @@ async fn github_and_ticketmaster_hooks() {
             "{name}: rests {cooling:?}, expected {rest:?}"
         );
     }
+}
+
+/// A renamed repository's redirect is followed on the same host, so the
+/// update check still finds its releases; a redirect to another host is
+/// refused.
+#[tokio::test]
+async fn github_follows_a_renamed_repository() {
+    let releases = "http://127.0.0.1:9/releases";
+    let moved = "http://127.0.0.1:9/repositories/42/releases";
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        Method::Get,
+        releases,
+        answer(301, &[("location", moved)], ""),
+    );
+    wire.answer(
+        moved,
+        200,
+        &[],
+        r#"[{"tag_name": "v3.0.0", "draft": false, "prerelease": false}]"#,
+    );
+    let providers = Providers::unpaced(wire.clone());
+    let found = providers
+        .github
+        .fetch_latest_release(RequestPriority::UserInitiated)
+        .await
+        .map(|release| release.tag_name);
+    assert_eq!(found.as_deref(), Some("v3.0.0"));
+
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        Method::Get,
+        releases,
+        answer(301, &[("location", "https://example.com/releases")], ""),
+    );
+    let providers = Providers::unpaced(wire.clone());
+    assert!(
+        providers
+            .github
+            .fetch_releases(RequestPriority::UserInitiated)
+            .await
+            .is_empty()
+    );
+    assert_eq!(wire.sent().len(), 1, "the other host is never asked");
+}
+
+/// YouTube's refusals answer honestly. A key it does not accept (the
+/// recorded 400) answers the refused-key 409 on search. A spent daily quota
+/// is a 503 naming YouTube with the wait until the quota day turns at 08:00
+/// UTC, and the rest of that day sends nothing.
+#[tokio::test]
+async fn youtube_refusals_answer_honestly() {
+    use droppedneedle_kernel::clock::ManualClock;
+    use droppedneedle_kernel::error::ApiError;
+    use droppedneedle_providers::youtube::{YouTubeClient, YouTubeSettings, YoutubeError};
+
+    const SEARCH: &str = "http://127.0.0.1:9/youtube/youtube/v3/search";
+    let invalid_key = include_str!("../fixtures/youtube/search_invalid_key.json");
+    let quota_spent = r#"{"error": {"code": 403, "message": "quota", "errors": [{"reason": "quotaExceeded", "domain": "youtube.quota"}]}}"#;
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(SEARCH, 400, &[], invalid_key);
+    wire.answer(SEARCH, 403, &[], quota_spent);
+    let providers = Providers::unpaced(wire.clone());
+    let scratch = crate::common::ScratchDir::new("youtube-refusals");
+    // 18:00 UTC: the quota day turns at 08:00 UTC, in fourteen hours.
+    let clock = Arc::new(ManualClock::at((1_777_939_200 + 18 * 3600) * 1000));
+    let client = YouTubeClient::new(
+        providers.youtube.clone(),
+        scratch.join("youtube_quota.json"),
+        YouTubeSettings {
+            api_key: "not-a-key".to_owned(),
+            enabled: true,
+            api_enabled: true,
+            daily_quota_limit: 80,
+        },
+        clock,
+        providers.cache.clone(),
+    )
+    .unwrap();
+    let refused = |result: Result<Option<String>, YoutubeError>| match result {
+        Err(YoutubeError::Provider(error)) => ApiError::from(error),
+        other => panic!("not a provider failure: {other:?}"),
+    };
+
+    let answered = refused(
+        client
+            .search_video("Portishead", "Dummy", RequestPriority::UserInitiated)
+            .await,
+    );
+    assert_eq!(answered.status().as_u16(), 409, "{answered:?}");
+    assert_eq!(answered.code(), "PROVIDER_NOT_CONFIGURED");
+
+    let spent = client
+        .search_video("Portishead", "Third", RequestPriority::UserInitiated)
+        .await;
+    assert!(
+        matches!(
+            &spent,
+            Err(YoutubeError::Provider(ProviderError::Unavailable {
+                provider: "youtube",
+                retry_after: Some(wait),
+            })) if *wait == Duration::from_secs(14 * 3600)
+        ),
+        "{spent:?}"
+    );
+    let answered = refused(spent);
+    assert_eq!(answered.status().as_u16(), 503, "{answered:?}");
+    assert_eq!(answered.code(), "PROVIDER_UNAVAILABLE");
+
+    assert!(matches!(
+        client
+            .search_video("Portishead", "Roseland", RequestPriority::UserInitiated)
+            .await,
+        Err(YoutubeError::QuotaExhausted)
+    ));
+    assert_eq!(wire.sent().len(), 2, "nothing more is sent today");
 }
 
 /// A key in the query or in the path never shows in the error or in any

@@ -135,6 +135,7 @@ pub async fn get_discover(
     responses(
         (status = 202, description = "Refresh triggered", body = RefreshResponse),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn refresh_discover(
@@ -157,6 +158,7 @@ pub async fn refresh_discover(
         (status = 200, description = "Personalization cursor", body = DiscoverActivityResponse),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn record_activity(
@@ -181,7 +183,7 @@ pub async fn record_activity(
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Unknown seed album or playlist"),
-        (status = 502, description = "A music provider failed"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn discover_radio(
@@ -206,7 +208,7 @@ pub async fn discover_radio(
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Unknown seed album or playlist"),
-        (status = 502, description = "A music provider failed"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn radio_plan(
@@ -231,7 +233,7 @@ pub async fn radio_plan(
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Unknown seed album or playlist"),
-        (status = 502, description = "A music provider failed"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn playlist_suggestions(
@@ -260,6 +262,7 @@ pub async fn playlist_suggestions(
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "The library check failed"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn get_queue(
@@ -324,6 +327,7 @@ pub async fn queue_generate(
         (status = 200, description = "Card details", body = QueueEnrichment),
         (status = 400, description = "Bad release-group id"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn enrich_queue_item(
@@ -348,7 +352,7 @@ pub async fn enrich_queue_item(
         (status = 200, description = "Card preview", body = DiscoverQueuePreview),
         (status = 400, description = "Bad release-group id"),
         (status = 401, description = "Not authenticated"),
-        (status = 502, description = "MusicBrainz or YouTube failed"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn preview_queue_item(
@@ -374,6 +378,7 @@ pub async fn preview_queue_item(
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "The ignore could not be saved"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn ignore_queue_item(
@@ -447,6 +452,7 @@ pub async fn validate_queue(
         (status = 401, description = "Not authenticated"),
         (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)"),
         (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn youtube_search(
@@ -475,6 +481,7 @@ pub async fn youtube_search(
         (status = 401, description = "Not authenticated"),
         (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)"),
         (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn youtube_track_search(
@@ -546,6 +553,7 @@ pub async fn youtube_cache_check(
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
         (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn track_preview(
@@ -574,6 +582,7 @@ pub async fn track_preview(
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
         (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn album_preview(
@@ -620,6 +629,7 @@ pub async fn get_home(
         (status = 200, description = "Integration availability", body = IntegrationStatus),
         (status = 401, description = "Not authenticated"),
         (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn integration_status(
@@ -647,6 +657,7 @@ pub async fn integration_status(
         (status = 200, description = "Genre detail", body = GenreDetailResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn genre_detail(
@@ -684,6 +695,7 @@ pub async fn genre_detail(
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
         (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn trending_artists(
@@ -720,6 +732,7 @@ pub async fn trending_artists(
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
         (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn popular_albums(
@@ -756,6 +769,7 @@ pub async fn popular_albums(
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
         (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
+        (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
 pub async fn your_top_albums(

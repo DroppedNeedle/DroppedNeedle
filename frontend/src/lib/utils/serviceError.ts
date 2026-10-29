@@ -12,15 +12,23 @@ export interface ServiceErrorView {
 	settingsHref?: string;
 }
 
-/** Names of the outside services the server reports by key. */
-const PROVIDER_NAMES: Readonly<Record<string, string>> = {
+/**
+ * Names of the outside services, by the key the server reports them under:
+ * an error's `details.provider` and a rate row's or cache source's name.
+ */
+export const PROVIDER_NAMES: Readonly<Record<string, string>> = {
 	musicbrainz: 'MusicBrainz',
 	brainzmash: 'BrainzMash',
+	'musicbrainz-mirror': 'MusicBrainz mirror',
 	listenbrainz: 'ListenBrainz',
 	lastfm: 'Last.fm',
 	coverartarchive: 'Cover Art Archive',
 	audiodb: 'TheAudioDB',
+	'audiodb-premium': 'TheAudioDB premium',
+	'audiodb-media': 'TheAudioDB images',
 	acoustid: 'AcoustID',
+	'wikimedia-api': 'Wikimedia',
+	'wikimedia-media': 'Wikimedia images',
 	discogs: 'Discogs',
 	itunes: 'iTunes',
 	deezer: 'Deezer',
@@ -30,7 +38,11 @@ const PROVIDER_NAMES: Readonly<Record<string, string>> = {
 	ticketmaster: 'Ticketmaster',
 	skiddle: 'Skiddle',
 	geocoding: 'Open-Meteo',
-	github: 'GitHub'
+	'open-meteo': 'Open-Meteo',
+	github: 'GitHub',
+	purchase: 'Purchase links',
+	plugins: 'Plugins',
+	previews: 'Previews'
 };
 
 function detail(error: ApiError, key: string): unknown {

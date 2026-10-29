@@ -3,8 +3,10 @@
 //! Services return [`ServiceError`]; this is the only place it meets a
 //! status. A feature that needs setting up answers 409 with its own code and
 //! sentence, so the page can say what to do. A provider failure answers by
-//! its kind (an outage is 503 `PROVIDER_UNAVAILABLE`). Other faults keep
-//! their status with the fixed body; their cause goes to the log only.
+//! its kind (an outage is 503 `PROVIDER_UNAVAILABLE`); another source that
+//! failed (the library, a media server) is 503 with the fixed body. Other
+//! faults keep their status with the fixed body; their cause goes to the
+//! log only.
 
 use axum::http::StatusCode;
 use droppedneedle_kernel::error::{ApiError, RATE_LIMITED};
@@ -22,7 +24,9 @@ impl From<ServiceError> for ApiError {
             ServiceError::NotFound => ApiError::not_found(),
             ServiceError::InvalidInput(message) => ApiError::invalid_input(message),
             ServiceError::Provider(error) => error.into(),
-            ServiceError::Upstream(cause) => ApiError::fault(StatusCode::BAD_GATEWAY, cause),
+            ServiceError::Upstream(cause) => {
+                ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, cause)
+            }
             ServiceError::Internal(cause) => ApiError::internal(cause),
             ServiceError::NotConfigured(message) => {
                 ApiError::new(StatusCode::CONFLICT, NOT_CONFIGURED, message)

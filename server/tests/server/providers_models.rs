@@ -1492,7 +1492,7 @@ async fn youtube_refusals_map_to_their_variants() {
             include_str!("../fixtures/youtube/search_invalid_key.json")
         )
         .await,
-        Err(ProviderError::BadRequest { status: 400, .. })
+        Err(ProviderError::Unauthorized { .. })
     ));
     assert!(matches!(
         youtube_check(

@@ -366,6 +366,10 @@ fn youtube_failure(error: &ProviderError) -> String {
         return wait;
     }
     match error {
+        ProviderError::Unauthorized { .. } | ProviderError::BadRequest { .. } => {
+            "The key was refused.".to_owned()
+        }
+        ProviderError::Disabled { .. } => "The daily quota is spent.".to_owned(),
         ProviderError::Forbidden { .. } => {
             "API key is invalid or YouTube Data API is not enabled.".to_owned()
         }

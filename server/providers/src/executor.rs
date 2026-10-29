@@ -293,6 +293,15 @@ pub enum Backoff {
         /// The longest wait.
         max: Duration,
     },
+    /// Doubling from `base` like [`Backoff::Exponential`], jittered upward
+    /// (between one and two times the doubled wait), so no rest is shorter
+    /// than the doubled wait; never longer than `max`.
+    ExponentialAtLeast {
+        /// The shortest first wait.
+        base: Duration,
+        /// The longest wait.
+        max: Duration,
+    },
 }
 
 /// One answer as the classifier sees it, with the kernel clock's time for
@@ -845,6 +854,11 @@ impl Executor {
                 let run = self.limiter.note_headerless_limit();
                 let doubled = base.saturating_mul(1u32 << run.saturating_sub(1).min(10));
                 doubled.min(max).mul_f64(0.5 + 0.5 * unit_random())
+            }
+            Backoff::ExponentialAtLeast { base, max } => {
+                let run = self.limiter.note_headerless_limit();
+                let doubled = base.saturating_mul(1u32 << run.saturating_sub(1).min(10));
+                doubled.mul_f64(1.0 + unit_random()).min(max)
             }
         })
     }

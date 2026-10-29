@@ -82,7 +82,7 @@ impl From<ProviderFailure> for ServiceError {
 }
 
 /// Map a failure of a store this server owns: a failed read is an internal
-/// fault (500), not a provider fault (502).
+/// fault (500), not a source being down (503).
 fn owned_store_failure(failure: ProviderFailure) -> ServiceError {
     match failure {
         ProviderFailure::Provider(error) => ServiceError::Provider(error),
@@ -131,7 +131,7 @@ fn check_name(value: &str, what: &str) -> Result<(), ServiceError> {
 }
 
 /// Cached discover shelves for the user. The cache is ours, so a failed
-/// read is an internal fault (500), not a provider fault (502).
+/// read is an internal fault (500), not a source being down (503).
 pub async fn discover(deps: &ReadsDeps, user_id: &str) -> Result<DiscoverResponse, ServiceError> {
     deps.content
         .discover(user_id)

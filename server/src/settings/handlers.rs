@@ -1016,7 +1016,8 @@ pub async fn consent_brainzmash(
     responses(
         (status = 200, description = "Verified settings", body = MusicBrainzSettingsView),
         (status = 409, description = "Proposal is stale, or BrainzMash is active"),
-        (status = 502, description = "Probe failed")
+        (status = 502, description = "Probe failed"),
+        (status = 503, description = "MusicBrainz is down (PROVIDER_UNAVAILABLE, with retry_after when known)")
     )
 )]
 pub async fn verify_musicbrainz(

@@ -64,6 +64,11 @@ pub(super) struct GoogleErrorDetail {
     /// One entry per reason. Empty when the body names none.
     #[serde(default)]
     pub(super) errors: Vec<ErrorReason>,
+    /// Typed details. A refused key names `API_KEY_INVALID` here (in
+    /// `search_invalid_key.json`) while its `errors` reason is only
+    /// `badRequest`. Empty when the body has none.
+    #[serde(default)]
+    pub(super) details: Vec<ErrorReason>,
 }
 
 /// One reason an error names.

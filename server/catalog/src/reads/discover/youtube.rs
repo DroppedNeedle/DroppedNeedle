@@ -15,7 +15,9 @@ use std::sync::Arc;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::runtime_config::{Live, secret_sections::YouTubeConnection};
 use droppedneedle_providers::RequestPriority;
-use droppedneedle_providers::youtube::{SearchKind, YouTubeClient, YouTubeSettings, YoutubeError};
+use droppedneedle_providers::youtube::{
+    SearchKind, YouTubeClient, YouTubeSettings, YoutubeError, next_quota_reset,
+};
 
 /// Why search is off when the quota file could not be read.
 const NO_QUOTA_FILE: &str = "YouTube search is off: its quota file could not be read.";
@@ -86,18 +88,12 @@ impl LiveYouTube {
                 "YouTube search needs an API key under Settings > YouTube.",
             ),
             YoutubeError::QuotaExhausted => ProviderFailure::Exhausted(
-                "Today's YouTube search quota is used up; it resets at midnight UTC.".to_owned(),
+                "Today's YouTube search quota is used up; it resets at 08:00 UTC.".to_owned(),
             ),
             YoutubeError::Provider(error) => ProviderFailure::Provider(error),
             other => ProviderFailure::failed(other.to_string()),
         })
     }
-}
-
-/// Unix second of the next UTC midnight after `now`, when the daily quota
-/// resets.
-fn next_utc_midnight(now: i64) -> i64 {
-    (now.div_euclid(86_400) + 1) * 86_400
 }
 
 impl LiveYouTube {
@@ -176,7 +172,7 @@ impl LiveYouTube {
             Some(YouTubeQuotaResponse {
                 used: i64::from(status.used),
                 limit: i64::from(status.limit),
-                resets_at: next_utc_midnight(self.clock.now_unix()),
+                resets_at: next_quota_reset(self.clock.now_unix()),
             })
         })
     }

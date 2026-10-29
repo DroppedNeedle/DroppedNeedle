@@ -12,17 +12,22 @@
 //! one unit from a daily budget persisted in `youtube_quota.json` before any
 //! HTTP leaves the box, so two concurrent searches (two users) cannot spend
 //! the last slot twice, and a restart never forgets what today already spent.
-//! Rollover is by UTC date, read from the kernel clock the client is given:
-//! a file stamped yesterday reads as zero. The write path is atomic (temp
+//! The budget's day follows YouTube's own: it starts at 08:00 UTC (see
+//! [`QUOTA_DAY_STARTS`]), read from the kernel clock the client is given:
+//! a file stamped with an earlier day reads as zero. The write path is atomic (temp
 //! file, fsync, rename, directory fsync), kept from v2.
 //!
 //! The daily budget is not a rate: it stays here, before the executor.
 //! Each reserved unit pays for exactly one request, so a search is sent
 //! once and never retried by the executor. The request itself goes through
 //! the executor at the `youtube` rate row, with the key as a query pair,
-//! never in an error or a log line. A 403 is [`ProviderError::Forbidden`],
+//! never in an error or a log line. A 400 whose body names an invalid key
+//! is [`ProviderError::Unauthorized`]. A 403 is [`ProviderError::Forbidden`],
 //! except one whose body names a spent quota: that is
-//! [`ProviderError::Disabled`], the provider's own daily cap.
+//! [`ProviderError::Disabled`], the provider's own daily cap. A search that
+//! meets it marks today's budget spent, so nothing more is sent until the
+//! budget's day turns, and answers [`ProviderError::Unavailable`] with the
+//! wait until then.
 //!
 //! Charging rules, kept from v2's quota tests:
 //!
@@ -30,7 +35,8 @@
 //!   search, an API resting after a rate limit fail before any HTTP,
 //!   leaving the file untouched.
 //! - A reservation that never dispatches (disabled mid-flight, limit
-//!   lowered) is refunded.
+//!   lowered, or the executor turning the search down unsent because the
+//!   API started resting) is refunded.
 //! - A dispatched search stays charged whatever the outcome: transport
 //!   failures, upstream errors, and bad payloads are charged, never cached.
 //! - A successful empty result (`items: []`) caches the absence, so the UI
@@ -78,6 +84,13 @@ pub const YOUTUBE_API_HOST: &str = "https://www.googleapis.com";
 pub const DEFAULT_DAILY_QUOTA_LIMIT: u32 = 80;
 /// Largest accepted daily budget (v2 validates 1..=10000).
 pub const MAX_DAILY_QUOTA_LIMIT: u32 = 10_000;
+/// When the quota day starts, in seconds after midnight UTC. YouTube's
+/// quota resets at midnight Pacific Time ("Quota usage resets at midnight
+/// Pacific Time", YouTube Data API docs, getting-started and quota cost
+/// pages, read 2026-10-29). That is 07:00 UTC in daylight time and 08:00
+/// UTC in standard time, so the day turns at 08:00 UTC: at or after
+/// Google's reset all year, without a time zone table.
+pub const QUOTA_DAY_STARTS: i64 = 8 * 3600;
 /// Largest search answer read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 /// The video the key check asks for. The answer must name no other video.
@@ -86,6 +99,9 @@ const CHECK_VIDEO_ID: &str = "dQw4w9WgXcQ";
 /// reference lists it (https://developers.google.com/youtube/v3/docs/errors,
 /// read 2026-10-29); the spent-quota answer itself is not recorded.
 const QUOTA_SPENT: &str = "quotaExceeded";
+/// The detail reason of a 400 for a key Google does not accept, recorded in
+/// `tests/fixtures/youtube/search_invalid_key.json` (2026-10-29).
+const KEY_INVALID: &str = "API_KEY_INVALID";
 
 /// YouTube on the wire: the standard rules, v2's 10 second deadline.
 pub static SPEC: Spec = Spec {
@@ -98,12 +114,17 @@ pub static SPEC: Spec = Spec {
     classify,
 };
 
-/// The status rules, with one YouTube answer of its own: a 403 whose body
-/// names a spent daily quota is `Disabled`. That is the provider's own cap,
-/// answered the same way until the quota resets, and not an outage. The
-/// message is ours, not the body's text.
+/// The status rules, with two YouTube answers of its own: a 400 whose body
+/// names an invalid key is `Unauthorized`, and a 403 whose body names a
+/// spent daily quota is `Disabled`. The quota is the provider's own cap,
+/// answered the same way until it resets, and not an outage. The message is
+/// ours, not the body's text.
 fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
-    if answer.reply.status() == 403 && quota_spent(answer) {
+    let status = answer.reply.status();
+    if status == 400 && names_reason(answer, KEY_INVALID) {
+        return Err(ProviderError::Unauthorized { provider: SOURCE });
+    }
+    if status == 403 && names_reason(answer, QUOTA_SPENT) {
         return Err(ProviderError::Disabled {
             provider: SOURCE,
             message: "the daily quota is used up".to_owned(),
@@ -112,18 +133,20 @@ fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
     standard_classify(answer)
 }
 
-/// Whether a refusal's body names the spent quota. A body that does not
-/// decode names none, so the 403 keeps its usual meaning.
-fn quota_spent(answer: &Answer<'_>) -> bool {
+/// Whether a refusal's body names `reason`, among its errors or its
+/// details. A body that does not decode names none, so the status keeps its
+/// usual meaning.
+fn names_reason(answer: &Answer<'_>, reason: &str) -> bool {
     answer
         .reply
         .json::<GoogleErrorAnswer>()
         .is_ok_and(|envelope| {
-            envelope
-                .error
+            let error = envelope.error;
+            error
                 .errors
                 .iter()
-                .any(|item| item.reason.as_deref() == Some(QUOTA_SPENT))
+                .chain(&error.details)
+                .any(|item| item.reason.as_deref() == Some(reason))
         })
 }
 
@@ -158,9 +181,32 @@ impl YouTubeApi {
         )
     }
 
+    /// Requests this row has sent since the server started.
+    fn sent(&self) -> u64 {
+        self.executor
+            .limiter()
+            .calls()
+            .iter()
+            .map(|count| count.calls)
+            .sum()
+    }
+
     /// One search for a single video. Sent once: the caller has paid one
-    /// unit of the daily budget for it.
-    async fn search(
+    /// unit of the daily budget for it. A failure the executor answered
+    /// without sending anything comes back as [`Search::Unsent`]. The row's
+    /// count only grows, so an unchanged count proves this search went
+    /// nowhere; another call sending at the same moment can only make an
+    /// unsent search look sent, and keep its unit charged.
+    async fn search(&self, key: &str, query: &str, priority: RequestPriority) -> Search {
+        let before = self.sent();
+        let result = self.search_once(key, query, priority).await;
+        match result {
+            Err(error) if self.sent() == before => Search::Unsent(error),
+            result => Search::Sent(result),
+        }
+    }
+
+    async fn search_once(
         &self,
         key: &str,
         query: &str,
@@ -226,6 +272,13 @@ impl YouTubeApi {
         }
         Ok(())
     }
+}
+
+/// How one search ended: sent (whatever came back), or turned down by the
+/// executor before anything left.
+enum Search {
+    Sent(Result<Option<String>, ProviderError>),
+    Unsent(ProviderError),
 }
 
 /// What kind of preview a search is after. Album and track searches are
@@ -318,7 +371,7 @@ pub struct QuotaStatus {
     pub limit: u32,
     /// Budget left, never negative.
     pub remaining: u32,
-    /// UTC date the usage belongs to, YYYY-MM-DD.
+    /// Quota day the usage belongs to (it starts at 08:00 UTC), YYYY-MM-DD.
     pub date: String,
 }
 
@@ -556,7 +609,40 @@ impl YouTubeClient {
             SearchKind::Album => format!("{artist} {title} full album"),
             SearchKind::Track => format!("{artist} {title}"),
         };
-        Ok(self.api.search(&api_key, &query, priority).await?)
+        match self.api.search(&api_key, &query, priority).await {
+            Search::Sent(Err(ProviderError::Disabled { .. })) => {
+                Err(self.quota_spent_upstream(&date).await?.into())
+            }
+            Search::Sent(result) => Ok(result?),
+            Search::Unsent(error) => {
+                self.quota_refund(&date).await?;
+                Err(error.into())
+            }
+        }
+    }
+
+    /// Google says today's quota is spent: mark the budget of `date` used
+    /// up, so no more searches are sent before the day turns, and answer an
+    /// outage that lasts until then. Google's own day may end later, in
+    /// which case the next search meets the same answer and marks the new
+    /// day spent too.
+    async fn quota_spent_upstream(&self, date: &str) -> Result<ProviderError, YoutubeError> {
+        let limit = self.snapshot_settings().daily_quota_limit;
+        let mut state = self.state.quota.lock().await;
+        if state.date == date && state.count < limit {
+            let next = QuotaState {
+                date: date.to_owned(),
+                count: limit,
+            };
+            persist_quota_file(&self.state.quota_path, &next).await?;
+            *state = next;
+        }
+        let now = self.clock.now_unix();
+        let until_reset = next_quota_reset(now) - now;
+        Ok(ProviderError::Unavailable {
+            provider: SOURCE,
+            retry_after: Some(Duration::from_secs(until_reset.unsigned_abs())),
+        })
     }
 
     /// Reserve one unit, persisting before returning. Fails closed when the
@@ -613,9 +699,9 @@ impl YouTubeClient {
         }
     }
 
-    /// Today's UTC date by the client's clock.
+    /// Today's quota day by the client's clock.
     fn today(&self) -> String {
-        utc_date(self.clock.now_unix())
+        quota_date(self.clock.now_unix())
     }
 
     fn snapshot_settings(&self) -> YouTubeSettings {
@@ -683,9 +769,21 @@ fn write_quota_file_atomic(path: &Path, bytes: &[u8]) -> Result<(), YoutubeError
     Ok(())
 }
 
-/// The UTC date of `unix_secs` as YYYY-MM-DD, the quota file's day stamp.
+/// The quota day `unix_secs` falls in, as YYYY-MM-DD: the UTC date of the
+/// last [`QUOTA_DAY_STARTS`]. The quota file's day stamp.
 #[must_use]
-pub fn utc_date(unix_secs: i64) -> String {
+pub fn quota_date(unix_secs: i64) -> String {
+    utc_date(unix_secs - QUOTA_DAY_STARTS)
+}
+
+/// Unix second of the next quota reset after `unix_secs`.
+#[must_use]
+pub fn next_quota_reset(unix_secs: i64) -> i64 {
+    ((unix_secs - QUOTA_DAY_STARTS).div_euclid(86_400) + 1) * 86_400 + QUOTA_DAY_STARTS
+}
+
+/// The UTC date of `unix_secs` as YYYY-MM-DD.
+fn utc_date(unix_secs: i64) -> String {
     let date = time::OffsetDateTime::from_unix_timestamp(unix_secs)
         .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
         .date();

@@ -61,7 +61,7 @@ pub struct YouTubeQuotaStatus {
     pub limit: i64,
     /// Searches left today, never negative.
     pub remaining: i64,
-    /// UTC date the numbers belong to, YYYY-MM-DD.
+    /// Quota day the numbers belong to (it starts at 08:00 UTC), YYYY-MM-DD.
     pub date: String,
 }
 

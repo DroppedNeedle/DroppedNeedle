@@ -1859,6 +1859,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Last.fm is down (PROVIDER_UNAVAILABLE, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2227,6 +2237,16 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ListenBrainz is down (PROVIDER_UNAVAILABLE, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2719,6 +2739,16 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Last.fm is down (PROVIDER_UNAVAILABLE, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4483,6 +4513,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -4564,6 +4604,16 @@
           },
           "409": {
             "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4909,8 +4959,8 @@
               }
             }
           },
-          "502": {
-            "description": "A music provider failed",
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4988,6 +5038,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5040,6 +5100,16 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5166,6 +5236,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5274,8 +5354,8 @@
               }
             }
           },
-          "502": {
-            "description": "MusicBrainz or YouTube failed",
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5583,6 +5663,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5671,6 +5761,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5740,8 +5840,8 @@
               }
             }
           },
-          "502": {
-            "description": "A music provider failed",
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5818,8 +5918,8 @@
               }
             }
           },
-          "502": {
-            "description": "A music provider failed",
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5858,6 +5958,16 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5936,6 +6046,16 @@
           },
           "409": {
             "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8256,6 +8376,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -8297,6 +8427,16 @@
           },
           "409": {
             "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8402,6 +8542,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -8500,6 +8650,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -8591,6 +8751,16 @@
           },
           "409": {
             "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
             "content": {
               "application/json": {
                 "schema": {
@@ -32790,6 +32960,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "MusicBrainz is down (PROVIDER_UNAVAILABLE, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -34460,6 +34640,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "YouTube is down or its daily quota is spent (PROVIDER_UNAVAILABLE, with retry_after)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -34551,6 +34741,16 @@
           },
           "502": {
             "description": "YouTube failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "YouTube is down or its daily quota is spent (PROVIDER_UNAVAILABLE, with retry_after)",
             "content": {
               "application/json": {
                 "schema": {
@@ -67497,7 +67697,7 @@
         "properties": {
           "date": {
             "type": "string",
-            "description": "UTC date the numbers belong to, YYYY-MM-DD."
+            "description": "Quota day the numbers belong to (it starts at 08:00 UTC), YYYY-MM-DD."
           },
           "limit": {
             "type": "integer",
