@@ -1,6 +1,9 @@
 <script lang="ts">
-	import { preferencesStore } from '$lib/stores/preferences';
 	import type { UserPreferences, ReleaseTypeOption } from '$lib/types';
+	import {
+		createSaveReleasePreferencesMutation,
+		getReleasePreferencesQuery
+	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
@@ -8,9 +11,23 @@
 	import CardActions from '$lib/ui/CardActions.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 
+	const DEFAULT_PREFERENCES: UserPreferences = {
+		primary_types: ['album', 'ep', 'single'],
+		secondary_types: ['studio']
+	};
+
+	const preferencesQuery = getReleasePreferencesQuery();
+	const saveMutation = createSaveReleasePreferencesMutation();
+
 	let preferences: UserPreferences = $state({
 		primary_types: [],
 		secondary_types: []
+	});
+	// The form starts from the saved choices, or the defaults when they can't be read.
+	$effect(() => {
+		if (preferencesQuery.isPending) return;
+		const saved = preferencesQuery.data;
+		preferences = { ...DEFAULT_PREFERENCES, ...saved };
 	});
 	let saving = $state(false);
 	let saveMessage = $state('');
@@ -90,7 +107,10 @@
 		saving = true;
 		saveMessage = '';
 
-		const success = await preferencesStore.save(preferences);
+		const success = await saveMutation
+			.mutateAsync(preferences)
+			.then(() => true)
+			.catch(() => false);
 
 		if (success) {
 			saveMessage = 'Saved. Artist pages and search results will refresh automatically.';
@@ -108,14 +128,6 @@
 
 		saving = false;
 	}
-
-	$effect(() => {
-		preferencesStore.load();
-		const unsubscribe = preferencesStore.subscribe((prefs) => {
-			preferences = { ...prefs };
-		});
-		return unsubscribe;
-	});
 </script>
 
 {#snippet typeTable(types: ReleaseTypeOption[], category: 'primary_types' | 'secondary_types')}

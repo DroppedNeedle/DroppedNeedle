@@ -1,5 +1,3 @@
-import { browser } from '$app/environment';
-import { get } from 'svelte/store';
 import { untrack } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { useQueryClient } from '@tanstack/svelte-query';
@@ -17,7 +15,7 @@ import type {
 } from '$lib/types';
 import type { RemoteTrack } from '$lib/queries/remotes/types';
 import { libraryStore } from '$lib/stores/library';
-import { integrationStore } from '$lib/stores/integration';
+import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 import { ApiError } from '$lib/api/client';
 import { compareDiscTrack, getDiscTrackKey } from '$lib/player/queueHelpers';
 import type { QueueItem } from '$lib/player/types';
@@ -88,7 +86,8 @@ export interface SourceCallbacks {
 export function createAlbumPageState(albumIdGetter: () => string) {
 	const client = useQueryClient();
 	const userId = () => authStore.user?.id;
-	let integrations = $state(get(integrationStore));
+	const integrationStatus = useIntegrationStatus();
+	const integrations = $derived(integrationStatus.current);
 	let requesting = $state(false);
 	let showDeleteModal = $state(false);
 	let quota = $state<YouTubeQuotaStatus | null>(null);
@@ -99,10 +98,6 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	const seenActiveTaskIds = new SvelteSet<string>();
 	const settledTaskIds = new SvelteSet<string>();
 
-	$effect(() => integrationStore.subscribe((s) => (integrations = s)));
-	$effect(() => {
-		if (browser) void integrationStore.ensureLoaded();
-	});
 	const downloadClientConfigured = $derived(integrations.download_client);
 
 	const basicQuery = getAlbumBasicQuery(userId, albumIdGetter);

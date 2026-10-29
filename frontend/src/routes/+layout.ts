@@ -6,7 +6,7 @@ import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
 import { PROFILE_ENDPOINTS } from '$lib/queries/profile/endpoints';
 import { toAuthUser } from '$lib/queries/auth/types';
 import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
-import { DEFAULT_SOURCE, isMusicSource, musicSourceStore } from '$lib/stores/musicSource';
+import { DEFAULT_SOURCE, isMusicSource } from '$lib/stores/musicSource';
 import { authStore, LAST_USER_ID_KEY } from '$lib/stores/authStore.svelte';
 import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
 import { withBasePath, withoutBasePath } from '$lib/utils/basePath';
@@ -97,17 +97,16 @@ export const load: LayoutLoad = async ({ url }) => {
 		throw redirect(302, withBasePath('/login'));
 	}
 
-	// the primary source is user-specific; connection defaults are global
+	// The primary source is the user's scrobble preference. Once it is cached a
+	// navigation reads it and refreshes it in the background.
 	let primarySource = DEFAULT_SOURCE;
 	if (authStore.isAuthenticated) {
+		const options = getScrobblePreferencesQueryOptions(authStore.user?.id);
 		try {
-			const data = await queryClient.ensureQueryData(
-				getScrobblePreferencesQueryOptions(authStore.user?.id)
-			);
-			if (isMusicSource(data.primary_music_source)) {
-				primarySource = data.primary_music_source;
-				musicSourceStore.setSource(primarySource);
-			}
+			const cached = queryClient.getQueryData(options.queryKey);
+			if (cached) void queryClient.prefetchQuery(options);
+			const data = cached ?? (await queryClient.ensureQueryData(options));
+			if (isMusicSource(data.primary_music_source)) primarySource = data.primary_music_source;
 		} catch {
 			primarySource = DEFAULT_SOURCE;
 		}

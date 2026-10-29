@@ -3,7 +3,8 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
-import { searchStore } from '$lib/stores/search';
+import { SearchQueryKeyFactory } from '$lib/queries/search/SearchQueryKeyFactory';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
 import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
@@ -15,11 +16,11 @@ import type { LibraryReviewParams } from './LibraryQueryKeyFactory';
 // always runs; the catalog layer (library, artist, home, discover) runs only
 // for actions that change what the library shows.
 async function invalidateReviewState(options?: { catalog?: boolean }): Promise<void> {
-	searchStore.clear();
 	await Promise.all([
 		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.reviewsPrefix() }),
 		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.activityPrefix() }),
 		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.operationsPrefix() }),
+		invalidateQueriesWithPersister({ queryKey: SearchQueryKeyFactory.v3.root(authStore.user?.id) }),
 		...(options?.catalog
 			? [
 					invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all }),

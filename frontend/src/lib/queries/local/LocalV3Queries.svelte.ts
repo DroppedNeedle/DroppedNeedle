@@ -3,11 +3,11 @@ import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { CACHE_TTL } from '$lib/constants';
 import { LibraryV3Api } from '../library/LibraryV3Api';
 import { SearchV3Api } from '../search/SearchV3Api';
 import type { SearchV3Limits } from '../search/SearchQueryKeyFactory';
 import { LOCAL_KEYS, type LocalV3AlbumsParams } from './LocalV3Keys';
+import { STALE_LIVE } from '$lib/queries/staleTime';
 
 export type SuggestionTrackV3 = components['schemas']['SuggestionTrack'];
 export type LocalTrackV3 = components['schemas']['TrackView'];
@@ -50,7 +50,6 @@ export const getLocalRecentV3Query = (getLimit: Getter<number> = () => 20) =>
 	createQuery(() => {
 		const limit = getLimit();
 		return queryOptions({
-			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			queryKey: LOCAL_KEYS.recent(limit),
 			queryFn: async ({ signal }) => {
 				const page = await api.global.v3.GET(LibraryV3Api.recentlyAdded(limit), { signal });
@@ -67,7 +66,6 @@ export const getLocalAlbumsV3Query = (
 		const params = getParams();
 		return queryOptions({
 			enabled: getEnabled(),
-			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			queryKey: LOCAL_KEYS.albums(params),
 			queryFn: async ({ signal }) => {
 				const page = await api.global.v3.GET(LibraryV3Api.albums(params), { signal });
@@ -85,7 +83,7 @@ export const getLocalSuggestionsV3Query = (
 		const limit = getLimit();
 		return queryOptions({
 			// crate should feel alive, never serve stale
-			staleTime: 0,
+			staleTime: STALE_LIVE,
 			gcTime: 0,
 			queryKey: LOCAL_KEYS.suggestions(limit, decade),
 			queryFn: ({ signal }) =>
@@ -106,7 +104,6 @@ export const getLibrarySearchV3Query = (getTerm: Getter<string>) =>
 		const term = getTerm().trim();
 		return queryOptions({
 			enabled: term.length >= 2,
-			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			placeholderData: keepPreviousData,
 			queryKey: LOCAL_KEYS.search(term),
 			queryFn: ({ signal }) =>
@@ -120,7 +117,6 @@ export const getLibrarySearchV3Query = (getTerm: Getter<string>) =>
 export const getLocalDecadesV3Query = () =>
 	createQuery(() =>
 		queryOptions({
-			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			queryKey: LOCAL_KEYS.decades(),
 			queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.decades(), { signal })
 		})
@@ -131,7 +127,6 @@ export const getLocalStatsV3Query = (getEnabled: Getter<boolean> = () => true) =
 	createQuery(() =>
 		queryOptions({
 			enabled: getEnabled(),
-			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			queryKey: LOCAL_KEYS.stats(),
 			queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.stats(), { signal })
 		})

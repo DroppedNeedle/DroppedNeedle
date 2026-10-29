@@ -5,6 +5,7 @@ import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery } from '@tanstack/svelte-query';
 
 import { DiagnosticsQueryKeyFactory } from './DiagnosticsQueryKeyFactory';
+import { STALE_LIVE } from '$lib/queries/staleTime';
 
 export const DIAGNOSTICS_ENDPOINTS = {
 	queueStats: () => v3('/api/v3/admin/queue-stats'),
@@ -22,7 +23,7 @@ export const getQueueStatsQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		queryKey: DiagnosticsQueryKeyFactory.queueStats(),
 		enabled: getEnabled(),
-		staleTime: 0, // gauges must be live: never serve a persisted snapshot on re-entry
+		staleTime: STALE_LIVE, // gauges must be live: never serve a persisted snapshot on re-entry
 		refetchInterval: POLL_INTERVAL_MS,
 		refetchIntervalInBackground: false,
 		refetchOnWindowFocus: false,
@@ -34,7 +35,7 @@ export const getProviderStatsQuery = (getEnabled: Getter<boolean> = () => true) 
 	createQuery(() => ({
 		queryKey: DiagnosticsQueryKeyFactory.providerStats(),
 		enabled: getEnabled(),
-		staleTime: 0,
+		staleTime: STALE_LIVE,
 		refetchInterval: POLL_INTERVAL_MS,
 		refetchIntervalInBackground: false,
 		refetchOnWindowFocus: false,

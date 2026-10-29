@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { Headphones, ArrowRight, Sparkles, TriangleAlert } from 'lucide-svelte';
 	import type { ComponentType } from 'svelte';
-	import { fromStore } from 'svelte/store';
 	import DropImportZone from '$lib/components/import/DropImportZone.svelte';
-	import { integrationStore } from '$lib/stores/integration';
+	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLocalStatsV3Query } from '$lib/queries/local/LocalV3Queries.svelte';
 	import { formatBytes } from '$lib/utils/formatting';
@@ -38,7 +37,7 @@
 		cta: string;
 	}
 
-	const integrations = fromStore(integrationStore);
+	const integrations = useIntegrationStatus();
 	const localEnabled = $derived(integrations.current.localfiles);
 	const canImport = $derived(authStore.isTrusted);
 

@@ -25,6 +25,7 @@ export type NavidromeSettings = Schemas['NavidromeConnection'];
 export type OidcSettings = Schemas['OidcConnection'];
 export type PlexSettings = Schemas['PlexConnection'];
 export type PlexVerifyResult = Schemas['PlexVerifyResponse'];
+export type ReleasePreferences = Schemas['UserPreferences'];
 export type SecuritySettings = Schemas['SecuritySettings'];
 export type SpotifySettings = Schemas['SpotifySettings'];
 export type VerifyResult = Schemas['VerifyConnectionResponse'];
@@ -121,6 +122,15 @@ const navidrome = section<NavidromeSettings>(
 export const NavidromeSettingsQueryKeyFactory = navidrome.keys;
 export const getNavidromeSettingsQuery = navidrome.query;
 export const createSaveNavidromeSettingsMutation = navidrome.save;
+
+// Which release types artist pages and search show.
+const releasePreferences = section<ReleasePreferences>(
+	'preferences',
+	(signal) => api.global.v3.GET(SETTINGS_ENDPOINTS.preferences(), { signal }),
+	(body) => api.global.v3.PUT(SETTINGS_ENDPOINTS.preferences(), body)
+);
+export const getReleasePreferencesQuery = releasePreferences.query;
+export const createSaveReleasePreferencesMutation = releasePreferences.save;
 
 const oidc = section<OidcSettings>(
 	'oidc',

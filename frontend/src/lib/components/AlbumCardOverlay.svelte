@@ -3,7 +3,7 @@
 	import ContextMenu from './ContextMenu.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { MenuItem } from './ContextMenu.svelte';
-	import { integrationStore } from '$lib/stores/integration';
+	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import {
 		cardQuickPlay,
 		cardQuickShuffle,
@@ -17,6 +17,8 @@
 	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
+
+	const integrations = useIntegrationStatus();
 
 	interface Props {
 		mbid: string;
@@ -33,7 +35,9 @@
 	let isShuffling = $state(false);
 
 	let hasPlaybackSource = $derived(
-		$integrationStore.localfiles || $integrationStore.navidrome || $integrationStore.jellyfin
+		integrations.current.localfiles ||
+			integrations.current.navidrome ||
+			integrations.current.jellyfin
 	);
 
 	const downloadAccessQuery = getDownloadAccessQuery(() => authStore.user?.id);
@@ -65,7 +69,7 @@
 				}
 			}
 		];
-		if ($integrationStore.localfiles && downloadAllowed) {
+		if (integrations.current.localfiles && downloadAllowed) {
 			items.push({
 				label: 'Download Album',
 				icon: Download,

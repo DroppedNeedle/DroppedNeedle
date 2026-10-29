@@ -11,6 +11,5 @@ export const getSystemHealthQuery = () =>
 		queryKey: SystemQueryKeyFactory.health(),
 		queryFn: ({ signal }) => api.global.v3.GET(SYSTEM_ENDPOINTS.health(), { signal }),
 		refetchInterval: 60_000,
-		refetchOnWindowFocus: true,
-		staleTime: 30_000
+		refetchOnWindowFocus: true
 	}));

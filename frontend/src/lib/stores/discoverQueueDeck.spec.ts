@@ -1,56 +1,45 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { apiMock, statusMock, cacheMock, cacheTtls, authMock } = vi.hoisted(() => {
-	type StatusState = { status: string; error?: string };
-	type Listener = (s: StatusState) => void;
+const { queries, statusMock, settings, authMock } = vi.hoisted(() => {
+	type Listener = (s: { status: string; error?: string }) => void;
 	const listeners: Listener[] = [];
-	// mirror Svelte's writable contract: subscribe fires synchronously with the
-	// current value, and that initial value is what the deck's watcher must ignore
-	let current: StatusState = { status: 'unknown' };
 	return {
-		apiMock: {
-			global: {
-				get: vi.fn(),
-				post: vi.fn().mockResolvedValue({})
-			}
-		},
+		// The deck hears only statuses after it starts watching.
 		statusMock: {
 			listeners,
-			emit(state: StatusState) {
-				current = state;
+			emit(state: { status: string; error?: string }) {
 				for (const l of [...listeners]) l(state);
-			},
-			subscribe: vi.fn((l: Listener) => {
+			}
+		},
+		queries: {
+			fetchDiscoverQueue: vi.fn(),
+			fetchDiscoverQueueStatus: vi.fn(),
+			fetchQueueEnrichment: vi.fn().mockResolvedValue(null),
+			fetchQueueInLibrary: vi.fn().mockResolvedValue({ in_library: [] }),
+			forgetSavedDeck: vi.fn().mockResolvedValue(undefined),
+			generateDiscoverQueue: vi.fn().mockResolvedValue({ status: 'building' }),
+			ignoreQueueItem: vi.fn().mockResolvedValue({}),
+			markDiscoverQueueConsumed: vi.fn().mockResolvedValue(undefined),
+			peekSavedDeck: vi.fn().mockReturnValue(null),
+			readSavedDeck: vi.fn().mockResolvedValue(null),
+			saveDeck: vi.fn().mockResolvedValue(undefined),
+			watchDiscoverQueueStatus: vi.fn((l: Listener) => {
 				listeners.push(l);
-				l(current);
 				return () => {
 					const i = listeners.indexOf(l);
 					if (i >= 0) listeners.splice(i, 1);
 				};
-			}),
-			fetchStatus: vi.fn(),
-			triggerGenerate: vi.fn().mockResolvedValue(undefined),
-			startPolling: vi.fn(),
-			stopPolling: vi.fn(),
-			reset: vi.fn(),
-			markConsumed: vi.fn()
+			})
 		},
-		cacheMock: {
-			getQueueCachedData: vi.fn().mockReturnValue(null),
-			setQueueCachedData: vi.fn(),
-			removeQueueCachedData: vi.fn()
-		},
-		cacheTtls: { discoverQueueAutoGenerate: true, discoverQueuePollingInterval: 1000 },
+		settings: { autoGenerate: true },
 		authMock: { user: { id: 'user-1' } }
 	};
 });
 
-vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: apiMock.global.get, POST: apiMock.global.post } } }
+vi.mock('$lib/queries/discover/DiscoverQueueQueries', () => queries);
+vi.mock('$lib/queries/settings/AdvancedSettingsReads.svelte', () => ({
+	discoverQueueAutoGenerate: async () => settings.autoGenerate
 }));
-vi.mock('$lib/stores/discoverQueueStatus', () => ({ discoverQueueStatusStore: statusMock }));
-vi.mock('$lib/utils/discoverQueueCache', () => cacheMock);
-vi.mock('$lib/stores/cacheTtl.svelte', () => ({ getCacheTTLs: () => cacheTtls }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: authMock
 }));
@@ -65,6 +54,10 @@ vi.mock('$lib/queries/musicbrainz/sourceScope.svelte', () => ({
 	subscribeMusicBrainzSourceScope: () => () => {},
 	watchMusicBrainzSourceScope: () => () => {}
 }));
+
+function savedDeck(items: ReturnType<typeof makeItem>[], currentIndex: number, queueId: string) {
+	return { items, currentIndex, queueId, savedAt: Date.now() };
+}
 
 import { discoverQueueDeck } from './discoverQueueDeck.svelte';
 
@@ -107,13 +100,16 @@ describe('discoverQueueDeck state machine', () => {
 		vi.clearAllMocks();
 		authMock.user.id = 'user-1';
 		statusMock.listeners.length = 0;
-		cacheMock.getQueueCachedData.mockReturnValue(null);
+		queries.readSavedDeck.mockResolvedValue(null);
+		queries.fetchQueueInLibrary.mockResolvedValue({ in_library: [] });
+		queries.generateDiscoverQueue.mockResolvedValue({ status: 'building' });
+		settings.autoGenerate = true;
 		discoverQueueDeck.destroy();
 	});
 
 	it('dedupes duplicate and missing release group IDs from a fetched queue', async () => {
-		statusMock.fetchStatus.mockResolvedValue({ status: 'ready' });
-		apiMock.global.get.mockResolvedValue({
+		queries.fetchDiscoverQueueStatus.mockResolvedValue({ status: 'ready' });
+		queries.fetchDiscoverQueue.mockResolvedValue({
 			items: [makeItem('rg-1'), makeItem(''), makeItem('rg-1'), makeItem('rg-2')],
 			queue_id: 'q-fetched'
 		});
@@ -129,46 +125,37 @@ describe('discoverQueueDeck state machine', () => {
 	] as const)(
 		'dedupes cached items and clamps a %s index after dedupe',
 		async (_label, currentIndex, expectedIndex) => {
-			cacheMock.getQueueCachedData.mockReturnValue({
-				data: {
-					items: [makeItem('rg-1'), makeItem(''), makeItem('rg-1'), makeItem('rg-2')],
+			queries.readSavedDeck.mockResolvedValue(
+				savedDeck(
+					[makeItem('rg-1'), makeItem(''), makeItem('rg-1'), makeItem('rg-2')],
 					currentIndex,
-					queueId: 'q-cached'
-				},
-				timestamp: Date.now()
-			});
-			apiMock.global.post.mockResolvedValue({ in_library: [] });
+					'q-cached'
+				)
+			);
+			queries.fetchQueueInLibrary.mockResolvedValue({ in_library: [] });
 
 			await discoverQueueDeck.init();
 
 			expect(discoverQueueDeck.queue.map((i) => i.musicbrainz_id)).toEqual(['rg-1', 'rg-2']);
 			expect(discoverQueueDeck.currentIndex).toBe(expectedIndex);
-			expect(apiMock.global.post).toHaveBeenCalledWith(
-				expect.stringContaining('validate'),
-				{ release_group_mbids: ['rg-1', 'rg-2'] },
-				expect.anything()
-			);
+			expect(queries.fetchQueueInLibrary).toHaveBeenCalledWith(['rg-1', 'rg-2']);
 		}
 	);
 
 	it('validation drops items that entered the library', async () => {
-		cacheMock.getQueueCachedData.mockReturnValue({
-			data: { items: [makeItem('rg-1'), makeItem('rg-2')], currentIndex: 0, queueId: 'q1' },
-			timestamp: Date.now()
-		});
-		apiMock.global.post.mockResolvedValue({ in_library: ['rg-1'] });
+		queries.readSavedDeck.mockResolvedValue(
+			savedDeck([makeItem('rg-1'), makeItem('rg-2')], 0, 'q1')
+		);
+		queries.fetchQueueInLibrary.mockResolvedValue({ in_library: ['rg-1'] });
 
 		await discoverQueueDeck.init();
 
 		expect(discoverQueueDeck.queue.map((i) => i.musicbrainz_id)).toEqual(['rg-2']);
-		expect(cacheMock.setQueueCachedData).toHaveBeenCalledWith(
-			expect.objectContaining({ queueId: 'q1' }),
-			'user-1'
-		);
+		expect(queries.saveDeck).toHaveBeenCalledWith(expect.objectContaining({ queueId: 'q1' }));
 	});
 	it('restores the cached queue ID instead of persisting a prior account identifier', async () => {
-		statusMock.fetchStatus.mockResolvedValue({ status: 'ready' });
-		apiMock.global.get.mockResolvedValue({
+		queries.fetchDiscoverQueueStatus.mockResolvedValue({ status: 'ready' });
+		queries.fetchDiscoverQueue.mockResolvedValue({
 			items: [makeItem('rg-prior')],
 			queue_id: 'q-user-1'
 		});
@@ -176,33 +163,29 @@ describe('discoverQueueDeck state machine', () => {
 		await discoverQueueDeck.init();
 
 		authMock.user.id = 'user-2';
-		cacheMock.getQueueCachedData.mockReturnValue({
-			data: { items: [makeItem('rg-1'), makeItem('rg-2')], currentIndex: 0, queueId: 'q-user-2' },
-			timestamp: Date.now()
-		});
-		apiMock.global.post.mockResolvedValue({ in_library: ['rg-1'] });
+		queries.readSavedDeck.mockResolvedValue(
+			savedDeck([makeItem('rg-1'), makeItem('rg-2')], 0, 'q-user-2')
+		);
+		queries.fetchQueueInLibrary.mockResolvedValue({ in_library: ['rg-1'] });
 
 		await discoverQueueDeck.init();
 
-		expect(cacheMock.setQueueCachedData).toHaveBeenNthCalledWith(
+		expect(queries.saveDeck).toHaveBeenNthCalledWith(
 			1,
-			expect.objectContaining({ queueId: 'q-user-1' }),
-			'user-1'
+			expect.objectContaining({ queueId: 'q-user-1' })
 		);
-		expect(cacheMock.setQueueCachedData).toHaveBeenLastCalledWith(
-			expect.objectContaining({ queueId: 'q-user-2' }),
-			'user-2'
+		expect(queries.saveDeck).toHaveBeenLastCalledWith(
+			expect.objectContaining({ queueId: 'q-user-2' })
 		);
 	});
 
 	it('keeps the loaded deck usable while an explicit forced replacement builds or fails', async () => {
-		cacheMock.getQueueCachedData.mockReturnValue({
-			data: { items: [makeItem('rg-1'), makeItem('rg-2')], currentIndex: 0, queueId: 'q1' },
-			timestamp: Date.now()
-		});
+		queries.readSavedDeck.mockResolvedValue(
+			savedDeck([makeItem('rg-1'), makeItem('rg-2')], 0, 'q1')
+		);
 		await discoverQueueDeck.init();
 		discoverQueueDeck.buildNow();
-		expect(statusMock.triggerGenerate).toHaveBeenCalledWith(true);
+		expect(queries.generateDiscoverQueue).toHaveBeenCalledWith(true);
 		expect(discoverQueueDeck.phase).toBe('ready');
 		discoverQueueDeck.next();
 		expect(discoverQueueDeck.current?.musicbrainz_id).toBe('rg-2');
@@ -212,11 +195,11 @@ describe('discoverQueueDeck state machine', () => {
 	});
 
 	it('ignores a late queue response from a destroyed session', async () => {
-		statusMock.fetchStatus.mockResolvedValue({ status: 'ready' });
+		queries.fetchDiscoverQueueStatus.mockResolvedValue({ status: 'ready' });
 		const response = deferred<unknown>();
-		apiMock.global.get.mockReturnValue(response.promise);
+		queries.fetchDiscoverQueue.mockReturnValue(response.promise);
 		const pending = discoverQueueDeck.init();
-		await vi.waitFor(() => expect(apiMock.global.get).toHaveBeenCalled());
+		await vi.waitFor(() => expect(queries.fetchDiscoverQueue).toHaveBeenCalled());
 		discoverQueueDeck.destroy();
 		response.resolve({ items: [makeItem('stale')], queue_id: 'stale' });
 		await pending;

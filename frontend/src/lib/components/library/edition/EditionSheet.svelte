@@ -19,7 +19,7 @@
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { integrationStore } from '$lib/stores/integration';
+	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import type { LibraryAlbumSummary } from '$lib/types';
 	import { getLibraryAlbumDetailQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { getReleaseEditionSearchQuery } from '$lib/queries/library/LibraryEditionQueries.svelte';
@@ -68,6 +68,8 @@
 		type EditionFactsLike
 	} from './editionCopy';
 
+	const integrations = useIntegrationStatus();
+
 	interface Props {
 		open: boolean;
 		/** The album's library copies; the first is the one the page shows. */
@@ -114,7 +116,7 @@
 	let getMissing = $state(true);
 	let replaceVersions = $state(true);
 	// "Any acquisition source is set up": slskd, Usenet or a plugin.
-	const sourceReady = $derived($integrationStore.download_client);
+	const sourceReady = $derived(integrations.current.download_client);
 
 	let wasOpen = false;
 	$effect(() => {

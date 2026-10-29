@@ -4,13 +4,14 @@ import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 import type { LibraryActivityResponse } from './LibraryOperationsTypes';
+import { STALE_LIVE } from '$lib/queries/staleTime';
 
 export const getLibraryActivityQueryOptions = (userId: string | undefined) =>
 	queryOptions({
 		queryKey: LibraryQueryKeyFactory.activity(userId),
 		queryFn: async ({ signal }): Promise<LibraryActivityResponse> =>
 			(await api.global.v3.GET(LibraryV3Api.activity(), { signal })) as LibraryActivityResponse,
-		staleTime: 2_000
+		staleTime: STALE_LIVE
 	});
 
 export const getLibraryActivityQuery = (getUserId: Getter<string | undefined>) =>

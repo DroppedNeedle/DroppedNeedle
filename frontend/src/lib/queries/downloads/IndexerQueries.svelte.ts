@@ -2,7 +2,6 @@ import { createMutation, createQuery, queryOptions } from '@tanstack/svelte-quer
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { CACHE_TTL } from '$lib/constants';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
@@ -15,7 +14,6 @@ export type UsenetSearchBackendName = components['schemas']['UsenetBackend'];
 
 const getIndexersQueryOptions = () =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.indexers(),
 		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), { signal })
 	});
@@ -65,7 +63,6 @@ export function testIndexerMutation() {
 
 const getSearchBackendQueryOptions = () =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.searchBackend(),
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.searchBackend(), { signal })

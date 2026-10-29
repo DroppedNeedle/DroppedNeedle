@@ -6,6 +6,7 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { AUTH_ENDPOINTS } from './endpoints';
+import { STALE_LIVE } from '$lib/queries/staleTime';
 
 // Per-user request/storage quotas (CollectionManagement Feature C, admin-only).
 // v3 names the override block `quota_override` (v1 `override`).
@@ -20,7 +21,7 @@ export const getUserQuotaQuery = (userId: () => string, enabled: () => boolean) 
 		enabled: enabled(),
 		// usage numbers must be live: without this the 1-min default staleTime +
 		// the IndexedDB persister serve yesterday's counts on a soft refresh
-		staleTime: 0,
+		staleTime: STALE_LIVE,
 		refetchOnMount: 'always' as const,
 		queryFn: ({ signal }) => api.v3.GET(AUTH_ENDPOINTS.userQuota(userId()), { signal })
 	}));

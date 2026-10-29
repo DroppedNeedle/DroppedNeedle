@@ -3,6 +3,7 @@ import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
+import { STALE_SLOW } from '$lib/queries/staleTime';
 
 // "Where to buy" links. Deliberately lazy: only the inline
 // section fetches this, with its own skeleton - the album page's load path
@@ -18,7 +19,7 @@ export const getPurchaseOptionsQuery = (
 	createQuery(() => ({
 		queryKey: purchaseOptionsKey(mbid()),
 		enabled: enabled() && !!mbid(),
-		staleTime: 24 * 60 * 60 * 1000, // the backend caches for 7 days anyway
+		staleTime: STALE_SLOW,
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(CATALOG_ENDPOINTS.albumPurchaseOptions(mbid()), { signal })
 	}));
@@ -31,7 +32,7 @@ export const getArtistPurchaseOptionsQuery = (mbid: Getter<string>, name: Getter
 	createQuery(() => ({
 		queryKey: artistPurchaseOptionsKey(mbid()),
 		enabled: !!mbid(),
-		staleTime: 24 * 60 * 60 * 1000,
+		staleTime: STALE_SLOW,
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(CATALOG_ENDPOINTS.artistPurchaseOptions(mbid(), name()), { signal })
 	}));
@@ -44,7 +45,7 @@ export const getAlbumPluginDetailsQuery = (mbid: Getter<string>) =>
 	createQuery(() => ({
 		queryKey: pluginDetailsKey(mbid()),
 		enabled: !!mbid(),
-		staleTime: 60 * 60 * 1000,
+		staleTime: STALE_SLOW,
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(CATALOG_ENDPOINTS.albumPluginDetails(mbid()), { signal })
 	}));

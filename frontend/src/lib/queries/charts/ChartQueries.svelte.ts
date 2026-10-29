@@ -1,6 +1,5 @@
 import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
-import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { AlbumRef, ArtistRef, ListenSource, StatsRange } from '../discover/types';
 import { ChartQueryKeyFactory } from './ChartQueryKeyFactory';
@@ -55,7 +54,6 @@ export const getChartOverviewQuery = (
 	getSource: Getter<ListenSource | null>
 ) =>
 	createQuery(() => ({
-		staleTime: CACHE_TTL.TIME_RANGE_OVERVIEW,
 		queryKey: ChartQueryKeyFactory.overview(authStore.user?.id, getChart(), getSource()),
 		queryFn: async ({ signal }): Promise<ChartOverview> => {
 			const chart = getChart();
@@ -80,7 +78,6 @@ export const getChartRangeQuery = (
 	getRange: Getter<StatsRange | null>
 ) =>
 	createInfiniteQuery(() => ({
-		staleTime: CACHE_TTL.TIME_RANGE_OVERVIEW,
 		queryKey: ChartQueryKeyFactory.range(
 			authStore.user?.id,
 			getChart(),

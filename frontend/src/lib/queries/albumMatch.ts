@@ -3,7 +3,6 @@ import type { Getter } from 'runed';
 
 import { api, ApiError } from '$lib/api/client';
 import { v3 } from '$lib/api/v3/endpoint';
-import { CACHE_TTL } from '$lib/constants';
 import type { LocalAlbumMatch, LocalTrackInfo } from '$lib/types';
 import type { components } from '$lib/api/v3/openapi';
 import { remoteApi } from './remotes/remoteApi';
@@ -103,7 +102,6 @@ export const getLocalAlbumMatchQuery = (
 		return {
 			queryKey: AlbumMatchKeyFactory.local(getUserId(), mbid),
 			enabled: getEnabled() && !!mbid,
-			staleTime: CACHE_TTL.ALBUM_DETAIL_SOURCE_MATCH,
 			queryFn: ({ signal }: { signal: AbortSignal }) => fetchLocalAlbumMatch(mbid, signal)
 		};
 	});
@@ -122,7 +120,6 @@ export const getRemoteAlbumMatchQuery = (
 		return {
 			queryKey: AlbumMatchKeyFactory.remote(getUserId(), source, mbid, hints),
 			enabled: enabled && !!mbid,
-			staleTime: CACHE_TTL.ALBUM_DETAIL_SOURCE_MATCH,
 			queryFn: ({ signal }: { signal: AbortSignal }) =>
 				fetchRemoteAlbumMatch(source, mbid, hints, signal)
 		};

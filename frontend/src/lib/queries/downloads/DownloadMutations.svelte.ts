@@ -1,5 +1,4 @@
 import { createMutation } from '@tanstack/svelte-query';
-import { get } from 'svelte/store';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
@@ -9,7 +8,7 @@ import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
 import { RequestQueryKeyFactory } from '$lib/queries/requests/RequestQueryKeyFactory';
 import type { IntakeResponse, TrackIntakeResponse } from '$lib/queries/requests/types';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { integrationStore } from '$lib/stores/integration';
+import { readIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 import { libraryStore } from '$lib/stores/library';
 import { toastStore } from '$lib/stores/toast';
 // Request-surface copy lives beside the other acquisition label mappings.
@@ -53,8 +52,8 @@ const invalidateTasks = () =>
 // A request accepted while no download source is set up waits for one; the
 // toast says so instead of claiming a search began.
 function noSourceReady(): boolean {
-	const status = get(integrationStore);
-	return status.loaded && !status.download_client;
+	const status = readIntegrationStatus();
+	return status !== undefined && !status.download_client;
 }
 
 function errorMessage(err: unknown, fallback: string): string {

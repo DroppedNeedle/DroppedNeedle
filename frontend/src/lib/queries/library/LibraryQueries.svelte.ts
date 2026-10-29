@@ -5,7 +5,6 @@ import {
 	queryOptions
 } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
-import { CACHE_TTL } from '$lib/constants';
 import { api } from '$lib/api/client';
 import {
 	LibraryQueryKeyFactory,
@@ -66,7 +65,6 @@ export const getLibraryMembershipQueryOptions = (
 		.sort();
 	return queryOptions({
 		enabled: Boolean(userId && albumIds.length),
-		staleTime: 30_000,
 		queryKey: LibraryQueryKeyFactory.membership(userId, albumIds),
 		queryFn: async ({ signal }) => {
 			let ownedIds: string[] = [];
@@ -96,7 +94,6 @@ export const getLibraryAlbumsQueryOptions = (
 	params: LibraryV3AlbumsParams
 ) =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY,
 		placeholderData: keepPreviousData,
 		queryKey: LibraryQueryKeyFactory.catalog.albums(forUser, params),
 		queryFn: async ({ signal }) =>
@@ -115,7 +112,6 @@ export const getLibraryAlbumsInfiniteQuery = (getParams: Getter<LibraryV3AlbumsP
 	createInfiniteQuery(() => {
 		const params = getParams();
 		return {
-			staleTime: CACHE_TTL.LIBRARY,
 			placeholderData: keepPreviousData,
 			queryKey: LibraryQueryKeyFactory.catalog.albumPages(userId(), params),
 			initialPageParam: null as string | null,
@@ -168,7 +164,6 @@ export const getLibraryArtistsInfiniteQuery = (getParams: Getter<LibraryArtistsP
 	createInfiniteQuery(() => {
 		const params = artistParams(getParams());
 		return {
-			staleTime: CACHE_TTL.LIBRARY,
 			queryKey: LibraryQueryKeyFactory.catalog.artists(userId(), params),
 			initialPageParam: null as string | null,
 			queryFn: ({ pageParam, signal }) => fetchArtists(params, pageParam, signal),
@@ -181,7 +176,6 @@ export const getLibraryTracksInfiniteQuery = (getParams: Getter<LibraryV3TracksP
 	createInfiniteQuery(() => {
 		const params = getParams();
 		return {
-			staleTime: CACHE_TTL.LIBRARY,
 			placeholderData: keepPreviousData,
 			queryKey: LibraryQueryKeyFactory.catalog.tracks(userId(), params),
 			initialPageParam: null as string | null,
@@ -195,7 +189,6 @@ const ARTIST_THUMBS_LIMIT = 12;
 
 export const getLibraryArtistThumbsQuery = () =>
 	createQuery(() => ({
-		staleTime: CACHE_TTL.LIBRARY,
 		queryKey: LibraryQueryKeyFactory.catalog.artistThumbs(userId()),
 		queryFn: ({ signal }) =>
 			fetchArtists({ limit: ARTIST_THUMBS_LIMIT, sort: 'album_count', order: 'desc' }, null, signal)
@@ -203,7 +196,6 @@ export const getLibraryArtistThumbsQuery = () =>
 
 export const getLibraryStatsQueryOptions = (forUser: LibraryV3UserId) =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.catalog.stats(forUser),
 		queryFn: async ({ signal }) =>
 			toLibraryStats(await api.global.v3.GET(LibraryV3Api.stats(), { signal }))
@@ -215,7 +207,6 @@ const RECENTLY_ADDED_LIMIT = 20;
 
 export const getLibraryRecentlyAddedQuery = () =>
 	createQuery(() => ({
-		staleTime: CACHE_TTL.RECENTLY_ADDED,
 		queryKey: LibraryQueryKeyFactory.catalog.recentlyAdded(userId(), RECENTLY_ADDED_LIMIT),
 		queryFn: async ({ signal }) =>
 			toNativeAlbums(
@@ -225,7 +216,6 @@ export const getLibraryRecentlyAddedQuery = () =>
 
 export const getLibraryAlbumDetailQueryOptions = (forUser: LibraryV3UserId, albumId: string) =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.catalog.albumDetail(forUser, albumId),
 		queryFn: async ({ signal }) =>
 			toAlbumDetail(await api.global.v3.GET(LibraryV3Api.albumDetail(albumId), { signal }))
@@ -257,7 +247,6 @@ export const cacheCanonicalLibraryAlbumDetail = (album: LibraryAlbumDetail) =>
 
 export const getLibraryAlbumCopiesQueryOptions = (forUser: LibraryV3UserId, albumId: string) =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.catalog.albumCopies(forUser, albumId),
 		queryFn: async ({ signal }) =>
 			toNativeAlbums(await api.global.v3.GET(LibraryV3Api.albumCopies(albumId), { signal }))
@@ -282,7 +271,6 @@ export const getLibraryAlbumTracksQuery = (getAlbumId: Getter<string>) =>
 		const albumId = getAlbumId();
 		return {
 			enabled: !!albumId,
-			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			queryKey: LibraryQueryKeyFactory.catalog.albumTracks(userId(), albumId, ALBUM_TRACKS_PAGE),
 			queryFn: async ({ signal }) => {
 				const page = await api.global.v3.GET(LibraryV3Api.albumTracks(albumId, ALBUM_TRACKS_PAGE), {
@@ -295,7 +283,6 @@ export const getLibraryAlbumTracksQuery = (getAlbumId: Getter<string>) =>
 
 export const getLibraryArtistDetailQueryOptions = (forUser: LibraryV3UserId, artistId: string) =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.catalog.artistDetail(forUser, artistId),
 		queryFn: async ({ signal }) =>
 			toArtistSummary(await api.global.v3.GET(LibraryV3Api.artistDetail(artistId), { signal }))
@@ -320,7 +307,6 @@ export const getLibraryArtistAlbumsQuery = (getArtistId: Getter<string>) =>
 		const artistId = getArtistId();
 		return {
 			enabled: !!artistId,
-			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			queryKey: LibraryQueryKeyFactory.catalog.artistAlbums(userId(), artistId, ARTIST_ALBUMS_PAGE),
 			queryFn: async ({ signal }) =>
 				toNativeAlbums(
@@ -375,7 +361,6 @@ export const getLibraryArtistAppearancesQuery = (getArtistId: Getter<string>) =>
 		const artistId = getArtistId();
 		return {
 			enabled: !!artistId,
-			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			queryKey: LibraryQueryKeyFactory.catalog.artistAppearances(userId(), artistId, {
 				limit: ARTIST_APPEARANCES_PAGE_SIZE
 			}),
@@ -388,7 +373,6 @@ export const getLibraryArtistAppearancesQuery = (getArtistId: Getter<string>) =>
 // schedule route is admin-gated; pass `enabled` to keep it off for non-admins
 export const getLibraryScanScheduleQuery = (enabled: () => boolean = () => true) =>
 	createQuery(() => ({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.scanSchedule(),
 		queryFn: async ({ signal }): Promise<LibraryScanSchedule> => {
@@ -406,7 +390,6 @@ export const getLibraryScanScheduleQuery = (enabled: () => boolean = () => true)
 // each held track's quality tier against the upgrade cutoff.
 export const getLibraryAlbumStatusQueryOptions = (mbid: string) =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.album(mbid),
 		queryFn: async ({ signal }): Promise<LibraryAlbumStatus> =>
 			toAlbumStatus(await api.global.v3.GET(LibraryV3Api.albumStatus(mbid), { signal }))
@@ -429,7 +412,6 @@ export const getLibrarySearchQuery = (getTerm: Getter<string>) =>
 		const term = getTerm().trim();
 		return {
 			enabled: term.length >= 2,
-			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			placeholderData: keepPreviousData,
 			queryKey: LibraryQueryKeyFactory.catalog.search(userId(), term),
 			queryFn: async ({ signal }): Promise<LibrarySearchResults> => {
@@ -461,7 +443,6 @@ export const getAlbumSearchQuery = (getTerm: Getter<string>) =>
 		const term = getTerm().trim();
 		return {
 			enabled: term.length >= 2,
-			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			queryKey: LibraryQueryKeyFactory.catalog.albumSearch(userId(), term),
 			queryFn: async ({ signal }): Promise<Album[]> => {
 				const data = await api.global.v3.GET(SearchV3Api.bucket('albums', term, 20, 0), {

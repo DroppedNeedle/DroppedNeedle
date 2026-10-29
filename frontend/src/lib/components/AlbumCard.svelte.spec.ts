@@ -12,11 +12,6 @@ const { emptyComponent } = vi.hoisted(() => ({
 	}
 }));
 
-// No download source is set up.
-vi.mock('$lib/stores/integration', async () => {
-	const { readable } = await import('svelte/store');
-	return { integrationStore: readable({ download_client: false, loaded: true }) };
-});
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	requestAlbum: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));

@@ -2,7 +2,6 @@ import { createMutation, createQuery, queryOptions } from '@tanstack/svelte-quer
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { CACHE_TTL } from '$lib/constants';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
@@ -13,7 +12,6 @@ export type ProwlarrConnectionSettings = components['schemas']['ProwlarrConnecti
 
 const getProwlarrConfigQueryOptions = () =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.prowlarr(),
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.prowlarrConfig(), {

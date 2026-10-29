@@ -8,6 +8,7 @@ import type { DownloadActivitySummary, DownloadListResponse } from '$lib/types';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { hasActiveTask } from './downloadStatus';
 import { DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
+import { STALE_LIVE } from '$lib/queries/staleTime';
 
 const IDLE_ACTIVITY_RECOVERY_MS = 120_000;
 const ACTIVE_ACTIVITY_RECOVERY_MS = 60_000;
@@ -19,7 +20,7 @@ const ACTIVE_ACTIVITY_RECOVERY_MS = 60_000;
 // missed event.
 export const getDownloadActivitySummaryQueryOptions = () =>
 	queryOptions({
-		staleTime: 0,
+		staleTime: STALE_LIVE,
 		enabled: !!authStore.user?.id,
 		queryKey: DownloadQueryKeyFactory.activity(authStore.user?.id),
 		queryFn: ({ signal }) =>
@@ -41,11 +42,10 @@ export const getDownloadActivitySummaryQuery = () =>
 
 // The downloads page owns the bounded detailed projection. It loads on entry and is
 // refreshed by the global summary revision rather than running a second timer.
-// No focus-'always': the SSE reconciler invalidates tasks(userId) exactly, and a
-// 30 s stale window keeps same-tab returns free; beyond it one stale-true refetch.
+// No focus-'always': the SSE reconciler invalidates tasks(userId) exactly, and the
+// default stale window keeps same-tab returns free; beyond it one stale-true refetch.
 export const getDownloadsQueryOptions = () =>
 	queryOptions({
-		staleTime: 30_000,
 		queryKey: DownloadQueryKeyFactory.tasks(authStore.user?.id),
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(DOWNLOAD_TASKS_ENDPOINTS.list(undefined, 1, 100), {
@@ -73,7 +73,7 @@ export const getAlbumDownloadsQuery = (
 	getEnabled: Getter<boolean> = () => true
 ) =>
 	createQuery(() => ({
-		staleTime: 0,
+		staleTime: STALE_LIVE,
 		enabled: getEnabled() && !!getMbid(),
 		queryKey: DownloadQueryKeyFactory.albumTasks(authStore.user?.id, getMbid()),
 		queryFn: ({ signal }) =>

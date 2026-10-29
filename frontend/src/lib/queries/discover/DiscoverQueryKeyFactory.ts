@@ -59,6 +59,16 @@ export const DiscoverQueryKeyFactory = {
 				'queue-status'
 			] as const;
 		},
+		// Where the person is in their deck. It names the source, so a source
+		// switch drops it with the rest of that source's answers.
+		savedDeck: (userId: DiscoverV3UserId) => {
+			const { normalizedUserId, sourceKey } = v3SourceKey(userId);
+			return [
+				...DiscoverQueryKeyFactory.v3.root(normalizedUserId),
+				sourceKey,
+				'saved-deck'
+			] as const;
+		},
 		queueEnrich: (userId: DiscoverV3UserId, releaseGroupMbid: string) => {
 			const { normalizedUserId, sourceKey } = v3SourceKey(userId);
 			return [

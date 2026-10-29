@@ -22,6 +22,7 @@ import {
 } from './musicbrainz/sourceScope.svelte';
 import { getDownloadScope, subscribeDownloadRoleChange } from './downloads/downloadScope.svelte';
 import { DownloadQueryKeyFactory } from './downloads/DownloadQueryKeyFactory';
+import { STALE_DEFAULT } from './staleTime';
 
 const queryPersister = createPersistedQueryPersister(createIDBStorage(isCurrentQueryScope));
 
@@ -218,7 +219,7 @@ export const queryClient = new QueryClient({
 			enabled: browser,
 			retry: false,
 			refetchOnWindowFocus: true,
-			staleTime: 1000 * 60 * 1, // 1 minute
+			staleTime: STALE_DEFAULT,
 			gcTime: 1000 * 60 * 5, // 5 min: keep results in memory so back-nav is instant (30s evicted before staleTime, forcing a skeleton + IDB rehydrate each return)
 			persister: queryPersister.persisterFn
 		}

@@ -1,4 +1,4 @@
-import { CACHE_TTL } from '$lib/constants';
+import { STALE_SLOW } from '$lib/queries/staleTime';
 import { createInfiniteQuery, createQuery, queryOptions } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { ArtistQueryKeyFactory } from './ArtistQueryKeyFactory';
@@ -13,7 +13,7 @@ import { CATALOG_ENDPOINTS } from '../catalog/endpoints';
 
 export const getBasicArtistQueryOptions = (artistId: string) =>
 	queryOptions({
-		staleTime: CACHE_TTL.ARTIST_DETAIL_BASIC,
+		staleTime: STALE_SLOW,
 		queryKey: ArtistQueryKeyFactory.basic(artistId),
 		queryFn: async ({ signal }) => {
 			const data = toArtistInfoBasic(
@@ -32,7 +32,7 @@ export const getBasicArtistQuery = (getArtistId: Getter<string>) =>
 
 export const getExtendedArtistQueryOptions = (artistId: string) =>
 	queryOptions({
-		staleTime: CACHE_TTL.ARTIST_DETAIL_EXTENDED,
+		staleTime: STALE_SLOW,
 		queryKey: ArtistQueryKeyFactory.extended(artistId),
 		// A fast extended query can finish before the provider page observes its lazy fields.
 		notifyOnChangeProps: 'all',
@@ -50,7 +50,7 @@ export const getSimilarArtistsQuery = (
 		const { artistId, source, enabled = true } = getParams();
 		return {
 			enabled,
-			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
+			staleTime: STALE_SLOW,
 			queryKey: ArtistQueryKeyFactory.similarArtists(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.v3.GET(CATALOG_ENDPOINTS.similarArtists(artistId, source), {
@@ -66,7 +66,7 @@ export const getArtistTopAlbumsQuery = (
 		const { artistId, source, enabled = true } = getParams();
 		return {
 			enabled,
-			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
+			staleTime: STALE_SLOW,
 			queryKey: ArtistQueryKeyFactory.topAlbums(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.v3.GET(CATALOG_ENDPOINTS.topAlbums(artistId, source), {
@@ -82,7 +82,7 @@ export const getArtistTopSongsQuery = (
 		const { artistId, source, enabled = true } = getParams();
 		return {
 			enabled,
-			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
+			staleTime: STALE_SLOW,
 			queryKey: ArtistQueryKeyFactory.topSongs(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.v3.GET(CATALOG_ENDPOINTS.topSongs(artistId, source), {
@@ -97,7 +97,7 @@ export const getArtistLastFmEnrichmentQuery = (
 	createQuery(() => {
 		const { artistId, artistName } = getParams();
 		return {
-			staleTime: CACHE_TTL.ARTIST_DETAIL_LASTFM,
+			staleTime: STALE_SLOW,
 			queryKey: ArtistQueryKeyFactory.lastFmEnrichment(artistId, artistName),
 			queryFn: ({ signal }) =>
 				api.global.v3.GET(CATALOG_ENDPOINTS.artistLastFm(artistId, artistName!), {
@@ -123,7 +123,7 @@ export const getArtistReleasesInfiniteQuery = (getArtistId: Getter<string>) =>
 		let warmingPolls = 0;
 		let lastKey: string | null = null;
 		return {
-			staleTime: CACHE_TTL.ARTIST_DETAIL_BASIC,
+			staleTime: STALE_SLOW,
 			queryKey: ArtistQueryKeyFactory.releases(getArtistId()),
 			initialPageParam: 0,
 			queryFn: async ({ pageParam = 0, signal }) => {

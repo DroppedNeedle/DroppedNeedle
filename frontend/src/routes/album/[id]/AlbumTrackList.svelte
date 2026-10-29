@@ -34,10 +34,12 @@
 	import TrackRequestButton from '$lib/components/downloads/TrackRequestButton.svelte';
 	import TrackDownloadStatus from '$lib/components/downloads/TrackDownloadStatus.svelte';
 	import HeldFileRow from '$lib/components/downloads/HeldFileRow.svelte';
-	import { integrationStore } from '$lib/stores/integration';
+	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { requestUpgradeTrack } from '$lib/queries/downloads/UpgradeQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
+
+	const integrations = useIntegrationStatus();
 
 	interface Props {
 		album: AlbumBasicInfo;
@@ -267,7 +269,7 @@
 					authStore.isTrusted &&
 					!!upgradeRecordingId &&
 					!trackTask &&
-					$integrationStore.download_client}
+					integrations.current.download_client}
 				{@const rateTrack = libMeta && onRateTrack ? onRateTrack : null}
 				<li
 					class="list-row group transition-colors p-3 sm:p-4 {isCurrentlyPlaying

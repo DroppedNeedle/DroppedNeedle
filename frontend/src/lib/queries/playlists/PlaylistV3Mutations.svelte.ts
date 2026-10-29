@@ -146,9 +146,3 @@ export const checkPlaylistTracksV3 = () =>
 		// Pure read: membership answers are never cached, so no invalidation.
 		mutationFn: (body: CheckTracksBodyV3) => api.global.v3.POST(PlaylistV3Api.checkTracks(), body)
 	}));
-
-export const resolvePlaylistSourcesV3 = () =>
-	createMutation(() => ({
-		// Pure read: source answers are never cached, so no invalidation.
-		mutationFn: (id: string) => api.global.v3.POST(PlaylistV3Api.resolveSources(id))
-	}));

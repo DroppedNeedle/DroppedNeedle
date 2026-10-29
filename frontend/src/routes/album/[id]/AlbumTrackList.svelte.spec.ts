@@ -1,5 +1,5 @@
 import { page } from 'vitest/browser';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
 // keep the Request button real; stub only its mutation hook so it renders without a QueryClient
@@ -23,16 +23,6 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 		},
 		get isTrusted() {
 			return auth.role === 'trusted' || auth.role === 'admin';
-		}
-	}
-}));
-
-// download_client gates the Upgrade button
-vi.mock('$lib/stores/integration', () => ({
-	integrationStore: {
-		subscribe: (cb: (v: unknown) => void) => {
-			cb({ download_client: true });
-			return () => {};
 		}
 	}
 }));
@@ -70,6 +60,8 @@ const blob = vi.hoisted(() => ({ download: vi.fn() }));
 vi.mock('$lib/utils/blobDownload', () => ({ downloadBlob: blob.download }));
 
 import AlbumTrackList from './AlbumTrackList.svelte';
+import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
+import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { getTrackContextMenuItems as realMenuItems } from './albumPlaybackHandlers';
 import { buildRenderedTrackSections, buildSortedTrackMap } from './albumTrackResolvers';
 import type {
@@ -212,6 +204,22 @@ async function renderList(
 		typeof render<typeof AlbumTrackList>
 	>[1]);
 }
+
+// A download source is set up, which the Upgrade button needs.
+beforeAll(async () => {
+	await setQueryDataWithPersister(HomeQueryKeyFactory.integrationStatus(undefined), {
+		download_client: true,
+		jellyfin: false,
+		lastfm: false,
+		library: false,
+		listenbrainz: false,
+		localfiles: false,
+		navidrome: false,
+		plex: false,
+		youtube: false,
+		youtube_api: false
+	});
+});
 
 describe('AlbumTrackList upgrade affordance (admin/trusted, below cutoff)', () => {
 	const belowCutoffOwned = new Map<string, LibraryFileMeta>([

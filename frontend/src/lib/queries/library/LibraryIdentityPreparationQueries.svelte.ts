@@ -8,6 +8,7 @@ import type {
 	IdentityPreparationEstimateResponse,
 	RepairFindingListResponse
 } from './LibraryOperationsTypes';
+import { STALE_LIVE } from '$lib/queries/staleTime';
 
 export const getLibraryIdentityPreparationsQuery = (
 	getUserId: Getter<string | undefined>,
@@ -46,7 +47,7 @@ export const getLibraryIdentityPreparationEstimateQuery = (
 			queryKey: LibraryQueryKeyFactory.identityPreparationEstimate(userId, rootIds),
 			queryFn: async ({ signal }): Promise<IdentityPreparationEstimateResponse> =>
 				api.global.v3.GET(LibraryV3Api.identityPreparationEstimate(rootIds), { signal }),
-			staleTime: 10_000
+			staleTime: STALE_LIVE
 		};
 	});
 

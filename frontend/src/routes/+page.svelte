@@ -26,7 +26,7 @@
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { genreRows } from '$lib/utils/sectionRows';
-	import { getGreeting } from '$lib/utils/homeCache';
+	import { getGreeting } from '$lib/utils/formatting';
 	import { isDismissed } from '$lib/utils/dismissedPrompts';
 	import HomeSectionNowPlaying from '$lib/components/HomeSectionNowPlaying.svelte';
 	import HomeEntryCards from '$lib/components/HomeEntryCards.svelte';

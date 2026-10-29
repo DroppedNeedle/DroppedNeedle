@@ -120,10 +120,10 @@ describe('download queue queries', () => {
 		};
 
 		expect(opts.refetchInterval).toBeUndefined();
-		// neither always-flag remains; 30 s stale window instead
+		// neither always-flag remains; the default stale window instead
 		expect(opts.refetchOnWindowFocus).toBeUndefined();
 		expect(opts.refetchOnReconnect).toBeUndefined();
-		expect(opts.staleTime).toBe(30_000);
+		expect(opts.staleTime).toBeUndefined();
 	});
 
 	it('drops single-album badge writes when the account changes before the response', async () => {

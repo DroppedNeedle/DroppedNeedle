@@ -1,8 +1,7 @@
 <script lang="ts">
 	import '$lib/components/now-playing.css';
-	import { fromStore } from 'svelte/store';
 	import { Headphones, Disc3 } from 'lucide-svelte';
-	import { integrationStore } from '$lib/stores/integration';
+	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { nowPlayingMerged } from '$lib/stores/nowPlayingMerged.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
@@ -15,7 +14,7 @@
 	import SidebarVisualiser from '$lib/components/SidebarVisualiser.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
-	const integrations = fromStore(integrationStore);
+	const integrations = useIntegrationStatus();
 
 	const prefsQuery = getSectionPrefsQuery();
 	// fail-open: until prefs load, every service is visible

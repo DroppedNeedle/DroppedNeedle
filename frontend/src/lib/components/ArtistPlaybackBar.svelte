@@ -8,7 +8,7 @@
 	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
-	import { integrationStore } from '$lib/stores/integration';
+	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
@@ -17,6 +17,8 @@
 	import type { SourceType } from '$lib/player/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+
+	const integrations = useIntegrationStatus();
 
 	type PlaybackSourceType = Exclude<SourceType, 'youtube'>;
 
@@ -45,7 +47,7 @@
 	];
 
 	let availableSources = $derived.by(() => {
-		const status = $integrationStore;
+		const status = integrations.current;
 		return PLAYBACK_SOURCES.filter(
 			(s) => status[s.integrationKey as keyof typeof status] === true
 		).map((s) => s.key);

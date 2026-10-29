@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { coverSrc, type CoverKind } from '$lib/api/covers';
-	import { imageSettingsStore } from '$lib/stores/imageSettings';
+	import { useDirectRemoteImages } from '$lib/queries/settings/AdvancedSettingsReads.svelte';
 	import { onDestroy } from 'svelte';
 	import { lazyImage, resetLazyImage } from '$lib/utils/lazyImage';
 	import { API_SIZES } from '$lib/constants';
@@ -14,6 +14,8 @@
 		type CoverWarmUpdate
 	} from '$lib/utils/coverWarmCoordinator';
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
+
+	const directRemoteImages = useDirectRemoteImages();
 
 	interface Props {
 		mbid: string;
@@ -119,7 +121,7 @@
 	let remoteRequestSize = $derived(
 		requestSize === 250 ? 'md' : requestSize === 500 ? 'lg' : requestSize === 1200 ? 'full' : size
 	);
-	let useRemoteUrl = $derived(remoteUrl && $imageSettingsStore.directRemoteImagesEnabled);
+	let useRemoteUrl = $derived(remoteUrl && directRemoteImages.current);
 	let resolvedRemoteUrl = $derived(
 		remoteUrl ? appendAudioDBSizeSuffix(remoteUrl, remoteRequestSize) : null
 	);

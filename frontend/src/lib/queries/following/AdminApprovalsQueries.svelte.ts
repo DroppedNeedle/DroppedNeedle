@@ -4,6 +4,7 @@ import { FollowQueryKeyFactory } from './FollowQueryKeyFactory';
 import { FOLLOW_ENDPOINTS } from './endpoints';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { REQUESTS_ENDPOINTS } from '../requests/endpoints';
+import { STALE_LIVE } from '$lib/queries/staleTime';
 
 type Getter<T> = () => T;
 
@@ -30,7 +31,7 @@ export const getPendingApprovalCountQuery = (getEnabled: Getter<boolean>) =>
 		queryKey: FollowQueryKeyFactory.pendingApprovalCount(authStore.user?.id),
 		queryFn: ({ signal }) => api.global.v3.GET(REQUESTS_ENDPOINTS.approvalsCount(), { signal }),
 		enabled: getEnabled() && !!authStore.user?.id,
-		staleTime: 0,
+		staleTime: STALE_LIVE,
 		refetchInterval: 120_000,
 		refetchIntervalInBackground: false,
 		refetchOnReconnect: 'always' as const,

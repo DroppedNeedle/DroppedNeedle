@@ -9,6 +9,7 @@ import { toastStore } from '$lib/stores/toast';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_SEARCH_ENDPOINTS } from './endpoints';
+import { STALE_LIVE } from '$lib/queries/staleTime';
 
 export type SearchAlbumRequest = components['schemas']['SearchAlbumRequest'];
 export type SearchAlbumResponse = components['schemas']['SearchAlbumResponse'];
@@ -35,7 +36,7 @@ const invalidateJob = (jobId: string) =>
 
 export const getSearchJobQueryOptions = (jobId: string) =>
 	queryOptions({
-		staleTime: 0,
+		staleTime: STALE_LIVE,
 		enabled: jobId !== '',
 		queryKey: DownloadQueryKeyFactory.searchJob(authStore.user?.id, jobId),
 		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_SEARCH_ENDPOINTS.job(jobId), { signal }),

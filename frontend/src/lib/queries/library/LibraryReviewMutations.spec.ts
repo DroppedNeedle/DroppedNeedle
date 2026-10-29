@@ -20,12 +20,6 @@ vi.mock('$lib/stores/toast', () => ({
 	toastStore: { show: vi.fn() }
 }));
 
-const clearSearch = vi.hoisted(() => vi.fn());
-
-vi.mock('$lib/stores/search', () => ({
-	searchStore: { clear: clearSearch }
-}));
-
 import { actOnLibraryReview, type ReviewAction } from './LibraryReviewMutations.svelte';
 
 // Review-local layer keys - swept for every action.

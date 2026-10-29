@@ -1,7 +1,6 @@
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 
 import { ConnectAppsQueryKeyFactory } from './ConnectAppsQueryKeyFactory';
@@ -9,7 +8,6 @@ import { CONNECT_APPS_ENDPOINTS } from './endpoints';
 
 const settingsQueryOptions = () =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: ConnectAppsQueryKeyFactory.settings(),
 		queryFn: ({ signal }) => api.global.v3.GET(CONNECT_APPS_ENDPOINTS.settings(), { signal })
 	});
@@ -21,7 +19,6 @@ export const getConnectAppsSettingsQuery = () => createQuery(() => settingsQuery
 // empty-id key (matches the user-scoped query pattern elsewhere).
 export const getAppPasswordsQuery = () =>
 	createQuery(() => ({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		enabled: !!authStore.user?.id,
 		queryKey: ConnectAppsQueryKeyFactory.appPasswords(authStore.user?.id ?? ''),
 		queryFn: async ({ signal }) =>
@@ -31,7 +28,6 @@ export const getAppPasswordsQuery = () =>
 // admin oversight: every user's active app-passwords (metadata only, no secrets)
 export const getAdminAppPasswordsQuery = () =>
 	createQuery(() => ({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: ConnectAppsQueryKeyFactory.adminAppPasswords(),
 		queryFn: async ({ signal }) =>
 			(await api.global.v3.GET(CONNECT_APPS_ENDPOINTS.adminAppPasswords(), { signal }))

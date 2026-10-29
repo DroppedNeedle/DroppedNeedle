@@ -2,7 +2,6 @@ import { createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 
 import { PluginQueryKeyFactory } from './PluginQueryKeyFactory';
@@ -39,7 +38,6 @@ export async function fetchPluginSources(signal?: AbortSignal): Promise<PluginSo
 
 const getPluginSourcesQueryOptions = () =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: PluginQueryKeyFactory.sources(authStore.user?.id),
 		queryFn: ({ signal }) => fetchPluginSources(signal)
 	});

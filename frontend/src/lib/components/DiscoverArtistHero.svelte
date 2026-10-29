@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { coverSrc } from '$lib/api/covers';
-	import { imageSettingsStore } from '$lib/stores/imageSettings';
+	import { useDirectRemoteImages } from '$lib/queries/settings/AdvancedSettingsReads.svelte';
 	import type { BecauseYouListenTo } from '$lib/queries/discover/types';
 	import HomeSection from './HomeSection.svelte';
 	import HeroBackdrop from './HeroBackdrop.svelte';
 	import { Headphones } from 'lucide-svelte';
+
+	const directRemoteImages = useDirectRemoteImages();
 
 	interface Props {
 		entry: BecauseYouListenTo;
@@ -13,12 +15,11 @@
 	let { entry }: Props = $props();
 
 	let hasDirectBackdrop = $derived(
-		$imageSettingsStore.directRemoteImagesEnabled &&
-			!!(entry.banner_url || entry.wide_thumb_url || entry.fanart_url)
+		directRemoteImages.current && !!(entry.banner_url || entry.wide_thumb_url || entry.fanart_url)
 	);
 
 	let backdropUrl = $derived.by(() => {
-		if ($imageSettingsStore.directRemoteImagesEnabled) {
+		if (directRemoteImages.current) {
 			if (entry.banner_url) return entry.banner_url;
 			if (entry.wide_thumb_url) return entry.wide_thumb_url;
 			if (entry.fanart_url) return entry.fanart_url;

@@ -3,7 +3,7 @@ import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { CACHE_TTL } from '$lib/constants';
+import { STALE_SLOW } from '$lib/queries/staleTime';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { DiscoverV3Api } from './DiscoverV3Api';
 import {
@@ -17,10 +17,6 @@ import type { ListenSource, RadioSeedKind } from './types';
 export type DiscoverResponseV3 = components['schemas']['DiscoverResponse'];
 export type DiscoveryBatchDetailV3 = components['schemas']['DiscoveryBatchDetail'];
 export type DiscoveryBatchItemStatusV3 = components['schemas']['DiscoveryBatchItemStatus'];
-// Floor between intentional revalidates; active rebuilds stream via the
-// refreshing-poll lane below; tab switches never revalidate.
-const DISCOVER_REVALIDATE_MS = 60_000;
-
 // Keep the persisted recommendations while the server finishes its SWR rebuild.
 async function fetchDiscoverHome(
 	userId: DiscoverV3UserId,
@@ -50,7 +46,7 @@ async function fetchDiscoverHome(
 export const getDiscoverHomeV3QueryOptions = (userId: DiscoverV3UserId) =>
 	queryOptions({
 		enabled: Boolean(userId),
-		staleTime: DISCOVER_REVALIDATE_MS,
+		staleTime: STALE_SLOW,
 		refetchOnWindowFocus: false,
 		queryKey: DiscoverQueryKeyFactory.v3.home(userId),
 		queryFn: ({ signal }) => fetchDiscoverHome(userId, signal),
@@ -64,7 +60,6 @@ export const getDiscoverHomeV3Query = () =>
 export const getDiscoveryBatchesV3Query = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		enabled: getEnabled() && Boolean(authStore.user?.id),
-		staleTime: 15_000,
 		queryKey: DiscoverQueryKeyFactory.v3.batches(authStore.user?.id),
 		queryFn: ({ signal }) => api.global.v3.GET(DiscoverV3Api.batches(), { signal })
 	}));
@@ -84,7 +79,7 @@ export const getDiscoverRadioV3Query = (getParams: Getter<DiscoverV3RadioInput>)
 		if (params.count !== undefined) radioParams.count = params.count;
 		if (params.source !== undefined) radioParams.source = params.source;
 		return {
-			staleTime: CACHE_TTL.DISCOVER,
+			staleTime: STALE_SLOW,
 			queryKey: DiscoverQueryKeyFactory.v3.radio(
 				authStore.user?.id,
 				params.seedType,
@@ -119,7 +114,7 @@ export const getDiscoverPlaylistSuggestionsV3Query = (
 	createQuery(() => {
 		const params = getParams();
 		return {
-			staleTime: CACHE_TTL.DISCOVER,
+			staleTime: STALE_SLOW,
 			queryKey: DiscoverQueryKeyFactory.v3.playlistSuggestions(
 				authStore.user?.id,
 				params.playlistId,

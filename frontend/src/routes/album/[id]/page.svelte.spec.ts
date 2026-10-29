@@ -22,7 +22,8 @@ vi.mock('$lib/stores/player.svelte', () => ({
 import AlbumPage from './ProviderAlbumPage.svelte';
 import AlbumRoute from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { integrationStore } from '$lib/stores/integration';
+import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
+import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { libraryStore } from '$lib/stores/library';
 import { toAuthUser } from '$lib/queries/auth/types';
 
@@ -230,15 +231,25 @@ async function renderPage(id = albumId) {
 
 const trackRow = (title: string) => page.getByRole('listitem').filter({ hasText: title }).first();
 
-beforeEach(() => {
+beforeEach(async () => {
 	localStorage.clear();
 	h.goto.mockReset();
 	status = notHeld;
 	plan = null;
 	history = { items: [] };
 	editionFetch = null;
-	integrationStore.reset();
-	integrationStore.setStatus({ navidrome: true, localfiles: true, library: true });
+	await setQueryDataWithPersister(HomeQueryKeyFactory.integrationStatus('user-1'), {
+		download_client: false,
+		jellyfin: false,
+		lastfm: false,
+		library: true,
+		listenbrainz: false,
+		localfiles: true,
+		navidrome: true,
+		plex: false,
+		youtube: false,
+		youtube_api: false
+	});
 	signIn('admin');
 	api = routes();
 });

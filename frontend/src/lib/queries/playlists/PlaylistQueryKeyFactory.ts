@@ -13,7 +13,9 @@ export const PlaylistQueryKeyFactory = {
 		[...PlaylistQueryKeyFactory.prefix, userIdSegment(userId)] as const,
 	list: (userId: PlaylistV3UserId) => [...PlaylistQueryKeyFactory.root(userId), 'list'] as const,
 	detail: (userId: PlaylistV3UserId, id: string) =>
-		[...PlaylistQueryKeyFactory.root(userId), 'detail', id] as const
+		[...PlaylistQueryKeyFactory.root(userId), 'detail', id] as const,
+	sources: (userId: PlaylistV3UserId, id: string) =>
+		[...PlaylistQueryKeyFactory.root(userId), 'sources', id] as const
 };
 
 export type FavoriteV3UserId = string | null | undefined;

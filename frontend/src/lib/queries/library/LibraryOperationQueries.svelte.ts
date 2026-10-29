@@ -9,6 +9,7 @@ import type {
 	ScanRunFailuresResponse,
 	ScanRunHistoryResponse
 } from './LibraryOperationsTypes';
+import { STALE_LIVE } from '$lib/queries/staleTime';
 
 // Scan runs and operation jobs read the v3 routes.
 
@@ -20,7 +21,7 @@ export const getCurrentLibraryRunsQueryOptions = () =>
 		queryKey: LibraryQueryKeyFactory.currentRuns(),
 		queryFn: async ({ signal }) =>
 			toCurrentRuns(await api.global.v3.GET(LibraryV3Api.currentScanRuns(), { signal })),
-		staleTime: 2_000
+		staleTime: STALE_LIVE
 	});
 
 export const getCurrentLibraryRunsQuery = (enabled: Getter<boolean> = () => true) =>

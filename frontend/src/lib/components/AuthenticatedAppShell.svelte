@@ -7,12 +7,14 @@
 	import { migratePageSourceKeys } from '$lib/stores/musicSource';
 	import { watchMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 	import { libraryStore } from '$lib/stores/library';
-	import { integrationStore } from '$lib/stores/integration';
-	import { initCacheTTLs } from '$lib/stores/cacheTtl.svelte';
+	import {
+		getIntegrationStatusQuery,
+		useIntegrationStatus
+	} from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { loadAdvancedSettings } from '$lib/queries/settings/AdvancedSettingsReads.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
-	import { imageSettingsStore } from '$lib/stores/imageSettings';
 	import { serviceStatusStore } from '$lib/stores/serviceStatus';
 	import { resumeAudioEngine, setAudioElement } from '$lib/player/audioElement';
 	import { eqStore } from '$lib/stores/eq.svelte';
@@ -41,7 +43,6 @@
 	import { nowPlayingStore } from '$lib/stores/nowPlayingSessions.svelte';
 	import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
 	import { createNavigationProgressController } from '$lib/utils/navigationProgress';
-	import { fromStore } from 'svelte/store';
 	import type { Component, Snippet } from 'svelte';
 	import { createFollowingEvents } from '$lib/queries/following/FollowingEvents';
 	import { createLibraryActivityEvents } from '$lib/queries/library/LibraryActivityEvents';
@@ -79,7 +80,10 @@
 	// pane scroll, the document itself must not.
 	const isSettingsPane = $derived(currentPath.startsWith('/settings'));
 
-	const integrations = fromStore(integrationStore);
+	// Session-wide reads: the sidebar, page gates, album cards and images use them.
+	getIntegrationStatusQuery();
+	loadAdvancedSettings();
+	const integrations = useIntegrationStatus();
 	const viewer = $derived({
 		isAdmin: authStore.isAdmin,
 		downloadClient: integrations.current.download_client || !integrations.current.loaded
@@ -206,12 +210,7 @@
 		});
 		if (sessionUserId) {
 			const cancelDeferred = untrack(() => {
-				// integration status feeds the home entry cards and the services panel
-				// (only some pages call ensureLoaded themselves)
-				void integrationStore.ensureLoaded();
 				return deferInit(() => {
-					initCacheTTLs();
-					void imageSettingsStore.load();
 					void restorePlayerSession();
 					void scrobbleManager.init();
 					syncStatus.connect();
@@ -223,7 +222,6 @@
 			};
 		} else {
 			untrack(() => {
-				integrationStore.reset();
 				syncStatus.disconnect();
 			});
 		}

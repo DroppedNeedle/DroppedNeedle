@@ -1,9 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { replaceState } from '$app/navigation';
-	import { onMount } from 'svelte';
-	import { fromStore } from 'svelte/store';
-	import { integrationStore } from '$lib/stores/integration';
+	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import SettingsTabContent from '$lib/components/settings/SettingsTabContent.svelte';
 	import { isSettingsTabVisible } from '$lib/components/settings/settingsTabs';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -45,7 +43,7 @@
 	import UnsavedChangesGuard from '$lib/ui/UnsavedChangesGuard.svelte';
 	import { confirmLeave } from '$lib/ui/settingsSection.svelte';
 
-	const integration = fromStore(integrationStore);
+	const integration = useIntegrationStatus();
 
 	const updateCheckQuery = getUpdateCheckQuery();
 	const updateAvailable = $derived(updateCheckQuery.data?.update_available ?? false);
@@ -149,10 +147,6 @@
 			replaceState(url, {});
 		});
 	}
-
-	onMount(() => {
-		integrationStore.ensureLoaded();
-	});
 
 	$effect(() => {
 		const tabParam = page.url.searchParams.get('tab');

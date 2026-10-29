@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { integrationStore } from '$lib/stores/integration';
+	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -32,6 +32,8 @@
 	} from '$lib/queries/library/LibraryQueries.svelte';
 	import LocalAlbumPage from './LocalAlbumPage.svelte';
 	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings/RatingQueries.svelte';
+
+	const integrations = useIntegrationStatus();
 
 	// The outage fallback only needs the local id; the v3 album view the
 	// route gate passes satisfies this, as does the v1 detail shape.
@@ -162,7 +164,7 @@
 				refreshing={state.refreshing}
 				headerDownloadTask={state.headerDownloadTask}
 				heldFiles={state.headerHeldFiles}
-				downloadClientConfigured={$integrationStore.download_client}
+				downloadClientConfigured={integrations.current.download_client}
 				libraryInLibrary={state.libraryInLibrary}
 				libraryTrackCount={state.libraryTrackCount}
 				libraryBelowCutoff={state.libraryBelowCutoff}
@@ -261,12 +263,12 @@
 						loadingLocal={state.loadingLocal}
 						loadingNavidrome={state.loadingNavidrome}
 						loadingPlex={state.loadingPlex}
-						youtubeEnabled={$integrationStore.youtube}
-						youtubeApiConfigured={$integrationStore.youtube_api}
-						jellyfinEnabled={$integrationStore.jellyfin}
-						localfilesEnabled={$integrationStore.localfiles}
-						navidromeEnabled={$integrationStore.navidrome}
-						plexEnabled={$integrationStore.plex}
+						youtubeEnabled={integrations.current.youtube}
+						youtubeApiConfigured={integrations.current.youtube_api}
+						jellyfinEnabled={integrations.current.jellyfin}
+						localfilesEnabled={integrations.current.localfiles}
+						navidromeEnabled={integrations.current.navidrome}
+						plexEnabled={integrations.current.plex}
 						jellyfinCallbacks={state.jellyfinCallbacks}
 						localCallbacks={state.localCallbacks}
 						localDownloadCallback={state.localDownloadCallback}
@@ -294,12 +296,12 @@
 						navidromeTracks={state.navidromeTracks}
 						plexTracks={state.plexTracks}
 						trackLinks={state.trackLinks}
-						youtubeEnabled={$integrationStore.youtube}
-						youtubeApiConfigured={$integrationStore.youtube_api}
-						jellyfinEnabled={$integrationStore.jellyfin}
-						localfilesEnabled={$integrationStore.localfiles}
-						navidromeEnabled={$integrationStore.navidrome}
-						plexEnabled={$integrationStore.plex}
+						youtubeEnabled={integrations.current.youtube}
+						youtubeApiConfigured={integrations.current.youtube_api}
+						jellyfinEnabled={integrations.current.jellyfin}
+						localfilesEnabled={integrations.current.localfiles}
+						navidromeEnabled={integrations.current.navidrome}
+						plexEnabled={integrations.current.plex}
 						libraryTracksByRecording={state.libraryTracksByRecording}
 						libraryTracksByPosition={state.libraryTracksByPosition}
 						heldByRecording={state.heldByRecording}

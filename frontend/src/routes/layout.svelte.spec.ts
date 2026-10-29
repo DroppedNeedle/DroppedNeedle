@@ -75,15 +75,14 @@ vi.mock('$lib/stores/library', () => ({
 		setSession: vi.fn()
 	}
 }));
-vi.mock('$lib/stores/integration', () => ({
-	integrationStore: {
-		subscribe: vi.fn((cb: (v: unknown) => void) => {
-			cb(integrationState);
-			return () => {};
-		}),
-		ensureLoaded: vi.fn().mockResolvedValue(undefined),
-		reset: vi.fn()
-	}
+// The shell's session-wide reads answer from fixed state, with no network.
+vi.mock('$lib/queries/HomeIntegrationStatusQuery.svelte', () => ({
+	getIntegrationStatusQuery: vi.fn(() => ({ data: integrationState })),
+	useIntegrationStatus: () => ({ current: integrationState })
+}));
+vi.mock('$lib/queries/settings/AdvancedSettingsReads.svelte', () => ({
+	loadAdvancedSettings: vi.fn(() => ({ data: undefined })),
+	useDirectRemoteImages: () => ({ current: true })
 }));
 vi.mock('$lib/stores/nowPlayingSessions.svelte', () => ({
 	nowPlayingStore: { sessions: [], start: vi.fn(), stop: vi.fn() }
@@ -116,14 +115,10 @@ vi.mock('$lib/queries/events/MuxEventStream', () => ({
 	muxEventStream: muxMock,
 	createMuxEventStream: vi.fn(() => muxMock)
 }));
-vi.mock('$lib/stores/cacheTtl.svelte', () => ({ initCacheTTLs: vi.fn() }));
 const { syncStatusMock } = vi.hoisted(() => ({
 	syncStatusMock: { connect: vi.fn(), disconnect: vi.fn() }
 }));
 vi.mock('$lib/stores/syncStatus.svelte', () => ({ syncStatus: syncStatusMock }));
-vi.mock('$lib/stores/imageSettings', () => ({
-	imageSettingsStore: { load: vi.fn().mockResolvedValue(undefined) }
-}));
 vi.mock('$lib/stores/player.svelte', () => ({
 	playerStore: {
 		isPlayerVisible: false,
@@ -217,11 +212,9 @@ vi.mock('$lib/components/lazyComponentLoaders', () => ({
 }));
 
 import Layout from './+layout.svelte';
-import { integrationStore } from '$lib/stores/integration';
 import { nowPlayingStore } from '$lib/stores/nowPlayingSessions.svelte';
 import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
-import { initCacheTTLs } from '$lib/stores/cacheTtl.svelte';
 import { discographyDownloadStore } from '$lib/stores/discographyDownload.svelte';
 import { batchDownloadStore } from '$lib/stores/batchDownloadStatus.svelte';
 import { resetPlaylistModal } from '$lib/stores/playlistModal.svelte';
@@ -353,19 +346,17 @@ describe('+layout.svelte auth-reactive session state (#155)', () => {
 		authStore.clear();
 	});
 
-	it('resets the integration store instead of loading it when unauthenticated', async () => {
+	it('starts no session services when unauthenticated', async () => {
 		await renderLayout();
-		await vi.waitFor(() => expect(vi.mocked(integrationStore.reset)).toHaveBeenCalled());
-		expect(integrationStore.ensureLoaded).not.toHaveBeenCalled();
-		expect(initCacheTTLs).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(syncStatusMock.disconnect).toHaveBeenCalled());
 		expect(syncStatusMock.connect).not.toHaveBeenCalled();
+		expect(nowPlayingStore.start).not.toHaveBeenCalled();
 	});
 
-	it('loads integration status and starts session services when authenticated at mount', async () => {
+	it('starts session services when authenticated at mount', async () => {
 		authStore.setUser(testUser());
 		await renderLayout();
-		await vi.waitFor(() => expect(vi.mocked(integrationStore.ensureLoaded)).toHaveBeenCalled());
-		expect(nowPlayingStore.start).toHaveBeenCalled();
+		await vi.waitFor(() => expect(nowPlayingStore.start).toHaveBeenCalled());
 		expect(nowPlayingReporter.start).toHaveBeenCalled();
 		expect(followingEventsMock.start).toHaveBeenCalled();
 		await vi.waitFor(() => expect(syncStatusMock.connect).toHaveBeenCalled());
@@ -382,17 +373,16 @@ describe('+layout.svelte auth-reactive session state (#155)', () => {
 		expect(lastStart).toBeLessThan(muxMock.connect.mock.invocationCallOrder[0]);
 	});
 
-	it('loads integration status after a warm in-app login without a remount', async () => {
+	it('starts session services after a warm in-app login without a remount', async () => {
 		await renderLayout();
-		await vi.waitFor(() => expect(vi.mocked(integrationStore.reset)).toHaveBeenCalled());
-		expect(integrationStore.ensureLoaded).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(syncStatusMock.disconnect).toHaveBeenCalled());
+		expect(nowPlayingStore.start).not.toHaveBeenCalled();
 
 		authStore.setUser(testUser());
-		await vi.waitFor(() => expect(vi.mocked(integrationStore.ensureLoaded)).toHaveBeenCalled());
-		expect(nowPlayingStore.start).toHaveBeenCalled();
+		await vi.waitFor(() => expect(nowPlayingStore.start).toHaveBeenCalled());
 	});
 
-	it('stops session services and resets integrations on logout', async () => {
+	it('stops session services on logout', async () => {
 		authStore.setUser(testUser());
 		await renderLayout();
 		await vi.waitFor(() => expect(nowPlayingStore.start).toHaveBeenCalled());
@@ -402,13 +392,12 @@ describe('+layout.svelte auth-reactive session state (#155)', () => {
 		expect(nowPlayingReporter.stop).toHaveBeenCalled();
 		expect(followingEventsMock.stop).toHaveBeenCalled();
 		expect(muxMock.disconnect).toHaveBeenCalled();
-		expect(vi.mocked(integrationStore.reset)).toHaveBeenCalled();
 	});
 
 	it('clears a pending discography selection when the account changes', async () => {
 		authStore.setUser(testUser());
 		await renderLayout();
-		await vi.waitFor(() => expect(vi.mocked(integrationStore.ensureLoaded)).toHaveBeenCalled());
+		await vi.waitFor(() => expect(nowPlayingStore.start).toHaveBeenCalled());
 		discographyDownloadStore.show('Private Artist', 'artist-a', [
 			{ id: 'release-a', title: 'Private Release', requested: true }
 		]);
@@ -435,7 +424,7 @@ describe('+layout.svelte auth-reactive session state (#155)', () => {
 		);
 		authStore.setUser(testUser());
 		await renderLayout();
-		await vi.waitFor(() => expect(vi.mocked(integrationStore.ensureLoaded)).toHaveBeenCalled());
+		await vi.waitFor(() => expect(nowPlayingStore.start).toHaveBeenCalled());
 		batchDownloadStore.addJob('Private Artist', 'artist-a', ['release-a']);
 		discographyDownloadStore.show('Private Artist', 'artist-a', [
 			{ id: 'release-a', title: 'Private Release', type: 'Album' }

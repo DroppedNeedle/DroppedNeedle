@@ -25,7 +25,6 @@ export const getHeldEntriesQuery = (
 ) =>
 	createQuery(() => ({
 		enabled: getEnabled(),
-		staleTime: 30_000,
 		queryKey: DownloadQueryKeyFactory.held(authStore.user?.id, getFilters()),
 		queryFn: ({ signal }) => api.global.v3.GET(HELD_ENDPOINTS.list(getFilters()), { signal })
 	}));

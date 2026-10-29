@@ -2,7 +2,6 @@ import { createMutation, createQuery, queryOptions } from '@tanstack/svelte-quer
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { CACHE_TTL } from '$lib/constants';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
@@ -16,7 +15,6 @@ export type WantedWatcherSettings = components['schemas']['WantedWatcher'];
 
 const sourcePriorityOptions = () =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.sourcePriority(),
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sourcePriority(), { signal })
@@ -35,7 +33,6 @@ export function saveSourcePriority() {
 
 const sabnzbdOptions = () =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.sabnzbd(),
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdConfig(), {
@@ -47,7 +44,6 @@ export const getSabnzbdConfigQuery = () => createQuery(() => sabnzbdOptions());
 
 const sabnzbdStatusOptions = () =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.sabnzbdStatus(),
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdStatus(), { signal })
@@ -57,7 +53,6 @@ export const getSabnzbdStatusQuery = () => createQuery(() => sabnzbdStatusOption
 
 const policyOptions = () =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.policy(),
 		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.policy(), { signal })
 	});
@@ -104,7 +99,6 @@ export function saveDownloadPolicy() {
 
 const wantedSettingsOptions = () =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.wantedSettings(),
 		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.wanted(), { signal })
 	});

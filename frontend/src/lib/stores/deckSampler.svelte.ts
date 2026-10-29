@@ -12,12 +12,11 @@
  *  - a single album / track (`start` / `startTrack`)
  *  - a station: a queue of album/track entries played back-to-back (`startStation`)
  */
-import { api } from '$lib/api/client';
 import { SvelteSet } from 'svelte/reactivity';
 import { audioFocus } from '$lib/stores/audioFocus.svelte';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
 import type { PreviewTrackItem } from '$lib/queries/discover/types';
-import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
+import { fetchAlbumPreview, fetchTrackPreview } from '$lib/queries/discover/DiscoverQueueQueries';
 
 const FOCUS_ID = 'deck-sampler';
 const CROSSFADE_S = 0.5;
@@ -446,7 +445,7 @@ function createDeckSampler() {
 		provider: string | null;
 	}> {
 		if (entry.kind === 'track') {
-			const data = await api.global.v3.GET(DiscoverV3Api.trackPreview(entry.artist, entry.title));
+			const data = await fetchTrackPreview(entry.artist, entry.title);
 			const provider = data.provider ?? null;
 			if (!data.preview_url) return { tracks: [], provider };
 			return {
@@ -462,9 +461,7 @@ function createDeckSampler() {
 				provider
 			};
 		}
-		const data = await api.global.v3.GET(
-			DiscoverV3Api.albumPreview(entry.artist, entry.title, null)
-		);
+		const data = await fetchAlbumPreview(entry.artist, entry.title);
 		const tracks: PreviewTrackItem[] = (data.tracks ?? []).flatMap((track) =>
 			track.preview_url
 				? [

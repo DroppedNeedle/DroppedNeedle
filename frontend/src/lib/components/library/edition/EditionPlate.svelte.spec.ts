@@ -112,10 +112,6 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	sealCustomEdition: () => mutation((...args: unknown[]) => h.seal(...args)),
 	leaveAlbumUnmanaged: () => mutation((...args: unknown[]) => h.leave(...args))
 }));
-vi.mock('$lib/stores/integration', async () => {
-	const { writable } = await import('svelte/store');
-	return { integrationStore: writable({ download_client: true }) };
-});
 vi.mock('$lib/queries/downloads/DownloadQueries.svelte', () => ({
 	getAlbumDownloadsQuery: () => ({
 		get data() {
@@ -154,8 +150,24 @@ vi.mock('$lib/components/AlbumImage.svelte', () => {
 });
 
 import '../../../../app.css';
-import { integrationStore } from '$lib/stores/integration';
+import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
+import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import EditionPlate from './EditionPlate.svelte';
+
+function setDownloadSource(set_up: boolean): Promise<void> {
+	return setQueryDataWithPersister(HomeQueryKeyFactory.integrationStatus('user-1'), {
+		download_client: set_up,
+		jellyfin: false,
+		lastfm: false,
+		library: false,
+		listenbrainz: false,
+		localfiles: false,
+		navidrome: false,
+		plex: false,
+		youtube: false,
+		youtube_api: false
+	});
+}
 
 const copy = {
 	id: 'local-1',
@@ -328,7 +340,7 @@ beforeEach(async () => {
 	h.downloads = [];
 	h.latest = null;
 	h.cancel.mockReset();
-	(integrationStore as unknown as { set: (value: unknown) => void }).set({ download_client: true });
+	await setDownloadSource(true);
 	h.isTrusted = true;
 	h.isAdmin = false;
 	h.url = new URL('http://localhost/album/group-1');
@@ -632,9 +644,7 @@ describe('making your copy the chosen edition', () => {
 	});
 
 	it('with no download source still asks, and says the download waits for one', async () => {
-		(integrationStore as unknown as { set: (value: unknown) => void }).set({
-			download_client: false
-		});
+		await setDownloadSource(false);
 		h.acquire.mockResolvedValue({
 			status: 'started',
 			message:

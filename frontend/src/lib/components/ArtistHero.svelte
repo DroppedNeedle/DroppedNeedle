@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { coverSrc } from '$lib/api/covers';
-	import { imageSettingsStore } from '$lib/stores/imageSettings';
+	import { useDirectRemoteImages } from '$lib/queries/settings/AdvancedSettingsReads.svelte';
 	import { Check, MicVocal, RefreshCw } from 'lucide-svelte';
 	import type { ArtistInfo } from '$lib/types';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
@@ -13,6 +13,8 @@
 	import RatingStars from '$lib/ui/RatingStars.svelte';
 	import { outsideLink } from './outsideLink';
 	import { getArtistImageCreditQuery } from '$lib/queries/artist/ArtistImageCreditQuery.svelte';
+
+	const directRemoteImages = useDirectRemoteImages();
 
 	interface Props {
 		artist: ArtistInfo;
@@ -38,7 +40,7 @@
 	let heroImageLoaded = $state(false);
 
 	let resolvedBackdropUrl = $derived.by(() => {
-		if ($imageSettingsStore.directRemoteImagesEnabled) {
+		if (directRemoteImages.current) {
 			if (artist.banner_url) return artist.banner_url;
 			if (artist.wide_thumb_url) return artist.wide_thumb_url;
 			if (artist.fanart_url) return artist.fanart_url;
@@ -48,7 +50,7 @@
 	});
 
 	let hasDistinctBackdrop = $derived(
-		$imageSettingsStore.directRemoteImagesEnabled &&
+		directRemoteImages.current &&
 			!!(artist.banner_url || artist.wide_thumb_url || artist.fanart_url)
 	);
 

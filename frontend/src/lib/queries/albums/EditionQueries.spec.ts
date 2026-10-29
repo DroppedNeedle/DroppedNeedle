@@ -20,10 +20,6 @@ vi.mock('$lib/api/client', () => ({
 	api: { global: { v3: h.v3 } }
 }));
 
-vi.mock('$lib/constants', () => ({
-	CACHE_TTL: { ALBUM_DETAIL_EDITIONS: 60_000 }
-}));
-
 vi.mock('$lib/queries/QueryClient', () => ({
 	invalidateQueriesWithPersister: h.invalidate,
 	queryClient: { getQueryData: () => h.cached }

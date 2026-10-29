@@ -2,7 +2,8 @@ import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
-import { searchStore } from '$lib/stores/search';
+import { SearchQueryKeyFactory } from '$lib/queries/search/SearchQueryKeyFactory';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
 import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
@@ -16,7 +17,6 @@ async function invalidateIdentityPreparation(
 	userId: string | undefined,
 	catalogChanged = false
 ): Promise<void> {
-	if (catalogChanged) searchStore.clear();
 	await Promise.all([
 		invalidateQueriesWithPersister({
 			queryKey: LibraryQueryKeyFactory.identityPreparationsPrefix(userId)
@@ -27,7 +27,10 @@ async function invalidateIdentityPreparation(
 					invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all }),
 					invalidateQueriesWithPersister({ queryKey: ArtistQueryKeyFactory.prefix }),
 					invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix }),
-					invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix })
+					invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix }),
+					invalidateQueriesWithPersister({
+						queryKey: SearchQueryKeyFactory.v3.root(authStore.user?.id)
+					})
 				]
 			: [])
 	]);

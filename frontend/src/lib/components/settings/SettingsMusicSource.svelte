@@ -1,21 +1,29 @@
 <script lang="ts">
-	import { musicSourceStore, type MusicSource } from '$lib/stores/musicSource';
-	import { fromStore } from 'svelte/store';
+	import { DEFAULT_SOURCE, isMusicSource, type MusicSource } from '$lib/stores/musicSource';
+	import { getScrobblePreferencesQuery } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
+	import { createUpdateScrobblePreferencesMutation } from '$lib/queries/scrobble-preferences/ScrobblePreferencesMutations.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 
-	const source = fromStore(musicSourceStore);
+	const preferencesQuery = getScrobblePreferencesQuery();
+	const updatePreferences = createUpdateScrobblePreferencesMutation();
 
 	let saving = $state(false);
 	let message = $state('');
 
-	const currentSource = $derived(source.current.source);
+	const currentSource = $derived.by((): MusicSource => {
+		const saved = preferencesQuery.data?.primary_music_source;
+		return isMusicSource(saved) ? saved : DEFAULT_SOURCE;
+	});
 
 	async function handleChange(newSource: MusicSource) {
 		if (newSource === currentSource) return;
 		saving = true;
 		message = '';
-		const ok = await musicSourceStore.save(newSource);
+		const ok = await updatePreferences
+			.mutateAsync({ primary_music_source: newSource })
+			.then(() => true)
+			.catch(() => false);
 		if (ok) {
 			message = 'Default music source updated';
 			setTimeout(() => {
@@ -26,10 +34,6 @@
 		}
 		saving = false;
 	}
-
-	$effect(() => {
-		musicSourceStore.load();
-	});
 </script>
 
 <Card title="Primary Music Source">

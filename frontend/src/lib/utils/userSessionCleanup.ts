@@ -2,7 +2,6 @@ import { browser } from '$app/environment';
 import { clearPersistedQueryCache } from '$lib/queries/IndexedDbPersister.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore, LAST_USER_ID_KEY } from '$lib/stores/authStore.svelte';
-import { clearUserScopedLocalCaches } from '$lib/utils/userScopedCaches';
 
 type SessionCleanupOptions = {
 	clearAuth?: boolean;
@@ -37,7 +36,6 @@ export async function clearUserSessionState(options: SessionCleanupOptions = {})
 	const failures: unknown[] = [];
 	const { clearAuth = true, clearLastUserId = true } = options;
 
-	runCleanupLeg(failures, clearUserScopedLocalCaches);
 	for (const reset of [...registeredSessionResets]) runCleanupLeg(failures, reset);
 	if (browser && clearLastUserId) {
 		runCleanupLeg(failures, () => localStorage.removeItem(LAST_USER_ID_KEY));

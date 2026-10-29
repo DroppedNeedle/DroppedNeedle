@@ -8,7 +8,6 @@ import { ScrobblePreferencesQueryKeyFactory } from './ScrobblePreferencesQueryKe
 import { SCROBBLE_PREFERENCES_ENDPOINTS } from './endpoints';
 import { notifyPendingApprovalCountChanged } from '$lib/utils/requestsApi';
 import type { ScrobblePreferencesUpdate } from './types';
-import { isMusicSource, musicSourceStore } from '$lib/stores/musicSource';
 
 // invalidate so the card and home/discover re-read the new primary source
 export const createUpdateScrobblePreferencesMutation = () =>
@@ -24,9 +23,6 @@ export const createUpdateScrobblePreferencesMutation = () =>
 		onSuccess: async (preferences, _vars, context) => {
 			const userId = context.userId;
 			if (!userId || authStore.user?.id !== userId) return;
-			if (isMusicSource(preferences.primary_music_source)) {
-				musicSourceStore.setSource(preferences.primary_music_source);
-			}
 			await setQueryDataWithPersister(ScrobblePreferencesQueryKeyFactory.get(userId), preferences);
 		}
 	}));

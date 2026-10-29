@@ -20,7 +20,6 @@ function toResponse(data: { pages?: SectionPrefsResponse['pages'] }): SectionPre
 
 export const getSectionPrefsQuery = () =>
 	createQuery(() => ({
-		staleTime: 60_000,
 		queryKey: SectionPrefsQueryKeyFactory.prefs(authStore.user?.id),
 		queryFn: async ({ signal }) =>
 			toResponse(await api.global.v3.GET(SECTION_PREFS_ENDPOINT(), { signal }))

@@ -100,8 +100,6 @@ import { SCROBBLE_PREFERENCES_ENDPOINTS } from './endpoints';
 import { getScrobblePreferencesQuery } from './ScrobblePreferencesQuery.svelte';
 import { getScrobblePreferencesQueryOptions } from './ScrobblePreferencesQuery.svelte';
 import { createUpdateScrobblePreferencesMutation } from './ScrobblePreferencesMutations.svelte';
-import type { ScrobblePreferences } from './types';
-import { musicSourceStore } from '$lib/stores/musicSource';
 
 // The typed client's generics resolve mock results to void; loosen to Mock
 // so resolves typecheck (assertions still pin URLs + bodies).
@@ -123,7 +121,6 @@ type Opts = {
 beforeEach(() => {
 	vi.clearAllMocks();
 	queryClient.clear();
-	musicSourceStore.reset();
 	(authStore as { user: { id: string } | null }).user = { id: 'userA' };
 	mockV3Get.mockResolvedValue({
 		scrobble_to_lastfm: false,
@@ -176,7 +173,6 @@ describe('getScrobblePreferencesQuery', () => {
 		const cachedDuration = performance.now() - cachedStart;
 		expect(mockV3Get).toHaveBeenCalledOnce();
 		expect(cachedDuration).toBeLessThan(400);
-		expect(options.staleTime).toBe(Infinity);
 		expect(options.gcTime).toBe(Infinity);
 	});
 });
@@ -195,42 +191,12 @@ describe('update scrobble preferences', () => {
 
 	it('discards a delayed mutation result after an account switch', async () => {
 		const m = createUpdateScrobblePreferencesMutation() as unknown as Opts;
-		const setSource = vi.spyOn(musicSourceStore, 'setSource');
 		const context = m.onMutate!({ primary_music_source: 'lastfm' });
 		const updated = await m.mutationFn({ primary_music_source: 'lastfm' });
 		(authStore as { user: { id: string } | null }).user = { id: 'userB' };
 
 		await m.onSuccess!(updated, { primary_music_source: 'lastfm' }, context);
 
-		expect(setSource).not.toHaveBeenCalled();
-		expect(queryClient.getQueryData(['me', 'scrobble-preferences', 'userA'])).toBeUndefined();
-		expect(queryClient.getQueryData(['me', 'scrobble-preferences', 'userB'])).toBeUndefined();
-		setSource.mockRestore();
-	});
-
-	it('does not repopulate source state or cache when save resolves after an account switch', async () => {
-		let resolveSave: (preferences: ScrobblePreferences) => void = () => undefined;
-		mockV3Put.mockImplementationOnce(
-			() =>
-				new Promise<ScrobblePreferences>((resolve) => {
-					resolveSave = resolve;
-				})
-		);
-		const save = musicSourceStore.save('lastfm');
-		(authStore as { user: { id: string } | null }).user = { id: 'userB' };
-		musicSourceStore.reset();
-		resolveSave({
-			scrobble_to_lastfm: false,
-			scrobble_to_listenbrainz: false,
-			navidrome_handles_external_scrobbles: true,
-			primary_music_source: 'lastfm',
-			now_playing_visibility: 'full',
-			auto_request_personal_mix: false,
-			auto_request_state: 'none'
-		});
-
-		await expect(save).resolves.toBe(true);
-		expect(musicSourceStore.getSource()).toBe('listenbrainz');
 		expect(queryClient.getQueryData(['me', 'scrobble-preferences', 'userA'])).toBeUndefined();
 		expect(queryClient.getQueryData(['me', 'scrobble-preferences', 'userB'])).toBeUndefined();
 	});

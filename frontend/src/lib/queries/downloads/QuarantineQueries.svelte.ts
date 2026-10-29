@@ -1,7 +1,6 @@
 import { createMutation, createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { CACHE_TTL } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 
@@ -10,7 +9,6 @@ import { DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
 
 const getQuarantineQueryOptions = () =>
 	queryOptions({
-		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.quarantine(),
 		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_TASKS_ENDPOINTS.quarantine(), { signal })
 	});

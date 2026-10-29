@@ -6,6 +6,7 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
+import { STALE_LIVE } from '$lib/queries/staleTime';
 
 export type BinRemoval = components['schemas']['Page_BinRemovalView']['items'][number];
 export type RecycleBinPage = components['schemas']['RecycleBinPage'];
@@ -34,7 +35,7 @@ export const getRecycleBinSummaryQuery = (getOpen: () => boolean) =>
 	createQuery(() => ({
 		queryKey: LibraryQueryKeyFactory.catalog.recycleBinSummary(authStore.user?.id),
 		enabled: authStore.isAdmin && getOpen(),
-		staleTime: 0,
+		staleTime: STALE_LIVE,
 		gcTime: 0,
 		refetchOnWindowFocus: false,
 		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.recycleBinSummary(), { signal })

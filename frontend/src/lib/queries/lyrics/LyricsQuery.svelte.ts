@@ -1,5 +1,5 @@
 import { api, ApiError } from '$lib/api/client';
-import { CACHE_TTL } from '$lib/constants';
+import { STALE_SLOW } from '$lib/queries/staleTime';
 import type { LyricLine } from '$lib/types';
 import type { NowPlaying } from '$lib/player/types';
 import { createQuery } from '@tanstack/svelte-query';
@@ -58,8 +58,7 @@ export const getLyricsQuery = (
 	createQuery(() => {
 		const np = getNowPlaying();
 		return {
-			staleTime: CACHE_TTL.LYRICS,
-			gcTime: CACHE_TTL.LYRICS,
+			staleTime: STALE_SLOW,
 			queryKey: LyricsQueryKeyFactory.lyrics(
 				getUserId(),
 				np?.sourceType === 'navidrome' ? getNavidromeScope() : undefined,

@@ -1,8 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { ArrowRight, Compass } from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
-	import { discoverQueueStatusStore } from '$lib/stores/discoverQueueStatus';
+	import { getDiscoverQueueStatusQuery } from '$lib/queries/discover/DiscoverQueueQueries';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { DiscoverPreview } from '$lib/queries/discover/types';
 	import Card from '$lib/ui/Card.svelte';
@@ -13,15 +12,11 @@
 
 	let { preview }: Props = $props();
 
-	let queueCount = $state<number | null>(null);
-
-	onMount(async () => {
-		// the queue count makes the pitch concrete ("12 albums waiting")
-		const status = await discoverQueueStatusStore.fetchStatus();
-		if (status?.status === 'ready' && status.item_count) {
-			queueCount = status.item_count;
-		}
-	});
+	// the queue count makes the pitch concrete ("12 albums waiting")
+	const queueStatus = getDiscoverQueueStatusQuery();
+	const queueCount = $derived(
+		queueStatus.data?.status === 'ready' ? (queueStatus.data.item_count ?? null) : null
+	);
 
 	const teaserArtists = $derived((preview?.items ?? []).slice(0, 4));
 	const headline = $derived(

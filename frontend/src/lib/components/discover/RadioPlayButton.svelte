@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { Play, Shuffle } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import { fromStore } from 'svelte/store';
 	import { launchRadio, type RadioMode } from '$lib/player/launchRadio';
 	import { deckSampler, type SampleEntry } from '$lib/stores/deckSampler.svelte';
-	import { integrationStore } from '$lib/stores/integration';
+	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
 	import type { RadioPlanRequest } from '$lib/queries/discover/types';
 
@@ -34,7 +33,7 @@
 		className = ''
 	}: Props = $props();
 
-	const integrations = fromStore(integrationStore);
+	const integrations = useIntegrationStatus();
 	const ytConfigured = $derived(!!integrations.current.youtube_api);
 
 	let tuning = $state(false);

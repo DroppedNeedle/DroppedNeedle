@@ -1,7 +1,5 @@
 <script lang="ts">
-	import { userStorageSegment } from '$lib/queries/userKeySegment';
 	import { goto } from '$app/navigation';
-	import { CACHE_TTL } from '$lib/constants';
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { requestMissingTracks, type PlaylistDetail } from '$lib/api/playlists';
@@ -11,15 +9,15 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		getPlaylistDetailV3Query,
+		getPlaylistSourcesV3QueryOptions,
 		type PlaylistDetailV3
 	} from '$lib/queries/playlists/PlaylistV3Queries.svelte';
 	import {
 		deletePlaylistV3,
-		resolvePlaylistSourcesV3,
 		setPlaylistVisibilityV3
 	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
 	import { toPageDetail } from '$lib/queries/playlists/playlistV3Adapter';
-	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
+	import { invalidateQueriesWithPersister, queryClient } from '$lib/queries/QueryClient';
 	import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import { getApiUrl } from '$lib/api/api-utils';
@@ -42,7 +40,6 @@
 	);
 	const shareMutation = setPlaylistVisibilityV3();
 	const deleteMutation = deletePlaylistV3();
-	const resolveSourcesMutation = resolvePlaylistSourcesV3();
 
 	// A local mutable copy of the (full) playlist so child components can keep
 	// applying optimistic updates; redaction/loading/error leave it null.
@@ -94,49 +91,6 @@
 		}
 	}
 
-	// Source-resolution cache is namespaced per user so two accounts on a shared
-	// browser never read each other's resolved sources.
-	const SOURCES_CACHE_PREFIX = 'droppedneedle_playlist_sources_';
-	function sourcesCacheKey(playlistId: string): string {
-		return `${SOURCES_CACHE_PREFIX}${userStorageSegment(authStore.user?.id)}_${playlistId}`;
-	}
-
-	function getSourcesFromCache(playlistId: string): Record<string, string[]> | null {
-		try {
-			const key = sourcesCacheKey(playlistId);
-			const raw = localStorage.getItem(key);
-			if (!raw) return null;
-			const cached = JSON.parse(raw) as { ts: number; data: Record<string, string[]> };
-			const ttl = CACHE_TTL.PLAYLIST_SOURCES;
-			if (Date.now() - cached.ts > ttl) {
-				localStorage.removeItem(key);
-				return null;
-			}
-			return cached.data;
-		} catch {
-			return null;
-		}
-	}
-
-	function setSourcesCache(playlistId: string, sources: Record<string, string[]>) {
-		try {
-			localStorage.setItem(
-				sourcesCacheKey(playlistId),
-				JSON.stringify({ ts: Date.now(), data: sources })
-			);
-		} catch {
-			/* storage full - non-critical */
-		}
-	}
-
-	function invalidateSourcesCache(playlistId: string) {
-		try {
-			localStorage.removeItem(sourcesCacheKey(playlistId));
-		} catch {
-			/* ignore */
-		}
-	}
-
 	function applySourcesMap(sources: Record<string, string[]>, onlyMissing = false) {
 		if (!playlist) return;
 		for (const track of playlist.tracks) {
@@ -164,40 +118,42 @@
 		return false;
 	}
 
-	async function resolveAndCacheSources(playlistId: string) {
-		const cached = getSourcesFromCache(playlistId);
-		if (cached && playlist && playlist.id === playlistId) {
+	async function resolveSources(playlistId: string) {
+		const options = getPlaylistSourcesV3QueryOptions(authStore.user?.id, playlistId);
+		const before = queryClient.getQueryData(options.queryKey);
+		try {
+			const sources = await queryClient.fetchQuery(options);
+			if (!playlist || playlist.id !== playlistId) return;
 			const ids = new Set(playlist.tracks.map((t) => t.id));
-			if (hasUsableSourcesForPlaylist(cached, ids)) {
-				// Playlist was just cloned from live detailQuery data, so healed
-				// backend rows are already present; fill gaps from cache only.
-				applySourcesMap(cached, true);
+			if (!hasUsableSourcesForPlaylist(sources, ids)) {
+				// Nothing usable is never fresh: the next visit asks again.
+				await forgetSources(playlistId);
 				return;
 			}
-			// Empty/stale cache is never fresh: drop it and fetch live.
-			invalidateSourcesCache(playlistId);
-		} else if (cached) {
-			applySourcesMap(cached, true);
-			return;
-		}
-		try {
-			const answer = await resolveSourcesMutation.mutateAsync(playlistId);
-			const sources = answer.sources;
-			if (playlist && playlist.id === playlistId) {
-				applySourcesMap(sources);
-				// Empty resolve results are not fresh: skip caching when nothing
-				// usable was returned for this playlist's tracks.
-				if (playlist.tracks.length === 0) return;
-				const ids = new Set(playlist.tracks.map((t) => t.id));
-				if (hasUsableSourcesForPlaylist(sources, ids)) {
-					setSourcesCache(playlistId, sources);
-					await invalidateQueriesWithPersister({
-						queryKey: PlaylistQueryKeyFactory.detail(authStore.user?.id, playlistId)
-					});
-				}
+			if (sources === before) {
+				// Live detailQuery values (clone) already hold the healed rows;
+				// the kept answer only fills gaps.
+				applySourcesMap(sources, true);
+				return;
 			}
+			applySourcesMap(sources);
+			await invalidateQueriesWithPersister({
+				queryKey: PlaylistQueryKeyFactory.detail(authStore.user?.id, playlistId)
+			});
 		} catch {
 			// non-critical - tracks keep their stored available_sources
+		}
+	}
+
+	async function forgetSources(playlistId: string) {
+		try {
+			await invalidateQueriesWithPersister(
+				{ queryKey: PlaylistQueryKeyFactory.sources(authStore.user?.id, playlistId), exact: true },
+				undefined,
+				{ removePersisted: true }
+			);
+		} catch {
+			// the kept answer only goes stale on its own later
 		}
 	}
 
@@ -213,7 +169,7 @@
 				// Clone so optimistic child mutations never touch the query cache.
 				const page = toPageDetail(d);
 				playlist = { ...page, tracks: page.tracks.map((t) => ({ ...t })) };
-				void resolveAndCacheSources(d.id);
+				void resolveSources(d.id);
 			} else {
 				playlist = null;
 			}
@@ -258,7 +214,7 @@
 	}
 
 	function handleSourceChange() {
-		if (playlist) invalidateSourcesCache(playlist.id);
+		if (playlist) void forgetSources(playlist.id);
 	}
 
 	function handlePlaylistUpdate(updatedPlaylist: PlaylistDetail) {

@@ -1,7 +1,6 @@
 import { fetchLocalAlbumMatch, fetchRemoteAlbumMatch } from '$lib/queries/albumMatch';
-import { get } from 'svelte/store';
 import { gatewayStreamUrl } from '$lib/player/playbackGateway';
-import { integrationStore } from '$lib/stores/integration';
+import { readIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 import { playerStore } from '$lib/stores/player.svelte';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
 import { recordingFor, REMOTE_FORMAT, remoteStreamKey } from '$lib/player/queueHelpers';
@@ -65,11 +64,11 @@ export async function fetchAlbumQueueItems(
 	meta: AlbumCardMeta,
 	signal?: AbortSignal
 ): Promise<QueueItem[]> {
-	const status = get(integrationStore);
+	const status = readIntegrationStatus();
 	const hints = { title: meta.albumName, artist: meta.artistName };
 	const probes: Promise<SourceResult | null>[] = [];
 
-	if (status.localfiles) {
+	if (status?.localfiles) {
 		probes.push(
 			fetchLocalAlbumMatch(meta.mbid, signal)
 				.then((data) => {
@@ -82,7 +81,7 @@ export async function fetchAlbumQueueItems(
 
 	const remotes: RemoteSource[] = ['navidrome', 'jellyfin', 'plex'];
 	for (const source of remotes) {
-		if (!status[source]) continue;
+		if (!status?.[source]) continue;
 		probes.push(
 			fetchRemoteAlbumMatch(source, meta.mbid, hints, signal)
 				.then((data) => {

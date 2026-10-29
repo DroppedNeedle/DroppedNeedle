@@ -1,7 +1,7 @@
 import { api } from '$lib/api/client';
 import { v3 } from '$lib/api/v3/endpoint';
 import type { components } from '$lib/api/v3/openapi';
-import { CACHE_TTL } from '$lib/constants';
+import { STALE_SLOW } from '$lib/queries/staleTime';
 import { createQuery } from '@tanstack/svelte-query';
 import { VersionQueryKeyFactory } from './VersionQueryKeyFactory';
 
@@ -15,7 +15,7 @@ export const VERSION_ENDPOINTS = {
 
 export const getVersionQuery = () =>
 	createQuery(() => ({
-		staleTime: CACHE_TTL.VERSION_INFO,
+		staleTime: STALE_SLOW,
 		queryKey: VersionQueryKeyFactory.info(),
 		queryFn: ({ signal }) => api.global.v3.GET(VERSION_ENDPOINTS.info(), { signal }),
 		refetchOnWindowFocus: false,
@@ -24,7 +24,7 @@ export const getVersionQuery = () =>
 
 export const getUpdateCheckQuery = () =>
 	createQuery(() => ({
-		staleTime: CACHE_TTL.UPDATE_CHECK,
+		staleTime: STALE_SLOW,
 		queryKey: VersionQueryKeyFactory.updateCheck(),
 		queryFn: ({ signal }) => api.global.v3.GET(VERSION_ENDPOINTS.checkUpdate(), { signal }),
 		refetchOnWindowFocus: false,
@@ -33,7 +33,7 @@ export const getUpdateCheckQuery = () =>
 
 export const getReleaseHistoryQuery = () =>
 	createQuery(() => ({
-		staleTime: CACHE_TTL.RELEASE_HISTORY,
+		staleTime: STALE_SLOW,
 		queryKey: VersionQueryKeyFactory.releases(),
 		queryFn: ({ signal }) => api.global.v3.GET(VERSION_ENDPOINTS.releases(), { signal }),
 		refetchOnWindowFocus: false,

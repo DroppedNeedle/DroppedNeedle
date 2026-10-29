@@ -8,12 +8,12 @@ import { DropImportQueryKeyFactory } from '$lib/queries/import/DropImportQueryKe
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { LOCAL_KEYS } from '$lib/queries/local/LocalV3Keys';
 import { LyricsQueryKeyFactory } from '$lib/queries/lyrics/LyricsQueryKeyFactory';
-import { searchStore } from '$lib/stores/search';
+import { SearchQueryKeyFactory } from '$lib/queries/search/SearchQueryKeyFactory';
+import { authStore } from '$lib/stores/authStore.svelte';
 
 import { LibraryManagementQueryKeyFactory } from './LibraryManagementQueryKeyFactory';
 
 export async function invalidateLibraryManagementSurfaces(): Promise<void> {
-	searchStore.clear();
 	await Promise.all([
 		invalidateQueriesWithPersister({ queryKey: LibraryManagementQueryKeyFactory.prefix }),
 		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.operationsPrefix() }),
@@ -25,6 +25,7 @@ export async function invalidateLibraryManagementSurfaces(): Promise<void> {
 		invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix }),
 		invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.all }),
 		invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix }),
-		invalidateQueriesWithPersister({ queryKey: LyricsQueryKeyFactory.prefix })
+		invalidateQueriesWithPersister({ queryKey: LyricsQueryKeyFactory.prefix }),
+		invalidateQueriesWithPersister({ queryKey: SearchQueryKeyFactory.v3.root(authStore.user?.id) })
 	]);
 }

@@ -6,14 +6,14 @@ import { ArtistReconciliationQueryKeyFactory } from '$lib/queries/artist-reconci
 import { LyricsQueryKeyFactory } from '$lib/queries/lyrics/LyricsQueryKeyFactory';
 import { LOCAL_KEYS } from '$lib/queries/local/LocalV3Keys';
 import { RatingQueryKeyFactory } from '$lib/queries/ratings/RatingQueryKeyFactory';
-import { searchStore } from '$lib/stores/search';
+import { SearchQueryKeyFactory } from '$lib/queries/search/SearchQueryKeyFactory';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 
 // The cross-domain contract for catalog changes, including a landed download:
 // every key nested under these prefixes refreshes (the library prefix covers
 // the catalog, membership, review and operation keys).
 export async function invalidateLibraryCatalog(): Promise<void> {
-	searchStore.clear();
 	await Promise.all([
 		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all }),
 		invalidateQueriesWithPersister({ queryKey: ArtistQueryKeyFactory.prefix }),
@@ -22,6 +22,7 @@ export async function invalidateLibraryCatalog(): Promise<void> {
 		invalidateQueriesWithPersister({ queryKey: ArtistReconciliationQueryKeyFactory.prefix }),
 		invalidateQueriesWithPersister({ queryKey: LyricsQueryKeyFactory.prefix }),
 		invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root }),
-		invalidateQueriesWithPersister({ queryKey: RatingQueryKeyFactory.prefix })
+		invalidateQueriesWithPersister({ queryKey: RatingQueryKeyFactory.prefix }),
+		invalidateQueriesWithPersister({ queryKey: SearchQueryKeyFactory.v3.root(authStore.user?.id) })
 	]);
 }

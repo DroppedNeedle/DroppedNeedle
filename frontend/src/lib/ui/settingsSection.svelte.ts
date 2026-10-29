@@ -20,9 +20,10 @@
 */
 import { untrack } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
-import { api, ApiError } from '$lib/api/client';
-import { HOME_ENDPOINTS } from '$lib/queries/charts/endpoints';
-import { integrationStore } from '$lib/stores/integration';
+import { ApiError } from '$lib/api/client';
+import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
+import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
+import { authStore } from '$lib/stores/authStore.svelte';
 
 interface QueryLike<T> {
 	data: T | undefined;
@@ -286,8 +287,9 @@ export function createSettingsSection<T extends object>(
 
 async function refreshIntegration() {
 	try {
-		const current = await api.global.v3.GET(HOME_ENDPOINTS.integrationStatus());
-		if (current) integrationStore.setStatus(current);
+		await invalidateQueriesWithPersister({
+			queryKey: HomeQueryKeyFactory.integrationStatus(authStore.user?.id)
+		});
 	} catch {
 		// The dots catch up on the next page load.
 	}

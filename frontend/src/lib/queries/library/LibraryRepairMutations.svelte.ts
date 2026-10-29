@@ -2,7 +2,8 @@ import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
-import { searchStore } from '$lib/stores/search';
+import { SearchQueryKeyFactory } from '$lib/queries/search/SearchQueryKeyFactory';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
 import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
@@ -12,7 +13,6 @@ import { toOperationResponse } from './libraryOperationAdapters';
 import { createUuid } from '$lib/utils/uuid';
 
 async function invalidateRepairs(catalogChanged = false): Promise<void> {
-	if (catalogChanged) searchStore.clear();
 	await Promise.all([
 		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.repairsPrefix() }),
 		invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.activityPrefix() }),
@@ -22,7 +22,10 @@ async function invalidateRepairs(catalogChanged = false): Promise<void> {
 					invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all }),
 					invalidateQueriesWithPersister({ queryKey: ArtistQueryKeyFactory.prefix }),
 					invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix }),
-					invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix })
+					invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix }),
+					invalidateQueriesWithPersister({
+						queryKey: SearchQueryKeyFactory.v3.root(authStore.user?.id)
+					})
 				]
 			: [])
 	]);

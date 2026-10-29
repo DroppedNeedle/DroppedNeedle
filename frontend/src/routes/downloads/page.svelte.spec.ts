@@ -17,6 +17,12 @@ vi.mock('$lib/queries/HomeIntegrationStatusQuery.svelte', () => ({
 		get data() {
 			return h.loaded ? { download_client: h.configured } : undefined;
 		}
+	}),
+	readIntegrationStatus: () => (h.loaded ? { download_client: h.configured } : undefined),
+	useIntegrationStatus: () => ({
+		get current() {
+			return { download_client: h.configured, loaded: h.loaded };
+		}
 	})
 }));
 

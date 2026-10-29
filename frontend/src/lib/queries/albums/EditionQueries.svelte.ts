@@ -4,7 +4,7 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { v3 } from '$lib/api/v3/endpoint';
 import type { components } from '$lib/api/v3/openapi';
-import { CACHE_TTL } from '$lib/constants';
+import { STALE_LIVE, STALE_SLOW } from '$lib/queries/staleTime';
 import { purchaseOptionsKey } from '$lib/queries/albums/GetItQueries.svelte';
 import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
 import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
@@ -47,7 +47,7 @@ export const getAlbumEditionsQuery = (
 	createQuery(() => ({
 		queryKey: editionsKey(getUserId(), mbid()),
 		enabled: enabled() && !!getUserId() && !!mbid(),
-		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
+		staleTime: STALE_SLOW,
 		queryFn: ({ signal }) => api.global.v3.GET(CATALOG_ENDPOINTS.editions(mbid()), { signal })
 	}));
 
@@ -72,7 +72,7 @@ export const getEditionTracksQuery = (
 	createQuery(() => ({
 		queryKey: editionTracksKey(getUserId(), release() ?? ''),
 		enabled: enabled() && !!getUserId() && !!group() && !!release(),
-		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
+		staleTime: STALE_SLOW,
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(CATALOG_ENDPOINTS.editionTracks(group(), release() ?? ''), { signal })
 	}));
@@ -158,7 +158,7 @@ export const getEditionFetchQuery = (
 		return {
 			queryKey,
 			enabled: getEnabled() && !!userId && !!group,
-			staleTime: 0,
+			staleTime: STALE_LIVE,
 			refetchInterval: (query: { state: { data?: EditionFetchAnswer } }) =>
 				editionFetchLive(query.state.data?.latest) ? EDITION_FETCH_POLL_MS : false,
 			queryFn: async ({ signal }: { signal: AbortSignal }): Promise<EditionFetchAnswer> => {
@@ -214,7 +214,7 @@ export const getAlbumEditionStatusQuery = (
 		return {
 			queryKey,
 			enabled: getEnabled() && !!userId && !!localId,
-			staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
+			staleTime: STALE_SLOW,
 			refetchInterval: (query: { state: { data?: EditionStatus } }) =>
 				editionBusy(query.state.data) ? EDITION_BUSY_POLL_MS : false,
 			queryFn: async ({ signal }: { signal: AbortSignal }): Promise<EditionStatus> => {
@@ -253,7 +253,7 @@ export const getEditionPlanQuery = (
 	createQuery(() => ({
 		queryKey: editionPlanKey(getUserId(), getLocalId(), getRelease()),
 		enabled: getEnabled() && !!getUserId() && !!getLocalId(),
-		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
+		staleTime: STALE_SLOW,
 		retry: false,
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(LibraryV3Api.editionPlan(getLocalId(), getRelease() ?? undefined), {
@@ -521,7 +521,7 @@ export const getTagWriteQuery = (
 		return {
 			queryKey,
 			enabled: !!userId && !!localId && !!jobId,
-			staleTime: 0,
+			staleTime: STALE_LIVE,
 			retry: false,
 			refetchInterval: (query: { state: { data?: TagWriteJob } }) =>
 				tagWriteMoving(query.state.data) ? TAG_WRITE_POLL_MS : false,

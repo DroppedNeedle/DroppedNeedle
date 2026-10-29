@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
-	import { integrationStore } from '$lib/stores/integration';
+	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import { api } from '$lib/api/client';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { isAbortError } from '$lib/utils/errorHandling';
@@ -24,6 +24,8 @@
 		ytCardPlayNext,
 		ytCardAddToPlaylist
 	} from '$lib/utils/youtubeCardPlayback';
+
+	const integrations = useIntegrationStatus();
 
 	let links = $state<YouTubeLink[]>([]);
 	let loading = $state(true);
@@ -169,7 +171,7 @@
 		<span class="badge badge-neutral">{links.length}</span>
 	</div>
 
-	{#if !$integrationStore.youtube}
+	{#if !integrations.current.youtube}
 		<div class="alert alert-warning mb-4">
 			<Info class="h-4 w-4" />
 			<span
@@ -178,7 +180,7 @@
 				> to use YouTube features.</span
 			>
 		</div>
-	{:else if !$integrationStore.youtube_api}
+	{:else if !integrations.current.youtube_api}
 		<div class="alert alert-info mb-4">
 			<Info class="h-4 w-4" />
 			<span

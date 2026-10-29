@@ -2,7 +2,7 @@ import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { v3 } from '$lib/api/v3/endpoint';
-import { CACHE_TTL } from '$lib/constants';
+import { STALE_SLOW } from '$lib/queries/staleTime';
 import { ArtistQueryKeyFactory } from './ArtistQueryKeyFactory';
 
 // The credit is stored with the artist's picture, so it is read once the
@@ -19,7 +19,7 @@ export const getArtistImageCreditQuery = (getParams: Getter<{ mbid: string; enab
 		const { mbid, enabled } = getParams();
 		return {
 			enabled: enabled && !!mbid,
-			staleTime: CACHE_TTL.ARTIST_DETAIL_EXTENDED,
+			staleTime: STALE_SLOW,
 			queryKey: ArtistImageCreditQueryKeyFactory.credit(mbid),
 			queryFn: async ({ signal }) => {
 				const answer = await api.global.v3.GET(ARTIST_IMAGE_CREDIT_ENDPOINT(mbid), { signal });
