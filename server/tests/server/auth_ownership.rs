@@ -348,12 +348,21 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         403,
         ADMITTED,
     ),
-    // Requests (A's has failed): a requester or an admin.
+    // Requests (A's has failed): a requester or an admin. Retry and
+    // cancel answer another user as for an unknown id whatever the status,
+    // so they are tried on a failed and on a waiting request.
     (
         Owned::Request,
         "POST",
         "/api/v3/requests/retry/{musicbrainz_id}",
-        403,
+        404,
+        ADMITTED,
+    ),
+    (
+        Owned::Request,
+        "DELETE",
+        "/api/v3/requests/active/{musicbrainz_id}",
+        404,
         ADMITTED,
     ),
     (
@@ -372,9 +381,16 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
     ),
     (
         Owned::LiveRequest,
+        "POST",
+        "/api/v3/requests/retry/{musicbrainz_id}",
+        404,
+        ADMITTED,
+    ),
+    (
+        Owned::LiveRequest,
         "DELETE",
         "/api/v3/requests/active/{musicbrainz_id}",
-        403,
+        404,
         ADMITTED,
     ),
     (

@@ -133,18 +133,17 @@ pub struct BatchCancelled {
     pub failed: u32,
 }
 
-/// The outcome of a requester's cancel.
+/// The outcome of a member's cancel. A denial of a row the caller could
+/// otherwise cancel means they left it meanwhile, so it answers as unknown.
 fn requester_decided(
     outcome: RequesterCancel,
     record: &RequestRecord,
 ) -> Result<Decided, RequestsError> {
     Ok(match outcome {
-        RequesterCancel::NotFound => Decided::NotFound,
+        RequesterCancel::NotFound => return Err(RequestsError::NotFound),
         RequesterCancel::Denied(prior_status) => {
             if prior_status.is_cancellable() || prior_status == RequestStatus::AwaitingApproval {
-                return Err(RequestsError::Forbidden {
-                    message: "Cannot cancel another user's request".to_owned(),
-                });
+                return Err(RequestsError::NotFound);
             }
             Decided::CannotCancel {
                 status: prior_status,
@@ -329,7 +328,8 @@ impl RequestsService {
         })
     }
 
-    /// Cancel one ask.
+    /// Cancel one ask. Membership is checked first, so someone else's
+    /// request answers as an unknown id whatever its status.
     pub async fn cancel_one(
         &self,
         principal: &Principal,
@@ -337,9 +337,10 @@ impl RequestsService {
         kind: RequestKind,
     ) -> Result<Decided, RequestsError> {
         let mbid = validate_mbid(mbid)?;
+        self.require_member(principal, kind, &mbid).await?;
         let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
-            return Ok(Decided::NotFound);
+            return Err(RequestsError::NotFound);
         };
         if !principal.is_admin() {
             let outcome = self
@@ -428,7 +429,8 @@ impl RequestsService {
 
     /// Retry one terminal ask. An ordinary user may only
     /// dispatch a generation that already carries approval provenance;
-    /// anything else rejoins the queue.
+    /// anything else rejoins the queue. Membership is checked first, so
+    /// someone else's request answers as an unknown id whatever its status.
     pub async fn retry_request(
         &self,
         principal: &Principal,
@@ -436,7 +438,28 @@ impl RequestsService {
         kind: RequestKind,
     ) -> Result<Decided, RequestsError> {
         let mbid = validate_mbid(mbid)?;
+        self.require_member(principal, kind, &mbid).await?;
         self.retry_with(principal, &mbid, kind, false).await
+    }
+
+    /// Refuse a caller who is neither an admin nor on the request with the
+    /// unknown-id answer, so the refusal says nothing about the row.
+    async fn require_member(
+        &self,
+        principal: &Principal,
+        kind: RequestKind,
+        mbid: &str,
+    ) -> Result<(), RequestsError> {
+        if principal.is_admin()
+            || self
+                .store
+                .is_requester(kind, mbid, principal.user_id())
+                .await?
+        {
+            Ok(())
+        } else {
+            Err(RequestsError::NotFound)
+        }
     }
 
     /// Take a single from its album: a failed track request whose download
@@ -499,7 +522,7 @@ impl RequestsService {
         let mbid = mbid.to_owned();
         let now = self.now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
-            return Ok(Decided::NotFound);
+            return Err(RequestsError::NotFound);
         };
         if !record.status.is_retryable() {
             return Ok(Decided::CannotRetry {
@@ -529,23 +552,13 @@ impl RequestsService {
         let generation = match claim {
             crate::requests::ledger::RetryClaim::Claimed { generation, .. } => generation,
             crate::requests::ledger::RetryClaim::Lost => {
-                let current = self.store.get(kind, &mbid).await?;
-                if !principal.is_admin()
-                    && current
-                        .as_ref()
-                        .is_some_and(|row| row.status.is_retryable())
-                    && !self
-                        .store
-                        .is_requester(kind, &mbid, principal.user_id())
-                        .await?
-                {
-                    return Err(RequestsError::Forbidden {
-                        message: "Cannot retry another user's request".to_owned(),
-                    });
-                }
-                return Ok(match current {
-                    None => Decided::NotFound,
-                    Some(row) => Decided::CannotRetry { status: row.status },
+                // The row changed, or the caller left it, since the check.
+                let Some(current) = self.store.get(kind, &mbid).await? else {
+                    return Err(RequestsError::NotFound);
+                };
+                self.require_member(principal, kind, &mbid).await?;
+                return Ok(Decided::CannotRetry {
+                    status: current.status,
                 });
             }
         };

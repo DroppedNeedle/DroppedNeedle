@@ -517,7 +517,8 @@ async fn batch_dedupes_and_dispatches_new_rows() {
     assert_eq!(dispatch.take_calls().await.len(), 2);
 }
 
-// Strangers may not cancel, listeners detach, owners stop the task.
+// Strangers get the unknown-id answer, listeners detach, owners stop the
+// task.
 #[tokio::test]
 async fn cancel_matrix() {
     let (state, _db, dispatch) = setup().await;
@@ -525,7 +526,7 @@ async fn cancel_matrix() {
     ask(&state, BOB, MBID_A).await;
     let uri = format!("/api/v3/requests/active/{MBID_A}");
     let (status, _) = call(&state, Method::DELETE, &uri, Some(ADA), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::NOT_FOUND);
     let (_, detached) = call(&state, Method::DELETE, &uri, Some(BOB), None).await;
     assert_eq!(detached["success"], true);
     assert!(
