@@ -13770,11 +13770,14 @@ async fn library_journey_review_exclude_restore_dismiss() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["applied"], json!(1));
-    let (_, body) = app
-        .call("GET", "/api/v3/library/reviews/rev-2", &headers, None)
-        .await;
-    assert_eq!(body["state"], json!("rejected"));
+    assert_eq!(body["queued"], json!(1));
+    app.until("the bulk keep settles its review", || async {
+        let (_, body) = app
+            .call("GET", "/api/v3/library/reviews/rev-2", &headers, None)
+            .await;
+        (body["state"] == json!("rejected")).then_some(())
+    })
+    .await;
 
     // A bulk accept never replaces an edition someone picked by hand.
     conn.execute(
@@ -13810,6 +13813,340 @@ async fn library_journey_review_exclude_restore_dismiss() {
         preview["skipped"][0]["reason"]["code"],
         json!("REVIEW_ALBUM_PINNED")
     );
+    rig.stop().await;
+}
+
+/// A bulk keep over 30 reviews is one review job, not 30 changes in one
+/// request: a pause holds it between reviews, a resume finishes it, and
+/// every review ends kept as tagged. A retry scoped to one sub-folder
+/// rule is one job over that folder's albums only. The operations loop is
+/// stopped so the journey takes each step itself.
+#[tokio::test]
+async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
+    use droppedneedle_library::operations::service::ReviewStep;
+
+    let rig = Rig::start("lib-review-jobs").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "inside/01.flac", "flac_full_01.flac");
+    plant(&music, "outside/01.flac", "flac_cjk_01.flac");
+    rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let album_at = |relative: &str| {
+        let track = rig
+            .scan_store
+            .track_at("music", relative)
+            .unwrap()
+            .expect("track indexed");
+        rig.scan_store
+            .album_for_track(&track)
+            .unwrap()
+            .expect("album")
+    };
+    let (inside, outside) = (album_at("inside/01.flac"), album_at("outside/01.flac"));
+    assert_ne!(inside, outside);
+    app.state()
+        .jobs
+        .supervisor()
+        .cancel(
+            droppedneedle_library::operations::JOB_NAME,
+            std::time::Duration::from_secs(5),
+        )
+        .await;
+    let ops = app.state().library_services.operations.clone();
+    let step = || {
+        let ops = ops.clone();
+        async move {
+            tokio::task::spawn_blocking(move || ops.run_review_step("journey"))
+                .await
+                .expect("step joins")
+                .expect("step runs")
+        }
+    };
+    let db = app.db();
+    let file = |id: &str, album: &str| {
+        db.execute(
+            "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+             candidates_json, state, created_ms, updated_ms) \
+             VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
+            [id, album],
+        )
+        .expect("review filed");
+    };
+    let states = || -> Vec<(String, i64)> {
+        db.prepare("SELECT state, COUNT(*) FROM library_identify_reviews GROUP BY state")
+            .expect("prepare")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows")
+    };
+    for n in 0..30 {
+        file(&format!("keep-{n:02}"), &inside);
+    }
+
+    let selection = json!({"action": "keep_tagged", "filter": {}});
+    let (status, preview) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/bulk-preview",
+            &headers,
+            Some(selection.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["eligible"], json!(30));
+    let mut apply = selection;
+    apply["preview_token"] = preview["preview_token"].clone();
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/bulk-apply",
+            &headers,
+            Some(apply),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["queued"], json!(30));
+    assert_eq!(body["job"]["kind"], json!("bulk_review_apply"));
+    assert_eq!(body["job"]["state"], json!("queued"));
+    let job_id = body["job"]["id"].as_str().expect("job id").to_owned();
+    assert_eq!(states(), vec![("pending".to_owned(), 30)], "nothing yet");
+
+    for _ in 0..10 {
+        assert!(matches!(step().await, ReviewStep::Worked(_)));
+    }
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/reviews/jobs/{job_id}/control"),
+            &headers,
+            Some(json!({"control": "pause"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["control_request"], json!("pause"));
+    let ReviewStep::Ended(paused) = step().await else {
+        panic!("the pause is honoured before the next review");
+    };
+    assert_eq!(paused.state.as_str(), "paused");
+    assert!(
+        matches!(step().await, ReviewStep::Idle),
+        "a paused job waits"
+    );
+    assert_eq!(
+        states(),
+        vec![("pending".to_owned(), 20), ("rejected".to_owned(), 10)]
+    );
+    let (status, body) = app
+        .call("GET", "/api/v3/library/reviews/jobs", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["jobs"][0]["id"], json!(job_id));
+    assert_eq!(body["jobs"][0]["action"], json!("keep_tagged"));
+    assert_eq!(body["jobs"][0]["state"], json!("paused"));
+    assert_eq!(body["jobs"][0]["completed_count"], json!(10));
+
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/reviews/jobs/{job_id}/control"),
+            &headers,
+            Some(json!({"control": "resume"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let finished = loop {
+        match step().await {
+            ReviewStep::Worked(_) => {}
+            ReviewStep::Ended(job) => break job,
+            ReviewStep::Idle => panic!("the resumed job is taken again"),
+        }
+    };
+    assert_eq!(finished.state.as_str(), "succeeded");
+    assert_eq!(
+        (finished.completed_count, finished.succeeded_count),
+        (30, 30)
+    );
+    assert_eq!(states(), vec![("rejected".to_owned(), 30)]);
+
+    // A retry of one sub-folder rule picks only the albums inside it.
+    let (status, mut settings) = app
+        .call("GET", "/api/v3/settings/library", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    let revision = settings["policy_revision"].clone();
+    settings["library_roots"][0]["rules"] = json!([
+        {"id": "inside-rule", "relative_path": "inside", "policy": "automatic"}
+    ]);
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/library",
+            &headers,
+            Some(json!({"settings": settings, "expected_policy_revision": revision})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    file("retry-inside", &inside);
+    file("retry-outside", &outside);
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/retry-pending",
+            &headers,
+            Some(json!({"scope_ids": ["inside-rule"]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["started"], json!(1));
+    let retry_job = body["job"]["id"].as_str().expect("job id").to_owned();
+    let albums: Vec<String> = db
+        .prepare("SELECT local_album_id FROM library_operation_work WHERE job_id = ?1")
+        .expect("prepare")
+        .query_map([&retry_job], |row| row.get(0))
+        .expect("query")
+        .collect::<Result<_, _>>()
+        .expect("rows");
+    assert_eq!(albums, vec![inside.clone()]);
+    let per_album: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_operation_jobs \
+             WHERE kind = 'explicit_reidentification'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("jobs read");
+    assert_eq!(per_album, 0, "no job per album");
+    while !matches!(step().await, ReviewStep::Ended(_)) {}
+    let state_of = |id: &str| -> String {
+        db.query_row(
+            "SELECT state FROM library_identify_reviews WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .expect("review reads")
+    };
+    assert_eq!(state_of("retry-inside"), "dismissed");
+    assert_eq!(state_of("retry-outside"), "pending");
+    rig.stop().await;
+}
+
+/// A review job whose step fails to record a review's outcome puts that
+/// review back to pending and does it on a later step, so the job never
+/// ends with a review it skipped over.
+#[tokio::test]
+async fn a_review_job_step_that_fails_to_record_does_the_review_again() {
+    use droppedneedle_library::operations::service::ReviewStep;
+
+    let rig = Rig::start("lib-review-job-retake").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "album/01.flac", "flac_full_01.flac");
+    rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    app.state()
+        .jobs
+        .supervisor()
+        .cancel(
+            droppedneedle_library::operations::JOB_NAME,
+            std::time::Duration::from_secs(5),
+        )
+        .await;
+    let ops = app.state().library_services.operations.clone();
+    let step = || {
+        let ops = ops.clone();
+        async move {
+            tokio::task::spawn_blocking(move || ops.run_review_step("journey"))
+                .await
+                .expect("step joins")
+        }
+    };
+    let db = app.db();
+    for n in 0..3 {
+        db.execute(
+            "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+             candidates_json, state, created_ms, updated_ms) \
+             VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
+            [format!("keep-{n}"), album.clone()],
+        )
+        .expect("review filed");
+    }
+    let selection = json!({"action": "keep_tagged", "filter": {}});
+    let (status, preview) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/bulk-preview",
+            &headers,
+            Some(selection.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    let mut apply = selection;
+    apply["preview_token"] = preview["preview_token"].clone();
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/bulk-apply",
+            &headers,
+            Some(apply),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let job_id = body["job"]["id"].as_str().expect("job id").to_owned();
+
+    // Recording the second review's outcome fails once.
+    db.execute_batch(
+        "CREATE TRIGGER fail_second_outcome BEFORE UPDATE OF state ON library_operation_work \
+         WHEN NEW.ordinal = 1 AND NEW.state = 'succeeded' \
+         BEGIN SELECT RAISE(ABORT, 'outcome write failed'); END;",
+    )
+    .expect("trigger");
+    assert!(matches!(step().await, Ok(ReviewStep::Worked(_))));
+    assert!(step().await.is_err(), "the outcome write fails");
+    let state_of = |ordinal: i64| -> String {
+        db.query_row(
+            "SELECT state FROM library_operation_work WHERE job_id = ?1 AND ordinal = ?2",
+            rusqlite::params![job_id, ordinal],
+            |row| row.get(0),
+        )
+        .expect("work reads")
+    };
+    assert_eq!(state_of(1), "pending", "the review goes back to pending");
+    db.execute_batch("DROP TRIGGER fail_second_outcome")
+        .expect("trigger dropped");
+
+    let finished = loop {
+        match step().await.expect("step runs") {
+            ReviewStep::Worked(_) => {}
+            ReviewStep::Ended(job) => break job,
+            ReviewStep::Idle => panic!("the released job is taken again"),
+        }
+    };
+    assert_eq!(finished.state.as_str(), "succeeded");
+    assert_eq!((finished.completed_count, finished.succeeded_count), (3, 3));
+    let rejected: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_identify_reviews WHERE state = 'rejected'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("reviews read");
+    assert_eq!(rejected, 3);
     rig.stop().await;
 }
 

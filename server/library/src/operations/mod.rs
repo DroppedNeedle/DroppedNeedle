@@ -2,9 +2,10 @@
 //! administrator can watch, pause, resume, and stop.
 //!
 //! Jobs are claimed, kept and recovered through [`crate::jobs`]. The
-//! worker here runs re-identifications: a person retries a review, and the
+//! worker here runs re-identifications (a person retries a review, and the
 //! job hands the album to the identification queue, which settles it by
-//! its usual rules. The same module undoes an automatic edition and
+//! its usual rules) and review jobs, which settle or retry many reviews
+//! one at a time. The same module undoes an automatic edition and
 //! searches MusicBrainz releases for the edition finder.
 //!
 //! Layout: `models` holds the types, `control` the pause, resume, and stop
@@ -46,11 +47,10 @@ const IDLE_CEILING: Duration = Duration::from_secs(2);
 /// The operations worker's name on the supervisor.
 pub const JOB_NAME: &str = "library-operations";
 
-/// Start the operations worker (re-identifications, then edition
-/// remaps): one job at a time, never while a scan runs (the scan
+/// Start the operations worker (review jobs, re-identifications, then
+/// edition remaps): one step at a time, never while a scan runs (the scan
 /// may be changing the very files a job reads). Its first turn runs at
-/// once and requeues the re-identifications an earlier process left
-/// running.
+/// once and requeues the jobs an earlier process left running.
 pub(crate) fn start(
     setup: &LibrarySetup,
     ops: Operations,
@@ -58,13 +58,15 @@ pub(crate) fn start(
 ) -> Result<(), AlreadyRunning> {
     let mut wake = setup.wakeups.subscribe(OPERATIONS_WAKEUP);
     wake.mark_changed();
+    let owners = Owner::new();
     supervisor.on_wakeup(
         JOB_NAME,
         wake,
         Schedule::new(IDLE_CEILING),
         OperationsTick {
             ops,
-            owners: Owner::new(),
+            review_owner: owners.mint(),
+            owners,
             setup: setup.clone(),
             recovered: false,
         },
@@ -77,6 +79,9 @@ struct OperationsTick {
     ops: Operations,
     /// Each step claims under an owner never used before.
     owners: Owner,
+    /// The owner the current review job is held under; a fresh one once
+    /// that job leaves the worker.
+    review_owner: std::sync::Arc<str>,
     /// Whether start recovery ran.
     recovered: bool,
 }
@@ -87,7 +92,12 @@ impl Tick for OperationsTick {
             self.recovered = recover_at_start(&self.ops).await;
         }
         while !ctx.token().is_cancelled() {
+            let reviewed = review_tick(&self.setup, &self.ops, &self.review_owner).await;
+            if reviewed == Some(false) {
+                self.review_owner = self.owners.mint();
+            }
             if !(tick(&self.setup, &self.ops, &self.owners.mint()).await
+                || reviewed.is_some()
                 || remap_tick(&self.setup, &self.ops).await)
             {
                 break;
@@ -141,6 +151,35 @@ pub async fn tick(setup: &LibrarySetup, ops: &Operations, worker: &str) -> bool 
             true
         }
         _ => false,
+    }
+}
+
+/// One review of a review job, held under `owner`. `Some(true)` when the
+/// job goes on, `Some(false)` when it left the worker (finished, paused
+/// or stopped), `None` when nothing was due. While a scan runs the job
+/// goes back to the queue.
+async fn review_tick(setup: &LibrarySetup, ops: &Operations, owner: &str) -> Option<bool> {
+    let (setup, ops, owner) = (setup.clone(), ops.clone(), owner.to_owned());
+    let stepped = blocking("review job step", move || {
+        if !setup.coordinator.current().is_empty() {
+            ops.release_review_job(&owner)?;
+            return Ok(service::ReviewStep::Idle);
+        }
+        ops.run_review_step(&owner)
+    })
+    .await?;
+    match stepped {
+        service::ReviewStep::Idle => None,
+        service::ReviewStep::Worked(_) => Some(true),
+        service::ReviewStep::Ended(job) => {
+            tracing::info!(
+                job_id = job.id,
+                state = job.state.as_str(),
+                done = job.completed_count,
+                "review job left the worker"
+            );
+            Some(false)
+        }
     }
 }
 

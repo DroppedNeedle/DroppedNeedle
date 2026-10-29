@@ -5178,8 +5178,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Apply a previewed bulk change. Refused when the token is not the
-         *     caller's or is too old, or the selection changed since the preview.
+         * Apply a previewed bulk change as one background job that can be
+         *     paused, resumed and stopped. Refused when the token is not the caller's
+         *     or is too old, or the selection changed since the preview.
          */
         post: operations["apply_bulk_reviews"];
         delete?: never;
@@ -5210,6 +5211,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/reviews/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Review jobs still running, queued or paused, and those that ended in
+         *     the last five minutes, newest first.
+         */
+        get: operations["list_review_jobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews/jobs/{job_id}/control": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause, resume or stop a review job. A running job halts between
+         *     reviews.
+         */
+        post: operations["control_review_job"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/reviews/retry-pending": {
         parameters: {
             query?: never;
@@ -5221,8 +5262,9 @@ export interface paths {
         put?: never;
         /**
          * Start identification again for every pending review a filter selects
-         *     (all of them by default), or with `preview` count what would start.
-         *     Reviews whose album cannot start stay open and are counted by reason.
+         *     (all of them by default), as one background job that can be paused,
+         *     resumed and stopped. With `preview`, nothing starts: the answer counts
+         *     what would start and why the rest would not.
          */
         post: operations["retry_pending_reviews"];
         delete?: never;
@@ -20907,15 +20949,40 @@ export interface components {
             /** @description Reviews it would leave alone, grouped by why. */
             skipped: components["schemas"]["SkippedReviews"][];
         };
-        /** @description What a bulk review change did. */
+        /** @description What a bulk review change started. */
         ReviewBulkResponse: {
+            job?: null | components["schemas"]["OperationView"];
             /**
              * Format: int32
-             * @description Reviews changed.
+             * @description Reviews the job will change, each checked again when it is reached.
              */
-            applied: number;
-            /** @description Reviews left alone, grouped by why. */
+            queued: number;
+            /** @description Reviews the preview left alone, grouped by why. */
             skipped: components["schemas"]["SkippedReviews"][];
+        };
+        /**
+         * @description What a review job does to each of its reviews.
+         * @enum {string}
+         */
+        ReviewJobAction: "keep_tagged" | "exclude" | "accept" | "retry";
+        /**
+         * @description What to do with a review job.
+         * @enum {string}
+         */
+        ReviewJobControl: "pause" | "resume" | "stop";
+        /** @description Pause, resume or stop a review job. */
+        ReviewJobControlBody: {
+            control: components["schemas"]["ReviewJobControl"];
+        };
+        /** @description A review job: a bulk change or retry running in the background. */
+        ReviewJobView: components["schemas"]["OperationView"] & {
+            action?: null | components["schemas"]["ReviewJobAction"];
+            /** @description Reviews it left alone so far, grouped by why. */
+            skipped: components["schemas"]["SkippedReviews"][];
+        };
+        /** @description The review jobs to show. */
+        ReviewJobsResponse: {
+            jobs: components["schemas"]["ReviewJobView"][];
         };
         /** @description Review resolution answer. */
         ReviewResolveResponse: {
@@ -20934,18 +21001,22 @@ export interface components {
             filter?: components["schemas"]["ReviewsQuery"];
             /** @description Count what would start and why the rest would not; start nothing. */
             preview?: boolean;
-            /** @description Albums in these library folders (overrides the filter's folder). */
-            root_ids?: string[];
+            /**
+             * @description Albums in these library folders and sub-folder rules, picked the
+             *     way a scan picks them (overrides the filter's folder).
+             */
+            scope_ids?: string[];
         };
-        /** @description What a "retry all" started. */
+        /** @description What a "retry all" started, or with `preview` would start. */
         ReviewRetryAllResponse: {
+            job?: null | components["schemas"]["OperationView"];
             /** @description True when nothing started: the counts are what a real run would do. */
             preview: boolean;
-            /** @description Reviews that stayed open, grouped by why. */
+            /** @description Preview only: reviews that would stay open, grouped by why. */
             skipped: components["schemas"]["SkippedReviews"][];
             /**
              * Format: int32
-             * @description Albums whose identification started again (or would).
+             * @description Albums whose identification would start, or that the job will try.
              */
             started: number;
         };
@@ -37312,7 +37383,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description What changed and what did not */
+            /** @description The job, and the reviews the preview left alone */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -37410,6 +37481,107 @@ export interface operations {
             };
         };
     };
+    list_review_jobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Review jobs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewJobsResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    control_review_job: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Review job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewJobControlBody"];
+            };
+        };
+        responses: {
+            /** @description The review job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown review job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     retry_pending_reviews: {
         parameters: {
             query?: never;
@@ -37423,13 +37595,22 @@ export interface operations {
             };
         };
         responses: {
-            /** @description What started and what did not */
+            /** @description The job, or what would start */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ReviewRetryAllResponse"];
+                };
+            };
+            /** @description Unknown filter value, folder or sub-folder */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */

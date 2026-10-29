@@ -16,6 +16,7 @@ import { toAuthUser } from '$lib/queries/auth/types';
 
 type ReviewPage = RouteData<'GET /api/v3/library/reviews'>;
 type Review = ReviewPage['items'][number];
+type ReviewJob = RouteData<'GET /api/v3/library/reviews/jobs'>['jobs'][number];
 
 function review(id: string, title: string, reasonCode: string): Review {
 	return {
@@ -135,6 +136,7 @@ describe('review queue', () => {
 			},
 			'GET /api/v3/library/albums/{album_id}/edition': EDITION,
 			'GET /api/v3/library/albums/{album_id}/history': { items: [] },
+			'GET /api/v3/library/reviews/jobs': { jobs: [] },
 			'POST /api/v3/library/reviews/{id}/exclude': {
 				...REVIEWS[0],
 				state: 'excluded',
@@ -182,7 +184,8 @@ describe('review queue', () => {
 					: 'token-best',
 				shared_candidates: [shared]
 			}),
-			'POST /api/v3/library/reviews/bulk-apply': { applied: 2, skipped: [] }
+			'GET /api/v3/library/reviews/jobs': { jobs: [] },
+			'POST /api/v3/library/reviews/bulk-apply': { queued: 2, skipped: [], job: null }
 		});
 		await renderWithQuery(ReviewQueue, {});
 
@@ -201,6 +204,60 @@ describe('review queue', () => {
 			review_ids: ['r1', 'r2'],
 			candidate_key: 'rg:shared',
 			preview_token: 'token-shared'
+		});
+	});
+
+	it('shows a bulk change running in the background, and pauses it', async () => {
+		signIn('admin');
+		h.page.url = new URL('http://localhost/library/review?state=pending');
+		const job: ReviewJob = {
+			id: 'job-1',
+			kind: 'bulk_review_apply',
+			action: 'keep_tagged',
+			state: 'running',
+			expected_work_count: 30,
+			completed_count: 12,
+			succeeded_count: 10,
+			failed_count: 0,
+			skipped_count: 2,
+			skipped: [
+				{
+					reason: { code: 'STALE_REVISION', message: 'This review changed.', action: '' },
+					count: 2
+				}
+			],
+			control_request: 'none',
+			terminal_code: null,
+			terminal_reason: null,
+			row_revision: 14,
+			event_revision: 14,
+			created_at: 1,
+			updated_at: 2,
+			results: [],
+			results_truncated: false,
+			reidentification_candidates: [],
+			selected_reidentification_candidate_key: null,
+			repair_summary: null
+		};
+		const api = fakeApi({
+			'GET /api/v3/library/reviews': (request) => reviews(request.query),
+			'GET /api/v3/settings/library/policy-tree': { policy_revision: '1', roots: [], warnings: [] },
+			'GET /api/v3/library/reviews/jobs': { jobs: [job] },
+			'POST /api/v3/library/reviews/jobs/{job_id}/control': {
+				...job,
+				control_request: 'pause'
+			}
+		});
+		await renderWithQuery(ReviewQueue, {});
+
+		await expect.element(page.getByText('Keeping as tagged')).toBeVisible();
+		await expect.element(page.getByText('12 of 30 reviews · 2 left alone')).toBeVisible();
+		await page.getByRole('button', { name: 'Pause review change' }).click();
+		await vi.waitFor(() =>
+			expect(api.calls('POST /api/v3/library/reviews/jobs/{job_id}/control')).toHaveLength(1)
+		);
+		expect(api.calls('POST /api/v3/library/reviews/jobs/{job_id}/control')[0].body).toEqual({
+			control: 'pause'
 		});
 	});
 });

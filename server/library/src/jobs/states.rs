@@ -29,9 +29,8 @@ macro_rules! sql_text {
     };
 }
 
-/// What kind of work a job carries. Re-identification, repairs and
-/// management have workers; bulk review apply comes from v2 data and only
-/// answers to reads and controls.
+/// What kind of work a job carries. A bulk review apply settles or
+/// retries many identification reviews, one work item per review.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {

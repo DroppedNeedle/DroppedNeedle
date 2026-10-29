@@ -42,15 +42,15 @@
 		});
 	});
 	const hasUnavailable = $derived(selectedNodes.some((node) => !node.available));
-	// Retry scope is whole folders: only selected roots count.
-	const selectedRoots = $derived(selected.filter((id) => roots.some((root) => root.id === id)));
-	// The preview counts exactly the chosen folders; before it, the whole
-	// library's pending count is the best known.
+	// The preview counts exactly the chosen folders and sub-folders; before
+	// it, the whole library's pending count is the best known.
 	const pendingCount = $derived(
-		retryPreview.data?.started ?? (selectedRoots.length ? null : (pendingReviews.data ?? 0))
+		retryPreview.data?.started ?? (selected.length ? null : (pendingReviews.data ?? 0))
 	);
 	const selectionLabel = $derived(
-		selected.length === 0 ? 'Whole library' : `${selected.length} scopes`
+		selected.length === 0
+			? 'Whole library'
+			: `${selected.length} ${selected.length === 1 ? 'scope' : 'scopes'}`
 	);
 	const estimatedFiles = $derived(estimateQuery.data?.estimated_file_count);
 	const title = $derived(
@@ -92,7 +92,7 @@
 
 	// A changed scope or confirmation needs a fresh preview.
 	$effect(() => {
-		void selectedRoots.join();
+		void selected.join();
 		void confirmLocalMetadata;
 		retryPreview.reset();
 	});
@@ -109,7 +109,7 @@
 		try {
 			await retryPreview.mutateAsync({
 				confirmLocalMetadata,
-				rootIds: selectedRoots,
+				scopeIds: selected,
 				preview: true
 			});
 		} catch {
@@ -119,7 +119,7 @@
 
 	async function startRetry(): Promise<void> {
 		try {
-			await retryAll.mutateAsync({ confirmLocalMetadata, rootIds: selectedRoots });
+			await retryAll.mutateAsync({ confirmLocalMetadata, scopeIds: selected });
 		} catch {
 			// mutation state keeps the error visible in this dialog
 		}
@@ -141,7 +141,7 @@
 			{kind === 'rescan_files'
 				? 'Read file tags again for the selected library scopes. Existing indexed music stays available while the scan runs.'
 				: kind === 'retry_identification'
-					? 'Look every album that waits for a decision up on MusicBrainz again, without rereading its files. Each one gets a fresh identification job.'
+					? 'Look up every album that waits for a decision on MusicBrainz again, without rereading its files. It runs in the background; follow it on the review page.'
 					: 'Reconcile the saved policies for the selected scopes. Work begins only after you confirm.'}
 		</p>
 
@@ -176,7 +176,7 @@
 							{#if !root.available}<span class="badge badge-warning badge-sm">Unavailable</span
 								>{/if}
 						</label>
-						{#each kind === 'retry_identification' ? [] : root.children as rule (rule.id)}
+						{#each root.children as rule (rule.id)}
 							<label
 								class="ml-6 flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-base-200"
 							>
@@ -199,13 +199,7 @@
 
 		<div class="mt-4 rounded-box bg-base-200 p-3 text-sm">
 			<div class="flex items-center justify-between gap-3">
-				<span
-					>{kind === 'retry_identification'
-						? selectedRoots.length
-							? `${selectedRoots.length} ${selectedRoots.length === 1 ? 'folder' : 'folders'}`
-							: 'Whole library'
-						: selectionLabel}</span
-				>
+				<span>{selectionLabel}</span>
 				{#if kind === 'retry_identification' && (pendingReviews.isLoading || retryPreview.isPending)}
 					<span class="skeleton h-4 w-28"></span>
 				{:else if kind === 'retry_identification' && pendingCount === null}
@@ -282,24 +276,11 @@
 					role="status"
 				>
 					<p>
-						<strong>Started {result.started.toLocaleString()}</strong>
-						{result.started === 1 ? 'identification job' : 'identification jobs'}. Each one shows up
-						under Library operations and asks you to pick when it is done.
+						<strong
+							>Retrying {result.started.toLocaleString()}
+							{result.started === 1 ? 'album' : 'albums'}</strong
+						> in the background. Pause or stop it from the review page.
 					</p>
-					{#if result.skipped.length}
-						<ul class="mt-2 space-y-1">
-							{#each result.skipped as group (group.reason.code)}
-								<li class="flex gap-2">
-									<TriangleAlert class="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-									<span
-										><strong>{group.count.toLocaleString()}</strong> did not start: {group.reason
-											.message}
-										<span class="text-base-content/60">{group.reason.action}</span></span
-									>
-								</li>
-							{/each}
-						</ul>
-					{/if}
 					<a
 						class="link link-primary mt-2 inline-block"
 						href={withBasePath('/library/review?state=pending')}>Open the reviews</a

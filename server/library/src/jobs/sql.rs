@@ -29,12 +29,37 @@ droppedneedle_kernel::sql! {
              terminal_code, idempotency_key, created_at, updated_at, terminal_at) \
              VALUES (:id, :kind, 'succeeded', :code, :key, :now, :now, :now) \
              ON CONFLICT DO NOTHING";
+    /// The running job of a kind an owner holds.
+    pub(super) HELD_JOB = JOB_ROW + " WHERE kind = ?1 AND state = 'running' AND lease_owner = ?2";
+    /// The jobs of a kind (`?1`) still to finish, or that ended at or after
+    /// `?2`, newest first, at most `?3`.
+    pub(super) RECENT_JOBS = JOB_ROW + " WHERE kind = ?1 \
+             AND (state IN ('queued', 'running', 'paused') OR terminal_at >= ?2) \
+             ORDER BY created_at DESC, id LIMIT ?3";
     /// A new pending work item.
     pub(super) INSERT_WORK = "INSERT INTO library_operation_work (job_id, ordinal, \
              local_album_id, local_track_id, expected_subject_revision, expected_input_revision, \
              action, idempotency_key, state, updated_at) \
              VALUES (:job, :ordinal, :album, :track, :subject_revision, :input_revision, :action, \
              :key, 'pending', :now)";
+
+    /// A new pending work item with its input.
+    pub(super) INSERT_WORK_WITH_INPUT = "INSERT INTO library_operation_work (job_id, ordinal, \
+             local_album_id, local_track_id, expected_subject_revision, expected_input_revision, \
+             action, idempotency_key, state, checkpoint_json, updated_at) \
+             VALUES (:job, :ordinal, :album, :track, :subject_revision, :input_revision, :action, \
+             :key, 'pending', :input, :now)";
+    /// One work item's subject, expectations, action and input.
+    pub(super) WORK_ITEM = "SELECT local_album_id, expected_subject_revision, \
+             expected_input_revision, action, checkpoint_json FROM library_operation_work \
+             WHERE job_id = :job AND ordinal = :ordinal";
+    /// The work item a job left running, if any.
+    pub(super) RUNNING_WORK = "SELECT ordinal FROM library_operation_work \
+             WHERE job_id = :job AND state = 'running' ORDER BY ordinal LIMIT 1";
+    /// A job's skipped work, counted by why.
+    pub(super) SKIPPED_BY_CODE = "SELECT COALESCE(failure_code, ''), COUNT(*) \
+             FROM library_operation_work WHERE job_id = :job AND state = 'skipped' \
+             GROUP BY failure_code ORDER BY COUNT(*) DESC, failure_code";
 
     /// Take the next due queued job of a kind. A management job waits in
     /// the queue only while it has files to plan or write.

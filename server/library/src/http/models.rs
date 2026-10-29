@@ -265,17 +265,6 @@ pub struct ReviewsResponse {
     pub state_counts: ReviewStateCounts,
 }
 
-/// What a "retry all" started.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct ReviewRetryAllResponse {
-    /// True when nothing started: the counts are what a real run would do.
-    pub preview: bool,
-    /// Albums whose identification started again (or would).
-    pub started: u32,
-    /// Reviews that stayed open, grouped by why.
-    pub skipped: Vec<SkippedReviews>,
-}
-
 /// What a bulk review change would do.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ReviewBulkPreviewResponse {
@@ -291,15 +280,6 @@ pub struct ReviewBulkPreviewResponse {
     /// weakest score first; accept one for them all with its
     /// `candidate_key`. Empty when they share none.
     pub shared_candidates: Vec<SharedCandidateView>,
-}
-
-/// What a bulk review change did.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct ReviewBulkResponse {
-    /// Reviews changed.
-    pub applied: u32,
-    /// Reviews left alone, grouped by why.
-    pub skipped: Vec<SkippedReviews>,
 }
 
 /// Reviews one reason held back.

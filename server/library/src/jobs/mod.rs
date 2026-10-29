@@ -204,6 +204,53 @@ pub fn insert_work(tx: &Transaction<'_>, new: &NewWork<'_>) -> rusqlite::Result<
         .map(drop)
 }
 
+/// As [`insert_work`], with `input`: what the item's worker needs to do
+/// it, kept on the item.
+pub fn insert_work_with_input(
+    tx: &Transaction<'_>,
+    new: &NewWork<'_>,
+    input: &str,
+) -> rusqlite::Result<()> {
+    tx.prepare_cached(sql::INSERT_WORK_WITH_INPUT.text())?
+        .execute(named_params! {
+            ":job": new.job_id,
+            ":ordinal": new.ordinal,
+            ":album": new.local_album_id,
+            ":track": new.local_track_id,
+            ":subject_revision": new.expected_subject_revision,
+            ":input_revision": new.expected_input_revision,
+            ":action": new.action,
+            ":key": new.idempotency_key,
+            ":input": input,
+            ":now": new.now,
+        })
+        .map(drop)
+}
+
+/// The running job of `kind` that `owner` holds, if any.
+pub fn held(
+    conn: &Connection,
+    kind: OperationKind,
+    owner: &str,
+) -> rusqlite::Result<Option<OperationJob>> {
+    conn.prepare_cached(sql::HELD_JOB.text())?
+        .query_row(params![kind, owner], map_job)
+        .optional()
+}
+
+/// The jobs of `kind` still to finish, and those that ended at or after
+/// `since`, newest first, at most `limit`.
+pub fn recent(
+    conn: &Connection,
+    kind: OperationKind,
+    since: f64,
+    limit: u32,
+) -> rusqlite::Result<Vec<OperationJob>> {
+    conn.prepare_cached(sql::RECENT_JOBS.text())?
+        .query_map(params![kind, since, limit], map_job)?
+        .collect()
+}
+
 /// Queue a job again with fresh counts for `work_count` items.
 pub fn queue_work(
     tx: &Transaction<'_>,
@@ -592,6 +639,56 @@ pub fn claim_work(tx: &Transaction<'_>, job_id: &str, now: f64) -> rusqlite::Res
             .execute(named_params! { ":job": job_id, ":ordinal": ordinal, ":now": now })?;
     }
     Ok(ordinal)
+}
+
+/// The work item of a job that is still running, if any: one a worker
+/// took and never recorded.
+pub fn running_work(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<i64>> {
+    conn.prepare_cached(sql::RUNNING_WORK.text())?
+        .query_row(named_params! { ":job": job_id }, |row| row.get(0))
+        .optional()
+}
+
+/// One work item as it was queued.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkItem {
+    pub local_album_id: Option<String>,
+    pub expected_subject_revision: i64,
+    pub expected_input_revision: String,
+    pub action: String,
+    /// What [`insert_work_with_input`] kept, if anything.
+    pub input: Option<String>,
+}
+
+/// One work item, or `None` when the job has none at `ordinal`.
+pub fn work_item(
+    conn: &Connection,
+    job_id: &str,
+    ordinal: i64,
+) -> rusqlite::Result<Option<WorkItem>> {
+    conn.prepare_cached(sql::WORK_ITEM.text())?
+        .query_row(
+            named_params! { ":job": job_id, ":ordinal": ordinal },
+            |row| {
+                Ok(WorkItem {
+                    local_album_id: row.get(0)?,
+                    expected_subject_revision: row.get(1)?,
+                    expected_input_revision: row.get(2)?,
+                    action: row.get(3)?,
+                    input: row.get(4)?,
+                })
+            },
+        )
+        .optional()
+}
+
+/// A job's skipped work items counted by their failure code, most first.
+pub fn skipped_by_code(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<(String, i64)>> {
+    conn.prepare_cached(sql::SKIPPED_BY_CODE.text())?
+        .query_map(named_params! { ":job": job_id }, |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect()
 }
 
 /// Record one work item's outcome and count it on its job.

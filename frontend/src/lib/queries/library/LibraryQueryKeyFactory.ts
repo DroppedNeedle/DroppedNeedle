@@ -174,6 +174,7 @@ export const LibraryQueryKeyFactory = {
 	reviews: (params: object) => [...reviews(), params] as const,
 	reviewCount: (params: object) => [...reviews(), 'count', params] as const,
 	review: (reviewId: string) => [...reviews(), 'detail', reviewId] as const,
+	reviewJobs: () => [...reviews(), 'jobs'] as const,
 	policyPrefix: policy,
 	targetSettings: () => [...policy(), 'settings'] as const,
 	policyTree: () => [...policy(), 'tree'] as const,

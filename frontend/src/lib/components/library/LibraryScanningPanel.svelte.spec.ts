@@ -273,16 +273,17 @@ describe('LibraryScanningPanel', () => {
 		expect(h.stopRun).toHaveBeenCalledWith({ runId: 'run-1', expectedRevision: 11 });
 	});
 
-	it('previews the retry before starting it', async () => {
+	it('previews the retry of one sub-folder before starting it', async () => {
 		h.reviews = { data: 12 };
 		await render(LibraryScanningPanel);
 		await page.getByRole('button', { name: 'Retry identification...' }).click();
 		await expect.element(page.getByRole('heading', { name: 'Retry identification' })).toBeVisible();
+		await page.getByRole('checkbox', { name: /Bootlegs/ }).click();
 		await page.getByLabelText(/Also look up albums in Local metadata/).click();
 		await page.getByRole('button', { name: 'Preview retry' }).click();
 		expect(h.bulkApply).toHaveBeenCalledWith({
 			confirmLocalMetadata: true,
-			rootIds: [],
+			scopeIds: ['rule-local'],
 			preview: true
 		});
 	});

@@ -238,6 +238,9 @@ export const LibraryV3Api = {
 	retryPendingReviews: () => v3('/api/v3/library/reviews/retry-pending'),
 	bulkReviewPreview: () => v3('/api/v3/library/reviews/bulk-preview'),
 	bulkReviewApply: () => v3('/api/v3/library/reviews/bulk-apply'),
+	reviewJobs: () => v3('/api/v3/library/reviews/jobs'),
+	reviewJobControl: (jobId: string) =>
+		v3('/api/v3/library/reviews/jobs/{job_id}/control', { path: { job_id: jobId } }),
 	approveReview: (reviewId: string) =>
 		v3('/api/v3/library/reviews/{id}/approve', { path: { id: reviewId } }),
 	keepTaggedReview: (reviewId: string) =>

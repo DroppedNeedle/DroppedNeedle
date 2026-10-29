@@ -2,7 +2,8 @@
 	The identification review list: five views with counts, filters kept in
 	the page address, the reviews (grouped when ordered by reason, with
 	per-reason actions), and bulk changes that are previewed before they
-	apply.
+	apply. A bulk change or retry runs as a background job, shown above the
+	list with its progress and pause, resume and stop.
 -->
 <script lang="ts">
 	import { untrack } from 'svelte';
@@ -15,6 +16,7 @@
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import OperationJobStrip from './OperationJobStrip.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type {
@@ -23,9 +25,11 @@
 	} from '$lib/queries/library/LibraryQueryKeyFactory';
 	import { getLibraryPolicyTreeQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import {
+		getLibraryReviewJobsQuery,
 		getLibraryReviewQuery,
 		getLibraryReviewsQuery,
 		type LibraryReview,
+		type LibraryReviewJob,
 		type LibraryReviewPage
 	} from '$lib/queries/library/LibraryReviewQueries.svelte';
 	import {
@@ -35,10 +39,13 @@
 		retryPendingLibraryReviews,
 		previewBulkLibraryReviews,
 		applyBulkLibraryReviews,
+		controlLibraryReviewJob,
+		reviewJobEnded,
 		type BulkReviewAction,
 		type BulkReviewResult,
 		type BulkReviewSelection,
-		type ReviewAction
+		type ReviewAction,
+		type ReviewJobControl
 	} from '$lib/queries/library/LibraryReviewMutations.svelte';
 	import ReviewFilterBar from './review/ReviewFilterBar.svelte';
 	import ReviewItem from './review/ReviewItem.svelte';
@@ -245,11 +252,49 @@
 	function bulkDone(result: BulkReviewResult): void {
 		const left = result.skipped.reduce((sum, group) => sum + group.count, 0);
 		toastStore.show({
-			message: `Changed ${plural(result.applied, 'review')}${left ? `; ${left} left alone` : ''}.`,
+			message: `Changing ${plural(result.queued, 'review')} in the background${left ? `; ${left} left alone` : ''}.`,
 			type: left ? 'info' : 'success'
 		});
 		selected = [];
 		allMatching = false;
+	}
+
+	// Bulk changes and retries run as jobs; each shows here until a few
+	// minutes after it ends.
+	const reviewJobs = getLibraryReviewJobsQuery(() => authStore.isTrusted);
+	const controlJob = controlLibraryReviewJob();
+	const ACTIVE_JOB = ['queued', 'running', 'paused'];
+	const JOB_LABEL: Record<NonNullable<LibraryReviewJob['action']>, string> = {
+		keep_tagged: 'Keeping as tagged',
+		accept: 'Using the best release',
+		exclude: 'Taking out of library',
+		retry: 'Retrying identification'
+	};
+	const JOB_STATE: Record<string, string> = {
+		queued: 'Waiting',
+		running: 'Running',
+		paused: 'Paused',
+		succeeded: 'Done',
+		stopped: 'Stopped',
+		cancelled: 'Stopped',
+		failed: 'Failed'
+	};
+	// Jobs seen running, so the list reloads once when each one ends.
+	const watching: Record<string, boolean> = {};
+	$effect(() => {
+		for (const job of reviewJobs.data ?? []) {
+			if (ACTIVE_JOB.includes(job.state)) watching[job.id] = true;
+			else if (watching[job.id]) {
+				delete watching[job.id];
+				void reviewJobEnded(job.action === 'accept' || job.action === 'exclude');
+			}
+		}
+	});
+
+	function controlReviewJob(job: LibraryReviewJob, control: ReviewJobControl): Promise<unknown> {
+		return controlJob
+			.mutateAsync({ jobId: job.id, control })
+			.catch((error: unknown) => failure(error, 'Could not change the job.'));
 	}
 
 	// Retrying identification for many: counted first, then started.
@@ -268,12 +313,9 @@
 
 	async function retryEverything(): Promise<void> {
 		const result = await retryAll.mutateAsync({ confirmLocalMetadata, filter: retryFilter });
-		const held = result.skipped.reduce((sum, group) => sum + group.count, 0);
 		toastStore.show({
-			message: held
-				? `Started ${result.started}; ${held} could not start (see below).`
-				: `Started identification again for ${plural(result.started, 'album')}.`,
-			type: held ? 'info' : 'success'
+			message: `Retrying ${plural(result.started, 'album')} in the background.`,
+			type: 'success'
 		});
 	}
 
@@ -389,18 +431,62 @@
 		</div>
 	{/if}
 
-	{#if retryAll.data && !retryAll.data.preview && retryAll.data.skipped.length}
-		<div class="alert alert-warning text-sm">
-			<CircleAlert class="h-4 w-4" />
-			<ul class="space-y-1">
-				{#each retryAll.data.skipped as group (group.reason.code)}
-					<li>
-						<strong>{group.count}</strong>: {group.reason.message}
-						<span class="text-base-content/70">{group.reason.action}</span>
-					</li>
-				{/each}
-			</ul>
-		</div>
+	{#if reviewJobs.data?.length}
+		<ul class="space-y-2" aria-label="Background review changes">
+			{#each reviewJobs.data as job (job.id)}
+				{@const active = ACTIVE_JOB.includes(job.state)}
+				{@const left = job.skipped.reduce((sum, group) => sum + group.count, 0)}
+				<li>
+					<Card variant="bordered" padding="sm">
+						<div class="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+							<div class="min-w-0 space-y-1.5">
+								<div class="flex flex-wrap items-center gap-2">
+									<strong class="text-sm"
+										>{job.action ? JOB_LABEL[job.action] : 'Changing reviews'}</strong
+									>
+									<span class="badge badge-ghost badge-sm">{JOB_STATE[job.state] ?? job.state}</span
+									>
+								</div>
+								{#if active}
+									<progress
+										class="progress progress-primary w-full"
+										value={job.completed_count}
+										max={Math.max(job.expected_work_count, 1)}
+										aria-label="Reviews handled"
+									></progress>
+								{/if}
+								<p class="text-xs text-base-content/60">
+									{job.completed_count.toLocaleString()} of {plural(
+										job.expected_work_count,
+										'review'
+									)}{left ? ` · ${left.toLocaleString()} left alone` : ''}
+								</p>
+								{#if !active && job.skipped.length}
+									<ul class="space-y-0.5 text-xs text-base-content/70">
+										{#each job.skipped as group (group.reason.code)}
+											<li class="flex gap-1.5">
+												<CircleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+												<span><strong>{group.count}</strong>: {group.reason.message}</span>
+											</li>
+										{/each}
+									</ul>
+								{/if}
+							</div>
+							<OperationJobStrip
+								class="sm:justify-end"
+								size="xs"
+								subject="review change"
+								status={job.state}
+								controlRequest={job.control_request}
+								onpause={() => controlReviewJob(job, 'pause')}
+								onresume={() => controlReviewJob(job, 'resume')}
+								onstop={() => controlReviewJob(job, 'stop')}
+							/>
+						</div>
+					</Card>
+				</li>
+			{/each}
+		</ul>
 	{/if}
 
 	<QueryBoundary {query} what="the reviews" isEmpty={() => reviews.length === 0}>

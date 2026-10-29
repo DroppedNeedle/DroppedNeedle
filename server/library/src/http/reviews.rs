@@ -19,24 +19,24 @@ use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::page::{Page, PageRequest};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::blocking;
 use super::models::{
     ApproveBody, CandidateView, IdentityView, PenaltyView, ReasonCount, ReviewActionBody,
-    ReviewBulkPreviewResponse, ReviewBulkResponse, ReviewResolveResponse, ReviewRetryAllResponse,
-    ReviewRetryBody, ReviewStateCounts, ReviewView, ReviewsResponse, SharedCandidateView,
-    SkippedReviews, TrackEvidenceView,
+    ReviewBulkPreviewResponse, ReviewResolveResponse, ReviewRetryBody, ReviewStateCounts,
+    ReviewView, ReviewsResponse, SharedCandidateView, SkippedReviews, TrackEvidenceView,
 };
 use super::operations::{OperationView, job_view};
 use crate::identify::models::{AlbumIdentity, CandidateEvidence, ReviewState};
-use crate::operations::models::OperationError;
+use crate::operations::models::{Control, OperationError};
 use crate::operations::reasons::{self, review_reason};
 use crate::operations::reviews::{
-    BulkAction, ReviewAction, ReviewFilter, ReviewOrder, ReviewRow, Tally, parse_state,
+    BulkAction, FolderScope, ReviewAction, ReviewFilter, ReviewJobAction, ReviewOrder, ReviewRow,
+    parse_state,
 };
-use crate::operations::service::Operations;
+use crate::operations::service::{Operations, ReviewJob};
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, Curator, User};
 
@@ -51,6 +51,8 @@ pub fn routes() -> Routes<LibraryServices> {
         .admin(routes!(retry_pending_reviews))
         .curator(routes!(preview_bulk_reviews))
         .curator(routes!(apply_bulk_reviews))
+        .curator(routes!(list_review_jobs))
+        .curator(routes!(control_review_job))
         .user(routes!(get_review))
         .curator(routes!(approve_review))
         .curator(routes!(keep_tagged_review))
@@ -288,9 +290,13 @@ fn review_filter(
         reason_code: query.reason_code.filter(|code| !code.is_empty()),
         search: query.search,
         review_ids,
-        root_ids: query
+        scopes: query
             .root_id
             .filter(|id| !id.is_empty())
+            .map(|root_id| FolderScope {
+                root_id,
+                relative_path: ".".to_owned(),
+            })
             .into_iter()
             .collect(),
         policy: known(query.policy, &["automatic", "local_metadata", "excluded"])?,
@@ -552,15 +558,17 @@ pub async fn retry_review(
 }
 
 /// Start identification again for every pending review a filter selects
-/// (all of them by default), or with `preview` count what would start.
-/// Reviews whose album cannot start stay open and are counted by reason.
+/// (all of them by default), as one background job that can be paused,
+/// resumed and stopped. With `preview`, nothing starts: the answer counts
+/// what would start and why the rest would not.
 #[utoipa::path(
     post,
     tag = "library management",
     path = "/api/v3/library/reviews/retry-pending",
     request_body = ReviewRetryAllBody,
     responses(
-        (status = 200, description = "What started and what did not", body = ReviewRetryAllResponse),
+        (status = 200, description = "The job, or what would start", body = ReviewRetryAllResponse),
+        (status = 400, description = "Unknown filter value, folder or sub-folder"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
     )
@@ -572,25 +580,34 @@ pub async fn retry_pending_reviews(
 ) -> Result<Json<ReviewRetryAllResponse>, ApiError> {
     let actor = caller.user_id().to_owned();
     let mut filter = review_filter(body.filter, Vec::new())?;
-    if !body.root_ids.is_empty() {
-        filter.root_ids = body.root_ids;
-    }
-    let preview = body.preview;
-    let confirm = body.confirm_local_metadata;
-    let outcome =
-        blocking(move || ops.retry_pending_reviews(&actor, confirm, &filter, preview)).await?;
-    Ok(Json(ReviewRetryAllResponse {
-        preview,
-        started: outcome.done,
-        skipped: outcome
-            .skipped
-            .into_iter()
-            .map(|(reason, count)| SkippedReviews {
-                reason: reason.into(),
-                count,
-            })
-            .collect(),
-    }))
+    let (preview, confirm, scope_ids) = (body.preview, body.confirm_local_metadata, body.scope_ids);
+    let answer = blocking(move || {
+        if !scope_ids.is_empty() {
+            filter.scopes = ops.folder_scopes(&scope_ids)?;
+        }
+        if preview {
+            let tally = ops.preview_retry_pending(&actor, confirm, &filter)?;
+            return Ok(ReviewRetryAllResponse {
+                preview,
+                started: tally.done,
+                skipped: skipped_view(tally.skipped),
+                job: None,
+            });
+        }
+        let job = ops.retry_pending_reviews(&actor, confirm, &filter)?;
+        Ok::<_, OperationError>(ReviewRetryAllResponse {
+            preview,
+            started: job.as_ref().map_or(0, work_count),
+            skipped: Vec::new(),
+            job: job.as_ref().map(job_view),
+        })
+    })
+    .await?;
+    Ok(Json(answer))
+}
+
+fn work_count(job: &crate::operations::models::OperationJob) -> u32 {
+    u32::try_from(job.expected_work_count).unwrap_or(u32::MAX)
 }
 
 /// Retry identification for many reviews.
@@ -603,12 +620,27 @@ pub struct ReviewRetryAllBody {
     /// Pending reviews matching this list filter (paging is ignored).
     #[serde(default)]
     pub filter: ReviewsQuery,
-    /// Albums in these library folders (overrides the filter's folder).
+    /// Albums in these library folders and sub-folder rules, picked the
+    /// way a scan picks them (overrides the filter's folder).
     #[serde(default)]
-    pub root_ids: Vec<String>,
+    pub scope_ids: Vec<String>,
     /// Count what would start and why the rest would not; start nothing.
     #[serde(default)]
     pub preview: bool,
+}
+
+/// What a "retry all" started, or with `preview` would start.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReviewRetryAllResponse {
+    /// True when nothing started: the counts are what a real run would do.
+    pub preview: bool,
+    /// Albums whose identification would start, or that the job will try.
+    pub started: u32,
+    /// Preview only: reviews that would stay open, grouped by why.
+    pub skipped: Vec<SkippedReviews>,
+    /// The job that retries them; none for a preview or when nothing was
+    /// pending.
+    pub job: Option<OperationView>,
 }
 
 /// A bulk review change: what to do, and to which reviews.
@@ -699,15 +731,16 @@ pub async fn preview_bulk_reviews(
     }))
 }
 
-/// Apply a previewed bulk change. Refused when the token is not the
-/// caller's or is too old, or the selection changed since the preview.
+/// Apply a previewed bulk change as one background job that can be
+/// paused, resumed and stopped. Refused when the token is not the caller's
+/// or is too old, or the selection changed since the preview.
 #[utoipa::path(
     post,
     tag = "library management",
     path = "/api/v3/library/reviews/bulk-apply",
     request_body = ReviewBulkBody,
     responses(
-        (status = 200, description = "What changed and what did not", body = ReviewBulkResponse),
+        (status = 200, description = "The job, and the reviews the preview left alone", body = ReviewBulkResponse),
         (status = 400, description = "Unknown action or filter value, or no readable preview token"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required (admin to exclude)"),
@@ -724,11 +757,119 @@ pub async fn apply_bulk_reviews(
     let Some(token) = token.filter(|token| !token.is_empty()) else {
         return Err(ApiError::invalid_input("Preview the change first"));
     };
-    let Tally { done, skipped } =
+    let (job, skipped) =
         blocking(move || ops.apply_bulk_reviews(action, &filter, key.as_deref(), &token, &actor))
             .await?;
     Ok(Json(ReviewBulkResponse {
-        applied: done,
+        queued: job.as_ref().map_or(0, work_count),
         skipped: skipped_view(skipped),
+        job: job.as_ref().map(job_view),
     }))
+}
+
+/// What a bulk review change started.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReviewBulkResponse {
+    /// Reviews the job will change, each checked again when it is reached.
+    pub queued: u32,
+    /// Reviews the preview left alone, grouped by why.
+    pub skipped: Vec<SkippedReviews>,
+    /// The job; none when the preview left nothing to change.
+    pub job: Option<OperationView>,
+}
+
+/// A review job: a bulk change or retry running in the background.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReviewJobView {
+    #[serde(flatten)]
+    pub job: OperationView,
+    /// What it does to each review; none when its work is gone.
+    pub action: Option<ReviewJobAction>,
+    /// Reviews it left alone so far, grouped by why.
+    pub skipped: Vec<SkippedReviews>,
+}
+
+/// The review jobs to show.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReviewJobsResponse {
+    pub jobs: Vec<ReviewJobView>,
+}
+
+fn review_job_view(job: ReviewJob) -> ReviewJobView {
+    ReviewJobView {
+        job: job_view(&job.job),
+        action: job.action,
+        skipped: skipped_view(job.skipped),
+    }
+}
+
+/// Review jobs still running, queued or paused, and those that ended in
+/// the last five minutes, newest first.
+#[utoipa::path(
+    get,
+    tag = "library management",
+    path = "/api/v3/library/reviews/jobs",
+    responses(
+        (status = 200, description = "Review jobs", body = ReviewJobsResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+    )
+)]
+pub async fn list_review_jobs(
+    State(ops): State<Operations>,
+    _caller: Curator,
+) -> Result<Json<ReviewJobsResponse>, ApiError> {
+    let jobs = blocking(move || ops.review_jobs()).await?;
+    Ok(Json(ReviewJobsResponse {
+        jobs: jobs.into_iter().map(review_job_view).collect(),
+    }))
+}
+
+/// What to do with a review job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewJobControl {
+    /// Hold it after the review in hand.
+    Pause,
+    /// Go on where it paused or stopped.
+    Resume,
+    /// End it after the review in hand.
+    Stop,
+}
+
+/// Pause, resume or stop a review job.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct ReviewJobControlBody {
+    pub control: ReviewJobControl,
+}
+
+/// Pause, resume or stop a review job. A running job halts between
+/// reviews.
+#[utoipa::path(
+    post,
+    tag = "library management",
+    path = "/api/v3/library/reviews/jobs/{job_id}/control",
+    params(("job_id" = String, Path, description = "Review job id")),
+    request_body = ReviewJobControlBody,
+    responses(
+        (status = 200, description = "The review job", body = OperationView),
+        (status = 400, description = "Bad body"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown review job"),
+    )
+)]
+pub async fn control_review_job(
+    State(ops): State<Operations>,
+    _caller: Curator,
+    Path(job_id): Path<String>,
+    ValidJson(body): ValidJson<ReviewJobControlBody>,
+) -> Result<Json<OperationView>, ApiError> {
+    let control = match body.control {
+        ReviewJobControl::Pause => Control::Pause,
+        ReviewJobControl::Resume => Control::Resume,
+        ReviewJobControl::Stop => Control::Stop,
+    };
+    let job = blocking(move || ops.control_review_job(&job_id, control)).await?;
+    Ok(Json(job_view(&job)))
 }

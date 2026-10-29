@@ -760,6 +760,11 @@ const EXACT_EXEMPTIONS: &[(&str, &str, &str)] = &[
         SHARED_REVIEW,
     ),
     (
+        "POST",
+        "/api/v3/library/reviews/jobs/{job_id}/control",
+        "review jobs are a shared curator queue: any curator may pause, resume or stop one",
+    ),
+    (
         "DELETE",
         "/api/v3/library/tracks/{id}",
         "removes a shared library track",

@@ -111,23 +111,42 @@ export function retryLibraryReview() {
 	}));
 }
 
-/** Start identification again for every album with a pending review. */
+/**
+ * Start identification again for every album with a pending review, as one
+ * background job. `scopeIds` picks library folders and sub-folder rules.
+ */
 export function retryPendingLibraryReviews() {
 	return createAppMutation(() => ({
 		mutationFn: (input: {
 			confirmLocalMetadata: boolean;
 			filter?: Omit<LibraryReviewParams, 'limit'>;
-			rootIds?: string[];
+			scopeIds?: string[];
 			preview?: boolean;
 		}) =>
 			api.v3.POST(LibraryV3Api.retryPendingReviews(), {
 				confirm_local_metadata: input.confirmLocalMetadata,
 				filter: { state: 'pending', ...reviewFilterQuery(input.filter ?? {}) },
-				root_ids: input.rootIds ?? [],
+				scope_ids: input.scopeIds ?? [],
 				preview: input.preview ?? false
 			}),
 		effects: (result) => (result.preview ? [] : reviewState())
 	}));
+}
+
+export type ReviewJobControl = components['schemas']['ReviewJobControl'];
+
+/** Pause, resume or stop a review job. */
+export function controlLibraryReviewJob() {
+	return createAppMutation(() => ({
+		mutationFn: (input: { jobId: string; control: ReviewJobControl }) =>
+			api.v3.POST(LibraryV3Api.reviewJobControl(input.jobId), { control: input.control }),
+		effects: () => reviewState()
+	}));
+}
+
+/** What a finished review job changed: the reviews, and the library when it accepted or excluded. */
+export function reviewJobEnded(catalog: boolean): Promise<void> {
+	return applyEffects(...reviewState({ catalog }));
 }
 
 export type BulkReviewAction = components['schemas']['BulkAction'];

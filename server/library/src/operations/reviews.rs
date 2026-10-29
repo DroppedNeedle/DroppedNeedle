@@ -37,8 +37,8 @@ pub struct ReviewFilter {
     pub search: Option<String>,
     /// Only these reviews (a bulk selection by hand).
     pub review_ids: Vec<String>,
-    /// Albums with a file in one of these library folders.
-    pub root_ids: Vec<String>,
+    /// Albums with a file inside one of these folders.
+    pub scopes: Vec<FolderScope>,
     /// Albums with a file under this folder policy (`automatic`,
     /// `local_metadata` or `excluded`).
     pub policy: Option<String>,
@@ -56,6 +56,14 @@ pub struct ReviewFilter {
     pub order: ReviewOrder,
     pub limit: u32,
     pub offset: u32,
+}
+
+/// A library folder, or a sub-folder of one, as a filter: `.` is the
+/// whole folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderScope {
+    pub root_id: String,
+    pub relative_path: String,
 }
 
 /// How a listing is sorted.
@@ -216,7 +224,16 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
         (!values.is_empty()).then(|| serde_json::Value::from(values.to_vec()).to_string())
     };
     let review_ids = json_list(&filter.review_ids);
-    let root_ids = json_list(&filter.root_ids);
+    let scopes = (!filter.scopes.is_empty()).then(|| {
+        serde_json::Value::from(
+            filter
+                .scopes
+                .iter()
+                .map(|scope| vec![scope.root_id.clone(), scope.relative_path.clone()])
+                .collect::<Vec<_>>(),
+        )
+        .to_string()
+    });
     let states = (!filter.states.is_empty()).then(|| {
         serde_json::Value::from(
             filter
@@ -236,9 +253,12 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
          AND (:search IS NULL OR lower(a.title) LIKE :search \
               OR lower(COALESCE(a.album_artist_name, '')) LIKE :search) \
          AND (:ids IS NULL OR r.id IN (SELECT value FROM json_each(:ids))) \
-         AND (:roots IS NULL OR EXISTS (SELECT 1 FROM local_tracks t \
-              WHERE t.local_album_id = r.local_album_id \
-              AND t.root_id IN (SELECT value FROM json_each(:roots)))) \
+         AND (:scopes IS NULL OR EXISTS (SELECT 1 FROM local_tracks t, \
+              (SELECT json_extract(value, '$[0]') AS root, json_extract(value, '$[1]') AS path \
+               FROM json_each(:scopes)) s \
+              WHERE t.local_album_id = r.local_album_id AND t.root_id = s.root \
+              AND (s.path = '.' OR t.relative_path = s.path \
+                   OR substr(t.relative_path, 1, length(s.path) + 1) = s.path || '/'))) \
          AND (:policy IS NULL OR EXISTS (SELECT 1 FROM local_tracks t \
               WHERE t.local_album_id = r.local_album_id AND t.applied_policy = :policy)) \
          AND (:job IS NULL OR EXISTS (SELECT 1 FROM library_identify_jobs j \
@@ -257,7 +277,7 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
         ":reason": filter.reason_code,
         ":search": search,
         ":ids": review_ids,
-        ":roots": root_ids,
+        ":scopes": scopes,
         ":policy": filter.policy,
         ":job": filter.job_state,
         ":no_active": filter.exclude_active_jobs,
@@ -313,7 +333,7 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
             ":reason": Option::<String>::None,
             ":search": search,
             ":ids": review_ids,
-            ":roots": root_ids,
+            ":scopes": scopes,
             ":policy": filter.policy,
             ":job": filter.job_state,
             ":no_active": filter.exclude_active_jobs,
@@ -333,7 +353,7 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
             ":reason": filter.reason_code,
             ":search": search,
             ":ids": review_ids,
-            ":roots": root_ids,
+            ":scopes": scopes,
             ":policy": filter.policy,
             ":job": filter.job_state,
             ":no_active": filter.exclude_active_jobs,
@@ -369,6 +389,9 @@ fn buckets(
         .collect()
 }
 
+/// Reviews left alone, each reason once with how many it held back.
+pub type Skips = Vec<(reasons::Reason, u32)>;
+
 /// How many reviews a batch changed, and why the rest were left alone.
 #[derive(Debug, Clone, Default)]
 pub struct Tally {
@@ -386,6 +409,21 @@ impl Tally {
         {
             Some((_, count)) => *count += 1,
             None => self.skipped.push((reason, 1)),
+        }
+    }
+
+    /// Add another batch's counts to these.
+    pub fn merge(&mut self, other: Tally) {
+        self.done += other.done;
+        for (reason, count) in other.skipped {
+            match self
+                .skipped
+                .iter_mut()
+                .find(|(seen, _)| seen.code == reason.code)
+            {
+                Some((_, held)) => *held += count,
+                None => self.skipped.push((reason, count)),
+            }
         }
     }
 }
@@ -416,6 +454,7 @@ impl BulkAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BulkItem {
     pub review_id: String,
+    pub album_id: String,
     /// The review's revision when the plan was made.
     pub revision: i64,
     /// The release an accept uses.
@@ -552,6 +591,7 @@ pub fn plan_bulk(
         };
         items.push(BulkItem {
             review_id: review.id.clone(),
+            album_id: review.local_album_id.clone(),
             revision: row.row_revision,
             candidate_key: candidate,
         });
@@ -788,6 +828,219 @@ fn audit(
     )?;
     bump_catalog(tx)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Review jobs: one background job settles or retries many reviews, one
+// work item per review, so it can be watched, paused, resumed and stopped.
+// ---------------------------------------------------------------------------
+
+/// What a review job does to each of its reviews.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewJobAction {
+    KeepTagged,
+    Exclude,
+    Accept,
+    /// Identify the album again.
+    Retry,
+}
+
+impl ReviewJobAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::KeepTagged => "keep_tagged",
+            Self::Exclude => "exclude",
+            Self::Accept => "accept",
+            Self::Retry => "retry",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        [Self::KeepTagged, Self::Exclude, Self::Accept, Self::Retry]
+            .into_iter()
+            .find(|action| action.as_str() == raw)
+    }
+
+    /// Excluding and retrying change what the library holds or start
+    /// identification, so a job does them only while the admin who asked
+    /// still is one.
+    pub fn needs_admin(self) -> bool {
+        matches!(self, Self::Exclude | Self::Retry)
+    }
+}
+
+impl From<BulkAction> for ReviewJobAction {
+    fn from(action: BulkAction) -> Self {
+        match action {
+            BulkAction::KeepTagged => Self::KeepTagged,
+            BulkAction::Exclude => Self::Exclude,
+            BulkAction::Accept => Self::Accept,
+        }
+    }
+}
+
+/// One review a job will act on, at the revision it was picked at.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ReviewWork {
+    pub review_id: String,
+    #[serde(skip)]
+    pub album_id: String,
+    #[serde(skip)]
+    pub revision: i64,
+    /// The release an accept uses.
+    #[serde(default)]
+    pub candidate_key: Option<String>,
+    /// A retry may look up files under a Local metadata policy.
+    #[serde(default)]
+    pub confirm_local_metadata: bool,
+}
+
+/// Queue one review job for `actor` over `items`, in order.
+pub fn queue_job(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    action: ReviewJobAction,
+    actor: &str,
+    items: &[ReviewWork],
+    now: f64,
+) -> Result<crate::jobs::OperationJob, OperationError> {
+    crate::jobs::insert(
+        tx,
+        &crate::jobs::NewJob {
+            id: job_id,
+            kind: crate::jobs::OperationKind::BulkReviewApply,
+            requested_by: Some(actor),
+            idempotency_key: None,
+            catalog_revision: None,
+            expected_work_count: items.len() as i64,
+            now,
+        },
+    )?;
+    for (ordinal, item) in items.iter().enumerate() {
+        let input = serde_json::to_string(item)
+            .map_err(|error| OperationError::Store(error.to_string()))?;
+        crate::jobs::insert_work_with_input(
+            tx,
+            &crate::jobs::NewWork {
+                job_id,
+                ordinal: ordinal as i64,
+                local_album_id: Some(&item.album_id),
+                local_track_id: None,
+                expected_subject_revision: item.revision,
+                expected_input_revision: &item.review_id,
+                action: action.as_str(),
+                idempotency_key: &format!("{job_id}:{}", item.review_id),
+                now,
+            },
+            &input,
+        )?;
+    }
+    super::store::job_after(tx, job_id)
+}
+
+/// The review a work item acts on, read back from what [`queue_job`] kept.
+pub fn work_of(item: &crate::jobs::WorkItem) -> Option<(ReviewJobAction, ReviewWork)> {
+    let action = ReviewJobAction::parse(&item.action)?;
+    let mut work: ReviewWork = serde_json::from_str(item.input.as_deref()?).ok()?;
+    work.album_id = item.local_album_id.clone()?;
+    work.revision = item.expected_subject_revision;
+    Some((action, work))
+}
+
+/// Retry one pending review still at `work.revision`: the review is
+/// dismissed and its album goes to the identification queue, under the
+/// same refusals a single retry has.
+pub fn retry(
+    tx: &Transaction<'_>,
+    management: &droppedneedle_kernel::runtime_config::Live<
+        droppedneedle_kernel::runtime_config::sections::LibraryManagement,
+    >,
+    work: &ReviewWork,
+    actor: &str,
+    now: f64,
+) -> Result<(), OperationError> {
+    let album_id = guard(
+        tx,
+        &work.review_id,
+        work.revision,
+        ReviewState::Pending,
+        reasons::REVIEW_SETTLED,
+    )?;
+    super::store::retry_gate(tx, management, &album_id, work.confirm_local_metadata)?;
+    if !mark(
+        tx,
+        &work.review_id,
+        "pending",
+        ReviewState::Dismissed,
+        actor,
+        now,
+    )? {
+        return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
+    }
+    crate::identify::queue::queue_retry(tx, &album_id, Some(actor), crate::clock::ms(now))?;
+    Ok(())
+}
+
+/// The person who asked for a review job, as their stored row has them
+/// now; `None` when the account is gone.
+pub fn requester(
+    conn: &Connection,
+    user_id: &str,
+) -> rusqlite::Result<Option<droppedneedle_auth::Principal>> {
+    conn.query_row(
+        "SELECT role, username_display FROM auth_users WHERE id = ?1",
+        [user_id],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+    )
+    .optional()
+    .map(|found| {
+        found.map(|(role, name)| {
+            let role =
+                droppedneedle_auth::Role::parse(&role).unwrap_or(droppedneedle_auth::Role::User);
+            droppedneedle_auth::Principal::acting_for(user_id, role, name)
+        })
+    })
+}
+
+/// The action of a review job, from its first work item.
+pub fn job_action(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<ReviewJobAction>> {
+    Ok(crate::jobs::work_item(conn, job_id, 0)?
+        .and_then(|item| ReviewJobAction::parse(&item.action)))
+}
+
+/// Why a review job skips a review, for each code it stores. Refusals
+/// that share a code read as the first one listed.
+const SKIP_REASONS: [reasons::Reason; 12] = [
+    reasons::REVIEW_REQUESTER_NOT_ADMIN,
+    reasons::REVIEW_STALE,
+    reasons::REVIEW_SETTLED,
+    reasons::REVIEW_NOT_FOUND,
+    reasons::REVIEW_CANDIDATE_NOT_FOUND,
+    reasons::REVIEW_ALBUM_PINNED,
+    reasons::REVIEW_NO_CANDIDATE,
+    reasons::ALBUM_NOT_FOUND,
+    reasons::ALBUM_EXCLUDED,
+    reasons::LOCAL_METADATA_NEEDS_CONFIRMATION,
+    reasons::LOCAL_METADATA_MANAGED,
+    reasons::EDITION_IS_CHOSEN,
+];
+
+fn skip_reason(code: &str) -> reasons::Reason {
+    SKIP_REASONS
+        .into_iter()
+        .find(|reason| reason.code == code)
+        .unwrap_or(reasons::REVIEW_ACTION_FAILED)
+}
+
+/// Why a review job's work items were skipped, counted by reason.
+pub fn job_skips(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<(reasons::Reason, u32)>> {
+    Ok(crate::jobs::skipped_by_code(conn, job_id)?
+        .into_iter()
+        .map(|(code, count)| (skip_reason(&code), u32::try_from(count).unwrap_or(u32::MAX)))
+        .collect())
 }
 
 #[cfg(test)]

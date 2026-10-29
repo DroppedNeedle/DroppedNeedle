@@ -32,6 +32,22 @@ export const getPendingReviewCountQuery = () =>
 		};
 	});
 
+export type LibraryReviewJob = components['schemas']['ReviewJobView'];
+
+const ACTIVE_JOB = ['queued', 'running', 'paused'];
+
+/** Bulk review changes and retries running in the background, and ones that just ended. */
+export const getLibraryReviewJobsQuery = (getEnabled: Getter<boolean>) =>
+	createQuery(() => ({
+		enabled: getEnabled(),
+		queryKey: LibraryQueryKeyFactory.reviewJobs(),
+		queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.reviewJobs(), { signal }),
+		select: (answer: components['schemas']['ReviewJobsResponse']) => answer.jobs,
+		// Progress moves while a job works; nothing to follow once all have ended.
+		refetchInterval: (query) =>
+			query.state.data?.jobs.some((job) => ACTIVE_JOB.includes(job.state)) ? 2000 : false
+	}));
+
 export const getLibraryReviewQuery = (getReviewId: Getter<string | null>) =>
 	createQuery(() => {
 		const reviewId = getReviewId();

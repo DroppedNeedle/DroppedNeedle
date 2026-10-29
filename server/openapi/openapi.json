@@ -19415,7 +19415,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "Apply a previewed bulk change. Refused when the token is not the\ncaller's or is too old, or the selection changed since the preview.",
+        "summary": "Apply a previewed bulk change as one background job that can be\npaused, resumed and stopped. Refused when the token is not the caller's\nor is too old, or the selection changed since the preview.",
         "operationId": "apply_bulk_reviews",
         "requestBody": {
           "content": {
@@ -19429,7 +19429,7 @@
         },
         "responses": {
           "200": {
-            "description": "What changed and what did not",
+            "description": "The job, and the reviews the preview left alone",
             "content": {
               "application/json": {
                 "schema": {
@@ -19556,12 +19556,149 @@
         ]
       }
     },
+    "/api/v3/library/reviews/jobs": {
+      "get": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Review jobs still running, queued or paused, and those that ended in\nthe last five minutes, newest first.",
+        "operationId": "list_review_jobs",
+        "responses": {
+          "200": {
+            "description": "Review jobs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewJobsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/reviews/jobs/{job_id}/control": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Pause, resume or stop a review job. A running job halts between\nreviews.",
+        "operationId": "control_review_job",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Review job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewJobControlBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The review job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown review job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/reviews/retry-pending": {
       "post": {
         "tags": [
           "library management"
         ],
-        "summary": "Start identification again for every pending review a filter selects\n(all of them by default), or with `preview` count what would start.\nReviews whose album cannot start stay open and are counted by reason.",
+        "summary": "Start identification again for every pending review a filter selects\n(all of them by default), as one background job that can be paused,\nresumed and stopped. With `preview`, nothing starts: the answer counts\nwhat would start and why the rest would not.",
         "operationId": "retry_pending_reviews",
         "requestBody": {
           "content": {
@@ -19575,11 +19712,21 @@
         },
         "responses": {
           "200": {
-            "description": "What started and what did not",
+            "description": "The job, or what would start",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReviewRetryAllResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown filter value, folder or sub-folder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -60404,16 +60551,27 @@
       },
       "ReviewBulkResponse": {
         "type": "object",
-        "description": "What a bulk review change did.",
+        "description": "What a bulk review change started.",
         "required": [
-          "applied",
+          "queued",
           "skipped"
         ],
         "properties": {
-          "applied": {
+          "job": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OperationView",
+                "description": "The job; none when the preview left nothing to change."
+              }
+            ]
+          },
+          "queued": {
             "type": "integer",
             "format": "int32",
-            "description": "Reviews changed.",
+            "description": "Reviews the job will change, each checked again when it is reached.",
             "minimum": 0
           },
           "skipped": {
@@ -60421,7 +60579,87 @@
             "items": {
               "$ref": "#/components/schemas/SkippedReviews"
             },
-            "description": "Reviews left alone, grouped by why."
+            "description": "Reviews the preview left alone, grouped by why."
+          }
+        }
+      },
+      "ReviewJobAction": {
+        "type": "string",
+        "description": "What a review job does to each of its reviews.",
+        "enum": [
+          "keep_tagged",
+          "exclude",
+          "accept",
+          "retry"
+        ]
+      },
+      "ReviewJobControl": {
+        "type": "string",
+        "description": "What to do with a review job.",
+        "enum": [
+          "pause",
+          "resume",
+          "stop"
+        ]
+      },
+      "ReviewJobControlBody": {
+        "type": "object",
+        "description": "Pause, resume or stop a review job.",
+        "required": [
+          "control"
+        ],
+        "properties": {
+          "control": {
+            "$ref": "#/components/schemas/ReviewJobControl"
+          }
+        }
+      },
+      "ReviewJobView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/OperationView"
+          },
+          {
+            "type": "object",
+            "required": [
+              "skipped"
+            ],
+            "properties": {
+              "action": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReviewJobAction",
+                    "description": "What it does to each review; none when its work is gone."
+                  }
+                ]
+              },
+              "skipped": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SkippedReviews"
+                },
+                "description": "Reviews it left alone so far, grouped by why."
+              }
+            }
+          }
+        ],
+        "description": "A review job: a bulk change or retry running in the background."
+      },
+      "ReviewJobsResponse": {
+        "type": "object",
+        "description": "The review jobs to show.",
+        "required": [
+          "jobs"
+        ],
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewJobView"
+            }
           }
         }
       },
@@ -60465,24 +60703,35 @@
             "type": "boolean",
             "description": "Count what would start and why the rest would not; start nothing."
           },
-          "root_ids": {
+          "scope_ids": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Albums in these library folders (overrides the filter's folder)."
+            "description": "Albums in these library folders and sub-folder rules, picked the\nway a scan picks them (overrides the filter's folder)."
           }
         }
       },
       "ReviewRetryAllResponse": {
         "type": "object",
-        "description": "What a \"retry all\" started.",
+        "description": "What a \"retry all\" started, or with `preview` would start.",
         "required": [
           "preview",
           "started",
           "skipped"
         ],
         "properties": {
+          "job": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OperationView",
+                "description": "The job that retries them; none for a preview or when nothing was\npending."
+              }
+            ]
+          },
           "preview": {
             "type": "boolean",
             "description": "True when nothing started: the counts are what a real run would do."
@@ -60492,12 +60741,12 @@
             "items": {
               "$ref": "#/components/schemas/SkippedReviews"
             },
-            "description": "Reviews that stayed open, grouped by why."
+            "description": "Preview only: reviews that would stay open, grouped by why."
           },
           "started": {
             "type": "integer",
             "format": "int32",
-            "description": "Albums whose identification started again (or would).",
+            "description": "Albums whose identification would start, or that the job will try.",
             "minimum": 0
           }
         }
