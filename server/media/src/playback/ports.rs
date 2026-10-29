@@ -36,6 +36,8 @@ pub struct TrackInfo {
     pub recording_mbid: Option<String>,
     /// Release-group MBID, when known.
     pub rg_mbid: Option<String>,
+    /// Local album id, for the album's own art.
+    pub album_id: String,
 }
 
 /// One play, by name, for external forwarding.

@@ -21,6 +21,7 @@ use droppedneedle_media::playback::PlaybackDeps;
 use droppedneedle_media::playback::models::{
     NowPlayingHeartbeat, ScrobbleNowPlayingRequest, ScrobbleSubmitRequest,
 };
+use droppedneedle_media::playback::ports::TrackInfo;
 use droppedneedle_media::playback::presence::{clear_presence, compat_heartbeat};
 use droppedneedle_media::playback::report::{forward_sink_now_playing, submit_track_scrobble};
 use droppedneedle_media::playback::rules::{normalize_client, presence_cover_url};
@@ -48,12 +49,9 @@ impl CompatPlayback {
     }
 
     /// Record now-playing presence for a file, with the position and paused
-    /// state its report carries (`None` and `false` on a start). Unknown
-    /// files are skipped (no names to project); sink forwarding is
-    /// best-effort. The device is always `compat`: the Jellyfin progress report
-    /// carries no client, so a per-client device would split one listener
-    /// across two presence rows; the client rides `source` instead (v2
-    /// parity).
+    /// state its report carries (`None` and `false` on a start), and tell
+    /// the user's scrobble services it is playing (best-effort). Unknown
+    /// files are skipped (no names to project).
     pub fn now_playing(
         &self,
         file_id: &str,
@@ -62,9 +60,49 @@ impl CompatPlayback {
         position_ms: Option<i64>,
         paused: bool,
     ) {
-        let Some(track) = self.deps.store.get_track(file_id) else {
+        let Some(track) = self.presence_for(file_id, user_id, client, position_ms, paused) else {
             return;
         };
+        let _ = forward_sink_now_playing(
+            &self.deps,
+            user_id,
+            &ScrobbleNowPlayingRequest {
+                track_name: track.title,
+                artist_name: track.artist_name,
+                album_name: Some(track.album_title).filter(|name| !name.is_empty()),
+                duration_ms: Some(track.duration_ms).filter(|duration| *duration > 0),
+                mbid: track.recording_mbid,
+                release_group_mbid: track.rg_mbid,
+                source: Some("local".to_owned()),
+            },
+        );
+    }
+
+    /// Update presence only, for a progress report: the scrobble services
+    /// heard about the play when it started.
+    pub fn progress(
+        &self,
+        file_id: &str,
+        user_id: &str,
+        client: Option<&str>,
+        position_ms: Option<i64>,
+        paused: bool,
+    ) {
+        self.presence_for(file_id, user_id, client, position_ms, paused);
+    }
+
+    /// Write the presence entry and hand back the resolved track. The
+    /// device is always `compat`, so one listener has one entry whichever
+    /// report came last; the client rides `source`.
+    fn presence_for(
+        &self,
+        file_id: &str,
+        user_id: &str,
+        client: Option<&str>,
+        position_ms: Option<i64>,
+        paused: bool,
+    ) -> Option<TrackInfo> {
+        let track = self.deps.store.get_track(file_id)?;
         compat_heartbeat(
             &self.deps,
             user_id,
@@ -81,19 +119,7 @@ impl CompatPlayback {
             },
             &track.track_id,
         );
-        let _ = forward_sink_now_playing(
-            &self.deps,
-            user_id,
-            &ScrobbleNowPlayingRequest {
-                track_name: track.title,
-                artist_name: track.artist_name,
-                album_name: Some(track.album_title).filter(|name| !name.is_empty()),
-                duration_ms: Some(track.duration_ms).filter(|duration| *duration > 0),
-                mbid: track.recording_mbid,
-                release_group_mbid: track.rg_mbid,
-                source: Some("local".to_owned()),
-            },
-        );
+        Some(track)
     }
 
     /// Record a scrobble. Unknown files are skipped; played_at defaults to

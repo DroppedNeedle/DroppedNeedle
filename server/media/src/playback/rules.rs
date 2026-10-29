@@ -62,17 +62,15 @@ pub fn has_remote(source: &str) -> bool {
     matches!(source, "jellyfin" | "navidrome" | "plex")
 }
 
-/// Presence cover URL for a resolved track: the v3 release-group cover
-/// route when an MBID is known, else empty (v2
-/// `CompatScrobbleAdapter._write_presence` built the old route; same rule,
-/// new path).
+/// Presence cover URL for a resolved track: the release group's cover when
+/// the album is matched, else the album's own art from the library (a
+/// folder image or embedded picture), so every play shows a cover where
+/// the library has one.
 pub fn presence_cover_url(track: &TrackInfo) -> String {
-    track
-        .rg_mbid
-        .as_deref()
-        .filter(|mbid| !mbid.is_empty())
-        .map(|mbid| format!("/api/v3/covers/release-group/{mbid}"))
-        .unwrap_or_default()
+    match track.rg_mbid.as_deref().filter(|mbid| !mbid.is_empty()) {
+        Some(mbid) => format!("/api/v3/covers/release-group/{mbid}"),
+        None => format!("/api/v3/library/albums/{}/artwork?size=500", track.album_id),
+    }
 }
 
 /// Domain failures. Forwarding and attribution failures never surface here:

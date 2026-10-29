@@ -256,8 +256,8 @@ pub(super) async fn playing(
     Ok(no_content())
 }
 
-/// Progress → live scrubber + heartbeat, never a scrobble (v2
-/// `_playing_progress`).
+/// Progress → live scrubber + heartbeat under the reporting app, never a
+/// scrobble or a scrobble service's now-playing (v2 `_playing_progress`).
 pub(super) async fn playing_progress(
     State(state): State<JellyfinState>,
     authed: Authed,
@@ -271,12 +271,15 @@ pub(super) async fn playing_progress(
         return Ok(no_content());
     };
     if let Some(file_id) = report_file_id(&state, item_id).await? {
-        let position_ms = body.position_ticks.map(|t| t / (TICKS_PER_SECOND / 1000));
-        // Presence only: the stop report alone checks the play threshold.
-        state.sessions.now_playing(
+        let position_ms = body
+            .position_ticks
+            .map(|t| (t / (TICKS_PER_SECOND / 1000)).max(0));
+        // Presence only: the start told the scrobble services, and the stop
+        // report alone checks the play threshold.
+        state.sessions.progress(
             &file_id,
             &authed.principal.id,
-            None,
+            authed.client.as_deref(),
             position_ms,
             body.is_paused,
         );

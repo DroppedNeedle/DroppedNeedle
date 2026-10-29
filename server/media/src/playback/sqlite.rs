@@ -275,6 +275,7 @@ impl PlaybackStore {
                         rg_mbid: row
                             .get::<_, Option<String>>("rg_mbid")?
                             .filter(|mbid| !mbid.is_empty()),
+                        album_id: row.get("local_album_id")?,
                     })
                 })
                 .optional()?;

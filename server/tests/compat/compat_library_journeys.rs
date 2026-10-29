@@ -176,11 +176,30 @@ async fn finamp_browse_stream_favorite_playlist_progress() {
         .await;
     assert_eq!(entries["Items"][0]["Id"], json!(track_id));
 
+    // The reports name Finamp, and a progress report keeps it as the
+    // presence entry's source.
+    let finamp_value = format!("MediaBrowser Client=\"Finamp\", Token=\"{}\"", rig.secret);
+    let finamp = [("X-Emby-Authorization", finamp_value.as_str())];
     for endpoint in ["Playing", "Playing/Progress"] {
         let uri = format!("/jellyfin/Sessions/{endpoint}");
-        let body = json!({ "ItemId": track_id });
-        trace.call("POST", &uri, &auth, Some(body)).await;
+        let body = json!({ "ItemId": track_id, "PositionTicks": -10_000_000_i64 });
+        trace.call("POST", &uri, &finamp, Some(body)).await;
     }
+    let admin = rig.app.login_admin().await;
+    let (status, feed) = rig
+        .app
+        .call(
+            "GET",
+            "/api/v3/now-playing",
+            &[("authorization", admin.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{feed}");
+    assert_eq!(feed["sessions"].as_array().map(Vec::len), Some(1), "{feed}");
+    let entry = &feed["sessions"][0];
+    assert_eq!(entry["source"], json!("finamp"), "{feed}");
+    assert_eq!(entry["progress_ms"], json!(0), "{feed}");
     let stopped = json!({
         "ItemId": track_id,
         "PositionTicks": 1_700_000_000_i64,

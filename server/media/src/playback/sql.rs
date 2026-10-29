@@ -7,7 +7,7 @@ droppedneedle_kernel::sql! {
     /// group its album was matched to. The recording is the accepted
     /// identity's, else the file's own: the rule catalog's `recording_mbid!`
     /// states, written out here because media sits below catalog.
-    pub(super) TRACK = "SELECT id, title, artist_name, album_title, duration_seconds, \
+    pub(super) TRACK = "SELECT id, local_album_id, title, artist_name, album_title, duration_seconds, \
          COALESCE((SELECT i.recording_mbid FROM local_track_external_identities i \
                    WHERE i.local_track_id = local_tracks.id AND i.provider = 'musicbrainz'), \
                   embedded_recording_mbid) AS recording_mbid, \

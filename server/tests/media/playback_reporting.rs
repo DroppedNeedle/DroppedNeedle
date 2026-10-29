@@ -842,6 +842,41 @@ async fn compat_now_playing_serves_full_sessions_only() {
     assert_eq!(served[0].0.track_name, "Roads");
 }
 
+/// A Subsonic app's playback report shows under the app with the position
+/// it reported, and with a cover: the matched release group's, else the
+/// album's own art from the library.
+#[tokio::test]
+async fn subsonic_report_shows_position_and_cover() {
+    let rig = rig();
+    let compat = droppedneedle_compat::adapters::playback::CompatPlayback::new(rig.deps.clone());
+    let entry = || {
+        let sessions = rig.deps.presence.snapshot();
+        assert_eq!(sessions.len(), 1, "{sessions:?}");
+        sessions[0].clone()
+    };
+
+    assert!(compat.report_playback("track-1", "user-1", "Symfonium", "starting", 0, false));
+    let started = entry();
+    assert_eq!(started.source, "symfonium");
+    assert_eq!(started.progress_ms, None);
+    assert_eq!(started.cover_url, "/api/v3/covers/release-group/rg-mbid-1");
+
+    rig.sql()
+        .execute(
+            "DELETE FROM local_album_external_identities WHERE local_album_id = 'album-1'",
+            [],
+        )
+        .expect("the album is unmatched");
+    assert!(compat.report_playback("track-1", "user-1", "Symfonium", "paused", 61_000, false));
+    let paused = entry();
+    assert_eq!(paused.progress_ms, Some(61_000));
+    assert!(paused.is_paused);
+    assert_eq!(
+        paused.cover_url,
+        "/api/v3/library/albums/album-1/artwork?size=500"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Scrobble forwarding
 // ---------------------------------------------------------------------------
