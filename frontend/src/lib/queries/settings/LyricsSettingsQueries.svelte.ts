@@ -22,13 +22,13 @@ export const getLyricsSettingsQuery = () =>
 	createQuery(() => ({
 		enabled: authStore.isAdmin,
 		queryKey: LyricsSettingsQueryKeyFactory.saved(authStore.user?.id),
-		queryFn: ({ signal }) => api.global.v3.GET(SETTINGS_ENDPOINTS.lyrics(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(SETTINGS_ENDPOINTS.lyrics(), { signal })
 	}));
 
 /** Saves the switch, then drops cached lyrics so an open panel asks again. */
 export const createSaveLyricsSettingsMutation = () =>
 	createMutation(() => ({
-		mutationFn: (body: LyricsSettings) => api.global.v3.PUT(SETTINGS_ENDPOINTS.lyrics(), body),
+		mutationFn: (body: LyricsSettings) => api.v3.PUT(SETTINGS_ENDPOINTS.lyrics(), body),
 		onSuccess: async (saved: LyricsSettings) => {
 			await setQueryDataWithPersister(
 				LyricsSettingsQueryKeyFactory.saved(authStore.user?.id),

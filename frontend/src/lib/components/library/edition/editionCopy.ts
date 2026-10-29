@@ -1,7 +1,7 @@
 // Every sentence the edition plate and the edition sheet show, with their
 // plural forms. Numbers are only ever counts of the person's own files and
 // tracks.
-import { ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 import type { components } from '$lib/api/v3/openapi';
 import { formatDuration } from '$lib/utils/formatting';
 

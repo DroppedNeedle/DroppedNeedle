@@ -26,35 +26,31 @@ async function applyUser(userId: string, user: AuthSessionUser): Promise<void> {
 
 export const createUpdateDisplayNameMutation = (userId: string) =>
 	createMutation(() => ({
-		mutationFn: (vars: DisplayNameUpdateVars) =>
-			api.global.v3.PATCH(PROFILE_ENDPOINTS.update(), vars),
+		mutationFn: (vars: DisplayNameUpdateVars) => api.v3.PATCH(PROFILE_ENDPOINTS.update(), vars),
 		onSuccess: (user: AuthSessionUser) => applyUser(userId, user)
 	}));
 
 export const createUpdateUsernameMutation = (userId: string) =>
 	createMutation(() => ({
-		mutationFn: (vars: UsernameUpdateVars) =>
-			api.global.v3.PUT(PROFILE_ENDPOINTS.updateUsername(), vars),
+		mutationFn: (vars: UsernameUpdateVars) => api.v3.PUT(PROFILE_ENDPOINTS.updateUsername(), vars),
 		onSuccess: (user: AuthSessionUser) => applyUser(userId, user)
 	}));
 
 export const createUpdateEmailMutation = (userId: string) =>
 	createMutation(() => ({
-		mutationFn: (vars: EmailUpdateVars) => api.global.v3.PUT(PROFILE_ENDPOINTS.updateEmail(), vars),
+		mutationFn: (vars: EmailUpdateVars) => api.v3.PUT(PROFILE_ENDPOINTS.updateEmail(), vars),
 		onSuccess: (user: AuthSessionUser) => applyUser(userId, user)
 	}));
 
 export const createChangePasswordMutation = (userId: string) =>
 	createMutation(() => ({
-		mutationFn: (vars: ChangePasswordVars) =>
-			api.global.v3.POST(PROFILE_ENDPOINTS.changePassword(), vars),
+		mutationFn: (vars: ChangePasswordVars) => api.v3.POST(PROFILE_ENDPOINTS.changePassword(), vars),
 		onSuccess: (user: AuthSessionUser) => applyUser(userId, user)
 	}));
 
 export const createSetPasswordMutation = (userId: string) =>
 	createMutation(() => ({
-		mutationFn: (vars: SetPasswordVars) =>
-			api.global.v3.POST(PROFILE_ENDPOINTS.setPassword(), vars),
+		mutationFn: (vars: SetPasswordVars) => api.v3.POST(PROFILE_ENDPOINTS.setPassword(), vars),
 		onSuccess: (user: AuthSessionUser) => applyUser(userId, user)
 	}));
 
@@ -76,7 +72,7 @@ export const createUploadAvatarMutation = (userId: string) =>
 	createMutation(() => ({
 		mutationFn: async (file: File) => {
 			const image_base64 = await fileToBase64(file);
-			return api.global.v3.POST(PROFILE_ENDPOINTS.avatarUpload(), {
+			return api.v3.POST(PROFILE_ENDPOINTS.avatarUpload(), {
 				content_type: file.type || 'application/octet-stream',
 				image_base64
 			});

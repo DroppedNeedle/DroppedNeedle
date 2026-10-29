@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { AtSign, Check, KeyRound, Mail, Pencil, UserCog } from 'lucide-svelte';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import {
 		createChangePasswordMutation,
 		createSetPasswordMutation,

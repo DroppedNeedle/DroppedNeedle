@@ -16,7 +16,7 @@ export const getCutoffUnmetQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		enabled: getEnabled(),
 		queryKey: DownloadQueryKeyFactory.cutoffUnmet(),
-		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_UPGRADE_ENDPOINTS.cutoffUnmet(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_UPGRADE_ENDPOINTS.cutoffUnmet(), { signal })
 	}));
 
 async function invalidateAfterUpgrade() {
@@ -31,7 +31,7 @@ export type UpgradeAlbumInput = components['schemas']['UpgradeAlbumRequest'];
 export function requestUpgradeAlbum() {
 	return createMutation(() => ({
 		mutationFn: (input: UpgradeAlbumInput) =>
-			api.global.v3.POST(DOWNLOAD_UPGRADE_ENDPOINTS.album(), input),
+			api.v3.POST(DOWNLOAD_UPGRADE_ENDPOINTS.album(), input),
 		onSuccess: invalidateAfterUpgrade
 	}));
 }
@@ -41,7 +41,7 @@ export type UpgradeTrackInput = components['schemas']['UpgradeTrackRequest'];
 export function requestUpgradeTrack() {
 	return createMutation(() => ({
 		mutationFn: (input: UpgradeTrackInput) =>
-			api.global.v3.POST(DOWNLOAD_UPGRADE_ENDPOINTS.track(), input),
+			api.v3.POST(DOWNLOAD_UPGRADE_ENDPOINTS.track(), input),
 		onSuccess: invalidateAfterUpgrade
 	}));
 }

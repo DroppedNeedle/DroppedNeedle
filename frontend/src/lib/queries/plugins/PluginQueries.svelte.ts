@@ -12,7 +12,7 @@ type Getter<T> = () => T;
 export const getPluginsQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		queryKey: PluginQueryKeyFactory.list(),
-		queryFn: ({ signal }) => api.global.v3.GET(PLUGIN_ENDPOINTS.list(), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(PLUGIN_ENDPOINTS.list(), { signal }),
 		enabled: getEnabled()
 	}));
 
@@ -24,7 +24,7 @@ export const getPluginFilesQuery = (getName: Getter<string>) =>
 			queryKey: PluginQueryKeyFactory.files(name),
 			initialPageParam: undefined as string | undefined,
 			queryFn: ({ pageParam, signal }) =>
-				api.global.v3.GET(PLUGIN_ENDPOINTS.files(name, pageParam), { signal }),
+				api.v3.GET(PLUGIN_ENDPOINTS.files(name, pageParam), { signal }),
 			getNextPageParam: (lastPage: PluginFilesPage) => lastPage.next_cursor ?? undefined
 		};
 	});

@@ -12,7 +12,7 @@ const h = vi.hoisted(() => ({
 const player = $state<{ now: NowPlaying | null; playing: boolean }>({ now: null, playing: false });
 let progress = 0;
 
-vi.mock('$lib/api/client', () => ({ api: { global: { v3: { GET: h.settings } } } }));
+vi.mock('$lib/api/client', () => ({ api: { v3: { GET: h.settings } } }));
 vi.mock('$lib/player/playbackGateway', () => ({
 	submitScrobble: h.submit,
 	sendScrobbleNowPlaying: h.nowPlaying

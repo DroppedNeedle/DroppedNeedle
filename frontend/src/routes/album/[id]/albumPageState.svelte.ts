@@ -16,7 +16,7 @@ import type {
 import type { RemoteTrack } from '$lib/queries/remotes/types';
 import { libraryStore } from '$lib/stores/library';
 import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
-import { ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 import { compareDiscTrack, getDiscTrackKey } from '$lib/player/queueHelpers';
 import type { QueueItem } from '$lib/player/types';
 import { launchRemotePlayback } from '$lib/player/launchRemotePlayback';

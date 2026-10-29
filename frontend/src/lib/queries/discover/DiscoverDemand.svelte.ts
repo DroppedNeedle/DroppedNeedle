@@ -26,7 +26,7 @@ export async function recordDiscoverActivity(
 ): Promise<void> {
 	const userId = authStore.user?.id;
 	const before = JSON.stringify(musicBrainzSourceKey());
-	const source = await api.global.v3.POST(DiscoverV3Api.activity(), activity, { signal });
+	const source = await api.v3.POST(DiscoverV3Api.activity(), activity, { signal });
 	const knownMode = KNOWN_SOURCE_MODES.find((mode) => mode === source.source_mode);
 	if (
 		!signal?.aborted &&

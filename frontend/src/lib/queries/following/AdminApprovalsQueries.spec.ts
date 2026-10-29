@@ -6,7 +6,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 
 const mockGet = vi.fn();
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: (...args: unknown[]) => mockGet(...args) } } }
+	api: { v3: { GET: (...args: unknown[]) => mockGet(...args) } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({

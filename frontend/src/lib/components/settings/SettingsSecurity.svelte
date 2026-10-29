@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
-	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
 	import {
 		createSaveOidcSettingsMutation,
 		createSaveSecuritySettingsMutation,
+		createVerifyHibpMutation,
 		createVerifyOidcMutation,
 		getOidcSettingsQuery,
 		getSecuritySettingsQuery,
@@ -21,7 +21,6 @@
 		LogIn,
 		Download
 	} from 'lucide-svelte';
-	import { api } from '$lib/api/client';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Field from '$lib/ui/Field.svelte';
@@ -118,14 +117,13 @@
 		{ value: 'admin', label: 'Admins only', help: 'Only admins can download.' }
 	] as const;
 
+	const verifyHibp = createVerifyHibpMutation();
+
 	async function verifyLocalFile(draft: SecuritySettings) {
 		verifying = true;
 		verifyResult = null;
 		try {
-			verifyResult = await api.v3.POST(
-				SETTINGS_ENDPOINTS.securityVerifyHibp(),
-				$state.snapshot(draft)
-			);
+			verifyResult = await verifyHibp.mutateAsync($state.snapshot(draft));
 		} catch (e: unknown) {
 			verifyResult = {
 				valid: false,

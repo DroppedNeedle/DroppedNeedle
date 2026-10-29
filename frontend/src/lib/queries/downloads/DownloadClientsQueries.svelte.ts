@@ -16,8 +16,7 @@ export type WantedWatcherSettings = components['schemas']['WantedWatcher'];
 const sourcePriorityOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.sourcePriority(),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sourcePriority(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sourcePriority(), { signal })
 	});
 
 export const getSourcePriorityQuery = () => createQuery(() => sourcePriorityOptions());
@@ -25,7 +24,7 @@ export const getSourcePriorityQuery = () => createQuery(() => sourcePriorityOpti
 export function saveSourcePriority() {
 	return createMutation(() => ({
 		mutationFn: (order: string[]) =>
-			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.sourcePriority(), { order }),
+			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.sourcePriority(), { order }),
 		onSuccess: () =>
 			invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sourcePriority() })
 	}));
@@ -35,7 +34,7 @@ const sabnzbdOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.sabnzbd(),
 		queryFn: ({ signal }) =>
-			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdConfig(), {
+			api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdConfig(), {
 				signal
 			})
 	});
@@ -45,8 +44,7 @@ export const getSabnzbdConfigQuery = () => createQuery(() => sabnzbdOptions());
 const sabnzbdStatusOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.sabnzbdStatus(),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdStatus(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdStatus(), { signal })
 	});
 
 export const getSabnzbdStatusQuery = () => createQuery(() => sabnzbdStatusOptions());
@@ -54,7 +52,7 @@ export const getSabnzbdStatusQuery = () => createQuery(() => sabnzbdStatusOption
 const policyOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.policy(),
-		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.policy(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.policy(), { signal })
 	});
 
 // enabled-getter so non-admin pages can render without firing the admin-only
@@ -72,7 +70,7 @@ async function invalidateClients() {
 export function saveSabnzbdConfig() {
 	return createMutation(() => ({
 		mutationFn: (config: SabnzbdConnectionSettings) =>
-			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdConfig(), config),
+			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdConfig(), config),
 		onSuccess: invalidateClients
 	}));
 }
@@ -80,14 +78,14 @@ export function saveSabnzbdConfig() {
 export function testSabnzbd() {
 	return createMutation(() => ({
 		mutationFn: (config: SabnzbdConnectionSettings) =>
-			api.global.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdTest(), config)
+			api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdTest(), config)
 	}));
 }
 
 export function saveDownloadPolicy() {
 	return createMutation(() => ({
 		mutationFn: (policy: DownloadPolicySettings) =>
-			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.policy(), policy),
+			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.policy(), policy),
 		onSuccess: async () => {
 			await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.policy() });
 			await invalidateQueriesWithPersister({
@@ -100,7 +98,7 @@ export function saveDownloadPolicy() {
 const wantedSettingsOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.wantedSettings(),
-		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.wanted(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.wanted(), { signal })
 	});
 
 export const getWantedSettingsQuery = () => createQuery(() => wantedSettingsOptions());
@@ -108,7 +106,7 @@ export const getWantedSettingsQuery = () => createQuery(() => wantedSettingsOpti
 export function saveWantedSettings() {
 	return createMutation(() => ({
 		mutationFn: (settings: WantedWatcherSettings) =>
-			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.wanted(), settings),
+			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.wanted(), settings),
 		onSuccess: () =>
 			invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.wantedSettings() })
 	}));

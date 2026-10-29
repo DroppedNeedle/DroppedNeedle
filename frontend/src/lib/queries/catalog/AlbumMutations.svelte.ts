@@ -2,7 +2,6 @@ import { createMutation, useQueryClient } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import type { AlbumBasicInfo } from '$lib/types';
-import { extractServiceStatus } from '$lib/utils/serviceStatus';
 import { AlbumMatchKeyFactory } from '../albumMatch';
 import { LibraryQueryKeyFactory } from '../library/LibraryQueryKeyFactory';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
@@ -17,11 +16,8 @@ type RefreshTarget = { userId: string | null | undefined; albumId: string };
 export function refreshAlbum() {
 	const client = useQueryClient();
 	return createMutation(() => ({
-		mutationFn: async ({ albumId }: RefreshTarget): Promise<AlbumBasicInfo> => {
-			const album = await api.global.v3.POST(CATALOG_ENDPOINTS.albumRefresh(albumId));
-			extractServiceStatus(album);
-			return album;
-		},
+		mutationFn: ({ albumId }: RefreshTarget): Promise<AlbumBasicInfo> =>
+			api.v3.POST(CATALOG_ENDPOINTS.albumRefresh(albumId)),
 		onSuccess: (album, { userId, albumId }) =>
 			setQueryDataWithPersister(
 				AlbumQueryKeyFactory.basic(userId, albumId),

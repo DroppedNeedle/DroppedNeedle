@@ -83,7 +83,7 @@ vi.mock('idb-keyval', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: vi.fn(), POST: vi.fn(), PUT: vi.fn() } } }
+	api: { v3: { GET: vi.fn(), POST: vi.fn(), PUT: vi.fn() } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -107,8 +107,8 @@ import {
 import { createSetAutoDownloadMutation } from './FollowMutations.svelte';
 import type { FollowStatus } from './types';
 
-const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock;
-const mockPut = vi.mocked(api.global.v3.PUT) as unknown as Mock;
+const mockGet = vi.mocked(api.v3.GET) as unknown as Mock;
+const mockPut = vi.mocked(api.v3.PUT) as unknown as Mock;
 type Opts = {
 	queryKey?: unknown;
 	queryFn?: (ctx: { signal: AbortSignal }) => Promise<unknown>;

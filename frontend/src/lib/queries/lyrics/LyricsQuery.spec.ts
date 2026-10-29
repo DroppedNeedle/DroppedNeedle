@@ -5,34 +5,14 @@ vi.mock('@tanstack/svelte-query', () => ({
 	createQuery: vi.fn()
 }));
 
-vi.mock('$lib/api/client', async () => {
-	class ApiErrorMock extends Error {
-		readonly status: number;
-		readonly code: string;
-		readonly details: unknown;
-		constructor(status: number, message: string, code = '', details: unknown = null) {
-			super(message);
-			this.name = 'ApiError';
-			this.status = status;
-			this.code = code;
-			this.details = details;
-		}
-	}
-	return {
-		ApiError: ApiErrorMock,
-		api: {
-			global: {
-				v3: { GET: vi.fn() }
-			}
-		}
-	};
-});
+vi.mock('$lib/api/client', () => ({ api: { v3: { GET: vi.fn() } } }));
 
-import { api, ApiError } from '$lib/api/client';
+import { api } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 import { fetchLyrics } from '$lib/queries/lyrics/LyricsQuery.svelte';
 import { LyricsQueryKeyFactory } from '$lib/queries/lyrics/LyricsQueryKeyFactory';
 
-const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock;
+const mockGet = vi.mocked(api.v3.GET) as unknown as Mock;
 
 function makeNowPlaying(overrides: Partial<NowPlaying> = {}): NowPlaying {
 	return {

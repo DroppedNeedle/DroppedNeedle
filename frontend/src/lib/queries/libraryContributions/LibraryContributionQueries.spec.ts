@@ -5,7 +5,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: vi.fn() } } }
+	api: { v3: { GET: vi.fn() } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -21,7 +21,7 @@ import { invalidateLibraryCatalog } from '$lib/queries/library/LibraryCatalogInv
 import { LibraryContributionQueryKeyFactory } from './LibraryContributionQueryKeyFactory';
 import { getLibraryContributionQuery } from './LibraryContributionQueries.svelte';
 
-const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock;
+const mockGet = vi.mocked(api.v3.GET) as unknown as Mock;
 
 beforeEach(() => {
 	vi.clearAllMocks();

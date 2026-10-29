@@ -17,7 +17,7 @@ export const updatePluginMutation = () =>
 			name: string;
 			enabled: boolean;
 			settings: Record<string, string>;
-		}) => api.global.v3.PUT(PLUGIN_ENDPOINTS.plugin(name), { enabled, settings }),
+		}) => api.v3.PUT(PLUGIN_ENDPOINTS.plugin(name), { enabled, settings }),
 		onSuccess: async (plugin) => {
 			toastStore.show({
 				message: plugin.error
@@ -34,7 +34,7 @@ export const updatePluginMutation = () =>
 
 export const uninstallPluginMutation = () =>
 	createMutation(() => ({
-		mutationFn: (name: string) => api.global.v3.DELETE(PLUGIN_ENDPOINTS.plugin(name)),
+		mutationFn: (name: string) => api.v3.DELETE(PLUGIN_ENDPOINTS.plugin(name)),
 		onSuccess: async () => {
 			toastStore.show({ message: 'Plugin removed.', type: 'info' });
 			await invalidateQueriesWithPersister({ queryKey: PluginQueryKeyFactory.prefix });
@@ -49,7 +49,7 @@ export const uninstallPluginMutation = () =>
 export const undoPluginFileMutation = () =>
 	createMutation(() => ({
 		mutationFn: ({ bundleId }: { name: string; bundleId: string }) =>
-			api.global.v3.POST(PLUGIN_ENDPOINTS.undoFile(), { bundle_id: bundleId }),
+			api.v3.POST(PLUGIN_ENDPOINTS.undoFile(), { bundle_id: bundleId }),
 		onSuccess: async (_answer, { name }) => {
 			toastStore.show({ message: 'File removed.', type: 'success' });
 			await invalidateQueriesWithPersister({ queryKey: PluginQueryKeyFactory.files(name) });

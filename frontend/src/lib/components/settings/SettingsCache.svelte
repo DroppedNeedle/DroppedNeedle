@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import {
 		createClearCacheMutation,
 		createPrecacheRunMutation,

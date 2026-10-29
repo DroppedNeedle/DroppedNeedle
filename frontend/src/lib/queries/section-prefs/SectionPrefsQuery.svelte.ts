@@ -22,12 +22,12 @@ export const getSectionPrefsQuery = () =>
 	createQuery(() => ({
 		queryKey: SectionPrefsQueryKeyFactory.prefs(authStore.user?.id),
 		queryFn: async ({ signal }) =>
-			toResponse(await api.global.v3.GET(SECTION_PREFS_ENDPOINT(), { signal }))
+			toResponse(await api.v3.GET(SECTION_PREFS_ENDPOINT(), { signal }))
 	}));
 
 /** Save one page's toggles; refreshes the prefs cache and invalidates the page data. */
 export async function saveSectionPrefs(update: SectionPrefsUpdate): Promise<void> {
-	const saved = toResponse(await api.global.v3.PUT(SECTION_PREFS_ENDPOINT(), update));
+	const saved = toResponse(await api.v3.PUT(SECTION_PREFS_ENDPOINT(), update));
 	const userId = authStore.user?.id;
 	await setQueryDataWithPersister<SectionPrefsResponse>(
 		SectionPrefsQueryKeyFactory.prefs(userId),

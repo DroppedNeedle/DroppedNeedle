@@ -14,7 +14,7 @@ const advancedSettingsQueryOptions = () =>
 	queryOptions({
 		queryKey: AdvancedSettingsQueryKeyFactory.saved(authStore.user?.id),
 		queryFn: ({ signal }): Promise<AdvancedSettings> =>
-			api.global.v3.GET(SETTINGS_ENDPOINTS.advanced(), { signal }),
+			api.v3.GET(SETTINGS_ENDPOINTS.advanced(), { signal }),
 		enabled: authStore.isAdmin
 	});
 

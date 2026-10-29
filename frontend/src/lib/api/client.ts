@@ -1,60 +1,10 @@
-import { pageFetch } from '$lib/utils/navigationAbort';
 import { getApiUrl } from '$lib/api/api-utils';
 import { withBasePath } from '$lib/utils/basePath';
 import { browser } from '$app/environment';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
 import { createV3Client, type V3Client } from './v3/client';
-
-export class ApiError extends Error {
-	readonly status: number;
-	readonly code: string;
-	readonly details: unknown;
-
-	constructor(status: number, message: string, code = '', details: unknown = null) {
-		super(message);
-		this.name = 'ApiError';
-		this.status = status;
-		this.code = code;
-		this.details = details;
-	}
-}
-
-/**
- * Thrown when a request fails with 401 while a session was active. The client
- * has already cleared the store and triggered a hard redirect to /login;
- * callers can use `instanceof SessionExpiredError` to suppress error UI that
- * would otherwise flash during navigation.
- */
-export class SessionExpiredError extends ApiError {
-	constructor(message = 'Session expired') {
-		super(401, message, 'session_expired');
-		this.name = 'SessionExpiredError';
-	}
-}
-
-export type TransportErrorCode =
-	'TRANSPORT_TIMEOUT' | 'TRANSPORT_ABORTED' | 'TRANSPORT_NETWORK' | 'TRANSPORT_STALLED';
-
-const TRANSPORT_MESSAGES: Record<TransportErrorCode, string> = {
-	TRANSPORT_TIMEOUT: 'The request timed out',
-	TRANSPORT_ABORTED: 'The request was cancelled',
-	TRANSPORT_NETWORK: 'The server could not be reached',
-	TRANSPORT_STALLED: 'The upload stopped'
-};
-
-export class TransportError extends ApiError {
-	readonly method: string;
-	readonly path: string;
-
-	constructor(code: TransportErrorCode, method: string, path: string) {
-		const message = TRANSPORT_MESSAGES[code];
-		super(0, message, code, { method, path });
-		this.name = 'TransportError';
-		this.method = method;
-		this.path = path;
-	}
-}
+import { ApiError, SessionExpiredError, TransportError, type TransportErrorCode } from './errors';
 
 export interface RequestOptions extends Omit<RequestInit, 'method' | 'body'> {
 	signal?: AbortSignal;
@@ -121,9 +71,9 @@ interface ApiClient {
 	head(url: string, opts?: RequestOptions): Promise<Response>;
 	/** GET answering the raw Response, for binary bodies (downloads, images). */
 	raw(url: string, opts?: RequestOptions): Promise<Response>;
-	/** A multipart POST that can report progress; never cut off by page navigation. */
+	/** A multipart POST that can report progress. */
 	upload<T = unknown>(url: string, body: FormData, opts?: UploadOptions): Promise<T>;
-	/** Typed v3 client over the generated contract (same fetch flavor as the host). */
+	/** Typed v3 client over the generated contract. */
 	v3: V3Client;
 }
 
@@ -261,7 +211,6 @@ function createClient(fetchFn: FetchFn): ApiClient {
 	};
 }
 
-const navClient = createClient(pageFetch);
-const globalClient = createClient((...args) => globalThis.fetch(...args));
-
-export const api = Object.assign(navClient, { global: globalClient });
+// One client. A request stops only on its own signal: TanStack's for a query,
+// the caller's for anything else. Navigation never cancels one.
+export const api = createClient((...args) => globalThis.fetch(...args));

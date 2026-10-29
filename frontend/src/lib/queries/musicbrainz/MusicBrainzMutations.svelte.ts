@@ -53,7 +53,7 @@ const cacheSettingsResponse = async (
 export const saveMusicBrainzSettings = () =>
 	createMutation(() => ({
 		mutationFn: async (settings: MusicBrainzSettingsUpdate) =>
-			toMusicBrainzSettings(await api.global.v3.PUT(MUSICBRAINZ_ENDPOINTS.settings(), settings)),
+			toMusicBrainzSettings(await api.v3.PUT(MUSICBRAINZ_ENDPOINTS.settings(), settings)),
 		onMutate: captureMusicBrainzUser,
 		onSuccess: cacheSettingsResponse
 	}));
@@ -61,9 +61,7 @@ export const saveMusicBrainzSettings = () =>
 export const consentBrainzMash = () =>
 	createMutation(() => ({
 		mutationFn: async (binding: BrainzMashBinding) =>
-			toMusicBrainzSettings(
-				await api.global.v3.POST(MUSICBRAINZ_ENDPOINTS.brainzMashConsent(), binding)
-			),
+			toMusicBrainzSettings(await api.v3.POST(MUSICBRAINZ_ENDPOINTS.brainzMashConsent(), binding)),
 		onMutate: captureMusicBrainzUser,
 		onSuccess: cacheSettingsResponse
 	}));
@@ -71,7 +69,7 @@ export const consentBrainzMash = () =>
 export const testMusicBrainzConnection = () =>
 	createMutation(() => ({
 		mutationFn: async (request: BrainzMashBinding | MusicBrainzSettingsUpdate) =>
-			toMusicBrainzSettings(await api.global.v3.POST(MUSICBRAINZ_ENDPOINTS.verify(), request)),
+			toMusicBrainzSettings(await api.v3.POST(MUSICBRAINZ_ENDPOINTS.verify(), request)),
 		onMutate: captureMusicBrainzUser,
 		onSuccess: cacheSettingsResponse
 	}));
@@ -79,7 +77,7 @@ export const testMusicBrainzConnection = () =>
 export const stageBrainzMash = () =>
 	createMutation(() => ({
 		mutationFn: async () =>
-			toMusicBrainzSettings(await api.global.v3.POST(MUSICBRAINZ_ENDPOINTS.brainzMashStage())),
+			toMusicBrainzSettings(await api.v3.POST(MUSICBRAINZ_ENDPOINTS.brainzMashStage())),
 		onMutate: captureMusicBrainzUser,
 		onSuccess: cacheSettingsResponse
 	}));
@@ -87,7 +85,7 @@ export const stageBrainzMash = () =>
 export const activateBrainzMash = () =>
 	createMutation(() => ({
 		mutationFn: async (binding: BrainzMashBinding) =>
-			toMusicBrainzSettings(await api.global.v3.POST(MUSICBRAINZ_ENDPOINTS.activate(), binding)),
+			toMusicBrainzSettings(await api.v3.POST(MUSICBRAINZ_ENDPOINTS.activate(), binding)),
 		onMutate: captureMusicBrainzUser,
 		onSuccess: cacheSettingsResponse
 	}));

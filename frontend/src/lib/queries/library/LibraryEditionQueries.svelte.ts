@@ -88,7 +88,7 @@ export function getReleaseEditionSearchQuery(
 			),
 			queryFn: async ({ signal }): Promise<ReleaseEditionSearchResponse> =>
 				toReleaseEditionSearch(
-					await api.global.v3.GET(
+					await api.v3.GET(
 						LibraryV3Api.reidentificationReleases(
 							albumId,
 							releaseGroup

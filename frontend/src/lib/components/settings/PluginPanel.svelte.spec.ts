@@ -5,7 +5,7 @@ import { render } from 'vitest-browser-svelte';
 const h = vi.hoisted(() => ({ head: vi.fn(), list: vi.fn(), address: '' }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { head: h.head, v3: { GET: h.list } } }
+	api: { head: h.head, v3: { GET: h.list } }
 }));
 vi.mock('$lib/queries/plugins/endpoints', () => ({
 	PLUGIN_ENDPOINTS: { panelPage: () => h.address, list: () => '/api/v3/plugins' }

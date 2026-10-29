@@ -69,6 +69,16 @@
 		() => authStore.user?.id,
 		() => authStore.isAdmin
 	);
+	// Every flag is read on each pass. A flag skipped by `||` is not tracked, so a
+	// query that answered meanwhile could leave the skeleton up for good.
+	const loading = $derived(
+		[
+			settingsQuery.isLoading,
+			policyQuery.isLoading,
+			operationsQuery.isLoading,
+			recoveryQuery.isLoading
+		].some(Boolean)
+	);
 	const pauseOperation = controlLibraryManagementOperationMutation('pause');
 	const resumeOperation = controlLibraryManagementOperationMutation('resume');
 	const reissuePreview = reissueLibraryManagementPreviewMutation();
@@ -335,7 +345,7 @@
 		</div>
 	</div>
 
-	{#if settingsQuery.isLoading || policyQuery.isLoading || operationsQuery.isLoading || recoveryQuery.isLoading}
+	{#if loading}
 		<div class="space-y-3" role="status" aria-label="Loading file-organization state">
 			<div class="skeleton h-28 rounded-xl"></div>
 			<div class="skeleton h-44 rounded-xl"></div>

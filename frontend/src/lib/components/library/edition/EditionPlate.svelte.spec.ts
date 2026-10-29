@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-import { ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 import type { components } from '$lib/api/v3/openapi';
 import type { LibraryAlbumSummary } from '$lib/types';
 

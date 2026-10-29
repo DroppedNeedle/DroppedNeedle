@@ -21,7 +21,7 @@ function sameUser(contextUserId: string | null | undefined): boolean {
 
 export const createSaveRemoteFoldersMutation = () =>
 	createMutation(() => ({
-		mutationFn: (vars: RemoteFolderSave) => api.global.v3.PUT(REMOTE_ENDPOINTS.folders(), vars),
+		mutationFn: (vars: RemoteFolderSave) => api.v3.PUT(REMOTE_ENDPOINTS.folders(), vars),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: async (_data, _vars, context) => {
 			if (!sameUser(context.userId)) return;

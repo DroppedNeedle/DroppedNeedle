@@ -12,11 +12,9 @@ const mockGet = vi.fn();
 const mockPost = vi.fn();
 vi.mock('$lib/api/client', () => ({
 	api: {
-		global: {
-			v3: {
-				GET: (...args: unknown[]) => mockGet(...args),
-				POST: (...args: unknown[]) => mockPost(...args)
-			}
+		v3: {
+			GET: (...args: unknown[]) => mockGet(...args),
+			POST: (...args: unknown[]) => mockPost(...args)
 		}
 	}
 }));

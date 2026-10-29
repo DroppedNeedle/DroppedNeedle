@@ -6,7 +6,7 @@ import { withBasePath } from '$lib/utils/basePath';
  * PUBLIC_API_URL origin if it's set. Useful for <img> src tags, Background
  * image URLs, EventSource streams, and anywhere else that builds a URL string
  * instead of going through the API client (which calls this internally, so
- * every standard `api.*`/`api.global.*` call inherits the same behavior).
+ * every standard `api.*`/`api.*` call inherits the same behavior).
  *
  * Root-relative paths (`/api/v3/...`) get the base prefix exactly once;
  * external, data:, blob:, hash, and protocol-relative (`//host/...`) URLs

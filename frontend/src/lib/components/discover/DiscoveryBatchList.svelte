@@ -3,12 +3,11 @@
 	import { slide } from '$lib/ui/motion';
 	import { SvelteSet } from 'svelte/reactivity';
 	import {
+		fetchDiscoveryBatchV3,
 		getDiscoveryBatchesV3Query,
 		type DiscoveryBatchDetailV3
 	} from '$lib/queries/discover/DiscoverV3Queries.svelte';
 	import { removeDiscoveryBatchV3 } from '$lib/queries/discover/DiscoverV3Mutations.svelte';
-	import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
-	import { api } from '$lib/api/client';
 	import type { components } from '$lib/api/v3/openapi';
 	import { albumHrefOrNull } from '$lib/utils/entityRoutes';
 	import Button from '$lib/ui/Button.svelte';
@@ -35,7 +34,7 @@
 			try {
 				details = {
 					...details,
-					[batch.id]: await api.global.v3.GET(DiscoverV3Api.batch(batch.id))
+					[batch.id]: await fetchDiscoveryBatchV3(batch.id)
 				};
 			} catch {
 				expanded.delete(batch.id);

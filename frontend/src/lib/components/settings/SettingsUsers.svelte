@@ -1,6 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { api } from '$lib/api/client';
+	import {
+		createAdminUserMutation,
+		createDeleteUserMutation,
+		createSetUserRoleMutation,
+		getAdminUsersQuery,
+		type AdminUser
+	} from '$lib/queries/auth/AdminUsersQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
@@ -32,8 +37,6 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import { createPasswordRecoveryCodeMutation } from '$lib/queries/auth/AuthMutations.svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
-	import type { components } from '$lib/api/v3/openapi';
-	import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
@@ -44,17 +47,25 @@
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 
-	type UserRecord = components['schemas']['UserResponse'];
+	type UserRecord = AdminUser;
 
 	const PAGE_SIZE = 20;
 
-	let users = $state<UserRecord[]>([]);
-	let loading = $state(true);
-	let error = $state<string | null>(null);
 	let savingRole = $state<string | null>(null);
 	let roleError = $state<string | null>(null);
 	let page = $state(1);
-	let total = $state(0);
+
+	const usersQuery = getAdminUsersQuery(() => ({
+		limit: PAGE_SIZE,
+		offset: (page - 1) * PAGE_SIZE
+	}));
+	const setUserRole = createSetUserRoleMutation();
+	const createUser = createAdminUserMutation();
+	const deleteUser = createDeleteUserMutation();
+	const users = $derived(usersQuery.data?.users ?? []);
+	const total = $derived(usersQuery.data?.total ?? 0);
+	const loading = $derived(usersQuery.isFetching);
+	const error = $derived(usersQuery.isError ? "Couldn't load users" : null);
 
 	let userToDelete = $state<UserRecord | null>(null);
 	let deleteOpen = $state(false);
@@ -126,28 +137,16 @@
 	let createError = $state<string | null>(null);
 	let createSuccess = $state<string | null>(null);
 
-	async function loadUsers(targetPage = page) {
-		loading = true;
-		error = null;
-		try {
-			const offset = (targetPage - 1) * PAGE_SIZE;
-			const data = await api.v3.GET(AUTH_ENDPOINTS.adminUsers(PAGE_SIZE, offset));
-			users = data.users;
-			total = data.total;
-			page = targetPage;
-		} catch {
-			error = "Couldn't load users";
-		} finally {
-			loading = false;
-		}
+	function loadUsers(targetPage = page) {
+		if (targetPage !== page) page = targetPage;
+		else void usersQuery.refetch();
 	}
 
 	async function setRole(userId: string, role: 'admin' | 'trusted' | 'user') {
 		savingRole = userId;
 		roleError = null;
 		try {
-			await api.v3.PUT(AUTH_ENDPOINTS.adminUserRole(userId), { role });
-			users = users.map((u) => (u.id === userId ? { ...u, role } : u));
+			await setUserRole.mutateAsync({ userId, role });
 		} catch (e: unknown) {
 			roleError = (e as { message?: string })?.message ?? 'Could not update role';
 		} finally {
@@ -164,7 +163,7 @@
 		}
 		creating = true;
 		try {
-			const user = await api.v3.POST(AUTH_ENDPOINTS.adminCreateUser, {
+			const user = await createUser.mutateAsync({
 				display_name: newName,
 				username: newUsername,
 				email: newEmail || undefined,
@@ -178,15 +177,8 @@
 			newPassword = '';
 			newRole = 'user';
 			showCreateForm = false;
-			total += 1;
-			const lastPage = Math.ceil(total / PAGE_SIZE);
-			if (lastPage === page && users.length < PAGE_SIZE) {
-				// Admin-created users always get a local (email/password) login
-				users = [...users, { ...user, providers: ['local'] }];
-			} else {
-				// New user landed on a different page (sorted by created_at ASC)
-				await loadUsers(lastPage);
-			}
+			// The list is oldest first, so the new account is on the last page.
+			page = Math.max(1, Math.ceil(total / PAGE_SIZE));
 		} catch (e: unknown) {
 			const msg = (e as { message?: string })?.message;
 			createError = msg ?? 'Could not create user';
@@ -203,15 +195,15 @@
 	// Throws on failure, so the dialog stays open and shows why.
 	async function handleDeleteUser() {
 		if (!userToDelete) return;
+		const wasLastOnPage = users.length === 1 && page > 1;
 		try {
-			await api.v3.DELETE(AUTH_ENDPOINTS.adminUser(userToDelete.id));
+			await deleteUser.mutateAsync(userToDelete.id);
 		} catch (e: unknown) {
 			const msg = (e as { message?: string })?.message;
 			throw new Error(msg ?? 'Could not delete user', { cause: e });
 		}
-		const wasLastOnPage = users.length === 1 && page > 1;
 		userToDelete = null;
-		await loadUsers(wasLastOnPage ? page - 1 : page);
+		if (wasLastOnPage) page -= 1;
 	}
 
 	function openRecoveryDialog(user: UserRecord) {
@@ -301,10 +293,6 @@
 		if (role === 'trusted') return 'badge-info';
 		return 'badge-ghost';
 	}
-
-	onMount(() => {
-		void loadUsers();
-	});
 </script>
 
 <Card>

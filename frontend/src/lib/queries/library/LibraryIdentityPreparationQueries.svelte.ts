@@ -22,7 +22,7 @@ export const getLibraryIdentityPreparationsQuery = (
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
 				toOperationList(
-					await api.global.v3.GET(LibraryV3Api.identityPreparations(5, pageParam), { signal })
+					await api.v3.GET(LibraryV3Api.identityPreparations(5, pageParam), { signal })
 				),
 			getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
 			refetchInterval: (query) =>
@@ -46,7 +46,7 @@ export const getLibraryIdentityPreparationEstimateQuery = (
 			enabled: enabled() && Boolean(userId),
 			queryKey: LibraryQueryKeyFactory.identityPreparationEstimate(userId, rootIds),
 			queryFn: async ({ signal }): Promise<IdentityPreparationEstimateResponse> =>
-				api.global.v3.GET(LibraryV3Api.identityPreparationEstimate(rootIds), { signal }),
+				api.v3.GET(LibraryV3Api.identityPreparationEstimate(rootIds), { signal }),
 			staleTime: STALE_LIVE
 		};
 	});
@@ -70,7 +70,7 @@ export const getLibraryIdentityPreparationFindingsQuery = (
 			),
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
-				(await api.global.v3.GET(
+				(await api.v3.GET(
 					LibraryV3Api.identityPreparationFindings(jobId ?? '', 100, pageParam, findingCategory),
 					{ signal }
 				)) as RepairFindingListResponse,

@@ -8,7 +8,7 @@
 		Check,
 		Sparkles
 	} from 'lucide-svelte';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import {
 		createConnectListenBrainzMutation,

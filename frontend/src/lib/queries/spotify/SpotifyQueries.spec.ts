@@ -6,7 +6,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: vi.fn(), POST: vi.fn() } } }
+	api: { v3: { GET: vi.fn(), POST: vi.fn() } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -24,9 +24,7 @@ import { userIdSegment } from '../userKeySegment';
 import { SPOTIFY_ENDPOINTS } from './endpoints';
 import { getSpotifyPlaylistsQuery } from './SpotifyQueries.svelte';
 
-const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock<
-	(...args: unknown[]) => Promise<unknown>
->;
+const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
 type QueryResult = {
 	queryKey?: unknown;
 	queryFn?: (ctx: { signal?: AbortSignal }) => Promise<unknown>;

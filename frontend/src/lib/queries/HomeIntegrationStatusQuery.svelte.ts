@@ -27,7 +27,7 @@ export const getIntegrationStatusQueryOptions = (userId: string | null | undefin
 	queryOptions({
 		queryKey: HomeQueryKeyFactory.integrationStatus(userId),
 		enabled: Boolean(userId),
-		queryFn: ({ signal }) => api.global.v3.GET(HOME_ENDPOINTS.integrationStatus(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(HOME_ENDPOINTS.integrationStatus(), { signal })
 	});
 
 // Loads the status. The app shell holds one for the whole session, so every

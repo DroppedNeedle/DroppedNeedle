@@ -12,14 +12,14 @@ export const getFollowStatusQuery = (getMbid: Getter<string>) =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.status(getMbid(), authStore.user?.id),
 		queryFn: async ({ signal }) =>
-			toFollowStatus(await api.global.v3.GET(FOLLOW_ENDPOINTS.status(getMbid()), { signal }))
+			toFollowStatus(await api.v3.GET(FOLLOW_ENDPOINTS.status(getMbid()), { signal }))
 	}));
 
 export const getFollowedArtistsQuery = () =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.artists(authStore.user?.id),
 		queryFn: async ({ signal }) => {
-			const data = await api.global.v3.GET(FOLLOW_ENDPOINTS.followedArtists(), { signal });
+			const data = await api.v3.GET(FOLLOW_ENDPOINTS.followedArtists(), { signal });
 			return data.artists.map(toFollowedArtist);
 		}
 	}));
@@ -39,7 +39,7 @@ export const getRecentReleasesQuery = (
 			getIncludeOwned()
 		),
 		queryFn: async ({ signal }): Promise<NewReleasesResponse> => {
-			const data = await api.global.v3.GET(
+			const data = await api.v3.GET(
 				FOLLOW_ENDPOINTS.recentReleases(getDays(), getLimit(), getIncludeOwned()),
 				{ signal }
 			);
@@ -50,21 +50,20 @@ export const getRecentReleasesQuery = (
 export const getConcertsQuery = () =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.concerts(authStore.user?.id),
-		queryFn: ({ signal }) => api.global.v3.GET(CONCERT_ENDPOINTS.concerts(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(CONCERT_ENDPOINTS.concerts(), { signal })
 	}));
 
 export const getEventCitiesQuery = () =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.concertCities(authStore.user?.id),
-		queryFn: ({ signal }) => api.global.v3.GET(CONCERT_ENDPOINTS.concertCities(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(CONCERT_ENDPOINTS.concertCities(), { signal })
 	}));
 
 // enabled only from 2 chars (the backend's min query length); callers debounce
 export const getCitySearchQuery = (getQ: Getter<string>) =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.citySearch(authStore.user?.id, getQ()),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(CONCERT_ENDPOINTS.concertCitySearch(getQ()), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(CONCERT_ENDPOINTS.concertCitySearch(getQ()), { signal }),
 		enabled: getQ().trim().length >= 2
 	}));
 
@@ -73,7 +72,7 @@ export const getCitySearchQuery = (getQ: Getter<string>) =>
 export const getUnseenConcertsCountQuery = () =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.concertsUnseen(authStore.user?.id),
-		queryFn: ({ signal }) => api.global.v3.GET(CONCERT_ENDPOINTS.concertsUnseenCount(), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(CONCERT_ENDPOINTS.concertsUnseenCount(), { signal }),
 		enabled: !!authStore.user?.id,
 		refetchInterval: 60_000
 	}));
@@ -83,8 +82,7 @@ export const getUnseenConcertsCountQuery = () =>
 export const getUnseenNewReleasesCountQuery = () =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.newReleasesUnseen(authStore.user?.id),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(FOLLOW_ENDPOINTS.newReleasesUnseenCount(), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(FOLLOW_ENDPOINTS.newReleasesUnseenCount(), { signal }),
 		enabled: !!authStore.user?.id,
 		refetchInterval: 60_000
 	}));

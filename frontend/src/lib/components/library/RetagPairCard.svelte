@@ -6,7 +6,7 @@
 	import { goto } from '$app/navigation';
 	import { Combine } from 'lucide-svelte';
 
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import { getAlbumEditionsQuery } from '$lib/queries/albums/EditionQueries.svelte';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';

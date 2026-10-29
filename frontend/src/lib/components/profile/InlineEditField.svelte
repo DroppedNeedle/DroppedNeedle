@@ -8,7 +8,7 @@
 	import { untrack } from 'svelte';
 	import type { FullAutoFill } from 'svelte/elements';
 	import { Check, X } from 'lucide-svelte';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 

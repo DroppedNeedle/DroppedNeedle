@@ -1,5 +1,6 @@
 import { createMutation } from '@tanstack/svelte-query';
-import { api, ApiError } from '$lib/api/client';
+import { api } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
@@ -25,7 +26,7 @@ export function previewLibraryPolicyImpact() {
 		mutationFn: (input: {
 			settings: TypedLibrarySettings;
 			expected_policy_revision: string | null;
-		}) => api.global.v3.POST(LibraryV3Api.policyImpact(), input)
+		}) => api.v3.POST(LibraryV3Api.policyImpact(), input)
 	}));
 }
 
@@ -34,7 +35,7 @@ export function saveTargetLibrarySettings() {
 		mutationFn: async (input: {
 			settings: TypedLibrarySettings;
 			expected_policy_revision: string;
-		}) => toTargetLibrarySettings(await api.global.v3.PUT(LibraryV3Api.settings(), input)),
+		}) => toTargetLibrarySettings(await api.v3.PUT(LibraryV3Api.settings(), input)),
 		onSuccess: async () => {
 			await invalidatePolicies();
 			toastStore.show({ message: 'Library policies saved', type: 'success' });
@@ -50,7 +51,7 @@ export function saveTargetLibrarySettings() {
 export function restoreLibraryRoots() {
 	return createMutation(() => ({
 		mutationFn: async (input: LibraryRestoreRootsRequest) =>
-			toTargetLibrarySettings(await api.global.v3.POST(LibraryV3Api.restoreRoots(), input)),
+			toTargetLibrarySettings(await api.v3.POST(LibraryV3Api.restoreRoots(), input)),
 		onSuccess: async () => {
 			await invalidatePolicies();
 			toastStore.show({ message: 'Library roots restored', type: 'success' });
@@ -66,6 +67,6 @@ export function restoreLibraryRoots() {
 export function previewLibraryPolicyApply() {
 	return createMutation(() => ({
 		mutationFn: (input: { scope_ids: string[]; expected_policy_revision: string }) =>
-			api.global.v3.POST(LibraryV3Api.policyApplyPreview(), input)
+			api.v3.POST(LibraryV3Api.policyApplyPreview(), input)
 	}));
 }

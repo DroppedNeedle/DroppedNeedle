@@ -9,21 +9,16 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: {
-		v3: { POST: vi.fn() },
-		global: {
-			v3: { GET: vi.fn(), POST: vi.fn() }
-		}
-	}
+	api: { v3: { GET: vi.fn(), POST: vi.fn() } }
 }));
 
 import { api } from '$lib/api/client';
 import { createMutation, createQuery } from '@tanstack/svelte-query';
 
-const mockV3Get = vi.mocked(api.global.v3.GET) as unknown as Mock<
+const mockV3Get = vi.mocked(api.v3.GET) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
-const mockV3Post = vi.mocked(api.global.v3.POST) as unknown as Mock<
+const mockV3Post = vi.mocked(api.v3.POST) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
 const mockAuthenticatedV3Post = vi.mocked(api.v3.POST) as unknown as Mock<
@@ -74,7 +69,7 @@ describe('toAuthUser', () => {
 	});
 });
 
-describe('auth mutations route through api.global', () => {
+describe('auth mutations', () => {
 	it('local login posts username + password to the login endpoint', async () => {
 		mockV3Post.mockResolvedValue({ user: {} });
 		const { createLocalLoginMutation } = await import('./AuthMutations.svelte');

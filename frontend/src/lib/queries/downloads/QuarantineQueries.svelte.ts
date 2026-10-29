@@ -10,7 +10,7 @@ import { DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
 const getQuarantineQueryOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.quarantine(),
-		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_TASKS_ENDPOINTS.quarantine(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_TASKS_ENDPOINTS.quarantine(), { signal })
 	});
 
 export const getQuarantineQuery = (enabled: () => boolean = () => true) =>
@@ -18,7 +18,7 @@ export const getQuarantineQuery = (enabled: () => boolean = () => true) =>
 
 export function deleteQuarantineEntry() {
 	return createMutation(() => ({
-		mutationFn: (id: number) => api.global.v3.DELETE(DOWNLOAD_TASKS_ENDPOINTS.quarantineDelete(id)),
+		mutationFn: (id: number) => api.v3.DELETE(DOWNLOAD_TASKS_ENDPOINTS.quarantineDelete(id)),
 		onSuccess: () => {
 			toastStore.show({ message: 'Quarantine entry removed', type: 'success' });
 			void invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.quarantine() });

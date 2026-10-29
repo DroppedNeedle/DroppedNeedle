@@ -8,8 +8,7 @@ import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
 const policySummaryOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.policySummary(),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.policySummary(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.policySummary(), { signal })
 	});
 
 // Safe read-only acquisition-policy summary for ANY signed-in user (spec):

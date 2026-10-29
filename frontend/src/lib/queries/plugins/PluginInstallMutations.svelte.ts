@@ -15,7 +15,7 @@ export type PluginInstallRequest = components['schemas']['PluginInstallRequest']
 export const previewPluginInstallMutation = () =>
 	createMutation(() => ({
 		mutationFn: (request: PluginInstallRequest) =>
-			api.global.v3.POST(PLUGIN_ENDPOINTS.installPreview(), request),
+			api.v3.POST(PLUGIN_ENDPOINTS.installPreview(), request),
 		onError: (error: Error) => {
 			toastStore.show({
 				message: error.message || 'Could not read that repository.',
@@ -28,7 +28,7 @@ export const previewPluginInstallMutation = () =>
 export const installPreviewedPluginMutation = () =>
 	createMutation(() => ({
 		mutationFn: (preview: PluginInstallPreview & { repository_url: string }) =>
-			api.global.v3.POST(PLUGIN_ENDPOINTS.install(), {
+			api.v3.POST(PLUGIN_ENDPOINTS.install(), {
 				repository_url: preview.repository_url,
 				commit: preview.commit
 			}),
@@ -47,7 +47,7 @@ export const installPreviewedPluginMutation = () =>
 /** Move an installed plugin to its newest release (or the same ref). */
 export const updatePluginFromSourceMutation = () =>
 	createMutation(() => ({
-		mutationFn: (name: string) => api.global.v3.POST(PLUGIN_ENDPOINTS.update(name), {}),
+		mutationFn: (name: string) => api.v3.POST(PLUGIN_ENDPOINTS.update(name), {}),
 		onSuccess: async (result) => {
 			toastStore.show({
 				message: result.updated

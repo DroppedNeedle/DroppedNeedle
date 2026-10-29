@@ -13,7 +13,7 @@ import { STALE_LIVE } from '$lib/queries/staleTime';
 export const getActiveRequestsQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		queryKey: RequestQueryKeyFactory.active(authStore.user?.id),
-		queryFn: ({ signal }) => api.global.v3.GET(REQUESTS_ENDPOINTS.active(), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(REQUESTS_ENDPOINTS.active(), { signal }),
 		enabled: getEnabled() && !!authStore.user?.id,
 		staleTime: STALE_LIVE,
 		refetchInterval: 5_000,
@@ -24,7 +24,7 @@ export const getActiveRequestsQuery = (getEnabled: Getter<boolean> = () => true)
 export const getActiveRequestCountQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		queryKey: RequestQueryKeyFactory.activeCount(authStore.user?.id),
-		queryFn: ({ signal }) => api.global.v3.GET(REQUESTS_ENDPOINTS.activeCount(), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(REQUESTS_ENDPOINTS.activeCount(), { signal }),
 		enabled: getEnabled() && !!authStore.user?.id,
 		staleTime: STALE_LIVE,
 		refetchInterval: 30_000,
@@ -40,7 +40,7 @@ export const getRequestHistoryQuery = (
 		return {
 			queryKey: RequestQueryKeyFactory.history(authStore.user?.id, params),
 			queryFn: ({ signal }: { signal: AbortSignal }) =>
-				api.global.v3.GET(REQUESTS_ENDPOINTS.history(params), { signal }),
+				api.v3.GET(REQUESTS_ENDPOINTS.history(params), { signal }),
 			enabled: getEnabled() && !!authStore.user?.id
 		};
 	});
@@ -48,7 +48,7 @@ export const getRequestHistoryQuery = (
 export const getApprovalsQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		queryKey: RequestQueryKeyFactory.approvals(authStore.user?.id),
-		queryFn: ({ signal }) => api.global.v3.GET(REQUESTS_ENDPOINTS.approvals(), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(REQUESTS_ENDPOINTS.approvals(), { signal }),
 		enabled: getEnabled() && !!authStore.user?.id
 	}));
 

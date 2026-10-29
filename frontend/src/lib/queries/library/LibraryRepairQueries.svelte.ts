@@ -12,9 +12,7 @@ export const getLibraryRepairsQuery = (enabled: Getter<boolean> = () => true) =>
 		queryKey: LibraryQueryKeyFactory.repairs(undefined),
 		initialPageParam: undefined as string | undefined,
 		queryFn: async ({ pageParam, signal }) =>
-			toOperationList(
-				await api.global.v3.GET(LibraryV3Api.identityRepairs(50, pageParam), { signal })
-			),
+			toOperationList(await api.v3.GET(LibraryV3Api.identityRepairs(50, pageParam), { signal })),
 		getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined
 	}));
 
@@ -28,7 +26,7 @@ export const getLibraryRepairEstimateQuery = (
 			enabled: enabled(),
 			queryKey: LibraryQueryKeyFactory.repairEstimate(rootIds),
 			queryFn: async ({ signal }): Promise<RepairEstimateResponse> =>
-				api.global.v3.GET(LibraryV3Api.identityRepairEstimate(rootIds), { signal })
+				api.v3.GET(LibraryV3Api.identityRepairEstimate(rootIds), { signal })
 		};
 	});
 
@@ -44,7 +42,7 @@ export const getLibraryRepairFindingsQuery = (
 			queryKey: LibraryQueryKeyFactory.repairFindings(jobId ?? '', findingCategory, undefined),
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
-				(await api.global.v3.GET(
+				(await api.v3.GET(
 					LibraryV3Api.identityRepairFindings(jobId ?? '', 100, pageParam, findingCategory),
 					{ signal }
 				)) as RepairFindingListResponse,

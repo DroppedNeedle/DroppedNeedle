@@ -5,9 +5,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: {
-		global: { v3: { POST: vi.fn(), PUT: vi.fn() } }
-	}
+	api: { v3: { POST: vi.fn(), PUT: vi.fn() } }
 }));
 
 vi.mock('$app/environment', () => ({ browser: true }));
@@ -23,8 +21,8 @@ import { saveMusicBrainzSettings } from './MusicBrainzMutations.svelte';
 import { getMusicBrainzSourceScope, resetMusicBrainzSourceScope } from './sourceScope.svelte';
 import type { MusicBrainzSettingsResponse, MusicBrainzSettingsUpdate } from './types';
 
-const mockPost = vi.mocked(api.global.v3.POST) as unknown as Mock;
-const mockPut = vi.mocked(api.global.v3.PUT) as unknown as Mock;
+const mockPost = vi.mocked(api.v3.POST) as unknown as Mock;
+const mockPut = vi.mocked(api.v3.PUT) as unknown as Mock;
 
 const storage = new Map<string, string>();
 

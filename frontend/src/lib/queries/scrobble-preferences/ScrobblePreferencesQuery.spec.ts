@@ -84,7 +84,7 @@ vi.mock('idb-keyval', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: vi.fn(), PUT: vi.fn() } } }
+	api: { v3: { GET: vi.fn(), PUT: vi.fn() } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -103,8 +103,8 @@ import { createUpdateScrobblePreferencesMutation } from './ScrobblePreferencesMu
 
 // The typed client's generics resolve mock results to void; loosen to Mock
 // so resolves typecheck (assertions still pin URLs + bodies).
-const mockV3Get = vi.mocked(api.global.v3.GET) as unknown as Mock;
-const mockV3Put = vi.mocked(api.global.v3.PUT) as unknown as Mock;
+const mockV3Get = vi.mocked(api.v3.GET) as unknown as Mock;
+const mockV3Put = vi.mocked(api.v3.PUT) as unknown as Mock;
 
 type Opts = {
 	queryKey?: unknown;

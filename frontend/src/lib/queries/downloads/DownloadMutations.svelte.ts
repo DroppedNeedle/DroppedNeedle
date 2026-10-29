@@ -79,7 +79,7 @@ export function requestAlbum() {
 			const initiatingUserId = authStore.user?.id;
 			let data: IntakeResponse;
 			try {
-				data = await api.global.v3.POST(REQUESTS_ENDPOINTS.requestAlbum(), {
+				data = await api.v3.POST(REQUESTS_ENDPOINTS.requestAlbum(), {
 					musicbrainz_id: input.release_group_mbid,
 					artist: input.artist_name ?? null,
 					album: input.album_title ?? null,
@@ -153,7 +153,7 @@ export function requestBatch() {
 		}): Promise<BatchRequestResult> => {
 			const initiatingUserId = authStore.user?.id;
 			try {
-				const response = await api.global.v3.POST(REQUESTS_ENDPOINTS.requestBatch(), {
+				const response = await api.v3.POST(REQUESTS_ENDPOINTS.requestBatch(), {
 					items: input.items,
 					monitor_artist: input.monitorArtist === true,
 					auto_download_artist: input.autoDownloadArtist === true
@@ -194,7 +194,7 @@ export function requestBatch() {
 export function requestTrack() {
 	return createMutation(() => ({
 		mutationFn: (input: TrackRequestInput) =>
-			api.global.v3.POST(REQUESTS_ENDPOINTS.requestTrack(), {
+			api.v3.POST(REQUESTS_ENDPOINTS.requestTrack(), {
 				recording_mbid: input.recording_mbid,
 				artist_name: input.artist_name,
 				track_title: input.track_title,
@@ -225,7 +225,7 @@ export function requestTrack() {
 
 export function cancelDownload() {
 	return createMutation(() => ({
-		mutationFn: (id: string) => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.cancel(id)),
+		mutationFn: (id: string) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.cancel(id)),
 		onSuccess: () => {
 			toastStore.show({ message: 'Download cancelled', type: 'info' });
 			void invalidateTasks();
@@ -243,7 +243,7 @@ interface NextSourceInput {
 export function tryNextSource() {
 	return createMutation(() => ({
 		mutationFn: (input: NextSourceInput) =>
-			api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.nextSource(input.id), {
+			api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.nextSource(input.id), {
 				expected_candidate_index: input.candidateIndex
 			}),
 		onSuccess: () => {
@@ -264,7 +264,7 @@ export function tryNextSource() {
 // retry sweep (status -> cancelled); a manual Retry is still available afterwards.
 export function stopAutoRetry() {
 	return createMutation(() => ({
-		mutationFn: (id: string) => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.cancel(id)),
+		mutationFn: (id: string) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.cancel(id)),
 		onSuccess: () => {
 			toastStore.show({ message: 'Stopped retrying', type: 'info' });
 			void invalidateTasks();
@@ -276,7 +276,7 @@ export function stopAutoRetry() {
 
 export function retryDownload() {
 	return createMutation(() => ({
-		mutationFn: (id: string) => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.retry(id)),
+		mutationFn: (id: string) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.retry(id)),
 		onSuccess: () => {
 			toastStore.show({ message: 'Download retry initiated', type: 'info' });
 			void invalidateTasks();
@@ -294,7 +294,7 @@ function pluralDownloads(n: number): string {
 
 export function clearFinished() {
 	return createMutation(() => ({
-		mutationFn: () => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.clear()),
+		mutationFn: () => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.clear()),
 		onSuccess: (data: { cleared: number }) => {
 			toastStore.show({
 				message: data.cleared > 0 ? `Cleared ${pluralDownloads(data.cleared)}` : 'Nothing to clear',
@@ -309,7 +309,7 @@ export function clearFinished() {
 
 export function stopAllRetries() {
 	return createMutation(() => ({
-		mutationFn: () => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.stopAllRetries()),
+		mutationFn: () => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.stopAllRetries()),
 		onSuccess: (data: { stopped: number }) => {
 			toastStore.show({
 				message:
@@ -327,7 +327,7 @@ export function stopAllRetries() {
 
 export function retryAllFailed() {
 	return createMutation(() => ({
-		mutationFn: () => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.retryAllFailed()),
+		mutationFn: () => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.retryAllFailed()),
 		onSuccess: (data: { retried: number }) => {
 			toastStore.show({
 				message:
@@ -359,8 +359,7 @@ interface ReimportInput {
 // re-searching.
 export function reimportDownload() {
 	return createMutation(() => ({
-		mutationFn: (input: ReimportInput) =>
-			api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.reimport(input.id)),
+		mutationFn: (input: ReimportInput) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.reimport(input.id)),
 		onSuccess: (data, input: ReimportInput) => {
 			if (data.status === 'completed') {
 				toastStore.show({ message: 'Import complete', type: 'success' });

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 
-import { ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 import { describeServiceError } from './serviceError';
 
 it('shows a 409 NOT_CONFIGURED read as not set up, with the server sentence', () => {

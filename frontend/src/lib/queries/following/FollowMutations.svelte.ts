@@ -37,7 +37,7 @@ function invalidateFollowedArtists(): Promise<void> {
 export const createSetFollowMutation = (getMbid: () => string) =>
 	createMutation(() => ({
 		mutationFn: async (followed: boolean) =>
-			toFollowStatus(await api.global.v3.PUT(FOLLOW_ENDPOINTS.setFollow(getMbid()), { followed })),
+			toFollowStatus(await api.v3.PUT(FOLLOW_ENDPOINTS.setFollow(getMbid()), { followed })),
 		onMutate: async (followed: boolean) => {
 			const key = statusKey(getMbid());
 			await queryClient.cancelQueries({ queryKey: key });
@@ -64,7 +64,7 @@ export const createSetFollowMutation = (getMbid: () => string) =>
 // so the badge clears without waiting for a refetch
 export const createMarkNewReleasesSeenMutation = () =>
 	createMutation(() => ({
-		mutationFn: () => api.global.v3.POST(FOLLOW_ENDPOINTS.markNewReleasesSeen()),
+		mutationFn: () => api.v3.POST(FOLLOW_ENDPOINTS.markNewReleasesSeen()),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<UnseenCountResponse>(
 				FollowQueryKeyFactory.newReleasesUnseen(authStore.user?.id),
@@ -77,7 +77,7 @@ export const createMarkNewReleasesSeenMutation = () =>
 export const createReplaceEventCitiesMutation = () =>
 	createMutation(() => ({
 		mutationFn: (cities: EventCity[]) =>
-			api.global.v3.PUT(CONCERT_ENDPOINTS.concertCities(), { items: cities }),
+			api.v3.PUT(CONCERT_ENDPOINTS.concertCities(), { items: cities }),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<EventCitiesResponse>(
 				FollowQueryKeyFactory.concertCities(authStore.user?.id),
@@ -100,7 +100,7 @@ export const createReplaceEventCitiesMutation = () =>
 // cache so the badge clears without waiting for a refetch
 export const createMarkConcertsSeenMutation = () =>
 	createMutation(() => ({
-		mutationFn: () => api.global.v3.POST(CONCERT_ENDPOINTS.markConcertsSeen()),
+		mutationFn: () => api.v3.POST(CONCERT_ENDPOINTS.markConcertsSeen()),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<UnseenCountResponse>(
 				FollowQueryKeyFactory.concertsUnseen(authStore.user?.id),
@@ -113,9 +113,7 @@ export const createMarkConcertsSeenMutation = () =>
 export const createUnfollowMutation = () =>
 	createMutation(() => ({
 		mutationFn: async (mbid: string) =>
-			toFollowStatus(
-				await api.global.v3.PUT(FOLLOW_ENDPOINTS.setFollow(mbid), { followed: false })
-			),
+			toFollowStatus(await api.v3.PUT(FOLLOW_ENDPOINTS.setFollow(mbid), { followed: false })),
 		onSuccess: (data, mbid) => {
 			void setQueryDataWithPersister<FollowStatus>(statusKey(mbid), data);
 		},
@@ -127,9 +125,7 @@ export const createUnfollowMutation = () =>
 export const createSetAutoDownloadMutation = (getMbid: () => string) =>
 	createMutation(() => ({
 		mutationFn: async (enabled: boolean) =>
-			toFollowStatus(
-				await api.global.v3.PUT(FOLLOW_ENDPOINTS.autoDownload(getMbid()), { enabled })
-			),
+			toFollowStatus(await api.v3.PUT(FOLLOW_ENDPOINTS.autoDownload(getMbid()), { enabled })),
 		onMutate: async (enabled: boolean) => {
 			const key = statusKey(getMbid());
 			await queryClient.cancelQueries({ queryKey: key });

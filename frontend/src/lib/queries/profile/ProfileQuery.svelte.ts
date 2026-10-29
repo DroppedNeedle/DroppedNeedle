@@ -9,5 +9,5 @@ import { PROFILE_ENDPOINTS } from './endpoints';
 export const getProfileQuery = (getUserId: Getter<string>) =>
 	createQuery(() => ({
 		queryKey: ProfileQueryKeyFactory.profile(getUserId()),
-		queryFn: ({ signal }) => api.global.v3.GET(PROFILE_ENDPOINTS.get(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(PROFILE_ENDPOINTS.get(), { signal })
 	}));

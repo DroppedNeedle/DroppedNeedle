@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { onDestroy } from 'svelte';
-	import { api } from '$lib/api/client';
-	import { PLEX_ENDPOINTS } from '$lib/queries/plex/endpoints';
+	import { fetchPlexLibraries } from '$lib/queries/plex/PlexLibraryQueries';
 	import { pollPlexFlow, startPlexFlow } from '$lib/queries/plex/PlexFlowApi';
 	import {
 		createSavePlexSettingsMutation,
@@ -93,7 +92,7 @@
 	async function fetchLibraries() {
 		loadingLibraries = true;
 		try {
-			libraries = await api.global.v3.GET(PLEX_ENDPOINTS.libraries());
+			libraries = await fetchPlexLibraries();
 		} catch {
 			libraries = [];
 		}

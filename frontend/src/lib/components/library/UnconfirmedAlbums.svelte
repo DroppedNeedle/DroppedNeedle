@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { CircleAlert, CircleHelp } from 'lucide-svelte';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';

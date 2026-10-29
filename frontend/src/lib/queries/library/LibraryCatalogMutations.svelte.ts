@@ -30,7 +30,7 @@ export interface ArtistMergePreviewInput {
 export function reenableAlbumManagement() {
 	return createMutation(() => ({
 		mutationFn: (input: { albumId: string; expectedRevision: number }) =>
-			api.global.v3.POST(LibraryV3Api.reenableManagement(input.albumId), {
+			api.v3.POST(LibraryV3Api.reenableManagement(input.albumId), {
 				expected_exclusion_revision: input.expectedRevision
 			}),
 		onSuccess: async () => {
@@ -84,7 +84,7 @@ export function previewAlbumMembership(kind: MembershipKind) {
 			albumId: string;
 			request: MembershipPreviewInput;
 		}): Promise<MembershipPreviewResponse> =>
-			api.global.v3.POST(previewUrl(kind, input.albumId), input.request)
+			api.v3.POST(previewUrl(kind, input.albumId), input.request)
 	}));
 }
 
@@ -95,7 +95,7 @@ export function applyAlbumMembership(kind: MembershipKind) {
 			request: MembershipPreviewInput;
 			previewToken: string;
 		}): Promise<CatalogCorrectionResponse> =>
-			api.global.v3.POST(applyUrl(kind, input.albumId), {
+			api.v3.POST(applyUrl(kind, input.albumId), {
 				...input.request,
 				preview_token: input.previewToken,
 				idempotency_key: createUuid()
@@ -115,7 +115,7 @@ export function applyAlbumMembership(kind: MembershipKind) {
 export function previewArtistMerge() {
 	return createMutation(() => ({
 		mutationFn: (input: ArtistMergePreviewInput): Promise<ArtistMergePreviewResponse> =>
-			api.global.v3.POST(LibraryV3Api.artistMergePreview(), input),
+			api.v3.POST(LibraryV3Api.artistMergePreview(), input),
 		onError: (error) =>
 			toastStore.show({
 				message: errorMessage(error, 'Could not preview this artist merge'),
@@ -132,7 +132,7 @@ export function applyArtistMerge() {
 				provider_choice: 'detach' | 'retain_survivor';
 			}
 		): Promise<CatalogCorrectionResponse> =>
-			api.global.v3.POST(LibraryV3Api.artistMerge(), {
+			api.v3.POST(LibraryV3Api.artistMerge(), {
 				...input,
 				idempotency_key: createUuid()
 			}),

@@ -110,7 +110,7 @@ export function createSyncStatusStore(mux: MuxEventStream = muxEventStream) {
 	async function fetchStatus(): Promise<void> {
 		const basis = liveGeneration;
 		try {
-			const data = await api.global.v3.GET(CACHE_SYNC_ENDPOINTS.status());
+			const data = await api.v3.GET(CACHE_SYNC_ENDPOINTS.status());
 			// A live frame that landed mid-fetch is fresher than this seed.
 			if (basis !== liveGeneration) return;
 			applyStatus({ ...EMPTY_STATUS, ...data });
@@ -209,7 +209,7 @@ export function createSyncStatusStore(mux: MuxEventStream = muxEventStream) {
 
 		async cancelSync(): Promise<void> {
 			try {
-				await api.global.v3.POST(CACHE_SYNC_ENDPOINTS.cancel());
+				await api.v3.POST(CACHE_SYNC_ENDPOINTS.cancel());
 			} catch {
 				// ignore errors, sync may already be stopped
 			}

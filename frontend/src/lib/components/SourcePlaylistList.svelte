@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import SourcePlaylistCard from '$lib/components/SourcePlaylistCard.svelte';
 	import { getSourcePlaylistsQuery } from '$lib/queries/source-playlists/SourcePlaylistQueries.svelte';

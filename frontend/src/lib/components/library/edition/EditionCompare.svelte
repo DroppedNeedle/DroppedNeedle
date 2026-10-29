@@ -9,7 +9,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { Check, Undo2 } from 'lucide-svelte';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';

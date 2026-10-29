@@ -13,12 +13,9 @@ export const getLibraryContributionQuery = (getContributionId: Getter<string>) =
 			enabled: Boolean(authStore.user?.id && contributionId),
 			queryKey: LibraryContributionQueryKeyFactory.detail(authStore.user?.id, contributionId),
 			queryFn: async ({ signal }) => {
-				const contribution = await api.global.v3.GET(
-					LibraryContributionApi.detail(contributionId),
-					{
-						signal
-					}
-				);
+				const contribution = await api.v3.GET(LibraryContributionApi.detail(contributionId), {
+					signal
+				});
 				return asLibraryContribution(contribution);
 			},
 			refetchInterval: (query: { state: { data?: LibraryContribution } }) =>

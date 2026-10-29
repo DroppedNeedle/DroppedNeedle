@@ -39,7 +39,6 @@
 	import Toaster from '$lib/ui/Toaster.svelte';
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { cancelPendingImages } from '$lib/utils/lazyImage';
-	import { abortAllPageRequests } from '$lib/utils/navigationAbort';
 	import { nowPlayingStore } from '$lib/stores/nowPlayingSessions.svelte';
 	import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
 	import { createNavigationProgressController } from '$lib/utils/navigationProgress';
@@ -102,10 +101,7 @@
 	beforeNavigate((navigation) => {
 		const fromPath = navigation.from?.url.pathname;
 		const toPath = navigation.to?.url.pathname;
-		if (fromPath !== toPath) {
-			abortAllPageRequests();
-			serviceStatusStore.clear();
-		}
+		if (fromPath !== toPath) serviceStatusStore.clear();
 		navigationProgress.start();
 		cancelPendingImages();
 	});

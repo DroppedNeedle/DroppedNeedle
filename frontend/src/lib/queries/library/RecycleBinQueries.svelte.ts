@@ -24,7 +24,7 @@ export const getRecycleBinQuery = () =>
 		enabled: authStore.isAdmin,
 		initialPageParam: null as string | null,
 		queryFn: ({ pageParam, signal }) =>
-			api.global.v3.GET(LibraryV3Api.recycleBin(pageParam, PAGE_SIZE), { signal }),
+			api.v3.GET(LibraryV3Api.recycleBin(pageParam, PAGE_SIZE), { signal }),
 		getNextPageParam: (lastPage: RecycleBinPage) => lastPage.next_cursor ?? undefined
 	}));
 
@@ -38,7 +38,7 @@ export const getRecycleBinSummaryQuery = (getOpen: () => boolean) =>
 		staleTime: STALE_LIVE,
 		gcTime: 0,
 		refetchOnWindowFocus: false,
-		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.recycleBinSummary(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.recycleBinSummary(), { signal })
 	}));
 
 // Whether the bin is emptying; polled while it is.
@@ -48,7 +48,7 @@ export const getRecycleBinStatusQuery = () =>
 		enabled: authStore.isAdmin,
 		refetchInterval: (query: { state: { data?: RecycleBinStatus } }) =>
 			query.state.data?.state === 'emptying' ? POLL_MS : false,
-		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.recycleBinStatus(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.recycleBinStatus(), { signal })
 	}));
 
 /** Read the bin's page, summary and status again. */
@@ -62,7 +62,7 @@ export function invalidateRecycleBin(): Promise<void> {
 // `as_of`). It runs in the background; the status says when it is done.
 export function emptyRecycleBin() {
 	return createMutation(() => ({
-		mutationFn: (before: number) => api.global.v3.POST(LibraryV3Api.emptyRecycleBin(), { before }),
+		mutationFn: (before: number) => api.v3.POST(LibraryV3Api.emptyRecycleBin(), { before }),
 		onSettled: () =>
 			invalidateQueriesWithPersister({
 				queryKey: LibraryQueryKeyFactory.catalog.recycleBinStatus(authStore.user?.id)

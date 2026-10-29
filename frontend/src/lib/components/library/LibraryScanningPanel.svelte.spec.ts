@@ -83,6 +83,7 @@ vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
 }));
 vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
 	requestLibraryRun: () => ({ mutateAsync: h.requestRun, isPending: false }),
+	createScanDiagnosticsExportMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	controlLibraryRun: (action: string) => ({
 		mutateAsync: action === 'pause' ? h.pauseRun : action === 'resume' ? h.resumeRun : h.stopRun,
 		isPending: false

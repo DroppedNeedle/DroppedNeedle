@@ -1,5 +1,6 @@
 import { browser } from '$app/environment';
 import { clearPersistedQueryCache } from '$lib/queries/IndexedDbPersister.svelte';
+import { forgetStoredMusicBrainzSourceScopes } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore, LAST_USER_ID_KEY } from '$lib/stores/authStore.svelte';
 
@@ -40,6 +41,7 @@ export async function clearUserSessionState(options: SessionCleanupOptions = {})
 	if (browser && clearLastUserId) {
 		runCleanupLeg(failures, () => localStorage.removeItem(LAST_USER_ID_KEY));
 	}
+	runCleanupLeg(failures, forgetStoredMusicBrainzSourceScopes);
 	runCleanupLeg(failures, () => queryClient.clear());
 	if (clearAuth) runCleanupLeg(failures, () => authStore.clear());
 

@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { api } from '$lib/api/client';
 	import { SPOTIFY_ENDPOINTS } from '$lib/queries/spotify/endpoints';
 	import {
 		createSaveSpotifySettingsMutation,
 		getSpotifySettingsQuery
 	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
+	import { getSpotifyRedirectUriQuery } from '$lib/queries/spotify/SpotifyQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { Copy, ExternalLink } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -19,7 +19,6 @@
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
-	let redirectUri = $state('');
 	let copied = $state(false);
 
 	function copyRedirectUri() {
@@ -39,6 +38,15 @@
 		createSaveSpotifySettingsMutation()
 	);
 
+	const redirectQuery = getSpotifyRedirectUriQuery(() => section.saved?.spotify_redirect_origin);
+	// When the server cannot say, the callback on this page's own origin is the best guess.
+	const redirectUri = $derived(
+		redirectQuery.data?.redirect_uri ??
+			(redirectQuery.isError
+				? new URL(getApiUrl(SPOTIFY_ENDPOINTS.authCallback()), window.location.origin).toString()
+				: '')
+	);
+
 	// The server builds the address from the request when no origin is saved,
 	// so behind a proxy it does not know about it can name the wrong one.
 	const addressIsElsewhere = $derived.by(() => {
@@ -48,25 +56,6 @@
 		} catch {
 			return false;
 		}
-	});
-
-	async function loadRedirectUri() {
-		try {
-			const data = await api.global.v3.GET(SPOTIFY_ENDPOINTS.redirectUri());
-			redirectUri = data.redirect_uri;
-		} catch {
-			redirectUri = new URL(
-				getApiUrl(SPOTIFY_ENDPOINTS.authCallback()),
-				window.location.origin
-			).toString();
-		}
-	}
-
-	// The address follows the saved origin: read it again whenever that changes.
-	$effect(() => {
-		if (section.saved === undefined) return;
-		void section.saved.spotify_redirect_origin;
-		void loadRedirectUri();
 	});
 </script>
 

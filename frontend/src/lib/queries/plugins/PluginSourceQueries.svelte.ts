@@ -32,7 +32,7 @@ function toSourceInfo(source: PluginSource): PluginSourceInfo {
 }
 
 export async function fetchPluginSources(signal?: AbortSignal): Promise<PluginSourceList> {
-	const data = await api.global.v3.GET(PLUGIN_ENDPOINTS.sources(), { signal });
+	const data = await api.v3.GET(PLUGIN_ENDPOINTS.sources(), { signal });
 	return { sources: data.sources.map(toSourceInfo) };
 }
 

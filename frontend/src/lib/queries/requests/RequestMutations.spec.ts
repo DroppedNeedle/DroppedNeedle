@@ -5,7 +5,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { POST: vi.fn(), DELETE: vi.fn() } } }
+	api: { v3: { POST: vi.fn(), DELETE: vi.fn() } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -35,10 +35,10 @@ import {
 	createRejectRequestMutation
 } from './RequestMutations.svelte';
 
-const mockPost = vi.mocked(api.global.v3.POST) as unknown as Mock<
+const mockPost = vi.mocked(api.v3.POST) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
-const mockDelete = vi.mocked(api.global.v3.DELETE) as unknown as Mock<
+const mockDelete = vi.mocked(api.v3.DELETE) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
 const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);

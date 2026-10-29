@@ -85,9 +85,7 @@ const h = vi.hoisted(() => ({
 vi.mock('$app/navigation', () => ({ goto: h.goto, replaceState: h.replaceState }));
 vi.mock('$app/state', () => ({ page: h.appPage }));
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: h.apiGet, post: h.apiPost } },
-	ApiError: class ApiError extends Error {},
-	TransportError: class TransportError extends Error {}
+	api: { get: h.apiGet, post: h.apiPost }
 }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
 vi.mock('$lib/queries/library-management/LibraryManagementInvalidation', () => ({

@@ -18,7 +18,7 @@ import { SourcePlaylistQueryKeyFactory } from './SourcePlaylistQueryKeyFactory';
 export const createSourcePlaylistImportMutation = (getSource: () => SourcePlaylistSource) =>
 	createMutation(() => ({
 		mutationFn: (playlistId: string) =>
-			api.global.v3.POST(REMOTE_ENDPOINTS.importPlaylist(getSource(), playlistId)),
+			api.v3.POST(REMOTE_ENDPOINTS.importPlaylist(getSource(), playlistId)),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: async (_data, _playlistId, context) => {
 			// A late answer after an account switch must not touch the new

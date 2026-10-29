@@ -15,7 +15,7 @@ export type UsenetSearchBackendName = components['schemas']['UsenetBackend'];
 const getIndexersQueryOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.indexers(),
-		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), { signal })
 	});
 
 export const getIndexersQuery = () => createQuery(() => getIndexersQueryOptions());
@@ -31,15 +31,15 @@ export function saveIndexerMutation() {
 	return createMutation(() => ({
 		mutationFn: (indexer: IndexerSettings) =>
 			indexer.id
-				? api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(indexer.id), indexer)
-				: api.global.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), indexer),
+				? api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(indexer.id), indexer)
+				: api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), indexer),
 		onSuccess: invalidateIndexers
 	}));
 }
 
 export function deleteIndexerMutation() {
 	return createMutation(() => ({
-		mutationFn: (id: string) => api.global.v3.DELETE(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(id)),
+		mutationFn: (id: string) => api.v3.DELETE(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(id)),
 		onSuccess: invalidateIndexers
 	}));
 }
@@ -47,7 +47,7 @@ export function deleteIndexerMutation() {
 export function reorderIndexersMutation() {
 	return createMutation(() => ({
 		mutationFn: (orderedIds: string[]) =>
-			api.global.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexersReorder(), {
+			api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexersReorder(), {
 				ordered_ids: orderedIds
 			}),
 		onSuccess: invalidateIndexers
@@ -57,15 +57,14 @@ export function reorderIndexersMutation() {
 export function testIndexerMutation() {
 	return createMutation(() => ({
 		mutationFn: (indexer: IndexerSettings) =>
-			api.global.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexersTest(), indexer)
+			api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexersTest(), indexer)
 	}));
 }
 
 const getSearchBackendQueryOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.searchBackend(),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.searchBackend(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.searchBackend(), { signal })
 	});
 
 export const getSearchBackendQuery = () => createQuery(() => getSearchBackendQueryOptions());
@@ -73,7 +72,7 @@ export const getSearchBackendQuery = () => createQuery(() => getSearchBackendQue
 export function saveSearchBackendMutation() {
 	return createMutation(() => ({
 		mutationFn: (backend: UsenetSearchBackendName) =>
-			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.searchBackend(), {
+			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.searchBackend(), {
 				backend
 			}),
 		onSuccess: async () => {

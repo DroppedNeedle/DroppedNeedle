@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
 	import ArtistHeaderSkeleton from '$lib/components/ArtistHeaderSkeleton.svelte';
 	import AlbumGridSkeleton from '$lib/components/AlbumGridSkeleton.svelte';

@@ -9,7 +9,7 @@ import { SystemQueryKeyFactory } from './SystemQueryKeyFactory';
 export const getSystemHealthQuery = () =>
 	createQuery(() => ({
 		queryKey: SystemQueryKeyFactory.health(),
-		queryFn: ({ signal }) => api.global.v3.GET(SYSTEM_ENDPOINTS.health(), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(SYSTEM_ENDPOINTS.health(), { signal }),
 		refetchInterval: 60_000,
 		refetchOnWindowFocus: true
 	}));

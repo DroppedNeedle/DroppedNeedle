@@ -110,7 +110,7 @@ function createScrobbleManager() {
 		const now = Date.now();
 		if (settingsCache && now - lastSettingsFetch < 60_000) return settingsCache;
 		try {
-			settingsCache = await api.global.v3.GET(SCROBBLE_PREFERENCES_ENDPOINTS.get());
+			settingsCache = await api.v3.GET(SCROBBLE_PREFERENCES_ENDPOINTS.get());
 			lastSettingsFetch = now;
 			return settingsCache;
 		} catch {

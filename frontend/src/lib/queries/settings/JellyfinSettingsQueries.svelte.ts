@@ -18,13 +18,13 @@ export const JellyfinSettingsQueryKeyFactory = {
 export const getJellyfinSettingsQuery = () =>
 	createQuery(() => ({
 		queryKey: JellyfinSettingsQueryKeyFactory.saved(authStore.user?.id),
-		queryFn: ({ signal }) => api.global.v3.GET(SETTINGS_ENDPOINTS.jellyfin(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(SETTINGS_ENDPOINTS.jellyfin(), { signal })
 	}));
 
 /** The answer is the section as stored, with the API key masked. */
 export const createSaveJellyfinSettingsMutation = () =>
 	createMutation(() => ({
-		mutationFn: (body: JellyfinSettings) => api.global.v3.PUT(SETTINGS_ENDPOINTS.jellyfin(), body),
+		mutationFn: (body: JellyfinSettings) => api.v3.PUT(SETTINGS_ENDPOINTS.jellyfin(), body),
 		onSuccess: (saved: JellyfinSettings) =>
 			setQueryDataWithPersister(JellyfinSettingsQueryKeyFactory.saved(authStore.user?.id), saved)
 	}));
@@ -32,6 +32,5 @@ export const createSaveJellyfinSettingsMutation = () =>
 /** Checks the entered connection without saving it. */
 export const createVerifyJellyfinMutation = () =>
 	createMutation(() => ({
-		mutationFn: (body: JellyfinSettings) =>
-			api.global.v3.POST(SETTINGS_ENDPOINTS.jellyfinVerify(), body)
+		mutationFn: (body: JellyfinSettings) => api.v3.POST(SETTINGS_ENDPOINTS.jellyfinVerify(), body)
 	}));

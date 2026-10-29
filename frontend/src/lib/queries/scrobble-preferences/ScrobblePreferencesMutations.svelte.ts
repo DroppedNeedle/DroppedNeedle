@@ -15,7 +15,7 @@ export const createUpdateScrobblePreferencesMutation = () =>
 		mutationFn: (vars: ScrobblePreferencesUpdate) =>
 			// Partial by design (absent keeps stored values); the generated body
 			// type over-states requiredness, so the patch is asserted at the call.
-			api.global.v3.PUT(
+			api.v3.PUT(
 				SCROBBLE_PREFERENCES_ENDPOINTS.update(),
 				vars as components['schemas']['ScrobblePreferencesUpdate']
 			),
@@ -31,7 +31,7 @@ export const createUpdateScrobblePreferencesMutation = () =>
 // personal_mix_refreshed SSE handler (FollowingEvents) when the build lands
 export const createRefreshPersonalMixMutation = () =>
 	createMutation(() => ({
-		mutationFn: () => api.global.v3.POST(SCROBBLE_PREFERENCES_ENDPOINTS.refreshPersonalMixV3())
+		mutationFn: () => api.v3.POST(SCROBBLE_PREFERENCES_ENDPOINTS.refreshPersonalMixV3())
 	}));
 
 interface PersonalMixApprovalVars {
@@ -52,7 +52,7 @@ function approvalErrorMessage(err: unknown, fallback: string): string {
 export const createApprovePersonalMixMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: PersonalMixApprovalVars) =>
-			api.global.v3.POST(SCROBBLE_PREFERENCES_ENDPOINTS.approvePersonalMix(vars.userId)),
+			api.v3.POST(SCROBBLE_PREFERENCES_ENDPOINTS.approvePersonalMix(vars.userId)),
 		onSuccess: async (_data, vars) => {
 			toastStore.show({
 				message: `Weekly Mix auto-request approved for ${vars.userName ?? 'user'}`,
@@ -68,7 +68,7 @@ export const createApprovePersonalMixMutation = () =>
 export const createRejectPersonalMixMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: PersonalMixApprovalVars) =>
-			api.global.v3.POST(SCROBBLE_PREFERENCES_ENDPOINTS.rejectPersonalMix(vars.userId)),
+			api.v3.POST(SCROBBLE_PREFERENCES_ENDPOINTS.rejectPersonalMix(vars.userId)),
 		onSuccess: async (_data, vars) => {
 			toastStore.show({
 				message: `Weekly Mix auto-request rejected for ${vars.userName ?? 'user'}`,

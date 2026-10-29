@@ -8,7 +8,7 @@
 	import DeleteAlbumModal from '$lib/components/DeleteAlbumModal.svelte';
 	import RemoveTrackFileDialog from './RemoveTrackFileDialog.svelte';
 	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import { createAlbumPageState } from './albumPageState.svelte';
 	import AlbumHeader from './AlbumHeader.svelte';
 	import UnmatchedFilesSection from './UnmatchedFilesSection.svelte';

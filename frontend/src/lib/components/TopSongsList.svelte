@@ -1,14 +1,12 @@
 <script lang="ts">
 	import type { TopSong, ResolvedTrack } from '$lib/types';
 	import type { QueueItem, SourceType } from '$lib/player/types';
-	import { api } from '$lib/api/client';
-	import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
+	import { getResolvedTracksQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import TrackRow from './TrackRow.svelte';
-	import { SvelteMap } from 'svelte/reactivity';
 
 	interface Props {
 		songs: TopSong[];
@@ -19,66 +17,35 @@
 
 	let { songs, loading = false, configured = true, source = '' }: Props = $props();
 
-	let resolveMap = new SvelteMap<string, ResolvedTrack>();
-	let lastResolveKey = $state('');
-
 	function resolveKey(rgMbid: string, disc: number, track: number): string {
 		return `${rgMbid}|${disc}|${track}`;
 	}
 
-	function resolvableFingerprint(s: TopSong[]): string {
-		return s
-			.filter((t) => t.release_group_mbid && t.track_number != null)
-			.map((t) => `${t.release_group_mbid}|${t.disc_number ?? 1}|${t.track_number}`)
-			.join(';');
-	}
-
-	$effect(() => {
-		const resolvable = songs.filter((s) => s.release_group_mbid && s.track_number != null);
-		if (resolvable.length === 0) return;
-		const key = resolvableFingerprint(songs);
-		if (key === lastResolveKey) return;
-		lastResolveKey = key;
-
-		(async () => {
-			try {
-				const data: { items: ResolvedTrack[] } = await api.global.v3.POST(
-					LibraryV3Api.resolveTracks(),
-					{
-						items: resolvable.map((s) => ({
-							release_group_mbid: s.release_group_mbid,
-							disc_number: s.disc_number ?? 1,
-							track_number: s.track_number
-						}))
-					}
-				);
-				if (lastResolveKey === key) {
-					for (const item of data.items) {
-						if (
-							item.source &&
-							item.track_source_id &&
-							item.release_group_mbid &&
-							item.track_number != null
-						) {
-							resolveMap.set(
-								resolveKey(item.release_group_mbid, item.disc_number ?? 1, item.track_number),
-								item
-							);
-						}
-					}
-				}
-			} catch {
-				// resolve is best-effort
-			}
-		})();
-	});
+	// Resolving is best effort: a song that does not resolve plays from its preview.
+	const resolveQuery = getResolvedTracksQuery(() =>
+		songs
+			.filter((s) => s.release_group_mbid && s.track_number != null)
+			.map((s) => ({
+				release_group_mbid: s.release_group_mbid,
+				disc_number: s.disc_number ?? 1,
+				track_number: s.track_number
+			}))
+	);
+	const resolveMap = $derived<Record<string, ResolvedTrack>>(
+		Object.fromEntries(
+			(resolveQuery.data?.items ?? []).flatMap((item: ResolvedTrack) =>
+				item.source && item.track_source_id && item.release_group_mbid && item.track_number != null
+					? [[resolveKey(item.release_group_mbid, item.disc_number ?? 1, item.track_number), item]]
+					: []
+			)
+		)
+	);
 
 	function getResolvedTrack(song: TopSong): ResolvedTrack | null {
 		if (!song.release_group_mbid || song.track_number == null) return null;
 		return (
-			resolveMap.get(
-				resolveKey(song.release_group_mbid, song.disc_number ?? 1, song.track_number)
-			) ?? null
+			resolveMap[resolveKey(song.release_group_mbid, song.disc_number ?? 1, song.track_number)] ??
+			null
 		);
 	}
 

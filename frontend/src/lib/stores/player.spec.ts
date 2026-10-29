@@ -80,21 +80,8 @@ const mockApiGet = vi.fn();
 const mockApiHead = vi.fn();
 vi.mock('$lib/api/client', () => ({
 	api: {
-		global: {
-			get: (...args: unknown[]) => mockApiGet(...args),
-			head: (...args: unknown[]) => mockApiHead(...args)
-		}
-	},
-	ApiError: class extends Error {
-		status: number;
-		code: string;
-		details: unknown;
-		constructor(s: number, c: string, m: string, d?: unknown) {
-			super(m);
-			this.status = s;
-			this.code = c;
-			this.details = d;
-		}
+		get: (...args: unknown[]) => mockApiGet(...args),
+		head: (...args: unknown[]) => mockApiHead(...args)
 	}
 }));
 

@@ -18,17 +18,17 @@ export const getCacheStatsQuery = () =>
 	createQuery(() => ({
 		enabled: authStore.isAdmin,
 		queryKey: AdminCacheQueryKeyFactory.stats(authStore.user?.id),
-		queryFn: ({ signal }) => api.global.v3.GET(ADMIN_CACHE_ENDPOINTS.stats(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(ADMIN_CACHE_ENDPOINTS.stats(), { signal })
 	}));
 
 export const createPrecacheRunMutation = () =>
 	createMutation(() => ({
-		mutationFn: () => api.global.v3.POST(ADMIN_CACHE_ENDPOINTS.precacheRun())
+		mutationFn: () => api.v3.POST(ADMIN_CACHE_ENDPOINTS.precacheRun())
 	}));
 
 export const createClearCacheMutation = () =>
 	createMutation(() => ({
-		mutationFn: (body: CacheClearBody) => api.global.v3.POST(ADMIN_CACHE_ENDPOINTS.clear(), body),
+		mutationFn: (body: CacheClearBody) => api.v3.POST(ADMIN_CACHE_ENDPOINTS.clear(), body),
 		onSettled: () =>
 			invalidateQueriesWithPersister({
 				queryKey: AdminCacheQueryKeyFactory.stats(authStore.user?.id)

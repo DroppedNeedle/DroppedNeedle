@@ -45,7 +45,7 @@ function sameUser(contextUserId: string | undefined): boolean {
 export const createCancelRequestMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: RequestActionVars) =>
-			api.global.v3.DELETE(REQUESTS_ENDPOINTS.cancel(vars.mbid, vars.kind)),
+			api.v3.DELETE(REQUESTS_ENDPOINTS.cancel(vars.mbid, vars.kind)),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: async (data, vars, context) => {
 			if (!sameUser(context.userId)) return;
@@ -65,7 +65,7 @@ export const createCancelRequestMutation = () =>
 export const createRetryRequestMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: RequestActionVars) =>
-			api.global.v3.POST(REQUESTS_ENDPOINTS.retry(vars.mbid, vars.kind)),
+			api.v3.POST(REQUESTS_ENDPOINTS.retry(vars.mbid, vars.kind)),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: async (data, vars, context) => {
 			if (!sameUser(context.userId)) return;
@@ -81,8 +81,7 @@ export const createRetryRequestMutation = () =>
 // track as the song.
 export const createFromAlbumMutation = () =>
 	createMutation(() => ({
-		mutationFn: (recordingMbid: string) =>
-			api.global.v3.POST(REQUESTS_ENDPOINTS.fromAlbum(recordingMbid)),
+		mutationFn: (recordingMbid: string) => api.v3.POST(REQUESTS_ENDPOINTS.fromAlbum(recordingMbid)),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: async (data, _mbid, context) => {
 			if (!sameUser(context.userId)) return;
@@ -99,7 +98,7 @@ export const createFromAlbumMutation = () =>
 export const createApproveRequestMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: RequestActionVars) =>
-			api.global.v3.POST(REQUESTS_ENDPOINTS.approve(vars.mbid, vars.kind)),
+			api.v3.POST(REQUESTS_ENDPOINTS.approve(vars.mbid, vars.kind)),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: async (data, vars, context) => {
 			if (!sameUser(context.userId)) return;
@@ -117,7 +116,7 @@ export const createApproveRequestMutation = () =>
 export const createRejectRequestMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: RequestActionVars) =>
-			api.global.v3.POST(REQUESTS_ENDPOINTS.reject(vars.mbid, vars.kind)),
+			api.v3.POST(REQUESTS_ENDPOINTS.reject(vars.mbid, vars.kind)),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: async (data, vars, context) => {
 			if (!sameUser(context.userId)) return;
@@ -135,7 +134,7 @@ export const createRejectRequestMutation = () =>
 export const createBatchCancelRequestsMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: BatchCancelVars) =>
-			api.global.v3.POST(REQUESTS_ENDPOINTS.batchCancel(), {
+			api.v3.POST(REQUESTS_ENDPOINTS.batchCancel(), {
 				musicbrainz_ids: vars.mbids,
 				kind: vars.kind
 			}),
@@ -163,7 +162,7 @@ export const createBatchCancelRequestsMutation = () =>
 export const createClearHistoryMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: RequestActionVars) =>
-			api.global.v3.DELETE(REQUESTS_ENDPOINTS.clearHistory(vars.mbid, vars.kind)),
+			api.v3.DELETE(REQUESTS_ENDPOINTS.clearHistory(vars.mbid, vars.kind)),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: async (_data, _vars, context) => {
 			if (!sameUser(context.userId)) return;

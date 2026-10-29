@@ -16,7 +16,7 @@ const invalidateOwnAppPasswords = () =>
 export function saveConnectAppsSettings() {
 	return createMutation(() => ({
 		mutationFn: (settings: ConnectAppsSettings) =>
-			api.global.v3.PUT(CONNECT_APPS_ENDPOINTS.settings(), settings),
+			api.v3.PUT(CONNECT_APPS_ENDPOINTS.settings(), settings),
 		onSuccess: () =>
 			invalidateQueriesWithPersister({ queryKey: ConnectAppsQueryKeyFactory.settings() })
 	}));
@@ -24,8 +24,7 @@ export function saveConnectAppsSettings() {
 
 export function createAppPassword() {
 	return createMutation(() => ({
-		mutationFn: (name: string) =>
-			api.global.v3.POST(CONNECT_APPS_ENDPOINTS.appPasswords(), { name }),
+		mutationFn: (name: string) => api.v3.POST(CONNECT_APPS_ENDPOINTS.appPasswords(), { name }),
 		// returned secret stays in component state for the one-time reveal, never cached
 		onSuccess: invalidateOwnAppPasswords
 	}));
@@ -33,7 +32,7 @@ export function createAppPassword() {
 
 export function revokeAppPassword() {
 	return createMutation(() => ({
-		mutationFn: (id: string) => api.global.v3.DELETE(CONNECT_APPS_ENDPOINTS.appPassword(id)),
+		mutationFn: (id: string) => api.v3.DELETE(CONNECT_APPS_ENDPOINTS.appPassword(id)),
 		onSuccess: invalidateOwnAppPasswords
 	}));
 }
@@ -45,7 +44,7 @@ export function revokeAppPassword() {
 export function adminRevokeAppPassword() {
 	return createMutation(() => ({
 		mutationFn: (vars: { id: string; userId: string }) =>
-			api.global.v3.DELETE(CONNECT_APPS_ENDPOINTS.adminAppPassword(vars.id)),
+			api.v3.DELETE(CONNECT_APPS_ENDPOINTS.adminAppPassword(vars.id)),
 		onSuccess: (_data: void, vars: { id: string; userId: string }) => {
 			invalidateQueriesWithPersister({
 				queryKey: ConnectAppsQueryKeyFactory.adminAppPasswords()

@@ -3,6 +3,8 @@ import {
 	type InferDataFromTag,
 	type InvalidateOptions,
 	type InvalidateQueryFilters,
+	MutationCache,
+	QueryCache,
 	QueryClient,
 	type QueryKey,
 	type SetDataOptions,
@@ -23,6 +25,7 @@ import {
 import { getDownloadScope, subscribeDownloadRoleChange } from './downloads/downloadScope.svelte';
 import { DownloadQueryKeyFactory } from './downloads/DownloadQueryKeyFactory';
 import { STALE_DEFAULT } from './staleTime';
+import { recordServiceStatus } from '$lib/stores/serviceStatus';
 
 const queryPersister = createPersistedQueryPersister(createIDBStorage(isCurrentQueryScope));
 
@@ -214,6 +217,9 @@ subscribeMusicBrainzSourceScope((next, previous) => {
 });
 
 export const queryClient = new QueryClient({
+	// A degraded answer names its sources in `service_status`; this is the one place that reads it.
+	queryCache: new QueryCache({ onSuccess: recordServiceStatus }),
+	mutationCache: new MutationCache({ onSuccess: recordServiceStatus }),
 	defaultOptions: {
 		queries: {
 			enabled: browser,

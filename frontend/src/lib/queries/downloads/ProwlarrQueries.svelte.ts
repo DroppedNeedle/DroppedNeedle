@@ -14,7 +14,7 @@ const getProwlarrConfigQueryOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.prowlarr(),
 		queryFn: ({ signal }) =>
-			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.prowlarrConfig(), {
+			api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.prowlarrConfig(), {
 				signal
 			})
 	});
@@ -34,7 +34,7 @@ async function invalidateProwlarr() {
 export function saveProwlarrConfigMutation() {
 	return createMutation(() => ({
 		mutationFn: (connection: ProwlarrConnectionSettings) =>
-			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.prowlarrConfig(), connection),
+			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.prowlarrConfig(), connection),
 		onSuccess: invalidateProwlarr
 	}));
 }
@@ -42,6 +42,6 @@ export function saveProwlarrConfigMutation() {
 export function testProwlarrMutation() {
 	return createMutation(() => ({
 		mutationFn: (connection: ProwlarrConnectionSettings) =>
-			api.global.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.prowlarrTest(), connection)
+			api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.prowlarrTest(), connection)
 	}));
 }

@@ -16,7 +16,7 @@ export const getMusicBrainzSettingsQuery = () =>
 			queryKey,
 			queryFn: async ({ signal }) => {
 				const data = toMusicBrainzSettings(
-					await api.global.v3.GET(MUSICBRAINZ_ENDPOINTS.settings(), { signal })
+					await api.v3.GET(MUSICBRAINZ_ENDPOINTS.settings(), { signal })
 				);
 				if ((authStore.user?.id ?? null) === userId) {
 					setMusicBrainzSourceScope(data, userId);

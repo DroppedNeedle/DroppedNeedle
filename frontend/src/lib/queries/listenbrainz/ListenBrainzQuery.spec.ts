@@ -7,7 +7,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: vi.fn(), PUT: vi.fn(), POST: vi.fn() } } }
+	api: { v3: { GET: vi.fn(), PUT: vi.fn(), POST: vi.fn() } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -37,13 +37,9 @@ import {
 	createVerifyListenBrainzMutation
 } from './ListenBrainzMutations.svelte';
 
-const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock<
-	(...args: unknown[]) => Promise<unknown>
->;
-const mockPut = vi.mocked(api.global.v3.PUT) as unknown as Mock<
-	(...args: unknown[]) => Promise<unknown>
->;
-const mockPost = vi.mocked(api.global.v3.POST) as unknown as Mock<
+const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
+const mockPut = vi.mocked(api.v3.PUT) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
+const mockPost = vi.mocked(api.v3.POST) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
 const mockSetData = vi.mocked(setQueryDataWithPersister);

@@ -18,7 +18,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 
 const mockGet = vi.fn();
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: (...args: unknown[]) => mockGet(...args) } }
+	api: { get: (...args: unknown[]) => mockGet(...args) }
 }));
 
 vi.mock('../QueryClient', () => ({ setQueryDataWithPersister: vi.fn() }));

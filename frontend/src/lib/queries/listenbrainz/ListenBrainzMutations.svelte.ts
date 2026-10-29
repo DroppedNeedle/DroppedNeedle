@@ -11,7 +11,7 @@ import type { ListenBrainzConnection } from './types';
 export const createSaveListenBrainzMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: ListenBrainzConnection) =>
-			api.global.v3.PUT(LISTENBRAINZ_ENDPOINTS.connection, vars),
+			api.v3.PUT(LISTENBRAINZ_ENDPOINTS.connection, vars),
 		onMutate: () => ({ admin: authStore.isAdmin }),
 		onSuccess: async (saved, _vars, context) => {
 			if (context.admin && authStore.isAdmin) {
@@ -23,6 +23,5 @@ export const createSaveListenBrainzMutation = () =>
 // Verify only probes the submitted values; the tab renders the verdict.
 export const createVerifyListenBrainzMutation = () =>
 	createMutation(() => ({
-		mutationFn: (vars: ListenBrainzConnection) =>
-			api.global.v3.POST(LISTENBRAINZ_ENDPOINTS.verify, vars)
+		mutationFn: (vars: ListenBrainzConnection) => api.v3.POST(LISTENBRAINZ_ENDPOINTS.verify, vars)
 	}));

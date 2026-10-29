@@ -2,8 +2,7 @@
 	import { Download, FileClock } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import { api } from '$lib/api/client';
-	import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
+	import { createScanDiagnosticsExportMutation } from '$lib/queries/library/LibraryOperationMutations.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
 		getLibraryRunFailuresQuery,
@@ -13,6 +12,7 @@
 	import { tick } from 'svelte';
 
 	const DEFAULT_VISIBLE_RUNS = 3;
+	const exportDiagnostics = createScanDiagnosticsExportMutation();
 	const historyQuery = getLibraryRunHistoryQuery();
 	let showOlder = $state(false);
 	const runs = $derived(historyQuery.data?.pages.flatMap((page) => page.items) ?? []);
@@ -92,12 +92,7 @@
 		if (!exportRun) return;
 		exporting = true;
 		try {
-			const response = await api.global.raw(LibraryV3Api.scanDiagnostics(exportRun.id));
-			if (!response.ok) throw new Error('Diagnostic export failed');
-			const blob = await response.blob();
-			const disposition = response.headers.get('content-disposition') ?? '';
-			const filename =
-				disposition.match(/filename="([^"]+)"/)?.[1] ?? 'droppedneedle-library-run.json';
+			const { blob, filename } = await exportDiagnostics.mutateAsync(exportRun.id);
 			const url = URL.createObjectURL(blob);
 			const link = document.createElement('a');
 			link.href = url;

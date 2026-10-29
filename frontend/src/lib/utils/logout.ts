@@ -8,7 +8,7 @@ import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
 // sees no prior personalized data; local state clears regardless of network success.
 export async function logout(): Promise<void> {
 	try {
-		await api.global.v3.POST(AUTH_ENDPOINTS.logout);
+		await api.v3.POST(AUTH_ENDPOINTS.logout);
 	} catch {
 		// A failed revoke must not strand the user in a signed-in UI.
 	}

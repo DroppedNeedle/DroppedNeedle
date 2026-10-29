@@ -15,7 +15,7 @@ async function fetchGenrePage(
 	signal: AbortSignal
 ): Promise<GenreDetailResponse> {
 	const url = HOME_ENDPOINTS.genre(genre, PAGE_SIZE, artistOffset, albumOffset);
-	return api.global.v3.GET(url, { signal });
+	return api.v3.GET(url, { signal });
 }
 
 export const getGenreDetailQuery = (getGenre: Getter<string>) =>

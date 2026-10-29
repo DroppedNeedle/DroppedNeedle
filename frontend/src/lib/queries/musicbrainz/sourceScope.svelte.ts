@@ -171,6 +171,14 @@ export function resetMusicBrainzSourceScope(): void {
 	updateCurrentScope({ ...EMPTY_SCOPE });
 }
 
+/** Forgets every account's stored scope, for a sign-out or a change of account. */
+export function forgetStoredMusicBrainzSourceScopes(): void {
+	if (!browser) return;
+	for (const key of Object.keys(localStorage)) {
+		if (key.startsWith(STORAGE_PREFIX)) localStorage.removeItem(key);
+	}
+}
+
 export interface MusicBrainzSourceKey {
 	user_id: string | null;
 	source_mode: MusicBrainzSourceMode;

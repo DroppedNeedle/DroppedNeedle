@@ -9,7 +9,7 @@ import { ARTIST_RECONCILIATION_ENDPOINTS } from './endpoints';
 export const dismissArtistDuplicateGroup = () =>
 	createMutation(() => ({
 		mutationFn: (input: { groupId: string; expectedMemberRevisions: Record<string, number> }) =>
-			api.global.v3.POST(ARTIST_RECONCILIATION_ENDPOINTS.dismiss(input.groupId), {
+			api.v3.POST(ARTIST_RECONCILIATION_ENDPOINTS.dismiss(input.groupId), {
 				expected_member_revisions: input.expectedMemberRevisions
 			}),
 		onSuccess: async () => {

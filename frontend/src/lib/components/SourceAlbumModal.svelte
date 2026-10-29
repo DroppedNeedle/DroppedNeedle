@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
+	import { fetchRemoteAlbumInfo, fetchRemoteMix } from '$lib/queries/remotes/RemoteQueries.svelte';
 	import { remoteApi } from '$lib/queries/remotes/remoteApi';
 	import { fetchLocalAlbumMatch } from '$lib/queries/albumMatch';
 	import { Shuffle, Play, ListPlus, ListStart, ListMusic, Info, Download } from 'lucide-svelte';
@@ -32,7 +32,6 @@
 	import type { QueueItem } from '$lib/player/types';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { api } from '$lib/api/client';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import { Radio } from 'lucide-svelte';
 	import type { LocalTrackInfo, LocalAlbumSummary } from '$lib/types';
@@ -146,7 +145,7 @@
 		if (seed?.source !== 'jellyfin') return;
 		mixLoading = true;
 		try {
-			const mix = await api.v3.GET(REMOTE_ENDPOINTS.mix('jellyfin', seed.id, { limit: 50 }));
+			const mix = await fetchRemoteMix('jellyfin', seed.id, { limit: 50 });
 			if (mix.items.length > 0) {
 				const items: QueueItem[] = mix.items.map((t) => ({
 					trackSourceId: t.id,
@@ -177,7 +176,7 @@
 		infoLoading = true;
 		infoOpen = true;
 		try {
-			const info = await api.v3.GET(REMOTE_ENDPOINTS.infoAlbum('navidrome', target.id));
+			const info = await fetchRemoteAlbumInfo('navidrome', target.id);
 			infoNotes = info.biography;
 			infoLastfmUrl = info.lastfm_url;
 			infoMbid = info.musicbrainz_id;

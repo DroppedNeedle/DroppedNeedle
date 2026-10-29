@@ -17,7 +17,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: h.v3 } }
+	api: { v3: h.v3 }
 }));
 
 vi.mock('$lib/queries/QueryClient', () => ({

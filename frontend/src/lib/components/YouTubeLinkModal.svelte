@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { TOAST_DURATION } from '$lib/constants';
-	import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
+	import {
+		createManualYouTubeLinkMutation,
+		createUpdateYouTubeLinkMutation
+	} from '$lib/queries/youtube/YouTubeQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
-	import { api } from '$lib/api/client';
-	import { SearchV3Api } from '$lib/queries/search/SearchV3Api';
+	import { getSearchBucketV3Query } from '$lib/queries/search/SearchV3Queries.svelte';
 	import { toMusicBrainzAlbums } from '$lib/queries/search/SearchV3Adapters';
 	import type { YouTubeLink, Album } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
@@ -31,10 +33,23 @@
 	let selectedAlbumId = $state<string | null>(null);
 	let saving = $state(false);
 
+	const saveManual = createManualYouTubeLinkMutation();
+	const updateLink = createUpdateYouTubeLinkMutation();
+
 	let searchQuery = $state('');
-	let searchResults = $state<Album[]>([]);
-	let searching = $state(false);
+	// The term the search runs for, set once typing pauses.
+	let searchTerm = $state('');
+	let typing = $state(false);
 	let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+	const albumSearch = getSearchBucketV3Query(
+		() => 'albums',
+		() => searchTerm,
+		() => 50
+	);
+	const searchResults = $derived<Album[]>(
+		searchTerm && albumSearch.data ? toMusicBrainzAlbums(albumSearch.data.results) : []
+	);
+	const searching = $derived(typing || (searchTerm !== '' && albumSearch.isFetching));
 
 	const isEditing = $derived(editLink !== null);
 	const isValid = $derived(
@@ -61,28 +76,22 @@
 		coverUrl = '';
 		selectedAlbumId = null;
 		searchQuery = '';
-		searchResults = [];
+		searchTerm = '';
 		mode = 'manual';
 	}
 
 	function handleSearchInput(): void {
 		if (searchTimeout) clearTimeout(searchTimeout);
-		if (searchQuery.trim().length < 2) {
-			searchResults = [];
+		const term = searchQuery.trim();
+		if (term.length < 2) {
+			searchTerm = '';
+			typing = false;
 			return;
 		}
-		searching = true;
-		searchTimeout = setTimeout(async () => {
-			try {
-				const data = await api.global.v3.GET(
-					SearchV3Api.bucket('albums', searchQuery.trim(), 50, 0)
-				);
-				searchResults = toMusicBrainzAlbums(data.results);
-			} catch {
-				// Ignore errors
-			} finally {
-				searching = false;
-			}
+		typing = true;
+		searchTimeout = setTimeout(() => {
+			searchTerm = term;
+			typing = false;
 		}, 400);
 	}
 
@@ -91,7 +100,7 @@
 		artistName = album.artist || '';
 		coverUrl = getCoverUrl(album.cover_url, album.musicbrainz_id);
 		selectedAlbumId = album.musicbrainz_id;
-		searchResults = [];
+		searchTerm = '';
 		searchQuery = '';
 		mode = 'manual';
 	}
@@ -106,16 +115,19 @@
 
 		try {
 			if (isEditing && selectedAlbumId) {
-				const updated = await api.global.v3.PUT(YOUTUBE_ENDPOINTS.link(selectedAlbumId), {
-					youtube_url: youtubeUrl.trim(),
-					album_name: albumName.trim(),
-					artist_name: artistName.trim(),
-					cover_url: normalizedCoverUrl
+				const updated = await updateLink.mutateAsync({
+					albumId: selectedAlbumId,
+					body: {
+						youtube_url: youtubeUrl.trim(),
+						album_name: albumName.trim(),
+						artist_name: artistName.trim(),
+						cover_url: normalizedCoverUrl
+					}
 				});
 				onsave(updated);
 				toastStore.show({ message: 'Link updated', type: 'success', duration: TOAST_DURATION });
 			} else {
-				const link = await api.global.v3.POST(YOUTUBE_ENDPOINTS.manual(), {
+				const link = await saveManual.mutateAsync({
 					album_name: albumName.trim(),
 					artist_name: artistName.trim(),
 					youtube_url: youtubeUrl.trim(),

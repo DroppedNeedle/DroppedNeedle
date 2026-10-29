@@ -99,7 +99,7 @@ async function fetchPlan(
 	request: RadioPlanRequest & { mode: RadioMode },
 	signal: AbortSignal
 ): Promise<RadioPlanResponse> {
-	const plan = await api.global.v3.POST(DiscoverV3Api.radioPlan(), request, { signal });
+	const plan = await api.v3.POST(DiscoverV3Api.radioPlan(), request, { signal });
 	return { title: plan.title, tracks: (plan.tracks ?? []).map(toPlanTrack) };
 }
 

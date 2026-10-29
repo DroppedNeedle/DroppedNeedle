@@ -27,7 +27,7 @@ export const getQueueStatsQuery = (getEnabled: Getter<boolean> = () => true) =>
 		refetchInterval: POLL_INTERVAL_MS,
 		refetchIntervalInBackground: false,
 		refetchOnWindowFocus: false,
-		queryFn: ({ signal }) => api.global.v3.GET(DIAGNOSTICS_ENDPOINTS.queueStats(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DIAGNOSTICS_ENDPOINTS.queueStats(), { signal })
 	}));
 
 /** Rate limiters and outbound call counts. Same polling posture. */
@@ -39,5 +39,5 @@ export const getProviderStatsQuery = (getEnabled: Getter<boolean> = () => true) 
 		refetchInterval: POLL_INTERVAL_MS,
 		refetchIntervalInBackground: false,
 		refetchOnWindowFocus: false,
-		queryFn: ({ signal }) => api.global.v3.GET(DIAGNOSTICS_ENDPOINTS.providerStats(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DIAGNOSTICS_ENDPOINTS.providerStats(), { signal })
 	}));

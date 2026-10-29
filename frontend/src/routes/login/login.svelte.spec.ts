@@ -19,8 +19,7 @@ const mockGoto = vi.fn();
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: vi.fn() } },
-	ApiError: class ApiError extends Error {}
+	api: { get: vi.fn() }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({

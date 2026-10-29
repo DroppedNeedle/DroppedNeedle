@@ -9,7 +9,7 @@ import { CONNECT_APPS_ENDPOINTS } from './endpoints';
 const settingsQueryOptions = () =>
 	queryOptions({
 		queryKey: ConnectAppsQueryKeyFactory.settings(),
-		queryFn: ({ signal }) => api.global.v3.GET(CONNECT_APPS_ENDPOINTS.settings(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(CONNECT_APPS_ENDPOINTS.settings(), { signal })
 	});
 
 export const getConnectAppsSettingsQuery = () => createQuery(() => settingsQueryOptions());
@@ -22,7 +22,7 @@ export const getAppPasswordsQuery = () =>
 		enabled: !!authStore.user?.id,
 		queryKey: ConnectAppsQueryKeyFactory.appPasswords(authStore.user?.id ?? ''),
 		queryFn: async ({ signal }) =>
-			(await api.global.v3.GET(CONNECT_APPS_ENDPOINTS.appPasswords(), { signal })).app_passwords
+			(await api.v3.GET(CONNECT_APPS_ENDPOINTS.appPasswords(), { signal })).app_passwords
 	}));
 
 // admin oversight: every user's active app-passwords (metadata only, no secrets)
@@ -30,6 +30,5 @@ export const getAdminAppPasswordsQuery = () =>
 	createQuery(() => ({
 		queryKey: ConnectAppsQueryKeyFactory.adminAppPasswords(),
 		queryFn: async ({ signal }) =>
-			(await api.global.v3.GET(CONNECT_APPS_ENDPOINTS.adminAppPasswords(), { signal }))
-				.app_passwords
+			(await api.v3.GET(CONNECT_APPS_ENDPOINTS.adminAppPasswords(), { signal })).app_passwords
 	}));

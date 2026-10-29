@@ -5,7 +5,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: vi.fn() } } }
+	api: { v3: { GET: vi.fn() } }
 }));
 
 import { api } from '$lib/api/client';
@@ -13,9 +13,7 @@ import { PROFILE_ENDPOINTS } from './endpoints';
 import { getProfileQuery } from './ProfileQuery.svelte';
 import { ProfileQueryKeyFactory } from './ProfileQueryKeyFactory';
 
-const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock<
-	(...args: unknown[]) => Promise<unknown>
->;
+const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
 
 type QueryResult = {
 	queryKey?: unknown;

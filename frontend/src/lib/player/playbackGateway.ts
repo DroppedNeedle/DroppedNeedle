@@ -59,27 +59,27 @@ export function gatewayStreamUrl(
 export async function startPlaybackSession(
 	request: PlaybackStartRequest
 ): Promise<PlaybackStartResponse> {
-	return api.global.v3.POST(GATEWAY_ENDPOINTS.playbackStart(), request);
+	return api.v3.POST(GATEWAY_ENDPOINTS.playbackStart(), request);
 }
 
 export async function reportPlaybackProgress(request: PlaybackProgressRequest): Promise<void> {
-	await api.global.v3.POST(GATEWAY_ENDPOINTS.playbackProgress(), request);
+	await api.v3.POST(GATEWAY_ENDPOINTS.playbackProgress(), request);
 }
 
 export async function stopPlaybackSession(request: PlaybackStopRequest): Promise<void> {
-	await api.global.v3.POST(GATEWAY_ENDPOINTS.playbackStop(), request);
+	await api.v3.POST(GATEWAY_ENDPOINTS.playbackStop(), request);
 }
 
 export async function sendScrobbleNowPlaying(
 	request: ScrobbleNowPlayingRequest
 ): Promise<ScrobbleResponse> {
-	return api.global.v3.POST(GATEWAY_ENDPOINTS.scrobbleNowPlaying(), request);
+	return api.v3.POST(GATEWAY_ENDPOINTS.scrobbleNowPlaying(), request);
 }
 
 export async function submitScrobble(request: ScrobbleSubmitRequest): Promise<ScrobbleResponse> {
-	return api.global.v3.POST(GATEWAY_ENDPOINTS.scrobbleSubmit(), request);
+	return api.v3.POST(GATEWAY_ENDPOINTS.scrobbleSubmit(), request);
 }
 
 export async function fetchNowPlayingSnapshot(signal?: AbortSignal): Promise<NowPlayingSnapshot> {
-	return api.global.v3.GET(GATEWAY_ENDPOINTS.nowPlaying(), { signal });
+	return api.v3.GET(GATEWAY_ENDPOINTS.nowPlaying(), { signal });
 }

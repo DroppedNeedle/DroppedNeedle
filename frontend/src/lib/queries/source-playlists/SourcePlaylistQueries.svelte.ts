@@ -34,8 +34,8 @@ async function fetchCollection(
 	signal: AbortSignal
 ): Promise<SourcePlaylistCollection> {
 	const [playlists, connection] = await Promise.all([
-		api.global.v3.GET(REMOTE_ENDPOINTS.playlists(source), { signal }),
-		api.global.v3.GET(REMOTE_ENDPOINTS.connection(source), { signal })
+		api.v3.GET(REMOTE_ENDPOINTS.playlists(source), { signal }),
+		api.v3.GET(REMOTE_ENDPOINTS.connection(source), { signal })
 	]);
 	return {
 		account_mode: connection.account_mode === 'linked' ? 'linked' : 'shared',
@@ -49,7 +49,7 @@ async function fetchDetail(
 	playlistId: string,
 	signal: AbortSignal
 ): Promise<SourcePlaylistDetail> {
-	const detail = await api.global.v3.GET(REMOTE_ENDPOINTS.playlist(source, playlistId), {
+	const detail = await api.v3.GET(REMOTE_ENDPOINTS.playlist(source, playlistId), {
 		signal
 	});
 	return {

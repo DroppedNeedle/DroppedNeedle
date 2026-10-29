@@ -1,4 +1,4 @@
-import { ApiError, TransportError } from '$lib/api/client';
+import { ApiError, TransportError } from '$lib/api/errors';
 
 /** How a page explains a failed read: one plain reason and what to do. */
 export interface ServiceErrorView {

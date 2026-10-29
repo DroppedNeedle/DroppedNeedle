@@ -2,12 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockGet = vi.fn();
 vi.mock('$lib/api/client', () => ({
-	api: {
-		global: {
-			v3: { GET: (...args: unknown[]) => mockGet(...args), POST: vi.fn() }
-		}
-	},
-	ApiError: class extends Error {}
+	api: { v3: { GET: (...args: unknown[]) => mockGet(...args), POST: vi.fn() } }
 }));
 
 import {

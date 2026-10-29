@@ -35,7 +35,7 @@ export function createLibraryRepair() {
 	return createMutation(() => ({
 		mutationFn: async (rootIds: string[]) =>
 			toOperationResponse(
-				await api.global.v3.POST(LibraryV3Api.identityRepairs(), {
+				await api.v3.POST(LibraryV3Api.identityRepairs(), {
 					idempotency_key: createUuid(),
 					root_ids: rootIds,
 					target_matcher_version: 'quiet-reconfirm-v1'
@@ -54,7 +54,7 @@ export function applyLibraryRepair() {
 	return createMutation(() => ({
 		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
 			toOperationResponse(
-				await api.global.v3.POST(LibraryV3Api.applyIdentityRepair(input.jobId), {
+				await api.v3.POST(LibraryV3Api.applyIdentityRepair(input.jobId), {
 					expected_row_revision: input.expectedRevision,
 					confirmation: true
 				})

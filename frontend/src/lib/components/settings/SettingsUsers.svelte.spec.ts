@@ -1,6 +1,6 @@
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render } from 'vitest-browser-svelte';
+import { renderWithQuery } from '$lib/test/render';
 
 const h = vi.hoisted(() => ({
 	get: vi.fn(),
@@ -105,7 +105,7 @@ beforeEach(() => {
 
 describe('SettingsUsers password recovery', () => {
 	it('creates and displays a one-time code for a local account', async () => {
-		await render(SettingsUsers);
+		await renderWithQuery(SettingsUsers, {});
 		await expect.element(page.getByText('Local Listener')).toBeVisible();
 
 		await page.getByLabelText('Create recovery code for Local Listener').click();
@@ -120,7 +120,7 @@ describe('SettingsUsers password recovery', () => {
 	});
 
 	it('disables DroppedNeedle recovery for an SSO-only account', async () => {
-		await render(SettingsUsers);
+		await renderWithQuery(SettingsUsers, {});
 		await expect.element(page.getByText('SSO Listener')).toBeVisible();
 		await expect
 			.element(page.getByLabelText('Create recovery code for SSO Listener'))
@@ -141,7 +141,7 @@ describe('SettingsUsers password recovery', () => {
 				expires_at: 1784307600
 			});
 
-		await render(SettingsUsers);
+		await renderWithQuery(SettingsUsers, {});
 		await expect.element(page.getByText('Local Listener')).toBeVisible();
 		await page.getByLabelText('Create recovery code for Local Listener').click();
 		await page.getByRole('button', { name: 'Create code' }).click();

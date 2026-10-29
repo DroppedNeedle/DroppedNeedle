@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('$lib/utils/navigationAbort', () => ({
-	pageFetch: vi.fn()
-}));
-
 vi.mock('$app/environment', () => ({ browser: true }));
 
 const authMock = vi.hoisted(() => ({ isAuthenticated: false, clear: vi.fn() }));
@@ -22,7 +18,7 @@ vi.mock('$lib/utils/userSessionCleanup', () => ({
 }));
 
 import { expectTypeOf } from 'vitest';
-import { ApiError, SessionExpiredError, TransportError } from '../client';
+import { ApiError, SessionExpiredError, TransportError } from '../errors';
 import { createV3Client, type V3Body, type V3Response } from './client';
 import { v3 } from './endpoint';
 import type { components } from './openapi';

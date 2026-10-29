@@ -22,7 +22,7 @@ export const getArtistImageCreditQuery = (getParams: Getter<{ mbid: string; enab
 			staleTime: STALE_SLOW,
 			queryKey: ArtistImageCreditQueryKeyFactory.credit(mbid),
 			queryFn: async ({ signal }) => {
-				const answer = await api.global.v3.GET(ARTIST_IMAGE_CREDIT_ENDPOINT(mbid), { signal });
+				const answer = await api.v3.GET(ARTIST_IMAGE_CREDIT_ENDPOINT(mbid), { signal });
 				return answer.credit;
 			}
 		};

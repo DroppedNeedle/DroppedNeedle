@@ -70,7 +70,7 @@ const activeResultsRefetchInterval = (
 export const getLibraryManagementSettingsQueryOptions = (userId: string | null | undefined) =>
 	queryOptions({
 		queryKey: LibraryManagementQueryKeyFactory.settings(userId),
-		queryFn: ({ signal }) => api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.settings(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.settings(), { signal })
 	});
 
 export const getLibraryManagementSettingsQuery = (
@@ -94,7 +94,7 @@ export const getLibraryManagementTagEditorQuery = (
 			queryKey: LibraryManagementQueryKeyFactory.tagEditor(getUserId(), trackId ?? ''),
 			queryFn: async ({ signal }): Promise<LibraryManagementTagEditorContext> =>
 				toTagEditor(
-					await api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.tagEditor(trackId ?? ''), {
+					await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.tagEditor(trackId ?? ''), {
 						signal
 					})
 				)
@@ -111,7 +111,7 @@ export const getLibraryManagementPresetDiffQuery = (
 			enabled: Boolean(profileId),
 			queryKey: LibraryManagementQueryKeyFactory.presetDiff(getUserId(), profileId ?? ''),
 			queryFn: ({ signal }) =>
-				api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.presetDiff(profileId ?? ''), { signal })
+				api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.presetDiff(profileId ?? ''), { signal })
 		};
 	});
 
@@ -127,7 +127,7 @@ export const getLibraryManagementActivationPreviewQuery = (
 			queryKey: LibraryManagementQueryKeyFactory.activationPreview(getUserId(), jobId ?? ''),
 			queryFn: async ({ signal }): Promise<LibraryManagementPreviewDetailResponse> =>
 				toPreviewDetail(
-					await api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.activationPreview(jobId ?? ''), {
+					await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.activationPreview(jobId ?? ''), {
 						signal
 					})
 				)
@@ -146,7 +146,7 @@ export const getLibraryManagementPreviewQuery = (
 			queryKey: LibraryManagementQueryKeyFactory.preview(getUserId(), jobId ?? ''),
 			queryFn: async ({ signal }) =>
 				toPreviewDetail(
-					await api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.preview(jobId ?? ''), { signal })
+					await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.preview(jobId ?? ''), { signal })
 				)
 		};
 	});
@@ -166,7 +166,7 @@ export const getLibraryManagementPlanItemsQuery = (
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
 				toPlanItemPage(
-					await api.global.v3.GET(
+					await api.v3.GET(
 						LIBRARY_MANAGEMENT_ENDPOINTS.previewItems(jobId ?? '', {
 							...params,
 							cursor: pageParam,
@@ -191,7 +191,7 @@ export const getLibraryManagementOperationsQuery = (
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
 				toHistory(
-					await api.global.v3.GET(
+					await api.v3.GET(
 						LIBRARY_MANAGEMENT_ENDPOINTS.operations({ ...params, cursor: pageParam }),
 						{ signal }
 					)
@@ -213,7 +213,7 @@ export const getLibraryManagementOperationQuery = (
 			queryKey: LibraryManagementQueryKeyFactory.operation(getUserId(), jobId ?? ''),
 			queryFn: async ({ signal }) =>
 				toPreviewDetail(
-					await api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.operation(jobId ?? ''), {
+					await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.operation(jobId ?? ''), {
 						signal
 					})
 				)
@@ -237,7 +237,7 @@ export const getLibraryManagementOperationResultsQuery = (
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
 				toResultPage(
-					await api.global.v3.GET(
+					await api.v3.GET(
 						LIBRARY_MANAGEMENT_ENDPOINTS.operationResults(jobId ?? '', pageParam, limit),
 						{ signal }
 					)
@@ -255,9 +255,7 @@ export const getLibraryManagementRecoveryQuery = (
 		enabled: enabled(),
 		queryKey: LibraryManagementQueryKeyFactory.recovery(getUserId()),
 		queryFn: async ({ signal }): Promise<LibraryManagementRecoveryDiagnosticsResponse> =>
-			toRecovery(
-				await api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.recoveryDiagnostics(), { signal })
-			)
+			toRecovery(await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.recoveryDiagnostics(), { signal }))
 	}));
 
 export const getLibraryManagementAutomaticSkippedQuery = (
@@ -269,8 +267,7 @@ export const getLibraryManagementAutomaticSkippedQuery = (
 		enabled: enabled(),
 		refetchInterval: refetchInterval(),
 		queryKey: LibraryManagementQueryKeyFactory.automaticSkipped(getUserId()),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.automaticSkipped(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.automaticSkipped(), { signal })
 	}));
 
 export const TAKEOVERS_POLL_MS = 5_000;
@@ -286,7 +283,7 @@ export const getLibraryManagementTakeoversQuery = (
 		refetchInterval: (query: { state: { data?: { handing_back: number } } }) =>
 			(query.state.data?.handing_back ?? 0) > 0 ? TAKEOVERS_POLL_MS : false,
 		queryKey: LibraryManagementQueryKeyFactory.takeovers(getUserId()),
-		queryFn: ({ signal }) => api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.takeovers(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.takeovers(), { signal })
 	}));
 
 export const getLibraryManagementActivationHealthQuery = (
@@ -296,8 +293,7 @@ export const getLibraryManagementActivationHealthQuery = (
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryManagementQueryKeyFactory.activationHealth(getUserId()),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.activationHealth(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.activationHealth(), { signal })
 	}));
 
 // How safely each library folder can be written to, as last checked.
@@ -309,5 +305,5 @@ export const getLibraryManagementPlacementQuery = (
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryManagementQueryKeyFactory.placement(getUserId()),
-		queryFn: ({ signal }) => api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.placement(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.placement(), { signal })
 	}));

@@ -20,8 +20,7 @@ export const getPurchaseOptionsQuery = (
 		queryKey: purchaseOptionsKey(mbid()),
 		enabled: enabled() && !!mbid(),
 		staleTime: STALE_SLOW,
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(CATALOG_ENDPOINTS.albumPurchaseOptions(mbid()), { signal })
+		queryFn: ({ signal }) => api.v3.GET(CATALOG_ENDPOINTS.albumPurchaseOptions(mbid()), { signal })
 	}));
 
 export const artistPurchaseOptionsKey = (mbid: string) =>
@@ -34,7 +33,7 @@ export const getArtistPurchaseOptionsQuery = (mbid: Getter<string>, name: Getter
 		enabled: !!mbid(),
 		staleTime: STALE_SLOW,
 		queryFn: ({ signal }) =>
-			api.global.v3.GET(CATALOG_ENDPOINTS.artistPurchaseOptions(mbid(), name()), { signal })
+			api.v3.GET(CATALOG_ENDPOINTS.artistPurchaseOptions(mbid(), name()), { signal })
 	}));
 
 // Notes, tags and links metadata plugins add about one album. Lazy like the
@@ -46,6 +45,5 @@ export const getAlbumPluginDetailsQuery = (mbid: Getter<string>) =>
 		queryKey: pluginDetailsKey(mbid()),
 		enabled: !!mbid(),
 		staleTime: STALE_SLOW,
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(CATALOG_ENDPOINTS.albumPluginDetails(mbid()), { signal })
+		queryFn: ({ signal }) => api.v3.GET(CATALOG_ENDPOINTS.albumPluginDetails(mbid()), { signal })
 	}));

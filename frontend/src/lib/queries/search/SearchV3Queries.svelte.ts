@@ -39,7 +39,7 @@ export const getUnifiedSearchV3QueryOptions = (
 		enabled: enabled(userId, query),
 		queryKey: SearchQueryKeyFactory.v3.unified(userId, query, limits, buckets),
 		queryFn: ({ signal }) =>
-			api.global.v3.GET(SearchV3Api.unified(query, limits, buckets), {
+			api.v3.GET(SearchV3Api.unified(query, limits, buckets), {
 				signal
 			})
 	});
@@ -65,7 +65,7 @@ export const getSearchBucketV3QueryOptions = (
 		// The bucket status mirrors the v1 values, so the v1 helper reads it.
 		queryKey: SearchQueryKeyFactory.v3.bucket(userId, bucket, query, limit, offset),
 		queryFn: ({ signal }) =>
-			api.global.v3.GET(SearchV3Api.bucket(bucket, query, limit, offset), {
+			api.v3.GET(SearchV3Api.bucket(bucket, query, limit, offset), {
 				signal
 			})
 	});
@@ -97,7 +97,7 @@ export const getSearchSuggestionsV3Query = (
 			enabled: getEnabled() && enabled(authStore.user?.id, query),
 			queryKey: SearchQueryKeyFactory.v3.suggest(authStore.user?.id, query, limit),
 			queryFn: ({ signal }: { signal?: AbortSignal }) =>
-				api.global.v3.GET(SearchV3Api.suggest(query, limit), { signal })
+				api.v3.GET(SearchV3Api.suggest(query, limit), { signal })
 		};
 	});
 
@@ -113,7 +113,7 @@ export const getSearchEnrichBatchV3QueryOptions = (
 	queryOptions({
 		enabled: Boolean(userId && (body.artists?.length || body.albums?.length)),
 		queryKey: SearchQueryKeyFactory.v3.enrich(userId, enrichFingerprint(body)),
-		queryFn: ({ signal }) => api.global.v3.POST(SearchV3Api.enrichBatch(), body, { signal })
+		queryFn: ({ signal }) => api.v3.POST(SearchV3Api.enrichBatch(), body, { signal })
 	});
 
 export const getSearchEnrichBatchV3Query = (getBody: Getter<EnrichmentBatchRequestV3>) =>

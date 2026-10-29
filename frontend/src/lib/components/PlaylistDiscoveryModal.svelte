@@ -20,7 +20,7 @@
 	} from '$lib/queries/playlists/PlaylistV3Queries.svelte';
 	import type { components } from '$lib/api/v3/openapi';
 	import { fetchAlbumTracks } from '$lib/queries/catalog/albumTracks';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import { formatDuration } from '$lib/utils/formatting';
 	import type { Track } from '$lib/types';
 	import type { AlbumRef } from '$lib/queries/discover/types';

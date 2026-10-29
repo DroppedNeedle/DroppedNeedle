@@ -1,11 +1,6 @@
 import { v3 } from '$lib/api/v3/endpoint';
 
-/** v3 auth endpoints, built through the typed registry. Login/setup happen
- * before a session exists, so those go through `api.global`, whose requests
- * survive page navigation; both clients share `createClient` and send the
- * session cookie alike, so this is about request lifetime, not credentials.
- * The `adminImport*` endpoints are post-session admin actions and use the
- * navigation-scoped `api` client instead. */
+/** v3 auth endpoints, built through the typed registry. */
 export const AUTH_ENDPOINTS = {
 	providers: v3('/api/v3/auth/providers'),
 	login: v3('/api/v3/auth/login'),

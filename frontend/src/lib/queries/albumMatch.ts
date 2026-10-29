@@ -1,7 +1,8 @@
 import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
-import { api, ApiError } from '$lib/api/client';
+import { api } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 import { v3 } from '$lib/api/v3/endpoint';
 import type { LocalAlbumMatch, LocalTrackInfo } from '$lib/types';
 import type { components } from '$lib/api/v3/openapi';
@@ -44,7 +45,7 @@ export async function fetchLocalAlbumMatch(
 	signal?: AbortSignal
 ): Promise<LocalAlbumMatch> {
 	try {
-		const page = await api.global.v3.GET(localMatchUrl(mbid), {
+		const page = await api.v3.GET(localMatchUrl(mbid), {
 			signal
 		});
 		const tracks = page.items.map(toLocalTrack);

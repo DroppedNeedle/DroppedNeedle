@@ -15,7 +15,7 @@ async function fetchHome(
 	userId: string | null | undefined,
 	signal?: AbortSignal
 ): Promise<HomeResponse> {
-	const fresh = await api.global.v3.GET(HOME_ENDPOINTS.home(), { signal, timeoutMs: 15_000 });
+	const fresh = await api.v3.GET(HOME_ENDPOINTS.home(), { signal, timeoutMs: 15_000 });
 	if (fresh.refreshing) {
 		const { queryClient } = await import('$lib/queries/QueryClient');
 		const prev = queryClient.getQueryData<HomeResponse>(HomeQueryKeyFactory.home(userId));

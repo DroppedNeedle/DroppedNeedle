@@ -13,8 +13,7 @@ export type DownloadClientConfig = components['schemas']['SlskdConnection'];
 const getDownloadClientConfigQueryOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.clientConfig(),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.slskdConfig(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.slskdConfig(), { signal })
 	});
 
 export const getDownloadClientConfigQuery = () =>
@@ -23,8 +22,7 @@ export const getDownloadClientConfigQuery = () =>
 const getDownloadClientStatusQueryOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.clientStatus(),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.slskdStatus(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.slskdStatus(), { signal })
 	});
 
 export const getDownloadClientStatusQuery = () =>
@@ -33,7 +31,7 @@ export const getDownloadClientStatusQuery = () =>
 export function saveDownloadClientConfig() {
 	return createMutation(() => ({
 		mutationFn: (config: DownloadClientConfig) =>
-			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.slskdConfig(), config),
+			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.slskdConfig(), config),
 		onSuccess: async () => {
 			await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientConfig() });
 			await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
@@ -47,6 +45,6 @@ export function saveDownloadClientConfig() {
 export function testDownloadClient() {
 	return createMutation(() => ({
 		mutationFn: (config: DownloadClientConfig) =>
-			api.global.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.slskdTest(), config)
+			api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.slskdTest(), config)
 	}));
 }

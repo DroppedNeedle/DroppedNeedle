@@ -47,7 +47,7 @@ async function invalidateConnectionAndPlaylists(service?: string): Promise<void>
 export const createSetLastFmCredentialsMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: components['schemas']['LastFmCredentialsSet']) =>
-			api.global.v3.PUT(CONNECTIONS_ENDPOINTS.lastfm(), vars),
+			api.v3.PUT(CONNECTIONS_ENDPOINTS.lastfm(), vars),
 		onSuccess: invalidateConnections
 	}));
 
@@ -55,21 +55,21 @@ export const createSetLastFmCredentialsMutation = () =>
 export const createLastFmRequestTokenMutation = () =>
 	createMutation(() => ({
 		mutationFn: (): Promise<LastFmAuthTokenResponse> =>
-			api.global.v3.POST(CONNECTIONS_ENDPOINTS.lastfmToken())
+			api.v3.POST(CONNECTIONS_ENDPOINTS.lastfmToken())
 	}));
 
 // OAuth step 2: exchange the approved token for a per-user session
 export const createLastFmExchangeSessionMutation = () =>
 	createMutation(() => ({
 		mutationFn: (token: string): Promise<LastFmAuthSessionResponse> =>
-			api.global.v3.POST(CONNECTIONS_ENDPOINTS.lastfmSession(), { token }),
+			api.v3.POST(CONNECTIONS_ENDPOINTS.lastfmSession(), { token }),
 		onSuccess: invalidateConnections
 	}));
 
 export const createConnectListenBrainzMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: ListenBrainzConnectVars) =>
-			api.global.v3.PUT(CONNECTIONS_ENDPOINTS.listenbrainz(), vars),
+			api.v3.PUT(CONNECTIONS_ENDPOINTS.listenbrainz(), vars),
 		onSuccess: invalidateConnections
 	}));
 
@@ -80,16 +80,16 @@ export const createDisconnectMutation = () =>
 		// settlement, so the result stays unknown.
 		mutationFn: (service: string): Promise<unknown> => {
 			if (isMediaSource(service)) {
-				return api.global.v3.DELETE(REMOTE_ENDPOINTS.connection(service));
+				return api.v3.DELETE(REMOTE_ENDPOINTS.connection(service));
 			}
 			if (service === 'listenbrainz') {
-				return api.global.v3.DELETE(CONNECTIONS_ENDPOINTS.listenbrainz());
+				return api.v3.DELETE(CONNECTIONS_ENDPOINTS.listenbrainz());
 			}
 			if (service === 'lastfm') {
-				return api.global.v3.DELETE(CONNECTIONS_ENDPOINTS.lastfm());
+				return api.v3.DELETE(CONNECTIONS_ENDPOINTS.lastfm());
 			}
 			if (service === 'spotify') {
-				return api.global.v3.DELETE(CONNECTIONS_ENDPOINTS.spotify());
+				return api.v3.DELETE(CONNECTIONS_ENDPOINTS.spotify());
 			}
 			// Anything else has no unlink route: fail loudly rather than
 			// calling a route that does not exist.
@@ -101,7 +101,7 @@ export const createDisconnectMutation = () =>
 export const createConnectSpotifyMutation = () =>
 	createMutation(() => ({
 		mutationFn: async () => {
-			const data = await api.global.v3.GET(CONNECTIONS_ENDPOINTS.spotifyAuthUrl());
+			const data = await api.v3.GET(CONNECTIONS_ENDPOINTS.spotifyAuthUrl());
 			window.location.href = data.auth_url;
 		}
 	}));
@@ -111,14 +111,14 @@ export const createConnectSpotifyMutation = () =>
 export const createConnectNavidromeMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: MediaServerConnectVars) =>
-			api.global.v3.PUT(REMOTE_ENDPOINTS.connection('navidrome'), vars),
+			api.v3.PUT(REMOTE_ENDPOINTS.connection('navidrome'), vars),
 		onSuccess: () => invalidateConnectionAndPlaylists('navidrome')
 	}));
 
 export const createConnectJellyfinMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: MediaServerConnectVars) =>
-			api.global.v3.PUT(REMOTE_ENDPOINTS.connection('jellyfin'), vars),
+			api.v3.PUT(REMOTE_ENDPOINTS.connection('jellyfin'), vars),
 		onSuccess: () => invalidateConnectionAndPlaylists('jellyfin')
 	}));
 

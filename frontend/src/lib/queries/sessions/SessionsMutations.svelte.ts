@@ -17,8 +17,7 @@ function revokeErrorMessage(err: unknown): string {
 
 export const createRevokeSessionMutation = () =>
 	createMutation(() => ({
-		mutationFn: (vars: RevokeSessionVars) =>
-			api.global.v3.DELETE(SESSIONS_ENDPOINTS.revoke(vars.id)),
+		mutationFn: (vars: RevokeSessionVars) => api.v3.DELETE(SESSIONS_ENDPOINTS.revoke(vars.id)),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: async (_data, vars, context) => {
 			const userId = context.userId;

@@ -6,7 +6,7 @@
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
 	import ArtistAppearancesSectionSkeleton from './ArtistAppearancesSectionSkeleton.svelte';
 	import { getLibraryArtistAppearancesQuery } from '$lib/queries/library/LibraryQueries.svelte';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import { albumHref } from '$lib/utils/entityRoutes';
 
 	interface Props {

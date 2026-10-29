@@ -8,11 +8,10 @@
 		isRedactedPlaylist,
 		type PlaylistSummary
 	} from '$lib/api/playlists';
-	import { api } from '$lib/api/client';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
-	import { PlaylistV3Api } from '$lib/queries/playlists/PlaylistV3Api';
+	import { fetchPlaylistListV3 } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
 	import {
 		addPlaylistTracksV3,
 		checkPlaylistTracksV3,
@@ -99,8 +98,7 @@
 	async function loadPlaylists() {
 		try {
 			// Only the user's own playlists are valid add targets.
-			const answer = await api.global.v3.GET(PlaylistV3Api.list());
-			playlists = toPageList(answer.playlists).filter(
+			playlists = toPageList(await fetchPlaylistListV3()).filter(
 				(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner
 			);
 			if (pendingTracks.length > 0) {

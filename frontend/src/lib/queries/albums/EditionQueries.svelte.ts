@@ -48,7 +48,7 @@ export const getAlbumEditionsQuery = (
 		queryKey: editionsKey(getUserId(), mbid()),
 		enabled: enabled() && !!getUserId() && !!mbid(),
 		staleTime: STALE_SLOW,
-		queryFn: ({ signal }) => api.global.v3.GET(CATALOG_ENDPOINTS.editions(mbid()), { signal })
+		queryFn: ({ signal }) => api.v3.GET(CATALOG_ENDPOINTS.editions(mbid()), { signal })
 	}));
 
 export const editionTracksKey = (userId: EditionUserId, release: string) => {
@@ -74,7 +74,7 @@ export const getEditionTracksQuery = (
 		enabled: enabled() && !!getUserId() && !!group() && !!release(),
 		staleTime: STALE_SLOW,
 		queryFn: ({ signal }) =>
-			api.global.v3.GET(CATALOG_ENDPOINTS.editionTracks(group(), release() ?? ''), { signal })
+			api.v3.GET(CATALOG_ENDPOINTS.editionTracks(group(), release() ?? ''), { signal })
 	}));
 
 // Switch a live request to another edition (curators). The answer says
@@ -87,7 +87,7 @@ export function switchRequestedEdition() {
 			artistName: string | null;
 			albumTitle: string;
 		}) =>
-			api.global.v3.POST(REQUESTS_ENDPOINTS.requestAlbum(), {
+			api.v3.POST(REQUESTS_ENDPOINTS.requestAlbum(), {
 				musicbrainz_id: input.group,
 				artist: input.artistName,
 				album: input.albumTitle,
@@ -109,7 +109,7 @@ export function acquireEdition() {
 			mbid: string;
 			copyId?: string;
 			replaceVersions?: boolean;
-		}) => api.global.v3.POST(CATALOG_ENDPOINTS.acquireEdition(mbid, copyId, replaceVersions)),
+		}) => api.v3.POST(CATALOG_ENDPOINTS.acquireEdition(mbid, copyId, replaceVersions)),
 		// The acquire starts a download task: show it in the queue, the album's
 		// download strip, its edition fetch and its library status now, not on
 		// the next poll.
@@ -163,7 +163,7 @@ export const getEditionFetchQuery = (
 				editionFetchLive(query.state.data?.latest) ? EDITION_FETCH_POLL_MS : false,
 			queryFn: async ({ signal }: { signal: AbortSignal }): Promise<EditionFetchAnswer> => {
 				const before = queryClient.getQueryData<EditionFetchAnswer>(queryKey)?.latest;
-				const answer = await api.global.v3.GET(
+				const answer = await api.v3.GET(
 					v3('/api/v3/albums/{album_id}/edition/acquire', { path: { album_id: group } }),
 					{ signal }
 				);
@@ -219,7 +219,7 @@ export const getAlbumEditionStatusQuery = (
 				editionBusy(query.state.data) ? EDITION_BUSY_POLL_MS : false,
 			queryFn: async ({ signal }: { signal: AbortSignal }): Promise<EditionStatus> => {
 				const before = queryClient.getQueryData<EditionStatus>(queryKey);
-				const status = await api.global.v3.GET(LibraryV3Api.edition(localId), { signal });
+				const status = await api.v3.GET(LibraryV3Api.edition(localId), { signal });
 				// The plans line the files up as they were placed, and say which
 				// hand matches were written since: once placing or writing ends,
 				// or the edition itself changed, they are stale.
@@ -256,7 +256,7 @@ export const getEditionPlanQuery = (
 		staleTime: STALE_SLOW,
 		retry: false,
 		queryFn: ({ signal }) =>
-			api.global.v3.GET(LibraryV3Api.editionPlan(getLocalId(), getRelease() ?? undefined), {
+			api.v3.GET(LibraryV3Api.editionPlan(getLocalId(), getRelease() ?? undefined), {
 				signal
 			})
 	}));
@@ -275,7 +275,7 @@ export function removeEditionExtras() {
 			trackIds: string[];
 			identityRevision: number;
 		}) =>
-			api.global.v3.POST(LibraryV3Api.editionExtrasRemove(localId), {
+			api.v3.POST(LibraryV3Api.editionExtrasRemove(localId), {
 				track_ids: trackIds,
 				expected_identity_revision: identityRevision
 			}),
@@ -319,7 +319,7 @@ export function matchEditionFile() {
 			releaseTrackMbid: string;
 			identityRevision: number;
 		}) =>
-			api.global.v3.PUT(LibraryV3Api.editionFile(localId, trackId), {
+			api.v3.PUT(LibraryV3Api.editionFile(localId, trackId), {
 				release_track_mbid: releaseTrackMbid,
 				expected_identity_revision: identityRevision
 			}),
@@ -337,7 +337,7 @@ export function unmatchEditionFile() {
 			localId: string;
 			trackId: string;
 			identityRevision: number;
-		}) => api.global.v3.DELETE(LibraryV3Api.editionFileUnmatch(localId, trackId, identityRevision)),
+		}) => api.v3.DELETE(LibraryV3Api.editionFileUnmatch(localId, trackId, identityRevision)),
 		onSettled: (_data, _error, { localId }) => invalidateHandMatchScope(localId)
 	}));
 }
@@ -354,7 +354,7 @@ export const getWaitingAlbumsQuery = (
 			enabled: !!getUserId(),
 			initialPageParam: undefined as string | undefined,
 			queryFn: ({ pageParam, signal }): Promise<WaitingAlbums> =>
-				api.global.v3.GET(LibraryV3Api.unconfirmed(state, limit, pageParam), { signal }),
+				api.v3.GET(LibraryV3Api.unconfirmed(state, limit, pageParam), { signal }),
 			getNextPageParam: (lastPage: WaitingAlbums) => lastPage.next_cursor ?? undefined
 		};
 	});
@@ -410,7 +410,7 @@ export function chooseAlbumEdition() {
 			identityRevision
 		}: GuardedEditionTarget & { releaseMbid: string }) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.v3.PUT(LibraryV3Api.edition(localId), {
+			return api.v3.PUT(LibraryV3Api.edition(localId), {
 				release_mbid: releaseMbid,
 				expected_identity_revision: identityRevision
 			});
@@ -423,7 +423,7 @@ export function handBackAlbumEdition() {
 	return createMutation(() => ({
 		mutationFn: ({ localId, rgMbid, identityRevision }: GuardedEditionTarget) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.v3.DELETE(LibraryV3Api.editionHandBack(localId, identityRevision));
+			return api.v3.DELETE(LibraryV3Api.editionHandBack(localId, identityRevision));
 		},
 		onSuccess: (_d, variables) => invalidateEditionScope(variables)
 	}));
@@ -432,7 +432,7 @@ export function handBackAlbumEdition() {
 export function confirmAlbumEdition() {
 	return createMutation(() => ({
 		mutationFn: ({ localId, identityRevision }: GuardedEditionTarget) =>
-			api.global.v3.POST(LibraryV3Api.editionConfirm(localId), {
+			api.v3.POST(LibraryV3Api.editionConfirm(localId), {
 				expected_identity_revision: identityRevision
 			}),
 		onSuccess: (_d, variables) => invalidateEditionScope(variables)
@@ -457,7 +457,7 @@ export function sealCustomEdition() {
 			identityRevision
 		}: EditionTarget & { releaseMbid: string; identityRevision: number }) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.v3.POST(LibraryV3Api.editionCustom(localId), {
+			return api.v3.POST(LibraryV3Api.editionCustom(localId), {
 				release_mbid: releaseMbid,
 				expected_identity_revision: identityRevision
 			});
@@ -476,7 +476,7 @@ export function leaveAlbumUnmanaged() {
 			identityRevision
 		}: EditionTarget & { identityRevision: number }) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.v3.POST(LibraryV3Api.editionLeaveUnmanaged(localId), {
+			return api.v3.POST(LibraryV3Api.editionLeaveUnmanaged(localId), {
 				expected_identity_revision: identityRevision
 			});
 		},
@@ -526,7 +526,7 @@ export const getTagWriteQuery = (
 			refetchInterval: (query: { state: { data?: TagWriteJob } }) =>
 				tagWriteMoving(query.state.data) ? TAG_WRITE_POLL_MS : false,
 			queryFn: ({ signal }: { signal: AbortSignal }): Promise<TagWriteJob> =>
-				api.global.v3.GET(LibraryV3Api.editionTagWrite(localId, jobId), { signal })
+				api.v3.GET(LibraryV3Api.editionTagWrite(localId, jobId), { signal })
 		};
 	});
 
@@ -547,7 +547,7 @@ export function previewEditionTags() {
 			identityRevision: number;
 		}): Promise<TagWriteQueued> => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.v3.POST(LibraryV3Api.editionTags(localId), {
+			return api.v3.POST(LibraryV3Api.editionTags(localId), {
 				release_mbid: releaseMbid,
 				expected_identity_revision: identityRevision
 			});
@@ -567,7 +567,7 @@ export function writeEditionTags() {
 			previewToken: string;
 			rowRevision: number;
 		}): Promise<TagWriteJob> =>
-			api.global.v3.POST(LibraryV3Api.editionTagWriteApply(localId, jobId), {
+			api.v3.POST(LibraryV3Api.editionTagWriteApply(localId, jobId), {
 				preview_token: previewToken,
 				expected_row_revision: rowRevision,
 				idempotency_key: `apply-${jobId}`
@@ -583,7 +583,7 @@ export function undoTagWrite() {
 			jobId,
 			rowRevision
 		}: EditionTarget & { jobId: string; rowRevision: number }): Promise<TagWriteQueued> =>
-			api.global.v3.POST(LibraryV3Api.editionTagWriteUndo(localId, jobId), {
+			api.v3.POST(LibraryV3Api.editionTagWriteUndo(localId, jobId), {
 				expected_row_revision: rowRevision,
 				idempotency_key: `undo-${jobId}`
 			}),
@@ -594,7 +594,7 @@ export function undoTagWrite() {
 export function undoAlbumEdition() {
 	return createMutation(() => ({
 		mutationFn: ({ localId, identityRevision }: GuardedEditionTarget) =>
-			api.global.v3.POST(LibraryV3Api.editionUndo(localId), {
+			api.v3.POST(LibraryV3Api.editionUndo(localId), {
 				expected_identity_revision: identityRevision
 			}),
 		onSuccess: (_d, variables) => {

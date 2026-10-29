@@ -7,7 +7,6 @@
 	import { setQueueMutationToastsSuppressed } from '$lib/stores/playerUtils';
 	import { deckFocus } from '$lib/stores/deckFocus.svelte';
 	import { gatewayStreamUrl } from '$lib/player/playbackGateway';
-	import { api } from '$lib/api/client';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { formatBytes } from '$lib/utils/formatting';
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
@@ -26,9 +25,10 @@
 		getLocalAlbumsV3Query,
 		getLocalSuggestionsV3Query,
 		getLocalDecadesV3Query,
-		getLocalStatsV3Query
+		getLocalStatsV3Query,
+		fetchLocalAlbumTracksV3,
+		fetchLocalSuggestionBatchV3
 	} from '$lib/queries/local/LocalV3Queries.svelte';
-	import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
 	import {
 		albumCardToSummary,
 		albumCoverUrl,
@@ -161,9 +161,7 @@
 
 	async function playAlbum(album: SpinAlbum, shuffle = false) {
 		try {
-			const match = await api.global.v3.GET(
-				LibraryV3Api.albumMatch(album.musicbrainz_id, { limit: 1000 })
-			);
+			const match = await fetchLocalAlbumTracksV3(album.musicbrainz_id);
 			const tracks = [...match.items].sort(
 				(a, b) => a.disc_number - b.disc_number || a.track_number - b.track_number
 			);
@@ -191,9 +189,7 @@
 
 	async function queueAlbum(album: SpinAlbum) {
 		try {
-			const match = await api.global.v3.GET(
-				LibraryV3Api.albumMatch(album.musicbrainz_id, { limit: 1000 })
-			);
+			const match = await fetchLocalAlbumTracksV3(album.musicbrainz_id);
 			const tracks = [...match.items].sort(
 				(a, b) => a.disc_number - b.disc_number || a.track_number - b.track_number
 			);
@@ -209,7 +205,7 @@
 
 	async function fetchBatch(): Promise<QueueItem[]> {
 		try {
-			const res = await api.global.v3.GET(LibraryV3Api.suggestions(40, null));
+			const res = await fetchLocalSuggestionBatchV3();
 			return res.items.map((s) =>
 				crateToQueueItem(suggestionToCrateTrack(s, albumMbidById.get(s.album_id) ?? null))
 			);

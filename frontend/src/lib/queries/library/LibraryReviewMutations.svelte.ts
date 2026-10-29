@@ -58,15 +58,15 @@ function post({ reviewId, revision, action }: ReviewActionInput) {
 	const body = { expected_revision: revision };
 	switch (action) {
 		case 'keep_tagged':
-			return api.global.v3.POST(LibraryV3Api.keepTaggedReview(reviewId), body);
+			return api.v3.POST(LibraryV3Api.keepTaggedReview(reviewId), body);
 		case 'dismiss':
-			return api.global.v3.POST(LibraryV3Api.dismissReview(reviewId), body);
+			return api.v3.POST(LibraryV3Api.dismissReview(reviewId), body);
 		case 'detach':
-			return api.global.v3.POST(LibraryV3Api.detachReview(reviewId), body);
+			return api.v3.POST(LibraryV3Api.detachReview(reviewId), body);
 		case 'exclude':
-			return api.global.v3.POST(LibraryV3Api.excludeReview(reviewId), body);
+			return api.v3.POST(LibraryV3Api.excludeReview(reviewId), body);
 		case 'restore':
-			return api.global.v3.POST(LibraryV3Api.restoreReview(reviewId), body);
+			return api.v3.POST(LibraryV3Api.restoreReview(reviewId), body);
 	}
 }
 
@@ -88,7 +88,7 @@ export function actOnLibraryReview() {
 export function acceptLibraryReviewCandidate() {
 	return createMutation(() => ({
 		mutationFn: async (input: { reviewId: string; revision: number; candidateKey: string }) => {
-			await api.global.v3.POST(LibraryV3Api.approveReview(input.reviewId), {
+			await api.v3.POST(LibraryV3Api.approveReview(input.reviewId), {
 				candidate_key: input.candidateKey,
 				expected_revision: input.revision
 			});
@@ -104,7 +104,7 @@ export function acceptLibraryReviewCandidate() {
 export function retryLibraryReview() {
 	return createMutation(() => ({
 		mutationFn: (input: { reviewId: string; revision: number; confirmLocalMetadata?: boolean }) =>
-			api.global.v3.POST(LibraryV3Api.retryReview(input.reviewId), {
+			api.v3.POST(LibraryV3Api.retryReview(input.reviewId), {
 				expected_revision: input.revision,
 				confirm_local_metadata: input.confirmLocalMetadata ?? false
 			}),
@@ -125,7 +125,7 @@ export function retryPendingLibraryReviews() {
 			rootIds?: string[];
 			preview?: boolean;
 		}) =>
-			api.global.v3.POST(LibraryV3Api.retryPendingReviews(), {
+			api.v3.POST(LibraryV3Api.retryPendingReviews(), {
 				confirm_local_metadata: input.confirmLocalMetadata,
 				filter: { state: 'pending', ...reviewFilterQuery(input.filter ?? {}) },
 				root_ids: input.rootIds ?? [],
@@ -160,17 +160,14 @@ function bulkBody(selection: BulkReviewSelection, previewToken?: string) {
 export function previewBulkLibraryReviews() {
 	return createMutation(() => ({
 		mutationFn: (selection: BulkReviewSelection) =>
-			api.global.v3.POST(LibraryV3Api.bulkReviewPreview(), bulkBody(selection))
+			api.v3.POST(LibraryV3Api.bulkReviewPreview(), bulkBody(selection))
 	}));
 }
 
 export function applyBulkLibraryReviews() {
 	return createMutation(() => ({
 		mutationFn: (input: { selection: BulkReviewSelection; previewToken: string }) =>
-			api.global.v3.POST(
-				LibraryV3Api.bulkReviewApply(),
-				bulkBody(input.selection, input.previewToken)
-			),
+			api.v3.POST(LibraryV3Api.bulkReviewApply(), bulkBody(input.selection, input.previewToken)),
 		onSuccess: async (_result, input) => {
 			await invalidateReviewState({ catalog: input.selection.action !== 'keep_tagged' });
 		}

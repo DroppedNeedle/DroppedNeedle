@@ -23,7 +23,7 @@ export const getAlbumHistoryQuery = (
 			queryKey: LibraryQueryKeyFactory.catalog.albumHistory(user, album ?? ''),
 			enabled: Boolean(user && album),
 			queryFn: ({ signal }: { signal: AbortSignal }) =>
-				api.global.v3.GET(LibraryV3Api.albumHistory(album ?? ''), { signal })
+				api.v3.GET(LibraryV3Api.albumHistory(album ?? ''), { signal })
 		};
 	});
 
@@ -32,7 +32,7 @@ export const getAlbumHistoryQuery = (
 // refreshes too, as the history it was offered from is stale.
 export function undoAlbumFold() {
 	return createMutation(() => ({
-		mutationFn: (undoId: string) => api.global.v3.POST(LibraryV3Api.undoAlbumFold(undoId)),
+		mutationFn: (undoId: string) => api.v3.POST(LibraryV3Api.undoAlbumFold(undoId)),
 		onSettled: () => invalidateLibraryCatalog()
 	}));
 }
@@ -42,7 +42,7 @@ export function undoAlbumFold() {
 // it shows, so every catalog view refreshes, on a refusal too.
 export function undoArtistRepair() {
 	return createMutation(() => ({
-		mutationFn: (undoId: string) => api.global.v3.POST(LibraryV3Api.undoArtistRepair(undoId)),
+		mutationFn: (undoId: string) => api.v3.POST(LibraryV3Api.undoArtistRepair(undoId)),
 		onSettled: () => invalidateLibraryCatalog()
 	}));
 }

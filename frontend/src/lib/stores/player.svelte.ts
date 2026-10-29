@@ -50,6 +50,7 @@ import {
 	buildNowPlayingMetadata
 } from './playerSourceResolver';
 import { resumeAudioEngine } from '$lib/player/audioElement';
+import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
 import {
 	persistSession as doPersistSession,
 	restoreSessionData,
@@ -425,7 +426,7 @@ function createPlayerStore() {
 		const nextItem = queue[nextIdx];
 		if (!nextItem) return;
 		const url = buildPrefetchUrl(nextItem);
-		if (url) void api.global.head(url).catch(() => {});
+		if (url) void api.head(url).catch(() => {});
 	}
 
 	function subscribeToSource(source: PlaybackSource, gen: number): void {
@@ -958,3 +959,6 @@ function createPlayerStore() {
 }
 
 export const playerStore = createPlayerStore();
+
+// The next person on this browser never resumes the last one's listening.
+registerUserSessionReset(() => playerStore.stop());

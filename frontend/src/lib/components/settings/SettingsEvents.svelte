@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
-	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
-	import { api } from '$lib/api/client';
 	import {
 		createSaveEventsSettingsMutation,
+		createTestEventsSourceMutation,
 		getEventsSettingsQuery,
 		type EventsSettings
 	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
@@ -24,6 +23,8 @@
 		createSaveEventsSettingsMutation()
 	);
 
+	const testSource = createTestEventsSourceMutation();
+
 	// Each source has its own test, beside its key.
 	type TestState = { testing: boolean; message: string; valid: boolean };
 	let ticketmasterTest = $state<TestState>({ testing: false, message: '', valid: false });
@@ -37,11 +38,7 @@
 		state.testing = true;
 		state.message = '';
 		try {
-			const endpoint =
-				provider === 'ticketmaster'
-					? SETTINGS_ENDPOINTS.eventsTestTicketmaster()
-					: SETTINGS_ENDPOINTS.eventsTestSkiddle();
-			const result = await api.global.v3.POST(endpoint, $state.snapshot(draft));
+			const result = await testSource.mutateAsync({ provider, body: $state.snapshot(draft) });
 			state.valid = result.valid;
 			state.message = result.message;
 		} catch {

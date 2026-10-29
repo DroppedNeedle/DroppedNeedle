@@ -21,7 +21,7 @@ import type {
 export function removeLibraryAlbum() {
 	return createMutation(() => ({
 		mutationFn: ({ mbid, stopWanted }: { mbid: string; stopWanted: boolean }) =>
-			api.global.v3.DELETE(LibraryV3Api.removeAlbum(mbid, stopWanted)) as Promise<
+			api.v3.DELETE(LibraryV3Api.removeAlbum(mbid, stopWanted)) as Promise<
 				AlbumRemoveResponse | TargetCatalogRemovalResponse
 			>,
 		onSuccess: async (result, { mbid: requestedMbid }) => {
@@ -76,7 +76,7 @@ const RESCAN_REFRESH_DELAYS_MS = [2500, 6000];
 
 export function rescanAlbum() {
 	return createMutation(() => ({
-		mutationFn: (mbid: string) => api.global.v3.POST(LibraryV3Api.rescanAlbum(mbid)),
+		mutationFn: (mbid: string) => api.v3.POST(LibraryV3Api.rescanAlbum(mbid)),
 		onSuccess: (_data, mbid) => {
 			const invalidate = () =>
 				invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.album(mbid) });
@@ -89,7 +89,7 @@ export function rescanAlbum() {
 export function saveLibraryScanSchedule() {
 	return createMutation(() => ({
 		mutationFn: (schedule: LibraryScanSchedule) =>
-			api.global.v3.PUT(LibraryV3Api.schedule(), {
+			api.v3.PUT(LibraryV3Api.schedule(), {
 				scan_frequency: schedule.scan_frequency,
 				daily_scan_time: schedule.daily_scan_time
 			}),
@@ -106,7 +106,7 @@ export function removeLibraryTrack() {
 	const client = useQueryClient();
 	return createMutation(() => ({
 		mutationFn: ({ fileId }: { fileId: string; albumMbid: string }) =>
-			api.global.v3.DELETE(LibraryV3Api.removeTrack(fileId)),
+			api.v3.DELETE(LibraryV3Api.removeTrack(fileId)),
 		onSuccess: async (_data, { albumMbid }) => {
 			const userId = authStore.user?.id;
 			for (const queryKey of [

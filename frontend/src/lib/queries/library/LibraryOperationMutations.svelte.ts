@@ -28,7 +28,7 @@ export function requestLibraryRun() {
 			scope_ids: string[];
 			expected_policy_revision: string;
 		}): Promise<ScanRunRequestedResponse> => {
-			const response = await api.global.v3.POST(LibraryV3Api.scanRuns(), input);
+			const response = await api.v3.POST(LibraryV3Api.scanRuns(), input);
 			return {
 				run_id: response.run_id,
 				disposition: response.disposition,
@@ -59,7 +59,7 @@ export function controlLibraryRun(action: 'pause' | 'resume' | 'stop') {
 					: action === 'resume'
 						? LibraryV3Api.resumeScanRun(input.runId)
 						: LibraryV3Api.stopScanRun(input.runId);
-			const response = await api.global.v3.POST(url, {
+			const response = await api.v3.POST(url, {
 				expected_revision: input.expectedRevision
 			});
 			return { ...response, state: response.state as LibraryWorkState };
@@ -72,7 +72,7 @@ export function controlLibraryRun(action: 'pause' | 'resume' | 'stop') {
 export function controlIdentification(action: 'pause' | 'resume') {
 	return createMutation(() => ({
 		mutationFn: (expectedRevision: number): Promise<IdentificationControlResponse> =>
-			api.global.v3.POST(
+			api.v3.POST(
 				action === 'pause'
 					? LibraryV3Api.pauseIdentification()
 					: LibraryV3Api.resumeIdentification(),
@@ -96,7 +96,7 @@ export function controlLibraryOperation(action: 'pause' | 'resume' | 'stop') {
 			expectedRevision: number;
 		}): Promise<OperationResponse> =>
 			toOperationResponse(
-				await api.global.v3.POST(operationControlUrl(action, input.jobId), {
+				await api.v3.POST(operationControlUrl(action, input.jobId), {
 					expected_row_revision: input.expectedRevision
 				})
 			),
@@ -104,3 +104,17 @@ export function controlLibraryOperation(action: 'pause' | 'resume' | 'stop') {
 		onError: () => toastStore.show({ message: `Could not ${action} this job`, type: 'error' })
 	}));
 }
+
+/** A run's diagnostic report, as a file to save, and the name the server gave it. */
+export const createScanDiagnosticsExportMutation = () =>
+	createMutation(() => ({
+		mutationFn: async (runId: string): Promise<{ blob: Blob; filename: string }> => {
+			const response = await api.raw(LibraryV3Api.scanDiagnostics(runId));
+			if (!response.ok) throw new Error('Diagnostic export failed');
+			const disposition = response.headers.get('content-disposition') ?? '';
+			return {
+				blob: await response.blob(),
+				filename: disposition.match(/filename="([^"]+)"/)?.[1] ?? 'droppedneedle-library-run.json'
+			};
+		}
+	}));

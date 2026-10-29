@@ -35,23 +35,7 @@ vi.stubGlobal('localStorage', {
 vi.mock('$app/environment', () => ({ browser: true }));
 // imported for its side effect (applying the theme), which needs a DOM
 vi.mock('$lib/stores/theme.svelte', () => ({}));
-vi.mock('$lib/api/client', () => {
-	class ApiError extends Error {
-		constructor(
-			readonly status: number,
-			message: string,
-			readonly code = ''
-		) {
-			super(message);
-		}
-	}
-	class TransportError extends ApiError {
-		constructor(code: string) {
-			super(0, 'The request failed', code);
-		}
-	}
-	return { ApiError, TransportError, api: { global: { v3: { GET: state.apiGet } } } };
-});
+vi.mock('$lib/api/client', () => ({ api: { v3: { GET: state.apiGet } } }));
 vi.mock('$lib/constants', () => ({
 	AUTH_FREE_PATHS: ['/login', '/setup']
 }));
@@ -113,7 +97,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	}
 }));
 
-import { ApiError, TransportError } from '$lib/api/client';
+import { ApiError, TransportError } from '$lib/api/errors';
 import { load } from './+layout';
 
 const user: TestUser = {

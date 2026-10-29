@@ -12,14 +12,14 @@
 	} from 'lucide-svelte';
 	import { goto } from '$app/navigation';
 	import { TOAST_DURATION } from '$lib/constants';
-	import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
+	import { getAlbumYouTubeTrackLinksQuery } from '$lib/queries/catalog/AlbumQueries.svelte';
+	import { createDeleteYouTubeLinkMutation } from '$lib/queries/youtube/YouTubeQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { launchYouTubePlayback } from '$lib/player/launchYouTubePlayback';
 	import { launchTrackPlayback } from '$lib/player/launchTrackPlayback';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { api } from '$lib/api/client';
 	import {
 		buildQueueItemFromYouTube,
 		buildQueueItemsFromYouTube,
@@ -49,12 +49,13 @@
 
 	let { open = $bindable(), link, onclose, onedit, ondelete }: Props = $props();
 
-	let tracks = $state<YouTubeTrackLink[]>([]);
-	let loadingTracks = $state(false);
-	let trackError = $state(false);
+	const trackLinksQuery = getAlbumYouTubeTrackLinksQuery(() => (open && link ? link.album_id : ''));
+	const tracks = $derived(trackLinksQuery.data ?? []);
+	const loadingTracks = $derived(trackLinksQuery.isLoading);
+	const trackError = $derived(trackLinksQuery.isError);
+	const deleteLink = createDeleteYouTubeLinkMutation();
 	let confirmingDelete = $state(false);
 	let deleting = $state(false);
-	let fetchId = 0;
 
 	let canNavigate = $derived(!link?.is_manual && !!link?.album_id);
 	let trackSections = $derived.by(() => getTrackSections());
@@ -95,29 +96,8 @@
 		if (open && link) {
 			confirmingDelete = false;
 			deleting = false;
-			fetchTracks(link.album_id);
-		}
-		if (!open) {
-			tracks = [];
 		}
 	});
-
-	async function fetchTracks(albumId: string): Promise<void> {
-		const id = ++fetchId;
-		loadingTracks = true;
-		trackError = false;
-		try {
-			const data = await api.global.v3.GET(YOUTUBE_ENDPOINTS.trackLinks(albumId));
-			if (id !== fetchId) return;
-			tracks = data.sort(compareDiscTrack);
-		} catch (_e) {
-			if (id === fetchId) {
-				trackError = true;
-			}
-		} finally {
-			if (id === fetchId) loadingTracks = false;
-		}
-	}
 
 	function handleClose(): void {
 		open = false;
@@ -277,7 +257,7 @@
 		}
 		deleting = true;
 		try {
-			await api.global.v3.DELETE(YOUTUBE_ENDPOINTS.link(link.album_id));
+			await deleteLink.mutateAsync(link.album_id);
 			toastStore.show({ message: 'Link removed', type: 'success', duration: TOAST_DURATION });
 			open = false;
 			ondelete(link.album_id);
@@ -424,7 +404,7 @@
 				<div class="text-center py-10">
 					<div class="alert alert-error max-w-sm mx-auto">
 						<span class="text-sm">Couldn't load the track list</span>
-						<Button variant="ghost" size="sm" onclick={() => link && fetchTracks(link.album_id)}
+						<Button variant="ghost" size="sm" onclick={() => void trackLinksQuery.refetch()}
 							>Retry</Button
 						>
 					</div>

@@ -1,5 +1,6 @@
 import { browser } from '$app/environment';
-import { ApiError, TransportError, api } from '$lib/api/client';
+import { api } from '$lib/api/client';
+import { ApiError, TransportError } from '$lib/api/errors';
 import { queryClient } from '$lib/queries/QueryClient';
 import { AUTH_FREE_PATHS } from '$lib/constants';
 import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
@@ -54,7 +55,7 @@ export const load: LayoutLoad = async ({ url }) => {
 	if (!authStore.initialized) {
 		try {
 			const status = await retryUnreached(() =>
-				api.global.v3.GET(AUTH_ENDPOINTS.setupStatus, { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
+				api.v3.GET(AUTH_ENDPOINTS.setupStatus, { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
 			);
 			setupRequired = status.setup_required;
 			authStore.setSetupRequired(setupRequired);
@@ -64,7 +65,7 @@ export const load: LayoutLoad = async ({ url }) => {
 
 		try {
 			const user = await retryUnreached(() =>
-				api.global.v3.GET(PROFILE_ENDPOINTS.get(), { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
+				api.v3.GET(PROFILE_ENDPOINTS.get(), { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
 			);
 			authStore.setUser(toAuthUser(user));
 		} catch (cause) {

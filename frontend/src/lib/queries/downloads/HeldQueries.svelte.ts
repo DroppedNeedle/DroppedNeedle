@@ -26,7 +26,7 @@ export const getHeldEntriesQuery = (
 	createQuery(() => ({
 		enabled: getEnabled(),
 		queryKey: DownloadQueryKeyFactory.held(authStore.user?.id, getFilters()),
-		queryFn: ({ signal }) => api.global.v3.GET(HELD_ENDPOINTS.list(getFilters()), { signal })
+		queryFn: ({ signal }) => api.v3.GET(HELD_ENDPOINTS.list(getFilters()), { signal })
 	}));
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -111,8 +111,7 @@ const fileBody = (input: HeldFilesInput) => ({ file_ids: input.fileIds ?? null }
 /** Import, Retry, "Use this version" and "Use this file" all place files this way. */
 export const importHeldMutation = () =>
 	heldMutation(
-		(input: HeldFilesInput) =>
-			api.global.v3.POST(HELD_ENDPOINTS.import(input.entryId), fileBody(input)),
+		(input: HeldFilesInput) => api.v3.POST(HELD_ENDPOINTS.import(input.entryId), fileBody(input)),
 		'Could not import the held files'
 	);
 
@@ -120,7 +119,7 @@ export const importHeldMutation = () =>
 export const matchHeldMutation = () =>
 	heldMutation(
 		(input: HeldMatchInput) =>
-			api.global.v3.POST(HELD_ENDPOINTS.match(input.entryId), {
+			api.v3.POST(HELD_ENDPOINTS.match(input.entryId), {
 				release_group_mbid: input.matchMbid,
 				file_ids: input.fileIds ?? null
 			}),
@@ -129,15 +128,13 @@ export const matchHeldMutation = () =>
 
 export const recheckHeldMutation = () =>
 	heldMutation(
-		(input: HeldFilesInput) =>
-			api.global.v3.POST(HELD_ENDPOINTS.recheck(input.entryId), fileBody(input)),
+		(input: HeldFilesInput) => api.v3.POST(HELD_ENDPOINTS.recheck(input.entryId), fileBody(input)),
 		'Could not re-check the held files'
 	);
 
 export const discardHeldMutation = () =>
 	heldMutation(
-		(input: HeldFilesInput) =>
-			api.global.v3.POST(HELD_ENDPOINTS.discard(input.entryId), fileBody(input)),
+		(input: HeldFilesInput) => api.v3.POST(HELD_ENDPOINTS.discard(input.entryId), fileBody(input)),
 		'Could not discard the held files'
 	);
 
@@ -146,7 +143,7 @@ export const discardHeldMutation = () =>
 export const recheckAllHeldMutation = () =>
 	createMutation(() => ({
 		mutationFn: (entryIds: number[] | null) =>
-			api.global.v3.POST(HELD_ENDPOINTS.recheckAll(), { entry_ids: entryIds }),
+			api.v3.POST(HELD_ENDPOINTS.recheckAll(), { entry_ids: entryIds }),
 		onSuccess: async (data: HeldRecheckAllResult) => {
 			const imported = data.results.filter((r) => r.status === 'imported').length;
 			const stillHeld = data.results.filter((r) => r.status === 'still_held').length;

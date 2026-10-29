@@ -5,7 +5,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { put: vi.fn(), v3: { POST: vi.fn() } } }
+	api: { put: vi.fn(), v3: { POST: vi.fn() } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({

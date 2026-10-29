@@ -106,7 +106,7 @@ export async function fetchPlaylist(
 	id: string,
 	options?: { signal?: AbortSignal }
 ): Promise<PlaylistDetailItem> {
-	const data = await api.global.v3.GET(PlaylistV3Api.detail(id), { signal: options?.signal });
+	const data = await api.v3.GET(PlaylistV3Api.detail(id), { signal: options?.signal });
 	return toPageDetail(data);
 }
 
@@ -144,7 +144,7 @@ export async function requestMissingTracks(tracks: PlaylistTrack[]): Promise<Bat
 			skipped: 0
 		};
 	}
-	const data = await api.global.v3.POST(REQUESTS_ENDPOINTS.requestBatch(), { items });
+	const data = await api.v3.POST(REQUESTS_ENDPOINTS.requestBatch(), { items });
 	return {
 		success: data.success,
 		message: data.message,

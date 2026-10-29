@@ -21,7 +21,7 @@ export const getDropImportJobsQuery = (
 		// The server sends job and item status as plain strings; the screens
 		// narrow them to the values it uses.
 		queryFn: async ({ signal }) =>
-			(await api.global.v3.GET(DROP_IMPORT_ENDPOINTS.jobs(getAll()), {
+			(await api.v3.GET(DROP_IMPORT_ENDPOINTS.jobs(getAll()), {
 				signal
 			})) as DropImportJobList,
 		enabled: getEnabled(),

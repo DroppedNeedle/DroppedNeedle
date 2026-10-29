@@ -40,7 +40,7 @@ export function createLibraryIdentityPreparation(getUserId: () => string | undef
 	return createMutation(() => ({
 		mutationFn: async (rootIds: string[]) =>
 			toOperationResponse(
-				await api.global.v3.POST(LibraryV3Api.identityPreparations(), {
+				await api.v3.POST(LibraryV3Api.identityPreparations(), {
 					idempotency_key: createUuid(),
 					root_ids: rootIds
 				})
@@ -58,7 +58,7 @@ export function applyLibraryIdentityPreparation(getUserId: () => string | undefi
 	return createMutation(() => ({
 		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
 			toOperationResponse(
-				await api.global.v3.POST(LibraryV3Api.applyIdentityPreparation(input.jobId), {
+				await api.v3.POST(LibraryV3Api.applyIdentityPreparation(input.jobId), {
 					expected_row_revision: input.expectedRevision,
 					confirmation: true
 				})
@@ -76,7 +76,7 @@ export function discardLibraryIdentityPreparation(getUserId: () => string | unde
 	return createMutation(() => ({
 		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
 			toOperationResponse(
-				await api.global.v3.POST(LibraryV3Api.discardIdentityPreparation(input.jobId), {
+				await api.v3.POST(LibraryV3Api.discardIdentityPreparation(input.jobId), {
 					expected_row_revision: input.expectedRevision
 				})
 			),
@@ -96,7 +96,7 @@ export function undoLibraryAutomaticEdition(getUserId: () => string | undefined)
 			expectedAlbumRevision: number;
 			expectedIdentityRevision: number;
 		}) =>
-			api.global.v3.POST(LibraryV3Api.undoAutomaticEdition(input.albumId), {
+			api.v3.POST(LibraryV3Api.undoAutomaticEdition(input.albumId), {
 				expected_album_revision: input.expectedAlbumRevision,
 				expected_identity_revision: input.expectedIdentityRevision
 			}),

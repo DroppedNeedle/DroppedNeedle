@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '../../auth.css';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createPasswordRecoveryResetMutation } from '$lib/queries/auth/AuthMutations.svelte';
 	import {

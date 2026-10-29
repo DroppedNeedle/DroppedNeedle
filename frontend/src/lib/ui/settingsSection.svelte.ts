@@ -20,7 +20,7 @@
 */
 import { untrack } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
-import { ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';

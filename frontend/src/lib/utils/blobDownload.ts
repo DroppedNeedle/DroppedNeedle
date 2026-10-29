@@ -1,4 +1,5 @@
-import { ApiError, api } from '$lib/api/client';
+import { api } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 
 /**
  * Download a file through the api client so failures surface as errors
@@ -8,7 +9,7 @@ import { ApiError, api } from '$lib/api/client';
  * callers turn these into toasts.
  */
 export async function downloadBlob(url: string, filename?: string): Promise<void> {
-	const response = await api.global.raw(url);
+	const response = await api.raw(url);
 	if (!response.ok) {
 		throw new ApiError(response.status, `Download failed with status ${response.status}`);
 	}

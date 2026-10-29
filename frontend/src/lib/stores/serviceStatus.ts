@@ -18,31 +18,10 @@ function createServiceStatusStore() {
 	return {
 		subscribe,
 
-		/**
-		 * Merge degradation info from a backend response.
-		 * Called by pageFetch / API wrappers after every successful response.
-		 */
-		recordFromResponse(serviceStatus: ServiceDegradation | null | undefined) {
-			if (!serviceStatus || Object.keys(serviceStatus).length === 0) return;
+		/** Merge the degraded sources one answer reported. */
+		recordFromResponse(serviceStatus: ServiceDegradation) {
+			if (Object.keys(serviceStatus).length === 0) return;
 			update((current) => ({ ...current, ...serviceStatus }));
-			scheduleClear();
-		},
-
-		/**
-		 * Parse the X-Degraded-Services header (comma-separated source names).
-		 */
-		recordFromHeader(header: string | null) {
-			if (!header) return;
-			const sources = header
-				.split(',')
-				.map((s) => s.trim())
-				.filter(Boolean);
-			if (sources.length === 0) return;
-			const patch: ServiceDegradation = {};
-			for (const src of sources) {
-				patch[src] = 'error';
-			}
-			update((current) => ({ ...current, ...patch }));
 			scheduleClear();
 		},
 
@@ -55,3 +34,26 @@ function createServiceStatusStore() {
 }
 
 export const serviceStatusStore = createServiceStatusStore();
+
+function serviceStatusOf(data: unknown): ServiceDegradation | null {
+	if (!data || typeof data !== 'object' || !('service_status' in data)) return null;
+	const status = data.service_status;
+	if (!status || typeof status !== 'object' || Array.isArray(status)) return null;
+	return status as ServiceDegradation;
+}
+
+/**
+ * Records the `service_status` a degraded answer carries. The query and
+ * mutation caches call it for every success, so no hook reads it by hand; a
+ * paged query's answer is checked page by page.
+ */
+export function recordServiceStatus(data: unknown): void {
+	const pages =
+		data && typeof data === 'object' && 'pages' in data && Array.isArray(data.pages)
+			? data.pages
+			: [data];
+	for (const page of pages) {
+		const status = serviceStatusOf(page);
+		if (status) serviceStatusStore.recordFromResponse(status);
+	}
+}

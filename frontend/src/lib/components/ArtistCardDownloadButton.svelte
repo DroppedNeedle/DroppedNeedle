@@ -4,9 +4,7 @@
 		discographyDownloadStore,
 		type DiscographyRelease
 	} from '$lib/stores/discographyDownload.svelte';
-	import { api } from '$lib/api/client';
-	import { toArtistReleases } from '$lib/queries/catalog/catalogAdapters';
-	import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
+	import { fetchArtistDiscography } from '$lib/queries/artist/ArtistQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
@@ -26,9 +24,7 @@
 		loading = true;
 
 		try {
-			const data = toArtistReleases(
-				await api.global.v3.GET(CATALOG_ENDPOINTS.artistReleases(artistMbid, 0, 200))
-			);
+			const data = await fetchArtistDiscography(artistMbid);
 
 			const allReleases: DiscographyRelease[] = [
 				...data.albums.map((r) => ({ ...r, type: r.type ?? 'Album' })),

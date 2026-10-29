@@ -22,7 +22,7 @@ export function needsHydration(item: QueueItem): boolean {
 export async function resolveRadioPatch(item: QueueItem): Promise<Partial<QueueItem> | null> {
 	if (item.sourceType !== 'youtube' || item.trackSourceId) return {};
 	try {
-		const data = await api.global.v3.GET(
+		const data = await api.v3.GET(
 			DiscoverV3Api.youtubeTrackSearch(item.artistName, item.trackName)
 		);
 		if (data.video_id) {

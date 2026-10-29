@@ -5,7 +5,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { PUT: vi.fn(), DELETE: vi.fn() } } }
+	api: { v3: { PUT: vi.fn(), DELETE: vi.fn() } }
 }));
 
 const { mockRemoveMbid } = vi.hoisted(() => ({ mockRemoveMbid: vi.fn() }));
@@ -25,7 +25,7 @@ import { LibraryV3Api } from './LibraryV3Api';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
 
 // The typed client's DELETE resolves to the response body; the mock stands in for it.
-const mockDelete = vi.mocked(api.global.v3.DELETE) as unknown as ReturnType<typeof vi.fn>;
+const mockDelete = vi.mocked(api.v3.DELETE) as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -102,6 +102,6 @@ describe('library scan mutations', () => {
 			scan_frequency: '6hr',
 			daily_scan_time: '03:00'
 		});
-		expect(vi.mocked(api.global.v3.PUT).mock.calls[0][0]).toBe('/api/v3/settings/library/schedule');
+		expect(vi.mocked(api.v3.PUT).mock.calls[0][0]).toBe('/api/v3/settings/library/schedule');
 	});
 });

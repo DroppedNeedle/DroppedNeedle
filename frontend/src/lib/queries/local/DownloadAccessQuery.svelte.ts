@@ -9,7 +9,7 @@ import { STALE_LIVE } from '$lib/queries/staleTime';
 export const getDownloadAccessQueryOptions = (userId: string | undefined) =>
 	queryOptions({
 		queryKey: LOCAL_KEYS.downloadAccess(userId),
-		queryFn: ({ signal }) => api.global.v3.GET(LocalDownloadsApi.access(), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(LocalDownloadsApi.access(), { signal }),
 		// The admin can flip the setting at any time: never serve a stale
 		// persisted bit (same reasoning as the admin user-quota query).
 		staleTime: STALE_LIVE,

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RadioPlanTrack } from '$lib/queries/discover/types';
 
 const { apiMock, playerMock, toastMock } = vi.hoisted(() => ({
-	apiMock: { global: { get: vi.fn(), post: vi.fn() } },
+	apiMock: { get: vi.fn(), post: vi.fn() },
 	playerMock: {
 		queue: [] as unknown[],
 		currentIndex: 0,
@@ -17,7 +17,7 @@ const { apiMock, playerMock, toastMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: apiMock.global.get, POST: apiMock.global.post } } }
+	api: { v3: { GET: apiMock.get, POST: apiMock.post } }
 }));
 vi.mock('$lib/stores/player.svelte', () => ({ playerStore: playerMock }));
 vi.mock('$lib/stores/playbackToast.svelte', () => ({ playbackToast: toastMock }));
@@ -71,7 +71,7 @@ describe('launchRadio', () => {
 	});
 
 	it('resolves the first YouTube placeholder BEFORE playback starts', async () => {
-		apiMock.global.post.mockResolvedValue({ title: 'Radio', tracks: [track()] });
+		apiMock.post.mockResolvedValue({ title: 'Radio', tracks: [track()] });
 		resolveRadioPatch.mockResolvedValue({ trackSourceId: 'vid-1' });
 
 		const ok = await launchRadio({ seed_type: 'genre', seed_id: 'x' }, true);
@@ -83,7 +83,7 @@ describe('launchRadio', () => {
 	});
 
 	it('drops dead heads and aborts when nothing resolves', async () => {
-		apiMock.global.post.mockResolvedValue({ title: 'Radio', tracks: [track()] });
+		apiMock.post.mockResolvedValue({ title: 'Radio', tracks: [track()] });
 		resolveRadioPatch.mockResolvedValue(null);
 
 		const ok = await launchRadio({ seed_type: 'genre', seed_id: 'x' }, true);
@@ -94,7 +94,7 @@ describe('launchRadio', () => {
 	});
 
 	it('dedupes tracks within the complete plan', async () => {
-		apiMock.global.post.mockResolvedValue({
+		apiMock.post.mockResolvedValue({
 			title: 'Radio',
 			tracks: [track(), track()] // duplicate in one plan
 		});
@@ -107,7 +107,7 @@ describe('launchRadio', () => {
 
 	it('does not start playback when the player closes during tuning', async () => {
 		let finishPlan: (value: { title: string; tracks: RadioPlanTrack[] }) => void = () => {};
-		apiMock.global.post.mockImplementationOnce(
+		apiMock.post.mockImplementationOnce(
 			() =>
 				new Promise((resolve) => {
 					finishPlan = resolve;
@@ -125,7 +125,7 @@ describe('launchRadio', () => {
 	it('lets the newest station win when plans finish out of order', async () => {
 		let finishFirst: (value: { title: string; tracks: RadioPlanTrack[] }) => void = () => {};
 		let finishSecond: (value: { title: string; tracks: RadioPlanTrack[] }) => void = () => {};
-		apiMock.global.post
+		apiMock.post
 			.mockImplementationOnce(
 				() =>
 					new Promise((resolve) => {

@@ -37,6 +37,8 @@ export const RemoteQueryKeyFactory = {
 		[...RemoteQueryKeyFactory.source(userId, source), 'stats'] as const,
 	infoArtist: (userId: UserId, source: RemoteSource, id: string) =>
 		[...RemoteQueryKeyFactory.source(userId, source), 'info', 'artists', id] as const,
+	infoAlbum: (userId: UserId, source: RemoteSource, id: string) =>
+		[...RemoteQueryKeyFactory.source(userId, source), 'info', 'albums', id] as const,
 	mix: (userId: UserId, source: RemoteSource, id: string, params: RemoteMixParams) =>
 		[
 			...RemoteQueryKeyFactory.source(userId, source),

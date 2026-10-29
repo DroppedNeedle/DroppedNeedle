@@ -21,7 +21,7 @@ function buildMeta(link: YouTubeLink): TrackMeta {
 
 async function fetchTrackItems(link: YouTubeLink): Promise<FetchResult> {
 	try {
-		const tracks = await api.global.v3.GET(YOUTUBE_ENDPOINTS.trackLinks(link.album_id));
+		const tracks = await api.v3.GET(YOUTUBE_ENDPOINTS.trackLinks(link.album_id));
 		if (tracks.length === 0) return { items: [], error: false };
 		return { items: buildQueueItemsFromYouTube(tracks, buildMeta(link)), error: false };
 	} catch {

@@ -10,19 +10,19 @@ export const getTargetLibrarySettingsQuery = (enabled: Getter<boolean> = () => t
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.targetSettings(),
 		queryFn: async ({ signal }) =>
-			toTargetLibrarySettings(await api.global.v3.GET(LibraryV3Api.settings(), { signal }))
+			toTargetLibrarySettings(await api.v3.GET(LibraryV3Api.settings(), { signal }))
 	}));
 
 export const getLibraryRestorableRootsQuery = (enabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.restorableRoots(),
-		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.restorableRoots(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.restorableRoots(), { signal })
 	}));
 
 export const getLibraryPolicyTreeQuery = (enabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.policyTree(),
-		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.policyTree(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.policyTree(), { signal })
 	}));

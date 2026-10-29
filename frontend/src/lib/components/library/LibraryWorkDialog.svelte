@@ -6,7 +6,7 @@
 	import { retryPendingLibraryReviews } from '$lib/queries/library/LibraryReviewMutations.svelte';
 	import { getPendingReviewCountQuery } from '$lib/queries/library/LibraryReviewQueries.svelte';
 	import type { ScanKind } from '$lib/queries/library/LibraryOperationsTypes';
-	import { TransportError } from '$lib/api/client';
+	import { TransportError } from '$lib/api/errors';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	interface Props {

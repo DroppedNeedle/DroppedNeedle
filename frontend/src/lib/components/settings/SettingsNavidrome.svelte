@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
-	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import {
+		createNavidromePlaylistSyncMutation,
 		createSaveNavidromeSettingsMutation,
 		createVerifyNavidromeMutation,
 		getNavidromeSettingsQuery
 	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
-	import { api, ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import type { NavidromePlaylistSyncResult } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -38,6 +38,7 @@
 	// The switch stays locked until a test passes, unless already on.
 	const enableLocked = $derived(!section.testPassed && !section.saved?.enabled);
 
+	const playlistSync = createNavidromePlaylistSyncMutation();
 	let syncing = $state(false);
 	let syncResult = $state<NavidromePlaylistSyncResult | null>(null);
 
@@ -50,7 +51,7 @@
 				await section.save();
 				if (section.dirty) return;
 			}
-			syncResult = await api.global.v3.POST(SETTINGS_ENDPOINTS.navidromePlaylistSync());
+			syncResult = await playlistSync.mutateAsync();
 		} catch (error) {
 			syncResult = {
 				success: false,

@@ -7,7 +7,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: vi.fn(), DELETE: vi.fn() } } }
+	api: { v3: { GET: vi.fn(), DELETE: vi.fn() } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -29,10 +29,8 @@ import { SESSIONS_ENDPOINTS } from './endpoints';
 import { getSessionsQuery, getSessionsQueryOptions } from './SessionsQuery.svelte';
 import { createRevokeSessionMutation } from './SessionsMutations.svelte';
 
-const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock<
-	(...args: unknown[]) => Promise<unknown>
->;
-const mockDelete = vi.mocked(api.global.v3.DELETE) as unknown as Mock<
+const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
+const mockDelete = vi.mocked(api.v3.DELETE) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
 const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);

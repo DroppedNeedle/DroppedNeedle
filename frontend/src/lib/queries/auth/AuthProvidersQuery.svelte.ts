@@ -9,5 +9,5 @@ export const getAuthProvidersQuery = () =>
 	createQuery(() => ({
 		queryKey: AuthQueryKeyFactory.providers(),
 		queryFn: ({ signal }): Promise<AuthProviders> =>
-			api.global.v3.GET(AUTH_ENDPOINTS.providers, { signal })
+			api.v3.GET(AUTH_ENDPOINTS.providers, { signal })
 	}));

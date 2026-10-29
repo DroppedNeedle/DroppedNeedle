@@ -85,6 +85,6 @@ export async function fetchLibraryTracks(
 	after: string | null,
 	signal?: AbortSignal
 ): Promise<LibraryTrackPage> {
-	const page = await api.global.v3.GET(LibraryV3Api.tracks(params, after), { signal });
+	const page = await api.v3.GET(LibraryV3Api.tracks(params, after), { signal });
 	return { items: page.items.map(toNativeTrack), total: page.total, next: page.next ?? null };
 }

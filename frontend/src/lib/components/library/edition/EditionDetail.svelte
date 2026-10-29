@@ -7,7 +7,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { ExternalLink, EyeOff, Trash2, Undo2 } from 'lucide-svelte';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import { coverPath } from '$lib/api/covers';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { outsideLink } from '$lib/components/outsideLink';

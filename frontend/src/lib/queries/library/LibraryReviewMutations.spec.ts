@@ -7,7 +7,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 const apiPost = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { POST: apiPost } } }
+	api: { v3: { POST: apiPost } }
 }));
 
 const invalidate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));

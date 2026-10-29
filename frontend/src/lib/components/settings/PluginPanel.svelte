@@ -2,9 +2,11 @@
 	import { onMount } from 'svelte';
 
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { api } from '$lib/api/client';
-	import { PLUGIN_ENDPOINTS } from '$lib/queries/plugins/endpoints';
-	import { fetchPluginSources } from '$lib/queries/plugins/PluginSourceQueries.svelte';
+	import {
+		answerPanelRequest,
+		PANEL_METHODS,
+		probePanelPage
+	} from '$lib/queries/plugins/PluginPanelRequests';
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
@@ -24,40 +26,12 @@
 	let loading: boolean = $state(true);
 	let loadError: string | null = $state(null);
 
-	const RPC_METHODS = new Set(['sources.list', 'search.preview', 'get_settings', 'health.get']);
-
 	function reply(target: Window | null, id: unknown, payload: Record<string, unknown>): void {
 		try {
 			target?.postMessage({ id, ...payload }, '*');
 		} catch {
 			// opaque-origin target may reject; panel stays usable without the reply
 		}
-	}
-
-	async function handleRpc(
-		method: string,
-		params: Record<string, unknown>,
-		signal: AbortSignal
-	): Promise<unknown> {
-		if (method === 'sources.list') {
-			return fetchPluginSources(signal);
-		}
-		if (method === 'search.preview') {
-			const query = typeof params.query === 'string' ? params.query.slice(0, 200) : '';
-			return api.global.v3.GET(
-				PLUGIN_ENDPOINTS.ext(pluginName, 'search', query ? { query } : undefined),
-				{ signal }
-			);
-		}
-		if (method === 'get_settings') {
-			const list = await api.global.v3.GET(PLUGIN_ENDPOINTS.list(), { signal });
-			const own = list.plugins.find((p) => p.name === pluginName);
-			return { settings_values: own?.settings_values ?? {} };
-		}
-		const list = await api.global.v3.GET(PLUGIN_ENDPOINTS.list(), { signal });
-		const own = list.plugins.find((p) => p.name === pluginName);
-		if (!own) throw new Error('Plugin not found');
-		return { enabled: own.enabled, error: own.error, active_capabilities: own.active_capabilities };
 	}
 
 	onMount(() => {
@@ -67,12 +41,8 @@
 
 		async function load(): Promise<void> {
 			try {
-				// A frame cannot tell the page whether its load failed, so ask first.
-				const address = PLUGIN_ENDPOINTS.panelPage(pluginName);
-				const res = await api.global.head(address, { signal });
+				const address = await probePanelPage(pluginName, signal);
 				if (cancelled) return;
-				if (res.status === 404) throw new Error('the panel file is missing or empty');
-				if (!res.ok) throw new Error(`the server answered ${res.status}`);
 				src = getApiUrl(address);
 			} catch (error) {
 				if (cancelled || signal.aborted) return;
@@ -89,7 +59,7 @@
 			if (!data || typeof data !== 'object') return;
 			const { id, method } = data;
 			if ((typeof id !== 'string' && typeof id !== 'number') || typeof method !== 'string') return;
-			if (!RPC_METHODS.has(method)) {
+			if (!PANEL_METHODS.has(method)) {
 				reply(event.source as Window, id, {
 					error: { code: 'unknown_method', message: `Unknown method ${method}` }
 				});
@@ -99,7 +69,7 @@
 				data.params && typeof data.params === 'object'
 					? (data.params as Record<string, unknown>)
 					: {};
-			handleRpc(method, params, signal).then(
+			answerPanelRequest(pluginName, method, params, signal).then(
 				(result) => reply(event.source as Window, id, { result }),
 				(error: unknown) =>
 					reply(event.source as Window, id, {

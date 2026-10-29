@@ -13,7 +13,7 @@ import type { PlexPollResult, PlexPurpose, PlexStartBody } from './types';
 const pinSecrets = new Map<number, string>();
 
 export async function startPlexFlow(purpose: PlexPurpose): Promise<PlexStartBody> {
-	const started = await api.global.v3.POST(PLEX_ENDPOINTS.start(purpose));
+	const started = await api.v3.POST(PLEX_ENDPOINTS.start(purpose));
 	pinSecrets.set(started.pin_id, started.pin_secret);
 	return started;
 }
@@ -25,7 +25,7 @@ export async function pollPlexFlow<P extends PlexPurpose>(
 	// The poll route is one literal per purpose; the union result narrows to
 	// the caller's purpose at runtime, so the cast only recovers the static
 	// link the generic erases.
-	const result = await api.global.v3.POST(PLEX_ENDPOINTS.poll(purpose), {
+	const result = await api.v3.POST(PLEX_ENDPOINTS.poll(purpose), {
 		pin_id: pinId,
 		pin_secret: pinSecrets.get(pinId) ?? ''
 	});

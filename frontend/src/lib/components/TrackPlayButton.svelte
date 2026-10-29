@@ -1,13 +1,12 @@
 <script lang="ts">
 	import { Download, Play } from 'lucide-svelte';
 	import { TOAST_DURATION } from '$lib/constants';
-	import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
+	import { createGenerateYouTubeTrackLinkMutation } from '$lib/queries/youtube/YouTubeQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { launchTrackPlayback } from '$lib/player/launchTrackPlayback';
 	import { compareDiscTrack, getDiscTrackKey, normalizeDiscNumber } from '$lib/player/queueHelpers';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
-	import { api } from '$lib/api/client';
 	import type { YouTubeTrackLink, YouTubeQuotaStatus } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 
@@ -43,6 +42,7 @@
 		onQuotaUpdate
 	}: Props = $props();
 
+	const generateTrackLink = createGenerateYouTubeTrackLinkMutation();
 	let generating = $state(false);
 
 	const hasLink = $derived(trackLink !== null);
@@ -66,7 +66,7 @@
 	async function generateLink(): Promise<void> {
 		generating = true;
 		try {
-			const data = await api.global.v3.POST(YOUTUBE_ENDPOINTS.generateTrack(), {
+			const data = await generateTrackLink.mutateAsync({
 				album_id: albumId,
 				album_name: albumName,
 				artist_name: artistName,

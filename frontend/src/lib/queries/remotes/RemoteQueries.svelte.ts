@@ -1,7 +1,8 @@
 import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
-import { api, ApiError } from '$lib/api/client';
+import { api } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 import { authStore } from '$lib/stores/authStore.svelte';
 
 import {
@@ -14,6 +15,7 @@ import {
 	type RemoteTrackParams
 } from './endpoints';
 import { invalidateQueriesWithPersister, queryClient } from '../QueryClient';
+import { readNow } from '../readNow';
 import { RemoteQueryKeyFactory } from './RemoteQueryKeyFactory';
 import { remoteApi } from './remoteApi';
 import type { RemoteAlbumPage, RemoteFolders, RemoteSource, RemoteTrack } from './types';
@@ -48,15 +50,14 @@ function query<T>(
 export const getRemoteHubQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.hub(userId(), getSource()),
-		load: (signal: AbortSignal) => api.global.v3.GET(REMOTE_ENDPOINTS.hub(getSource()), { signal }),
+		load: (signal: AbortSignal) => api.v3.GET(REMOTE_ENDPOINTS.hub(getSource()), { signal }),
 		getEnabled
 	}));
 
 export const getRemoteConnectionQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.connection(userId(), getSource()),
-		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.connection(getSource()), { signal }),
+		load: (signal: AbortSignal) => api.v3.GET(REMOTE_ENDPOINTS.connection(getSource()), { signal }),
 		getEnabled
 	}));
 
@@ -64,15 +65,14 @@ export const getRemoteArtistIndexQuery = (getSource: Source, getEnabled: Enabled
 	query(() => ({
 		key: RemoteQueryKeyFactory.artistIndex(userId(), getSource()),
 		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.artistIndex(getSource()), { signal }),
+			api.v3.GET(REMOTE_ENDPOINTS.artistIndex(getSource()), { signal }),
 		getEnabled
 	}));
 
 export const getRemoteFavoritesQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.favorites(userId(), getSource()),
-		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.favorites(getSource()), { signal }),
+		load: (signal: AbortSignal) => api.v3.GET(REMOTE_ENDPOINTS.favorites(getSource()), { signal }),
 		getEnabled
 	}));
 
@@ -84,7 +84,7 @@ export const getRemoteHistoryQuery = (
 	query(() => ({
 		key: RemoteQueryKeyFactory.history(userId(), getSource(), getParams()),
 		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.history(getSource(), getParams()), { signal }),
+			api.v3.GET(REMOTE_ENDPOINTS.history(getSource(), getParams()), { signal }),
 		getEnabled
 	}));
 
@@ -103,7 +103,7 @@ export const getRemoteInfoArtistQuery = (
 	query(() => ({
 		key: RemoteQueryKeyFactory.infoArtist(userId(), getSource(), getId()),
 		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.infoArtist(getSource(), getId()), { signal }),
+			api.v3.GET(REMOTE_ENDPOINTS.infoArtist(getSource(), getId()), { signal }),
 		getEnabled,
 		extraGate: getId().length > 0
 	}));
@@ -117,7 +117,7 @@ export const getRemoteMixQuery = (
 	query(() => ({
 		key: RemoteQueryKeyFactory.mix(userId(), getSource(), getId(), getParams()),
 		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.mix(getSource(), getId(), getParams()), { signal }),
+			api.v3.GET(REMOTE_ENDPOINTS.mix(getSource(), getId(), getParams()), { signal }),
 		getEnabled,
 		extraGate: getId().length > 0
 	}));
@@ -131,7 +131,7 @@ export const getRemoteSimilarQuery = (
 	query(() => ({
 		key: RemoteQueryKeyFactory.similar(userId(), getSource(), getId(), getParams()),
 		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.similar(getSource(), getId(), getParams()), { signal }),
+			api.v3.GET(REMOTE_ENDPOINTS.similar(getSource(), getId(), getParams()), { signal }),
 		getEnabled,
 		extraGate: getId().length > 0
 	}));
@@ -145,7 +145,7 @@ export const getRemoteTopQuery = (
 	query(() => ({
 		key: RemoteQueryKeyFactory.top(userId(), getSource(), getArtist(), getLimit()),
 		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.top(getSource(), getArtist(), getLimit()), { signal }),
+			api.v3.GET(REMOTE_ENDPOINTS.top(getSource(), getArtist(), getLimit()), { signal }),
 		getEnabled,
 		extraGate: getArtist().length > 0
 	}));
@@ -158,7 +158,7 @@ export const getRemoteRandomQuery = (
 	query(() => ({
 		key: RemoteQueryKeyFactory.random(userId(), getSource(), getParams()),
 		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.random(getSource(), getParams()), { signal }),
+			api.v3.GET(REMOTE_ENDPOINTS.random(getSource(), getParams()), { signal }),
 		getEnabled
 	}));
 
@@ -170,14 +170,14 @@ export const getRemoteDiscoveryQuery = (
 	query(() => ({
 		key: RemoteQueryKeyFactory.discovery(userId(), getSource(), getCount()),
 		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.discovery(getSource(), getCount()), { signal }),
+			api.v3.GET(REMOTE_ENDPOINTS.discovery(getSource(), getCount()), { signal }),
 		getEnabled
 	}));
 
 export const getRemoteFoldersQuery = (getEnabled: Enabled = () => true) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.folders(userId()),
-		load: (signal: AbortSignal) => api.global.v3.GET(REMOTE_ENDPOINTS.folders(), { signal }),
+		load: (signal: AbortSignal) => api.v3.GET(REMOTE_ENDPOINTS.folders(), { signal }),
 		getEnabled
 	}));
 
@@ -198,24 +198,21 @@ export const getRemoteGenresQuery = (getSource: Source, getEnabled: Enabled = ()
 export const getRemoteMoodsQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.moods(userId(), getSource()),
-		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.moods(getSource()), { signal }),
+		load: (signal: AbortSignal) => api.v3.GET(REMOTE_ENDPOINTS.moods(getSource()), { signal }),
 		getEnabled
 	}));
 
 export const getRemoteFiltersQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.filters(userId(), getSource()),
-		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.filters(getSource()), { signal }),
+		load: (signal: AbortSignal) => api.v3.GET(REMOTE_ENDPOINTS.filters(getSource()), { signal }),
 		getEnabled
 	}));
 
 export const getRemoteAnalyticsQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.analytics(userId(), getSource()),
-		load: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.analytics(getSource()), { signal }),
+		load: (signal: AbortSignal) => api.v3.GET(REMOTE_ENDPOINTS.analytics(getSource()), { signal }),
 		getEnabled
 	}));
 
@@ -269,7 +266,7 @@ export const getRemoteAlbumsInfiniteQuery = (
 				signal: AbortSignal;
 			}): Promise<RemoteAlbumPage> => {
 				if (search) {
-					const found = await api.global.v3.GET(REMOTE_ENDPOINTS.search(source, { q: search }), {
+					const found = await api.v3.GET(REMOTE_ENDPOINTS.search(source, { q: search }), {
 						signal
 					});
 					return { items: found.albums, total: found.albums.length, limit: 0, offset: 0 };
@@ -321,7 +318,7 @@ export async function fetchRemoteGenreSongs(
 	const page = await queryClient.fetchQuery({
 		queryKey: RemoteQueryKeyFactory.genreSongs(userId(), source, chosen, params),
 		queryFn: ({ signal }) =>
-			api.global.v3.GET(
+			api.v3.GET(
 				multi
 					? REMOTE_ENDPOINTS.genresSongs(source, chosen, params)
 					: REMOTE_ENDPOINTS.genreSongs(source, chosen[0], params),
@@ -348,3 +345,15 @@ export function navidromeFolderScope(userId: string | null | undefined): string 
 /** Reloads everything shown for one server, for a page's refresh button. */
 export const refreshRemoteSource = (source: RemoteSource) =>
 	invalidateQueriesWithPersister({ queryKey: RemoteQueryKeyFactory.source(userId(), source) });
+
+/** A mix seeded from one item, for the play button that starts it. */
+export const fetchRemoteMix = (source: RemoteSource, id: string, params: RemoteMixParams) =>
+	readNow(RemoteQueryKeyFactory.mix(userId(), source, id, params), (signal) =>
+		api.v3.GET(REMOTE_ENDPOINTS.mix(source, id, params), { signal })
+	);
+
+/** An album's notes and links, for its info panel. */
+export const fetchRemoteAlbumInfo = (source: RemoteSource, id: string) =>
+	readNow(RemoteQueryKeyFactory.infoAlbum(userId(), source, id), (signal) =>
+		api.v3.GET(REMOTE_ENDPOINTS.infoAlbum(source, id), { signal })
+	);

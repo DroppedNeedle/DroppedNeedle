@@ -17,8 +17,7 @@ export const getArtistReconciliationProgressQuery = (getEnabled: Getter<boolean>
 	createQuery(() => ({
 		enabled: getEnabled(),
 		queryKey: ArtistReconciliationQueryKeyFactory.progress(authStore.user?.id),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(ARTIST_RECONCILIATION_ENDPOINTS.progress(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(ARTIST_RECONCILIATION_ENDPOINTS.progress(), { signal })
 	}));
 
 export const getArtistDuplicateGroupsQuery = (getParams: Getter<ArtistDuplicateGroupParams>) =>
@@ -28,7 +27,7 @@ export const getArtistDuplicateGroupsQuery = (getParams: Getter<ArtistDuplicateG
 			queryKey: ArtistReconciliationQueryKeyFactory.groups(authStore.user?.id, params),
 			initialPageParam: undefined as string | undefined,
 			queryFn: ({ pageParam, signal }) =>
-				api.global.v3.GET(
+				api.v3.GET(
 					ARTIST_RECONCILIATION_ENDPOINTS.groups({
 						limit: GROUP_PAGE_SIZE,
 						cursor: pageParam,
@@ -49,6 +48,6 @@ export const getArtistDuplicateGroupQuery = (getGroupId: Getter<string | null>) 
 			enabled: Boolean(groupId),
 			queryKey: ArtistReconciliationQueryKeyFactory.group(authStore.user?.id, groupId ?? ''),
 			queryFn: ({ signal }) =>
-				api.global.v3.GET(ARTIST_RECONCILIATION_ENDPOINTS.group(groupId ?? ''), { signal })
+				api.v3.GET(ARTIST_RECONCILIATION_ENDPOINTS.group(groupId ?? ''), { signal })
 		};
 	});

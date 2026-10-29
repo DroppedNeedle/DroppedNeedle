@@ -6,7 +6,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 	keepPreviousData: 'keepPreviousData'
 }));
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: vi.fn() } } }
+	api: { v3: { GET: vi.fn() } }
 }));
 
 import { LOCAL_KEYS } from './LocalV3Keys';

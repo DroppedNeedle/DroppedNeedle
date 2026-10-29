@@ -49,7 +49,7 @@ export const getRatingsQuery = (getIds: () => RatingIds | null) =>
 			queryKey: key,
 			enabled: Boolean(userId && (albumIds.length || trackIds.length || artistIds.length)),
 			queryFn: ({ signal }) =>
-				api.global.v3.POST(
+				api.v3.POST(
 					RatingV3Api.lookup(),
 					{ album_ids: albumIds, track_ids: trackIds, artist_ids: artistIds },
 					{ signal }
@@ -87,7 +87,7 @@ export function setRating() {
 		mutationKey: RatingQueryKeyFactory.prefix,
 		scope: { id: 'ratings' },
 		mutationFn: ({ kind, itemId, rating }: RateVars) =>
-			api.global.v3.PUT(RatingV3Api.rating(kind, itemId), { rating }),
+			api.v3.PUT(RatingV3Api.rating(kind, itemId), { rating }),
 		onMutate: async (vars: RateVars) => {
 			const root = RatingQueryKeyFactory.user(authStore.user?.id);
 			await queryClient.cancelQueries({ queryKey: root });

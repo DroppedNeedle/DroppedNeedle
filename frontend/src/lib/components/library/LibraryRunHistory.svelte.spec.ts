@@ -1,6 +1,6 @@
 import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render } from 'vitest-browser-svelte';
+import { renderWithQuery } from '$lib/test/render';
 import type { ScanRun } from '$lib/queries/library/LibraryOperationsTypes';
 
 function run(overrides: Partial<ScanRun> = {}): ScanRun {
@@ -54,7 +54,7 @@ vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
 	getLibraryRunHistoryQuery: () => h.history,
 	getLibraryRunFailuresQuery: () => h.failures
 }));
-vi.mock('$lib/api/client', () => ({ api: { global: { raw: h.raw } } }));
+vi.mock('$lib/api/client', () => ({ api: { raw: h.raw } }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
 
 import LibraryRunHistory from './LibraryRunHistory.svelte';
@@ -93,7 +93,7 @@ describe('LibraryRunHistory', () => {
 				}
 			})
 		);
-		await render(LibraryRunHistory);
+		await renderWithQuery(LibraryRunHistory, {});
 		await page.getByText('Details').first().click();
 		await page.getByRole('button', { name: /Export diagnostics for run run-safe-1/ }).click();
 		await expect
@@ -107,7 +107,7 @@ describe('LibraryRunHistory', () => {
 
 	it('uses fixed user-safe copy when an export fails', async () => {
 		h.raw.mockRejectedValue(new Error('/secret/path/provider-token'));
-		await render(LibraryRunHistory);
+		await renderWithQuery(LibraryRunHistory, {});
 		await page.getByText('Details').first().click();
 		await page.getByRole('button', { name: /Export diagnostics/ }).click();
 		await page.getByRole('button', { name: 'Export report' }).click();

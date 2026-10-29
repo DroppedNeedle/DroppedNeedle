@@ -10,7 +10,7 @@ export const getSessionsQueryOptions = (userId: string | undefined) =>
 	queryOptions({
 		queryKey: SessionsQueryKeyFactory.list(userId),
 		queryFn: ({ signal }) =>
-			api.global.v3.GET(SESSIONS_ENDPOINTS.list(), {
+			api.v3.GET(SESSIONS_ENDPOINTS.list(), {
 				signal,
 				timeoutMs: SESSIONS_TIMEOUT_MS
 			})

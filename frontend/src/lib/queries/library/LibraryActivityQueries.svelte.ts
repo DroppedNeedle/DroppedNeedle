@@ -10,7 +10,7 @@ export const getLibraryActivityQueryOptions = (userId: string | undefined) =>
 	queryOptions({
 		queryKey: LibraryQueryKeyFactory.activity(userId),
 		queryFn: async ({ signal }): Promise<LibraryActivityResponse> =>
-			(await api.global.v3.GET(LibraryV3Api.activity(), { signal })) as LibraryActivityResponse,
+			(await api.v3.GET(LibraryV3Api.activity(), { signal })) as LibraryActivityResponse,
 		staleTime: STALE_LIVE
 	});
 

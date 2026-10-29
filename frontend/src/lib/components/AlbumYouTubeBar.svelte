@@ -1,13 +1,15 @@
 <script lang="ts">
 	import { TOAST_DURATION } from '$lib/constants';
-	import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
+	import {
+		createGenerateAlbumYouTubeLinkMutation,
+		createGenerateYouTubeTrackLinksMutation
+	} from '$lib/queries/youtube/YouTubeQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { launchTrackPlayback } from '$lib/player/launchTrackPlayback';
 	import { launchYouTubePlayback } from '$lib/player/launchYouTubePlayback';
 	import { compareDiscTrack, getDiscTrackKey, normalizeDiscNumber } from '$lib/player/queueHelpers';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
-	import { api } from '$lib/api/client';
 	import { Link, Download, Search, Play } from 'lucide-svelte';
 	import type { Track, YouTubeLink, YouTubeTrackLink, YouTubeQuotaStatus } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
@@ -43,6 +45,8 @@
 		onQuotaUpdate
 	}: Props = $props();
 
+	const generateAlbumLinkMutation = createGenerateAlbumYouTubeLinkMutation();
+	const generateTrackLinks = createGenerateYouTubeTrackLinksMutation();
 	let batchGenerating = $state(false);
 	let generatingAlbumLink = $state(false);
 
@@ -69,7 +73,7 @@
 		if (albumLink?.video_id) return;
 		generatingAlbumLink = true;
 		try {
-			const data = await api.global.v3.POST(YOUTUBE_ENDPOINTS.generate(), {
+			const data = await generateAlbumLinkMutation.mutateAsync({
 				artist_name: artistName,
 				album_name: albumName,
 				album_id: albumId,
@@ -105,7 +109,7 @@
 
 		batchGenerating = true;
 		try {
-			const data = await api.global.v3.POST(YOUTUBE_ENDPOINTS.generateTracks(), {
+			const data = await generateTrackLinks.mutateAsync({
 				album_id: albumId,
 				album_name: albumName,
 				artist_name: artistName,

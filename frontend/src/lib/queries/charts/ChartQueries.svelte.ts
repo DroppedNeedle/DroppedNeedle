@@ -39,13 +39,13 @@ async function fetchChartPage(
 	signal?: AbortSignal
 ): Promise<ChartPage> {
 	if (chart === 'trending-artists') {
-		return api.global.v3.GET(HOME_ENDPOINTS.trendingArtists(params), { signal });
+		return api.v3.GET(HOME_ENDPOINTS.trendingArtists(params), { signal });
 	}
 	const url =
 		chart === 'popular-albums'
 			? HOME_ENDPOINTS.popularAlbums(params)
 			: HOME_ENDPOINTS.yourTopAlbums(params);
-	return api.global.v3.GET(url, { signal });
+	return api.v3.GET(url, { signal });
 }
 
 // The overview shows every range at once: one short page per range.

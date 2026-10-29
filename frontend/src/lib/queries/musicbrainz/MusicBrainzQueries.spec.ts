@@ -5,9 +5,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: {
-		global: { v3: { GET: vi.fn() } }
-	}
+	api: { v3: { GET: vi.fn() } }
 }));
 vi.mock('$app/environment', () => ({ browser: true }));
 
@@ -18,7 +16,7 @@ import { MusicBrainzQueryKeyFactory } from './MusicBrainzQueryKeyFactory';
 import { getMusicBrainzSourceScope, resetMusicBrainzSourceScope } from './sourceScope.svelte';
 import type { MusicBrainzSettingsResponse } from './types';
 
-const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock;
+const mockGet = vi.mocked(api.v3.GET) as unknown as Mock;
 
 const storage = new Map<string, string>();
 

@@ -5,6 +5,7 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { STALE_SLOW } from '$lib/queries/staleTime';
 import { authStore } from '$lib/stores/authStore.svelte';
+import { readNow } from '../readNow';
 import { DiscoverV3Api } from './DiscoverV3Api';
 import {
 	DiscoverQueryKeyFactory,
@@ -22,7 +23,7 @@ async function fetchDiscoverHome(
 	userId: DiscoverV3UserId,
 	signal?: AbortSignal
 ): Promise<DiscoverResponseV3> {
-	const fresh = await api.global.v3.GET(DiscoverV3Api.home(), {
+	const fresh = await api.v3.GET(DiscoverV3Api.home(), {
 		signal,
 		timeoutMs: 15_000
 	});
@@ -61,7 +62,7 @@ export const getDiscoveryBatchesV3Query = (getEnabled: Getter<boolean> = () => t
 	createQuery(() => ({
 		enabled: getEnabled() && Boolean(authStore.user?.id),
 		queryKey: DiscoverQueryKeyFactory.v3.batches(authStore.user?.id),
-		queryFn: ({ signal }) => api.global.v3.GET(DiscoverV3Api.batches(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(DiscoverV3Api.batches(), { signal })
 	}));
 
 export interface DiscoverV3RadioInput {
@@ -87,7 +88,7 @@ export const getDiscoverRadioV3Query = (getParams: Getter<DiscoverV3RadioInput>)
 				radioParams
 			),
 			queryFn: ({ signal }: { signal?: AbortSignal }) =>
-				api.global.v3.POST(
+				api.v3.POST(
 					DiscoverV3Api.radio(),
 					{
 						seed_type: params.seedType,
@@ -121,7 +122,7 @@ export const getDiscoverPlaylistSuggestionsV3Query = (
 				params.count ?? 15
 			),
 			queryFn: ({ signal }: { signal?: AbortSignal }) =>
-				api.global.v3.POST(
+				api.v3.POST(
 					DiscoverV3Api.playlistSuggestions(),
 					{
 						playlist_id: params.playlistId,
@@ -133,3 +134,9 @@ export const getDiscoverPlaylistSuggestionsV3Query = (
 			enabled: (params.enabled ?? true) && !!params.playlistId
 		};
 	});
+
+/** One batch's albums and their progress, read when its row opens. */
+export const fetchDiscoveryBatchV3 = (batchId: string) =>
+	readNow(DiscoverQueryKeyFactory.v3.batch(authStore.user?.id, batchId), (signal) =>
+		api.v3.GET(DiscoverV3Api.batch(batchId), { signal })
+	);

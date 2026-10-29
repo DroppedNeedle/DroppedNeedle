@@ -2,7 +2,7 @@
 	import '../../auth.css';
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import { getAuthProvidersQuery } from '$lib/queries/auth/AuthProvidersQuery.svelte';
 	import {
 		createJellyfinLoginMutation,

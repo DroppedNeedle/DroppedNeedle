@@ -7,8 +7,7 @@ import { AUTH_ENDPOINTS } from './endpoints';
 import type { ImportUsersResult, ImportUsersVars } from './types';
 
 /**
- * Admin user-import mutation. Uses the authenticated `api` client (NOT
- * `api.global` - import runs post-session). On success it invalidates the
+ * Admin user-import mutation. On success it invalidates the
  * candidate list so `already_imported` flips; the admin user list is on a legacy
  * fetch, so the caller refreshes it via its own onImported callback.
  */

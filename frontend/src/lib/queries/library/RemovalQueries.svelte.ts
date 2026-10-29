@@ -23,7 +23,7 @@ export const getAlbumRemovalsQuery = (getAlbumId: Getter<string>) =>
 		queryKey: LibraryQueryKeyFactory.catalog.albumRemovals(authStore.user?.id, getAlbumId()),
 		enabled: authStore.isTrusted && !!getAlbumId(),
 		queryFn: async ({ signal }) => {
-			const answer = await api.global.v3.GET(LibraryV3Api.albumRemovals(getAlbumId()), {
+			const answer = await api.v3.GET(LibraryV3Api.albumRemovals(getAlbumId()), {
 				signal
 			});
 			return answer.items;
@@ -50,8 +50,7 @@ export function putBackRemoval() {
 			albumId: string;
 			removalId: string;
 			releaseGroupMbid?: string | null;
-		}): Promise<PutBackAnswer> =>
-			api.global.v3.POST(LibraryV3Api.putBackRemoval(albumId, removalId)),
+		}): Promise<PutBackAnswer> => api.v3.POST(LibraryV3Api.putBackRemoval(albumId, removalId)),
 		onSuccess: async (_answer, { releaseGroupMbid }) => {
 			const userId = authStore.user?.id;
 			const albumPage = releaseGroupMbid

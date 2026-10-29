@@ -15,13 +15,13 @@ import type {
 
 export const createLocalLoginMutation = () =>
 	createMutation(() => ({
-		mutationFn: (vars: LocalLoginVars) => api.global.v3.POST(AUTH_ENDPOINTS.login, vars)
+		mutationFn: (vars: LocalLoginVars) => api.v3.POST(AUTH_ENDPOINTS.login, vars)
 	}));
 
 export const createPasswordRecoveryResetMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: PasswordRecoveryResetVars) =>
-			api.global.v3.POST(AUTH_ENDPOINTS.passwordRecoveryReset, vars)
+			api.v3.POST(AUTH_ENDPOINTS.passwordRecoveryReset, vars)
 	}));
 
 export const createPasswordRecoveryCodeMutation = () =>
@@ -32,23 +32,22 @@ export const createPasswordRecoveryCodeMutation = () =>
 
 export const createJellyfinLoginMutation = () =>
 	createMutation(() => ({
-		mutationFn: (vars: JellyfinLoginVars) => api.global.v3.POST(AUTH_ENDPOINTS.jellyfinLogin, vars)
+		mutationFn: (vars: JellyfinLoginVars) => api.v3.POST(AUTH_ENDPOINTS.jellyfinLogin, vars)
 	}));
 
 export const createSetupMutation = () =>
 	createMutation(() => ({
-		mutationFn: (vars: SetupVars) => api.global.v3.POST(AUTH_ENDPOINTS.setup, vars)
+		mutationFn: (vars: SetupVars) => api.v3.POST(AUTH_ENDPOINTS.setup, vars)
 	}));
 
 export const createOidcExchangeMutation = () =>
 	createMutation(() => ({
-		mutationFn: (vars: OidcExchangeVars) => api.global.v3.POST(AUTH_ENDPOINTS.oidcExchange, vars)
+		mutationFn: (vars: OidcExchangeVars) => api.v3.POST(AUTH_ENDPOINTS.oidcExchange, vars)
 	}));
 
 export const createOidcAuthorizeMutation = () =>
 	createMutation(() => ({
-		mutationFn: (): Promise<OidcAuthorizeResponse> =>
-			api.global.v3.POST(AUTH_ENDPOINTS.oidcAuthorize)
+		mutationFn: (): Promise<OidcAuthorizeResponse> => api.v3.POST(AUTH_ENDPOINTS.oidcAuthorize)
 	}));
 
 // Plex sign-in rides the single v3 Plex flow ($lib/queries/plex): the login

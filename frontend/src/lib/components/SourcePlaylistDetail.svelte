@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import { createSourcePlaylistImportMutation } from '$lib/queries/source-playlists/SourcePlaylistMutations.svelte';
 	import { getSourcePlaylistDetailQuery } from '$lib/queries/source-playlists/SourcePlaylistQueries.svelte';

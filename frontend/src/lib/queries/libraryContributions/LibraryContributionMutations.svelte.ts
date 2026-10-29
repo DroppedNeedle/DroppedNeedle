@@ -54,7 +54,7 @@ const refreshAfterMutationError = async (
 
 export const createLibraryContributionMutation = () =>
 	createMutation(() => ({
-		mutationFn: (albumId: string) => api.global.v3.POST(LibraryContributionApi.create(albumId)),
+		mutationFn: (albumId: string) => api.v3.POST(LibraryContributionApi.create(albumId)),
 		onSuccess: async (contribution) => {
 			await saveContribution(contribution);
 			toastStore.show({ message: 'Contribution draft ready', type: 'success' });
@@ -74,7 +74,7 @@ export const updateLibraryContributionMutation = () =>
 			expectedRowRevision: number;
 			draft: ReleaseDraft;
 		}) =>
-			api.global.v3.PUT(LibraryContributionApi.draft(input.contributionId), {
+			api.v3.PUT(LibraryContributionApi.draft(input.contributionId), {
 				expected_row_revision: input.expectedRowRevision,
 				draft: input.draft
 			}),
@@ -97,7 +97,7 @@ const revisionMutation = (
 				action === 'rebuild'
 					? LibraryContributionApi.rebuild(input.contributionId)
 					: LibraryContributionApi.cancel(input.contributionId);
-			return api.global.v3.POST(url, {
+			return api.v3.POST(url, {
 				expected_row_revision: input.expectedRowRevision
 			});
 		},
@@ -126,7 +126,7 @@ export const cancelLibraryContributionMutation = () =>
 export const searchDiscogsReleasesMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { contributionId: string; query: string }) =>
-			api.global.v3.POST(LibraryContributionApi.searchDiscogs(input.contributionId), {
+			api.v3.POST(LibraryContributionApi.searchDiscogs(input.contributionId), {
 				query: input.query || null
 			}),
 		onError: (error) =>
@@ -140,7 +140,7 @@ export const selectDiscogsReleaseMutation = () =>
 			expectedRowRevision: number;
 			releaseIdOrUrl: string;
 		}) =>
-			api.global.v3.POST(LibraryContributionApi.selectDiscogs(input.contributionId), {
+			api.v3.POST(LibraryContributionApi.selectDiscogs(input.contributionId), {
 				expected_row_revision: input.expectedRowRevision,
 				release_id_or_url: input.releaseIdOrUrl
 			}),
@@ -155,7 +155,7 @@ export const selectDiscogsReleaseMutation = () =>
 export const removeDiscogsReleaseMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { contributionId: string; expectedRowRevision: number }) =>
-			api.global.v3.POST(LibraryContributionApi.removeDiscogs(input.contributionId), {
+			api.v3.POST(LibraryContributionApi.removeDiscogs(input.contributionId), {
 				expected_row_revision: input.expectedRowRevision
 			}),
 		onSuccess: async (contribution) => {
@@ -173,7 +173,7 @@ export const checkMusicBrainzDuplicatesMutation = () =>
 			expectedRowRevision: number;
 			differentEditionConfirmed: boolean;
 		}) =>
-			api.global.v3.POST(LibraryContributionApi.checkDuplicates(input.contributionId), {
+			api.v3.POST(LibraryContributionApi.checkDuplicates(input.contributionId), {
 				expected_row_revision: input.expectedRowRevision,
 				different_edition_confirmed: input.differentEditionConfirmed
 			}),
@@ -196,7 +196,7 @@ export const attachExistingMusicBrainzReleaseMutation = () =>
 			expectedRowRevision: number;
 			releaseMbid: string;
 		}) =>
-			api.global.v3.POST(LibraryContributionApi.attachRelease(input.contributionId), {
+			api.v3.POST(LibraryContributionApi.attachRelease(input.contributionId), {
 				expected_row_revision: input.expectedRowRevision,
 				release_mbid: input.releaseMbid
 			}),
@@ -216,7 +216,7 @@ export const attachExistingMusicBrainzReleaseMutation = () =>
 export const createMusicBrainzSeedMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { contributionId: string; expectedRowRevision: number }) =>
-			api.global.v3.POST(LibraryContributionApi.seed(input.contributionId), {
+			api.v3.POST(LibraryContributionApi.seed(input.contributionId), {
 				expected_row_revision: input.expectedRowRevision
 			}),
 		onSuccess: async (seed, input) => {
@@ -239,7 +239,7 @@ export const recordMusicBrainzResultMutation = () =>
 			releaseIdOrUrl: string;
 			replaceExistingResult: boolean;
 		}) =>
-			api.global.v3.PUT(LibraryContributionApi.recordResult(input.contributionId), {
+			api.v3.PUT(LibraryContributionApi.recordResult(input.contributionId), {
 				expected_row_revision: input.expectedRowRevision,
 				release_id_or_url: input.releaseIdOrUrl,
 				replace_existing_result: input.replaceExistingResult
@@ -259,7 +259,7 @@ export const recordMusicBrainzResultMutation = () =>
 export const retryMusicBrainzVerificationMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { contributionId: string; expectedRowRevision: number }) =>
-			api.global.v3.POST(LibraryContributionApi.retryVerification(input.contributionId), {
+			api.v3.POST(LibraryContributionApi.retryVerification(input.contributionId), {
 				expected_row_revision: input.expectedRowRevision
 			}),
 		onSuccess: async (contribution) => {

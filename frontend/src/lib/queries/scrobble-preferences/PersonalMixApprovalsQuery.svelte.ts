@@ -9,7 +9,7 @@ export const getPersonalMixApprovalsQuery = (getEnabled: Getter<boolean>) =>
 	createQuery(() => ({
 		queryKey: ScrobblePreferencesQueryKeyFactory.personalMixApprovals(),
 		queryFn: ({ signal }) =>
-			api.global.v3.GET(SCROBBLE_PREFERENCES_ENDPOINTS.personalMixApprovals(), {
+			api.v3.GET(SCROBBLE_PREFERENCES_ENDPOINTS.personalMixApprovals(), {
 				signal
 			}),
 		enabled: getEnabled()

@@ -2,7 +2,7 @@
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import '$lib/components/library/library-management.css';
 	import { TriangleAlert, ArrowRight, CircleCheckBig, FolderCog, ScanSearch } from 'lucide-svelte';
-	import { ApiError } from '$lib/api/client';
+	import { ApiError } from '$lib/api/errors';
 	import {
 		getLibraryRestorableRootsQuery,
 		getTargetLibrarySettingsQuery

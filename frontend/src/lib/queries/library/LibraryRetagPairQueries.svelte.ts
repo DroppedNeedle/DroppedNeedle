@@ -25,7 +25,7 @@ export const getRetagPairsQuery = (enabled: Getter<boolean> = () => true) =>
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.retagPairs(),
 		queryFn: async ({ signal }): Promise<RetagPairList> =>
-			api.global.v3.GET(LibraryV3Api.retagPairs(), { signal })
+			api.v3.GET(LibraryV3Api.retagPairs(), { signal })
 	}));
 
 const errorMessage = (error: unknown, fallback: string) =>
@@ -38,7 +38,7 @@ export function joinRetagPair() {
 		mutationFn: (
 			input: RetagPairJoinInput
 		): Promise<components['schemas']['RetagPairJoinResponse']> =>
-			api.global.v3.POST(LibraryV3Api.joinRetagPair(input.oldAlbumId, input.newAlbumId), {
+			api.v3.POST(LibraryV3Api.joinRetagPair(input.oldAlbumId, input.newAlbumId), {
 				keep_edition_of: input.keepEditionOf ?? null,
 				expected_identity_revisions: input.expectedIdentityRevisions
 			}),
@@ -57,7 +57,7 @@ export function dismissRetagPair() {
 			oldAlbumId: string;
 			newAlbumId: string;
 		}): Promise<components['schemas']['RetagPairDismissResponse']> =>
-			api.global.v3.POST(LibraryV3Api.dismissRetagPair(input.oldAlbumId, input.newAlbumId)),
+			api.v3.POST(LibraryV3Api.dismissRetagPair(input.oldAlbumId, input.newAlbumId)),
 		onSuccess: invalidateLibraryCatalog,
 		onError: (error) =>
 			toastStore.show({

@@ -7,7 +7,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() } } }
+	api: { v3: { GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() } }
 }));
 
 vi.mock('$lib/queries/QueryClient', () => ({
@@ -22,9 +22,9 @@ import { api } from '$lib/api/client';
 import { createMutation } from '@tanstack/svelte-query';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
-const mockPut = vi.mocked(api.global.v3.PUT) as unknown as ReturnType<typeof vi.fn>;
-const mockPost = vi.mocked(api.global.v3.POST) as unknown as ReturnType<typeof vi.fn>;
-const mockDelete = vi.mocked(api.global.v3.DELETE) as unknown as ReturnType<typeof vi.fn>;
+const mockPut = vi.mocked(api.v3.PUT) as unknown as ReturnType<typeof vi.fn>;
+const mockPost = vi.mocked(api.v3.POST) as unknown as ReturnType<typeof vi.fn>;
+const mockDelete = vi.mocked(api.v3.DELETE) as unknown as ReturnType<typeof vi.fn>;
 const mockCreateMutation = vi.mocked(createMutation);
 const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);
 

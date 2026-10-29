@@ -213,5 +213,26 @@ export default defineConfig(
 				...kitRules
 			]
 		}
+	},
+	{
+		// Components read through the query hooks in lib/queries, never the client.
+		files: ['src/**/*.svelte'],
+		rules: {
+			'no-restricted-imports': [
+				'error',
+				{
+					paths: [
+						{
+							name: '$lib/api/client',
+							message: 'Read through a query or mutation hook in lib/queries.'
+						},
+						{
+							name: '$lib/api/v3/client',
+							message: 'Read through a query or mutation hook in lib/queries.'
+						}
+					]
+				}
+			]
+		}
 	}
 );

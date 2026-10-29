@@ -1,6 +1,7 @@
 import { createMutation } from '@tanstack/svelte-query';
 
-import { api, ApiError, TransportError } from '$lib/api/client';
+import { api } from '$lib/api/client';
+import { ApiError, TransportError } from '$lib/api/errors';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 
@@ -42,7 +43,7 @@ export const uploadDropMutation = () =>
 		mutationFn: ({ files, onProgress }: DropUpload) => {
 			const form = new FormData();
 			for (const file of files) form.append('files', file, file.name);
-			return api.global.upload<DropImportJob>(DROP_IMPORT_ENDPOINTS.uploads(), form, {
+			return api.upload<DropImportJob>(DROP_IMPORT_ENDPOINTS.uploads(), form, {
 				onProgress,
 				stallMs: STALL_MS
 			});

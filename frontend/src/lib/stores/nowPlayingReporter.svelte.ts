@@ -30,7 +30,7 @@ function createNowPlayingReporter() {
 		if (!np) return;
 		const state = playerStore.playbackState;
 		try {
-			await api.global.v3.POST(GATEWAY_ENDPOINTS.nowPlaying(), {
+			await api.v3.POST(GATEWAY_ENDPOINTS.nowPlaying(), {
 				track_name: np.trackName ?? '',
 				artist_name: np.artistName ?? '',
 				album_name: np.albumName ?? null,
@@ -49,7 +49,7 @@ function createNowPlayingReporter() {
 
 	async function clear(): Promise<void> {
 		try {
-			await api.global.v3.DELETE(GATEWAY_ENDPOINTS.nowPlaying());
+			await api.v3.DELETE(GATEWAY_ENDPOINTS.nowPlaying());
 		} catch {
 			// best-effort
 		}

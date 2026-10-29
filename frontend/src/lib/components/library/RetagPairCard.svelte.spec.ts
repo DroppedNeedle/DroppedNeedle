@@ -2,20 +2,11 @@ import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
+import { ApiError } from '$lib/api/errors';
 import type { RetagPair } from '$lib/queries/library/LibraryRetagPairQueries.svelte';
 
 const h = vi.hoisted(() => {
-	class ApiError extends Error {
-		constructor(
-			readonly status: number,
-			message: string,
-			readonly code = ''
-		) {
-			super(message);
-		}
-	}
 	return {
-		ApiError,
 		join: vi.fn(),
 		dismiss: vi.fn(),
 		goto: vi.fn(),
@@ -24,7 +15,6 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock('$app/navigation', () => ({ goto: h.goto }));
-vi.mock('$lib/api/client', () => ({ ApiError: h.ApiError }));
 vi.mock('$lib/stores/authStore.svelte', () => ({ authStore: { user: { id: 'admin-1' } } }));
 vi.mock('$lib/queries/QueryClient', () => ({ invalidateQueriesWithPersister: h.invalidate }));
 vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
@@ -192,7 +182,7 @@ describe('RetagPairCard', () => {
 
 	it('shows a 409 in place and refetches the pairs', async () => {
 		h.join.mockRejectedValue(
-			new h.ApiError(
+			new ApiError(
 				409,
 				"An album's edition changed since this was shown. Look again.",
 				'STALE_REVISION'

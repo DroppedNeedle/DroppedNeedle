@@ -16,10 +16,6 @@ vi.mock('$lib/queries/auth/AuthMutations.svelte', () => ({
 	})
 }));
 
-vi.mock('$lib/api/client', () => ({
-	ApiError: class ApiError extends Error {}
-}));
-
 import RecoveryPage from './+page.svelte';
 
 beforeEach(() => {

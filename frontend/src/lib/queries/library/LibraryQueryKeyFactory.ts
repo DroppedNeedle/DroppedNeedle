@@ -105,6 +105,8 @@ export const LibraryQueryKeyFactory = {
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'recently-added'] as const,
 		recentlyAdded: (userId: LibraryV3UserId, limit: number) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'recently-added', limit] as const,
+		resolvedTracks: (userId: LibraryV3UserId, items: readonly unknown[]) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'resolved-tracks', items] as const,
 		search: (userId: LibraryV3UserId, q: string) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'search', q] as const,
 		albumSearch: (userId: LibraryV3UserId, q: string) =>

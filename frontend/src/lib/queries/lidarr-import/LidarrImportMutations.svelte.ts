@@ -15,7 +15,7 @@ import type { LidarrImportConnection } from './types';
 export const saveLidarrConfigMutation = () =>
 	createMutation(() => ({
 		mutationFn: (connection: LidarrImportConnection) =>
-			api.global.v3.PUT(LIDARR_IMPORT_ENDPOINTS.config(), connection),
+			api.v3.PUT(LIDARR_IMPORT_ENDPOINTS.config(), connection),
 		onSuccess: async () => {
 			await invalidateQueriesWithPersister({ queryKey: LidarrImportQueryKeyFactory.config() });
 		}
@@ -24,13 +24,13 @@ export const saveLidarrConfigMutation = () =>
 export const testLidarrMutation = () =>
 	createMutation(() => ({
 		mutationFn: (connection: LidarrImportConnection) =>
-			api.global.v3.POST(LIDARR_IMPORT_ENDPOINTS.test(), connection)
+			api.v3.POST(LIDARR_IMPORT_ENDPOINTS.test(), connection)
 	}));
 
 export const importFromLidarrMutation = () =>
 	createMutation(() => ({
 		mutationFn: (selectedMbids: string[]) =>
-			api.global.v3.POST(LIDARR_IMPORT_ENDPOINTS.import(), {
+			api.v3.POST(LIDARR_IMPORT_ENDPOINTS.import(), {
 				selected_mbids: selectedMbids
 			}),
 		onSuccess: async () => {

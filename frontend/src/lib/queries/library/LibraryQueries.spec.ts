@@ -8,7 +8,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { v3: { GET: vi.fn(), POST: vi.fn() } } }
+	api: { v3: { GET: vi.fn(), POST: vi.fn() } }
 }));
 
 vi.mock('../QueryClient', () => ({
@@ -18,7 +18,7 @@ vi.mock('../QueryClient', () => ({
 import { api } from '$lib/api/client';
 import { getLibraryMembershipQueryOptions } from './LibraryQueries.svelte';
 
-const mockPost = vi.mocked(api.global.v3.POST) as unknown as Mock<
+const mockPost = vi.mocked(api.v3.POST) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
 
