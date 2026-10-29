@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use futures_util::future::BoxFuture;
 
+use droppedneedle_kernel::db::DbError;
 use droppedneedle_library::identify::sources::{ReleaseHit, SourceError};
 use droppedneedle_library::matching::Release;
 use droppedneedle_providers::RequestPriority;
@@ -177,8 +178,11 @@ pub trait LandingLibrary: Send + Sync {
     /// any: a manual identity, else the edition pin, else the best fit
     /// ([`crate::edition::chosen_edition`], the same answer
     /// acquisition fetched by). The landing honours it over the edition
-    /// the request carried.
-    fn chosen_edition<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>>;
+    /// the request carried, and waits while it does not read.
+    fn chosen_edition<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, DbError>>;
 
     /// Tracks the library already holds for a release group; with
     /// `album`, only in that library album (followed to the album it was

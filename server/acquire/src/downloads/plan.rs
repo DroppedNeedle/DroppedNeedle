@@ -9,6 +9,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::edition::EditionBasis;
+
 /// The plan of one download task.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,6 +20,10 @@ pub struct TaskPlan {
     /// row's asked release no longer answers to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_mbid: Option<String>,
+    /// The release the row asked for when MusicBrainz answered it with
+    /// `release_mbid`, so the asked id still answers to the lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirected_from: Option<String>,
     /// The release's tracklist.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub expected_tracks: Vec<ExpectedTrack>,
@@ -63,6 +69,7 @@ impl TaskPlan {
     pub fn for_successor(&self) -> Self {
         Self {
             release_mbid: self.release_mbid.clone(),
+            redirected_from: self.redirected_from.clone(),
             album_wanted: self.album_wanted.clone(),
             planned_album: self.planned_album.clone(),
             album_version: self.album_version,
@@ -70,12 +77,14 @@ impl TaskPlan {
         }
     }
 
-    /// Whether the plan's lists belong to `release` (the plan's own
-    /// release, compared without case).
+    /// Whether the plan's lists belong to `release`: the plan's own
+    /// release, or the one MusicBrainz redirected to it, compared without
+    /// case.
     pub fn is_for(&self, release: &str) -> bool {
-        self.release_mbid
-            .as_deref()
-            .is_some_and(|held| held.trim().eq_ignore_ascii_case(release.trim()))
+        [&self.release_mbid, &self.redirected_from]
+            .into_iter()
+            .flatten()
+            .any(|held| held.trim().eq_ignore_ascii_case(release.trim()))
     }
 }
 
@@ -124,9 +133,8 @@ pub struct TrackPosition {
 pub struct TrackAlbum {
     /// Album artist, as searched.
     pub album_artist: String,
-    /// Why this edition: `manual_identity`, `library_edition`,
-    /// `requested_release`, or `best_official`.
-    pub basis: String,
+    /// Why this edition.
+    pub basis: EditionBasis,
     /// Positions of the requested recording on the release.
     pub wanted: Vec<TrackPosition>,
 }

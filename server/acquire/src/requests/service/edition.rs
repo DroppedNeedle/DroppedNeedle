@@ -417,7 +417,7 @@ impl RequestsService {
         };
         let release_mbid = match &planned_album {
             Some(planned) => Some(planned.release_mbid.clone()),
-            None => self.chosen_release(&mbid).await,
+            None => self.chosen_release(&mbid).await?,
         };
         let wanted = gap
             .as_ref()

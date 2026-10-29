@@ -236,6 +236,9 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
     assert_eq!(plan.release_mbid.as_deref(), Some(ALBUM_RELEASE));
     assert_eq!(plan.expected_tracks.len(), 4);
     let context = plan.track_album.expect("album context recorded");
-    assert_eq!(context.basis, "best_official");
+    assert_eq!(
+        context.basis,
+        droppedneedle_acquire::edition::EditionBasis::BestOfficial
+    );
     assert_eq!(context.wanted, [TrackPosition { disc: 1, track: 2 }]);
 }

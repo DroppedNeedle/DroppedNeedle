@@ -26,6 +26,7 @@ use crate::landing::ports::LandingLibrary;
 use crate::landing::probe::Landing;
 use crate::landing::specs::Target;
 use crate::reason::Reason;
+use droppedneedle_kernel::db::DbError;
 use droppedneedle_library::matching::Release;
 use droppedneedle_library::matching::decide::ACCEPT_ALBUM;
 use droppedneedle_providers::RequestPriority;
@@ -57,6 +58,14 @@ fn review(reason: Reason) -> Outcome {
         reason,
         detail: None,
     }
+}
+
+/// The album's chosen edition did not read: never taken as none, so the
+/// files wait and are tried again.
+fn edition_unreadable(error: &DbError) -> Outcome {
+    Outcome::Unavailable(format!(
+        "the album's chosen edition cannot be read: {error}"
+    ))
 }
 
 /// Close enough to import without asking (Lidarr's `CloseAlbumMatch`).
@@ -165,9 +174,13 @@ pub async fn assigned(
     release_group_mbid: &str,
 ) -> Outcome {
     let group = release_group_mbid.trim().to_ascii_lowercase();
+    let chosen = match library.chosen_edition(&group).await {
+        Ok(chosen) => chosen,
+        Err(error) => return edition_unreadable(&error),
+    };
     let mut target = Target {
         release_group_mbid: group.clone(),
-        release_mbid: library.chosen_edition(&group).await,
+        release_mbid: chosen,
         ..Target::default()
     };
     let local = local_album(&landing.audio, &target);
@@ -276,7 +289,11 @@ async fn chosen_edition(
         return review(Reason::NoAlbumMatch);
     };
     let group = found.release.release_group_id.to_ascii_lowercase();
-    if let Some(pin) = library.chosen_edition(&group).await
+    let chosen = match library.chosen_edition(&group).await {
+        Ok(chosen) => chosen,
+        Err(error) => return edition_unreadable(&error),
+    };
+    if let Some(pin) = chosen
         && !found.release.answers_to(&pin)
     {
         let pinned = Target {

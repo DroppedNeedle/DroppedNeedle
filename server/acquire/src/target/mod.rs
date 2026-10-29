@@ -29,7 +29,7 @@ use self::reasons::TrackReason;
 use super::downloads::journal::Journal;
 use super::downloads::plan::{ExpectedTrack, TaskPlan, TrackAlbum, TrackPosition};
 use super::downloads::store::{TaskDetails, TaskRow, TrackAlbumColumns};
-use super::edition::chosen_edition;
+use super::edition::{EditionBasis, chosen_edition};
 
 /// Release lookups tried for one recording before giving up on an album.
 const MAX_RELEASES_TRIED: usize = 4;
@@ -248,6 +248,7 @@ impl Targets {
                 if !(plan.is_for(&asked) || plan.is_for(&found)) {
                     plan.planned_album = None;
                 }
+                plan.redirected_from = (!asked.eq_ignore_ascii_case(&found)).then_some(asked);
                 plan.release_mbid = Some(found);
                 plan.expected_tracks = tracklist;
                 let now = crate::db::unix_secs_f64(clock.as_ref());
@@ -383,7 +384,7 @@ impl Targets {
         &self,
         task: &TaskRow,
         release: &AlbumRelease,
-        basis: &str,
+        basis: EditionBasis,
         wanted: Vec<TrackPosition>,
         title: String,
     ) -> Result<SearchTarget, TargetError> {
@@ -415,7 +416,7 @@ impl Targets {
             let release_mbid = release.id.clone();
             let track_album = TrackAlbum {
                 album_artist: album_artist.clone(),
-                basis: basis.to_owned(),
+                basis,
                 wanted: wanted.clone(),
             };
             let tracks = tracklist.clone();
@@ -425,6 +426,7 @@ impl Targets {
                     store.set_track_album(&task_id, &columns, now)?;
                     let mut plan = store.task_plan(&task_id)?;
                     plan.release_mbid = Some(release_mbid);
+                    plan.redirected_from = None;
                     plan.expected_tracks = tracks;
                     plan.track_album = Some(track_album);
                     store.set_task_plan(&task_id, &plan, now)
@@ -435,7 +437,7 @@ impl Targets {
         tracing::info!(
             task_id = %task.id,
             release_mbid = %release.id,
-            basis,
+            basis = basis.as_str(),
             "single track resolved to its album"
         );
         Ok(SearchTarget {

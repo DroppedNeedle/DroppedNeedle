@@ -13,16 +13,28 @@
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_library::identity::DecisionSource;
 use droppedneedle_library::identity::reads::{Pick, copy_for_group};
+use serde::{Deserialize, Serialize};
 
 use crate::requests::sql;
 
-/// Why this edition was chosen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why this edition was chosen. [`chosen_edition`] answers the first two;
+/// a single track resolved to an album may also take the release it was
+/// requested from or the best official release. A track task's plan
+/// stores it by its serde name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditionBasis {
     /// A person chose this release for the album.
+    #[serde(rename = "manual_identity")]
     Manual,
     /// The matcher picked this release as the best fit for the files.
+    #[serde(rename = "library_edition")]
     BestFit,
+    /// The release the track was requested from.
+    #[serde(rename = "requested_release")]
+    RequestedRelease,
+    /// The best official release carrying the recording.
+    #[serde(rename = "best_official")]
+    BestOfficial,
 }
 
 impl EditionBasis {
@@ -31,6 +43,8 @@ impl EditionBasis {
         match self {
             Self::Manual => "manual_identity",
             Self::BestFit => "library_edition",
+            Self::RequestedRelease => "requested_release",
+            Self::BestOfficial => "best_official",
         }
     }
 }

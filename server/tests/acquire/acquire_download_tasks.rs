@@ -879,3 +879,222 @@ async fn a_restart_measures_a_copy_from_its_own_enqueue() {
         .unwrap();
     assert_eq!(quarantined, 0, "a copy that is moving is not blocklisted");
 }
+
+/// An album ask without a release fetches the album's chosen edition. A
+/// busy read of that edition queues nothing and answers busy, so the ask
+/// waits for a later pass, which fetches the chosen edition: the album is
+/// never queued without it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_edition_read_defers_the_dispatch_until_the_edition_reads() {
+    use droppedneedle_acquire::dispatch::DispatchError;
+    use droppedneedle_kernel::db::{DbConfig, LaneLimits, open_runtime};
+
+    let dir = crate::common::ScratchDir::new("dispatch-busy-edition");
+    let path = dir.join("journal.db");
+    crate::common::migrated_db(&path);
+    let mut config = DbConfig::new(&path)
+        .with_read_wait(Duration::from_millis(200))
+        .with_lane_limits(LaneLimits {
+            watch_tick: Duration::from_millis(10),
+            ..LaneLimits::default()
+        });
+    config.readers = 1;
+    let runtime = open_runtime(&config).await.expect("runtime opens");
+    let db = AcquireDb::new(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    db.add_user("u-ada", "Ada", "user").await.unwrap();
+    db.write("test.seed_edition", |tx| {
+        tx.execute_batch(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+               VALUES ('ar1', 'A', 'a', 'person', 0, 0);
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+               album_artist_id, grouping_source, created_at, updated_at)
+               VALUES ('al1', 'r1', 'g', 'T', 't', 'ar1', 'automatic', 0, 0);
+             INSERT INTO local_album_external_identities (local_album_id, provider,
+               release_group_mbid, release_mbid, decision_source, selected_at, row_revision)
+               VALUES ('al1', 'musicbrainz', 'rg-1', 'rel-chosen', 'manual', 5, 1);",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
+    let settings = droppedneedle_acquire::settings::scratch_settings(&dir.join("settings"))
+        .expect("settings open");
+    let dispatch = DownloadDispatch::new(journal.clone(), Arc::new(UuidGenerator), settings.live());
+    let request = DispatchRequest {
+        user_id: "u-ada".to_owned(),
+        target: DispatchTarget::Album {
+            release_group_mbid: "rg-1".to_owned(),
+        },
+        artist_name: "artist".to_owned(),
+        title: "album".to_owned(),
+        origin: DispatchOrigin::User,
+        release_mbid: None,
+        wanted: Vec::new(),
+        planned_album: None,
+        idempotency_key: None,
+    };
+
+    // The one reader is taken, so the edition read hears busy.
+    let (entered, inside) = std::sync::mpsc::channel();
+    let (let_go, release) = std::sync::mpsc::channel::<()>();
+    let reader = {
+        let db = runtime.db().clone();
+        std::thread::spawn(move || {
+            db.read_blocking("test.hold", move |_| {
+                let _ = entered.send(());
+                let _ = release.recv();
+                Ok::<_, DbError>(())
+            })
+        })
+    };
+    inside
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the reader is held");
+    let busy = dispatch.dispatch(&request).await;
+    drop(let_go);
+    reader
+        .join()
+        .expect("reader joins")
+        .expect("held read ends");
+    assert!(
+        matches!(busy, Err(DispatchError::Busy { .. })),
+        "a busy edition read is put back, got {busy:?}"
+    );
+    assert_eq!(task_count(&db).await, 0, "nothing is queued");
+
+    let DispatchOutcome::Dispatched { task_id } = dispatch.dispatch(&request).await.unwrap() else {
+        panic!("the next pass dispatches");
+    };
+    let details = journal
+        .read("test.details", move |store| store.task_details(&task_id))
+        .await
+        .unwrap();
+    assert_eq!(details.release_mbid.as_deref(), Some("rel-chosen"));
+    runtime.shutdown().await;
+}
+
+/// MusicBrainz answers `asked` with the release it was merged into, and
+/// counts how often it is asked.
+struct Redirecting {
+    asked: &'static str,
+    found: droppedneedle_acquire::target::lookup::AlbumRelease,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl droppedneedle_acquire::target::lookup::AlbumLookup for Redirecting {
+    fn recording_releases<'a>(
+        &'a self,
+        _recording_mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<
+            Option<Vec<droppedneedle_acquire::target::lookup::ReleaseCandidate>>,
+            droppedneedle_acquire::target::lookup::LookupError,
+        >,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn release<'a>(
+        &'a self,
+        release_mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<
+            Option<droppedneedle_acquire::target::lookup::AlbumRelease>,
+            droppedneedle_acquire::target::lookup::LookupError,
+        >,
+    > {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let found = (release_mbid == self.asked).then(|| self.found.clone());
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn first_release_date<'a>(
+        &'a self,
+        _release_group_mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<String>, droppedneedle_acquire::target::lookup::LookupError>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+/// "Get missing tracks" asks for some positions of one edition. When
+/// MusicBrainz redirects that edition to the release it was merged into,
+/// the plan keeps the tracklist under the found release, and every later
+/// target (another source, a retry of the search) reuses it with the same
+/// positions, without asking MusicBrainz again.
+#[tokio::test]
+async fn a_redirected_edition_keeps_its_plan_for_later_targets() {
+    use droppedneedle_acquire::downloads::TrackPosition;
+    use droppedneedle_acquire::target::Targets;
+    use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack};
+
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("u-ada", "Ada", "user").await.unwrap();
+    let journal = Arc::new(Journal::new(db, quiet_ticks()));
+    let dispatch = dispatch_over(journal.clone());
+    let DispatchOutcome::Dispatched { task_id } = dispatch
+        .dispatch(&DispatchRequest {
+            user_id: "u-ada".to_owned(),
+            target: DispatchTarget::Album {
+                release_group_mbid: "rg-1".to_owned(),
+            },
+            artist_name: "artist".to_owned(),
+            title: "album".to_owned(),
+            origin: DispatchOrigin::User,
+            release_mbid: Some("rel-asked".to_owned()),
+            wanted: vec![(1, 2)],
+            planned_album: None,
+            idempotency_key: None,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("the album dispatches");
+    };
+    let lookup = Arc::new(Redirecting {
+        asked: "rel-asked",
+        found: AlbumRelease {
+            id: "rel-found".to_owned(),
+            title: "album".to_owned(),
+            release_group_mbid: "rg-1".to_owned(),
+            artist: "artist".to_owned(),
+            various_artists: false,
+            year: Some(1994),
+            tracks: (1..=3)
+                .map(|position| AlbumTrack {
+                    disc: 1,
+                    position,
+                    title: format!("track {position}"),
+                    duration_seconds: Some(200.0),
+                    recording_mbid: format!("rec-{position}"),
+                    release_track_mbid: format!("rt-{position}"),
+                })
+                .collect(),
+        },
+        calls: 0.into(),
+    });
+    let targets = Targets::new(journal.clone(), Some(lookup.clone()));
+    let task = journal.read_task(&task_id).await.unwrap().unwrap();
+    let wanted = [TrackPosition { disc: 1, track: 2 }];
+
+    let first = targets.target(&task).await.expect("first target");
+    assert_eq!(
+        (first.tracklist.len(), first.wanted.as_slice()),
+        (3, &wanted[..])
+    );
+    let later = targets.target(&task).await.expect("later target");
+    assert_eq!(later, first, "a later target is the planned one");
+    assert_eq!(
+        lookup.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "MusicBrainz is asked once"
+    );
+}

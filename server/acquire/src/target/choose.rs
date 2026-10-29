@@ -26,10 +26,10 @@ pub fn release_order(
     candidates: &[ReleaseCandidate],
     library: &HashMap<String, ChosenEdition>,
     requested: Option<&str>,
-) -> Vec<(String, &'static str)> {
+) -> Vec<(String, EditionBasis)> {
     let on_recording: HashSet<&str> = candidates.iter().map(|c| c.id.as_str()).collect();
-    let mut out: Vec<(String, &'static str)> = Vec::new();
-    let push = |id: &str, basis: &'static str, out: &mut Vec<(String, &'static str)>| {
+    let mut out: Vec<(String, EditionBasis)> = Vec::new();
+    let push = |id: &str, basis: EditionBasis, out: &mut Vec<(String, EditionBasis)>| {
         let id = id.trim().to_ascii_lowercase();
         if !id.is_empty() && !out.iter().any(|(seen, _)| *seen == id) {
             out.push((id, basis));
@@ -42,21 +42,18 @@ pub fn release_order(
         .collect();
     chosen.sort_by_key(|edition| {
         (
-            match edition.basis {
-                EditionBasis::Manual => 0,
-                EditionBasis::BestFit => 1,
-            },
+            edition.basis != EditionBasis::Manual,
             edition.release_mbid.clone(),
         )
     });
     for edition in chosen {
-        push(&edition.release_mbid, edition.basis.as_str(), &mut out);
+        push(&edition.release_mbid, edition.basis, &mut out);
     }
     // The release the user asked from, even when the recording lookup
     // left it out (MusicBrainz caps linked releases); the tracklist check
     // proves it carries the recording.
     if let Some(requested) = requested {
-        push(requested, "requested_release", &mut out);
+        push(requested, EditionBasis::RequestedRelease, &mut out);
     }
     let mut ranked: Vec<&ReleaseCandidate> = candidates.iter().collect();
     ranked.sort_by_key(|candidate| {
@@ -81,7 +78,7 @@ pub fn release_order(
         )
     });
     for candidate in ranked {
-        push(&candidate.id, "best_official", &mut out);
+        push(&candidate.id, EditionBasis::BestOfficial, &mut out);
     }
     out
 }
@@ -143,8 +140,11 @@ mod tests {
             },
         );
         let order = release_order(&candidates, &library, Some("single"));
-        assert_eq!(order[0], ("deluxe".to_owned(), "manual_identity"));
-        assert_eq!(order[1], ("single".to_owned(), "requested_release"));
+        assert_eq!(order[0], ("deluxe".to_owned(), EditionBasis::Manual));
+        assert_eq!(
+            order[1],
+            ("single".to_owned(), EditionBasis::RequestedRelease)
+        );
 
         // Official still decides first: an official compilation beats a
         // bootleg single.

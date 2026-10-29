@@ -157,7 +157,7 @@ impl RequestsService {
             artist_name: release.artist_name.clone(),
             album_title: release.title.clone(),
             artist_mbid: Some(release.artist_mbid.clone()),
-            release_mbid: self.chosen_release(&key).await,
+            release_mbid: self.chosen_release_or_none(&key).await,
             ..fresh_record(
                 RequestKind::Album,
                 key.clone(),
@@ -405,7 +405,7 @@ impl RequestsService {
             .check_storage_admission(principal.user_id(), role, DispatchOrigin::User)
             .await?;
 
-        let release_mbid = self.chosen_release(&mbid).await.or(asked.clone());
+        let release_mbid = self.chosen_release(&mbid).await?.or(asked.clone());
         let needs_approval = !granted && !auto_approves(role);
         let record = RequestRecord {
             artist_name,
@@ -695,7 +695,7 @@ impl RequestsService {
 
         let mut records = Vec::with_capacity(resolvable.len());
         for (mbid, item, artist_name, album_title) in &resolvable {
-            let release_mbid = self.chosen_release(mbid).await;
+            let release_mbid = self.chosen_release_or_none(mbid).await;
             let record = RequestRecord {
                 artist_name: artist_name.clone(),
                 album_title: album_title.clone(),
@@ -845,7 +845,7 @@ impl RequestsService {
             ) else {
                 continue;
             };
-            let release_mbid = self.chosen_release(&item.release_group_mbid).await;
+            let release_mbid = self.chosen_release_or_none(&item.release_group_mbid).await;
             let artist_mbid = Some(item.artist_mbid.trim().to_owned()).filter(|id| !id.is_empty());
             records.push(RequestRecord {
                 artist_name,
@@ -933,7 +933,7 @@ impl RequestsService {
                 follow,
             )
             .await?;
-        let switch = self.edition_switch(principal, existing, asked).await;
+        let switch = self.edition_switch(principal, existing, asked).await?;
         if let Some(release) = switch
             && !self
                 .store
@@ -978,25 +978,28 @@ impl RequestsService {
 
     /// The edition a curator's ask would switch a live row to: the asked
     /// one, when it differs from the row's and the library has not chosen
-    /// one of its own (that edition always wins).
+    /// one of its own (that edition always wins). A chosen edition that
+    /// does not read switches nothing and answers the error.
     async fn edition_switch<'a>(
         &self,
         principal: &Principal,
         existing: &RequestRecord,
         asked: Option<&'a str>,
-    ) -> Option<&'a str> {
-        let release = asked?;
+    ) -> Result<Option<&'a str>, RequestsError> {
+        let Some(release) = asked else {
+            return Ok(None);
+        };
         if !principal.role().is_curator()
             || existing.kind != RequestKind::Album
             || existing.status == RequestStatus::Cancelling
             || existing.release_mbid.as_deref() == Some(release)
         {
-            return None;
+            return Ok(None);
         }
-        match self.chosen_release(&existing.key).await {
+        Ok(match self.chosen_release(&existing.key).await? {
             Some(_) => None,
             None => Some(release),
-        }
+        })
     }
 
     /// Dispatch one won row and link its task, cancelling the

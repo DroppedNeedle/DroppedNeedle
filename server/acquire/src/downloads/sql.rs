@@ -36,12 +36,13 @@ droppedneedle_kernel::sql! {
                  track_title = COALESCE(?4, track_title), \
                  updated_at = ?5 \
              WHERE id = ?6";
-    /// The album a single-track task resolved to.
+    /// The album a single-track task resolved to. The year is the album's,
+    /// so an undated album clears the year the request carried.
     pub(super) SET_TRACK_ALBUM = "UPDATE download_tasks \
              SET release_group_mbid = ?1, release_mbid = ?2, album_title = ?3, \
                  release_track_mbid = ?4, track_number = ?5, disc_number = ?6, \
                  track_count = ?7, track_duration_seconds = COALESCE(?8, track_duration_seconds), \
-                 year = COALESCE(?9, year), updated_at = ?10 \
+                 year = ?9, updated_at = ?10 \
              WHERE id = ?11 AND download_type = 'track'";
     /// The optional detail columns of one task (`?1`).
     pub(super) TASK_DETAILS = "SELECT release_mbid, artist_mbid, year, track_title \

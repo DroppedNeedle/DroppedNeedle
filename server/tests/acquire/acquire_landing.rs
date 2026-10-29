@@ -31,6 +31,7 @@ use droppedneedle_acquire::landing::{Landed, LandingReport, LandingResult, Repor
 use droppedneedle_acquire::reason::{Reason, ReasonKind};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
+use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::models::LocalTrackFacts;
@@ -1879,6 +1880,75 @@ async fn a_landing_waits_while_the_download_policy_does_not_read() {
         (Reason::SettingsUnreadable, Disposition::Temporary)
     );
     assert!(file.exists());
+    let quarantined: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_quarantine")
+        .fetch_one(acquire.db.db().sqlx())
+        .await
+        .expect("quarantine count");
+    assert_eq!(quarantined, 0);
+}
+
+/// The album's chosen edition decides what a landing is matched against.
+/// While it does not read (a busy database), it is never taken as none:
+/// the landing waits with a temporary rejection, the files stay, and
+/// nothing is said against the source.
+#[tokio::test]
+async fn a_landing_waits_while_the_chosen_edition_does_not_read() {
+    let (db, dir, _auth) = bare_db().await;
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .scans
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let mount = dir.join("downloads");
+    let file = land_file(
+        &mount.join("job"),
+        "01 - Mysterons.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    let releases = Releases(vec![release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons"],
+        &[length_ms(&file)],
+    )]);
+    let port: Arc<dyn LandingLibrary> = Arc::new(Shaky {
+        inner: Arc::new(LibraryLanding::new(
+            &library,
+            every_priority(Arc::new(releases)),
+        )),
+        changes: 0.into(),
+        after_import: None,
+        edition_busy: true,
+    });
+    let acquire = acquire_over(&db, Some(port));
+    let landed = Landed {
+        mounts: vec![mount.into()],
+        files: vec![Reported::path(file.clone())],
+    };
+    let waiting = rejection(&acquire, "t-edition-busy", landed, false)
+        .await
+        .expect("the landing waits");
+    assert_eq!(
+        (waiting.code, waiting.disposition),
+        (Reason::JournalUnreadable, Disposition::Temporary)
+    );
+    assert!(file.exists(), "the files stay where they are");
     let quarantined: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_quarantine")
         .fetch_one(acquire.db.db().sqlx())
         .await
@@ -5397,6 +5467,7 @@ async fn land_swapped(
         inner: Arc::new(LibraryLanding::new(&library, every_priority(source))),
         changes: 0.into(),
         after_import: (at == SwapAt::Import).then_some(swap),
+        edition_busy: false,
     });
     let acquire = acquire_over(&db, Some(port));
     acquire
@@ -5556,11 +5627,13 @@ impl FingerprintSource for Hears {
 
 /// The real library port, whose first `changes` imports find the library
 /// changed under them (a destination taken between the plan and the
-/// publish), and which runs `after_import` once an import is done.
+/// publish), and which runs `after_import` once an import is done. With
+/// `edition_busy`, the album's chosen edition does not read.
 struct Shaky {
     inner: Arc<dyn LandingLibrary>,
     changes: std::sync::atomic::AtomicUsize,
     after_import: Option<Swap>,
+    edition_busy: bool,
 }
 
 impl LandingLibrary for Shaky {
@@ -5589,7 +5662,17 @@ impl LandingLibrary for Shaky {
         self.inner.canonical_recording(mbid, priority)
     }
 
-    fn chosen_edition<'a>(&'a self, group: &'a str) -> BoxFuture<'a, Option<String>> {
+    fn chosen_edition<'a>(
+        &'a self,
+        group: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, DbError>> {
+        if self.edition_busy {
+            return Box::pin(async {
+                Err(DbError::Busy {
+                    operation: "acquire.edition.chosen".to_owned(),
+                })
+            });
+        }
         self.inner.chosen_edition(group)
     }
 
@@ -5810,6 +5893,7 @@ impl IntakeCase {
             )),
             changes: row.changes.into(),
             after_import: None,
+            edition_busy: false,
         });
         let acquire = acquire_over(&db, Some(port));
         let targets = Arc::new(droppedneedle_acquire::target::Targets::new(

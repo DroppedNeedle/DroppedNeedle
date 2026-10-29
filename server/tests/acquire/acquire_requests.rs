@@ -1322,6 +1322,112 @@ async fn a_busy_database_leaves_an_ask_waiting_until_the_next_pass() {
     runtime.shutdown().await;
 }
 
+/// An album ask that names the edition its page showed is still fetched
+/// in the library's chosen edition. While that edition does not read (a
+/// busy database), the ask answers busy and stores nothing, so the named
+/// edition never stands in for the chosen one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_edition_read_never_lets_the_asked_edition_stand_in() {
+    use droppedneedle_kernel::db::{DbConfig, DbError, LaneLimits, open_runtime};
+
+    const ASKED: &str = "22222222-2222-4222-8222-222222222222";
+    const CHOSEN: &str = "33333333-3333-4333-8333-333333333333";
+    let (mut state, _db, dispatch) = setup().await;
+    // The library's database, with one reader, holding the chosen edition.
+    let dir = crate::common::ScratchDir::new("requests-busy-edition");
+    let path = dir.join("library.db");
+    crate::common::migrated_db(&path);
+    let mut config = DbConfig::new(&path)
+        .with_read_wait(std::time::Duration::from_millis(200))
+        .with_lane_limits(LaneLimits {
+            watch_tick: std::time::Duration::from_millis(10),
+            ..LaneLimits::default()
+        });
+    config.readers = 1;
+    let runtime = open_runtime(&config).await.expect("runtime opens");
+    let library = AcquireDb::new(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    library
+        .write("test.seed_edition", |tx| {
+            tx.execute_batch(&format!(
+                "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at,
+                   updated_at) VALUES ('ar1', 'A', 'a', 'person', 0, 0);
+                 INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+                   album_artist_id, grouping_source, created_at, updated_at)
+                   VALUES ('al1', 'r1', 'g', 'T', 't', 'ar1', 'automatic', 0, 0);
+                 INSERT INTO local_album_external_identities (local_album_id, provider,
+                   release_group_mbid, release_mbid, decision_source, selected_at, row_revision)
+                   VALUES ('al1', 'musicbrainz', '{MBID_A}', '{CHOSEN}', 'manual', 5, 1);"
+            ))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    state.library = library;
+    let body = json!({
+        "musicbrainz_id": MBID_A,
+        "artist": "Artist",
+        "album": "Album",
+        "release_mbid": ASKED,
+    });
+
+    let (entered, inside) = std::sync::mpsc::channel();
+    let (let_go, release) = std::sync::mpsc::channel::<()>();
+    let reader = {
+        let db = runtime.db().clone();
+        std::thread::spawn(move || {
+            db.read_blocking("test.hold", move |_| {
+                let _ = entered.send(());
+                let _ = release.recv();
+                Ok::<_, DbError>(())
+            })
+        })
+    };
+    inside
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the reader is held");
+    let (status, answer) = call(
+        &state,
+        Method::POST,
+        "/api/v3/requests/albums",
+        Some(TRUSTED),
+        Some(body.clone()),
+    )
+    .await;
+    drop(let_go);
+    reader
+        .join()
+        .expect("reader joins")
+        .expect("held read ends");
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+    assert!(
+        state
+            .store
+            .get(RequestKind::Album, MBID_A)
+            .await
+            .unwrap()
+            .is_none(),
+        "nothing is stored"
+    );
+    assert!(dispatch.take_calls().await.is_empty(), "nothing is queued");
+
+    let (status, answer) = call(
+        &state,
+        Method::POST,
+        "/api/v3/requests/albums",
+        Some(TRUSTED),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{answer}");
+    let calls = dispatch.take_calls().await;
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].release_mbid.as_deref(), Some(CHOSEN));
+    runtime.shutdown().await;
+}
+
 /// The library's plan for one album, scripted: track 1 kept, track 2
 /// missing (held by "t2" when `complete`), track 3 kept and track 4 held
 /// only by "t4v", another version of it.

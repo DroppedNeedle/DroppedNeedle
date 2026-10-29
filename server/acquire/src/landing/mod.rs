@@ -272,21 +272,34 @@ impl LandingService {
         // The album's chosen edition (manual identity, pin, best fit) is
         // the only acceptable release: matching, the missing positions and
         // the pinned-edition check all use it. A download fetched for one
-        // copy is matched against that copy's release instead.
+        // copy is matched against that copy's release instead. An edition
+        // that does not read is never taken as none: the landing waits.
         if let Some(planned) = &target.planned_album {
             target.release_mbid = Some(planned.release_mbid.trim().to_ascii_lowercase());
         } else if let Some(library) = &library
             && !target.release_group_mbid.is_empty()
-            && let Some(pin) = library.chosen_edition(&target.release_group_mbid).await
         {
-            if target
-                .release_mbid
-                .as_deref()
-                .is_some_and(|asked| asked != pin)
-            {
-                tracing::info!(task_id = %task.id, %pin, "landing follows the album's chosen edition");
+            let pin = match library.chosen_edition(&target.release_group_mbid).await {
+                Ok(pin) => pin,
+                Err(error) => {
+                    tracing::warn!(task_id = %task.id, %error, "chosen edition unreadable");
+                    let rejection = Rejection {
+                        detail: "the album's chosen edition cannot be read".to_owned(),
+                        ..journal_unreadable()
+                    };
+                    return self.reject_unprobed(task, attempt_id, rejection).await;
+                }
+            };
+            if let Some(pin) = pin {
+                if target
+                    .release_mbid
+                    .as_deref()
+                    .is_some_and(|asked| asked != pin)
+                {
+                    tracing::info!(task_id = %task.id, %pin, "landing follows the album's chosen edition");
+                }
+                target.release_mbid = Some(pin);
             }
-            target.release_mbid = Some(pin);
         }
         // Sizes key on the exact reported file, never on a bare name: two
         // discs can each hold a `01 - Intro.flac`.

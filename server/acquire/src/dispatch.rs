@@ -300,15 +300,14 @@ impl DownloadDispatch {
         let now = self.journal.db().now_unix_f64();
         // An album ask without a release fetches the edition the library
         // has chosen for that album (a single track resolves its album
-        // when it is searched for).
+        // when it is searched for). An edition that does not read is never
+        // taken as none: nothing is queued, and a busy read is put back
+        // for a later pass.
         let chosen = match release_mbid {
-            None if !is_track => match chosen_edition(self.journal.db().db(), key).await {
-                Ok(chosen) => chosen.map(|edition| edition.release_mbid),
-                Err(error) => {
-                    tracing::warn!(key, %error, "chosen edition unreadable; dispatching the album");
-                    None
-                }
-            },
+            None if !is_track => chosen_edition(self.journal.db().db(), key)
+                .await
+                .map_err(|error| DispatchError::from(StoreError::Db(error)))?
+                .map(|edition| edition.release_mbid),
             _ => None,
         };
         let release_mbid = release_mbid.or(chosen.as_deref());

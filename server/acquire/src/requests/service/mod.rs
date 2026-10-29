@@ -29,7 +29,7 @@ use super::error::RequestsError;
 use super::ledger::{RequestRecord, RequestStatus};
 use super::models::RequestKind;
 use super::quota::QuotaLedger;
-use super::sqlite::{EditionStore, PersonalMixStore, RequestStore, WantedStore};
+use super::sqlite::{EditionStore, PersonalMixStore, RequestStore, WantedStore, lane_error};
 use crate::db::AcquireDb;
 use crate::dispatch::{
     DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTarget,
@@ -255,12 +255,26 @@ impl RequestsService {
     }
 
     /// The edition the library has chosen for one album, when it holds
-    /// the album. A read failure only loses the edition, never the ask.
-    async fn chosen_release(&self, release_group_mbid: &str) -> Option<String> {
-        match chosen_edition(self.library.db(), release_group_mbid).await {
-            Ok(chosen) => chosen.map(|edition| edition.release_mbid),
+    /// the album. A read that fails is never taken as none: a busy one
+    /// answers busy.
+    async fn chosen_release(
+        &self,
+        release_group_mbid: &str,
+    ) -> Result<Option<String>, RequestsError> {
+        chosen_edition(self.library.db(), release_group_mbid)
+            .await
+            .map(|chosen| chosen.map(|edition| edition.release_mbid))
+            .map_err(|error| lane_error("acquire.edition.chosen", error))
+    }
+
+    /// [`Self::chosen_release`] for a row that stores no release of its
+    /// own: a read failure leaves the release empty, and dispatch reads
+    /// the edition again before anything is queued.
+    async fn chosen_release_or_none(&self, release_group_mbid: &str) -> Option<String> {
+        match self.chosen_release(release_group_mbid).await {
+            Ok(chosen) => chosen,
             Err(error) => {
-                tracing::warn!(release_group_mbid, %error, "chosen edition unreadable");
+                tracing::warn!(release_group_mbid, ?error, "chosen edition unreadable");
                 None
             }
         }

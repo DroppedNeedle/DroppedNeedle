@@ -988,7 +988,7 @@ impl HeldService {
             {
                 Some(group) => library
                     .chosen_edition(group)
-                    .await
+                    .await?
                     .or_else(|| paired.clone())
                     .ok_or_else(unmatched)?,
                 None => paired.clone().ok_or_else(unmatched)?,
