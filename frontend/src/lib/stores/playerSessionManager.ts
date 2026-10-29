@@ -1,12 +1,9 @@
-import type { NowPlaying, QueueItem, SourceType } from '$lib/player/types';
-import {
-	getStoredSession,
-	storeSessionData,
-	normalizeSourceType,
-	migrateLegacyItem
-} from './playerUtils';
+import type { NowPlaying, QueueItem } from '$lib/player/types';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { getStoredSession, storeSessionData } from './playerUtils';
 import type { StoredSession } from './playerUtils';
 
+/** Saves the session under the signed-in user; with nobody signed in nothing is kept. */
 export function persistSession(
 	nowPlaying: NowPlaying | null,
 	queue: QueueItem[],
@@ -15,15 +12,24 @@ export function persistSession(
 	shuffleEnabled: boolean,
 	shuffleOrder: number[]
 ): void {
-	if (!nowPlaying) {
+	const userId = authStore.user?.id;
+	if (!nowPlaying || !userId) {
 		storeSessionData(null);
 		return;
 	}
-	storeSessionData({ nowPlaying, queue, currentIndex, progress, shuffleEnabled, shuffleOrder });
+	storeSessionData({
+		userId,
+		nowPlaying,
+		queue,
+		currentIndex,
+		progress,
+		shuffleEnabled,
+		shuffleOrder
+	});
 }
 
 export function restoreSessionData(): StoredSession | null {
-	return getStoredSession();
+	return getStoredSession(authStore.user?.id);
 }
 
 export interface ResumeState {
@@ -37,23 +43,17 @@ export interface ResumeState {
 }
 
 export function buildResumeState(session: StoredSession): ResumeState | null {
-	const migratedNowPlaying: NowPlaying = {
-		...session.nowPlaying,
-		sourceType: normalizeSourceType(session.nowPlaying.sourceType as SourceType | 'howler')
-	};
-	const migratedQueue = session.queue.map((item) =>
-		migrateLegacyItem(item as QueueItem & { sourceType: SourceType | 'howler' })
-	);
-
-	if (migratedNowPlaying.sourceType === 'youtube') return null;
-	if (!migratedQueue.length) return null;
-
-	const currentItem = migratedQueue[session.currentIndex];
+	if (session.nowPlaying.sourceType === 'youtube') return null;
+	const queue = session.queue.map((item) => ({
+		...item,
+		queueOrigin: item.queueOrigin ?? 'context'
+	}));
+	const currentItem = queue[session.currentIndex];
 	if (!currentItem) return null;
 
 	return {
-		nowPlaying: migratedNowPlaying,
-		queue: migratedQueue,
+		nowPlaying: session.nowPlaying,
+		queue,
 		currentIndex: session.currentIndex,
 		progress: session.progress,
 		shuffleEnabled: session.shuffleEnabled,

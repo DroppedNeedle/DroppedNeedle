@@ -1,5 +1,7 @@
 import { playerStore } from '$lib/stores/player.svelte';
-import { api } from '$lib/api/client';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { queryClient } from '$lib/queries/QueryClient';
+import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
 import type { components } from '$lib/api/v3/openapi';
 import type { SourceType } from '$lib/player/types';
 import {
@@ -8,13 +10,13 @@ import {
 	type ScrobbleNowPlayingRequest,
 	type ScrobbleSubmitRequest
 } from '$lib/player/playbackGateway';
-import { SCROBBLE_PREFERENCES_ENDPOINTS } from '$lib/queries/scrobble-preferences/endpoints';
 import {
 	makeTrackKey,
 	shouldAccumulate,
 	isLoopReset,
 	shouldSendNowPlaying,
 	shouldScrobble,
+	scrobbleRetryDelayMs,
 	formatServiceTooltip
 } from '$lib/stores/scrobbleHelpers';
 import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
@@ -22,13 +24,6 @@ import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
 export type NowPlayingSubmission = ScrobbleNowPlayingRequest;
 export type ScrobbleSubmission = ScrobbleSubmitRequest;
 export type ScrobbleResponse = components['schemas']['ScrobbleResponse'];
-
-// The manager only reads the three forwarding flags out of the full
-// per-user scrobble preferences.
-export type ScrobbleSettings = Pick<
-	components['schemas']['ScrobblePreferences'],
-	'scrobble_to_lastfm' | 'scrobble_to_listenbrainz' | 'navidrome_handles_external_scrobbles'
->;
 
 type ScrobbleStatus = 'idle' | 'tracking' | 'scrobbled' | 'error';
 
@@ -40,6 +35,8 @@ interface TrackState {
 	scrobbled: boolean;
 	startedAt: number;
 	durationMs: number;
+	submitFailures: number;
+	nextSubmitAt: number;
 }
 
 export function makeNowPlayingSubmission(
@@ -102,27 +99,23 @@ function createScrobbleManager() {
 	let enabled = $state(false);
 	let lastServiceDetail = $state<Record<string, { queued: boolean }> | null>(null);
 	let track: TrackState | null = null;
-	let settingsCache: ScrobbleSettings | null = null;
-	let lastSettingsFetch = 0;
 	let progressInterval: ReturnType<typeof setInterval> | null = null;
 
-	async function loadSettings(): Promise<ScrobbleSettings | null> {
-		const now = Date.now();
-		if (settingsCache && now - lastSettingsFetch < 60_000) return settingsCache;
-		try {
-			settingsCache = await api.v3.GET(SCROBBLE_PREFERENCES_ENDPOINTS.get());
-			lastSettingsFetch = now;
-			return settingsCache;
-		} catch {
-			return settingsCache;
-		}
-	}
-
-	async function init(): Promise<void> {
+	/** Reads the forwarding flag from the signed-in user's preferences query. */
+	async function loadSettings(fresh: boolean): Promise<void> {
 		active = true;
-		const settings = await loadSettings();
-		if (!active) return;
-		enabled = !!(settings?.scrobble_to_lastfm || settings?.scrobble_to_listenbrainz);
+		const userId = authStore.user?.id;
+		if (!userId) return;
+		const options = getScrobblePreferencesQueryOptions(userId);
+		let settings: components['schemas']['ScrobblePreferences'];
+		try {
+			settings = await queryClient.fetchQuery(fresh ? { ...options, staleTime: 0 } : options);
+		} catch {
+			return;
+		}
+		// A sign-out or another sign-in while this was in flight leaves the answer unused.
+		if (!active || authStore.user?.id !== userId) return;
+		enabled = !!(settings.scrobble_to_lastfm || settings.scrobble_to_listenbrainz);
 	}
 
 	function stopInterval(): void {
@@ -228,7 +221,9 @@ function createScrobbleManager() {
 					nowPlayingSent: false,
 					scrobbled: false,
 					startedAt: Math.floor(Date.now() / 1000),
-					durationMs
+					durationMs,
+					submitFailures: 0,
+					nextSubmitAt: 0
 				};
 				status = 'tracking';
 				lastServiceDetail = null;
@@ -259,6 +254,8 @@ function createScrobbleManager() {
 					track.scrobbled = false;
 					track.nowPlayingSent = false;
 					track.startedAt = Math.floor(Date.now() / 1000);
+					track.submitFailures = 0;
+					track.nextSubmitAt = 0;
 					status = 'tracking';
 					lastServiceDetail = null;
 					return;
@@ -279,7 +276,10 @@ function createScrobbleManager() {
 					);
 				}
 
-				if (shouldScrobble(track.accumulatedMs, track.durationMs, track.scrobbled)) {
+				if (
+					Date.now() >= track.nextSubmitAt &&
+					shouldScrobble(track.accumulatedMs, track.durationMs, track.scrobbled)
+				) {
 					track.scrobbled = true;
 					const t = track;
 					sendScrobble(
@@ -294,6 +294,11 @@ function createScrobbleManager() {
 						t.durationMs,
 						t.startedAt
 					).catch(() => {
+						// Retried after a growing pause, a few times per play; then it stays failed.
+						t.submitFailures += 1;
+						const delay = scrobbleRetryDelayMs(t.submitFailures);
+						if (delay === null) return;
+						t.nextSubmitAt = Date.now() + delay;
 						t.scrobbled = false;
 					});
 				}
@@ -313,11 +318,8 @@ function createScrobbleManager() {
 		get tooltip() {
 			return formatServiceTooltip(status, lastServiceDetail);
 		},
-		init,
-		async refreshSettings(): Promise<void> {
-			settingsCache = null;
-			await init();
-		},
+		init: () => loadSettings(false),
+		refreshSettings: () => loadSettings(true),
 		reset(): void {
 			// clear per-user scrobble state on user switch/logout so the client gate +
 			// tooltip never reflect the wrong user. A play started before
@@ -328,8 +330,6 @@ function createScrobbleManager() {
 			enabled = false;
 			status = 'idle';
 			lastServiceDetail = null;
-			settingsCache = null;
-			lastSettingsFetch = 0;
 		}
 	};
 }

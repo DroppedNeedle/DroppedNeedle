@@ -18,6 +18,7 @@ import {
 	SCROBBLE_TIME_THRESHOLD_MS,
 	MIN_TRACK_DURATION_MS
 } from './scrobbleHelpers';
+import { authStore } from './authStore.svelte';
 
 describe('native scrobble payloads', () => {
 	it('carry the playback source on now-playing and completed plays', () => {
@@ -67,7 +68,19 @@ describe('native scrobble payloads', () => {
 });
 
 describe('scrobbleManager settings', () => {
-	beforeEach(() => mockGet.mockReset());
+	beforeEach(() => {
+		mockGet.mockReset();
+		authStore.setUser({
+			id: 'user-1',
+			display_name: 'User',
+			role: 'user',
+			email: null,
+			avatar_url: null,
+			username: 'user',
+			username_display: 'User',
+			providers: ['local']
+		});
+	});
 
 	it.each([
 		[true, false, true],

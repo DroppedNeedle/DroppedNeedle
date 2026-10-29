@@ -44,6 +44,15 @@ export function shouldScrobble(
 	return accumulatedMs >= getScrobbleThreshold(durationMs);
 }
 
+export const MAX_SCROBBLE_RETRIES = 3;
+const SCROBBLE_RETRY_BASE_MS = 5_000;
+
+/** The pause before retrying a failed submit, or null once the play has used its retries. */
+export function scrobbleRetryDelayMs(failures: number): number | null {
+	if (failures > MAX_SCROBBLE_RETRIES) return null;
+	return SCROBBLE_RETRY_BASE_MS * 2 ** (failures - 1);
+}
+
 export function formatServiceTooltip(
 	scrobbleStatus: string,
 	serviceDetail: Record<string, { queued: boolean }> | null

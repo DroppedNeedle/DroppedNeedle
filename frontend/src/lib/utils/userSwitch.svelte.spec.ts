@@ -62,8 +62,9 @@ async function signInAlice(): Promise<void> {
 	setMusicBrainzSourceScope({ source_mode: 'mirror', source_id: 'mirror-a', generation: 7 });
 	localStorage.setItem(PAGE_SOURCE_KEYS.home, JSON.stringify('lastfm'));
 	localStorage.setItem(
-		'droppedneedle_player_session',
+		'droppedneedle_player_session_v3',
 		JSON.stringify({
+			userId: ALICE.id,
 			nowPlaying: { trackName: "Alice's song", artistName: 'Alice', sourceType: 'local' },
 			queue: [],
 			currentIndex: 0,

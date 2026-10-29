@@ -62,6 +62,29 @@ const SESSION_PERSIST_INTERVAL_MS = 5000;
 const SESSION_REPORT_INTERVAL_MS = 10_000;
 const MAX_SESSION_REPORT_FAILURES = 3;
 
+/**
+ * How the current item is recovering. A failed item is retried once, then moved to another
+ * source once, then counted failed and skipped after a pause; three failures in a row stop
+ * playback. Playing clears it, so recovery never chains.
+ */
+type RecoveryPhase = 'idle' | 'loading' | 'playing' | 'retrying' | 'fallingBack' | 'failed';
+type LoadKind = 'fresh' | 'retry' | 'fallback';
+
+interface Recovery {
+	phase: RecoveryPhase;
+	/** Bumped by every load: a callback from an older load is ignored. */
+	generation: number;
+	/** The tracks that failed in a row; its length is the error count. */
+	failed: string[];
+	skipTimer: ReturnType<typeof setTimeout> | null;
+}
+
+const LOAD_PHASE: Record<LoadKind, RecoveryPhase> = {
+	fresh: 'loading',
+	retry: 'retrying',
+	fallback: 'fallingBack'
+};
+
 function createPlayerStore() {
 	let currentSource = $state<PlaybackSource | null>(null);
 	let nowPlaying = $state<NowPlaying | null>(null);
@@ -71,22 +94,28 @@ function createPlayerStore() {
 	let progress = $state(0);
 	let duration = $state(0);
 	let isPlayerVisible = $state(false);
-	let loadGeneration = 0;
 	let queue = $state<QueueItem[]>([]);
 	let currentIndex = $state(0);
 	let shuffleEnabled = $state(false);
 	let shuffleOrder = $state<number[]>([]);
-	let consecutiveErrors = 0;
-	let failedTrackNames: string[] = [];
-	// Per-item error recovery: retry the same item once, then fail over to an
-	// alternate source once, before counting the item failed and skipping on.
-	// loadQueueItem clears both when starting a fresh (non-recovery) item and
-	// the 'playing' handler clears them on success, so recovery never chains.
-	let retriedIndex: number | null = null;
-	let fallbackIndex: number | null = null;
-	let recoveryPending = false;
-	let errorSkipTimeout: ReturnType<typeof setTimeout> | null = null;
+	const recovery: Recovery = { phase: 'idle', generation: 0, failed: [], skipTimer: null };
 	let lastPersistTime = 0;
+
+	function cancelSkip(): void {
+		if (recovery.skipTimer) clearTimeout(recovery.skipTimer);
+		recovery.skipTimer = null;
+	}
+
+	/** Starts a load in the given phase and returns its generation. */
+	function beginLoad(phase: RecoveryPhase): number {
+		cancelSkip();
+		recovery.phase = phase;
+		return ++recovery.generation;
+	}
+
+	function isCurrent(gen: number): boolean {
+		return gen === recovery.generation;
+	}
 
 	const isPlaying = $derived(playbackState === 'playing');
 	const isBuffering = $derived(playbackState === 'buffering' || playbackState === 'loading');
@@ -153,11 +182,9 @@ function createPlayerStore() {
 		currentIndex = 0;
 		shuffleOrder = [];
 		shuffleEnabled = false;
-		consecutiveErrors = 0;
-		failedTrackNames = [];
-		retriedIndex = null;
-		fallbackIndex = null;
-		recoveryPending = false;
+		cancelSkip();
+		recovery.phase = 'idle';
+		recovery.failed = [];
 		session.clear();
 		storeSessionData(null);
 	}
@@ -177,22 +204,10 @@ function createPlayerStore() {
 		};
 	}
 
-	async function loadQueueItem(index: number): Promise<void> {
+	async function loadQueueItem(index: number, kind: LoadKind = 'fresh'): Promise<void> {
 		const item = queue[index];
 		if (!item) return;
-		// Recovery reloads of the same item preserve the retry/fallback marks so
-		// a failed retry or fallback cannot trigger itself again. Any other load
-		// starts fresh.
-		if (recoveryPending) {
-			recoveryPending = false;
-		} else {
-			retriedIndex = null;
-			fallbackIndex = null;
-		}
-		if (errorSkipTimeout) {
-			clearTimeout(errorSkipTimeout);
-			errorSkipTimeout = null;
-		}
+		const gen = beginLoad(LOAD_PHASE[kind]);
 		const prevProgress = progress,
 			prevItem = currentSource ? (queue[currentIndex] ?? null) : null;
 		currentIndex = index;
@@ -204,19 +219,18 @@ function createPlayerStore() {
 		} else {
 			session.clear();
 		}
+		if (!isCurrent(gen)) return;
 		currentSource?.destroy();
-		const gen = ++loadGeneration;
 		let source: PlaybackSource, resolvedUrl: string | undefined;
 		try {
 			const r = await resolveSourceForItem(item);
 			source = r.source;
 			resolvedUrl = r.loadUrl;
 		} catch (e) {
-			if (gen === loadGeneration)
-				handleTrackError(
-					gen,
-					e instanceof Error ? { code: 'LOAD_ERROR', message: e.message } : undefined
-				);
+			handleTrackError(
+				gen,
+				e instanceof Error ? { code: 'LOAD_ERROR', message: e.message } : undefined
+			);
 			return;
 		}
 		currentSource = source;
@@ -232,19 +246,18 @@ function createPlayerStore() {
 				format: activeItem.format
 			});
 			void session.begin(sessionKeyFor(activeItem));
-			if (gen === loadGeneration && activeItem.sourceType !== 'youtube') {
+			if (isCurrent(gen) && activeItem.sourceType !== 'youtube') {
 				source.play();
 			}
 			await loadPromise;
-			if (gen === loadGeneration && activeItem.sourceType === 'youtube') {
+			if (isCurrent(gen) && activeItem.sourceType === 'youtube') {
 				source.play();
 			}
 		} catch (e) {
-			if (gen === loadGeneration)
-				handleTrackError(
-					gen,
-					e instanceof Error ? { code: 'LOAD_ERROR', message: e.message } : undefined
-				);
+			handleTrackError(
+				gen,
+				e instanceof Error ? { code: 'LOAD_ERROR', message: e.message } : undefined
+			);
 		}
 	}
 
@@ -256,56 +269,44 @@ function createPlayerStore() {
 	}
 
 	function handleTrackError(gen: number, error?: { code: string; message: string }): void {
-		if (gen !== loadGeneration) return;
+		if (!isCurrent(gen)) return;
 		const index = currentIndex;
 		const item = queue[index];
 		const trackName = nowPlaying?.trackName ?? item?.trackName ?? 'Unknown track';
 		const failedSource = item?.sourceType ?? nowPlaying?.sourceType ?? 'unknown';
 		const detail = error?.message || error?.code || '';
 		const detailSuffix = detail ? ` (${detail})` : '';
-		// Same track may have failed transiently: reload it once with a fresh
-		// resolve+load. The retry keeps its mark in loadQueueItem, so a failed
-		// retry falls through to fallback/skip instead of looping.
-		if (item && retriedIndex !== index) {
-			retriedIndex = index;
-			recoveryPending = true;
+		const { phase } = recovery;
+		// A first failure may be transient: reload the same item once.
+		if (item && (phase === 'loading' || phase === 'playing')) {
 			playbackToast.show(
 				`"${trackName}" failed on ${failedSource}${detailSuffix}, retrying...`,
 				'warning'
 			);
-			void loadQueueItem(index);
+			void loadQueueItem(index, 'retry');
 			return;
 		}
-		// Same track playable from another source (e.g. Plex fails but the local
-		// copy works): switch with the existing source machinery before skipping.
-		if (item && fallbackIndex !== index) {
+		// The same track may play from another source (Plex fails, the local copy works).
+		if (item && phase === 'retrying') {
 			const next = nextFallbackSource(item);
-			if (next) {
-				const switched = changeItemSource(queue, index, next);
-				if (!switched.error) {
-					fallbackIndex = index;
-					queue = switched.newQueue;
-					recoveryPending = true;
-					playbackToast.show(
-						`"${trackName}" failed on ${failedSource}, trying ${next}...`,
-						'warning'
-					);
-					void loadQueueItem(index);
-					return;
-				}
+			const switched = next ? changeItemSource(queue, index, next) : null;
+			if (switched && !switched.error) {
+				queue = switched.newQueue;
+				playbackToast.show(
+					`"${trackName}" failed on ${failedSource}, trying ${next}...`,
+					'warning'
+				);
+				void loadQueueItem(index, 'fallback');
+				return;
 			}
 		}
-		consecutiveErrors++;
+		cancelSkip();
+		recovery.phase = 'failed';
+		recovery.failed.push(trackName);
 		playbackState = 'error';
-		failedTrackNames.push(trackName);
-		if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-			const named = failedTrackNames
-				.slice(0, MAX_CONSECUTIVE_ERRORS)
-				.map((n) => `"${n}"`)
-				.join(', ');
-			const extra = failedTrackNames.length - MAX_CONSECUTIVE_ERRORS;
-			const suffix = extra > 0 ? ` +${extra} more` : '';
-			playbackToast.show(`Several tracks failed: ${named}${suffix} - playback stopped.`, 'error');
+		if (recovery.failed.length >= MAX_CONSECUTIVE_ERRORS) {
+			const named = recovery.failed.map((n) => `"${n}"`).join(', ');
+			playbackToast.show(`Several tracks failed: ${named} - playback stopped.`, 'error');
 			applyResetState();
 			return;
 		}
@@ -315,9 +316,9 @@ function createPlayerStore() {
 				`"${trackName}" failed on ${failedSource}${detailSuffix}, skipping...`,
 				'warning'
 			);
-			errorSkipTimeout = setTimeout(() => {
-				errorSkipTimeout = null;
-				if (gen === loadGeneration) void loadQueueItem(nextIdx);
+			recovery.skipTimer = setTimeout(() => {
+				recovery.skipTimer = null;
+				if (isCurrent(gen)) void loadQueueItem(nextIdx);
 			}, ERROR_SKIP_DELAY_MS);
 		} else {
 			playbackToast.show(`"${trackName}" failed on ${failedSource}${detailSuffix}`, 'error');
@@ -335,13 +336,11 @@ function createPlayerStore() {
 
 	function subscribeToSource(source: PlaybackSource, gen: number): void {
 		source.onStateChange((state) => {
-			if (gen !== loadGeneration) return;
+			if (!isCurrent(gen)) return;
 			playbackState = state;
 			if (state === 'playing') {
-				consecutiveErrors = 0;
-				failedTrackNames = [];
-				retriedIndex = null;
-				fallbackIndex = null;
+				recovery.phase = 'playing';
+				recovery.failed = [];
 				session.playing();
 				prefetchNext();
 			}
@@ -369,7 +368,7 @@ function createPlayerStore() {
 			}
 		});
 		source.onProgress((t, d) => {
-			if (gen !== loadGeneration) return;
+			if (!isCurrent(gen)) return;
 			progress = t;
 			duration = d;
 			// preview tier: DJ-style fade over the last 2s so 30s clips blend
@@ -388,7 +387,7 @@ function createPlayerStore() {
 			}
 		});
 		source.onError((error) => {
-			if (gen !== loadGeneration) return;
+			if (!isCurrent(gen)) return;
 			handleTrackError(gen, error);
 		});
 	}
@@ -469,7 +468,8 @@ function createPlayerStore() {
 			void resumeAudioEngine();
 			void session.end(progress);
 			currentSource?.destroy();
-			const gen = ++loadGeneration;
+			const gen = beginLoad('loading');
+			recovery.failed = [];
 			currentSource = source;
 			nowPlaying = metadata;
 			playbackState = 'loading';
@@ -478,7 +478,6 @@ function createPlayerStore() {
 			queue = [];
 			currentIndex = 0;
 			shuffleOrder = [];
-			consecutiveErrors = 0;
 			subscribeToSource(source, gen);
 			source.setVolume(volume);
 			persist();
@@ -495,7 +494,7 @@ function createPlayerStore() {
 			shuffleEnabled = s.shuffleEnabled;
 			shuffleOrder = s.shuffleOrder;
 			isPlayerVisible = s.isPlayerVisible;
-			consecutiveErrors = 0;
+			recovery.failed = [];
 			void loadQueueItem(s.startIndex);
 		},
 
@@ -771,11 +770,7 @@ function createPlayerStore() {
 
 		stop(): void {
 			void session.end(progress);
-			if (errorSkipTimeout) {
-				clearTimeout(errorSkipTimeout);
-				errorSkipTimeout = null;
-			}
-			loadGeneration++;
+			recovery.generation++;
 			applyResetState();
 		},
 
@@ -793,7 +788,7 @@ function createPlayerStore() {
 			shuffleEnabled = resume.shuffleEnabled;
 			shuffleOrder = resume.shuffleOrder;
 			isPlayerVisible = true;
-			consecutiveErrors = 0;
+			recovery.failed = [];
 			void session.end(progress);
 			currentSource?.destroy();
 			currentIndex = resume.currentIndex;
@@ -801,12 +796,12 @@ function createPlayerStore() {
 			isSeekable = true;
 			progress = 0;
 			duration = 0;
-			const gen = ++loadGeneration;
+			const gen = beginLoad('loading');
 
 			void (async () => {
 				try {
 					const { source, loadUrl } = resolveSourceForItem(resume.currentItem);
-					if (gen !== loadGeneration) return;
+					if (!isCurrent(gen)) return;
 					currentSource = source;
 					nowPlaying = resume.nowPlaying;
 					subscribeToSource(source, gen);
@@ -817,7 +812,7 @@ function createPlayerStore() {
 						url: loadUrl,
 						format: resume.currentItem.format
 					});
-					if (gen !== loadGeneration) return;
+					if (!isCurrent(gen)) return;
 					playbackState = 'paused';
 					duration = source.getDuration();
 					if (resume.progress > 0) {
@@ -825,7 +820,7 @@ function createPlayerStore() {
 						progress = resume.progress;
 					}
 				} catch {
-					if (gen !== loadGeneration) return;
+					if (!isCurrent(gen)) return;
 					playbackState = 'error';
 					storeSessionData(null);
 				}

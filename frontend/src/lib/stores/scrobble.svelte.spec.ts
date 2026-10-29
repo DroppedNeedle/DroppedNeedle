@@ -88,6 +88,12 @@ describe('web player plays with forwarding off', () => {
 		expect(h.nowPlaying).not.toHaveBeenCalled();
 	});
 
+	it('retries a failed submit three times with growing pauses, not every second', async () => {
+		h.submit.mockRejectedValue(new Error('server unreachable'));
+		await listen(200);
+		expect(h.submit).toHaveBeenCalledTimes(4);
+	});
+
 	it('drops the play when the user signs out mid-play', async () => {
 		await listen(50);
 		manager.reset();

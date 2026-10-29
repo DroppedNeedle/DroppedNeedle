@@ -1,10 +1,13 @@
-import type { NowPlaying, QueueItem, QueueOrigin, SourceType } from '$lib/player/types';
+import type { NowPlaying, QueueItem, QueueOrigin } from '$lib/player/types';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
 
 const VOLUME_STORAGE_KEY = 'droppedneedle_player_volume';
-const SESSION_STORAGE_KEY = 'droppedneedle_player_session';
+const SESSION_STORAGE_KEY = 'droppedneedle_player_session_v3';
+// The old unversioned save held v2 stream addresses and no owner: it is dropped, never resumed.
+const LEGACY_SESSION_STORAGE_KEY = 'droppedneedle_player_session';
 
 export type StoredSession = {
+	userId: string;
 	nowPlaying: NowPlaying;
 	queue: QueueItem[];
 	currentIndex: number;
@@ -28,25 +31,6 @@ export function stampOrigin(items: QueueItem[], origin: QueueOrigin): QueueItem[
 
 export function stampSingleOrigin(item: QueueItem, origin: QueueOrigin): QueueItem {
 	return { ...item, queueOrigin: origin };
-}
-
-export function normalizeSourceType(sourceType: SourceType | 'howler'): SourceType {
-	return sourceType === 'howler' ? 'local' : sourceType;
-}
-
-export function migrateLegacyItem(
-	item: QueueItem & { sourceType: SourceType | 'howler' }
-): QueueItem {
-	const sourceType = normalizeSourceType(item.sourceType);
-	const availableSources = item.availableSources?.map((source) =>
-		normalizeSourceType(source as SourceType | 'howler')
-	);
-	return {
-		...item,
-		sourceType,
-		availableSources,
-		queueOrigin: item.queueOrigin ?? 'context'
-	};
 }
 
 // The listening room manages its queue inline, so its "added to queue" toasts are noise there.
@@ -90,12 +74,16 @@ export function storeVolume(volume: number): void {
 	}
 }
 
-export function getStoredSession(): StoredSession | null {
+/** The saved session, only when it belongs to `userId`. Any other save is removed. */
+export function getStoredSession(userId: string | undefined): StoredSession | null {
 	try {
+		localStorage.removeItem(LEGACY_SESSION_STORAGE_KEY);
+		if (!userId) return null;
 		const stored = localStorage.getItem(SESSION_STORAGE_KEY);
 		if (!stored) return null;
 		const parsed = JSON.parse(stored);
-		if (parsed && parsed.nowPlaying) return parsed as StoredSession;
+		if (parsed?.userId === userId && parsed.nowPlaying) return parsed as StoredSession;
+		localStorage.removeItem(SESSION_STORAGE_KEY);
 	} catch {
 		/* empty */
 	}
@@ -108,6 +96,7 @@ export function storeSessionData(data: StoredSession | null): void {
 			localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(data));
 		} else {
 			localStorage.removeItem(SESSION_STORAGE_KEY);
+			localStorage.removeItem(LEGACY_SESSION_STORAGE_KEY);
 		}
 	} catch {
 		/* empty */

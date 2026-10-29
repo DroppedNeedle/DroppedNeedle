@@ -89,6 +89,7 @@ vi.mock('$lib/api/client', () => ({
 import { playerStore } from './player.svelte';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
 import { radioSession } from '$lib/stores/radioSession.svelte';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { startPlaybackSession, stopPlaybackSession } from '$lib/player/playbackGateway';
 import { streamUrlFor } from '$lib/player/streamUrl';
 
@@ -260,46 +261,6 @@ describe('playerStore queue methods', () => {
 		});
 	});
 
-	describe('session migration', () => {
-		it('maps legacy howler source type to local during resume', () => {
-			const legacySession = {
-				nowPlaying: {
-					albumId: 'album-1',
-					albumName: 'Album',
-					artistName: 'Artist',
-					coverUrl: null,
-					sourceType: 'howler',
-					trackSourceId: '1',
-					trackName: 'Track'
-				},
-				queue: [
-					{
-						trackSourceId: '1',
-						trackName: 'Track',
-						artistName: 'Artist',
-						trackNumber: 1,
-						albumId: 'album-1',
-						albumName: 'Album',
-						coverUrl: null,
-						sourceType: 'howler',
-						streamUrl: '/api/v3/stream/local/1',
-						availableSources: ['howler', 'jellyfin']
-					}
-				],
-				currentIndex: 0,
-				progress: 0,
-				shuffleEnabled: false,
-				shuffleOrder: []
-			};
-
-			localStorage.setItem('droppedneedle_player_session', JSON.stringify(legacySession));
-			playerStore.resumeSession();
-
-			expect(playerStore.queue[0].sourceType).toBe('local');
-			expect(playerStore.queue[0].availableSources).toEqual(['local', 'jellyfin']);
-		});
-	});
-
 	describe('playQueue', () => {
 		it('sets queue and starts playback at specified index', () => {
 			const items = makeItems(5);
@@ -410,7 +371,18 @@ describe('playerStore queue methods', () => {
 
 	describe('session migration with queueOrigin', () => {
 		it('defaults missing queueOrigin to context during resume', () => {
+			authStore.setUser({
+				id: 'user-1',
+				display_name: 'User',
+				role: 'user',
+				email: null,
+				avatar_url: null,
+				username: 'user',
+				username_display: 'User',
+				providers: ['local']
+			});
 			const session = {
+				userId: 'user-1',
 				nowPlaying: {
 					albumId: 'album-1',
 					albumName: 'Album',
@@ -430,7 +402,6 @@ describe('playerStore queue methods', () => {
 						albumName: 'Album',
 						coverUrl: null,
 						sourceType: 'local',
-						streamUrl: '/api/v3/stream/local/1',
 						availableSources: ['local']
 					}
 				],
@@ -440,7 +411,7 @@ describe('playerStore queue methods', () => {
 				shuffleOrder: []
 			};
 
-			localStorage.setItem('droppedneedle_player_session', JSON.stringify(session));
+			localStorage.setItem('droppedneedle_player_session_v3', JSON.stringify(session));
 			playerStore.resumeSession();
 
 			expect(playerStore.queue[0].queueOrigin).toBe('context');
