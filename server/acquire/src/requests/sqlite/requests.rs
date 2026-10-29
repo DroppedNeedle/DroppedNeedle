@@ -526,12 +526,13 @@ impl RequestStore {
     /// background lane: the follow poll calls it for waiting rows.
     pub async fn admit_waiting(
         &self,
+        kind: RequestKind,
         key: &str,
         asker: &str,
         gate: Option<QuotaGate>,
         now: u64,
     ) -> Result<Option<RequestRecord>, RequestsError> {
-        let stored = row_key(RequestKind::Album, key);
+        let stored = row_key(kind, key);
         let asker = asker.to_owned();
         self.db
             .write_background("requests.admit_waiting", move |tx| {
@@ -552,15 +553,15 @@ impl RequestStore {
             .map_err(|error| lane_error("requests.admit_waiting", error))
     }
 
-    /// Put a row started from waiting back to waiting when its download
-    /// could not be queued, behind the generation guard. Answers whether
-    /// it moved.
+    /// Put a pending row back to waiting when its download could not be
+    /// queued, behind the generation guard. Answers whether it moved.
     pub async fn requeue_waiting(
         &self,
+        kind: RequestKind,
         key: &str,
         expected_generation: u64,
     ) -> Result<bool, RequestsError> {
-        let stored = row_key(RequestKind::Album, key);
+        let stored = row_key(kind, key);
         let expected = to_i64(expected_generation);
         self.db
             .write_background("requests.requeue_waiting", move |tx| {

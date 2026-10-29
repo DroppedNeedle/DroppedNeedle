@@ -16,7 +16,7 @@ pub(super) fn successor_row(task: &TaskRow) -> Option<NewTask> {
         artist_name: task.artist_name.clone(),
         album_title: task.album_title.clone(),
         release_group_mbid: task.release_group_mbid.clone(),
-        origin: spawn.origin,
+        origin: spawn.origin.as_str().to_owned(),
         retry_count: spawn.retry_count,
     })
 }

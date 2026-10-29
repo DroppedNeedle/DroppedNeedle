@@ -15,6 +15,7 @@
 
 use super::state::{AttemptState, TaskStatus};
 use super::store::AttemptRow;
+use crate::dispatch::DispatchOrigin;
 
 /// What startup recovery should do with one active task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,19 +82,20 @@ pub fn classify_startup(status: TaskStatus, attempts: &[AttemptRow]) -> StartupA
 /// Planned successor for a terminal task: the original stays terminal for audit
 /// while a fresh queued task carries `retry_count + 1`. An upgrade's retry
 /// stays an upgrade (keeps the origin-aware gate); everything else becomes
-/// `retry` so quota counts ignore it.
+/// a retry so quota counts ignore it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetrySpawn {
     /// Successor task id.
     pub task_id: String,
     /// Successor origin.
-    pub origin: String,
+    pub origin: DispatchOrigin,
     /// Successor retry generation.
     pub retry_count: i64,
 }
 
-/// Plan a retry successor. Returns `None` for non-terminal statuses: a
-/// retry is only ever spawned from a settled task.
+/// Plan a retry successor from the settled task's stored origin. Returns
+/// `None` for non-terminal statuses: a retry is only ever spawned from a
+/// settled task.
 pub fn plan_retry(
     task_id: &str,
     status: TaskStatus,
@@ -105,10 +107,9 @@ pub fn plan_retry(
     }
     Some(RetrySpawn {
         task_id: format!("{task_id}-r{}", retry_count + 1),
-        origin: if origin == "upgrade" {
-            "upgrade".to_string()
-        } else {
-            "retry".to_string()
+        origin: match DispatchOrigin::parse(origin) {
+            Some(DispatchOrigin::Upgrade) => DispatchOrigin::Upgrade,
+            _ => DispatchOrigin::Retry,
         },
         retry_count: retry_count + 1,
     })

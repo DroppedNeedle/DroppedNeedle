@@ -426,6 +426,20 @@ impl DownloadDispatch {
             .map(TaskView::from))
     }
 
+    /// Any live task, album or track, in one release group, across users.
+    pub async fn live_task_in_group(
+        &self,
+        release_group_mbid: &str,
+    ) -> Result<Option<String>, DispatchError> {
+        let group = release_group_mbid.to_owned();
+        Ok(self
+            .journal
+            .read("downloads.live_in_group", move |store| {
+                store.live_task_in_group(&group)
+            })
+            .await?)
+    }
+
     /// Whether one task can be reimported (failed or short-landed with
     /// its candidate still linked).
     pub async fn reimportable(&self, task_id: &str) -> Result<bool, DispatchError> {

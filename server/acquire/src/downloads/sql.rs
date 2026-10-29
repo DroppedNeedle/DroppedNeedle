@@ -24,6 +24,10 @@ droppedneedle_kernel::sql! {
     pub(super) NEWEST_ACTIVE_FOR_ALBUM = TASK_ROW + " WHERE release_group_mbid = ?1 \
              AND download_type = 'album' AND status IN ('queued', 'downloading', 'processing') \
              ORDER BY created_at DESC, rowid DESC LIMIT 1";
+    /// Any live task, album or track, in release group `?1` (lowercase).
+    pub(super) LIVE_IN_GROUP = "SELECT id FROM download_tasks \
+             WHERE lower(release_group_mbid) = ?1 \
+             AND status IN ('queued', 'downloading', 'processing') LIMIT 1";
     /// Stamp the optional detail columns; NULL keeps a column.
     pub(super) SET_TASK_DETAILS = "UPDATE download_tasks \
              SET release_mbid = COALESCE(?1, release_mbid), \

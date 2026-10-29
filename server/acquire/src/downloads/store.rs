@@ -463,6 +463,21 @@ impl<'conn> DownloadStore<'conn> {
             .optional()?)
     }
 
+    /// Any live task, album or track, in one release group.
+    pub fn live_task_in_group(
+        &self,
+        release_group_mbid: &str,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                sql::LIVE_IN_GROUP.text(),
+                rusqlite::params![release_group_mbid.to_ascii_lowercase()],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     /// Stamp optional task detail columns after insert (edition pins,
     /// artist identity, track titles). `None` leaves the column as-is.
     pub fn set_task_details(

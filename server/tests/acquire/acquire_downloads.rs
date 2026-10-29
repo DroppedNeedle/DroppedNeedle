@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::dispatch::DispatchOrigin;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::worker::{
     DownloadWorker, FixedSource, WorkerConfig, run_startup_recovery,
@@ -398,10 +399,10 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
     // Retry spawns keep the original terminal and carry the generation.
     let spawn = plan_retry("orig-r1", TaskStatus::Failed, "retry", 1).unwrap();
     assert_eq!(spawn.task_id, "orig-r1-r2");
-    assert_eq!(spawn.origin, "retry");
+    assert_eq!(spawn.origin, DispatchOrigin::Retry);
     assert_eq!(spawn.retry_count, 2);
     let upgrade_spawn = plan_retry("up", TaskStatus::Failed, "upgrade", 0).unwrap();
-    assert_eq!(upgrade_spawn.origin, "upgrade");
+    assert_eq!(upgrade_spawn.origin, DispatchOrigin::Upgrade);
     assert!(plan_retry("live", TaskStatus::Downloading, "user", 0).is_none());
 }
 

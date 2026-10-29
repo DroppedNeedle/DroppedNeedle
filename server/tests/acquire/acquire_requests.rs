@@ -1234,6 +1234,92 @@ async fn recovery_finishes_cancels_and_dispatches() {
     assert!(row.task_id.is_some(), "the new task is linked");
 }
 
+/// An album or track ask whose download cannot be queued because the
+/// database is busy is never failed: the row waits, and the next pass of
+/// waiting requests starts it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_database_leaves_an_ask_waiting_until_the_next_pass() {
+    use droppedneedle_acquire::downloads::journal::Journal;
+    use droppedneedle_kernel::db::{DbConfig, DbError, Lane, LaneLimits, open_runtime};
+
+    let (state, db, dispatch) = setup().await;
+    // A download journal whose writer is held, so a dispatch hears busy.
+    let dir = crate::common::ScratchDir::new("requests-busy-dispatch");
+    let path = dir.join("journal.db");
+    crate::common::migrated_db(&path);
+    let runtime = open_runtime(&DbConfig::new(&path).with_lane_limits(LaneLimits {
+        foreground_wait: std::time::Duration::from_millis(200),
+        watch_tick: std::time::Duration::from_millis(10),
+        ..LaneLimits::default()
+    }))
+    .await
+    .expect("runtime opens");
+    let held = AcquireDb::new(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    let settings = droppedneedle_acquire::settings::scratch_settings(&dir.join("settings"))
+        .expect("settings open");
+    let busy = Arc::new(DownloadDispatch::new(
+        Arc::new(Journal::new(held, crate::common::bundles::quiet_ticks())),
+        Arc::new(droppedneedle_kernel::ids::UuidGenerator),
+        settings.live(),
+    ));
+    let busy_state = RequestsState::new(&db, state.quota.clone(), busy);
+    let (entered, inside) = std::sync::mpsc::channel();
+    let (let_go, release) = std::sync::mpsc::channel::<()>();
+    let writer = {
+        let db = runtime.db().clone();
+        std::thread::spawn(move || {
+            let _ = db.write_blocking(Lane::Foreground, "test.hold", |_| {
+                let _ = entered.send(());
+                let _ = release.recv();
+                Ok::<_, DbError>(())
+            });
+        })
+    };
+    inside
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the writer is held");
+
+    let (status, body) = ask(&busy_state, TRUSTED, MBID_A).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["status"], "queued");
+    let (status, body) = call(
+        &busy_state,
+        Method::POST,
+        "/api/v3/requests/tracks",
+        Some(TRUSTED),
+        Some(json!({
+            "recording_mbid": MBID_B,
+            "artist_name": "Artist",
+            "track_title": "Song",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["status"], "queued");
+    drop(let_go);
+    writer.join().expect("writer joins");
+    for (kind, key) in [(RequestKind::Album, MBID_A), (RequestKind::Track, MBID_B)] {
+        let row = state.store.get(kind, key).await.unwrap().unwrap();
+        assert!(row.waits_for_quota(), "{kind:?} waits: {:?}", row.status);
+    }
+
+    let started = RequestsService::new(&state)
+        .start_waiting(2_000_000_000)
+        .await
+        .unwrap();
+    assert!(started.is_empty(), "no follow notice for a person's ask");
+    assert_eq!(dispatch.take_calls().await.len(), 2);
+    for (kind, key) in [(RequestKind::Album, MBID_A), (RequestKind::Track, MBID_B)] {
+        let row = state.store.get(kind, key).await.unwrap().unwrap();
+        assert_eq!(row.status.as_str(), "downloading", "{kind:?} started");
+        assert!(row.task_id.is_some(), "{kind:?} is linked");
+    }
+    runtime.shutdown().await;
+}
+
 /// The library's plan for one album, scripted: track 1 kept, track 2
 /// missing (held by "t2" when `complete`), track 3 kept and track 4 held
 /// only by "t4v", another version of it.

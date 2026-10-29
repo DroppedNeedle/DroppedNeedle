@@ -519,16 +519,10 @@ impl RequestsService {
                 return Ok(Some(mark.task_id));
             }
         }
-        let group = release_group_mbid.to_ascii_lowercase();
-        self.library
-            .db()
-            .read("editions.album_busy", move |conn| {
-                conn.query_row(sql::GROUP_DOWNLOADING.text(), [group], |row| row.get(0))
-                    .optional()
-                    .map_err(DbError::from)
-            })
+        self.dispatch
+            .live_task_in_group(release_group_mbid)
             .await
-            .map_err(|error| RequestsError::internal(&error))
+            .map_err(super::dispatch_fault)
     }
 
     /// The library copy a fetch with no plan is for: the copy asked for

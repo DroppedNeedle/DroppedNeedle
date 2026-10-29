@@ -354,10 +354,6 @@ droppedneedle_kernel::sql! {
     /// Users with a live ListenBrainz link.
     pub(crate) LISTENBRAINZ_USERS = "SELECT user_id FROM user_connections \
          WHERE service = 'listenbrainz' AND enabled = 1 ORDER BY user_id";
-    /// A download already working on release group `?1`.
-    pub(crate) GROUP_DOWNLOADING = "SELECT id FROM download_tasks \
-         WHERE lower(release_group_mbid) = ?1 \
-         AND status IN ('queued', 'downloading', 'processing') LIMIT 1";
     /// The library copy of group `?1` a fetch with no plan is for: album
     /// `?2` followed to the album it was merged into, else the group's copy
     /// with an edition, a person's first, then the oldest.
