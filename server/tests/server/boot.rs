@@ -88,6 +88,21 @@ impl Running {
     }
 }
 
+/// Wait until nothing in this process holds the database of `config` or its
+/// data lock: a stopped server's last steps may still run past its
+/// shutdown, and a store the test opened closes on its own thread. A host
+/// command meets a server that is gone, as it does once the process exits.
+async fn let_go(config: &AppConfig) {
+    let deadline = Instant::now() + crate::common::PATIENCE;
+    while crate::persist_runtime::open_handles(&config.library_db_path) > 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the database is still held after the server stopped"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn production_graph_boots_on_an_empty_dir_and_answers() {
     let dir = scratch("graph");
@@ -1276,6 +1291,7 @@ async fn public_address_set_from_the_host_is_honoured_at_the_next_boot() {
     drop(router);
     running.shut_down().await;
     assert_eq!(revision(), 0);
+    let_go(&config).await;
 
     let refused = set_public_address(&dirs, vec!["https://music.test/music".to_owned()])
         .await
@@ -1307,6 +1323,7 @@ async fn public_address_set_from_the_host_is_honoured_at_the_next_boot() {
     assert_eq!(code, 403);
     drop(router);
     running.shut_down().await;
+    let_go(&config).await;
 
     assert_eq!(
         set_public_address(&dirs, Vec::new()).await.unwrap(),

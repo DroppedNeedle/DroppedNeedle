@@ -2086,26 +2086,43 @@ async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
     let readers = droppedneedle_kernel::db::MAX_READERS as usize;
     let mut held = Vec::new();
     for _ in 0..readers {
-        held.push(e2e.pool().acquire().await.expect("reader checks out"));
+        held.push(crate::common::hold_reader(e2e.pool()).await);
     }
-    let started = Arc::new(std::sync::Barrier::new(readers + 1));
-    let release = Arc::new(std::sync::Barrier::new(readers + 1));
+    // The held reads wait behind a gate that opens when it drops, so an
+    // assertion that fails below lets them go and the test fails instead
+    // of hanging.
+    let gate = OpenOnDrop::default();
+    let (entered, mut inside) = tokio::sync::mpsc::unbounded_channel();
     let mut holders = Vec::new();
     for _ in 0..readers {
-        let (started, release) = (Arc::clone(&started), Arc::clone(&release));
-        let db = e2e.db().clone();
+        let (gate, entered, db) = (gate.waiter(), entered.clone(), e2e.db().clone());
         holders.push(tokio::spawn(async move {
-            db.read("test.hold", move |_| {
-                started.wait();
-                release.wait();
-                Ok::<_, droppedneedle_kernel::db::DbError>(())
-            })
-            .await
+            // A background read may have a connection for a moment past the
+            // short checkout limit, so a hold that hears busy asks again.
+            let deadline = Instant::now() + crate::common::PATIENCE;
+            loop {
+                let (gate, entered) = (Arc::clone(&gate), entered.clone());
+                let read = db
+                    .read("test.hold", move |_| {
+                        let _ = entered.send(());
+                        wait_open(&gate);
+                        Ok::<_, droppedneedle_kernel::db::DbError>(())
+                    })
+                    .await;
+                match read {
+                    Err(droppedneedle_kernel::db::DbError::Busy { .. })
+                        if Instant::now() < deadline => {}
+                    done => return done,
+                }
+            }
         }));
     }
-    tokio::task::spawn_blocking(move || started.wait())
-        .await
-        .expect("readers check out");
+    for _ in 0..readers {
+        tokio::time::timeout(crate::common::PATIENCE, inside.recv())
+            .await
+            .expect("every reader checks out")
+            .expect("a hold reports in");
+    }
     let headers = [("authorization", auth.as_str())];
     let setup = json!({"username": "second", "password": "second-password-12"});
     let sign_in = json!({
@@ -2134,15 +2151,53 @@ async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
         assert!(body["error"]["details"]["error_id"].is_string(), "{body}");
     }
     drop(held);
-    tokio::task::spawn_blocking(move || release.wait())
-        .await
-        .expect("readers release");
+    drop(gate);
     for holder in holders {
-        holder.await.expect("holder joins").expect("held read ends");
+        tokio::time::timeout(crate::common::PATIENCE, holder)
+            .await
+            .expect("held read ends")
+            .expect("holder joins")
+            .expect("held read succeeds");
     }
     let (status, body, _) =
         login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+type Gate = (std::sync::Mutex<bool>, std::sync::Condvar);
+
+/// A gate that held reads wait behind until it drops, whichever way the
+/// test that holds it ends.
+#[derive(Default)]
+struct OpenOnDrop(Arc<Gate>);
+
+impl OpenOnDrop {
+    fn waiter(&self) -> Arc<Gate> {
+        Arc::clone(&self.0)
+    }
+}
+
+impl Drop for OpenOnDrop {
+    fn drop(&mut self) {
+        let (open, opened) = &*self.0;
+        *open
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        opened.notify_all();
+    }
+}
+
+/// Block until the gate behind `gate` opens.
+fn wait_open(gate: &Gate) {
+    let (open, opened) = gate;
+    let mut is_open = open
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    while !*is_open {
+        is_open = opened
+            .wait(is_open)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
 }
 
 #[tokio::test]
@@ -2165,7 +2220,11 @@ async fn cookie_mutation_needs_the_exact_origin() {
                 .iter()
                 .map(|(name, value)| (*name, value.as_str()))
                 .collect();
-            call_status(app, "POST", "/api/v3/auth/logout-all", &headers).await
+            // A busy answer did nothing, so the session gate's read on a
+            // loaded host is asked again rather than taken for the verdict.
+            call(app, "POST", "/api/v3/auth/logout-all", &headers, None)
+                .await
+                .0
         }
     };
     // Another app on the same host shares the cookie and counts as

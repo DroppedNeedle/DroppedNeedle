@@ -50,24 +50,35 @@ fn principal_for(user: &models::UserRecord, session_id: &str) -> Principal {
     test_principal(&user.id, user.role, session_id, SessionKind::Standard)
 }
 
+/// One request, asked again while the app answers busy: a busy answer did
+/// nothing, so on a loaded host the test still sees the real verdict.
 async fn call(app: Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(uri);
-    let body = match body {
-        Some(json) => {
-            builder = builder.header("content-type", "application/json");
-            Body::from(json.to_string())
+    let (status, _, body) = crate::common::through_busy(|| {
+        let mut builder = Request::builder().method(method).uri(uri);
+        let body = match &body {
+            Some(json) => {
+                builder = builder.header("content-type", "application/json");
+                Body::from(json.to_string())
+            }
+            None => Body::empty(),
+        };
+        let request = builder.body(body).unwrap();
+        let app = app.clone();
+        async move {
+            let response = app.oneshot(request).await.unwrap();
+            let (status, headers) = (response.status(), response.headers().clone());
+            let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
+                .await
+                .unwrap();
+            (
+                status,
+                headers,
+                serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            )
         }
-        None => Body::empty(),
-    };
-    let response = app.oneshot(builder.body(body).unwrap()).await.unwrap();
-    let status = response.status();
-    let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
-        .await
-        .unwrap();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+    })
+    .await;
+    (status, body)
 }
 
 #[tokio::test]
@@ -218,13 +229,14 @@ async fn first_local_password_is_set_once() {
 async fn foreign_sessions_and_app_passwords_are_404_not_403() {
     let (rig, _, user) = rig_with_admin().await;
     let other = rig.seed_user("other", Role::User).await;
-    let (_, created) = call(
+    let (status, created) = call(
         test_app(&rig, Some(principal_for(&user, "sess-molly"))),
         "POST",
         "/api/v3/me/app-passwords",
         Some(json!({"name": "x"})),
     )
     .await;
+    assert!(status.is_success(), "{status}: {created}");
     let app_password = created["id"].as_str().unwrap().to_owned();
     let stranger = || test_app(&rig, Some(principal_for(&other, "sess-other")));
     for uri in [

@@ -126,11 +126,25 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = bool>,
 {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + common::PATIENCE;
     while !ready().await {
         assert!(Instant::now() < deadline, "{what}");
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+}
+
+/// How many files of this process are open on `db` or a file beside it
+/// named after it (its `-wal`, `-shm` and lock files). Every SQLite
+/// connection holds the database open, so zero means no connection, and no
+/// data lock, is left on it.
+pub(crate) fn open_handles(db: &std::path::Path) -> usize {
+    let db = std::fs::canonicalize(db).expect("database path resolves");
+    let db = db.as_os_str().as_encoded_bytes();
+    std::fs::read_dir("/proc/self/fd")
+        .expect("open files list")
+        .filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok())
+        .filter(|target| target.as_os_str().as_encoded_bytes().starts_with(db))
+        .count()
 }
 
 /// Sidecar path for a database file.
@@ -819,7 +833,17 @@ async fn a_play_outlasting_the_request_wait_is_still_recorded() {
     use droppedneedle_media::playback::ports::PlayRecord;
     use droppedneedle_media::playback::sqlite::PlaybackStore;
 
-    let (runtime, _dir) = open_scratch("play-busy").await;
+    // The production wait for a request write, which the play must outlast;
+    // the holder gets a test's patient budget, so a loaded host only slows it.
+    let dir = scratch_dir("play-busy");
+    let db = dir.join("library.db");
+    common::migrated_db(&db);
+    let runtime = open_runtime(&DbConfig::new(&db).with_lane_limits(LaneLimits {
+        background: LaneLimits::patient().background,
+        ..LaneLimits::default()
+    }))
+    .await
+    .unwrap();
     let history = PlaybackStore::new(
         runtime.db().clone(),
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
@@ -863,8 +887,9 @@ async fn a_play_outlasting_the_request_wait_is_still_recorded() {
         Default::default(),
     );
     holder.join().unwrap().unwrap();
+    let mut reader = common::hold_reader(runtime.db().sqlx()).await;
     let plays: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_play_history")
-        .fetch_one(runtime.db().sqlx())
+        .fetch_one(&mut *reader)
         .await
         .unwrap();
     assert_eq!(plays, 1);
@@ -1546,6 +1571,14 @@ async fn shutdown_gives_up_on_a_read_that_does_not_return() {
 
     assert_eq!(held.pop().unwrap().release(), 1);
     assert_eq!(activity.out(), 0);
+    // Shutdown left its last steps running past the grace, and SQLite
+    // removes `-wal` only when the last handle on the file closes, so the
+    // next start waits until every handle of this one has closed.
+    drop(db);
+    until("the stopped runtime closes the database", || async {
+        open_handles(&path) == 0
+    })
+    .await;
     let next = open_runtime(&DbConfig::new(&path)).await.unwrap();
     assert_eq!(next.db().read("brief-next", count_labels).await.unwrap(), 1);
     next.shutdown().await;
