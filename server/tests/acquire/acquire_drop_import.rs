@@ -22,7 +22,6 @@ use droppedneedle_acquire::held::store::Entry;
 use droppedneedle_acquire::landing::library::LibraryLanding;
 use droppedneedle_acquire::landing::ports::LandingLibrary;
 use droppedneedle_acquire::reason::Reason;
-use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::sources::{
     Edition, EditionPage, EditionQuery, ReleaseHit, ReleaseSource, SourceError,
@@ -185,10 +184,8 @@ fn length_ms(bytes: &[u8], scratch: &Path) -> Option<u64> {
 
 /// The scratch database the acquire bundle is built on, the library bundle
 /// over it, with the curator and asker users and a `music` root, and the
-/// scratch folder. The auth rig is returned only to live as long as the
-/// others.
+/// scratch folder, and an auth rig on the platform they share.
 async fn bundles() -> (AcquireDb, LibrarySetup, PathBuf, AuthRig) {
-    let auth = AuthRig::new("drop-import").await;
     let db = AcquireDb::scratch().expect("scratch db");
     for (id, name) in [("u-curator", "Cora"), ("u-asker", "Asa")] {
         db.add_user(id, name, "user").await.expect("user");
@@ -213,26 +210,29 @@ async fn bundles() -> (AcquireDb, LibrarySetup, PathBuf, AuthRig) {
             EffectivePolicy::Automatic,
         )
         .expect("root adds");
+    let auth = AuthRig::on(&platform);
     (db, library, dir, auth)
 }
 
-/// The acquire bundle over `db`, finished downloads landing in `library`.
+/// The production acquire bundle on the rig's platform, finished downloads
+/// landing through `landing`.
 fn acquire_over(
-    db: &AcquireDb,
-    library: Arc<dyn LandingLibrary>,
+    auth: &AuthRig,
+    library: &LibrarySetup,
+    landing: Arc<dyn LandingLibrary>,
 ) -> droppedneedle_acquire::AcquireSetup {
-    droppedneedle_acquire::AcquireSetup::for_tests(
-        db.clone(),
-        Arc::new(UuidGenerator),
-        droppedneedle_kernel::events::EventHub::new(),
-        Some(library),
+    crate::common::bundles::acquire_landing_at(
+        &auth.platform,
+        auth.deps.clone(),
+        library,
+        &crate::common::bundles::collections_at(&auth.platform).stores,
+        landing,
     )
-    .expect("acquire bundle")
 }
 
 #[tokio::test]
 async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
-    let (db, library, dir, _auth) = bundles().await;
+    let (_db, library, dir, auth) = bundles().await;
     let music = dir.join("music");
     let work = dir.join("work");
     std::fs::create_dir_all(&work).expect("work dir");
@@ -246,7 +246,8 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
     let impostor = tagged(&work, "flac_full_01.flac", "Dummy", "Glory Box", 1);
     let lengths = [None, length_ms(&sour_times, &work)];
     let acquire = acquire_over(
-        &db,
+        &auth,
+        &library,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(OneRelease(release(
@@ -406,13 +407,14 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
 /// both kept on disk.
 #[tokio::test]
 async fn same_named_files_on_two_discs_both_wait() {
-    let (db, library, dir, _auth) = bundles().await;
+    let (_db, library, dir, auth) = bundles().await;
     let work = dir.join("work");
     std::fs::create_dir_all(&work).expect("work dir");
     let first = tagged(&work, "flac_full_01.flac", "Nothing Alike", "Glory Box", 1);
     let second = tagged(&work, "flac_full_02.flac", "Nothing Alike", "Roads", 1);
     let acquire = acquire_over(
-        &db,
+        &auth,
+        &library,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(OneRelease(release(&["Mysterons"], &[None])))),
@@ -447,7 +449,7 @@ async fn same_named_files_on_two_discs_both_wait() {
 /// on disk: it is never thrown away.
 #[tokio::test]
 async fn an_upgrade_the_bin_cannot_take_keeps_the_upload() {
-    let (db, library, dir, _auth) = bundles().await;
+    let (_db, library, dir, auth) = bundles().await;
     let music = dir.join("music");
     let work = dir.join("work");
     std::fs::create_dir_all(&work).expect("work dir");
@@ -456,7 +458,8 @@ async fn an_upgrade_the_bin_cannot_take_keeps_the_upload() {
     let mysterons_mp3 = tagged(&work, "mp3_full_01.mp3", "Dummy", "Mysterons", 1);
     let mysterons = tagged(&work, "flac_full_01.flac", "Dummy", "Mysterons", 1);
     let acquire = acquire_over(
-        &db,
+        &auth,
+        &library,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(OneRelease(release(&["Mysterons"], &[None])))),
@@ -601,11 +604,12 @@ async fn a_hand_match_finds_the_edition_in_a_large_group() {
             })
             .collect()
     };
-    let (db, library, dir, _auth) = bundles().await;
+    let (_db, library, dir, auth) = bundles().await;
     let mut known = editions(1);
     known.extend(editions(2));
     let acquire = acquire_over(
-        &db,
+        &auth,
+        &library,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(LargeGroups(known))),
@@ -687,9 +691,10 @@ async fn a_deferred_upload_match_leaves_its_files_as_they_were() {
     guess.release_group_id = GUESS_GROUP.to_owned();
     guess.tracks[0].id = "9d0b7a1e-0000-4000-8000-000000000003".to_owned();
     let guessed_track = guess.tracks[0].clone();
-    let (db, library, dir, _auth) = bundles().await;
+    let (_db, library, dir, auth) = bundles().await;
     let acquire = acquire_over(
-        &db,
+        &auth,
+        &library,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(LargeGroups(vec![picked, guess]))),
@@ -780,9 +785,10 @@ async fn a_matched_uploads_bonus_track_is_not_retried_onto_the_old_guess() {
     guess.tracks[0].id = "9d0b7a1e-0000-4000-8000-000000000013".to_owned();
     guess.tracks[0].recording_id = "9d0b7a1e-0000-4000-8000-000000000014".to_owned();
     let guessed = guess.tracks[0].clone();
-    let (db, library, dir, _auth) = bundles().await;
+    let (_db, library, dir, auth) = bundles().await;
     let acquire = acquire_over(
-        &db,
+        &auth,
+        &library,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(LargeGroups(vec![picked, guess]))),
@@ -951,9 +957,10 @@ async fn upload_and_settle(
 /// of it stays in staging and nothing from it reaches the library.
 #[tokio::test]
 async fn an_entry_longer_than_its_header_leaves_nothing_behind() {
-    let (db, library, _dir, _auth) = bundles().await;
+    let (_db, library, _dir, auth) = bundles().await;
     let acquire = acquire_over(
-        &db,
+        &auth,
+        &library,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(OneRelease(release(&["Big"], &[None])))),
@@ -1109,9 +1116,10 @@ async fn a_cut_off_upload_survives_a_sweep_that_cannot_read_its_jobs() {
 /// would never be grouped again and its other files would be swept.
 #[tokio::test]
 async fn a_cut_off_upload_is_grouped_whole_or_not_at_all() {
-    let (db, library, dir, _auth) = bundles().await;
+    let (_db, library, dir, auth) = bundles().await;
     let acquire = acquire_over(
-        &db,
+        &auth,
+        &library,
         Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(OneRelease(release(&["Mysterons"], &[None])))),

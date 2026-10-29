@@ -715,7 +715,7 @@ async fn plex_pins_are_bound_to_their_starter_and_gate_membership() {
     let mock = serve(plex_router).await;
     let e2e = E2e::open("plex").await.with_upstreams(Upstreams {
         plex_tv: mock.clone(),
-        ..droppedneedle::bootstrap::Outbound::live().sign_in()
+        ..crate::common::closed_outbound().sign_in()
     });
     let mut settings = PlexConnection {
         plex_url: mock,

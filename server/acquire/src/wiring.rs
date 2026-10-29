@@ -5,9 +5,8 @@
 //! health probes, and the download worker. Every durable piece sits on the
 //! shared SQLite runtime ([`AcquireDb`]). Clients, quotas and the download
 //! policy read their sections through live handles, so saving settings
-//! takes effect without a restart. `for_tests` binds the same shape over a
-//! scratch database and scratch settings. Routes are declared in posture
-//! groups through `routes()`; only the Spotify OAuth callback is public (it
+//! takes effect without a restart. Routes are declared in posture groups
+//! through `routes()`; only the Spotify OAuth callback is public (it
 //! is state-token identified).
 
 use std::path::{Path, PathBuf};
@@ -79,9 +78,6 @@ use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::Providers;
 use tokio::sync::watch;
-
-#[cfg(any(test, feature = "test-support"))]
-mod test_bundle;
 
 /// Spotify Web API root.
 pub const SPOTIFY_API_BASE: &str = "https://api.spotify.com/v1";

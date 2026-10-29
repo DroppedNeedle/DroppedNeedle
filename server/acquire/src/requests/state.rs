@@ -86,34 +86,4 @@ impl RequestsState {
             albums: None,
         }
     }
-
-    /// Test state over a scratch database and the download journal on it,
-    /// with default settings and staging beside the database. Returns the
-    /// state, the database (to seed users and rows) and the dispatch (to
-    /// read and settle its tasks). Call inside a tokio runtime.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests() -> Result<(Self, AcquireDb, Arc<DownloadDispatch>), String> {
-        use crate::downloads::journal::Journal;
-
-        let db = AcquireDb::scratch()?;
-        let dir = db
-            .path()
-            .parent()
-            .ok_or_else(|| "scratch database has no directory".to_owned())?
-            .to_path_buf();
-        let settings = crate::settings::scratch_settings(&dir.join("settings"))?;
-        let dispatch = Arc::new(DownloadDispatch::new(
-            Arc::new(Journal::new(
-                db.clone(),
-                Arc::new(crate::plugin_events::FlowTicks::new(
-                    None,
-                    droppedneedle_kernel::events::EventHub::new(),
-                )),
-            )),
-            Arc::new(droppedneedle_kernel::ids::UuidGenerator),
-            settings.live(),
-        ));
-        let quota = Arc::new(QuotaLedger::unlimited(db.clone()));
-        Ok((Self::new(&db, quota, dispatch.clone()), db, dispatch))
-    }
 }

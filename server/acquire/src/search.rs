@@ -13,21 +13,6 @@ const RELEASE_PAGE: u32 = 100;
 /// handful of artists, and bounds one poll's provider work.
 const MAX_RELEASE_PAGES: u32 = 10;
 
-/// The follow poll of a test bundle with no MusicBrainz: every poll
-/// fails, so no artist is baselined against an empty page.
-#[cfg(any(test, feature = "test-support"))]
-pub struct NoReleasePoll;
-
-#[cfg(any(test, feature = "test-support"))]
-impl ReleasePoll for NoReleasePoll {
-    fn poll_releases<'a>(
-        &'a self,
-        _artist_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<ObservedRelease>, String>> {
-        Box::pin(async { Err("MusicBrainz is not available".to_owned()) })
-    }
-}
-
 /// The artist's release groups from the MusicBrainz browse endpoint,
 /// every page, at background priority on the shared limiter. The
 /// browse list is complete, so a release cannot hide behind search

@@ -65,9 +65,29 @@ const MBID_B: &str = "22222222-2222-4222-8222-222222222222";
 const MBID_C: &str = "33333333-3333-4333-8333-333333333333";
 const ARTIST: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
+/// The requests routes alone (no ports, no quota) over the download
+/// dispatch of a production acquire bundle on a scratch database. Returns
+/// the state, the database (to seed users and rows) and the dispatch (to
+/// read and settle its tasks).
+pub(crate) async fn requests_state() -> (RequestsState, AcquireDb, Arc<DownloadDispatch>) {
+    let db = AcquireDb::scratch().expect("scratch db");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let platform = crate::common::TestPlatform::on(db.db(), &dir).build().await;
+    let (library, _) = crate::common::library::library_at(&platform);
+    let acquire = crate::common::bundles::acquire_at(
+        &platform,
+        crate::common::auth::AuthRig::on(&platform).deps,
+        &library,
+        &crate::common::bundles::collections_at(&platform).stores,
+    );
+    let quota = Arc::new(QuotaLedger::unlimited(acquire.db.clone()));
+    let state = RequestsState::new(&acquire.db, quota, acquire.dispatch.clone());
+    (state, db, acquire.dispatch)
+}
+
 /// State over a scratch database with every test user present.
 async fn setup() -> (RequestsState, AcquireDb, Downloads) {
-    let (state, db, dispatch) = RequestsState::for_tests().expect("requests state builds");
+    let (state, db, dispatch) = requests_state().await;
     for (id, name, role) in [
         ("u-ada", "Ada", "user"),
         ("u-bob", "Bob", "user"),

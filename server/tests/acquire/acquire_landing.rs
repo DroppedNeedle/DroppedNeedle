@@ -32,7 +32,6 @@ use droppedneedle_acquire::reason::{Reason, ReasonKind};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::db::DbError;
-use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::models::LocalTrackFacts;
 use droppedneedle_library::identify::sources::{
@@ -271,11 +270,9 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         ),
     ]));
     let acquire = acquire_over(
-        &db,
-        Some(Arc::new(LibraryLanding::new(
-            &library,
-            every_priority(releases),
-        ))),
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
     let worker = |paths: Vec<PathBuf>| {
         Arc::new(
@@ -473,16 +470,12 @@ const RETIRED: &str = "6d0b7a1e-0000-4000-8000-0000000000ff";
 
 /// Land a two-file download of Dummy whose first file carries the
 /// release's own recording id and whose second carries `second`, one
-/// worker pass. Answers the bundle, the music folder and the platform it
-/// runs on.
+/// worker pass. Answers the bundle, the music folder and what it runs
+/// on.
 async fn land_with_recording(
     task_id: &'static str,
     second: &str,
-) -> (
-    droppedneedle_acquire::AcquireSetup,
-    PathBuf,
-    droppedneedle_kernel::platform::Platform,
-) {
+) -> (droppedneedle_acquire::AcquireSetup, PathBuf, Grounds) {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u-ada", "Ada", "user").await.expect("user");
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
@@ -541,11 +534,9 @@ async fn land_with_recording(
         retired: RETIRED,
     });
     let acquire = acquire_over(
-        &db,
-        Some(Arc::new(LibraryLanding::new(
-            &library,
-            every_priority(releases),
-        ))),
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
     acquire
         .journal
@@ -569,7 +560,7 @@ async fn land_with_recording(
     );
     worker.run_once(1).await;
     worker.wait_for_landings().await;
-    (acquire, music, platform)
+    (acquire, music, (platform, db))
 }
 
 /// A download tagged long ago carries a recording id MusicBrainz has since
@@ -636,16 +627,12 @@ fn untag(path: &Path) {
 
 /// Land `files` for `task`, matched against the release `release` builds
 /// from the files' lengths, in one worker pass. Answers the bundle, the
-/// music folder and the platform it runs on.
+/// music folder and what it runs on.
 async fn land_for(
     task: NewTask,
     downloads: impl FnOnce(&Path) -> Vec<PathBuf>,
     release: impl FnOnce(&[Option<u64>]) -> Release,
-) -> (
-    droppedneedle_acquire::AcquireSetup,
-    PathBuf,
-    droppedneedle_kernel::platform::Platform,
-) {
+) -> (droppedneedle_acquire::AcquireSetup, PathBuf, Grounds) {
     land_reported(task, &[], downloads, release).await
 }
 
@@ -657,11 +644,7 @@ async fn land_reported(
     remote: &[&str],
     downloads: impl FnOnce(&Path) -> Vec<PathBuf>,
     release: impl FnOnce(&[Option<u64>]) -> Release,
-) -> (
-    droppedneedle_acquire::AcquireSetup,
-    PathBuf,
-    droppedneedle_kernel::platform::Platform,
-) {
+) -> (droppedneedle_acquire::AcquireSetup, PathBuf, Grounds) {
     land_through(task, remote, downloads, |lengths| {
         Arc::new(Releases(vec![release(lengths)]))
     })
@@ -675,11 +658,7 @@ async fn land_through(
     remote: &[&str],
     downloads: impl FnOnce(&Path) -> Vec<PathBuf>,
     source: impl FnOnce(&[Option<u64>]) -> Arc<dyn ReleaseSource>,
-) -> (
-    droppedneedle_acquire::AcquireSetup,
-    PathBuf,
-    droppedneedle_kernel::platform::Platform,
-) {
+) -> (droppedneedle_acquire::AcquireSetup, PathBuf, Grounds) {
     land_heard(task, remote, downloads, source, None).await
 }
 
@@ -690,11 +669,7 @@ async fn land_heard(
     downloads: impl FnOnce(&Path) -> Vec<PathBuf>,
     source: impl FnOnce(&[Option<u64>]) -> Arc<dyn ReleaseSource>,
     heard: Option<Arc<dyn FingerprintSource>>,
-) -> (
-    droppedneedle_acquire::AcquireSetup,
-    PathBuf,
-    droppedneedle_kernel::platform::Platform,
-) {
+) -> (droppedneedle_acquire::AcquireSetup, PathBuf, Grounds) {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u-ada", "Ada", "user").await.expect("user");
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
@@ -725,11 +700,9 @@ async fn land_heard(
     let lengths: Vec<Option<u64>> = files.iter().map(|path| length_ms(path)).collect();
     let releases = source(&lengths);
     let acquire = acquire_over(
-        &db,
-        Some(Arc::new(LibraryLanding::new(
-            &library,
-            every_priority(releases),
-        ))),
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
     let task_id = task.id.clone();
     acquire
@@ -769,7 +742,7 @@ async fn land_heard(
             .landing
             .land(&row, Some(&attempt), landed, false)
             .await;
-        return (acquire, music, platform);
+        return (acquire, music, (platform, db));
     }
     let worker = Arc::new(
         DownloadWorker::fixed(
@@ -786,7 +759,7 @@ async fn land_heard(
     );
     worker.run_once(1).await;
     worker.wait_for_landings().await;
-    (acquire, music, platform)
+    (acquire, music, (platform, db))
 }
 
 /// The landing decisions recorded for `task_id`: outcome and reason.
@@ -1285,11 +1258,9 @@ async fn held_files_import_as_upgrades_or_discard() {
     let first = release.tracks[0].clone();
     let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release]));
     let acquire = acquire_over(
-        &db,
-        Some(Arc::new(LibraryLanding::new(
-            &library,
-            every_priority(releases),
-        ))),
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
     let worker = |paths: Vec<PathBuf>| {
         Arc::new(
@@ -1336,7 +1307,7 @@ async fn held_files_import_as_upgrades_or_discard() {
 
     // A better FLAC of that track waits as a held upgrade file, plus one
     // held file of someone else's and one to discard.
-    let held_dir = dir.join("held");
+    let held_dir = acquire.held.folders().held.clone();
     let flac = land_file(&held_dir, "up.flac", "flac_full_01.flac", "Mysterons", 1);
     let spare = land_file(&held_dir, "spare.flac", "flac_full_02.flac", "Roads", 2);
     // And an upgrade file that cannot be read as audio.
@@ -1496,11 +1467,9 @@ async fn a_held_import_cut_off_by_a_restart_never_places_its_file_twice() {
     let tracks = release.tracks.clone();
     let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release]));
     let acquire = acquire_over(
-        &db,
-        Some(Arc::new(LibraryLanding::new(
-            &library,
-            every_priority(releases),
-        ))),
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
     let held_dir = acquire.held.folders().held.clone();
     let first = land_file(&held_dir, "first.flac", "flac_full_01.flac", "Mysterons", 1);
@@ -1693,19 +1662,19 @@ async fn expired_entries_lose_their_held_copies_and_nothing_else() {
     );
 }
 
-/// The test acquire bundle over `db`, finished downloads landing in
-/// `library` when there is one.
+/// What a bundle from [`acquire_over`] runs on and must not outlive: its
+/// platform, and the scratch database whose folder goes with the last
+/// handle.
+type Grounds = (droppedneedle_kernel::platform::Platform, AcquireDb);
+
+/// The production acquire bundle over `platform`, finished downloads
+/// landing through `landing`.
 fn acquire_over(
-    db: &AcquireDb,
-    library: Option<Arc<dyn LandingLibrary>>,
+    platform: &droppedneedle_kernel::platform::Platform,
+    library: &LibrarySetup,
+    landing: Arc<dyn LandingLibrary>,
 ) -> droppedneedle_acquire::AcquireSetup {
-    droppedneedle_acquire::AcquireSetup::for_tests(
-        db.clone(),
-        Arc::new(UuidGenerator),
-        droppedneedle_kernel::events::EventHub::new(),
-        library,
-    )
-    .expect("acquire bundle")
+    crate::common::bundles::acquire_on(platform, library, landing)
 }
 
 /// A scratch database with the test user, its folder, and the auth rig its
@@ -1718,11 +1687,22 @@ async fn bare_db() -> (AcquireDb, PathBuf, AuthRig) {
     (db, dir, auth)
 }
 
-/// An acquire bundle with no library, its scratch folder, and the auth rig
-/// its users live on.
-async fn bare_acquire() -> (droppedneedle_acquire::AcquireSetup, PathBuf, AuthRig) {
+/// An acquire bundle over a library with no folder, its scratch folder,
+/// and what must live as long as the bundle: the auth rig and the scratch
+/// database.
+async fn bare_acquire() -> (
+    droppedneedle_acquire::AcquireSetup,
+    PathBuf,
+    (AuthRig, AcquireDb),
+) {
     let (db, dir, auth) = bare_db().await;
-    (acquire_over(&db, None), dir, auth)
+    let platform = TestPlatform::on(db.db(), &dir).build().await;
+    let (library, _) = library_at(&platform);
+    let landing = Arc::new(LibraryLanding::new(
+        &library,
+        library.imports.releases.clone(),
+    ));
+    (acquire_over(&platform, &library, landing), dir, (auth, db))
 }
 
 /// Land `landed` for a fresh task and return the rejection code, if any.
@@ -1815,7 +1795,7 @@ async fn a_download_outside_its_clients_folder_is_refused() {
     );
 
     // The same file inside the folder gets past the path check (and stops
-    // at the next one: this rig has no library).
+    // at the next one: this rig's MusicBrainz is closed).
     let inside = land_file(
         &mount.join("real"),
         "01.flac",
@@ -1829,7 +1809,7 @@ async fn a_download_outside_its_clients_folder_is_refused() {
     };
     assert_eq!(
         rejection_code(&acquire, "t-inside", landed).await,
-        Some(Reason::LocalFault)
+        Some(Reason::MusicbrainzUnavailable)
     );
 }
 
@@ -1936,7 +1916,7 @@ async fn a_landing_waits_while_the_chosen_edition_does_not_read() {
         after_import: None,
         edition_busy: true,
     });
-    let acquire = acquire_over(&db, Some(port));
+    let acquire = acquire_over(&platform, &library, port);
     let landed = Landed {
         mounts: vec![mount.into()],
         files: vec![Reported::path(file.clone())],
@@ -1999,11 +1979,9 @@ async fn a_quality_waiver_keeps_only_the_pinned_attempts_files() {
             &[length_ms(&file)],
         )]));
         let acquire = acquire_over(
-            &db,
-            Some(Arc::new(LibraryLanding::new(
-                &library,
-                every_priority(releases),
-            ))),
+            &platform,
+            &library,
+            Arc::new(LibraryLanding::new(&library, every_priority(releases))),
         );
         // Lossy only: the FLAC files are outside the band.
         let band = dir.join("band");
@@ -2258,7 +2236,7 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
     let landed = source.landed(&handle).await.expect("inspect");
     assert_eq!(
         rejection_code(&acquire, "t-plugin-in", landed).await,
-        Some(Reason::LocalFault)
+        Some(Reason::MusicbrainzUnavailable)
     );
 }
 
@@ -2319,7 +2297,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
         &library,
         every_priority(Arc::new(Releases(vec![release.clone()]))),
     ));
-    let acquire = acquire_over(&db, Some(port.clone()));
+    let acquire = acquire_over(&platform, &library, port.clone());
     let receipt = port
         .import(ImportRequest {
             task_id: TASK.to_owned(),
@@ -2433,11 +2411,12 @@ async fn a_failed_downloads_kept_folder_stays_until_it_expires() {
         .await;
     let (library, _) = library_at(&platform);
     let acquire = acquire_over(
-        &db,
-        Some(Arc::new(LibraryLanding::new(
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(Releases(Vec::new()))),
-        ))),
+        )),
     );
     let complete = dir.join("complete");
     let job = format!("droppedneedle-{TASK}-0");
@@ -2605,11 +2584,9 @@ async fn a_missing_library_folder_holds_downloads_until_it_is_back() {
         &lengths,
     )]));
     let acquire = acquire_over(
-        &db,
-        Some(Arc::new(LibraryLanding::new(
-            &library,
-            every_priority(releases),
-        ))),
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
     let source = Arc::new(FixedSource::new(downloads.clone(), files.clone()));
     let worker = Arc::new(
@@ -2760,7 +2737,7 @@ async fn a_read_only_archive_folder_does_not_hold_downloads() {
         every_priority(Arc::new(Releases(Vec::new()))),
     ));
     assert_eq!(port.import_folder(), Some(music.clone()));
-    let acquire = acquire_over(&db, Some(port));
+    let acquire = acquire_over(&platform, &library, port);
     let downloads = dir.join("downloads");
     std::fs::create_dir_all(&downloads).expect("downloads");
     let worker = Arc::new(
@@ -2961,6 +2938,7 @@ struct JoinRig {
     music: PathBuf,
     downloads: PathBuf,
     _auth: AuthRig,
+    _grounds: Grounds,
 }
 
 async fn join_rig(releases: Vec<Release>) -> JoinRig {
@@ -2985,11 +2963,12 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
         )
         .expect("root adds");
     let acquire = acquire_over(
-        &db,
-        Some(Arc::new(LibraryLanding::new(
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(Releases(releases.clone()))),
-        ))),
+        )),
     );
     let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
         acquire.journal.clone(),
@@ -3002,6 +2981,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
         music,
         downloads: dir.join("downloads"),
         _auth: auth,
+        _grounds: (platform, db),
     }
 }
 
@@ -4874,11 +4854,9 @@ async fn a_failed_request_follows_its_retry_to_imported() {
         &lengths,
     )]));
     let acquire = acquire_over(
-        &db,
-        Some(Arc::new(LibraryLanding::new(
-            &library,
-            every_priority(releases),
-        ))),
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
     // The first attempt failed and its request says so.
     acquire
@@ -5001,11 +4979,12 @@ async fn land_single(task_id: &'static str, title: &str) -> Vec<(String, Option<
     single.title = "Love Me".to_owned();
     assert_eq!(single.tracks[0].recording_id, RECORDING);
     let acquire = acquire_over(
-        &db,
-        Some(Arc::new(LibraryLanding::new(
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(
             &library,
             every_priority(Arc::new(Releases(vec![single]))),
-        ))),
+        )),
     );
     let task = NewTask {
         album_title: "Love Me".to_owned(),
@@ -5113,11 +5092,9 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
     assert_eq!(single.tracks[0].recording_id, RECORDING);
     let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![single]));
     let acquire = acquire_over(
-        &db,
-        Some(Arc::new(LibraryLanding::new(
-            &library,
-            every_priority(releases),
-        ))),
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
     );
 
     let mut albums = FixedAlbums::default();
@@ -5400,7 +5377,7 @@ enum SwapAt {
 /// Land one file from `downloads/job` for a fresh task, with the job
 /// folder swapped at `at`. With `other_artist` the file is held.
 /// Answers the bundle, the music folder, the file outside the downloads
-/// folder and the platform it runs on.
+/// folder and what it runs on.
 async fn land_swapped(
     at: SwapAt,
     other_artist: bool,
@@ -5408,7 +5385,7 @@ async fn land_swapped(
     droppedneedle_acquire::AcquireSetup,
     PathBuf,
     PathBuf,
-    droppedneedle_kernel::platform::Platform,
+    Grounds,
 ) {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u-ada", "Ada", "user").await.expect("user");
@@ -5469,7 +5446,7 @@ async fn land_swapped(
         after_import: (at == SwapAt::Import).then_some(swap),
         edition_busy: false,
     });
-    let acquire = acquire_over(&db, Some(port));
+    let acquire = acquire_over(&platform, &library, port);
     acquire
         .journal
         .run("test.seed", |store| {
@@ -5492,7 +5469,7 @@ async fn land_swapped(
     );
     worker.run_once(1).await;
     worker.wait_for_landings().await;
-    (acquire, music, secret, platform)
+    (acquire, music, secret, (platform, db))
 }
 
 // A machine that runs the download client can swap a folder in the
@@ -5895,7 +5872,7 @@ impl IntakeCase {
             after_import: None,
             edition_busy: false,
         });
-        let acquire = acquire_over(&db, Some(port));
+        let acquire = acquire_over(&platform, &library, port);
         let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
             acquire.journal.clone(),
             Some(Arc::new(Lookup(releases))),
@@ -5907,6 +5884,7 @@ impl IntakeCase {
             music,
             downloads: dir.join("downloads"),
             _auth: auth,
+            _grounds: (platform, db),
         };
         let sour = copy_rel(s, SOUR_TIMES);
         let (copy, old) = match row.have {

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use droppedneedle_acquire::AcquireSetup;
 use droppedneedle_acquire::flows::seams::{FlowEvent, TickSink};
 use droppedneedle_acquire::landing::library::LibraryLanding;
+use droppedneedle_acquire::landing::ports::LandingLibrary;
 use droppedneedle_acquire::plugin_events::FlowTicks;
 use droppedneedle_acquire::wiring::{AcquirePorts, AcquireStores};
 use droppedneedle_auth::users::UsersDeps;
@@ -79,6 +80,37 @@ pub fn acquire_at(
     library: &LibrarySetup,
     collections: &Stores,
 ) -> AcquireSetup {
+    let landing = Arc::new(LibraryLanding::new(
+        library,
+        library.imports.releases.clone(),
+    ));
+    acquire_landing_at(platform, users, library, collections, landing)
+}
+
+/// As [`acquire_at`], with users from an auth rig on `platform` and the
+/// platform's collections, finished downloads landing through `landing`.
+pub fn acquire_on(
+    platform: &Platform,
+    library: &LibrarySetup,
+    landing: Arc<dyn LandingLibrary>,
+) -> AcquireSetup {
+    acquire_landing_at(
+        platform,
+        super::auth::AuthRig::on(platform).deps,
+        library,
+        &collections_at(platform).stores,
+        landing,
+    )
+}
+
+/// As [`acquire_at`], with finished downloads landing through `landing`.
+pub fn acquire_landing_at(
+    platform: &Platform,
+    users: UsersDeps,
+    library: &LibrarySetup,
+    collections: &Stores,
+    landing: Arc<dyn LandingLibrary>,
+) -> AcquireSetup {
     let outbound = super::closed_outbound();
     let providers = Arc::new(Providers::build(
         platform,
@@ -96,10 +128,7 @@ pub fn acquire_at(
         users,
         AcquireStores::open(platform, ticks),
         AcquirePorts {
-            library: Arc::new(LibraryLanding::new(
-                library,
-                library.imports.releases.clone(),
-            )),
+            library: landing,
             edition_plans: Arc::new(crate::common::library::operations(library)),
             album_lookup: Arc::new(droppedneedle_acquire::target::lookup::live_albums(
                 &providers,

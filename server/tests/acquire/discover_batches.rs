@@ -4,7 +4,6 @@
 //! made, stays private to its owner, and its removal cancels only what it
 //! caused and never recycles a plain user's albums.
 
-use droppedneedle_acquire::requests::RequestsState;
 use droppedneedle_acquire::requests::batches::DiscoveryBatches;
 use droppedneedle_acquire::requests::batches::models::{
     BatchOutcome, DiscoveryBatchCreate, DiscoveryBatchItemIn,
@@ -52,7 +51,7 @@ fn batch(name: &str, ids: &[&str]) -> DiscoveryBatchCreate {
 
 #[tokio::test]
 async fn batch_files_requests_and_removal_cancels_only_its_own() {
-    let (requests, db, _dispatch) = RequestsState::for_tests().expect("requests state");
+    let (requests, db, _dispatch) = crate::acquire_requests::requests_state().await;
     for (id, name) in [("u-ada", "Ada"), ("u-bob", "Bob")] {
         db.add_user(id, name, "user").await.expect("user row");
     }
