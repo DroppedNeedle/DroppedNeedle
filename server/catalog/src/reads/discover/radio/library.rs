@@ -22,9 +22,13 @@ const TRACK_SELECT: &str = "SELECT t.id AS id, t.title AS title, \
     JOIN local_albums a ON a.id = t.local_album_id \
     LEFT JOIN local_track_artists ta ON ta.local_track_id = t.id AND ta.position = 0 \
     LEFT JOIN local_track_external_identities te ON te.local_track_id = t.id \
+        AND te.provider = 'musicbrainz' \
     LEFT JOIN local_artist_external_identities tae ON tae.local_artist_id = ta.local_artist_id \
+        AND tae.provider = 'musicbrainz' \
     LEFT JOIN local_artist_external_identities aae ON aae.local_artist_id = a.album_artist_id \
+        AND aae.provider = 'musicbrainz' \
     LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id \
+        AND ae.provider = 'musicbrainz' \
     WHERE t.availability = 'indexed' AND a.retired_into_album_id IS NULL";
 
 fn placeholders(count: usize) -> String {

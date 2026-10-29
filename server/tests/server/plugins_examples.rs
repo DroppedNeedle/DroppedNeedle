@@ -219,20 +219,22 @@ async fn scrobbler_posts_each_play_to_its_webhook() {
 async fn metadata_and_purchase_links_fill_only_their_own_artist() {
     let rig = rig("metadata", &["metadata-joke-toy"]).await;
     enable(&rig, "metadata-joke-toy", &[]).await;
-    let found = rig.host.enrich_artist("Test Artist", None).await;
+    let found = rig.host.enrich_artist("Test Artist", None).await.value;
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].tags, ["example", "test-fixture"]);
     assert!(
         rig.host
             .enrich_artist("Someone Else", None)
             .await
+            .value
             .is_empty()
     );
 
     let links = rig
         .host
         .gather_purchase_links("Test Artist", "Fixtures", "")
-        .await;
+        .await
+        .value;
     assert_eq!(links.len(), 1);
     assert_eq!(
         links[0].url,
@@ -459,7 +461,7 @@ async fn crashes_restart_hangs_time_out_and_the_environment_is_scrubbed() {
     enable(&rig, "probe", &[]).await;
 
     // Scrubbed environment, its own data folder as home and working dir.
-    let env = rig.host.gather_purchase_links("env", "", "").await;
+    let env = rig.host.gather_purchase_links("env", "", "").await.value;
     let data_dir = rig.host.data_dir("probe").canonicalize().unwrap();
     let data = data_dir.to_string_lossy().replace(' ', "");
     let label = |key: &str| {
@@ -479,13 +481,21 @@ async fn crashes_restart_hangs_time_out_and_the_environment_is_scrubbed() {
         .fire_tick("probe", Duration::from_millis(300))
         .await;
     assert!(hung.is_err());
-    assert_eq!(rig.host.gather_purchase_links("ok", "", "").await.len(), 1);
+    assert_eq!(
+        rig.host
+            .gather_purchase_links("ok", "", "")
+            .await
+            .value
+            .len(),
+        1
+    );
 
     // A crash fails that call; the plugin comes back on its own.
     assert!(
         rig.host
             .gather_purchase_links("crash", "", "")
             .await
+            .value
             .is_empty()
     );
     wait_until_back(&rig, 1).await;
@@ -496,6 +506,7 @@ async fn crashes_restart_hangs_time_out_and_the_environment_is_scrubbed() {
         rig.host
             .gather_purchase_links("close", "", "")
             .await
+            .value
             .is_empty()
     );
     wait_until_back(&rig, 2).await;
@@ -511,6 +522,7 @@ async fn wait_until_back(rig: &Rig, restarts: u64) {
                 .host
                 .gather_purchase_links("ok", "", "")
                 .await
+                .value
                 .is_empty()
         {
             return;

@@ -17,16 +17,28 @@ pub(crate) mod sql;
 pub mod state;
 pub mod store;
 
+use axum::extract::DefaultBodyLimit;
 use droppedneedle_kernel::mount::{Routes, routes};
 
 pub use state::CollectionsState;
 
+/// The cover upload's body cap: the largest cover the service takes, in
+/// base64, with room for the rest of the JSON.
+const COVER_BODY_BYTES: usize = service::MAX_COVER_BYTES.div_ceil(3) * 4 + 1024;
+
 /// The collections routes at their full `/api/v3` paths, each for any
 /// signed-in user. Following and the auto-download approvals are the
-/// follows' routes in acquisition.
+/// follows' routes in acquisition. The cover upload takes a body up to
+/// `COVER_BODY_BYTES`.
 pub fn routes() -> Routes<CollectionsState> {
     use handlers::*;
 
+    let (schemas, paths, cover) = routes!(
+        upload_cover_handler,
+        get_cover_handler,
+        remove_cover_handler
+    );
+    let cover = cover.layer(DefaultBodyLimit::max(COVER_BODY_BYTES));
     Routes::new()
         .user(routes!(list_playlists_handler, create_playlist_handler))
         .user(routes!(check_tracks_handler))
@@ -41,11 +53,7 @@ pub fn routes() -> Routes<CollectionsState> {
         .user(routes!(reorder_track_handler))
         .user(routes!(update_track_handler, remove_track_handler))
         .user(routes!(resolve_sources_handler))
-        .user(routes!(
-            upload_cover_handler,
-            get_cover_handler,
-            remove_cover_handler
-        ))
+        .user((schemas, paths, cover))
         .user(routes!(list_favorites_handler))
         .user(routes!(set_favorite_handler))
         .user(routes!(rating_lookup_handler))

@@ -163,7 +163,8 @@ impl Catalog {
     }
 
     /// Plugin details for one artist or album, cached for an hour per
-    /// set of answering plugins. No plugin means no call and no cache.
+    /// set of answering plugins. No plugin means no call and no cache, and
+    /// an answer a plugin failed to give part of is shown but not kept.
     async fn plugin_details<F, Fut>(
         &self,
         kind: &str,
@@ -172,7 +173,7 @@ impl Catalog {
     ) -> Result<models::PluginDetails, CatalogError>
     where
         F: FnOnce(Catalog) -> Fut + Clone + Send + 'static,
-        Fut: Future<Output = models::PluginDetails> + Send + 'static,
+        Fut: Future<Output = ports::Gathered<models::PluginDetails>> + Send + 'static,
     {
         let token = self.details.token();
         if token.is_empty() {
@@ -185,7 +186,14 @@ impl Catalog {
                 &key,
                 PLUGIN_DETAILS,
                 RequestPriority::UserInitiated,
-                move |_| async move { Ok(Fetched::Found(fetch(catalog).await)) },
+                move |_| async move {
+                    let details = fetch(catalog).await;
+                    Ok(if details.complete {
+                        Fetched::Found(details.value)
+                    } else {
+                        Fetched::Partial(details.value)
+                    })
+                },
             )
             .await?;
         Ok(details.unwrap_or_default())

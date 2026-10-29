@@ -4,6 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::reads::collections::state::AutoDownloadState;
+pub use droppedneedle_plugins::capabilities::Gathered;
 
 /// Boxed future for dyn-compatible port methods.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -75,9 +76,12 @@ pub trait PurchaseLinkSource: Send + Sync {
     /// misses to a fresh answer instead of serving a week-old one.
     fn token(&self) -> String;
 
-    /// Links for one album. Failures are the provider's to log; they read
-    /// as no links.
-    fn links<'a>(&'a self, query: &'a PurchaseQuery) -> BoxFuture<'a, Vec<ExtraPurchaseLink>>;
+    /// Links for one album. Failures are the provider's to log; they add
+    /// no links and leave the answer incomplete.
+    fn links<'a>(
+        &'a self,
+        query: &'a PurchaseQuery,
+    ) -> BoxFuture<'a, Gathered<Vec<ExtraPurchaseLink>>>;
 }
 
 /// No purchase-link providers.
@@ -89,8 +93,16 @@ impl PurchaseLinkSource for NoPurchaseLinks {
         String::new()
     }
 
-    fn links<'a>(&'a self, _query: &'a PurchaseQuery) -> BoxFuture<'a, Vec<ExtraPurchaseLink>> {
-        Box::pin(async { Vec::new() })
+    fn links<'a>(
+        &'a self,
+        _query: &'a PurchaseQuery,
+    ) -> BoxFuture<'a, Gathered<Vec<ExtraPurchaseLink>>> {
+        Box::pin(async {
+            Gathered {
+                value: Vec::new(),
+                complete: true,
+            }
+        })
     }
 }
 
@@ -103,20 +115,20 @@ pub trait DetailsSource: Send + Sync {
     /// once. Empty means none, and nothing is asked.
     fn token(&self) -> String;
 
-    /// Details about one artist.
+    /// Details about one artist; incomplete when a provider failed.
     fn artist<'a>(
         &'a self,
         name: &'a str,
         mbid: &'a str,
-    ) -> BoxFuture<'a, super::models::PluginDetails>;
+    ) -> BoxFuture<'a, Gathered<super::models::PluginDetails>>;
 
-    /// Details about one album.
+    /// Details about one album; incomplete when a provider failed.
     fn album<'a>(
         &'a self,
         artist: &'a str,
         title: &'a str,
         mbid: &'a str,
-    ) -> BoxFuture<'a, super::models::PluginDetails>;
+    ) -> BoxFuture<'a, Gathered<super::models::PluginDetails>>;
 }
 
 /// No details providers.
@@ -132,8 +144,8 @@ impl DetailsSource for NoDetails {
         &'a self,
         _name: &'a str,
         _mbid: &'a str,
-    ) -> BoxFuture<'a, super::models::PluginDetails> {
-        Box::pin(async { super::models::PluginDetails::default() })
+    ) -> BoxFuture<'a, Gathered<super::models::PluginDetails>> {
+        Box::pin(async { none() })
     }
 
     fn album<'a>(
@@ -141,7 +153,15 @@ impl DetailsSource for NoDetails {
         _artist: &'a str,
         _title: &'a str,
         _mbid: &'a str,
-    ) -> BoxFuture<'a, super::models::PluginDetails> {
-        Box::pin(async { super::models::PluginDetails::default() })
+    ) -> BoxFuture<'a, Gathered<super::models::PluginDetails>> {
+        Box::pin(async { none() })
+    }
+}
+
+/// No details, and nobody failed.
+fn none() -> Gathered<super::models::PluginDetails> {
+    Gathered {
+        value: super::models::PluginDetails::default(),
+        complete: true,
     }
 }

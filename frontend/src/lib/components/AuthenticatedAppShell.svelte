@@ -7,10 +7,7 @@
 	import { migratePageSourceKeys } from '$lib/stores/musicSource';
 	import { watchMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 	import { libraryStore } from '$lib/stores/library';
-	import {
-		getIntegrationStatusQuery,
-		useIntegrationStatus
-	} from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { getIntegrationStatusQuery } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import { loadAdvancedSettings } from '$lib/queries/AdvancedSettingsReads.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
@@ -76,11 +73,7 @@
 	// Session-wide reads: the sidebar, page gates, album cards and images use them.
 	getIntegrationStatusQuery();
 	loadAdvancedSettings();
-	const integrations = useIntegrationStatus();
-	const viewer = $derived({
-		isAdmin: authStore.isAdmin,
-		downloadClient: integrations.current.download_client || !integrations.current.loaded
-	});
+	const viewer = $derived({ isAdmin: authStore.isAdmin });
 
 	const NAV_PROGRESS_DELAY_MS = 120;
 	const NAV_PROGRESS_MIN_VISIBLE_MS = 220;

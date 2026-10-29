@@ -247,10 +247,10 @@ pub fn service_prompts(
             "DL",
             "accent",
             [
-                "Album and track requests",
                 "Automatic downloads",
                 "Direct-to-library imports",
                 "Queue management",
+                "Quality upgrades",
             ],
         ));
     }

@@ -9,6 +9,9 @@
 //!   (gone from disk or in the recycle bin) and excluded ones do not count.
 //!   The web UI lists a live album without files, with no tracks; player
 //!   apps never see it.
+//! - **Live track.** A track every read shows is indexed and sits on a
+//!   live album. Merges retire only emptied albums, so a track left on a
+//!   retired one is a leftover no read lists, counts or returns.
 //! - **Owned** means live and has files. Membership, search's
 //!   `in_library`, the catalog pages' local fallback, Discover and follows
 //!   all read this one meaning. A release group is owned when any copy of
@@ -29,6 +32,20 @@
 macro_rules! live_album {
     ($album:literal) => {
         concat!("+", $album, ".retired_into_album_id IS NULL")
+    };
+}
+
+/// An indexed track on a live album, over a track alias. The album is
+/// probed by key per track, so a page keeps walking its own index.
+macro_rules! live_track {
+    ($track:literal) => {
+        concat!(
+            $track,
+            ".availability = 'indexed' AND NOT EXISTS (SELECT 1 FROM local_albums ra \
+             WHERE ra.id = ",
+            $track,
+            ".local_album_id AND +ra.retired_into_album_id IS NOT NULL)"
+        )
     };
 }
 
@@ -112,6 +129,6 @@ macro_rules! owned_artist {
 }
 
 pub(crate) use {
-    copy_order, live_album, musicbrainz, owned_album, owned_artist, owned_release_groups,
-    recording_mbid,
+    copy_order, live_album, live_track, musicbrainz, owned_album, owned_artist,
+    owned_release_groups, recording_mbid,
 };

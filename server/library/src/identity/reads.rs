@@ -263,8 +263,9 @@ pub(crate) fn stored_release(
 /// Which copy [`copy_for_group`] returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pick {
-    /// The copy the library shows, whatever its release. A copy that names
-    /// no release (left unmanaged) still counts.
+    /// The copy the library shows, whatever its release: one with files
+    /// before one without. A copy that names no release (left unmanaged)
+    /// still counts.
     Shown,
     /// The first copy that names a release: the one acquisition can fetch.
     WithRelease,

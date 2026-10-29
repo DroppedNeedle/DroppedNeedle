@@ -25,7 +25,7 @@ use crate::reads::collections::store::playlists::{
 /// Longest accepted playlist name.
 const MAX_NAME_LEN: usize = 200;
 /// Decoded cover cap: 5 MiB.
-const MAX_COVER_BYTES: usize = 5 * 1024 * 1024;
+pub(crate) const MAX_COVER_BYTES: usize = 5 * 1024 * 1024;
 /// Cover mime allowlist.
 const COVER_TYPES: [&str; 3] = ["image/png", "image/jpeg", "image/webp"];
 /// Source type of an entry added from the local library by a compat client.

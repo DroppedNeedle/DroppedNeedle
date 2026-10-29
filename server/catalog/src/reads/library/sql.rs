@@ -13,8 +13,8 @@ use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
 use rusqlite::types::Value;
 
 use super::definitions::{
-    copy_order, live_album, musicbrainz, owned_album, owned_artist, owned_release_groups,
-    recording_mbid,
+    copy_order, live_album, live_track, musicbrainz, owned_album, owned_artist,
+    owned_release_groups, recording_mbid,
 };
 use super::player::{
     AlbumKey, AlbumSequence, AlbumShape, HistoryKey, ItemKind, KeyedBy, PlayedFilter, TextMatch,
@@ -192,9 +192,11 @@ droppedneedle_kernel::sql! {
         AND (? IS NULL OR EXISTS (SELECT 1 FROM local_track_genres g \
         WHERE g.local_track_id = t.id AND g.folded_name = ?) \
         OR t.genre_folded = ?)";
+    /// A live track `t`: indexed, on a live album.
+    pub(crate) fragment LIVE_TRACK = (live_track!("t"));
     /// The track list's text filter as a substring match: the pattern four
     /// times.
-    pub(crate) fragment TRACK_LIKE = "t.availability = 'indexed' \
+    pub(crate) fragment TRACK_LIKE = LIVE_TRACK + " \
         AND (? IS NULL OR t.title_folded LIKE ? ESCAPE '\\' \
         OR t.artist_name_folded LIKE ? ESCAPE '\\' \
         OR t.album_title_folded LIKE ? ESCAPE '\\')";
@@ -237,13 +239,13 @@ droppedneedle_kernel::sql! {
     /// Every indexed track, from the maintained per-format totals.
     pub(crate) TRACK_TOTAL = "SELECT COALESCE(SUM(indexed_tracks), 0) \
         FROM library_track_format_stats";
-    /// One indexed track by the id it has now.
+    /// One live track by the id it has now.
     pub(crate) TRACK_BY_ID = "SELECT " + TRACK_COLUMNS + " " + TRACK_JOINS
-        + " WHERE t.id = (" + CURRENT_TRACK + ") AND t.availability = 'indexed'";
-    /// Whether one indexed track's file carries lyrics.
+        + " WHERE t.id = (" + CURRENT_TRACK + ") AND " + LIVE_TRACK;
+    /// Whether one live track's file carries lyrics.
     pub(crate) TRACK_HAS_LYRICS = "SELECT EXISTS (SELECT 1 FROM local_tracks t \
         JOIN local_track_lyrics l ON l.local_track_id = t.id \
-        WHERE t.id = (" + CURRENT_TRACK + ") AND t.availability = 'indexed')";
+        WHERE t.id = (" + CURRENT_TRACK + ") AND " + LIVE_TRACK + ")";
     /// A page of an album's indexed tracks, disc and track order.
     pub(crate) ALBUM_TRACKS = "SELECT " + TRACK_COLUMNS + " " + TRACK_JOINS
         + " WHERE t.local_album_id = ? AND t.availability = 'indexed' \
@@ -253,8 +255,8 @@ droppedneedle_kernel::sql! {
         WHERE t.local_album_id = ? AND t.availability = 'indexed'";
     /// The indexed tracks of several albums, by album, disc and track.
     family ALBUM_TRACKS_IN = album_tracks_in;
-    /// One genre (bound twice) on indexed tracks.
-    pub(crate) fragment GENRE_FILTER = "t.availability = 'indexed' AND \
+    /// One genre (bound twice) on live tracks.
+    pub(crate) fragment GENRE_FILTER = LIVE_TRACK + " AND \
         (EXISTS (SELECT 1 FROM local_track_genres g \
          WHERE g.local_track_id = t.id AND g.folded_name = ?) \
          OR t.genre_folded = ?)";
@@ -274,19 +276,18 @@ droppedneedle_kernel::sql! {
         COUNT(DISTINCT t.id) AS track_count, \
         COUNT(DISTINCT t.local_album_id) AS album_count \
         FROM tagged g JOIN local_tracks t ON t.id = g.track_id \
-        AND t.availability = 'indexed' \
+        AND " + LIVE_TRACK + " \
         GROUP BY g.folded ORDER BY track_count DESC, name ASC";
     /// The newest imports.
     pub(crate) NEWEST_TRACKS = "SELECT " + TRACK_COLUMNS + " " + TRACK_JOINS
-        + " WHERE t.availability = 'indexed' ORDER BY t.imported_at DESC, t.id ASC LIMIT ?";
+        + " WHERE " + LIVE_TRACK + " ORDER BY t.imported_at DESC, t.id ASC LIMIT ?";
     /// The oldest imports.
     pub(crate) OLDEST_TRACKS = "SELECT " + TRACK_COLUMNS + " " + TRACK_JOINS
-        + " WHERE t.availability = 'indexed' ORDER BY t.imported_at ASC, t.id ASC LIMIT ?";
-    /// A uniform random pick of indexed track ids, optionally from one
+        + " WHERE " + LIVE_TRACK + " ORDER BY t.imported_at ASC, t.id ASC LIMIT ?";
+    /// A uniform random pick of live track ids, optionally from one
     /// decade (bound three times).
-    pub(crate) RANDOM_TRACK_IDS = "SELECT t.id FROM local_tracks t \
-        WHERE t.availability = 'indexed' \
-        AND (? IS NULL OR (t.year >= ? AND t.year < ? + 10)) \
+    pub(crate) RANDOM_TRACK_IDS = "SELECT t.id FROM local_tracks t WHERE " + LIVE_TRACK
+        + " AND (? IS NULL OR (t.year >= ? AND t.year < ? + 10)) \
         ORDER BY RANDOM() LIMIT ?";
     /// The track projection for picked ids.
     family TRACKS_IN = tracks_in;
@@ -329,11 +330,15 @@ droppedneedle_kernel::sql! {
         owned_album!("la"),
         "))"
     ));
-    /// Artists leading an album or credited on an indexed track, with the
+    /// Artists leading an album or credited on a live track, with the
     /// leading half written `(LED)`.
-    pub(crate) fragment WITH_MUSIC_PREDICATE = "((LED) OR EXISTS (SELECT 1 \
-        FROM local_track_artists lta JOIN local_tracks lt ON lt.id = lta.local_track_id \
-        WHERE lta.local_artist_id = r.id AND lt.availability = 'indexed'))";
+    pub(crate) fragment WITH_MUSIC_PREDICATE = (concat!(
+        "((LED) OR EXISTS (SELECT 1 \
+         FROM local_track_artists lta JOIN local_tracks lt ON lt.id = lta.local_track_id \
+         WHERE lta.local_artist_id = r.id AND ",
+        live_track!("lt"),
+        "))"
+    ));
     /// One page of artist keys in a scope, one statement per scope, sort
     /// and direction, from the start or after a cursor.
     family ARTIST_PAGE = artist_page;
@@ -1078,7 +1083,7 @@ fn track_from(sort: TrackSort, favorites: bool) -> String {
 /// each of `short` words three times.
 fn track_words(short: ListLen) -> String {
     format!(
-        "t.availability = 'indexed' AND {TRACK_TEXT_MATCH}{}",
+        "{LIVE_TRACK} AND {TRACK_TEXT_MATCH}{}",
         TRACK_WORD_LIKE.repeat(short.get())
     )
 }
@@ -1179,11 +1184,11 @@ pub(crate) fn album_tracks_in(ids: ListLen) -> String {
     )
 }
 
-/// The track projection for `ids` indexed tracks.
+/// The track projection for `ids` live tracks.
 pub(crate) fn tracks_in(ids: ListLen) -> String {
     format!(
         "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
-         WHERE t.availability = 'indexed' AND t.id IN ({})",
+         WHERE {LIVE_TRACK} AND t.id IN ({})",
         marks(ids)
     )
 }
@@ -1652,11 +1657,11 @@ fn track_count(shape: TrackShape, key: TrackKey) -> String {
     )
 }
 
-/// The player projection for `ids` streamable tracks.
+/// The player projection for `ids` streamable tracks on live albums.
 pub(crate) fn player_tracks_in(ids: ListLen) -> String {
     format!(
         "SELECT {PLAYER_TRACK_COLUMNS} {PLAYER_TRACK_JOINS} \
-         WHERE t.availability = 'indexed' AND t.id IN ({})",
+         WHERE {LIVE_TRACK} AND t.id IN ({})",
         marks(ids)
     )
 }
@@ -2104,21 +2109,22 @@ pub(crate) fn player_artist_ids(ids: ListLen) -> String {
 }
 
 /// Tag ids of `ids` artists (the ids bound twice): the id each credit of
-/// an indexed track or a live album took from its file, set by the scan
+/// a live track or a live album took from its file, set by the scan
 /// only where the file pairs its artist names and ids one for one. The
 /// credits lead, so a chunk never walks the tracks.
 pub(crate) fn artist_tag_ids(ids: ListLen) -> String {
+    let live_album = live_album!("a");
     let ids = marks(ids);
     format!(
         "SELECT ta.local_artist_id, ta.artist_mbid \
          FROM local_track_artists ta CROSS JOIN local_tracks t \
          WHERE ta.local_artist_id IN ({ids}) AND ta.artist_mbid IS NOT NULL \
-         AND t.id = ta.local_track_id AND t.availability = 'indexed' \
+         AND t.id = ta.local_track_id AND {LIVE_TRACK} \
          UNION ALL \
          SELECT aa.local_artist_id, aa.artist_mbid \
          FROM local_album_artists aa CROSS JOIN local_albums a \
          WHERE aa.local_artist_id IN ({ids}) AND aa.artist_mbid IS NOT NULL \
-         AND a.id = aa.local_album_id AND a.retired_into_album_id IS NULL"
+         AND a.id = aa.local_album_id AND {live_album}"
     )
 }
 

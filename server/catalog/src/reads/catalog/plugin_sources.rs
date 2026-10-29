@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::models::{PluginDetails, PurchaseKind};
 use super::ports::{
-    BoxFuture, DetailsSource, ExtraPurchaseLink, PurchaseLinkSource, PurchaseQuery,
+    BoxFuture, DetailsSource, ExtraPurchaseLink, Gathered, PurchaseLinkSource, PurchaseQuery,
 };
 use droppedneedle_plugins::capabilities::metadata::{
     EnrichmentFields, PluginEnrichment, plain_text,
@@ -17,9 +17,9 @@ use droppedneedle_plugins::manifest::Capability;
 /// Every plugin's answer merged by the gap rule, as the catalog shows it.
 /// Text is reduced to plain text, links to `http(s)` and the image to
 /// `https` only.
-fn merged(answers: &[PluginEnrichment]) -> PluginDetails {
+fn merged(answers: Gathered<Vec<PluginEnrichment>>) -> Gathered<PluginDetails> {
     let mut fields = EnrichmentFields::default();
-    for answer in answers {
+    for answer in &answers.value {
         let mut clean = answer.clone();
         clean.biography = clean
             .biography
@@ -44,11 +44,14 @@ fn merged(answers: &[PluginEnrichment]) -> PluginDetails {
         });
         fields.fill_gaps(&clean);
     }
-    PluginDetails {
-        biography: fields.biography,
-        links: fields.links,
-        tags: fields.tags,
-        image_url: fields.image_url,
+    Gathered {
+        value: PluginDetails {
+            biography: fields.biography,
+            links: fields.links,
+            tags: fields.tags,
+            image_url: fields.image_url,
+        },
+        complete: answers.complete,
     }
 }
 
@@ -65,8 +68,12 @@ impl DetailsSource for PluginDetailsSource {
             .join(",")
     }
 
-    fn artist<'a>(&'a self, name: &'a str, mbid: &'a str) -> BoxFuture<'a, PluginDetails> {
-        Box::pin(async move { merged(&self.0.enrich_artist(name, Some(mbid)).await) })
+    fn artist<'a>(
+        &'a self,
+        name: &'a str,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Gathered<PluginDetails>> {
+        Box::pin(async move { merged(self.0.enrich_artist(name, Some(mbid)).await) })
     }
 
     fn album<'a>(
@@ -74,8 +81,8 @@ impl DetailsSource for PluginDetailsSource {
         artist: &'a str,
         title: &'a str,
         mbid: &'a str,
-    ) -> BoxFuture<'a, PluginDetails> {
-        Box::pin(async move { merged(&self.0.enrich_album(artist, title, Some(mbid)).await) })
+    ) -> BoxFuture<'a, Gathered<PluginDetails>> {
+        Box::pin(async move { merged(self.0.enrich_album(artist, title, Some(mbid)).await) })
     }
 }
 
@@ -92,11 +99,17 @@ impl PurchaseLinkSource for PluginPurchaseLinks {
             .join(",")
     }
 
-    fn links<'a>(&'a self, query: &'a PurchaseQuery) -> BoxFuture<'a, Vec<ExtraPurchaseLink>> {
+    fn links<'a>(
+        &'a self,
+        query: &'a PurchaseQuery,
+    ) -> BoxFuture<'a, Gathered<Vec<ExtraPurchaseLink>>> {
         Box::pin(async move {
-            self.0
+            let gathered = self
+                .0
                 .gather_purchase_links(&query.artist, &query.title, &query.release_group_mbid)
-                .await
+                .await;
+            let value = gathered
+                .value
                 .into_iter()
                 .map(|link| ExtraPurchaseLink {
                     kind: Some(match link.kind.as_str() {
@@ -107,7 +120,11 @@ impl PurchaseLinkSource for PluginPurchaseLinks {
                     url: link.url,
                     label: Some(link.label),
                 })
-                .collect()
+                .collect();
+            Gathered {
+                value,
+                complete: gathered.complete,
+            }
         })
     }
 }

@@ -7,7 +7,7 @@
 //! tick store. The real subprocess runtime is tested with the shipped
 //! examples in `plugins_examples`.
 
-use crate::common::auth::{test_principal, with_test_principal};
+use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use crate::common::{ScratchDir, TestApp};
 use std::collections::HashMap;
 use std::path::Path;
@@ -22,6 +22,12 @@ use axum::http::{Request, StatusCode};
 use droppedneedle_auth::Principal;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
+use droppedneedle_catalog::reads::catalog::plugin_sources::PluginDetailsSource;
+use droppedneedle_catalog::reads::catalog::{
+    Catalog,
+    library::LocalCatalog,
+    upstream::{CatalogSettings, Upstream},
+};
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::jobs::plugin_ticks::{
@@ -31,14 +37,20 @@ use droppedneedle_kernel::jobs::queue::JobQueue;
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::sections::{
+    ListenSource, MbSourceMode, MusicBrainzSettings, UserPreferences,
+};
 use droppedneedle_library::wiring::LibraryCore;
 use droppedneedle_plugins::handlers::{ExtRateLimiter, PluginsDeps, plugin_routes};
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_plugins::install::{Fetched, InstallError, parse_source, resolve};
 use droppedneedle_plugins::models::PluginRefKind;
 use droppedneedle_plugins::protocol::methods;
-use droppedneedle_plugins::runtime::{PublishPayload, ScrobbleEvent};
+use droppedneedle_plugins::runtime::{CallError, PublishPayload, ScrobbleEvent};
 use droppedneedle_plugins::ticks::{HostTickAdapter, PluginTickLoops, TICK_CANCEL_GRACE};
+use droppedneedle_providers::executor::ScriptedWire;
+use droppedneedle_providers::{ProviderEndpoints, Providers, musicbrainz};
 use serde_json::json;
 use tower::ServiceExt as _;
 
@@ -1318,7 +1330,7 @@ async fn the_largest_library_file_fits_one_message() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 
-    let links = host.gather_purchase_links("", "", "").await;
+    let links = host.gather_purchase_links("", "", "").await.value;
     host.stop_all().await;
     let link = links.first().expect("the plugin answers");
     let placed = music.join("big/max.bin");
@@ -1332,4 +1344,111 @@ async fn the_largest_library_file_fits_one_message() {
     assert_eq!(parts[1], "refused");
     assert!(parts[2].contains("at most"), "{}", parts[2]);
     assert!(!music.join("big/over.bin").exists());
+}
+
+/// Catalog settings over the recorded MusicBrainz answers.
+struct RecordedMusicBrainz;
+
+impl CatalogSettings for RecordedMusicBrainz {
+    fn musicbrainz(&self) -> Option<MusicBrainzSettings> {
+        Some(MusicBrainzSettings {
+            source_mode: MbSourceMode::Mirror,
+            api_url: musicbrainz::MB_API_BASE.to_owned(),
+            rate_limit: 0.0,
+            source_id: "test-source".to_owned(),
+            generation: 1,
+            ..MusicBrainzSettings::default()
+        })
+    }
+
+    fn preferences(&self) -> UserPreferences {
+        UserPreferences::default()
+    }
+
+    fn advanced(&self) -> AdvancedSettings {
+        AdvancedSettings::default()
+    }
+
+    fn listenbrainz_enabled(&self) -> bool {
+        false
+    }
+
+    fn primary_source(&self) -> ListenSource {
+        ListenSource::Listenbrainz
+    }
+
+    fn store_region(&self) -> Option<String> {
+        Some("US".to_owned())
+    }
+}
+
+const DETAILS_MANIFEST: &str = "[plugin]\n\
+     name = \"toy\"\n\
+     version = \"1.0.0\"\n\
+     api_version = 2\n\
+     entrypoint = \"plugin:Toy\"\n\
+     capabilities = [\"metadata_provider\"]\n";
+
+/// A plugin that runs late has given no answer, not an empty one: the
+/// album's plugin details are asked for again on the next read. A whole
+/// answer is kept, so the read after it asks nobody.
+#[tokio::test]
+async fn a_plugin_that_runs_late_is_asked_again_and_a_whole_answer_is_kept() {
+    const ALBUM: &str = "b1392450-e666-3926-a536-22c65f834433";
+    let rig = rig("details-late").await;
+    let runtime = enable_toy(&rig, DETAILS_MANIFEST);
+    runtime.answer(methods::ENRICH_ALBUM, Err(CallError::Timeout));
+    let wire = Arc::new(ScriptedWire::new());
+    let recorded = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/catalog/mb_release_group.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    wire.answer(
+        &format!("{}/release-group/{ALBUM}", musicbrainz::MB_API_BASE),
+        200,
+        &[],
+        recorded,
+    );
+    let providers = Providers::unpaced_at(
+        wire,
+        ProviderEndpoints {
+            musicbrainz: musicbrainz::MB_API_BASE.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    );
+    let users = AuthRig::new("details-late").await;
+    let catalog = Catalog::new(
+        Upstream::new(
+            Arc::new(providers),
+            Arc::new(RecordedMusicBrainz),
+            users.deps.clone(),
+        ),
+        LocalCatalog::new(rig.platform.db.clone()),
+    )
+    .with_details(Arc::new(PluginDetailsSource(Arc::clone(&rig.host))));
+
+    for _ in 0..2 {
+        let details = catalog.album_plugin_details(ALBUM).await.unwrap();
+        assert_eq!(details.biography, None);
+    }
+    assert_eq!(
+        runtime.calls_to(methods::ENRICH_ALBUM).len(),
+        2,
+        "a late answer is not kept"
+    );
+
+    runtime.answer(
+        methods::ENRICH_ALBUM,
+        Ok(json!({"biography": "Recorded in Oxford."})),
+    );
+    for _ in 0..2 {
+        let details = catalog.album_plugin_details(ALBUM).await.unwrap();
+        assert_eq!(details.biography.as_deref(), Some("Recorded in Oxford."));
+    }
+    assert_eq!(
+        runtime.calls_to(methods::ENRICH_ALBUM).len(),
+        3,
+        "a whole answer is kept"
+    );
 }

@@ -210,10 +210,10 @@ server carries on as if the plugin had said nothing.
 | Capability | Methods | Time limit | When a plugin fails |
 |---|---|---|---|
 | `scrobbler` | `on_scrobble(event)` | 10 s | the play is still recorded |
-| `purchase_links` | `purchase_links(artist, album, release_group_mbid)` | 10 s | no links from it |
+| `purchase_links` | `purchase_links(artist, album, release_group_mbid)` | 10 s | no links from it, and the album asks again next time |
 | `subscriber` | `on_event(event)` | 5 s | that event is skipped |
 | `publisher` | `handle_route(method, subpath, query, body)` for `[[route]]`s; `await ctx.publish(kind, payload)` | 5 s | the route answers 502 |
-| `metadata_provider` | `enrich_artist(...)`, `enrich_album(...)` | 15 s | nothing is filled in |
+| `metadata_provider` | `enrich_artist(...)`, `enrich_album(...)` | 15 s | nothing is filled in, and the page asks again next time |
 | `scheduler` | `on_tick()` | the interval | the next tick runs as normal |
 | `library_writer` | none; allows `await ctx.write_library_file(rel_path, data)` | 8 s per write | the call fails with the reason |
 | `streaming_source` | `resolve_stream(recording_mbid, user_id)` | 5 s | the next plugin is asked |

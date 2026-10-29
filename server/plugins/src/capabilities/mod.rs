@@ -20,6 +20,19 @@ use serde_json::Value;
 use super::host::LoadedPlugin;
 use super::runtime::CallError;
 
+/// What the plugins serving one capability gave, and whether every one of
+/// them answered. A plugin that failed, ran late or answered in the wrong
+/// shape adds nothing and makes the answer incomplete, so a caller shows
+/// what came back but never keeps it as the whole answer. A plugin that
+/// does not implement the method answers nothing, which is complete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gathered<T> {
+    /// What the plugins that answered gave.
+    pub value: T,
+    /// False when any plugin failed to answer.
+    pub complete: bool,
+}
+
 /// Call one method on one plugin, logging any failure with the plugin's
 /// name and the method. Disabled plugins answer `NotRunning`.
 pub async fn call(
@@ -41,6 +54,21 @@ pub async fn call(
         );
     }
     outcome
+}
+
+/// Call one method and decode its answer. `Ok(None)` when the plugin does
+/// not implement the method; any other failure is an error.
+async fn answer<T: serde::de::DeserializeOwned>(
+    plugin: &LoadedPlugin,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Option<T>, CallError> {
+    match call(plugin, method, params, timeout).await {
+        Ok(value) => decode(plugin, method, value).map(Some),
+        Err(CallError::Unsupported(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// Decode one answer, mapping a shape mismatch to [`CallError::Malformed`].

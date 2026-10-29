@@ -293,8 +293,9 @@ impl LocalCatalog {
     }
 
     /// The library copy's edition (who chose it) and file count for one
-    /// release group. Several copies read as a chosen one first, then the
-    /// oldest, as acquisition does.
+    /// release group. Several copies read as one with files first, then a
+    /// chosen one, then the oldest. A copy without files holds no edition:
+    /// only a person's choice for it stands.
     pub async fn edition_evidence(
         &self,
         release_group_mbid: &str,
@@ -313,7 +314,7 @@ impl LocalCatalog {
                 .release_mbid
                 .clone()
                 .filter(|_| copy.source == DecisionSource::Manual),
-            owned_release: copy.release_mbid,
+            owned_release: copy.release_mbid.filter(|_| copy.file_count > 0),
             file_count: u32::try_from(copy.file_count)
                 .ok()
                 .filter(|count| *count > 0),

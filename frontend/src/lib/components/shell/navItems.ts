@@ -20,8 +20,8 @@ import {
 } from 'lucide-svelte';
 import { withBasePath } from '$lib/utils/basePath';
 
-/** Who sees a destination: everyone, only when a download client is set up, or admins. */
-export type NavAudience = 'everyone' | 'download-client' | 'admin';
+/** Who sees a destination: everyone, or admins. */
+export type NavAudience = 'everyone' | 'admin';
 
 /** A live marker on a destination; each nav draws it in its own style. */
 export type NavBadge = 'library-sync' | 'downloads' | 'following' | 'approvals' | 'update';
@@ -54,7 +54,6 @@ export interface NavItem {
 
 export interface NavViewer {
 	isAdmin: boolean;
-	downloadClient: boolean;
 }
 
 export const exactly =
@@ -137,7 +136,7 @@ export const navItems: NavItem[] = [
 		label: 'Playlists',
 		icon: ListMusic,
 		href: '/playlists',
-		audience: 'download-client',
+		audience: 'everyone',
 		sidebar: { group: 'browse', active: within('/playlists') },
 		more: { active: within('/playlists') }
 	},
@@ -203,7 +202,6 @@ export const navItems: NavItem[] = [
 
 export function canSee(item: NavItem, viewer: NavViewer): boolean {
 	if (item.audience === 'admin') return viewer.isAdmin;
-	if (item.audience === 'download-client') return viewer.downloadClient;
 	return true;
 }
 

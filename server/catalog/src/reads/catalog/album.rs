@@ -927,13 +927,16 @@ impl Catalog {
             }
         }
         let artist = group.credit.as_str();
+        let mut complete = true;
         if !artist.is_empty() || !group.title.is_empty() {
             let query = PurchaseQuery {
                 artist: artist.to_owned(),
                 title: group.title.clone(),
                 release_group_mbid: group.mbid.clone(),
             };
-            for extra in self.purchase_links.links(&query).await {
+            let extras = self.purchase_links.links(&query).await;
+            complete &= extras.complete;
+            for extra in extras.value {
                 let url = extra.url.trim();
                 if !(url.starts_with("https://") || url.starts_with("http://"))
                     || links.iter().any(|known| known.url == url)
@@ -953,7 +956,6 @@ impl Catalog {
                 });
             }
         }
-        let mut complete = true;
         let has_digital = links.iter().any(|link| link.kind == PurchaseKind::Digital);
         if !has_digital && !artist.is_empty() && !group.title.is_empty() {
             match self

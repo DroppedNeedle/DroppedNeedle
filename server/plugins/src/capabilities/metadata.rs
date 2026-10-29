@@ -11,7 +11,8 @@
 //! | images      | kept                | the first plugin image URL           |
 //!
 //! Plugins are asked in name order under a 15 second budget each; one
-//! that fails or answers `null` ("not mine") adds nothing.
+//! that answers `null` ("not mine") adds nothing, and one that fails adds
+//! nothing and marks the answer incomplete.
 
 use std::time::Duration;
 
@@ -21,7 +22,7 @@ use serde_json::json;
 use super::super::host::PluginHost;
 use super::super::manifest::Capability;
 use super::super::protocol::methods;
-use super::{call, decode};
+use super::{Gathered, answer};
 
 /// Budget per plugin.
 const METADATA_TIMEOUT: Duration = Duration::from_secs(15);
@@ -94,7 +95,7 @@ impl PluginHost {
         &self,
         artist_name: &str,
         mbid: Option<&str>,
-    ) -> Vec<PluginEnrichment> {
+    ) -> Gathered<Vec<PluginEnrichment>> {
         let params = json!({ "artist_name": artist_name, "mbid": mbid });
         self.enrich(methods::ENRICH_ARTIST, params).await
     }
@@ -105,7 +106,7 @@ impl PluginHost {
         artist_name: &str,
         album_title: &str,
         mbid: Option<&str>,
-    ) -> Vec<PluginEnrichment> {
+    ) -> Gathered<Vec<PluginEnrichment>> {
         let params = json!({
             "artist_name": artist_name,
             "album_title": album_title,
@@ -114,19 +115,21 @@ impl PluginHost {
         self.enrich(methods::ENRICH_ALBUM, params).await
     }
 
-    async fn enrich(&self, method: &str, params: serde_json::Value) -> Vec<PluginEnrichment> {
+    async fn enrich(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Gathered<Vec<PluginEnrichment>> {
         let plugins = self.serving(Capability::MetadataProvider);
         let answers = futures_util::future::join_all(plugins.iter().map(|plugin| {
-            let params = params.clone();
-            async move {
-                let value = call(plugin, method, params, METADATA_TIMEOUT).await.ok()?;
-                decode::<Option<PluginEnrichment>>(plugin, method, value)
-                    .ok()
-                    .flatten()
-            }
+            answer::<Option<PluginEnrichment>>(plugin, method, params.clone(), METADATA_TIMEOUT)
         }))
         .await;
-        answers.into_iter().flatten().collect()
+        let complete = answers.iter().all(Result::is_ok);
+        Gathered {
+            value: answers.into_iter().flatten().flatten().flatten().collect(),
+            complete,
+        }
     }
 }
 

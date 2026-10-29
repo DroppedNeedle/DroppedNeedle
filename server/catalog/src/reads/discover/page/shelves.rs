@@ -318,14 +318,14 @@ pub fn service_prompts(
         prompts.push(prompt(
             PromptService::DownloadClient,
             "Connect Download Client",
-            "Lets you request and download albums and tracks straight into your library.",
+            "Downloads the albums and tracks you request straight into your library.",
             "DL",
             "accent",
             [
-                "Album requests",
-                "Track requests",
+                "Automatic downloads",
                 "Automatic import",
                 "Library management",
+                "Quality upgrades",
             ],
         ));
     }

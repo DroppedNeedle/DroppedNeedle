@@ -895,6 +895,27 @@ async fn one_album_set_everywhere() {
         sorted_ids(&tracks["items"], "id"),
         ["tk-matched", "tk-tagged"]
     );
+    // A track left on a merged album is not searched, listed or returned.
+    let (status, found) = rig
+        .app
+        .call("GET", "/api/v3/library/tracks?q=old", &native, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    assert_eq!(found["total"], 0, "{found}");
+    let (status, listed) = rig
+        .app
+        .call("GET", "/api/v3/library/tracks?limit=200", &native, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(
+        sorted_ids(&listed["items"], "id"),
+        ["tk-matched", "tk-pair", "tk-tagged"]
+    );
+    let (status, track) = rig
+        .app
+        .call("GET", "/api/v3/library/tracks/tk-retired", &native, None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{track}");
 
     // The status of a group held only by a copy without files names that
     // copy, not in library, so its album page still reaches it.
@@ -1056,4 +1077,63 @@ async fn one_album_set_everywhere() {
     assert_eq!(aurora["albumCount"], 2, "{aurora}");
 
     rig.stop().await;
+}
+
+/// Run `sql` on the fixture's database as one write.
+async fn seed(fixture: &SqliteFixture, sql: &'static str) {
+    fixture
+        .runtime
+        .db()
+        .write(
+            droppedneedle_kernel::db::Lane::Foreground,
+            "library seed",
+            move |tx| {
+                tx.execute_batch(sql)
+                    .map_err(droppedneedle_kernel::db::DbError::from)
+            },
+        )
+        .await
+        .expect("seed runs");
+}
+
+/// The library holds a release group only while a live copy of it has an
+/// indexed track: the landing and the wanted watcher read this to decide
+/// whether an album still needs fetching.
+#[tokio::test]
+async fn library_holds_a_group_only_through_an_indexed_track_on_a_live_copy() {
+    use droppedneedle_acquire::edition::library_holds;
+
+    let fixture = sqlite_fixture().await;
+    let db = fixture.runtime.db();
+    assert!(library_holds(db, "RG1").await.unwrap(), "any case holds");
+
+    seed(
+        &fixture,
+        "INSERT INTO local_album_external_identities \
+         (local_album_id, provider, release_group_mbid, decision_source, selected_at) \
+         VALUES ('al3', 'musicbrainz', 'rg3', 'manual', 1500); \
+         UPDATE local_tracks SET availability = 'missing' WHERE id = 't6'",
+    )
+    .await;
+    assert!(
+        !library_holds(db, "rg3").await.unwrap(),
+        "a copy whose files are gone holds nothing"
+    );
+
+    seed(
+        &fixture,
+        "UPDATE local_tracks SET availability = 'indexed' WHERE id = 't6'",
+    )
+    .await;
+    assert!(library_holds(db, "rg3").await.unwrap());
+
+    seed(
+        &fixture,
+        "UPDATE local_albums SET retired_into_album_id = 'al1' WHERE id = 'al3'",
+    )
+    .await;
+    assert!(
+        !library_holds(db, "rg3").await.unwrap(),
+        "a merged-away copy holds nothing"
+    );
 }

@@ -518,6 +518,19 @@ async fn playlist_input_validation() {
         assert_eq!(body["error"]["code"], "INVALID_INPUT");
     }
 
+    // A cover between the server's default body cap and the 5 MiB the
+    // service takes is accepted.
+    let three_mb = json!({"image_base64": "A".repeat(4_000_000), "content_type": "image/png"});
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("/api/v3/playlists/{id}/cover"),
+        Some(ADA),
+        Some(three_mb),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "a 3 MB cover is taken");
+
     let oversized = json!({"image_base64": "A".repeat(7_000_000), "content_type": "image/png"});
     let (status, body) = call(
         &app,
