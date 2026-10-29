@@ -20,12 +20,12 @@ use crate::tags::{AudioFormat, TagsError, format_for_path};
 /// `TMOO`, `TPRO`, `TSOA`, `TSOP`, `TSOT` and `TSST`, shortens `TDOR` to
 /// a year, and drops the `TDRC`, `TIPL` and `TMCL` frames the wrapper
 /// puts back itself; its v2.4 writer keeps every frame, the v2.3-only
-/// ones included. `POSS` and `TRSN` are ID3v2.4 frames too. `TSO2` is not on the list:
-/// Picard and iTunes write it in v2.3 tags, and lofty's v2.3 writer
-/// keeps it.
+/// ones included. `POSS` and `TRSN` are not on the list: ID3v2.3 defines
+/// them too. `TSO2` is not either: Picard and iTunes write it in v2.3
+/// tags, and lofty's v2.3 writer keeps it.
 pub(super) const V24_ONLY_IDS: &[&str] = &[
-    "ASPI", "EQU2", "POSS", "RVA2", "SEEK", "SIGN", "TDEN", "TDOR", "TDRC", "TDRL", "TDTG", "TIPL",
-    "TMCL", "TMOO", "TPRO", "TRSN", "TSOA", "TSOP", "TSOT", "TSST",
+    "ASPI", "EQU2", "RVA2", "SEEK", "SIGN", "TDEN", "TDOR", "TDRC", "TDRL", "TDTG", "TIPL", "TMCL",
+    "TMOO", "TPRO", "TSOA", "TSOP", "TSOT", "TSST",
 ];
 
 /// The first note on a mixed tag, as the preview shows it.
