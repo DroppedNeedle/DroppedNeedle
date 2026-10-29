@@ -9,6 +9,10 @@
 //! touched, so a request made since keeps its task, held files and watch.
 //! Held copies are deleted before the one write that discards their rows
 //! and finishes the job, so a run that stops in between finds them again.
+//! That write discards only the rows whose copies were deleted, and only
+//! in entries still waiting for a person: a file held in between keeps its
+//! row with its copy, and an entry a person took up since is left to that
+//! action.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -118,7 +122,7 @@ async fn clean_up(
     removed: &AlbumRemovedJob,
 ) -> Result<(), CleanupError> {
     let group = removed.release_group_mbid.clone();
-    let before = (removed.removed_at * 1000.0) as i64;
+    let before = crate::db::ms_from_secs_f64(removed.removed_at);
     let held = db
         .read("downloads.removed_album_held", move |conn| {
             Ok::<_, CleanupError>(HeldRows::new(conn).removed_album_files(&group, before)?)
@@ -127,13 +131,18 @@ async fn clean_up(
     for (_, _, path) in &held {
         super::held::remove_copy(held_dir, path).await;
     }
+    let held: Vec<(i64, i64)> = held
+        .into_iter()
+        .map(|(file, entry, _)| (file, entry))
+        .collect();
     let job_removed = removed.clone();
     let cleaned = db
         .write(Lane::Background, "downloads.removed_album", move |tx| {
             let removed = job_removed;
             let group = removed.release_group_mbid.as_str();
             let now = crate::db::unix_secs_f64(clock.as_ref());
-            let purge = DownloadStore::new(tx).purge_album(group, removed.removed_at, now)?;
+            let purge =
+                DownloadStore::new(tx).purge_album(group, removed.removed_at, &held, now)?;
             let wanted_changed = if removed.stop_wanted {
                 stop_after_removal(tx, group, removed.removed_at)?
             } else {
