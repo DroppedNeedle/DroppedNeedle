@@ -239,7 +239,7 @@ pub fn held(
 }
 
 /// The jobs of `kind` still to finish, and those that ended at or after
-/// `since`, newest first, at most `limit`.
+/// `since`, the running one first and then newest first, at most `limit`.
 pub fn recent(
     conn: &Connection,
     kind: OperationKind,

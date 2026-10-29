@@ -29,7 +29,7 @@ export function libraryWorkTitle(item: LibraryWorkItem): string {
 	if (item.kind === 'identification')
 		return item.state === 'failed' ? 'Album identification failed' : 'Identifying changed albums';
 	if (item.kind === 'identity_preparation') return 'Preparing exact MusicBrainz identities';
-	if (item.kind === 'reidentification') return 'Checking an exact MusicBrainz edition';
+	if (item.kind === 'reidentification') return 'Retrying identification';
 	if (item.kind === 'identity_review') return 'Applying identity review decisions';
 	if (item.kind === 'recovery') return 'File recovery needs attention';
 	if (item.kind === 'maintenance') return 'Maintaining the library catalog';

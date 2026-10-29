@@ -427,17 +427,11 @@ pub(super) fn detail_view(detail: &OperationDetail) -> OperationView {
     )
 )]
 pub async fn get_operation(
-    State(ops): State<Operations>,
     State(repairs): State<Repairs>,
     _caller: Admin,
     Path(job_id): Path<String>,
 ) -> Result<Json<OperationView>, ApiError> {
-    let (detail, summary) = blocking(move || {
-        let detail = ops.get(&job_id)?;
-        let summary = repairs.summary_of(&detail.job)?;
-        Ok::<_, OperationError>((detail, summary))
-    })
-    .await?;
+    let (detail, summary) = blocking(move || repairs.operation(&job_id)).await?;
     Ok(Json(OperationView {
         repair_summary: summary,
         ..detail_view(&detail)

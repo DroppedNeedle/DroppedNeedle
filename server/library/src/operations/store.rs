@@ -234,6 +234,34 @@ pub struct NewReidentification {
     pub one_off_local_metadata: bool,
 }
 
+/// The job key a re-identification request's idempotency key stands for.
+fn reidentification_key(new: &NewReidentification) -> Option<String> {
+    new.idempotency_key
+        .as_ref()
+        .map(|key| format!("{key}:reidentification"))
+}
+
+/// The job an earlier request with the same idempotency key started, if
+/// any. A key that started a re-identification of another album is
+/// refused.
+pub fn replayed_reidentification(
+    conn: &Connection,
+    new: &NewReidentification,
+) -> Result<Option<OperationJob>, OperationError> {
+    let Some(key) = reidentification_key(new) else {
+        return Ok(None);
+    };
+    let Some(existing) = jobs::job_by_key(conn, &key)? else {
+        return Ok(None);
+    };
+    let same_album =
+        snapshot(conn, &existing.id)?.is_some_and(|snap| snap.local_album_id == new.local_album_id);
+    if !same_album {
+        return Err(OperationError::Conflict(reasons::CONTROL_KEY_REUSED));
+    }
+    Ok(Some(existing))
+}
+
 /// Store a re-identification, or hand back the job an earlier request
 /// with the same idempotency key created, or (without a key) one of the
 /// album's that is still to run.
@@ -243,15 +271,10 @@ pub fn create_reidentification(
     new: &NewReidentification,
     now: f64,
 ) -> Result<OperationJob, OperationError> {
-    let key = new
-        .idempotency_key
-        .as_ref()
-        .map(|key| format!("{key}:reidentification"));
-    if let Some(key) = &key
-        && let Some(existing) = jobs::job_by_key(tx, key)?
-    {
+    if let Some(existing) = replayed_reidentification(tx, new)? {
         return Ok(existing);
     }
+    let key = reidentification_key(new);
     let revisions = retry_gate(
         tx,
         management,
@@ -259,7 +282,8 @@ pub fn create_reidentification(
         new.one_off_local_metadata,
     )?;
     if key.is_none()
-        && let Some(existing) = live_reidentification(tx, &new.local_album_id)?
+        && let Some(existing) =
+            live_reidentification(tx, &new.local_album_id, new.one_off_local_metadata)?
     {
         return Ok(existing);
     }
@@ -308,22 +332,28 @@ pub fn create_reidentification(
     job_after(tx, &new.job_id)
 }
 
-/// The album's re-identification that is queued or running, if any.
+/// The album's re-identification that is queued or running, if any. One
+/// started without the Local metadata confirmation is not handed to a
+/// request that carries it, since it would refuse the lookup that request
+/// confirmed.
 fn live_reidentification(
     conn: &Connection,
     album_id: &str,
+    one_off_local_metadata: bool,
 ) -> rusqlite::Result<Option<OperationJob>> {
     let id: Option<String> = conn
         .query_row(
             "SELECT id FROM library_operation_jobs \
              WHERE kind = ?1 AND state IN (?3, ?4) AND id IN \
-             (SELECT job_id FROM library_reidentification_snapshots WHERE local_album_id = ?2) \
+             (SELECT job_id FROM library_reidentification_snapshots WHERE local_album_id = ?2 \
+              AND one_off_local_metadata >= ?5) \
              ORDER BY created_at LIMIT 1",
             params![
                 OperationKind::ExplicitReidentification,
                 album_id,
                 OperationState::Queued,
                 OperationState::Running,
+                one_off_local_metadata,
             ],
             |row| row.get(0),
         )

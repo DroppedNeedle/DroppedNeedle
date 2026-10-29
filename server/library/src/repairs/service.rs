@@ -95,15 +95,20 @@ impl Repairs {
         }
     }
 
-    /// A repair job's report summary for the generic operation view, or
-    /// `None` when `job` is not a repair. Blocking.
-    pub fn summary_of(&self, job: &OperationJob) -> Result<Option<Summary>, OperationError> {
-        if OperationKind::parse(&job.kind) != Some(OperationKind::Repair) {
-            return Ok(None);
-        }
-        self.db.read_blocking("repairs.summary", |conn| {
-            let snap = store::snapshot(conn, &job.id)?.transpose()?;
-            Ok::<_, OperationError>(snap.and_then(|snap| snap.summary))
+    /// Any operation job for the generic operation view, with its report
+    /// summary when it is a repair. One read: read apart, a commit between
+    /// them shows a ready job with no summary. Blocking.
+    pub fn operation(
+        &self,
+        job_id: &str,
+    ) -> Result<(OperationDetail, Option<Summary>), OperationError> {
+        self.db.read_blocking("repairs.operation", |conn| {
+            let detail = job_detail(conn, job_id)?;
+            if OperationKind::parse(&detail.job.kind) != Some(OperationKind::Repair) {
+                return Ok((detail, None));
+            }
+            let snap = store::snapshot(conn, job_id)?.transpose()?;
+            Ok::<_, OperationError>((detail, snap.and_then(|snap| snap.summary)))
         })
     }
 

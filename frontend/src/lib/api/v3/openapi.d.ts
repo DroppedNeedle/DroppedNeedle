@@ -37580,6 +37580,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description A stopped job can't be resumed (REVIEW_JOB_STOPPED) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     retry_pending_reviews: {
@@ -38113,7 +38122,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Review already settled or changed since it was read (STALE_REVISION), album excluded, or needs the Local metadata confirmation */
+            /** @description Review already settled or changed since it was read (STALE_REVISION), album excluded (ALBUM_EXCLUDED), needs the Local metadata confirmation (LOCAL_METADATA_NEEDS_CONFIRMATION), keeps its own tags in a managed folder (LOCAL_METADATA_MANAGED), has an edition someone chose (EDITION_IS_CHOSEN), or the idempotency key started another album's job (CONTROL_KEY_REUSED) */
             409: {
                 headers: {
                     [name: string]: unknown;

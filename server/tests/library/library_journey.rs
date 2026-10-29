@@ -3741,17 +3741,29 @@ async fn library_journey_undo_automatic_edition() {
     assert_eq!(status, StatusCode::NOT_FOUND, "an undo is used once");
 
     // Retrying the review identifies the album again, as a scan would,
-    // and the job that asked for it finishes.
+    // and the job that asked for it finishes. The same request sent again
+    // answers the job the first one started.
+    let retry = json!({"expected_revision": revision, "idempotency_key": "retry-1"});
     let (status, job) = app
         .call(
             "POST",
             &format!("/api/v3/library/reviews/{review}/retry"),
             &headers,
-            Some(json!({"expected_revision": revision})),
+            Some(retry.clone()),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{job}");
     assert_eq!(job["kind"], json!("explicit_reidentification"));
+    let (status, again) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/reviews/{review}/retry"),
+            &headers,
+            Some(retry),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["id"], job["id"]);
     rig.identified(&album, 1).await;
     let db = app.db();
     let identity: (Option<String>, String) = db
@@ -14135,6 +14147,141 @@ async fn a_review_job_step_that_fails_to_record_does_the_review_again() {
             ReviewStep::Worked(_) => {}
             ReviewStep::Ended(job) => break job,
             ReviewStep::Idle => panic!("the released job is taken again"),
+        }
+    };
+    assert_eq!(finished.state.as_str(), "succeeded");
+    assert_eq!((finished.completed_count, finished.succeeded_count), (3, 3));
+    let rejected: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_identify_reviews WHERE state = 'rejected'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("reviews read");
+    assert_eq!(rejected, 3);
+    rig.stop().await;
+}
+
+/// A review job a stopped process held part way through goes back to the
+/// queue at start, with the review it was on pending again, and the next
+/// worker finishes every review.
+#[tokio::test]
+async fn a_review_job_left_running_by_a_restart_finishes_its_reviews() {
+    use droppedneedle_library::operations::service::ReviewStep;
+
+    let rig = Rig::start("lib-review-job-recovery").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "album/01.flac", "flac_full_01.flac");
+    rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    app.state()
+        .jobs
+        .supervisor()
+        .cancel(
+            droppedneedle_library::operations::JOB_NAME,
+            std::time::Duration::from_secs(5),
+        )
+        .await;
+    let ops = app.state().library_services.operations.clone();
+    let step = |owner: &'static str| {
+        let ops = ops.clone();
+        async move {
+            tokio::task::spawn_blocking(move || ops.run_review_step(owner))
+                .await
+                .expect("step joins")
+                .expect("step runs")
+        }
+    };
+    let db = app.db();
+    for n in 0..3 {
+        db.execute(
+            "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+             candidates_json, state, created_ms, updated_ms) \
+             VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
+            [format!("keep-{n}"), album.clone()],
+        )
+        .expect("review filed");
+    }
+    let selection = json!({"action": "keep_tagged", "filter": {}});
+    let (status, preview) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/bulk-preview",
+            &headers,
+            Some(selection.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    let mut apply = selection;
+    apply["preview_token"] = preview["preview_token"].clone();
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/bulk-apply",
+            &headers,
+            Some(apply),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let job_id = body["job"]["id"].as_str().expect("job id").to_owned();
+
+    // The old process settled one review and was taking the next when it
+    // stopped, its lease still current.
+    assert!(matches!(step("stopped").await, ReviewStep::Worked(_)));
+    db.execute(
+        "UPDATE library_operation_work SET state = 'running' \
+         WHERE job_id = ?1 AND ordinal = 1",
+        [&job_id],
+    )
+    .expect("work taken");
+    let work_state = |ordinal: i64| -> String {
+        db.query_row(
+            "SELECT state FROM library_operation_work WHERE job_id = ?1 AND ordinal = ?2",
+            rusqlite::params![job_id, ordinal],
+            |row| row.get(0),
+        )
+        .expect("work reads")
+    };
+    let job_state = || -> String {
+        db.query_row(
+            "SELECT state FROM library_operation_jobs WHERE id = ?1",
+            [&job_id],
+            |row| row.get(0),
+        )
+        .expect("job reads")
+    };
+    assert!(
+        matches!(step("started").await, ReviewStep::Idle),
+        "a held job is not taken while its lease runs"
+    );
+
+    let recover = ops.clone();
+    tokio::task::spawn_blocking(move || recover.recover_at_start())
+        .await
+        .expect("recovery joins")
+        .expect("recovery runs");
+    assert_eq!(job_state(), "queued");
+    assert_eq!(work_state(0), "succeeded");
+    assert_eq!(work_state(1), "pending", "the review it was on is pending");
+
+    let finished = loop {
+        match step("started").await {
+            ReviewStep::Worked(_) => {}
+            ReviewStep::Ended(job) => break job,
+            ReviewStep::Idle => panic!("the recovered job is taken again"),
         }
     };
     assert_eq!(finished.state.as_str(), "succeeded");

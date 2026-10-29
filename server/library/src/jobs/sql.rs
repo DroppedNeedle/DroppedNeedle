@@ -32,10 +32,10 @@ droppedneedle_kernel::sql! {
     /// The running job of a kind an owner holds.
     pub(super) HELD_JOB = JOB_ROW + " WHERE kind = ?1 AND state = 'running' AND lease_owner = ?2";
     /// The jobs of a kind (`?1`) still to finish, or that ended at or after
-    /// `?2`, newest first, at most `?3`.
+    /// `?2`, the running one first and then newest first, at most `?3`.
     pub(super) RECENT_JOBS = JOB_ROW + " WHERE kind = ?1 \
              AND (state IN ('queued', 'running', 'paused') OR terminal_at >= ?2) \
-             ORDER BY created_at DESC, id LIMIT ?3";
+             ORDER BY state = 'running' DESC, created_at DESC, id LIMIT ?3";
     /// A new pending work item.
     pub(super) INSERT_WORK = "INSERT INTO library_operation_work (job_id, ordinal, \
              local_album_id, local_track_id, expected_subject_revision, expected_input_revision, \

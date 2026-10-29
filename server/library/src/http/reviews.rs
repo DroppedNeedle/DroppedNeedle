@@ -533,7 +533,7 @@ pub async fn restore_review(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown review id, or the album has no files"),
-        (status = 409, description = "Review already settled or changed since it was read (STALE_REVISION), album excluded, or needs the Local metadata confirmation"),
+        (status = 409, description = "Review already settled or changed since it was read (STALE_REVISION), album excluded (ALBUM_EXCLUDED), needs the Local metadata confirmation (LOCAL_METADATA_NEEDS_CONFIRMATION), keeps its own tags in a managed folder (LOCAL_METADATA_MANAGED), has an edition someone chose (EDITION_IS_CHOSEN), or the idempotency key started another album's job (CONTROL_KEY_REUSED)"),
     )
 )]
 pub async fn retry_review(
@@ -857,6 +857,7 @@ pub struct ReviewJobControlBody {
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown review job"),
+        (status = 409, description = "A stopped job can't be resumed (REVIEW_JOB_STOPPED)"),
     )
 )]
 pub async fn control_review_job(

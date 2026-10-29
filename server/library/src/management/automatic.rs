@@ -141,7 +141,7 @@ pub fn skip_reason(code: &str) -> ItemReason {
         "EXCLUDED" => reason(
             code,
             "This album is kept out of file organizing.",
-            "Re-enable organizing on the album page.",
+            "Use \"Manage it again\" on the album page.",
         ),
         code if code == reasons::KEEPS_OWN_TAGS.code => reasons::keeps_own_tags(),
         takeover::TAKEN_OVER => reason(

@@ -121,13 +121,6 @@ impl Operations {
         })
     }
 
-    /// One job with its results and, for a re-identification, its
-    /// candidates. Blocking.
-    pub fn get(&self, job_id: &str) -> Result<OperationDetail, OperationError> {
-        self.db
-            .read_blocking("operations.get", |conn| job_detail(conn, job_id))
-    }
-
     /// Pause, resume, or stop a job. Blocking.
     pub fn control(
         &self,
@@ -263,7 +256,9 @@ impl Operations {
     /// `expected_revision`. The job hands the album to identification,
     /// which settles it by its usual rules, so the review is dismissed in
     /// the same write. A review someone changed meanwhile, or an album
-    /// that may not be retried, is refused and the review stays open.
+    /// that may not be retried, is refused and the review stays open. A
+    /// request sent again with the same idempotency key answers the job
+    /// the first one started, before the review's revision is checked.
     /// Blocking.
     pub fn retry_review(
         &self,
@@ -283,6 +278,9 @@ impl Operations {
         let job = self
             .db
             .write_blocking(Lane::Foreground, "operations.retry_review", |tx| {
+                if let Some(job) = store::replayed_reidentification(tx, &new)? {
+                    return Ok(job);
+                }
                 reviews::guard(
                     tx,
                     review_id,
@@ -1277,7 +1275,9 @@ impl Operations {
 
     /// Pause, resume or stop review job `job_id` as it is now: a review
     /// job's counts move with every review, so a revision read a moment
-    /// ago is already old. Blocking.
+    /// ago is already old. A stopped job stays stopped: its reviews that
+    /// were not reached are still pending and can be changed again.
+    /// Blocking.
     pub fn control_review_job(
         &self,
         job_id: &str,
@@ -1289,6 +1289,9 @@ impl Operations {
                     let current = jobs::job(tx, job_id)?
                         .filter(|job| job.kind == OperationKind::BulkReviewApply.as_str())
                         .ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
+                    if control == Control::Resume && current.state == OperationState::Stopped {
+                        return Err(OperationError::Conflict(reasons::REVIEW_JOB_STOPPED));
+                    }
                     store::request_control(
                         tx,
                         job_id,
@@ -1337,7 +1340,10 @@ impl Operations {
                 if let Some(halted) = jobs::checkpoint(tx, &job.id, owner, now)? {
                     return Ok(Begun::Ended(halted));
                 }
-                jobs::heartbeat(tx, &job.id, owner, now)?;
+                if !jobs::heartbeat(tx, &job.id, owner, now)? {
+                    // The lease went elsewhere: that worker has the job.
+                    return Ok(Begun::Idle);
+                }
                 let requester = match job.requested_by_user_id.as_deref() {
                     Some(user_id) => reviews::requester(tx, user_id)?,
                     None => None,

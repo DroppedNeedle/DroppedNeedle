@@ -279,11 +279,11 @@
 		cancelled: 'Stopped',
 		failed: 'Failed'
 	};
-	// Jobs seen running, so the list reloads once when each one ends.
+	// Jobs seen working, so the list reloads once when each one ends or pauses.
 	const watching: Record<string, boolean> = {};
 	$effect(() => {
 		for (const job of reviewJobs.data ?? []) {
-			if (ACTIVE_JOB.includes(job.state)) watching[job.id] = true;
+			if (job.state === 'queued' || job.state === 'running') watching[job.id] = true;
 			else if (watching[job.id]) {
 				delete watching[job.id];
 				void reviewJobEnded(job.action === 'accept' || job.action === 'exclude');
