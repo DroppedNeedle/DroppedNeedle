@@ -16,6 +16,7 @@ use crate::follows::{Follows, ImportArtist};
 use crate::requests::error::RequestsError;
 use crate::settings::ConfigLidarrSettings;
 use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
+use droppedneedle_kernel::runtime_config::ConfigError;
 
 /// Largest Lidarr answer read. `/artist` is one unpaged list of every
 /// artist with its overview and images, so a large library runs to tens
@@ -201,7 +202,7 @@ impl LidarrImportService {
 
     /// Re-fetch Lidarr and keep monitored artists with a valid MBID.
     async fn monitored_artists(&self) -> Result<Vec<LidarrArtist>, ServiceError> {
-        let raw = self.settings.get_raw();
+        let raw = self.settings.get_raw().map_err(ServiceError::Settings)?;
         if raw.url.is_empty() || raw.api_key.expose().is_empty() {
             return Err(ServiceError::NotConnected);
         }
@@ -308,6 +309,9 @@ impl LidarrImportService {
 /// Service-level failure: missing connection or a Lidarr fetch error.
 #[derive(Debug)]
 pub enum ServiceError {
+    /// The Lidarr settings do not read: nothing is fetched until they are
+    /// saved again.
+    Settings(ConfigError),
     /// No Lidarr connection configured. User-safe 400.
     NotConnected,
     /// Lidarr fetch failed.

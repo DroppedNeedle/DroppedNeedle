@@ -36,7 +36,7 @@ use utoipa::IntoParams;
 
 use super::error::ImportsError;
 use super::health::HealthProbes;
-use super::jobs::{ImportState, SpotifyImports};
+use super::jobs::{ImportState, SETTINGS_UNREADABLE, SpotifyImports};
 use super::lidarr::{
     LIDARR_NOT_CONNECTED, LidarrClient, LidarrError, LidarrImportService, ServiceError,
     normalize_lidarr_url,
@@ -47,7 +47,7 @@ use super::models::{
     SpotifyAuthUrlResponse, SpotifyImportRequest, SpotifyImportResponse, SpotifyJobStatus,
     SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
 };
-use super::spotify::SpotifyImportService;
+use super::spotify::{ImportFailure, SpotifyImportService};
 use super::spotify_albums::AlbumResolver;
 use super::spotify_client::{SpotifyClient, SpotifyError, now_unix_secs};
 use super::spotify_oauth::{
@@ -57,7 +57,7 @@ use super::spotify_oauth::{
 use super::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
 use crate::follows::Follows;
 use crate::requests::error::RequestsError;
-use crate::settings::{ConfigLidarrSettings, ConfigSpotifySettings};
+use crate::settings::{ConfigLidarrSettings, ConfigSpotifySettings, settings_failed};
 
 /// Every dependency the imports routes need, injected by constructor.
 #[derive(Clone)]
@@ -160,6 +160,7 @@ pub fn imports_legacy_callback_router(deps: ImportsDeps) -> axum::Router {
 /// log only.
 fn lidarr_failed(error: ServiceError) -> ImportsError {
     match error {
+        ServiceError::Settings(error) => settings_failed(error),
         ServiceError::NotConnected => ImportsError::NotConfigured {
             message: LIDARR_NOT_CONNECTED.to_owned(),
         },
@@ -184,8 +185,9 @@ fn lidarr_failed(error: ServiceError) -> ImportsError {
 pub async fn get_lidarr_config(
     State(deps): State<ImportsDeps>,
     _admin: Admin,
-) -> Json<LidarrConnectionSettings> {
-    Json(deps.lidarr_settings.get())
+) -> Result<Json<LidarrConnectionSettings>, ApiError> {
+    let settings = deps.lidarr_settings.get().map_err(settings_failed)?;
+    Ok(Json(settings))
 }
 
 /// Save the Lidarr connection. A masked key preserves the stored one.
@@ -196,9 +198,10 @@ pub async fn put_lidarr_config(
     State(deps): State<ImportsDeps>,
     _admin: Admin,
     ValidJson(body): ValidJson<LidarrConnectionSettings>,
-) -> Json<LidarrConnectionSettings> {
-    deps.lidarr_settings.save(&body).await;
-    Json(deps.lidarr_settings.get())
+) -> Result<Json<LidarrConnectionSettings>, ApiError> {
+    deps.lidarr_settings.save(&body).await?;
+    let settings = deps.lidarr_settings.get().map_err(settings_failed)?;
+    Ok(Json(settings))
 }
 
 /// Test submitted Lidarr credentials against `system/status`: the
@@ -213,13 +216,14 @@ pub async fn test_lidarr(
     State(deps): State<ImportsDeps>,
     _admin: Admin,
     ValidJson(body): ValidJson<LidarrConnectionSettings>,
-) -> Json<LidarrTestResponse> {
+) -> Result<Json<LidarrTestResponse>, ApiError> {
     let mut api_key = body.api_key;
     if api_key == droppedneedle_kernel::runtime_config::SECRET_MASK {
-        api_key = deps.lidarr_settings.get_raw().api_key.expose().to_owned();
+        let stored = deps.lidarr_settings.get_raw().map_err(settings_failed)?;
+        api_key = stored.api_key.expose().to_owned();
     }
     let url = normalize_lidarr_url(&body.url);
-    match deps.lidarr.system_status(&url, &api_key).await {
+    let verdict = match deps.lidarr.system_status(&url, &api_key).await {
         Err(LidarrError::Auth) => Json(LidarrTestResponse {
             valid: false,
             version: None,
@@ -242,7 +246,8 @@ pub async fn test_lidarr(
                 format!("Connected - Lidarr v{}", status.version)
             },
         }),
-    }
+    };
+    Ok(verdict)
 }
 
 /// Monitored Lidarr artists annotated for the caller.
@@ -286,8 +291,9 @@ pub async fn import_lidarr(
 pub async fn get_spotify_settings(
     State(deps): State<ImportsDeps>,
     _admin: Admin,
-) -> Json<SpotifySettings> {
-    Json(deps.spotify_settings.get())
+) -> Result<Json<SpotifySettings>, ApiError> {
+    let settings = deps.spotify_settings.get().map_err(settings_failed)?;
+    Ok(Json(settings))
 }
 
 /// Save the Spotify app settings. A masked secret preserves the stored
@@ -301,7 +307,8 @@ pub async fn put_spotify_settings(
     ValidJson(body): ValidJson<SpotifySettings>,
 ) -> Result<Json<SpotifySettings>, ApiError> {
     deps.spotify_settings.save(&body).await?;
-    Ok(Json(deps.spotify_settings.get()))
+    let settings = deps.spotify_settings.get().map_err(settings_failed)?;
+    Ok(Json(settings))
 }
 
 /// The computed OAuth redirect URI, for the admin to register.
@@ -331,12 +338,20 @@ const NO_CALLBACK_ADDRESS: &str = "DroppedNeedle could not work out its own addr
 /// only from a trusted proxy. A request that names no address is refused
 /// instead of guessed at.
 fn callback_uri(deps: &ImportsDeps, request: &Request) -> Result<String, ImportsError> {
-    let path = if deps.spotify_settings.legacy_callback() {
+    let legacy = deps
+        .spotify_settings
+        .legacy_callback()
+        .map_err(settings_failed)?;
+    let path = if legacy {
         SPOTIFY_LEGACY_CALLBACK_PATH
     } else {
         SPOTIFY_CALLBACK_PATH
     };
-    let configured = deps.spotify_settings.get_raw().spotify_redirect_origin;
+    let configured = deps
+        .spotify_settings
+        .get_raw()
+        .map_err(settings_failed)?
+        .spotify_redirect_origin;
     let base = if configured.trim().is_empty() {
         effective_origin(request, &deps.trusted_proxies)
             .map(|origin| origin.serialized())
@@ -363,10 +378,7 @@ pub async fn get_spotify_auth_url(
 ) -> Result<Json<SpotifyAuthUrlResponse>, ApiError> {
     let uri = callback_uri(&deps, &request)?;
     let state = fresh_state(&deps);
-    let response = deps
-        .spotify_service()
-        .auth_url(&uri, &state)
-        .map_err(|message| ImportsError::InvalidInput { message })?;
+    let response = deps.spotify_service().auth_url(&uri, &state)?;
     let pending = PendingAuth {
         user_id: principal.user_id().to_owned(),
         redirect_uri: uri,
@@ -435,7 +447,10 @@ async fn finish_spotify_link(deps: &ImportsDeps, query: SpotifyCallbackQuery) ->
             return Redirect::temporary(&profile("/profile?spotify=error")).into_response();
         }
     };
-    let raw = deps.spotify_settings.get_raw();
+    // The settings read logs a section that does not read.
+    let Ok(raw) = deps.spotify_settings.get_raw() else {
+        return Redirect::temporary(&profile("/profile?spotify=error")).into_response();
+    };
     let grant = match deps
         .spotify
         .exchange_code(
@@ -513,7 +528,10 @@ pub async fn list_spotify_playlists(
         .spotify_service()
         .list_playlists(principal.user_id())
         .await
-        .map_err(spotify_failed)?;
+        .map_err(|error| match error {
+            ImportFailure::Settings(error) => settings_failed(error),
+            ImportFailure::Spotify(error) => spotify_failed(error),
+        })?;
     Ok(Json(playlists))
 }
 
@@ -569,6 +587,9 @@ pub async fn import_spotify_playlist(
         }
         .into());
     }
+    // The import needs the Spotify app settings: while they do not read it
+    // is refused here rather than queued.
+    deps.spotify_settings.get_raw().map_err(settings_failed)?;
     let playlist_id = deps
         .spotify_service()
         .ensure_playlist_record(principal.user_id(), &id, &body.name)
@@ -610,11 +631,16 @@ pub async fn get_spotify_job(
         return Err(ImportsError::NotFound.into());
     };
     let status = match state {
+        // An import waiting on settings that do not read says so.
         ImportState::Running => SpotifyJobStatus {
             state: "running".to_owned(),
             playlist_id,
             track_count: None,
-            message: None,
+            message: deps
+                .spotify_settings
+                .get_raw()
+                .is_err()
+                .then(|| SETTINGS_UNREADABLE.to_owned()),
         },
         ImportState::Done => {
             let tracks = deps

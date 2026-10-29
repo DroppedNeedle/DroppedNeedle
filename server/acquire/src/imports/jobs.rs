@@ -10,8 +10,10 @@
 //! replaces the rows wholesale, so a run cut short by a restart is simply
 //! run again by the next process, and a run that already wrote leaves the
 //! same rows. A busy database puts the job back without spending an
-//! attempt. Any other failure ends the job failed, with a code the status
-//! route turns into its message.
+//! attempt. Spotify app settings that do not read hold the job until they
+//! are saved again (or a recheck comes round), then put it back the same
+//! way, so a broken section never fails an import. Any other failure ends
+//! the job failed, with a code the status route turns into its message.
 //!
 //! The jobs module runs one handler per kind, so imports run one at a time
 //! across users.
@@ -27,7 +29,7 @@ use droppedneedle_kernel::jobs::queue::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::spotify::SpotifyImportService;
+use super::spotify::{ImportFailure, SpotifyImportService};
 use super::spotify_client::SpotifyError;
 
 /// The import job kind.
@@ -45,6 +47,13 @@ pub const NOT_LINKED: &str = "SPOTIFY_NOT_LINKED";
 pub const UNAVAILABLE: &str = "SPOTIFY_UNAVAILABLE";
 /// The playlist could not be saved.
 pub const SAVE_FAILED: &str = "SPOTIFY_SAVE_FAILED";
+/// What the status route shows for an import waiting on Spotify app
+/// settings that do not read.
+pub const SETTINGS_UNREADABLE: &str = "Spotify settings can't be read";
+
+/// The longest an import waits for the Spotify app settings to be saved
+/// before it reads them again. A save wakes it at once.
+const SETTINGS_RECHECK: Duration = Duration::from_secs(300);
 
 /// The job key for one user's import of one Spotify playlist.
 pub fn import_job_key(user_id: &str, spotify_playlist_id: &str) -> String {
@@ -193,6 +202,7 @@ impl JobHandler for SpotifyImportJobs {
                     code: PAYLOAD_INVALID,
                 };
             };
+            let mut changes = service.settings_changes();
             let result = service
                 .populate_playlist(
                     &import.user_id,
@@ -205,13 +215,24 @@ impl JobHandler for SpotifyImportJobs {
                     announce_playlist_imported(&events, &import);
                     return Outcome::Done;
                 }
-                Err(SpotifyError::Busy) => return Outcome::Busy,
-                Err(SpotifyError::NotLinked) => NOT_LINKED,
-                Err(SpotifyError::Unavailable(cause)) => {
+                // The settings read logs its own failure, once per revision.
+                // The job waits for a save, then goes back without spending
+                // its attempt.
+                Err(ImportFailure::Settings(_)) => {
+                    tokio::select! {
+                        _ = changes.changed() => {}
+                        () = job.token().cancelled() => {}
+                        () = tokio::time::sleep(SETTINGS_RECHECK) => {}
+                    }
+                    return Outcome::Busy;
+                }
+                Err(ImportFailure::Spotify(SpotifyError::Busy)) => return Outcome::Busy,
+                Err(ImportFailure::Spotify(SpotifyError::NotLinked)) => NOT_LINKED,
+                Err(ImportFailure::Spotify(SpotifyError::Unavailable(cause))) => {
                     tracing::warn!(%cause, "spotify import fetch failed");
                     UNAVAILABLE
                 }
-                Err(SpotifyError::Store(cause)) => {
+                Err(ImportFailure::Spotify(SpotifyError::Store(cause))) => {
                     tracing::error!(%cause, "spotify import write failed");
                     SAVE_FAILED
                 }

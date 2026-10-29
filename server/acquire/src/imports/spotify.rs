@@ -7,6 +7,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
+use super::error::ImportsError;
 use super::models::{SpotifyAuthUrlResponse, SpotifyPlaylistItem, SpotifyPlaylistListResponse};
 use super::spotify_albums::{AlbumResolver, SpotifyAlbum};
 use super::spotify_client::{
@@ -15,7 +16,8 @@ use super::spotify_client::{
 use super::spotify_models::{EntryTrack, PlaylistInfo};
 use super::spotify_oauth::{SpotifyConnection, authorize_url};
 use super::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks};
-use crate::settings::ConfigSpotifySettings;
+use crate::settings::{ConfigSpotifySettings, settings_failed};
+use droppedneedle_kernel::runtime_config::ConfigError;
 
 /// One imported track row.
 #[derive(Debug, Clone, PartialEq)]
@@ -38,6 +40,22 @@ pub struct ImportedTrack {
     pub duration: Option<i64>,
     /// MB cover URL when resolved, else the Spotify image pick.
     pub cover_url: Option<String>,
+}
+
+/// What a Spotify import step fails with.
+#[derive(Debug)]
+pub enum ImportFailure {
+    /// The Spotify app settings do not read: the work waits until they are
+    /// saved again.
+    Settings(ConfigError),
+    /// Spotify, the user's link or the store failed.
+    Spotify(SpotifyError),
+}
+
+impl From<SpotifyError> for ImportFailure {
+    fn from(error: SpotifyError) -> Self {
+        Self::Spotify(error)
+    }
 }
 
 /// Spotify import service: OAuth helpers, playlist listing, and the
@@ -85,36 +103,47 @@ impl SpotifyImportService {
         &self,
         redirect_uri: &str,
         state: &str,
-    ) -> Result<SpotifyAuthUrlResponse, String> {
-        let raw = self.settings.get_raw();
+    ) -> Result<SpotifyAuthUrlResponse, ImportsError> {
+        let raw = self.settings.get_raw().map_err(settings_failed)?;
         if !raw.enabled || raw.client_id.is_empty() || raw.client_secret.expose().is_empty() {
-            return Err("Spotify is not configured by the administrator".to_owned());
+            return Err(ImportsError::InvalidInput {
+                message: "Spotify is not configured by the administrator".to_owned(),
+            });
         }
         Ok(SpotifyAuthUrlResponse {
             auth_url: authorize_url(&raw.client_id, redirect_uri, state),
         })
     }
 
+    /// Wakes after each saved change to the Spotify app settings.
+    pub fn settings_changes(&self) -> tokio::sync::watch::Receiver<i64> {
+        self.settings.subscribe()
+    }
+
     /// One user's stored link, or `NotLinked`.
     async fn link(&self, user_id: &str) -> Result<SpotifyConnection, SpotifyError> {
         self.connections
             .get(user_id)
-            .await
-            .map_err(SpotifyError::Store)?
+            .await?
             .ok_or(SpotifyError::NotLinked)
     }
 
-    /// Refreshing API access over one user's link.
-    fn refresher(&self, user_id: &str, connection: SpotifyConnection) -> TokenRefresher<'_> {
-        let raw = self.settings.get_raw();
-        TokenRefresher::new(
+    /// Refreshing API access over one user's link, or the error the app
+    /// settings do not read with.
+    fn refresher(
+        &self,
+        user_id: &str,
+        connection: SpotifyConnection,
+    ) -> Result<TokenRefresher<'_>, ImportFailure> {
+        let raw = self.settings.get_raw().map_err(ImportFailure::Settings)?;
+        Ok(TokenRefresher::new(
             &self.client,
             self.connections.as_ref(),
             user_id,
             &raw.client_id,
             raw.client_secret.expose(),
             connection,
-        )
+        ))
     }
 
     /// Owned playlists annotated with the imported mapping. Only playlists
@@ -123,10 +152,10 @@ impl SpotifyImportService {
     pub async fn list_playlists(
         &self,
         user_id: &str,
-    ) -> Result<SpotifyPlaylistListResponse, SpotifyError> {
+    ) -> Result<SpotifyPlaylistListResponse, ImportFailure> {
         let stored = self.link(user_id).await?;
         let mut spotify_user_id = stored.spotify_user_id.clone();
-        let refresher = self.refresher(user_id, stored);
+        let refresher = self.refresher(user_id, stored)?;
         if spotify_user_id.is_empty() {
             spotify_user_id = self.client.current_user(&refresher).await?.id;
         }
@@ -197,8 +226,8 @@ impl SpotifyImportService {
         user_id: &str,
         spotify_playlist_id: &str,
         playlist_id: &str,
-    ) -> Result<usize, SpotifyError> {
-        let refresher = self.refresher(user_id, self.link(user_id).await?);
+    ) -> Result<usize, ImportFailure> {
+        let refresher = self.refresher(user_id, self.link(user_id).await?)?;
         let (info, tracks) = tokio::join!(
             self.client.playlist(&refresher, spotify_playlist_id),
             self.client.playlist_tracks(&refresher, spotify_playlist_id)

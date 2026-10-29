@@ -34,6 +34,15 @@ use droppedneedle_kernel::runtime_config::crypto::Crypto;
 /// The `user_connections.service` tag for Spotify links.
 const SERVICE: &str = "spotify";
 
+/// Map a link read or write failure: a busy database stays retryable, so
+/// an import puts its job back instead of failing it.
+fn link_failed(operation: &str, error: DbError) -> SpotifyError {
+    match error {
+        DbError::Busy { .. } | DbError::LaneClosed => SpotifyError::Busy,
+        other => SpotifyError::Store(format!("{operation}: {other}")),
+    }
+}
+
 /// Single-use authorize states over the shared database.
 #[derive(Clone)]
 pub struct SqliteSpotifyStates {
@@ -176,8 +185,9 @@ impl SqliteSpotifyLinks {
         &self,
         user_id: &str,
         connection: &SpotifyConnection,
-    ) -> Result<bool, String> {
-        let (user_id, sealed) = (user_id.to_owned(), self.seal(connection)?);
+    ) -> Result<bool, SpotifyError> {
+        let user_id = user_id.to_owned();
+        let sealed = self.seal(connection).map_err(SpotifyError::Store)?;
         let clock = self.db.clock().clone();
         self.db
             .write("spotify.link.refresh", move |tx| {
@@ -193,11 +203,11 @@ impl SqliteSpotifyLinks {
                 Ok(changed > 0)
             })
             .await
-            .map_err(|error| error.to_string())
+            .map_err(|error| link_failed("spotify link refresh", error))
     }
 
     /// Read one user's link, if any.
-    pub async fn get(&self, user_id: &str) -> Result<Option<SpotifyConnection>, String> {
+    pub async fn get(&self, user_id: &str) -> Result<Option<SpotifyConnection>, SpotifyError> {
         let user_id = user_id.to_owned();
         let sealed: Option<String> = self
             .db
@@ -212,7 +222,7 @@ impl SqliteSpotifyLinks {
                 .map_err(DbError::from)
             })
             .await
-            .map_err(|error| format!("spotify link read: {error}"))?;
+            .map_err(|error| link_failed("spotify link read", error))?;
         let Some(sealed) = sealed else {
             return Ok(None);
         };

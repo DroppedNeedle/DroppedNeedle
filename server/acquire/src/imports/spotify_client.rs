@@ -547,8 +547,7 @@ impl<'a> TokenRefresher<'a> {
         let kept = self
             .connections
             .update_tokens_if_present(&self.user_id, &updated)
-            .await
-            .map_err(SpotifyError::Store)?;
+            .await?;
         if !kept {
             return Err(SpotifyError::NotLinked);
         }

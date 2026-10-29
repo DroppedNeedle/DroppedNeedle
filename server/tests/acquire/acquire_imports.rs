@@ -33,7 +33,7 @@ use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::models::PlaylistTrack;
 use droppedneedle_catalog::reads::collections::store::PlaylistStore;
-use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, start_runners};
+use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, State, start_runners};
 use droppedneedle_kernel::runtime_config::secret_sections::SpotifySettings as SpotifySection;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     DownloadClients, LidarrImportConnection, SabnzbdConnection, SlskdConnection,
@@ -112,15 +112,18 @@ impl Rig {
 const NEON_MERIDIAN_GROUP: &str = "5907a1b0-0000-4000-8000-000000000b01";
 
 fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str, cover_cdn: Option<&str>) -> Rig {
-    rig_with(auth, api_base, accounts_base, cover_cdn, None)
+    rig_with(auth, api_base, accounts_base, cover_cdn, None, None)
 }
 
+/// [`rig_for`] with plugins, and with the import job reading its Spotify
+/// app settings from `job_settings` instead of the routes' store.
 fn rig_with(
     auth: &AuthRig,
     api_base: &str,
     accounts_base: &str,
     cover_cdn: Option<&str>,
     plugins: Option<Arc<PluginHost>>,
+    job_settings: Option<Arc<droppedneedle_kernel::runtime_config::ConfigStore>>,
 ) -> Rig {
     let http = http_client();
     let platform = &auth.platform;
@@ -151,7 +154,10 @@ fn rig_with(
     );
     let service = Arc::new(SpotifyImportService::new(
         spotify_client.clone(),
-        spotify_settings.clone(),
+        job_settings.map_or_else(
+            || spotify_settings.clone(),
+            |store| Arc::new(ConfigSpotifySettings::new(store)),
+        ),
         spotify_links.clone(),
         spotify_playlists.clone(),
         resolver.clone(),
@@ -487,6 +493,59 @@ async fn lidarr_config_round_trip_masks_and_normalizes() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["valid"], true);
+}
+
+/// A settings store in `dir` whose `section` was copied in from a
+/// `config.json` unvalidated, as `stored`, a shape it does not decode to.
+fn unreadable_settings(
+    dir: &std::path::Path,
+    section: &str,
+    stored: Value,
+) -> Arc<droppedneedle_kernel::runtime_config::ConfigStore> {
+    std::fs::write(
+        dir.join("config.json"),
+        json!({ section: stored }).to_string(),
+    )
+    .expect("config.json");
+    Arc::new(droppedneedle_acquire::settings::scratch_settings(dir).expect("settings open"))
+}
+
+/// Lidarr settings that do not read are never an empty connection: the
+/// settings read, a save and a probe with the stored key answer the
+/// settings error, and Lidarr is never called.
+#[tokio::test]
+async fn unreadable_lidarr_settings_refuse_reads_saves_and_probes() {
+    let (auth, admin_id, _) = seed_rig().await;
+    let (server, recorder) = serve_lidarr().await.expect("mock serves");
+    let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1", None);
+    let dir = crate::common::ScratchDir::new("lidarr-unreadable");
+    let mut deps = bundle.deps.clone();
+    deps.lidarr_settings = Arc::new(ConfigLidarrSettings::new(unreadable_settings(
+        &dir,
+        "lidarr_import",
+        json!({"url": 7}),
+    )));
+    let admin = || authed_app(deps.clone(), &admin_id, Role::Admin);
+
+    let (status, body) = get_json(admin(), "/api/v3/acquire/lidarr-import/config").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "INVALID_INPUT");
+    let (status, _) = put_json(
+        admin(),
+        "/api/v3/acquire/lidarr-import/config",
+        json!({"url": server.base_url, "api_key": "********"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) = post_json(
+        admin(),
+        "/api/v3/acquire/lidarr-import/test",
+        json!({"url": server.base_url, "api_key": "********"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "INVALID_INPUT");
+    assert!(recorder.snapshot().lidarr_paths.is_empty());
 }
 
 #[tokio::test]
@@ -1036,6 +1095,132 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["playlists"][0]["imported_playlist_id"], playlist_id);
+}
+
+/// Spotify app settings that do not read are never an empty app: starting
+/// an import answers the settings error, queues nothing and calls Spotify
+/// for nothing.
+#[tokio::test]
+async fn unreadable_spotify_settings_refuse_an_import() {
+    let (auth, admin_id, user_id) = seed_rig().await;
+    let (api, accounts, _covers, recorder) = serve_spotify().await.expect("mock serves");
+    let bundle = rig_for(&auth, &api.base_url, &accounts.base_url, None);
+    seed_spotify_app(bundle.deps.clone(), &admin_id).await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
+    let before = recorder.snapshot();
+    let dir = crate::common::ScratchDir::new("spotify-unreadable");
+    let mut deps = bundle.deps.clone();
+    deps.spotify_settings = Arc::new(ConfigSpotifySettings::new(unreadable_settings(
+        &dir,
+        "spotify_settings",
+        json!({"enabled": "yes"}),
+    )));
+
+    let (status, body) = post_json(
+        authed_app(deps.clone(), &user_id, Role::User),
+        "/api/v3/acquire/spotify/playlists/sp-playlist-1/import",
+        json!({"name": "Neon Nights"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "INVALID_INPUT");
+    let (status, _) = get_json(
+        authed_app(deps, &user_id, Role::User),
+        "/api/v3/acquire/spotify/jobs/sp-playlist-1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let after = recorder.snapshot();
+    assert_eq!(after.spotify_paths, before.spotify_paths);
+    assert_eq!(after.spotify_grants, before.spotify_grants);
+}
+
+/// An import queued before the Spotify app settings stopped reading waits
+/// for them without spending its attempts, says why, and finishes once
+/// they are saved again.
+#[tokio::test]
+async fn an_import_waits_for_unreadable_spotify_settings() {
+    let (auth, admin_id, user_id) = seed_rig().await;
+    let (api, accounts, _covers, recorder) = serve_spotify().await.expect("mock serves");
+    let _musicbrainz = serve_musicbrainz(&auth).await;
+    let dir = crate::common::ScratchDir::new("spotify-import-waits");
+    // A secret that is not sealed: the section decodes but does not open,
+    // and a save with a new secret mends it.
+    let broken = unreadable_settings(
+        &dir,
+        "spotify_settings",
+        json!({"client_id": "test-client", "client_secret": "not sealed"}),
+    );
+    let bundle = rig_with(
+        &auth,
+        &api.base_url,
+        &accounts.base_url,
+        None,
+        None,
+        Some(broken.clone()),
+    );
+    seed_spotify_app(bundle.deps.clone(), &admin_id).await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
+    let (status, _) = post_json(
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
+        "/api/v3/acquire/spotify/playlists/sp-playlist-1/import",
+        json!({"name": "Neon Nights"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The job is claimed and held while the settings do not read.
+    let queue = JobQueue::new(auth.platform.db.clone(), auth.platform.clock.clone());
+    let key = imports::jobs::import_job_key(&user_id, "sp-playlist-1");
+    for _ in 0..500 {
+        let row = queue
+            .latest(imports::jobs::KIND, &key)
+            .await
+            .expect("job reads");
+        if row.is_some_and(|row| row.state == State::Running) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let mut waiting = bundle.deps.clone();
+    waiting.spotify_settings = Arc::new(ConfigSpotifySettings::new(broken.clone()));
+    let (_, body) = get_json(
+        authed_app(waiting, &user_id, Role::User),
+        "/api/v3/acquire/spotify/jobs/sp-playlist-1",
+    )
+    .await;
+    assert_eq!(body["state"], "running");
+    assert_eq!(body["message"], "Spotify settings can't be read");
+
+    // A save wakes it: it goes back with its attempt returned, then runs.
+    broken
+        .save_secret(SpotifySection {
+            client_id: "test-client".to_owned(),
+            client_secret: Secret::new("test-secret".to_owned()),
+            enabled: true,
+            spotify_redirect_origin: String::new(),
+            legacy_callback: false,
+        })
+        .await
+        .expect("settings save");
+    let mut requeued = None;
+    for _ in 0..500 {
+        let row = queue
+            .latest(imports::jobs::KIND, &key)
+            .await
+            .expect("job reads");
+        if let Some(row) = row.filter(|row| row.state == State::Queued) {
+            requeued = Some(row);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let requeued = requeued.expect("the job goes back");
+    assert_eq!(requeued.attempts, 0);
+    auth.clock.advance(10_000);
+    let done = poll_job_done(bundle.deps.clone(), &user_id, "sp-playlist-1").await;
+    assert_eq!(done["state"], "done");
+    assert_eq!(done["track_count"], 2);
 }
 
 /// A re-import that fails while its tracks are written leaves the playlist
@@ -1727,6 +1912,7 @@ async fn readiness_answers(setup: SourceSetup) -> (Vec<bool>, Vec<String>) {
         "http://127.0.0.1:1",
         None,
         plugins,
+        None,
     );
     rig.refresh_probes().await;
     let readiness = rig.deps.readiness.clone();

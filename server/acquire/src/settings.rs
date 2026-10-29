@@ -18,7 +18,10 @@ use droppedneedle_kernel::runtime_config::mask::display_mask;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     LidarrImportConnection, SpotifySettings,
 };
-use droppedneedle_kernel::runtime_config::{ConfigError, ConfigStore, Live, Secret, UpdateError};
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::{
+    ConfigError, ConfigStore, Listed, Live, Plain, Secret, UpdateError,
+};
 
 use super::imports::error::ImportsError;
 
@@ -46,9 +49,29 @@ pub fn scratch_settings(dir: &std::path::Path) -> Result<ConfigStore, String> {
     ConfigStore::scratch(dir, crypto)
 }
 
+/// The section as stored, or the error it does not read with. [`Live::read`]
+/// logs a section that does not read, once per revision.
+fn open<S: Listed>(live: &Live<S>) -> Result<Arc<Plain<S>>, ConfigError> {
+    match live.read() {
+        Some(section) => Ok(section),
+        None => live.get(),
+    }
+}
+
+/// What an import route answers for a section that does not read or save:
+/// the settings routes' answer, so a stored section of the wrong shape is
+/// a 400 naming it and a busy database the busy 503.
+pub(crate) fn settings_failed(error: ConfigError) -> ImportsError {
+    match SettingsError::from_config(error) {
+        SettingsError::InvalidInput { message } => ImportsError::InvalidInput { message },
+        SettingsError::Busy { cause } => ImportsError::Busy { cause },
+        other => ImportsError::internal(&other),
+    }
+}
+
 /// Lidarr connection settings over the `lidarr_import` secret section.
-/// A section that does not read reads as empty (the import then reports
-/// Lidarr as not connected, exactly like an unconfigured deployment).
+/// A section that does not read answers its error, so probes and imports
+/// wait until it is saved again.
 pub struct ConfigLidarrSettings {
     live: Live<LidarrImportConnection>,
     store: Arc<ConfigStore>,
@@ -64,36 +87,37 @@ impl ConfigLidarrSettings {
     }
 
     /// Masked settings for reads.
-    pub fn get(&self) -> LidarrConnectionSettings {
-        let section = self.live.read().unwrap_or_default();
-        LidarrConnectionSettings {
+    pub fn get(&self) -> Result<LidarrConnectionSettings, ConfigError> {
+        let section = open(&self.live)?;
+        Ok(LidarrConnectionSettings {
             url: section.url.clone(),
             api_key: display_mask(section.api_key.expose()).to_owned(),
-        }
+        })
     }
 
     /// The saved connection with its real key, for probes and imports.
     /// The key sits in a [`Secret`], so it never reaches a response.
-    pub fn get_raw(&self) -> LidarrImportConnection {
-        (**self.live.read().unwrap_or_default()).clone()
+    pub fn get_raw(&self) -> Result<LidarrImportConnection, ConfigError> {
+        Ok((**open(&self.live)?).clone())
     }
 
-    /// Save; a masked key keeps the stored one. A failed save is logged,
-    /// and the read that follows shows what is stored.
-    pub async fn save(&self, settings: &LidarrConnectionSettings) {
+    /// Save; a masked key keeps the stored one.
+    pub async fn save(&self, settings: &LidarrConnectionSettings) -> Result<(), ImportsError> {
         let incoming = LidarrImportConnection {
             url: settings.url.clone(),
             api_key: Secret::new(settings.api_key.clone()),
         };
-        if let Err(error) = self.store.save_secret(incoming).await {
-            tracing::warn!(%error, "lidarr settings save failed");
-        }
+        self.store
+            .save_secret(incoming)
+            .await
+            .map(|_| ())
+            .map_err(settings_failed)
     }
 }
 
 /// Spotify app settings over the `spotify_settings` secret section. A
-/// section that does not read reads as empty (OAuth then reports the app
-/// as unconfigured).
+/// section that does not read answers its error, so linking and imports
+/// wait until it is saved again.
 pub struct ConfigSpotifySettings {
     live: Live<SpotifySettings>,
     store: Arc<ConfigStore>,
@@ -113,25 +137,30 @@ impl ConfigSpotifySettings {
     /// True when the app was registered against v2, so its dashboard lists
     /// the v2 callback path. The v2 import sets it; saving a different
     /// client id clears it.
-    pub fn legacy_callback(&self) -> bool {
-        self.live.read().unwrap_or_default().legacy_callback
+    pub fn legacy_callback(&self) -> Result<bool, ConfigError> {
+        Ok(open(&self.live)?.legacy_callback)
+    }
+
+    /// Wakes after each saved change to the section.
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<i64> {
+        self.live.subscribe()
     }
 
     /// Masked settings for reads.
-    pub fn get(&self) -> ImportsSpotifySettings {
-        let section = self.live.read().unwrap_or_default();
-        ImportsSpotifySettings {
+    pub fn get(&self) -> Result<ImportsSpotifySettings, ConfigError> {
+        let section = open(&self.live)?;
+        Ok(ImportsSpotifySettings {
             client_id: section.client_id.clone(),
             client_secret: display_mask(section.client_secret.expose()).to_owned(),
             enabled: section.enabled,
             spotify_redirect_origin: section.spotify_redirect_origin.clone(),
-        }
+        })
     }
 
     /// The saved app settings with the real secret, which sits in a
     /// [`Secret`] so it never reaches a response.
-    pub fn get_raw(&self) -> SpotifySettings {
-        (**self.live.read().unwrap_or_default()).clone()
+    pub fn get_raw(&self) -> Result<SpotifySettings, ConfigError> {
+        Ok((**open(&self.live)?).clone())
     }
 
     /// Save; a masked secret keeps the stored one. A redirect origin that
@@ -159,14 +188,6 @@ impl ConfigSpotifySettings {
             .map_err(|error| match error {
                 UpdateError::Rejected(error) | UpdateError::Config(error) => error,
             })
-            .map_err(|error| match error {
-                ConfigError::Validation { .. } => ImportsError::InvalidInput {
-                    message: error.to_string(),
-                },
-                error if error.is_busy() => ImportsError::Busy {
-                    cause: error.to_string(),
-                },
-                error => ImportsError::internal(&error),
-            })
+            .map_err(settings_failed)
     }
 }
