@@ -2313,6 +2313,49 @@ fn a_replaced_file_reaches_a_bin_with_no_safe_step() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+/// A library folder reached through a link into another library folder
+/// takes no file changes, and the settings page says so, by its label.
+#[test]
+fn a_left_out_folder_is_listed_in_the_settings_warnings() {
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        IdentificationPolicy, LibraryRoot as SavedRoot, TypedLibrary,
+    };
+    let fix = fixture("left-out-warning");
+    let music = fix.dir.join("music");
+    std::fs::create_dir_all(music.join("Band")).unwrap();
+    let linked = fix.dir.join("linked");
+    std::os::unix::fs::symlink(music.join("Band"), &linked).unwrap();
+    let saved = |id: &str, label: &str, path: &std::path::Path| SavedRoot {
+        id: id.to_owned(),
+        path: path.to_string_lossy().into_owned(),
+        label: label.to_owned(),
+        policy: IdentificationPolicy::Automatic,
+        rules: Vec::new(),
+    };
+
+    let warnings = droppedneedle_library::policy::availability_warnings(&TypedLibrary {
+        library_roots: vec![
+            saved("music", "Music", &music),
+            saved("linked", "Linked", &linked),
+        ],
+        ..TypedLibrary::default()
+    });
+
+    assert!(
+        warnings.contains(
+            &"Library root Linked links into another library folder, so it takes no file changes."
+                .to_owned()
+        ),
+        "{warnings:?}"
+    );
+    assert!(
+        !warnings
+            .iter()
+            .any(|warning| warning.contains("Library root Music links")),
+        "{warnings:?}"
+    );
+}
+
 /// A bin entry never reaches through a symlink below the bin's folder:
 /// one that would is refused before anything moves. A configured bin that
 /// is itself a symlink still works: it is resolved once, and its checks

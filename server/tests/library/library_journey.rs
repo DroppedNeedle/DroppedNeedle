@@ -5548,8 +5548,10 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
             .expect("track row");
     assert_eq!(availability, "missing");
 
-    // A second folder reached through a link into the first takes no
-    // managed writes: two ids would manage one set of files.
+    // A second folder reached through a link into the first leaves both
+    // without managed writes: two ids would manage one set of files. Its
+    // files are indexed once, under the folder saved first, and a removal
+    // says why it is refused.
     let second = plant(&real, "music/Band/LP2/02.flac", "flac_full_02.flac");
     let other = scratch.to_path_buf().join("other");
     std::os::unix::fs::symlink(real.join("music"), &other).expect("link made");
@@ -5563,9 +5565,17 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
         )
         .expect("root adds");
     drain_scans(&library).await;
+    assert!(
+        library
+            .scan_store
+            .track_at("inner", "LP2/02.flac")
+            .unwrap()
+            .is_none(),
+        "the shared file is not indexed twice"
+    );
     let through_link = library
         .scan_store
-        .track_at("inner", "LP2/02.flac")
+        .track_at("music", "Band/LP2/02.flac")
         .unwrap()
         .expect("track indexed");
     let refused = Mutations::new(&library).remove_track_now(&through_link, true, "admin");
@@ -5573,7 +5583,7 @@ async fn a_library_folder_reached_through_a_symlink_takes_writes() {
         matches!(
             &refused,
             Err(droppedneedle_library::mutations::MutationError::Conflict(reason))
-                if reason.code == "FILE_OUTSIDE_ROOT"
+                if reason.code == "LIBRARY_FOLDER_LEFT_OUT"
         ),
         "{refused:?}"
     );

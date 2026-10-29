@@ -23,18 +23,37 @@ impl Management {
 
     /// Probe one root now. The probe makes and removes its own folder at
     /// the top of the root. A root excluded or removed in the settings is
-    /// not found, whatever the open session still holds. Waits for a write
-    /// in flight. Blocking.
+    /// not found, whatever the open session still holds. A root that links
+    /// into another library folder takes no file changes, and says so.
+    /// Waits for a write in flight. Blocking.
     pub fn check_placement(&self, root_id: &str) -> Result<PlacementCheck, ManagementError> {
-        self.setup
-            .publishing.check_placement(root_id)
+        let checked = self
+            .setup
+            .publishing
+            .check_placement(root_id)
             .map_err(|error| {
                 tracing::warn!(%error, root_id, "placement check could not open the library folders");
                 ManagementError::Conflict(
                     "The library folders are not available right now. Try again later.".to_owned(),
                 )
-            })?
-            .ok_or(ManagementError::NotFound("library folder"))
+            })?;
+        if let Some(check) = checked {
+            return Ok(check);
+        }
+        let left_out = crate::settings::registry(&self.setup.settings.library)
+            .map(|registry| {
+                crate::manage::left_out_now(&registry)
+                    .iter()
+                    .any(|id| id == root_id)
+            })
+            .unwrap_or(false);
+        if left_out {
+            return Err(ManagementError::Conflict(
+                "This library folder links into another library folder, so it takes no file changes."
+                    .to_owned(),
+            ));
+        }
+        Err(ManagementError::NotFound("library folder"))
     }
 }
 

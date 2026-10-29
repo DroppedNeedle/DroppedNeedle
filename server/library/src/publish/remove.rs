@@ -92,8 +92,20 @@ impl From<droppedneedle_kernel::db::DbError> for Refusal {
 /// now (gone, or a link to nothing) refuses (`FolderMissing`), so its
 /// tracks are not marked missing while their files may still exist. A
 /// path that is not plainly inside the folder refuses. A file that changed
-/// while it was read refuses.
+/// while it was read refuses. A file found gone is checked against the
+/// folder once more, so a folder unmounted mid-probe refuses rather than
+/// reading as a missing file.
 pub fn probe(root: &Path, path: &Path) -> Result<Probe, PublishError> {
+    match probe_file(root, path)? {
+        Probe::Gone => {
+            paths::ensure_library_dir(root)?;
+            Ok(Probe::Gone)
+        }
+        found => Ok(found),
+    }
+}
+
+fn probe_file(root: &Path, path: &Path) -> Result<Probe, PublishError> {
     paths::ensure_library_dir(root)?;
     if paths::below_root(root, path).is_none_or(|below| below.as_os_str().is_empty()) {
         return Err(PublishError::UnsafePath(

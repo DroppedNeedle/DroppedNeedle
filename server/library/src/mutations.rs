@@ -79,6 +79,11 @@ pub const LIBRARY_FOLDER_MISSING: Reason = reason(
     "The library folder isn't there, so nothing was removed.",
     "Check that its drive or share is mounted, then try again.",
 );
+pub const LIBRARY_FOLDER_LEFT_OUT: Reason = reason(
+    "LIBRARY_FOLDER_LEFT_OUT",
+    "This library folder links into another library folder, so it takes no file changes.",
+    "Point the library folder at its own folder under Settings > Library.",
+);
 pub const RECYCLE_FAILED: Reason = reason(
     "RECYCLE_FAILED",
     "A file could not be moved into the recycle bin, so nothing was removed.",
@@ -792,6 +797,10 @@ impl Mutations {
             });
         }
         let registry = self.setup.core.live_registry();
+        let left_out = super::manage::left_out_now(&registry);
+        if tracks.iter().any(|track| left_out.contains(&track.root_id)) {
+            return Err(MutationError::Conflict(LIBRARY_FOLDER_LEFT_OUT));
+        }
         let mut targets = Vec::with_capacity(tracks.len());
         for track in tracks {
             let root = registry

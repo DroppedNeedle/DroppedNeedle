@@ -659,6 +659,11 @@ impl Run<'_> {
         let gathered = self.gather(&journals, plan)?;
         let step = decide(bundle_id, &journals, gathered, plan);
         if let BundleStep::Attention(reason) = step {
+            // A folder unmounted while the rows were inspected reads as
+            // odd evidence: wait for it rather than hand the bundle over.
+            if let Some(root) = unusable_root(self.sandbox, &journals) {
+                return Ok(Advanced::Waiting(root));
+            }
             flag_attention(self.db, &journals)?;
             remove_folders(self.db, self.sandbox, bundle_id);
             return Ok(Advanced::Attention(reason));

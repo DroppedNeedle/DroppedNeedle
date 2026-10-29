@@ -87,6 +87,9 @@ pub struct BundleRecovery {
     pub bundle_id: String,
     /// What happened.
     pub action: RecoveryAction,
+    /// The root the bundle waits for, while its folder is not usable. The
+    /// caller logs each one once, not every pass.
+    pub waiting_root: Option<String>,
 }
 
 /// A hidden file under a library root that no journal row names: a
@@ -312,24 +315,44 @@ fn reconcile_with(
     let bundles = active_bundles(db)?;
     let mut results = Vec::new();
     for bundle_id in bundles {
-        let action = match reconcile_bundle(db, sandbox, jobs, clock, &bundle_id, seams) {
-            Ok(action) => action,
+        let (action, waiting_root) = match reconcile_bundle(
+            db, sandbox, jobs, clock, &bundle_id, seams,
+        ) {
+            Ok(Settled::Waiting(root)) => (
+                RecoveryAction::Deferred(format!(
+                    "bundle {bundle_id} names root {root}, which is not a usable library root"
+                )),
+                Some(root),
+            ),
+            Ok(Settled::Done(action)) => (action, None),
             Err(error) if error.is_interrupted() => {
                 tracing::warn!(bundle_id, %error, "publish recovery stopped: the database refused it");
                 results.push(BundleRecovery {
                     bundle_id,
                     action: RecoveryAction::Deferred(error.to_string()),
+                    waiting_root: None,
                 });
                 break;
             }
             Err(error) => {
                 tracing::warn!(bundle_id, %error, "publish bundle left for the next recovery pass");
-                RecoveryAction::Deferred(error.to_string())
+                (RecoveryAction::Deferred(error.to_string()), None)
             }
         };
-        results.push(BundleRecovery { bundle_id, action });
+        results.push(BundleRecovery {
+            bundle_id,
+            action,
+            waiting_root,
+        });
     }
     Ok(results)
+}
+
+/// What one bundle's reconcile came to.
+enum Settled {
+    Done(RecoveryAction),
+    /// It names a root that is not usable now, and waits as it is.
+    Waiting(String),
 }
 
 /// Reconcile one bundle through the steps a publish runs, from its rows
@@ -344,7 +367,7 @@ fn reconcile_bundle(
     clock: &dyn Clock,
     bundle_id: &str,
     seams: Seams,
-) -> Result<RecoveryAction, PublishError> {
+) -> Result<Settled, PublishError> {
     let operation = long_read(db, "publish.bundle_operation", |conn| {
         super::operations::operation_json(conn, bundle_id)
     })?;
@@ -374,31 +397,28 @@ fn reconcile_bundle(
         known: &known,
         hooks: Hooks::default(),
     };
-    Ok(match run.advance(bundle_id, plan.as_ref())? {
-        Advanced::Noop => RecoveryAction::Noop,
-        Advanced::FoldersWait => RecoveryAction::Deferred(format!(
-            "bundle {bundle_id} has folders waiting for their library folder"
-        )),
-        Advanced::Waiting(root) => {
-            tracing::warn!(bundle_id, root, "publish bundle waits for its root");
-            RecoveryAction::Deferred(format!(
-                "bundle {bundle_id} names root {root}, which is not a usable library root"
-            ))
-        }
-        Advanced::Attention(reason) => RecoveryAction::NeedsAttention(reason),
-        Advanced::Unwound { refused, kept } => match (kept, refused) {
-            (None, _) => RecoveryAction::Compensated,
-            (Some(kept), None) => RecoveryAction::NeedsAttention(kept),
-            (Some(kept), Some(refused)) => {
-                RecoveryAction::NeedsAttention(format!("{}; then {kept}", refused.reason))
-            }
+    Ok(Settled::Done(
+        match run.advance(bundle_id, plan.as_ref())? {
+            Advanced::Noop => RecoveryAction::Noop,
+            Advanced::FoldersWait => RecoveryAction::Deferred(format!(
+                "bundle {bundle_id} has folders waiting for their library folder"
+            )),
+            Advanced::Waiting(root) => return Ok(Settled::Waiting(root)),
+            Advanced::Attention(reason) => RecoveryAction::NeedsAttention(reason),
+            Advanced::Unwound { refused, kept } => match (kept, refused) {
+                (None, _) => RecoveryAction::Compensated,
+                (Some(kept), None) => RecoveryAction::NeedsAttention(kept),
+                (Some(kept), Some(refused)) => {
+                    RecoveryAction::NeedsAttention(format!("{}; then {kept}", refused.reason))
+                }
+            },
+            // Nothing committed, and the bundle is unwound; the next pass
+            // finds it settled.
+            Advanced::CommitRefused(error) => return Err(error),
+            Advanced::Committed { .. } => RecoveryAction::ResumedCommitted,
+            Advanced::CleanupFinished => RecoveryAction::CleanupFinished,
         },
-        // Nothing committed, and the bundle is unwound; the next pass
-        // finds it settled.
-        Advanced::CommitRefused(error) => return Err(error),
-        Advanced::Committed { .. } => RecoveryAction::ResumedCommitted,
-        Advanced::CleanupFinished => RecoveryAction::CleanupFinished,
-    })
+    ))
 }
 
 /// Remove the folders a bundle made, once its unwind finished. A failure

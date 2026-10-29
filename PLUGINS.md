@@ -351,8 +351,10 @@ one new file under your first library folder and answers the full path. The path
 in lowercase letters, digits, `_`, `-`, `.` and `/`, without hidden or `..`
 parts. A file that already exists is never replaced, nor is a file whose
 name differs only in letter case: the call fails instead. A first library
-folder set to Excluded, or one on a disk that can only add a file by
-checking first and then renaming, takes no plugin files. Each plugin may
+folder set to Excluded, one that isn't there (a share not mounted), one
+reached through a link into another library folder, or one on a disk that
+can only add a file by checking first and then renaming, takes no plugin
+files: the call fails. Each plugin may
 write 100 MiB and 1000 files a day; past either the call fails until older
 writes are a day old. The allowance is kept in the database, so a restart
 does not reset it, and a write that failed or was undone by itself does not

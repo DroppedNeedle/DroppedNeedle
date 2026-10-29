@@ -26,7 +26,7 @@ use super::models::{
     ScanRun, ScanScope, ScanState, ScopeDiscoveryState, Verdict,
 };
 use super::pool::BlockingPool;
-use super::roots::{PolicyResolver, RootRegistry};
+use super::roots::{PolicyResolver, RootRegistry, yielded_by, yielded_home};
 use super::seams::{Checkpoint, ScannedTags, TagReadError, TagReader};
 use super::sqlite_store::SqliteScanStore;
 use super::stop::RunStop;
@@ -1358,7 +1358,10 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     /// cleanly walked scope that the walk did not see are marked missing,
     /// never deleted. Only completed scopes qualify. A scope that would
     /// lose most of its tracks at once (an unmounted share looks exactly
-    /// like that) is held back with a failure row instead.
+    /// like that) is held back with a failure row instead. A row whose
+    /// file another library folder indexes (their real folders overlap)
+    /// was skipped by the walk, not lost: it does not count toward the
+    /// guard, and it retires into that folder's row for the same file.
     async fn reconcile(
         &self,
         run_id: &str,
@@ -1367,6 +1370,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         stop: &RunStop,
     ) -> Result<usize, Halt> {
         let mut missing = 0usize;
+        let roots = self.registry().roots().to_vec();
         for scope in scopes {
             if !self.check(run_id, frozen_policy_revision) {
                 return Ok(missing);
@@ -1388,18 +1392,33 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 scope.root_id.clone(),
                 scope.relative_path.clone(),
             );
-            let paths = self
+            let all_roots = roots.clone();
+            let (paths, yielded) = self
                 .on_store(stop, move |store, stop| {
-                    store.missing_catalog_paths(stop, &id, &root, &rel)
+                    let paths = store.missing_catalog_paths(stop, &id, &root, &rel)?;
+                    let yielded = if paths.is_empty() {
+                        Vec::new()
+                    } else {
+                        yielded_by(&all_roots, &root)
+                    };
+                    Ok((paths, yielded))
                 })
                 .await?;
             if paths.is_empty() {
                 continue;
             }
+            let (moves, paths): (Vec<_>, Vec<_>) = paths
+                .into_iter()
+                .map(|(path, held)| {
+                    let home = yielded_home(&yielded, &path);
+                    (path, held, home)
+                })
+                .partition(|(_, _, home)| home.is_some());
             let indexed = self
                 .store
-                .indexed_count(stop, &scope.root_id, &scope.relative_path)?;
-            if mass_missing(paths.len(), indexed) {
+                .indexed_count(stop, &scope.root_id, &scope.relative_path)?
+                .saturating_sub(moves.len());
+            if !paths.is_empty() && mass_missing(paths.len(), indexed) {
                 self.hold_back_scope(
                     run_id,
                     scope,
@@ -1411,9 +1430,28 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 continue;
             }
             // Nothing under a folder this run held back is marked.
+            let moves: Vec<(String, String, String)> = moves
+                .into_iter()
+                .filter(|(_, held, _)| !held)
+                .filter_map(|(path, _, home)| home.map(|(root, at)| (path, root, at)))
+                .collect();
+            let root_dir = roots
+                .iter()
+                .find(|root| root.id == scope.root_id)
+                .map(|root| root.path.clone());
+            if let Some(root_dir) = root_dir
+                && !moves.is_empty()
+            {
+                let (id, root, now) = (run_id.to_owned(), scope.root_id.clone(), self.now());
+                missing += self
+                    .on_store(stop, move |store, stop| {
+                        store.retire_yielded(stop, &id, &root, &root_dir, &moves, now)
+                    })
+                    .await?;
+            }
             let paths: Vec<String> = paths
                 .into_iter()
-                .filter_map(|(path, held)| (!held).then_some(path))
+                .filter_map(|(path, held, _)| (!held).then_some(path))
                 .collect();
             for chunk in paths.chunks(RECONCILE_CHUNK) {
                 if !self.check(run_id, frozen_policy_revision) {
@@ -1445,6 +1483,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     /// their ids and albums to copies found elsewhere.
     async fn guard_vanished_scopes(&self, run_id: &str, stop: &RunStop) -> Result<(), Halt> {
         let scopes = self.store.reread_run(stop, run_id)?.1;
+        let roots = self.registry().roots().to_vec();
         for scope in &scopes {
             if self.store.scope_discovery_state(
                 stop,
@@ -1460,9 +1499,29 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 scope.root_id.clone(),
                 scope.relative_path.clone(),
             );
+            let all_roots = roots.clone();
             let (missing, total) = self
                 .on_store(stop, move |store, stop| {
-                    store.vanish_counts(stop, &id, &root, &rel)
+                    let (missing, total) = store.vanish_counts(stop, &id, &root, &rel)?;
+                    // Rows whose files another library folder indexes were
+                    // skipped by the walk, not lost.
+                    let yielded = if missing == 0 {
+                        Vec::new()
+                    } else {
+                        yielded_by(&all_roots, &root)
+                    };
+                    if yielded.is_empty() {
+                        return Ok((missing, total));
+                    }
+                    let skipped = store
+                        .missing_catalog_paths(stop, &id, &root, &rel)?
+                        .iter()
+                        .filter(|(path, _)| yielded_home(&yielded, path).is_some())
+                        .count();
+                    Ok((
+                        missing.saturating_sub(skipped),
+                        total.saturating_sub(skipped),
+                    ))
                 })
                 .await?;
             if mass_missing(missing, total) {
@@ -1474,9 +1533,38 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 scope.root_id.clone(),
                 scope.relative_path.clone(),
             );
+            let all_roots = roots.clone();
             let mounts = self
                 .on_store(stop, move |store, stop| {
-                    store.empty_mounts(stop, &id, &root, &rel)
+                    let mounts = store.empty_mounts(stop, &id, &root, &rel)?;
+                    let yielded = if mounts.is_empty() {
+                        Vec::new()
+                    } else {
+                        yielded_by(&all_roots, &root)
+                    };
+                    if yielded.is_empty() {
+                        return Ok(mounts);
+                    }
+                    // Count only the rows under each mount that no other
+                    // library folder indexes: those the walk skipped on
+                    // purpose say nothing about the mount.
+                    let walked_past: Vec<String> = store
+                        .missing_catalog_paths(stop, &id, &root, &rel)?
+                        .into_iter()
+                        .map(|(path, _)| path)
+                        .filter(|path| yielded_home(&yielded, path).is_none())
+                        .collect();
+                    Ok(mounts
+                        .into_iter()
+                        .filter_map(|(folder, _)| {
+                            let below = format!("{folder}/");
+                            let indexed = walked_past
+                                .iter()
+                                .filter(|path| path.starts_with(&below))
+                                .count();
+                            (indexed > 0).then_some((folder, indexed))
+                        })
+                        .collect())
                 })
                 .await?;
             for (folder, indexed) in mounts {

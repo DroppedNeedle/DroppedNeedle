@@ -131,6 +131,111 @@ impl RootRegistry {
     }
 }
 
+/// One root's files that another root indexes instead: their real folders
+/// overlap (the same folder, or one holds the other).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Overlap {
+    /// The root whose walk leaves the shared files alone.
+    pub yields: String,
+    /// The real folder of `yields`.
+    pub from: PathBuf,
+    /// The root the shared files are indexed under, with its policy and
+    /// rules.
+    pub to: String,
+    /// The real folder of `to`, which `yields` does not walk into.
+    pub folder: PathBuf,
+}
+
+impl Overlap {
+    /// Where a file of `yields` at `relative` is indexed instead: the
+    /// path below `to`, when the file lies in the shared folder.
+    pub fn home(&self, relative: &str) -> Option<String> {
+        let real = self.from.join(relative);
+        let below = real.strip_prefix(&self.folder).ok()?;
+        let below = below.to_str()?;
+        (!below.is_empty()).then(|| below.to_owned())
+    }
+}
+
+/// Every pair of roots whose real folders overlap, and which of the two
+/// indexes the shared files, so each file is indexed once, under the
+/// winner's policy and rules. A root not excluded at the shared folder
+/// (by its own policy or its deepest rule covering that folder) wins over
+/// one excluded there, as an excluded folder is only walked for its
+/// included subfolders. Then the root that takes file changes wins (a root
+/// reached through a link into another is
+/// [`left_out`](crate::publish::paths::left_out) and takes none), so
+/// automatic management keeps the files; otherwise the first saved wins.
+/// Blocking: it resolves every root on disk.
+pub fn overlaps(roots: &[LibraryRoot]) -> Vec<Overlap> {
+    use crate::publish::paths::{ResolvedRoot, left_out};
+    let resolved: Vec<ResolvedRoot> = roots
+        .iter()
+        .map(|root| ResolvedRoot::of(&root.id, &root.path))
+        .collect();
+    let left_out = left_out(&resolved);
+    // A root's rules are written against its configured path, so the
+    // shared folder is read there.
+    let rank = |index: usize, shared: &Path| {
+        let excluded = resolved[index]
+            .real
+            .as_deref()
+            .and_then(|real| shared.strip_prefix(real).ok())
+            .map(|below| roots[index].path.join(below))
+            .is_none_or(|at| roots[index].policy_for(&at) == EffectivePolicy::Excluded);
+        (excluded, left_out.contains(&resolved[index].id), index)
+    };
+    let mut found = Vec::new();
+    for (mine, root) in resolved.iter().enumerate() {
+        let Some(my_folder) = &root.real else {
+            continue;
+        };
+        for (theirs, other) in resolved.iter().enumerate() {
+            let Some(their_folder) = &other.real else {
+                continue;
+            };
+            if theirs == mine
+                || !(my_folder.starts_with(their_folder) || their_folder.starts_with(my_folder))
+            {
+                continue;
+            }
+            let shared = if my_folder.starts_with(their_folder) {
+                my_folder
+            } else {
+                their_folder
+            };
+            if rank(theirs, shared) < rank(mine, shared) {
+                found.push(Overlap {
+                    yields: root.id.clone(),
+                    from: my_folder.clone(),
+                    to: other.id.clone(),
+                    folder: their_folder.clone(),
+                });
+            }
+        }
+    }
+    found
+}
+
+/// The [`overlaps`] in which `root_id` yields its shared files.
+/// Blocking: it resolves every root on disk.
+pub fn yielded_by(roots: &[LibraryRoot], root_id: &str) -> Vec<Overlap> {
+    overlaps(roots)
+        .into_iter()
+        .filter(|overlap| overlap.yields == root_id)
+        .collect()
+}
+
+/// Where a file of a yielding root at `relative` is indexed instead: the
+/// winning root and the path below it.
+pub fn yielded_home(yielded: &[Overlap], relative: &str) -> Option<(String, String)> {
+    yielded.iter().find_map(|overlap| {
+        overlap
+            .home(relative)
+            .map(|path| (overlap.to.clone(), path))
+    })
+}
+
 /// Policy resolver over the registry: longest-prefix root match, then the
 /// deepest covering rule inside it. Mirrors the v2
 /// `LibraryPolicyResolver.resolve` contract (returns `None` for paths

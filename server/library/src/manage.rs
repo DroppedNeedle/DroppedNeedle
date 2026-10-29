@@ -6,7 +6,7 @@
 //! `POST /library/manage/undo` (a plugin file's take-back) uses the undo,
 //! and the tests drive single-file publishes through the rest.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -108,6 +108,9 @@ pub struct PublishCell {
     /// The roots last left out of the session, so each change is logged
     /// once.
     left_out: std::sync::Mutex<Vec<String>>,
+    /// The (bundle, root) pairs recovery last found waiting for their
+    /// library folder, so each change is logged once.
+    waiting: BTreeSet<(String, String)>,
 }
 
 /// How files can be placed under each root of the open publisher session,
@@ -291,6 +294,22 @@ impl LeftoverFiles {
     }
 }
 
+/// Every saved root with the real folder it resolves to now. Blocking: it
+/// reads the disk.
+fn resolve_roots(registry: &RootRegistry) -> Vec<ResolvedRoot> {
+    registry
+        .roots()
+        .iter()
+        .map(|root| ResolvedRoot::of(&root.id, &root.path))
+        .collect()
+}
+
+/// The saved roots that take no file changes now, as [`left_out`] decides
+/// over the folders they resolve to. Blocking: it reads the disk.
+pub(crate) fn left_out_now(registry: &RootRegistry) -> Vec<String> {
+    left_out(&resolve_roots(registry))
+}
+
 impl PublishCell {
     /// An unopened cell over the application database, taking its
     /// recycle bins from `bins` and queueing a commit's follow-up work on
@@ -311,6 +330,7 @@ impl PublishCell {
             cell: None,
             placement: RootPlacement::default(),
             left_out: std::sync::Mutex::default(),
+            waiting: BTreeSet::new(),
         }
     }
 
@@ -359,7 +379,28 @@ impl PublishCell {
         let Some(open) = self.cell.as_ref() else {
             return Ok(Vec::new());
         };
-        super::publish::recovery::reconcile(&self.db, &open.sandbox, &self.jobs, &*self.clock)
+        let results =
+            super::publish::recovery::reconcile(&self.db, &open.sandbox, &self.jobs, &*self.clock)?;
+        self.log_waiting(&results);
+        Ok(results)
+    }
+
+    /// Warn once for each bundle that starts waiting for its library
+    /// folder, rather than on every pass while the folder stays away.
+    fn log_waiting(&mut self, results: &[super::publish::recovery::BundleRecovery]) {
+        let waiting: BTreeSet<(String, String)> = results
+            .iter()
+            .filter_map(|result| {
+                result
+                    .waiting_root
+                    .clone()
+                    .map(|root| (result.bundle_id.clone(), root))
+            })
+            .collect();
+        for (bundle_id, root) in waiting.difference(&self.waiting) {
+            tracing::warn!(bundle_id, root, "publish bundle waits for its root");
+        }
+        self.waiting = waiting;
     }
 
     fn root_dirs(registry: &RootRegistry) -> Vec<Root> {
@@ -384,11 +425,7 @@ impl PublishCell {
     /// bins are resolved here, once per call. A root [`left_out`] names
     /// takes no managed writes.
     pub(crate) fn session(&self, registry: &RootRegistry) -> SessionRoots {
-        let resolved: Vec<ResolvedRoot> = registry
-            .roots()
-            .iter()
-            .map(|root| ResolvedRoot::of(&root.id, &root.path))
-            .collect();
+        let resolved = resolve_roots(registry);
         let left_out = left_out(&resolved);
         self.log_left_out(&left_out);
         let kept = |root: &Root| !left_out.contains(&root.id);
@@ -464,6 +501,7 @@ impl PublishCell {
         // decides where it is.
         let recoveries =
             super::publish::recovery::reconcile(&self.db, &sandbox, &self.jobs, &*self.clock)?;
+        self.log_waiting(&recoveries);
         let publisher = Publisher::new(
             sandbox.clone(),
             self.db.clone(),

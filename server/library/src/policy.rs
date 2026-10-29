@@ -338,6 +338,50 @@ pub fn availability_warnings(normalized: &TypedLibrary) -> Vec<String> {
             ));
         }
     }
+    warnings.extend(overlap_warnings(normalized));
+    warnings
+}
+
+/// Warnings for roots whose real folders overlap through a link: the one
+/// that takes no file changes, and the one whose shared files another
+/// root indexes.
+fn overlap_warnings(normalized: &TypedLibrary) -> Vec<String> {
+    use crate::publish::paths::{ResolvedRoot, left_out};
+    let label = |id: &str| {
+        normalized
+            .library_roots
+            .iter()
+            .find(|root| root.id == id)
+            .map_or(id, |root| root.label.as_str())
+            .to_owned()
+    };
+    let registry = crate::settings::registry_from(normalized);
+    let resolved: Vec<ResolvedRoot> = registry
+        .roots()
+        .iter()
+        .map(|root| ResolvedRoot::of(&root.id, &root.path))
+        .collect();
+    let mut warnings: Vec<String> = left_out(&resolved)
+        .iter()
+        .map(|id| {
+            format!(
+                "Library root {} links into another library folder, so it takes no file changes.",
+                label(id)
+            )
+        })
+        .collect();
+    warnings.extend(
+        crate::scan::roots::overlaps(registry.roots())
+            .iter()
+            .map(|overlap| {
+                format!(
+                    "Library root {} shares files with {}; they are indexed under {} only (not excluded there), with its settings.",
+                    label(&overlap.yields),
+                    label(&overlap.to),
+                    label(&overlap.to)
+                )
+            }),
+    );
     warnings
 }
 

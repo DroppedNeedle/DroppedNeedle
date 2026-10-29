@@ -217,6 +217,90 @@ impl SqliteScanStore {
         marked
     }
 
+    /// Retire rows of `root_id` whose files another library folder indexes
+    /// (their real folders overlap): each `(path, home root, home path)`
+    /// whose home row is indexed is marked missing, as the run walked past
+    /// it, and continues into the home row, which takes what people made
+    /// on it. A row whose home is not indexed yet stays as it is, so
+    /// nothing is lost before the other folder's scan finds the file,
+    /// unless its own file under `root_dir` is absent: then it is marked
+    /// missing like any row whose file went. Returns how many rows retired.
+    pub fn retire_yielded(
+        &self,
+        stop: &RunStop,
+        run_id: &str,
+        root_id: &str,
+        root_dir: &std::path::Path,
+        moves: &[(String, String, String)],
+        now: f64,
+    ) -> Result<usize, ScanStoreError> {
+        if moves.is_empty() {
+            return Ok(0);
+        }
+        // Read before the write: only a file the filesystem says is not
+        // there counts as gone, never one it failed to answer for.
+        let absent: HashSet<&str> = moves
+            .iter()
+            .filter(|(path, _, _)| {
+                std::fs::symlink_metadata(root_dir.join(path))
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            })
+            .map(|(path, _, _)| path.as_str())
+            .collect();
+        let retired = self.write_chunked(stop, "scan_retire_yielded", moves, |chunk, tx| {
+            let mut pairs: Vec<(String, String)> = Vec::new();
+            let mut gone = 0usize;
+            {
+                let mut find = tx.prepare_cached(
+                    "SELECT id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2 \
+                     AND availability = 'indexed'",
+                )?;
+                let mut mark = tx.prepare_cached(MARK_WALKED_PAST_MISSING)?;
+                for (path, home_root, home_path) in chunk {
+                    let Some(home) = find
+                        .query_row(params![home_root, home_path], |row| row.get::<_, String>(0))
+                        .optional()?
+                    else {
+                        if absent.contains(path.as_str()) {
+                            gone += mark.execute(params![root_id, path, now, run_id])?;
+                        }
+                        continue;
+                    };
+                    let Some(old) = find
+                        .query_row(params![root_id, path], |row| row.get::<_, String>(0))
+                        .optional()?
+                    else {
+                        continue;
+                    };
+                    if mark.execute(params![root_id, path, now, run_id])? > 0 {
+                        pairs.push((old, home));
+                    }
+                }
+            }
+            let marked = pairs.len() + gone;
+            if marked == 0 {
+                return Ok(0);
+            }
+            tx.execute(
+                "UPDATE library_scan_runs SET missing_count = missing_count + ?1 WHERE id = ?2",
+                params![marked as i64, run_id],
+            )?;
+            crate::catalog_revision::bump_catalog(tx)?;
+            crate::corrections::continuation::continue_same_files(tx, &pairs, now)?;
+            Ok(marked)
+        });
+        let mut guard = self.lock();
+        if retired.as_ref().map_or(true, |retired| *retired > 0) {
+            guard.catalog_version += 1;
+            if let Some(cached) = guard.catalog_cache.get_mut(root_id) {
+                for (path, _, _) in moves {
+                    cached.entries.remove(path);
+                }
+            }
+        }
+        retired
+    }
+
     /// Indexed catalog rows under one scope.
     pub fn indexed_count(
         &self,

@@ -151,6 +151,60 @@ pub(crate) fn continue_replaced(
     run(tx, Scope::Album(album), replaced, true, WRITE_BOUND, now).map(|_| ())
 }
 
+/// Continue each `(old, new)` pair of rows for one file that two library
+/// folders reach, whose real paths overlap: the scan marked `old` missing
+/// because the file is indexed as `new` under the other folder. No proof
+/// beyond that is needed, as both rows name the same file on disk. Only
+/// when the two rows differ, the old one is missing and not an alias yet,
+/// and the new one is indexed; otherwise nothing is written for that
+/// pair. What people made on `old` then moves as for any continuation.
+pub(crate) fn continue_same_files(
+    tx: &Transaction<'_>,
+    pairs: &[(String, String)],
+    now: f64,
+) -> rusqlite::Result<()> {
+    let created_ms = (now * 1000.0) as i64;
+    savepoint(tx, "continue_same_files", || {
+        for (old, new) in pairs {
+            let fits: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM local_tracks o JOIN local_tracks n \
+                 ON n.id = ?2 AND n.availability = 'indexed' \
+                 WHERE o.id = ?1 AND o.availability = 'missing' \
+                 AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = o.id))",
+                params![old, new],
+                |row| row.get(0),
+            )?;
+            if old != new && fits {
+                add_alias(tx, old, new, true, created_ms)?;
+            }
+        }
+        Ok::<_, rusqlite::Error>(())
+    })??;
+    run(tx, Scope::Library, &[], false, WRITE_BOUND, now).map(|_| ())
+}
+
+/// Make `old` an alias of `new`, and move every alias naming `old` on to
+/// `new`: no alias ever names an alias.
+fn add_alias(
+    tx: &Transaction<'_>,
+    old: &str,
+    new: &str,
+    moves_overrides: bool,
+    created_ms: i64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO local_track_aliases (alias, local_track_id, created_at, \
+         moves_overrides) VALUES (?1, ?2, ?3, ?4)",
+        params![old, new, created_ms, moves_overrides],
+    )?;
+    tx.execute(
+        "UPDATE local_track_aliases SET local_track_id = ?2, \
+         moves_overrides = moves_overrides AND ?3 WHERE local_track_id = ?1",
+        params![old, new, moves_overrides],
+    )?;
+    Ok(())
+}
+
 /// One pass in a savepoint. `discover` looks for new pairs; `limit`
 /// bounds the aliases moved beyond the pairs made on the pass's album.
 /// `true` when aliases that hold something are left.
@@ -222,18 +276,8 @@ fn pass(
     // The alias, and every alias naming the old row moved on to the new
     // one: no alias ever names an alias. A replaced version's overrides
     // stay, and so do those of the rows that continued into it.
-    let alias = |old: &str, new: &str, moves_overrides: bool| -> rusqlite::Result<()> {
-        tx.execute(
-            "INSERT INTO local_track_aliases (alias, local_track_id, created_at, \
-             moves_overrides) VALUES (?1, ?2, ?3, ?4)",
-            params![old, new, created_ms, moves_overrides],
-        )?;
-        tx.execute(
-            "UPDATE local_track_aliases SET local_track_id = ?2, \
-             moves_overrides = moves_overrides AND ?3 WHERE local_track_id = ?1",
-            params![old, new, moves_overrides],
-        )?;
-        Ok(())
+    let alias = |old: &str, new: &str, moves_overrides: bool| {
+        add_alias(tx, old, new, moves_overrides, created_ms)
     };
     if let Some(album) = only {
         for (old, new) in given {

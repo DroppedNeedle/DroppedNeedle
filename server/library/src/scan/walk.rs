@@ -26,7 +26,7 @@ use super::models::{
 };
 use super::pool::BlockingPool;
 use super::revision::{exact_stat_revision, mtime_ns_from_metadata};
-use super::roots::PolicyResolver;
+use super::roots::{PolicyResolver, yielded_by};
 use super::seams::Checkpoint;
 use super::sqlite_store::SqliteScanStore;
 use super::stop::RunStop;
@@ -708,15 +708,22 @@ impl InventoryScanner {
         let producer_stopped = Arc::clone(&stopped);
         let producer_selected = selected.to_owned();
         let producer_root = root.to_owned();
+        let producer_roots = resolver.registry().roots().to_vec();
+        let producer_root_id = scope.root_id.clone();
         let pool = self.pool.clone();
         let mut producer = Some(tokio::spawn(async move {
             // A panic drops the sender before `Done`; the consumer reads
             // that as an incomplete walk.
             let _ = pool
                 .run(move || {
+                    let yielded: Vec<PathBuf> = yielded_by(&producer_roots, &producer_root_id)
+                        .into_iter()
+                        .map(|overlap| overlap.folder)
+                        .collect();
                     produce_inventory(
                         &producer_selected,
                         &producer_root,
+                        &yielded,
                         &sender,
                         &producer_stopped,
                         &producer_heartbeat,
@@ -1279,9 +1286,14 @@ pub fn folder_digests(
 /// Blocking walk producing inventory messages (v2 `producer`). Runs on the
 /// pool: stat-only, symlink-cautious, skip-and-report. `device` reads the
 /// filesystem of each folder the walk descends into, once, to report mounts.
+/// `yielded` holds the real folders of other roots that index the files
+/// this root shares with them ([`yielded_by`]): the walk never goes into one,
+/// and walks nothing when its own folder lies inside one.
+#[allow(clippy::too_many_arguments)]
 fn produce_inventory(
     selected: &Path,
     root: &Path,
+    yielded: &[PathBuf],
     sender: &mpsc::Sender<WalkMessage>,
     stopped: &AtomicBool,
     heartbeat: &WalkHeartbeat,
@@ -1297,6 +1309,16 @@ fn produce_inventory(
     // canonical root so a root reached through a symlink (`/music` ->
     // `/mnt/nas/music`) still recognizes its own files.
     let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned());
+    // No folder below the root is a link (linked folders are never
+    // descended), so a folder's real path is the root's real folder
+    // joined with the path below it.
+    let given_to_another = |folder: &Path| {
+        let real = folder
+            .strip_prefix(root)
+            .map(|below| canonical_root.join(below))
+            .unwrap_or_else(|_| folder.to_owned());
+        yielded.iter().any(|other| real.starts_with(other))
+    };
     // Unreadable directories are collected and reported instead of
     // aborting the walk.
     let mut walk_errors: Vec<WalkErrorInfo> = Vec::new();
@@ -1312,6 +1334,10 @@ fn produce_inventory(
             send_with_stop(sender, stopped, WalkMessage::Done);
             return;
         }
+    }
+    if given_to_another(selected) {
+        send_with_stop(sender, stopped, WalkMessage::Done);
+        return;
     }
     let base = scope_device(selected, root, device, &mut |folder| report_mount(folder));
     // Each folder carries its filesystem, for its subfolders to compare.
@@ -1359,7 +1385,7 @@ fn produce_inventory(
             };
             let path = entry.path();
             if file_type.is_dir() {
-                if descends_into(&path, &file_type) {
+                if descends_into(&path, &file_type) && !given_to_another(&path) {
                     let own = device(&path);
                     if is_mount(directory_device, own) {
                         report_mount(&path);
@@ -1508,6 +1534,7 @@ mod tests {
         produce_inventory(
             selected,
             root,
+            &[],
             &sender,
             &stopped,
             &WalkHeartbeat::new(),
