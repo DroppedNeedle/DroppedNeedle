@@ -76,7 +76,14 @@ describe('AlbumHistory', () => {
 			entry({ kind: 'retag_joined', by: 'person', other_album_title: null }),
 			entry({ kind: 'retag_half_left_alone', other_album_title: 'Old Name' }),
 			entry({ kind: 'leftover_joined', other_album_title: 'Old Name' }),
-			entry({ kind: 'artist_from_tracks' })
+			entry({ kind: 'artist_from_tracks' }),
+			entry({ kind: 'edition_changed' }),
+			entry({ kind: 'edition_chosen' }),
+			entry({ kind: 'edition_change_undone', by: 'you' }),
+			entry({ kind: 'edition_change_undone', by: 'person' }),
+			entry({ kind: 'unfolded_from', other_album_title: 'Kept Name' }),
+			entry({ kind: 'unfolded_from', by: 'you', other_album_title: 'Kept Name' }),
+			entry({ kind: 'hand_back_given_up' })
 		);
 		await expect.element(page.getByRole('heading', { name: 'Album history' })).toBeInTheDocument();
 		const lines = [
@@ -93,7 +100,14 @@ describe('AlbumHistory', () => {
 			'An admin merged Another album into this album.',
 			'Left unmanaged like Old Name, whose files were being retagged as this album.',
 			'Old Name, left over from an earlier version as a separate album, was folded into this album.',
-			'The artist was taken from the tracks, replacing "Unknown Artist".'
+			'The artist was taken from the tracks, replacing "Unknown Artist".',
+			'DroppedNeedle moved this album to another edition.',
+			'DroppedNeedle picked an edition for this album.',
+			"You undid DroppedNeedle's edition change.",
+			"An admin undid DroppedNeedle's edition change.",
+			'This album was brought back out of Kept Name, where it had been folded.',
+			'You brought this album back out of Kept Name.',
+			"Handing this album back stopped: its files couldn't be read."
 		];
 		for (const text of lines) {
 			await expect.element(page.getByText(text, { exact: true })).toBeInTheDocument();
@@ -180,6 +194,21 @@ describe('undoing a fold', () => {
 		await expect
 			.element(page.getByRole('alert'))
 			.toHaveTextContent("The albums changed after the join, so it can't be undone.");
+	});
+
+	it('lists an undone fold as its own entry, with no Undo left on the fold', async () => {
+		signIn('admin');
+		await show(
+			entry({ kind: 'fold_undone', by: 'you', other_album_title: 'Old Name' }),
+			entry({ kind: 'leftover_joined', other_album_title: 'Old Name' })
+		);
+		await expect
+			.element(
+				page.getByText('You undid the fold: Old Name is its own album again.', { exact: true })
+			)
+			.toBeVisible();
+		await expect.element(page.getByText(/was folded into this album/)).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
 	});
 
 	it('offers no Undo to a listener', async () => {

@@ -14,7 +14,8 @@ const album = {
 
 const h = vi.hoisted(() => ({
 	handBack: vi.fn(),
-	reenable: vi.fn()
+	reenable: vi.fn(),
+	history: [] as Array<{ kind: string; at: number }>
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -29,6 +30,13 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 		data: { items: [{ release_mbid: 'release-1', title: 'Local Signals (Deluxe)' }] }
 	})
 }));
+vi.mock('$lib/queries/library/LibraryAlbumHistoryQueries.svelte', () => ({
+	getAlbumHistoryQuery: () => ({
+		get data() {
+			return { items: h.history };
+		}
+	})
+}));
 vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
 	handBackLibraryAlbumMutation: () => ({ mutateAsync: h.handBack, isPending: false, error: null }),
 	handBackRefusalMessage: () => null
@@ -38,6 +46,7 @@ import ManagementHoldSection from './ManagementHoldSection.svelte';
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	h.history = [];
 	h.handBack.mockResolvedValue({ handed_back: true });
 	h.reenable.mockResolvedValue({});
 });
@@ -110,5 +119,27 @@ describe('an album left unmanaged', () => {
 		await renderHeld({ kind: 'files_changed', held_at: heldAt, handing_back: true });
 
 		await expect.element(page.getByRole('button', { name: 'Being handed back' })).toBeDisabled();
+	});
+
+	it('says a hand-back stopped since the album was held, and offers it again', async () => {
+		h.history = [
+			{ kind: 'hand_back_given_up', at: heldAt + 1000 },
+			{ kind: 'hand_back_given_up', at: heldAt - 1000 }
+		];
+		await renderHeld({ kind: 'files_changed', held_at: heldAt, handing_back: false });
+
+		const section = page.getByRole('region', { name: 'Left unmanaged' });
+		await expect
+			.element(section.getByText("Handing it back stopped: the files couldn't be read."))
+			.toBeVisible();
+		await expect.element(section.getByRole('button')).toHaveTextContent('Manage it again');
+	});
+
+	it('says nothing of a hand-back that stopped before the album was held', async () => {
+		h.history = [{ kind: 'hand_back_given_up', at: heldAt - 1000 }];
+		await renderHeld({ kind: 'files_changed', held_at: heldAt, handing_back: false });
+
+		await expect.element(page.getByRole('region', { name: 'Left unmanaged' })).toBeVisible();
+		await expect.element(page.getByText(/Handing it back stopped/)).not.toBeInTheDocument();
 	});
 });

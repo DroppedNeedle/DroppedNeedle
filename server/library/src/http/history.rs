@@ -1,7 +1,8 @@
 //! Album history routes.
 //!
 //! - `GET /library/albums/{id}/history`: what the app did by itself to the
-//!   album's tracks and to the albums it is made of, newest first. Open to
+//!   album, its tracks and the albums it is made of, and the undos of those
+//!   changes, newest first. Open to
 //!   every signed-in user, as the album is catalog data.
 //! - `POST /library/folds/{fold_id}/undo`: undo the fold of a leftover
 //!   album, by the `undo_id` its history entry carries. For curators.
@@ -57,9 +58,22 @@ pub enum AlbumHistoryKindView {
     /// The album took its artist from its tracks instead of the "Unknown
     /// Artist" placeholder.
     ArtistFromTracks,
+    /// The app moved the album to another edition.
+    EditionChanged,
+    /// The app gave the album, matched to a release group only, an edition.
+    EditionChosen,
+    /// Someone undid the app's edition change.
+    EditionChangeUndone,
+    /// The fold of a leftover album into this one was undone.
+    FoldUndone,
+    /// This album was folded into another and brought back out by an undo.
+    UnfoldedFrom,
+    /// Handing the album back to automatic management stopped: its files
+    /// could not be read after every try.
+    HandBackGivenUp,
 }
 
-/// Who asked for a join.
+/// Who asked for a join or an undo.
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AlbumHistoryByView {
@@ -75,13 +89,15 @@ pub struct AlbumHistoryEntryView {
     pub kind: AlbumHistoryKindView,
     /// Unix milliseconds.
     pub at: i64,
-    /// Who asked, for `retag_joined` only; null when the app did it.
+    /// Who asked, for `retag_joined` and the undo entries; null when the
+    /// app did it.
     pub by: Option<AlbumHistoryByView>,
     /// How many tracks the entry is about; 0 for album entries.
     pub track_count: usize,
     /// The first five of those tracks' titles, in album order.
     pub track_titles: Vec<String>,
-    /// The other album's title, null when its row is gone.
+    /// The other album's title, for a join, a fold or its undo; null when
+    /// its row is gone.
     pub other_album_title: Option<String>,
     /// For a `leftover_joined` or `artist_from_tracks` entry that can be
     /// undone now, the id to undo it by; null otherwise.
@@ -107,6 +123,12 @@ impl From<HistoryEntry> for AlbumHistoryEntryView {
                 HistoryKind::TracksOtherMusic => AlbumHistoryKindView::TracksOtherMusic,
                 HistoryKind::TracksNewCopy => AlbumHistoryKindView::TracksNewCopy,
                 HistoryKind::ArtistFromTracks => AlbumHistoryKindView::ArtistFromTracks,
+                HistoryKind::EditionChanged => AlbumHistoryKindView::EditionChanged,
+                HistoryKind::EditionChosen => AlbumHistoryKindView::EditionChosen,
+                HistoryKind::EditionChangeUndone => AlbumHistoryKindView::EditionChangeUndone,
+                HistoryKind::FoldUndone => AlbumHistoryKindView::FoldUndone,
+                HistoryKind::UnfoldedFrom => AlbumHistoryKindView::UnfoldedFrom,
+                HistoryKind::HandBackGivenUp => AlbumHistoryKindView::HandBackGivenUp,
             },
             at: entry.at,
             by: entry.by.map(|by| match by {
@@ -136,8 +158,8 @@ pub fn album_history_view(
     })
 }
 
-/// What the app did by itself to the album's tracks and to the albums it
-/// is made of.
+/// What the app did by itself to the album, its tracks and the albums it
+/// is made of, and the undos of those changes.
 #[utoipa::path(
     get,
     tag = "library management",

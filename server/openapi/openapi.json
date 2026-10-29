@@ -10811,7 +10811,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "What the app did by itself to the album's tracks and to the albums it\nis made of.",
+        "summary": "What the app did by itself to the album, its tracks and the albums it\nis made of, and the undos of those changes.",
         "operationId": "get_album_history",
         "parameters": [
           {
@@ -36212,7 +36212,7 @@
       },
       "AlbumHistoryByView": {
         "type": "string",
-        "description": "Who asked for a join.",
+        "description": "Who asked for a join or an undo.",
         "enum": [
           "you",
           "person"
@@ -36240,7 +36240,7 @@
               },
               {
                 "$ref": "#/components/schemas/AlbumHistoryByView",
-                "description": "Who asked, for `retag_joined` only; null when the app did it."
+                "description": "Who asked, for `retag_joined` and the undo entries; null when the\napp did it."
               }
             ]
           },
@@ -36252,7 +36252,7 @@
               "string",
               "null"
             ],
-            "description": "The other album's title, null when its row is gone."
+            "description": "The other album's title, for a join, a fold or its undo; null when\nits row is gone."
           },
           "track_count": {
             "type": "integer",
@@ -36286,7 +36286,13 @@
           "leftover_joined",
           "tracks_other_music",
           "tracks_new_copy",
-          "artist_from_tracks"
+          "artist_from_tracks",
+          "edition_changed",
+          "edition_chosen",
+          "edition_change_undone",
+          "fold_undone",
+          "unfolded_from",
+          "hand_back_given_up"
         ]
       },
       "AlbumHistoryView": {

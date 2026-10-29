@@ -2265,7 +2265,30 @@ async fn a_folded_v2_split_comes_back_on_undo() {
     let again = hygiene::clean_album(&tx, "split", "cleanup", now).expect("cleanup runs");
     tx.commit().expect("commit");
     assert_eq!(again, None, "an undone fold stays undone");
-    assert_eq!(undo_ids(), [None], "the entry stays, without Undo");
+    assert_eq!(undo_ids(), [None, None], "the entry stays, without Undo");
+    let told = |album: &str| {
+        let items = album_history_view(&ops, album, "curator")
+            .expect("history reads")
+            .items;
+        let told: Vec<_> = items
+            .iter()
+            .map(|entry| (entry.kind, entry.by, entry.other_album_title.clone()))
+            .collect();
+        serde_json::to_value(told).expect("history serializes")
+    };
+    assert_eq!(
+        told("kept"),
+        serde_json::json!([
+            ["fold_undone", "you", "album"],
+            ["leftover_joined", null, "album"]
+        ]),
+        "the undo has its own entry"
+    );
+    assert_eq!(
+        told("split"),
+        serde_json::json!([["unfolded_from", "you", "album"]]),
+        "the album brought back tells where from"
+    );
     assert_eq!(undo(&action), "STALE_REVISION", "an undo runs once");
 }
 

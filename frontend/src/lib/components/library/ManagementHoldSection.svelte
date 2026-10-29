@@ -1,7 +1,8 @@
 <!--
 	An album library management leaves alone: why, since when, and the one
 	"Manage it again" button. A person's own choice lifts the exclusion; a
-	hold the app set hands the album back.
+	hold the app set hands the album back. A hand-back that stopped because
+	the files could not be read says so, from the album's history.
 -->
 <script lang="ts">
 	import { CirclePause } from 'lucide-svelte';
@@ -9,6 +10,7 @@
 	import type { LibraryAlbumDetail } from '$lib/types';
 	import { reenableAlbumManagement } from '$lib/queries/library/LibraryCatalogMutations.svelte';
 	import { getAlbumEditionsQuery } from '$lib/queries/albums/EditionQueries.svelte';
+	import { getAlbumHistoryQuery } from '$lib/queries/library/LibraryAlbumHistoryQueries.svelte';
 	import {
 		handBackLibraryAlbumMutation,
 		handBackRefusalMessage
@@ -31,6 +33,19 @@
 		() => authStore.user?.id,
 		() => album.musicbrainz_release_group_id ?? '',
 		() => steppedBack && Boolean(album.musicbrainz_release_group_id)
+	);
+	const historyQuery = getAlbumHistoryQuery(
+		() => authStore.user?.id,
+		() => (steppedBack ? album.id : undefined)
+	);
+	// The worker gave up handing the album back since it was last held.
+	const handBackStopped = $derived(
+		steppedBack &&
+			hold !== null &&
+			!hold.handing_back &&
+			(historyQuery.data?.items ?? []).some(
+				(entry) => entry.kind === 'hand_back_given_up' && entry.at >= hold.held_at
+			)
 	);
 	const editionTitle = $derived(
 		editionsQuery.data?.items.find((item) => item.release_mbid === album.musicbrainz_release_id)
@@ -94,6 +109,9 @@
 				</p>
 				<h3 class="hero-title text-lg font-bold">{holdCopy.heading}</h3>
 				{#if holdCopy.body}<p class="text-xs text-base-content/60">{holdCopy.body}</p>{/if}
+				{#if handBackStopped}<p class="mt-1 text-xs text-warning" role="status">
+						Handing it back stopped: the files couldn't be read.
+					</p>{/if}
 				<div class="mt-3 flex flex-wrap items-center gap-3">
 					{#if hold.kind === 'your_choice'}
 						<AsyncButton

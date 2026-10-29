@@ -19530,12 +19530,14 @@ fn carried_from_v2(db: &rusqlite::Connection) {
 /// After an upgrade, albums the old rule may have left on the wrong
 /// edition because one file's track id named another are identified once
 /// more, by themselves: an automatic identity on another edition (A)
-/// moves to the edition its files name, keeping its album and tracks, and
-/// the edition it replaced can be undone. A person's edition (B), a match
-/// a person took off (C) and an album already on its files' edition (D)
-/// are left alone. It happens once.
+/// moves to the edition its files name, keeping its album and tracks, its
+/// history tells the move, and the edition it replaced can be undone. A
+/// person's edition (B), a match a person took off (C) and an album
+/// already on its files' edition (D) are left alone. It happens once.
 #[tokio::test]
 async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
+    use droppedneedle_library::http::history::album_history_view;
+
     let (scratch, library, music) = bare_library("lib-track-id-relook").await;
     let editions: Vec<(Release, Release)> = (1..=4)
         .map(|n| sibling_editions(n, &format!("Relook {n}")))
@@ -19711,6 +19713,20 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
         )
         .expect("undo reads");
     assert_eq!(undo, 1, "the replaced edition can be undone");
+    // The album's history tells the move; a first match is no change.
+    let ops = crate::common::library::operations(&library);
+    let history = |album: &str| {
+        let view = album_history_view(&ops, album, "listener").expect("history reads");
+        serde_json::to_value(
+            view.items
+                .iter()
+                .map(|entry| entry.kind)
+                .collect::<Vec<_>>(),
+        )
+        .expect("history serializes")
+    };
+    assert_eq!(history(&a), json!(["edition_changed"]));
+    assert_eq!(history(&d), json!([]));
 
     // The next start looks no more.
     let restarted = crate::common::library::repair_worker(&library);

@@ -1,18 +1,20 @@
 //! An album's history: what the app did by itself to which tracks the
-//! album holds, which albums it is made of, or where people's history
-//! lives.
+//! album holds, which albums it is made of, which edition it is on, or
+//! where people's history lives, and the undos of those changes.
 //!
-//! Read from `library_catalog_actions`. The audit JSON keeps every row a
-//! move touched, other people's included, so only the typed fields below
-//! leave this module: no album or track ids, no reason codes, no counts of
-//! what moved. The one id is the audit row of a fold or of an artist
-//! repair, as its undo handle.
+//! Read from `library_catalog_actions`, and for an edition identification
+//! sealed from `library_automatic_edition_undo`, which keeps the album's
+//! latest one. The audit JSON keeps every row a move touched, other
+//! people's included, so only the typed fields below leave this module: no
+//! album or track ids, no reason codes, no counts of what moved. The one id
+//! is the audit row of a fold or of an artist repair, as its undo handle.
 
 use std::collections::BTreeSet;
 
 use rusqlite::{Connection, OptionalExtension as _, params, params_from_iter};
 use serde::Deserialize;
 
+use crate::identify::models::PriorAlbumIdentity;
 use crate::identity;
 use crate::repairs::hygiene;
 
@@ -43,6 +45,20 @@ pub enum HistoryKind {
     /// The album took its artist from its tracks instead of the "Unknown
     /// Artist" placeholder.
     ArtistFromTracks,
+    /// The app moved the album to another edition.
+    EditionChanged,
+    /// The app gave the album, matched to a release group only, an edition.
+    EditionChosen,
+    /// A person undid the app's edition change.
+    EditionChangeUndone,
+    /// The fold of a leftover album into this one was undone: it is its
+    /// own album again.
+    FoldUndone,
+    /// This album was folded into another and brought back out by an undo.
+    UnfoldedFrom,
+    /// Handing the album back to automatic management stopped: its files
+    /// could not be read after every try.
+    HandBackGivenUp,
 }
 
 /// Who asked for an entry, as the caller may know it.
@@ -60,7 +76,7 @@ pub struct HistoryEntry {
     pub kind: HistoryKind,
     /// Unix milliseconds.
     pub at: i64,
-    /// Who asked, for a join only; `None` for the app.
+    /// Who asked, for a join or an undo; `None` for the app.
     pub by: Option<HistoryActor>,
     /// How many tracks the entry is about; 0 for album entries.
     pub track_count: usize,
@@ -129,7 +145,9 @@ const ROWS: &str = "SELECT a.id, a.actor_user_id, a.action_kind, a.reason_code, 
       OR (a.action_kind = 'retag_first_half' \
         AND a.reason_code = 'RETAG_FIRST_HALF_LEFT_AS_IT_WAS') \
       OR (a.action_kind = 'album_artist' \
-        AND a.reason_code = 'PLACEHOLDER_ARTIST_FROM_TRACKS')) \
+        AND a.reason_code = 'PLACEHOLDER_ARTIST_FROM_TRACKS') \
+      OR a.action_kind IN ('automatic_exact_edition', 'undo_automatic_edition', \
+        'fold_undone', 'management_hand_back_given_up')) \
     ORDER BY a.created_at DESC, a.rowid DESC LIMIT 10";
 
 struct Row {
@@ -173,9 +191,31 @@ pub fn album_history(
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
-    let mut entries = Vec::new();
+    let since = now - MAX_AGE_SECS;
+    let mut entries = sealed_editions(conn, album_id, since)?;
     for row in rows {
         let at = (row.created_at * 1000.0) as i64;
+        if let Some(kind) = album_event(&row) {
+            let other_album_title = match kind {
+                HistoryKind::UnfoldedFrom => {
+                    let surviving = serde_json::from_str::<Unfolded>(&row.before)
+                        .ok()
+                        .map(|unfolded| unfolded.surviving_album_id);
+                    album_title(conn, surviving.as_deref())?
+                }
+                _ => None,
+            };
+            entries.push(HistoryEntry {
+                kind,
+                at,
+                by: person(row.actor.as_deref(), caller_user_id),
+                track_count: 0,
+                track_titles: Vec::new(),
+                other_album_title,
+                undo_id: None,
+            });
+            continue;
+        }
         if row.kind == "continue_tracks" {
             let Ok(continued) = serde_json::from_str::<Continued>(&row.after) else {
                 tracing::warn!(
@@ -303,16 +343,7 @@ pub fn album_history(
             .retired_album_id
             .or(other.from_album_id)
             .or(other.source_album_id);
-        let other_album_title = match other_id {
-            Some(id) => conn
-                .query_row(
-                    "SELECT title FROM local_albums WHERE id = ?1",
-                    params![id],
-                    |row| row.get(0),
-                )
-                .optional()?,
-            None => None,
-        };
+        let other_album_title = album_title(conn, other_id.as_deref())?;
         let by = match (kind, row.actor.as_deref()) {
             (HistoryKind::RetagJoined, Some(actor)) if actor == caller_user_id => {
                 Some(HistoryActor::You)
@@ -320,10 +351,18 @@ pub fn album_history(
             (HistoryKind::RetagJoined, Some(_)) => Some(HistoryActor::Person),
             _ => None,
         };
-        let undo_id = match row.reason.as_deref() {
-            Some(identity::FOLD_REASON) if identity::fold_undoable(conn, &row.id)? => Some(row.id),
-            _ => None,
-        };
+        let fold = row.reason.as_deref() == Some(identity::FOLD_REASON);
+        if fold && let Some(source) = other_id.as_deref() {
+            entries.extend(fold_undone(
+                conn,
+                source,
+                &row.id,
+                other_album_title.clone(),
+                caller_user_id,
+                since,
+            )?);
+        }
+        let undo_id = (fold && identity::fold_undoable(conn, &row.id)?).then_some(row.id);
         entries.push(HistoryEntry {
             kind,
             at,
@@ -334,8 +373,141 @@ pub fn album_history(
             undo_id,
         });
     }
+    // Newest first, as the rows were read; entries read beside them slot in.
+    entries.sort_by(|a, b| b.at.cmp(&a.at));
     entries.truncate(MAX_ENTRIES);
     Ok(Some(entries))
+}
+
+/// The other album of an undone fold, as the undo's row keeps it.
+#[derive(Deserialize)]
+struct Unfolded {
+    surviving_album_id: String,
+}
+
+/// The kind of an album-level entry told by its row's kind alone, or
+/// `None` for the kinds read further below.
+fn album_event(row: &Row) -> Option<HistoryKind> {
+    Some(match row.kind.as_str() {
+        "automatic_exact_edition" => {
+            match serde_json::from_str::<Option<PriorAlbumIdentity>>(&row.before) {
+                Ok(Some(PriorAlbumIdentity {
+                    release_mbid: Some(_),
+                    ..
+                })) => HistoryKind::EditionChanged,
+                _ => HistoryKind::EditionChosen,
+            }
+        }
+        "undo_automatic_edition" => HistoryKind::EditionChangeUndone,
+        identity::FOLD_UNDONE => HistoryKind::UnfoldedFrom,
+        "management_hand_back_given_up" => HistoryKind::HandBackGivenUp,
+        _ => return None,
+    })
+}
+
+/// Who did a step a person may have asked for, as the caller may know it;
+/// `None` for the app.
+fn person(actor: Option<&str>, caller_user_id: &str) -> Option<HistoryActor> {
+    match actor {
+        None | Some("" | "system") => None,
+        Some(actor) if actor == caller_user_id => Some(HistoryActor::You),
+        Some(_) => Some(HistoryActor::Person),
+    }
+}
+
+fn album_title(conn: &Connection, album_id: Option<&str>) -> rusqlite::Result<Option<String>> {
+    let Some(album_id) = album_id else {
+        return Ok(None);
+    };
+    conn.query_row(
+        "SELECT title FROM local_albums WHERE id = ?1",
+        params![album_id],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// The undo of fold `fold_id`, recorded on the album it brought back
+/// (`source`), as an entry of the album that had kept its files.
+fn fold_undone(
+    conn: &Connection,
+    source: &str,
+    fold_id: &str,
+    source_title: Option<String>,
+    caller_user_id: &str,
+    since: f64,
+) -> rusqlite::Result<Option<HistoryEntry>> {
+    conn.prepare_cached(
+        "SELECT actor_user_id, created_at FROM library_catalog_actions \
+         WHERE local_album_id = ?1 AND action_kind = ?2 \
+         AND json_extract(after_json, '$.fold_action_id') = ?3 AND created_at >= ?4 \
+         ORDER BY created_at DESC LIMIT 1",
+    )?
+    .query_row(
+        params![source, identity::FOLD_UNDONE, fold_id, since],
+        |row| {
+            let actor: Option<String> = row.get(0)?;
+            let created_at: f64 = row.get(1)?;
+            Ok(HistoryEntry {
+                kind: HistoryKind::FoldUndone,
+                at: (created_at * 1000.0) as i64,
+                by: person(actor.as_deref(), caller_user_id),
+                track_count: 0,
+                track_titles: Vec::new(),
+                other_album_title: source_title,
+                undo_id: None,
+            })
+        },
+    )
+    .optional()
+}
+
+/// The album's edition change that identification sealed, kept as its
+/// automatic-edition undo; an exact edition a recheck accepted has its own
+/// audit row instead. Only the latest is kept, and only a change counts:
+/// the album was matched before, and is on another edition now or the
+/// change was undone.
+fn sealed_editions(
+    conn: &Connection,
+    album_id: &str,
+    since: f64,
+) -> rusqlite::Result<Vec<HistoryEntry>> {
+    let sealed: Option<(Option<String>, f64, bool, Option<String>)> = conn
+        .prepare_cached(
+            "SELECT u.prior_identity_json, u.created_at, u.consumed_at IS NOT NULL, \
+             i.release_mbid FROM library_automatic_edition_undo u \
+             LEFT JOIN local_album_external_identities i \
+             ON i.local_album_id = u.local_album_id AND i.provider = 'musicbrainz' \
+             WHERE u.local_album_id = ?1 AND u.reason_code = 'AUTOMATIC_EXACT_EDITION' \
+             AND u.created_at >= ?2",
+        )?
+        .query_row(params![album_id, since], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .optional()?;
+    let Some((Some(prior), created_at, undone, release)) = sealed else {
+        return Ok(Vec::new());
+    };
+    let Ok(prior) = serde_json::from_str::<PriorAlbumIdentity>(&prior) else {
+        tracing::warn!(album_id, "album history skips an unreadable edition undo");
+        return Ok(Vec::new());
+    };
+    if prior.release_group_mbid.is_none() || (!undone && prior.release_mbid == release) {
+        return Ok(Vec::new());
+    }
+    Ok(vec![HistoryEntry {
+        kind: if prior.release_mbid.is_some() {
+            HistoryKind::EditionChanged
+        } else {
+            HistoryKind::EditionChosen
+        },
+        at: (created_at * 1000.0) as i64,
+        by: None,
+        track_count: 0,
+        track_titles: Vec::new(),
+        other_album_title: None,
+        undo_id: None,
+    }])
 }
 
 /// The first titles of `tracks`, by disc and track number.

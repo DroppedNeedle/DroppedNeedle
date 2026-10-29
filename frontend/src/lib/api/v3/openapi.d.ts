@@ -3333,8 +3333,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * What the app did by itself to the album's tracks and to the albums it
-         *     is made of.
+         * What the app did by itself to the album, its tracks and the albums it
+         *     is made of, and the undos of those changes.
          */
         get: operations["get_album_history"];
         put?: never;
@@ -10091,7 +10091,7 @@ export interface components {
             musicbrainz_id: string;
         };
         /**
-         * @description Who asked for a join.
+         * @description Who asked for a join or an undo.
          * @enum {string}
          */
         AlbumHistoryByView: "you" | "person";
@@ -10104,7 +10104,10 @@ export interface components {
             at: number;
             by?: null | components["schemas"]["AlbumHistoryByView"];
             kind: components["schemas"]["AlbumHistoryKindView"];
-            /** @description The other album's title, null when its row is gone. */
+            /**
+             * @description The other album's title, for a join, a fold or its undo; null when
+             *     its row is gone.
+             */
             other_album_title?: string | null;
             /** @description How many tracks the entry is about; 0 for album entries. */
             track_count: number;
@@ -10120,7 +10123,7 @@ export interface components {
          * @description What one history entry tells.
          * @enum {string}
          */
-        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "leftover_joined" | "tracks_other_music" | "tracks_new_copy" | "artist_from_tracks";
+        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "leftover_joined" | "tracks_other_music" | "tracks_new_copy" | "artist_from_tracks" | "edition_changed" | "edition_chosen" | "edition_change_undone" | "fold_undone" | "unfolded_from" | "hand_back_given_up";
         /**
          * @description An album's history, newest first: at most ten entries, none older than
          *     180 days.

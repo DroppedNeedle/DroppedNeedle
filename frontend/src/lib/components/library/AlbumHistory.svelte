@@ -1,8 +1,9 @@
 <!--
 	What DroppedNeedle did by itself to a library album: history moved to new
 	files, tracks whose paths other music took, tracks replaced by new copies
-	of the same recordings, albums joined into this one, and an artist taken
-	from the tracks instead of "Unknown Artist". A curator can undo the fold
+	of the same recordings, albums joined into this one, an artist taken from
+	the tracks instead of "Unknown Artist", edition changes and a hand-back
+	that stopped, and the undos of those changes. A curator can undo the fold
 	of a leftover album and that artist change. Nothing shows while it loads
 	or when there is nothing to tell.
 -->
@@ -102,6 +103,24 @@
 				return `${old}, left over from an earlier version as a separate album, was folded into this album.`;
 			case 'artist_from_tracks':
 				return 'The artist was taken from the tracks, replacing "Unknown Artist".';
+			case 'edition_changed':
+				return 'DroppedNeedle moved this album to another edition.';
+			case 'edition_chosen':
+				return 'DroppedNeedle picked an edition for this album.';
+			case 'edition_change_undone':
+				if (entry.by === 'you') return "You undid DroppedNeedle's edition change.";
+				if (entry.by === 'person') return "An admin undid DroppedNeedle's edition change.";
+				return "DroppedNeedle's edition change was undone.";
+			case 'fold_undone':
+				return entry.by === 'you'
+					? `You undid the fold: ${old} is its own album again.`
+					: `The fold was undone: ${old} is its own album again.`;
+			case 'unfolded_from':
+				return entry.by === 'you'
+					? `You brought this album back out of ${old}.`
+					: `This album was brought back out of ${old}, where it had been folded.`;
+			case 'hand_back_given_up':
+				return "Handing this album back stopped: its files couldn't be read.";
 		}
 	}
 </script>
