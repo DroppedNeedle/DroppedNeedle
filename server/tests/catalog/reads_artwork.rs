@@ -660,6 +660,12 @@ async fn folder_art_behind_a_linked_folder_is_not_served() {
     let (_, headers, body) = get(rig.app(true), "/api/v3/library/albums/al1/artwork?v=2").await;
     assert_ne!(body, private, "nothing is read through the link");
     assert_ne!(header(&headers, "x-cover-source"), Some("folder"));
+
+    std::os::unix::fs::symlink(outside.join("cover.png"), music.join("Real/linked.png")).unwrap();
+    set_folder_art(&rig, &music.join("Real/linked.png"), 3).await;
+    let (_, headers, body) = get(rig.app(true), "/api/v3/library/albums/al1/artwork?v=3").await;
+    assert_ne!(body, private, "a linked folder image is not read");
+    assert_ne!(header(&headers, "x-cover-source"), Some("folder"));
 }
 
 /// The scan records a track's path below its library folder in NFC while

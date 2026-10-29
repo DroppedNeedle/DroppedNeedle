@@ -723,6 +723,8 @@ dependencies = [
  "droppedneedle-providers",
  "futures-util",
  "image",
+ "libc",
+ "lofty",
  "md5",
  "reqwest",
  "rusqlite",
