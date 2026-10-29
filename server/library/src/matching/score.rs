@@ -175,10 +175,10 @@ pub fn match_release(
     aliases: &HashMap<String, String>,
 ) -> ReleaseMatch {
     let various = local.is_compilation || release.is_various_artists();
-    let recordings: Vec<Option<String>> = local
+    let recordings: Vec<Option<FileRecording>> = local
         .tracks
         .iter()
-        .map(|track| canonical_recording(track, aliases))
+        .map(|track| file_recording(track, aliases))
         .collect();
     let claims_release = |track: &LocalTrack| {
         track
@@ -186,11 +186,11 @@ pub fn match_release(
             .as_deref()
             .is_some_and(|mbid| release.answers_to(mbid))
     };
-    let on_release = |recording: &str| {
+    let on_release = |recording: &FileRecording| {
         release
             .tracks
             .iter()
-            .any(|candidate| candidate.recording_id.eq_ignore_ascii_case(recording))
+            .any(|candidate| recording.is(&candidate.recording_id))
     };
     // A track id the release the file names does not carry: a veto, unless
     // the file's recording is on the release, which sets the id aside.
@@ -208,7 +208,7 @@ pub fn match_release(
         .iter()
         .zip(&recordings)
         .map(|(track, recording)| {
-            foreign_track_id(track) && recording.as_deref().is_some_and(on_release)
+            foreign_track_id(track) && recording.as_ref().is_some_and(on_release)
         })
         .collect();
     let unheard: Vec<usize> = local
@@ -236,7 +236,7 @@ pub fn match_release(
             };
             if let Some(scored) = track_distance(
                 track,
-                recordings[row].as_deref(),
+                recordings[row].as_ref(),
                 heard,
                 track_id,
                 candidate,
@@ -283,7 +283,7 @@ pub fn match_release(
 
     let mut conflicts = Vec::new();
     for (row, track) in local.tracks.iter().enumerate() {
-        if let Some(recording) = recordings[row].as_deref()
+        if let Some(recording) = recordings[row].as_ref()
             && !on_release(recording)
         {
             conflicts.push(Conflict {
@@ -442,11 +442,10 @@ fn names_agree(local: &LocalAlbum, release: &Release, various: bool, pairs: &[Tr
                 .iter()
                 .any(|pair| pair.local == index && pair.support == Support::EmbeddedId)
         });
-    let title_ok = local.title.trim().is_empty()
-        || string_dist(
-            &strip_edition_words(&local.title),
-            &strip_edition_words(&release.title),
-        ) <= NAME_GATE
+    let title_ok = string_dist(
+        &strip_edition_words(&local.title),
+        &strip_edition_words(&release.title),
+    ) <= NAME_GATE
         || proven;
     let release_artist = release.artist_text();
     let artist_ok = various
@@ -460,28 +459,37 @@ fn names_agree(local: &LocalAlbum, release: &Release, various: bool, pairs: &[Tr
 /// the largest albums.
 pub const MERGE_LOOKUPS: usize = 100;
 
-/// The files' recording MBIDs that no candidate in `releases` carries,
-/// lowercased, each once, in file order, at most [`MERGE_LOOKUPS`].
-/// MusicBrainz may have merged them into a recording a candidate does
-/// carry; until that is looked up each one vetoes every candidate. A tag
-/// that is not a MusicBrainz id is left out: MusicBrainz would refuse it,
-/// and it stays a plain conflict.
+/// The files' recording MBIDs to look up for merges, lowercased, each
+/// once, in file order, at most [`MERGE_LOOKUPS`]: one no candidate in
+/// `releases` carries, or one the release its file names (when fetched)
+/// lacks. MusicBrainz may have merged it into a recording that release
+/// carries, while another release still lists the old id; until that is
+/// looked up each one vetoes the release. A tag that is not a MusicBrainz
+/// id is left out: MusicBrainz would refuse it, and it stays a plain
+/// conflict.
 pub fn unknown_recordings(local: &LocalAlbum, releases: &[Release]) -> Vec<String> {
     if releases.is_empty() {
         return Vec::new();
     }
+    let carries = |release: &Release, mbid: &str| {
+        release
+            .tracks
+            .iter()
+            .any(|candidate| candidate.recording_id.eq_ignore_ascii_case(mbid))
+    };
     let mut unknown: Vec<String> = Vec::new();
     for track in &local.tracks {
-        let Some(mbid) = canonical_recording(track, &HashMap::new()) else {
+        let Some(mbid) = file_recording(track, &HashMap::new()).map(|found| found.raw) else {
             continue;
         };
-        let carried = releases.iter().any(|release| {
-            release
-                .tracks
+        let named_lacks = track.release_mbid.as_deref().is_some_and(|named| {
+            releases
                 .iter()
-                .any(|candidate| candidate.recording_id.eq_ignore_ascii_case(&mbid))
+                .find(|release| release.answers_to(named))
+                .is_some_and(|release| !carries(release, &mbid))
         });
-        if !carried && is_valid_mbid(&mbid) && !unknown.contains(&mbid) {
+        let carried = releases.iter().any(|release| carries(release, &mbid));
+        if (!carried || named_lacks) && is_valid_mbid(&mbid) && !unknown.contains(&mbid) {
             unknown.push(mbid);
         }
     }
@@ -520,12 +528,29 @@ pub fn heard_on_candidates(
         .collect()
 }
 
-fn canonical_recording(track: &LocalTrack, aliases: &HashMap<String, String>) -> Option<String> {
-    let mbid = track.recording_mbid.as_deref()?.trim().to_ascii_lowercase();
-    if mbid.is_empty() {
+/// A file's recording id as tagged and the id MusicBrainz merged it into
+/// (the same id when it was not merged), both lowercase.
+#[derive(Debug, Clone)]
+struct FileRecording {
+    raw: String,
+    canonical: String,
+}
+
+impl FileRecording {
+    /// A release track agrees with the file when its recording is either.
+    fn is(&self, recording_id: &str) -> bool {
+        self.raw.eq_ignore_ascii_case(recording_id)
+            || self.canonical.eq_ignore_ascii_case(recording_id)
+    }
+}
+
+fn file_recording(track: &LocalTrack, aliases: &HashMap<String, String>) -> Option<FileRecording> {
+    let raw = track.recording_mbid.as_deref()?.trim().to_ascii_lowercase();
+    if raw.is_empty() {
         return None;
     }
-    Some(aliases.get(&mbid).cloned().unwrap_or(mbid))
+    let canonical = aliases.get(&raw).cloned().unwrap_or_else(|| raw.clone());
+    Some(FileRecording { raw, canonical })
 }
 
 /// How a file's release-track id counts against one release.
@@ -566,7 +591,7 @@ fn title_dist(file: &str, track: &str) -> f64 {
 /// `heard` is the file's fingerprint recordings, or none when set aside.
 fn track_distance(
     local: &LocalTrack,
-    recording: Option<&str>,
+    recording: Option<&FileRecording>,
     heard: &[String],
     track_id: TrackId,
     candidate: &ReleaseTrack,
@@ -583,7 +608,7 @@ fn track_distance(
         support = Support::EmbeddedId;
     }
     if let Some(recording) = recording {
-        if !recording.eq_ignore_ascii_case(&candidate.recording_id) {
+        if !recording.is(&candidate.recording_id) {
             return None;
         }
         distance.add_bool("recording_id", false);
@@ -760,5 +785,26 @@ mod tests {
         let matched = match_release(&local, &release, &HashMap::new());
         assert_eq!(matched.disputed, vec![0]);
         assert_eq!(matched.pair_for(0).map(|pair| pair.track), Some(0));
+    }
+
+    /// An album with no title passes the title gate only when an embedded
+    /// id proves every file.
+    #[test]
+    fn an_empty_album_title_needs_proof() {
+        let release = release_of(&[("Night Drive", 200)]);
+        let album = |recording: Option<&str>| LocalAlbum {
+            tracks: vec![LocalTrack {
+                id: "t1".to_owned(),
+                title: "Night Drive".to_owned(),
+                track_number: 1,
+                disc_number: 1,
+                duration_secs: Some(200.0),
+                recording_mbid: recording.map(str::to_owned),
+                ..LocalTrack::default()
+            }],
+            ..LocalAlbum::default()
+        };
+        assert!(!match_release(&album(None), &release, &HashMap::new()).names_agree);
+        assert!(match_release(&album(Some("recording-1")), &release, &HashMap::new()).names_agree);
     }
 }

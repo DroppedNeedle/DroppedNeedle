@@ -237,11 +237,12 @@ impl IdentifyService {
             .await;
         // The edition the album already has is always weighed, so a recall
         // that missed it cannot flip it.
-        let held = current
-            .as_ref()
-            .and_then(|row| row.release_mbid.clone())
-            .filter(|_| !recall.provider_deferred);
-        if let Some(held) = held.as_deref()
+        let held = self.held(
+            &facts.local_album_id,
+            current.as_ref(),
+            recall.provider_deferred,
+        )?;
+        if let Some(held) = held.release.as_deref()
             && !recall
                 .releases
                 .iter()
@@ -295,40 +296,7 @@ impl IdentifyService {
         // Every candidate's document stays on file: the identity's release
         // for tagging, the others because a curator may approve them.
         keep_releases(&self.deps.store, recall.releases.clone(), Lane::Background).await?;
-        // A guess sealed because the files named another group stays a
-        // guess while nothing names a group.
-        let doubted = match current.as_ref() {
-            Some(row) if row.decision_source == DecisionSource::Automatic => self
-                .deps
-                .store
-                .match_flag(&facts.local_album_id)?
-                .filter(|flag| flag.reason_code == NAMED_GROUP_DIFFERS)
-                .and(row.release_group_mbid.clone()),
-            _ => None,
-        };
-        // An administrator who undid an automatic edition of the album's
-        // group got the edition they wanted back: it is not moved again.
-        let may_move = match current.as_ref() {
-            Some(row) if held.is_some() => match row.release_group_mbid.as_deref() {
-                Some(group) => !self
-                    .deps
-                    .store
-                    .edition_change_undone(&facts.local_album_id, group)?,
-                None => false,
-            },
-            _ => false,
-        };
-        let (ranking, decision) = self.ranked(
-            &facts,
-            &recall,
-            scored,
-            Held {
-                release: held.as_deref(),
-                doubted_group: doubted.as_deref(),
-                may_move,
-            },
-            &preferences,
-        );
+        let (ranking, decision) = self.ranked(&facts, &recall, scored, &held, &preferences);
         // A release MusicBrainz refused may be the one the files are: with
         // it missing, matching nothing is not evidence, so the job waits as
         // for an outage instead of marking the album unmatched.
@@ -534,18 +502,75 @@ impl IdentifyService {
     }
 
     /// Score every recalled release and decide, the way a queued attempt
-    /// does, without sealing anything. `None` while the edition
-    /// preferences do not read.
+    /// does, weighing what the album already holds, without sealing
+    /// anything. `None` while the edition preferences or the album's
+    /// identity do not read.
     pub fn rank(&self, facts: &LocalAlbumFacts, recall: &RecallResult) -> Option<Ranking> {
         let preferences = self.preferences()?;
-        let (ranking, _) = self.ranked(
-            facts,
-            recall,
-            Scored::default(),
-            Held::default(),
-            &preferences,
-        );
+        let held = self
+            .deps
+            .store
+            .album_identity(&facts.local_album_id)
+            .and_then(|current| {
+                self.held(
+                    &facts.local_album_id,
+                    current.as_ref(),
+                    recall.provider_deferred,
+                )
+            });
+        let held = match held {
+            Ok(held) => held,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    album = facts.local_album_id,
+                    "album identity unreadable; candidates not ranked"
+                );
+                return None;
+            }
+        };
+        let (ranking, _) = self.ranked(facts, recall, Scored::default(), &held, &preferences);
         Some(ranking)
+    }
+
+    /// What the album already holds that a pass weighs: its edition (none
+    /// when recall was deferred), the group of an automatic guess sealed
+    /// because the files named another group, and whether it may move to
+    /// the edition its files' barcode or catalog number names.
+    fn held(
+        &self,
+        album: &str,
+        current: Option<&AlbumIdentity>,
+        deferred: bool,
+    ) -> Result<Held, StoreError> {
+        let release = current
+            .and_then(|row| row.release_mbid.clone())
+            .filter(|_| !deferred);
+        // A guess sealed because the files named another group stays a
+        // guess while nothing names a group.
+        let doubted_group = match current {
+            Some(row) if row.decision_source == DecisionSource::Automatic => self
+                .deps
+                .store
+                .match_flag(album)?
+                .filter(|flag| flag.reason_code == NAMED_GROUP_DIFFERS)
+                .and(row.release_group_mbid.clone()),
+            _ => None,
+        };
+        // An administrator who undid an automatic edition of the album's
+        // group got the edition they wanted back: it is not moved again.
+        let may_move = match current {
+            Some(row) if release.is_some() => match row.release_group_mbid.as_deref() {
+                Some(group) => !self.deps.store.edition_change_undone(album, group)?,
+                None => false,
+            },
+            _ => false,
+        };
+        Ok(Held {
+            release,
+            doubted_group,
+            may_move,
+        })
     }
 
     /// The edition preferences now; the defaults only when none are wired
@@ -571,7 +596,7 @@ impl IdentifyService {
         facts: &LocalAlbumFacts,
         recall: &RecallResult,
         mut scored: Scored,
-        held: Held<'_>,
+        held: &Held,
         preferences: &Preferences,
     ) -> (Ranking, Decision) {
         let heard = heard_on_candidates(&recall.fingerprint_support, &recall.releases);
@@ -600,7 +625,7 @@ impl IdentifyService {
         let verdict = decide(&local, &recall.releases, &matches, prefs);
         let ids = edition_ids(facts);
         let keep = |index: usize, confirmed: bool| -> usize {
-            let Some(held_release) = held.release else {
+            let Some(held_release) = held.release.as_deref() else {
                 return index;
             };
             let chosen = &recall.releases[index];
@@ -712,7 +737,7 @@ impl IdentifyService {
         // another group stays that guess, whatever else this pass found,
         // while nothing names a group.
         let doubted = named.is_none()
-            && held.doubted_group.is_some_and(|group| {
+            && held.doubted_group.as_deref().is_some_and(|group| {
                 guess
                     .and_then(|index| order.get(index))
                     .is_some_and(|index| in_group(*index, group))
@@ -1046,14 +1071,14 @@ pub struct Ranking {
 }
 
 /// What the album already holds that this pass weighs.
-#[derive(Debug, Clone, Copy, Default)]
-struct Held<'a> {
+#[derive(Debug, Clone, Default)]
+struct Held {
     /// The album's edition, kept unless another fits clearly better.
-    release: Option<&'a str>,
+    release: Option<String>,
     /// The group of an automatic guess sealed because the files named
     /// another group: a pick in it stays that guess while nothing names a
     /// group.
-    doubted_group: Option<&'a str>,
+    doubted_group: Option<String>,
     /// The album may move to the edition its files' barcode or catalog
     /// number names: false once an administrator undid an automatic
     /// edition of its group.

@@ -320,10 +320,11 @@ fn is_number(word: &str) -> bool {
     !word.is_empty() && word.chars().all(|c| c.is_ascii_digit())
 }
 
-/// The folded artists in a credit string, split on collaboration
-/// separators (`;`, `&`, `,`, `/`, `+`, `×`, and the words feat, ft,
-/// featuring, with, vs).
-fn artist_tokens(credit: &str) -> std::collections::BTreeSet<String> {
+/// The artists in a credit string, split on collaboration separators
+/// (`;`, `&`, `,`, `/`, `+`, `×`, and the words feat, ft, featuring, with,
+/// vs), each folded, sorted, repeats kept. A name that folds to nothing
+/// ("!!!") is kept as its trimmed, lowercased text.
+fn artist_tokens(credit: &str) -> Vec<String> {
     let mut parts = vec![String::new()];
     for word in credit.split_whitespace() {
         let bare = word
@@ -345,11 +346,39 @@ fn artist_tokens(credit: &str) -> std::collections::BTreeSet<String> {
             last.push(' ');
         }
     }
-    parts
+    let mut tokens: Vec<String> = parts
         .iter()
-        .map(|part| fold(part))
-        .filter(|part| !part.is_empty())
-        .collect()
+        .filter_map(|part| {
+            let folded = fold(part);
+            let trimmed = part.trim();
+            if !folded.is_empty() {
+                Some(folded)
+            } else if !trimmed.is_empty() {
+                Some(trimmed.to_lowercase())
+            } else {
+                None
+            }
+        })
+        .collect();
+    tokens.sort();
+    tokens
+}
+
+/// A credit's text before a "feat." / "ft." / "featuring" word, as
+/// written: "X feat. Y" and "X (feat. Y)" are "X".
+pub fn before_featuring(credit: &str) -> &str {
+    let mut offset = 0;
+    for word in credit.split(' ') {
+        let bare = word
+            .trim_start_matches(['(', '['])
+            .trim_end_matches([':', '.'])
+            .to_lowercase();
+        if offset > 0 && matches!(bare.as_str(), "feat" | "ft" | "featuring") {
+            return credit[..offset].trim_end();
+        }
+        offset += word.len() + 1;
+    }
+    credit.trim_end()
 }
 
 /// Distance between two artist credits: none when both name the same
@@ -365,11 +394,20 @@ pub fn artist_dist(left: &str, right: &str) -> f64 {
 
 /// True when one credit's artists contain the other's ("Iron Coast;
 /// Vela" and "Iron Coast"), never for disjoint credits (a tribute band
-/// and the band it covers). v2's `_artist_subset_match`.
+/// and the band it covers). A repeated artist counts each time. v2's
+/// `_artist_subset_match`.
 pub fn artist_subset(left: &str, right: &str) -> bool {
     let left = artist_tokens(left);
     let right = artist_tokens(right);
-    !left.is_empty() && !right.is_empty() && (left.is_subset(&right) || right.is_subset(&left))
+    !left.is_empty() && !right.is_empty() && (contains(&left, &right) || contains(&right, &left))
+}
+
+/// True when every token of `inner` is in `outer` at least as often.
+fn contains(outer: &[String], inner: &[String]) -> bool {
+    inner.iter().all(|token| {
+        let wanted = inner.iter().filter(|other| *other == token).count();
+        outer.iter().filter(|other| *other == token).count() >= wanted
+    })
 }
 
 #[cfg(test)]
@@ -423,5 +461,12 @@ mod tests {
         assert!(artist_dist("Iron Coast; Vela", "Iron Coast") > 0.2);
         assert!(artist_subset("Iron Coast feat. Vela", "Iron Coast"));
         assert!(!artist_subset("The Tribute Band", "Michael Jackson"));
+        // A name of symbols only is an artist, and a repeat is not merged
+        // into one.
+        assert!(artist_dist("!!! & Foo", "Foo") > 0.0);
+        assert!(artist_dist("Foo & Foo", "Foo") > 0.0);
+        assert!(artist_subset("!!! & Foo", "Foo"));
+        assert!(artist_subset("Foo & Foo", "Foo"));
+        assert!(artist_subset("!!!", "!!!"));
     }
 }

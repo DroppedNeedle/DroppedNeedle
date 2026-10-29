@@ -890,6 +890,102 @@ async fn a_stray_track_id_does_not_move_the_album_to_another_edition() {
     assert_eq!(track.release_track_mbid.as_deref(), Some(expected.as_str()));
 }
 
+/// A recording id file 5 carries that MusicBrainz merged into the
+/// digital release's recording.
+const RAM_OLD_RECORDING: &str = "0ad0b0a0-0000-4000-8000-00000000dead";
+
+/// Thirteen files name the digital release and carry its recordings,
+/// except file 5, whose id MusicBrainz has since merged into the one the
+/// release lists. A release of another group, listed first, still carries
+/// the old id. The old id is looked up all the same, and the album is the
+/// release its files name.
+#[tokio::test]
+async fn a_merged_recording_another_release_still_lists_is_looked_up() {
+    let ok = |document: serde_json::Value| {
+        RawResponse::new(200, Vec::new(), document.to_string().into_bytes())
+    };
+    let other = "0ad0b0a0-0000-4000-8000-00000000c0de";
+    let mut other_release = ram_release(other, "CD");
+    other_release["release-group"]["id"] = "0ad0b0a0-0000-4000-8000-00000000b0b1".into();
+    for (index, track) in other_release["media"][0]["tracks"]
+        .as_array_mut()
+        .expect("tracks")
+        .iter_mut()
+        .enumerate()
+    {
+        track["recording"]["id"] = if index == 4 {
+            RAM_OLD_RECORDING.to_owned()
+        } else {
+            format!("0ad0b0a0-0000-4000-8000-0000000f{index:04}")
+        }
+        .into();
+    }
+    let mut search = ram_search();
+    let mut other_hit = search["releases"][1].clone();
+    other_hit["id"] = other.into();
+    other_hit["release-group"]["id"] = "0ad0b0a0-0000-4000-8000-00000000b0b1".into();
+    search["releases"]
+        .as_array_mut()
+        .expect("hits")
+        .insert(0, other_hit);
+    let rig = rig_with(
+        HashMap::from([
+            ("/release".to_owned(), ok(search)),
+            (
+                format!("/release/{RAM}"),
+                ok(ram_release(RAM, "Digital Media")),
+            ),
+            (format!("/release/{RAM_CD}"), ok(ram_release(RAM_CD, "CD"))),
+            (format!("/release/{other}"), ok(other_release)),
+            (
+                format!("/recording/{RAM_OLD_RECORDING}"),
+                ok(serde_json::json!({
+                    "id": ram_recording(4),
+                    "title": "Touch",
+                    "length": 498_000
+                })),
+            ),
+        ]),
+        false,
+    );
+    let facts = LocalAlbumFacts {
+        local_album_id: "album-1".to_owned(),
+        title: "Random Access Memories".to_owned(),
+        album_artist_name: "Daft Punk".to_owned(),
+        tracks: RAM_TRACKS
+            .iter()
+            .enumerate()
+            .map(|(index, (title, seconds))| LocalTrackFacts {
+                local_track_id: format!("t{}", index + 1),
+                title: (*title).to_owned(),
+                artist_name: "Daft Punk".to_owned(),
+                track_number: index as u32 + 1,
+                disc_number: 1,
+                duration_secs: Some(*seconds),
+                recording_mbid: Some(if index == 4 {
+                    RAM_OLD_RECORDING.to_owned()
+                } else {
+                    ram_recording(index)
+                }),
+                release_track_mbid: Some(ram_track(RAM, index)),
+                release_mbid: Some(RAM.to_owned()),
+                ..LocalTrackFacts::default()
+            })
+            .collect(),
+        ..LocalAlbumFacts::default()
+    };
+
+    let report = identify(&rig, facts).await;
+
+    assert_eq!(report.outcome, IdentificationOutcome::Identified);
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
+    assert_eq!(identity.release_mbid.as_deref(), Some(RAM));
+}
+
 /// Thirteen files name the digital release, which MusicBrainz will not
 /// give in a readable form, and carry its recordings. Recall goes on
 /// without it and the CD fits every file, but with the files' own

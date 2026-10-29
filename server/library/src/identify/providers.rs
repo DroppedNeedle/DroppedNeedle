@@ -55,7 +55,9 @@ use super::sqlite::SqliteIdentifyStore;
 use super::stores::fresh_release;
 use crate::matching::decide::STRONG;
 use crate::matching::score::NAME_GATE;
-use crate::matching::strings::{fold, string_dist, strip_edition_words, without_brackets};
+use crate::matching::strings::{
+    before_featuring, fold, string_dist, strip_edition_words, without_brackets,
+};
 use crate::matching::{
     LocalAlbum, Release, ReleaseMatch, match_release, should_fingerprint, unknown_recordings,
 };
@@ -459,18 +461,24 @@ impl<R: ReleaseSource, F: FingerprintSource> Recall<'_, R, F> {
     /// 4. the first track's title as a recording, with the artist, which
     ///    finds the releases that carry it.
     ///
-    /// The artist is the album artist, none for a compilation, and the
-    /// most common track artist when the album row names a placeholder.
-    /// The last tier needs an artist. An album no tier finds costs at most
-    /// four searches and no release lookups; each search goes through the
-    /// source's own client and priority.
+    /// The artist is the album artist, none for a compilation, and, when
+    /// the album row names a placeholder, the artist more than half the
+    /// tracks name. Tracks of several artists with none over half search
+    /// as Various Artists: no artist, and the various flag, which only
+    /// ranks Various Artists releases first. The last tier needs an
+    /// artist: for such an album, the first track's own. An album no tier
+    /// finds costs at most four searches and no release lookups; each
+    /// search goes through the source's own client and priority.
     async fn search(
         &self,
         facts: &LocalAlbumFacts,
         track_count: usize,
     ) -> Result<Vec<ReleaseHit>, SourceError> {
-        let various = is_various(&facts.album_artist_name);
-        let artist = search_artist(facts, various);
+        let SearchArtist {
+            artist,
+            various,
+            per_track,
+        } = search_artist(facts);
         let query = |title, words| AlbumQuery {
             title,
             artist,
@@ -508,17 +516,26 @@ impl<R: ReleaseSource, F: FingerprintSource> Recall<'_, R, F> {
                 return Ok(near);
             }
         }
-        if artist.is_empty() {
+        if artist.is_empty() && !per_track {
             return Ok(Vec::new());
         }
         let mut tracks: Vec<_> = facts.tracks.iter().collect();
         tracks.sort_by_key(|track| (track.disc_number, track.track_number));
-        let Some(recording) = tracks
+        let Some((recording, track)) = tracks
             .iter()
-            .map(|track| without_brackets(&track.title))
-            .find(|title| !title.is_empty())
+            .map(|track| (without_brackets(&track.title), track))
+            .find(|(title, _)| !title.is_empty())
         else {
             return Ok(Vec::new());
+        };
+        let artist = if per_track {
+            let own = before_featuring(track.artist_name.trim());
+            if is_placeholder(own) || is_various(own) {
+                return Ok(Vec::new());
+            }
+            own
+        } else {
+            artist
         };
         self.releases.search_recording(&recording, artist).await
     }
@@ -709,10 +726,12 @@ impl<R: ReleaseSource, F: FingerprintSource> Recall<'_, R, F> {
         !self.refused_ids().is_empty()
     }
 
-    /// Map file recording MBIDs that no candidate carries to the ids
-    /// MusicBrainz merged them into, when it did. Every such id is looked
-    /// up (at most [`MERGE_LOOKUPS`](crate::matching::score::MERGE_LOOKUPS)):
-    /// one left out would veto the release the files are.
+    /// Map file recording MBIDs to the ids MusicBrainz merged them into,
+    /// when it did. An id is looked up when no candidate carries it, or
+    /// when the release its file names was fetched and lacks it (another
+    /// release may still list the old id). Every such id is looked up (at
+    /// most [`MERGE_LOOKUPS`](crate::matching::score::MERGE_LOOKUPS)): one
+    /// left out would veto the release the files are.
     async fn resolve_aliases(
         &self,
         local: &LocalAlbum,
@@ -866,25 +885,64 @@ fn is_various(name: &str) -> bool {
 }
 
 /// An artist name that stands for no artist: blank, "Unknown Artist",
-/// or MusicBrainz's "[unknown]".
+/// MusicBrainz's "[unknown]", or junk a tagger left ("?", "????", "-",
+/// "...", "_"). Any other name of symbols only ("!!!", "†††", "+/-") is
+/// an artist: an artist phrase of `\!\!\!` finds the band's releases
+/// (verified 2026-10-29 against the BrainzMash mirror,
+/// api.brainzmash.cc/ws/2). That probe's title may be unique, so it shows
+/// "!!!" works, not how the index treats every symbol.
 fn is_placeholder(name: &str) -> bool {
-    matches!(fold(name).as_str(), "" | "unknownartist" | "unknown")
+    let folded = fold(name);
+    if folded.is_empty() {
+        return name.chars().all(|character| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    '?' | '-' | '–' | '—' | '_' | '.' | '…' | '*' | '/' | '\\'
+                )
+        });
+    }
+    matches!(folded.as_str(), "unknownartist" | "unknown")
+}
+
+/// Whom an album's searches name.
+#[derive(Debug, PartialEq, Eq)]
+struct SearchArtist<'a> {
+    /// The artist phrase for the album searches; empty for none.
+    artist: &'a str,
+    /// Rank Various Artists releases first. A search filter only, never
+    /// proof of anything.
+    various: bool,
+    /// The recording search names the first track's own artist.
+    per_track: bool,
 }
 
 /// The artist to search with: none for a compilation, the album artist,
-/// or, when the album row names a placeholder, the artist most of the
-/// tracks name (the earliest on a tie). Searching for a placeholder
-/// finds nothing, or only other placeholder albums.
-fn search_artist(facts: &LocalAlbumFacts, various: bool) -> &str {
-    if facts.is_compilation || various {
-        return "";
+/// or, when the album row names a placeholder, the artist more than half
+/// the tracks name, counted by the credit before any "feat." tail. With
+/// several artists and none over half, the album searches as Various
+/// Artists. Searching for a placeholder finds nothing, or only other
+/// placeholder albums.
+fn search_artist(facts: &LocalAlbumFacts) -> SearchArtist<'_> {
+    let named_various = is_various(&facts.album_artist_name);
+    let none = |various: bool, per_track: bool| SearchArtist {
+        artist: "",
+        various,
+        per_track,
+    };
+    if facts.is_compilation || named_various {
+        return none(named_various, false);
     }
     if !is_placeholder(&facts.album_artist_name) {
-        return facts.album_artist_name.as_str();
+        return SearchArtist {
+            artist: facts.album_artist_name.as_str(),
+            various: false,
+            per_track: false,
+        };
     }
     let mut counts: Vec<(String, usize, &str)> = Vec::new();
     for track in &facts.tracks {
-        let name = track.artist_name.trim();
+        let name = before_featuring(track.artist_name.trim());
         if is_placeholder(name) {
             continue;
         }
@@ -895,12 +953,23 @@ fn search_artist(facts: &LocalAlbumFacts, various: bool) -> &str {
         }
     }
     let mut best: Option<(usize, &str)> = None;
-    for (_, count, name) in counts {
-        if best.is_none_or(|(most, _)| count > most) {
-            best = Some((count, name));
+    for (_, count, name) in &counts {
+        if best.is_none_or(|(most, _)| *count > most) {
+            best = Some((*count, name));
         }
     }
-    best.map_or("", |(_, name)| if is_various(name) { "" } else { name })
+    match best {
+        None => none(false, false),
+        Some((_, name)) if is_various(name) => none(true, true),
+        Some((count, name)) if counts.len() == 1 || count * 2 > facts.tracks.len() => {
+            SearchArtist {
+                artist: name,
+                various: false,
+                per_track: false,
+            }
+        }
+        Some(_) => none(true, true),
+    }
 }
 
 /// The title before a trailing "(...)" or "[...]", when something is left.
@@ -1107,5 +1176,8 @@ mod tests {
             scored.clone().take(&release, &none, &aliases),
             Some(matched)
         );
+        // Junk symbols stand for no artist; a band's symbols do not.
+        assert!(is_placeholder("????"));
+        assert!(!is_placeholder("!!!"));
     }
 }
