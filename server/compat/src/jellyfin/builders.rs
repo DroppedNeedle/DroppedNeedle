@@ -624,7 +624,7 @@ pub fn media_source(
         requires_opening: false,
         requires_closing: false,
         requires_looping: false,
-        supports_probing: false,
+        supports_probing: true,
         read_at_native_framerate: false,
         ignore_dts: false,
         ignore_index: false,
@@ -652,6 +652,13 @@ pub fn media_stream(track: &TrackView) -> MediaStream {
         2 => "Stereo".to_owned(),
         n => format!("{n} ch"),
     };
+    // Jellyfin sends ffprobe's layout name; only mono and stereo are
+    // certain from the channel count alone.
+    let channel_layout = match channels {
+        1 => Some("mono".to_owned()),
+        2 => Some("stereo".to_owned()),
+        _ => None,
+    };
     let display_title = match codec.as_deref() {
         Some(codec) => format!("{} - {layout}", codec.to_uppercase()),
         None => layout,
@@ -665,10 +672,10 @@ pub fn media_stream(track: &TrackView) -> MediaStream {
             .map(|b| u64::from(b) * 1000)
             .filter(|b| *b != 0),
         channels: Some(channels),
-        channel_layout: Some("stereo".to_owned()),
+        channel_layout,
         sample_rate: track.sample_rate,
         bit_depth: track.bit_depth,
-        is_default: true,
+        is_default: false,
         is_interlaced: false,
         is_forced: false,
         is_external: false,

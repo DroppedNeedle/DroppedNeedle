@@ -34,6 +34,7 @@ use droppedneedle_library::scan::Counter;
 use droppedneedle_library::scan::models::{ScanKind, ScanRequest, ScanTrigger};
 use droppedneedle_library::scan::store::ScanStoreError;
 use droppedneedle_library::scans::Scans;
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// Unix seconds to the `YYYY-MM-DDTHH:MM:SSZ` form Subsonic shows.
 fn iso_text(unix: u64) -> Option<String> {
@@ -109,7 +110,7 @@ fn view_track(track: PlayerTrack, local_first: bool) -> ViewTrack {
         bit_depth: track.bit_depth,
         sample_rate: track.sample_rate,
         channels: track.channels,
-        musicbrainz_recording_id: track.recording_mbid.clone(),
+        musicbrainz_recording_id: track.recording_mbid.clone().filter(|id| is_valid_mbid(id)),
         musicbrainz_artist_id: track.artist_mbid,
         musicbrainz_album_artist_id: track.album_artist_mbid,
         recording_mbid: track.recording_mbid,
@@ -645,23 +646,25 @@ impl SubsonicStore {
         self.albums_for_caller(albums).await
     }
 
-    /// Albums the user rated, highest first.
+    /// Albums the user rated, highest first. A rated album that is gone
+    /// is dropped before paging, so every page but the last is full.
     pub async fn get_highest_albums(
         &self,
         user_id: &str,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<ViewAlbum>, CompatError> {
-        let ids = self
-            .library
-            .rated_ids(user_id, RatedKind::Album)
-            .await?
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .collect::<Vec<_>>();
-        let albums = self.library.albums_in_order(&ids).await?;
-        self.albums_for_caller(albums).await
+        let ids = self.library.rated_ids(user_id, RatedKind::Album).await?;
+        let wanted = offset.saturating_add(limit);
+        let mut albums = Vec::new();
+        for chunk in ids.chunks(500) {
+            if albums.len() >= wanted {
+                break;
+            }
+            albums.extend(self.library.albums_in_order(chunk).await?);
+        }
+        let page = albums.into_iter().skip(offset).take(limit).collect();
+        self.albums_for_caller(page).await
     }
 
     /// All genres.

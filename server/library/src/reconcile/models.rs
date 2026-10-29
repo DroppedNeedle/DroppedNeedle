@@ -48,6 +48,7 @@ pub struct ReferenceCounts {
     pub track_credits: i64,
     pub primary_albums: i64,
     pub favorites: i64,
+    pub ratings: i64,
     pub history: i64,
     /// Credits backed by a MusicBrainz proof at the current identity.
     pub proven_credits: i64,
@@ -60,7 +61,7 @@ impl ReferenceCounts {
 
     /// Everything a merge of this record would move.
     pub fn affected(&self) -> i64 {
-        self.active_credits() + self.favorites + self.history
+        self.active_credits() + self.favorites + self.ratings + self.history
     }
 }
 

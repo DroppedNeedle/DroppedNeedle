@@ -763,10 +763,10 @@ const ALBUM_KINDS: &str = "INSERT INTO local_artists (id, display_name, folded_n
     embedded_recording_mbid, ingest_source, imported_at, membership_source) VALUES \
     ('tk-matched', 'al-live', 'root', '/m/1.flac', '1.flac', 'h1', 1000, 1, 's1', 'Matched', 'matched', \
      'Aurora', 'aurora', 'Set Live', 'set live', 'Aurora', 'aurora', 1, 200.0, 'flac', 'indexed', \
-     'rec-tagged-other', 'scan', 1, 'automatic'), \
+     '9b2c4f10-0000-4000-8000-0000000000a3', 'scan', 1, 'automatic'), \
     ('tk-tagged', 'al-live', 'root', '/m/2.flac', '2.flac', 'h2', 1000, 1, 's2', 'Tagged', 'tagged', \
      'Aurora', 'aurora', 'Set Live', 'set live', 'Aurora', 'aurora', 2, 200.0, 'flac', 'indexed', \
-     'rec-tagged', 'scan', 1, 'automatic'), \
+     '9b2c4f10-0000-4000-8000-0000000000a2', 'scan', 1, 'automatic'), \
     ('tk-retired', 'al-retired', 'root', '/m/3.flac', '3.flac', 'h3', 1000, 1, 's3', 'Old', 'old', \
      'Aurora', 'aurora', 'Set Retired', 'set retired', 'Aurora', 'aurora', 1, 200.0, 'flac', 'indexed', \
      NULL, 'scan', 1, 'automatic'), \
@@ -782,7 +782,7 @@ const ALBUM_KINDS: &str = "INSERT INTO local_artists (id, display_name, folded_n
     INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
     SELECT id, 0, 'ar-aurora', 'main' FROM local_tracks WHERE id LIKE 'tk-%'; \
     INSERT INTO local_track_external_identities (local_track_id, provider, recording_mbid, \
-    decision_source, selected_at) VALUES ('tk-matched', 'musicbrainz', 'rec-matched', 'manual', 1); \
+    decision_source, selected_at) VALUES ('tk-matched', 'musicbrainz', '9b2c4f10-0000-4000-8000-0000000000a1', 'manual', 1); \
     INSERT INTO new_release_feed (release_group_mbid_lower, release_group_mbid, artist_mbid_lower, \
     artist_name, title, first_release_date, discovered_at) \
     SELECT release_group_mbid, release_group_mbid, 'mb-aurora', 'Aurora', release_group_mbid, \
@@ -935,11 +935,11 @@ async fn one_album_set_everywhere() {
     assert_eq!(status, StatusCode::OK, "{tracks}");
     assert_eq!(
         named(&tracks["items"], "id", "tk-matched")["recording_mbid"],
-        "rec-matched"
+        "9b2c4f10-0000-4000-8000-0000000000a1"
     );
     assert_eq!(
         named(&tracks["items"], "id", "tk-tagged")["recording_mbid"],
-        "rec-tagged"
+        "9b2c4f10-0000-4000-8000-0000000000a2"
     );
 
     // Owned: the library half of search, membership, follows and Discover.
@@ -1038,11 +1038,11 @@ async fn one_album_set_everywhere() {
     let songs = &album["album"]["song"];
     assert_eq!(
         named(songs, "id", "tr-tk-matched")["musicBrainzId"],
-        "rec-matched"
+        "9b2c4f10-0000-4000-8000-0000000000a1"
     );
     assert_eq!(
         named(songs, "id", "tr-tk-tagged")["musicBrainzId"],
-        "rec-tagged"
+        "9b2c4f10-0000-4000-8000-0000000000a2"
     );
     let (_, _, body) = rig.app.raw("GET", &subsonic("getArtists"), &[], None).await;
     let artists = subsonic_json(body);

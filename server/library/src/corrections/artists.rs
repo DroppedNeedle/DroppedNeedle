@@ -24,7 +24,7 @@ const VARIOUS_ARTISTS_ID: &str = "00000000-0000-4000-8000-000000000001";
 const UNKNOWN_ARTIST_ID: &str = "00000000-0000-4000-8000-000000000002";
 
 /// Reference kinds a merge moves, counted for the preview.
-const REFERENCE_COUNTS: [(&str, &str); 5] = [
+const REFERENCE_COUNTS: [(&str, &str); 6] = [
     (
         "album_credits",
         "SELECT local_artist_id, COUNT(*) FROM local_album_artists \
@@ -43,6 +43,11 @@ const REFERENCE_COUNTS: [(&str, &str); 5] = [
     (
         "favorites",
         "SELECT item_id, COUNT(*) FROM library_user_favorites \
+         WHERE item_kind = 'artist' AND item_id IN ({}) GROUP BY 1",
+    ),
+    (
+        "ratings",
+        "SELECT item_id, COUNT(*) FROM library_user_ratings \
          WHERE item_kind = 'artist' AND item_id IN ({}) GROUP BY 1",
     ),
     (

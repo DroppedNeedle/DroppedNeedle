@@ -137,7 +137,9 @@ fn candidate_columns() -> String {
               WHERE album.album_artist_id = artist.id AND {ACTIVE_ALBUM}), \
            (SELECT COUNT(*) FROM library_user_favorites \
               WHERE item_kind = 'artist' AND item_id = artist.id), \
-           (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = artist.id)"
+           (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = artist.id), \
+           (SELECT COUNT(*) FROM library_user_ratings \
+              WHERE item_kind = 'artist' AND item_id = artist.id)"
     )
 }
 
@@ -158,6 +160,7 @@ fn candidate_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Candidate> {
                 track_credits: row.get(8)?,
                 primary_albums: row.get(9)?,
                 favorites: row.get(10)?,
+                ratings: row.get(12)?,
                 history: row.get(11)?,
                 proven_credits: 0,
             },
@@ -379,6 +382,8 @@ fn merged_artists(
         "SELECT local_artist_id, COUNT(*) FROM local_track_artists WHERE local_artist_id IN ({}) GROUP BY 1",
         "SELECT album_artist_id, COUNT(*) FROM local_albums WHERE album_artist_id IN ({}) GROUP BY 1",
         "SELECT item_id, COUNT(*) FROM library_user_favorites \
+           WHERE item_kind = 'artist' AND item_id IN ({}) GROUP BY 1",
+        "SELECT item_id, COUNT(*) FROM library_user_ratings \
            WHERE item_kind = 'artist' AND item_id IN ({}) GROUP BY 1",
         "SELECT local_artist_id, COUNT(*) FROM library_play_history WHERE local_artist_id IN ({}) GROUP BY 1",
     ];

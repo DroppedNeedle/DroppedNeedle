@@ -2733,7 +2733,9 @@ async fn ratings(rig: &CompatApp, call: &str, key: &str, auth: &str) -> (Value, 
 /// their own, and an average that counts both. It survives a restart, 0
 /// clears it, and a merged album's ratings move to the album it went
 /// into, where a user who rated both keeps the survivor's. A rating on an
-/// unknown id is 70, and nothing is stored without sign-in.
+/// unknown id is 70, and nothing is stored without sign-in or with a
+/// wrong password (40). A rated album that is gone leaves the highest
+/// list's pages full.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn subsonic_ratings_are_per_user_and_follow_a_merge() {
     let mut rig = CompatApp::start("compat-ratings").await;
@@ -2811,6 +2813,19 @@ async fn subsonic_ratings_are_per_user_and_follow_a_merge() {
         anonymous["subsonic-response"]["error"]["code"], 10,
         "{anonymous}"
     );
+    let wrong = theirs.replacen("&p=", "&p=wrong", 1);
+    let refused = subsonic(&rig, &rate(&kept, 1), &wrong).await;
+    assert_eq!(refused["error"]["code"], 40, "{refused}");
+    let stored: i64 = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM library_user_ratings WHERE item_id = ?1",
+            [&kept[3..]],
+            |row| row.get(0),
+        )
+        .expect("ratings read");
+    assert_eq!(stored, 0, "no rating without sign-in");
 
     ok(&subsonic(&rig, &rate(&merged, 2), &mine).await);
     ok(&subsonic(&rig, &rate(&merged, 3), &theirs).await);
@@ -2853,6 +2868,21 @@ async fn subsonic_ratings_are_per_user_and_follow_a_merge() {
     );
     let highest = subsonic(&rig, "getAlbumList2?type=highest", &mine).await;
     assert_eq!(highest["albumList2"]["album"][0]["id"], json!(kept));
+    rig.app
+        .db()
+        .execute(
+            "INSERT INTO library_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+             SELECT user_id, 'album', 'album-gone', 5, rated_at FROM library_user_ratings \
+             WHERE item_id = ?1 AND rating = 2",
+            [local(&kept)],
+        )
+        .expect("a rated album that is gone");
+    let page = subsonic(&rig, "getAlbumList2?type=highest&size=1", &mine).await;
+    assert_eq!(
+        page["albumList2"]["album"],
+        json!([highest["albumList2"]["album"][0]]),
+        "a gone album leaves the page full"
+    );
     let left: i64 = rig
         .app
         .db()

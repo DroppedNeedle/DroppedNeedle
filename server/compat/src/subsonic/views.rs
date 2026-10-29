@@ -145,7 +145,8 @@ pub struct ViewArtist {
     pub name: String,
     /// Album count.
     pub album_count: Option<i64>,
-    /// Streamable tracks credited.
+    /// Streamable tracks crediting it as track artist. It decides only the
+    /// `artist` role: a Subsonic artist carries no song count.
     pub track_count: Option<i64>,
     /// Starred unix seconds.
     pub starred_at: Option<i64>,

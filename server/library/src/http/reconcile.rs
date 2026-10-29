@@ -316,6 +316,7 @@ impl From<GroupDetail> for ArtistDuplicateGroupDetail {
                 total(|m| m.counts.primary_albums),
             ),
             ("favorites".to_owned(), total(|m| m.counts.favorites)),
+            ("ratings".to_owned(), total(|m| m.counts.ratings)),
             ("history".to_owned(), total(|m| m.counts.history)),
         ]);
         let member_revisions = members
