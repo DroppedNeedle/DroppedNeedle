@@ -68,8 +68,10 @@
 					<span class="text-base-content/40">next try {nextTryLabel}</span>
 				{/if}
 				{#if ownerName}
-					<span class="text-base-content/20">•</span>
-					<span class="text-base-content/40">requested by {ownerName}</span>
+					<span class="flex items-center gap-1.5 text-base-content/40">
+						<span class="text-base-content/20">•</span>
+						requested by {ownerName}
+					</span>
 				{/if}
 			</div>
 		</div>

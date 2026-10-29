@@ -94,8 +94,10 @@
 					<span class="text-base-content/40">finding missing tracks</span>
 				{/if}
 				{#if ownerName}
-					<span class="text-base-content/20">•</span>
-					<span class="text-base-content/40">watched for {ownerName}</span>
+					<span class="flex items-center gap-1.5 text-base-content/40">
+						<span class="text-base-content/20">•</span>
+						watched for {ownerName}
+					</span>
 				{/if}
 			</div>
 

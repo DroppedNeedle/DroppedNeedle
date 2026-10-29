@@ -15,6 +15,12 @@
 	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import { compareDiscTrack, normalizeDiscNumber } from '$lib/player/queueHelpers';
+	import {
+		buildRenderedTrackSections,
+		buildSortedTrackMap,
+		resolveSourceTrack
+	} from './albumTrackResolvers';
 
 	interface Props {
 		album: AlbumBasicInfo;
@@ -73,6 +79,25 @@
 		onAlbumLinkUpdate,
 		onQuotaUpdate
 	}: Props = $props();
+
+	// A track is held when a local file resolves to it by the rule the track rows
+	// use, so the count matches the rows, not every file in the album.
+	const localTrackMap = $derived(buildSortedTrackMap(localMatch?.tracks ?? []));
+	const localTracks = $derived([...(localMatch?.tracks ?? [])].sort(compareDiscTrack));
+	const localHeldCount = $derived(
+		buildRenderedTrackSections(tracksInfo.tracks)
+			.flatMap((section) => section.items)
+			.filter(
+				({ track, globalIndex }) =>
+					resolveSourceTrack(
+						normalizeDiscNumber(track.disc_number),
+						track.position,
+						globalIndex,
+						localTrackMap,
+						localTracks
+					) !== null
+			).length
+	);
 </script>
 
 {#if youtubeEnabled}
@@ -121,7 +146,7 @@
 		<AlbumSourceBar
 			sourceLabel="Local Files"
 			sourceColor="rgb(var(--brand-localfiles))"
-			trackCount={localMatch.tracks.length}
+			trackCount={localHeldCount}
 			totalTracks={tracksInfo.tracks.length}
 			extraBadge={localMatch.primary_format?.toUpperCase() ?? null}
 			onPlayAll={localCallbacks.onPlayAll}

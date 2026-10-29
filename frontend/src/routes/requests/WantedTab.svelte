@@ -10,7 +10,6 @@
 		createStopWatchMutation
 	} from '$lib/queries/wanted/WantedMutations.svelte';
 	import type { WantedWatchItem } from '$lib/queries/wanted/types';
-	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';
 
@@ -35,6 +34,8 @@
 	const markWantedSeen = createMarkWantedSeenMutation();
 	const wantedBusy = $derived(stopWatch.isPending || resumeWatch.isPending);
 
+	// A listener only receives their own rows, and the server checks the owner
+	// on every action, so each row gets its stop and resume buttons.
 	function handleWantedStop(item: WantedWatchItem) {
 		stopWatch.mutate({ mbid: item.musicbrainz_id, albumTitle: item.album_title });
 	}
@@ -89,7 +90,7 @@
 			<div class="flex flex-col gap-2.5">
 				{#each wantedRetrying as item, i (`retrying-${item.musicbrainz_id}`)}
 					<div in:fly={{ y: 12, duration: 200, delay: i * 30 }}>
-						<WantedRetryingCard {item} />
+						<WantedRetryingCard {item} ownerName={item.user_name ?? undefined} />
 					</div>
 				{/each}
 				{#each wantedItems as item, i (item.musicbrainz_id)}
@@ -97,12 +98,9 @@
 						<WantedWatchCard
 							{item}
 							busy={wantedBusy}
-							onstop={authStore.isAdmin || item.user_id === authStore.user?.id
-								? handleWantedStop
-								: undefined}
-							onresume={authStore.isAdmin || item.user_id === authStore.user?.id
-								? handleWantedResume
-								: undefined}
+							ownerName={item.user_name ?? undefined}
+							onstop={handleWantedStop}
+							onresume={handleWantedResume}
 							onseen={handleWantedSeen}
 						/>
 					</div>

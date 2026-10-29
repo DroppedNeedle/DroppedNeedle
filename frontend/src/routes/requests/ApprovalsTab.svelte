@@ -92,7 +92,9 @@
 									class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300"
 								>
 									<AlbumImage
-										mbid={itemKind(item) === 'track' ? '' : item.musicbrainz_id}
+										mbid={itemKind(item) === 'track'
+											? (item.track_release_group_mbid ?? '')
+											: item.musicbrainz_id}
 										customUrl={null}
 										alt={item.album_title}
 										size="sm"

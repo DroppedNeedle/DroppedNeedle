@@ -1,0 +1,102 @@
+import { page } from 'vitest/browser';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import type { RequestItem } from '$lib/queries/requests/types';
+import type { WantedRetryingItem, WantedWatchItem } from '$lib/queries/wanted/types';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { fakeApi } from '$lib/test/api';
+import { renderWithQuery } from '$lib/test/render';
+
+import ApprovalsTab from './ApprovalsTab.svelte';
+import WantedTab from './WantedTab.svelte';
+
+const now = Math.floor(Date.now() / 1000);
+
+const watch: WantedWatchItem = {
+	musicbrainz_id: 'rg-blue-lines',
+	album_title: 'Blue Lines',
+	artist_name: 'Massive Attack',
+	kind: 'album',
+	state: 'watching',
+	check_count: 2,
+	created_at: now - 86400,
+	next_check_at: now + 3600,
+	new_candidate_count: 0,
+	year: 1991
+};
+
+const retrying: WantedRetryingItem = {
+	musicbrainz_id: 'rg-collected',
+	album_title: 'Collected',
+	artist_name: 'Massive Attack',
+	max_attempts: 5,
+	retry_count: 2,
+	next_retry_at: now + 1800
+};
+
+const trackApproval: RequestItem = {
+	musicbrainz_id: 'recording-angel',
+	request_kind: 'track',
+	track_title: 'Angel',
+	track_release_group_mbid: 'rg-mezzanine',
+	album_title: 'Mezzanine',
+	artist_name: 'Massive Attack',
+	origin: 'user',
+	requested_at: now - 3600,
+	requester_count: 0,
+	status: 'awaiting_approval'
+};
+
+function signIn(role: 'admin' | 'user') {
+	authStore.setUser({
+		id: role === 'admin' ? 'admin-1' : 'user-1',
+		display_name: role,
+		role,
+		email: null,
+		avatar_url: null,
+		username: role,
+		username_display: role,
+		providers: []
+	});
+}
+
+describe('requests restores', () => {
+	afterEach(() => authStore.clear());
+
+	it('shows whose watch each wanted card is to an admin', async () => {
+		signIn('admin');
+		fakeApi({
+			'GET /api/v3/requests/wanted': {
+				count: 1,
+				items: [{ ...watch, user_id: 'user-2', user_name: 'Alice' }],
+				retrying: [{ ...retrying, user_id: 'user-2', user_name: 'Alice' }]
+			}
+		});
+		await renderWithQuery(WantedTab, { active: true });
+
+		await expect.element(page.getByText('watched for Alice')).toBeInTheDocument();
+		await expect.element(page.getByText('requested by Alice')).toBeInTheDocument();
+	});
+
+	it('lets a user stop their own watch', async () => {
+		signIn('user');
+		fakeApi({
+			'GET /api/v3/requests/wanted': { count: 1, items: [watch], retrying: [] }
+		});
+		await renderWithQuery(WantedTab, { active: true });
+
+		await expect.element(page.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+	});
+
+	it('shows the album cover on a track approval', async () => {
+		signIn('admin');
+		fakeApi({
+			'GET /api/v3/requests/approvals': { count: 1, items: [trackApproval] }
+		});
+		await renderWithQuery(ApprovalsTab, { active: true });
+
+		await expect
+			.element(page.getByRole('img', { name: 'Mezzanine' }))
+			.toHaveAttribute('data-src', expect.stringContaining('rg-mezzanine'));
+	});
+});
