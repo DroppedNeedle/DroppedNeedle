@@ -280,6 +280,7 @@ mod tests {
             "lyrics_settings",
             "public_address",
             "edition_preferences",
+            "app_connect",
             // This install's own id.
             "instance_id",
         ];

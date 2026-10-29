@@ -27,6 +27,14 @@
 //! POST /api/v3/auth/plex/poll/link              (session-gated)
 //! POST /api/v3/auth/plex/poll/connect           (session-gated)
 //! ```
+//!
+//! App connect ([`crate::app_connect`]) mounts next to them:
+//!
+//! ```text
+//! GET  /api/v3/auth/app-connect/request         (session-gated)
+//! POST /api/v3/auth/app-connect/authorize       (session-gated)
+//! POST /api/v3/auth/app-connect/token           (public)
+//! ```
 
 pub mod error;
 pub mod federated;

@@ -13,5 +13,8 @@ export const AuthQueryKeyFactory = {
 	/** The server's accounts, as the admin reading them sees them. */
 	adminUsers: (userId: UserId) => key(userScope(userId), 'auth', 'admin-users'),
 	adminUsersPage: (userId: UserId, limit: number, offset: number) =>
-		[...AuthQueryKeyFactory.adminUsers(userId), { limit, offset }] as const
+		[...AuthQueryKeyFactory.adminUsers(userId), { limit, offset }] as const,
+	/** What an app asks to connect as, for the user signed in here. */
+	appConnectRequest: (userId: UserId, request: object | null) =>
+		key(userScope(userId), 'auth', 'app-connect', request)
 };

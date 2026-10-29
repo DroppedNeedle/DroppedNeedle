@@ -11,7 +11,8 @@
 //! matches `/api/v3/auth/setup/status`). Covers and streams have their own
 //! classes so a grid of artwork or a seeking player cannot starve the API.
 //! The numbers keep v2's (default 30/s burst 60, login 2/s burst 5, setup
-//! 1/s burst 3, search and discover 10/s burst 20).
+//! 1/s burst 3, search and discover 10/s burst 20). App connect, whose token
+//! step is a public credential trade, gets the login numbers.
 //!
 //! The OIDC and Plex sign-in routes spend the `oidc` and `plextv` provider
 //! rows, which every client shares, so each class stays well below its row:
@@ -246,6 +247,10 @@ pub const RATE_CLASSES: &[(PathMatch, RateClass)] = &[
     (
         PathMatch::Exact("/api/v3/auth/device-sessions"),
         class("device-sessions", 2.0, 5),
+    ),
+    (
+        PathMatch::Prefix("/api/v3/auth/app-connect"),
+        class("app-connect", 2.0, 5),
     ),
     (
         PathMatch::Prefix("/api/v3/search"),
@@ -505,6 +510,15 @@ mod tests {
         assert_eq!(classify("/api/v3/auth/plex/poll").name, "plex");
         assert_eq!(classify("/api/v3/auth/plexx").name, "default");
         assert_eq!(classify("/api/v3/auth/oidc/exchange").name, "oidc");
+        assert_eq!(
+            classify("/api/v3/auth/app-connect/token").name,
+            "app-connect"
+        );
+        assert_eq!(
+            classify("/api/v3/auth/app-connect/request").name,
+            "app-connect"
+        );
+        assert_eq!(classify("/api/v3/auth/app-connectx").name, "default");
         assert_eq!(classify("/api/v3/covers/release/x").name, "covers");
         assert_eq!(classify("/api/v3/stream/local/x").name, "stream");
         assert_eq!(classify("/api/v3/me").name, "default");

@@ -9,6 +9,7 @@ import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-prefer
 import { DEFAULT_SOURCE, isMusicSource } from '$lib/stores/musicSource';
 import { authStore, LAST_USER_ID_KEY } from '$lib/stores/authStore.svelte';
 import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
+import { rememberSignInReturn } from '$lib/utils/signInReturn';
 import { withBasePath, withoutBasePath } from '$lib/utils/basePath';
 import { SERVER_BUSY_ERROR, UNREACHABLE_ERROR } from '$lib/utils/pageErrors';
 // Applies the stored theme before the app shell and its CSS load.
@@ -102,6 +103,8 @@ export const load: LayoutLoad = async ({ url }) => {
 	}
 
 	if (!setupRequired && !isAuthFree && !authStore.isAuthenticated) {
+		// come back here once signed in (an app asking at /connect needs it)
+		if (browser) rememberSignInReturn(path + url.search);
 		throw redirect(302, withBasePath('/login'));
 	}
 

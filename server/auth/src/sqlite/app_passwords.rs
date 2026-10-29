@@ -75,6 +75,48 @@ impl AppPasswords {
         }
     }
 
+    /// Insert a row in place of the owner's live rows of the same name,
+    /// which are revoked in the same transaction, unless the owner holds
+    /// `max_active` live rows under other names (then nothing changes and
+    /// the answer is `None`). Returns how many rows it revoked. Conflict
+    /// when the id or secret hash is taken.
+    pub async fn replace_named(
+        &self,
+        row: AppPasswordRecord,
+        max_active: u64,
+    ) -> Result<Option<usize>, StoreError> {
+        let cap = i64::try_from(max_active).unwrap_or(i64::MAX);
+        let outcome = self
+            .db
+            .lane()
+            .write(Lane::Foreground, "auth.app_passwords.replace", move |tx| {
+                let others: i64 = tx
+                    .query_row(
+                        sql::ACTIVE_APP_PASSWORD_COUNT_OTHER_NAMES.text(),
+                        rusqlite::params![row.user_id, row.name],
+                        |found| found.get(0),
+                    )
+                    .map_err(op_error)?;
+                if others >= cap {
+                    return Ok(None);
+                }
+                let revoked = tx
+                    .execute(
+                        sql::REVOKE_APP_PASSWORDS_NAMED.text(),
+                        rusqlite::params![row.user_id, row.name],
+                    )
+                    .map_err(op_error)?;
+                Self::insert_in(tx, &row, false)?;
+                Ok(Some(revoked))
+            })
+            .await;
+        match outcome {
+            Ok(replaced) => Ok(replaced),
+            Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
+            Err(error) => Err(store_error(error)),
+        }
+    }
+
     /// Insert one row inside the caller's transaction, with no cap. A taken
     /// id or secret hash is [`WriteError::Conflict`].
     pub fn insert_in(

@@ -11,6 +11,7 @@
 	} from '$lib/queries/auth/AuthMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { providerUnavailableMessage } from '$lib/utils/serviceError';
+	import { takeSignInReturn } from '$lib/utils/signInReturn';
 	import { outsideLink } from '$lib/components/outsideLink';
 	import { createPlexStartMutation } from '$lib/queries/plex.svelte';
 	import { pollPlexFlow } from '$lib/queries/plex.svelte';
@@ -77,7 +78,7 @@
 
 	function storeSession(data: { user: SessionUserLike }) {
 		authStore.setUser(toAuthUser(data.user));
-		goto(withBasePath('/'));
+		goto(withBasePath(takeSignInReturn()));
 	}
 
 	async function handleLocalLogin() {
