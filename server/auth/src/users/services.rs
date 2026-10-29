@@ -1376,21 +1376,7 @@ pub async fn create_app_password(
             message: "App-password name is too long".to_owned(),
         });
     }
-    let secret = fresh_secret()?;
-    let encrypted = deps
-        .crypto
-        .encrypt(&secret)
-        .map_err(|cause| UsersError::internal(&cause))?;
-    let row = AppPasswordRecord {
-        id: deps.ids.new_id(),
-        user_id: caller.user_id().to_owned(),
-        name: name.to_owned(),
-        secret_sha256: tokens::hash_token(&secret),
-        secret_encrypted: encrypted,
-        created_at: clock_now(deps),
-        last_used_at: None,
-        last_client: None,
-    };
+    let (row, secret) = fresh_app_password(deps, caller.user_id(), name)?;
     // The cap is checked inside the insert transaction, so parallel
     // creates cannot overshoot it.
     let inserted = deps
@@ -1405,6 +1391,67 @@ pub async fn create_app_password(
             ),
         });
     }
+    Ok(AppPasswordCreatedResponse {
+        id: row.id,
+        name: row.name,
+        secret,
+        created_at: row.created_at,
+    })
+}
+
+/// A new app-password row for `user_id` named `name`, and its secret.
+fn fresh_app_password(
+    deps: &UsersDeps,
+    user_id: &str,
+    name: &str,
+) -> Result<(AppPasswordRecord, String), UsersError> {
+    let secret = fresh_secret()?;
+    let encrypted = deps
+        .crypto
+        .encrypt(&secret)
+        .map_err(|cause| UsersError::internal(&cause))?;
+    let row = AppPasswordRecord {
+        id: deps.ids.new_id(),
+        user_id: user_id.to_owned(),
+        name: name.to_owned(),
+        secret_sha256: tokens::hash_token(&secret),
+        secret_encrypted: encrypted,
+        created_at: clock_now(deps),
+        last_used_at: None,
+        last_client: None,
+    };
+    Ok((row, secret))
+}
+
+/// Mint an app password for `user_id` in place of the user's live ones
+/// named `name`, which are revoked in the same transaction: an app that
+/// signs in again on the same device replaces its old password instead of
+/// piling up new ones. Only app connect calls this, for a user who
+/// confirmed it with a standard session; `name` is already checked.
+pub async fn replace_app_password(
+    deps: &UsersDeps,
+    user_id: &str,
+    name: &str,
+) -> Result<AppPasswordCreatedResponse, UsersError> {
+    let (row, secret) = fresh_app_password(deps, user_id, name)?;
+    let replaced = deps
+        .app_passwords
+        .replace_named(row.clone(), MAX_ACTIVE_APP_PASSWORDS)
+        .await
+        .map_err(store_internal)?;
+    let Some(replaced) = replaced else {
+        return Err(UsersError::Conflict {
+            message: format!(
+                "App-password limit reached ({MAX_ACTIVE_APP_PASSWORDS}). Revoke one before creating another."
+            ),
+        });
+    };
+    tracing::info!(
+        user_id,
+        app_password_id = %row.id,
+        replaced,
+        "app password minted by app connect"
+    );
     Ok(AppPasswordCreatedResponse {
         id: row.id,
         name: row.name,

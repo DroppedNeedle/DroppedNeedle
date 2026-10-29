@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { AUTH_FREE_PATHS } from '$lib/constants';
+	import { SHELL_FREE_PATHS } from '$lib/constants';
 	import { loadAuthenticatedAppShell } from '$lib/components/lazyComponentLoaders';
 	import QueryProvider from '$lib/queries/QueryProvider.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -14,7 +14,7 @@
 	let shellLoadFailed = $state(false);
 	let shellLoadAttempt = $state(0);
 	const needsAppShell = $derived(
-		!AUTH_FREE_PATHS.some((path) => withoutBasePath(page.url.pathname).startsWith(path))
+		!SHELL_FREE_PATHS.some((path) => withoutBasePath(page.url.pathname).startsWith(path))
 	);
 
 	$effect(() => {

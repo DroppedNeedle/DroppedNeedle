@@ -23,6 +23,21 @@ export const ROUTE_REASONS: readonly { method: string; path: string; reason: str
 		reason: 'MusicBrainz sends the browser back here'
 	},
 	{
+		method: 'POST',
+		path: '/api/v3/auth/app-connect/token',
+		reason: 'a native app trades its one-time code here'
+	},
+	{
+		method: 'GET',
+		path: '/api/v3/settings/app-connect',
+		reason: 'the apps that may connect are set through the settings API, no page yet'
+	},
+	{
+		method: 'PUT',
+		path: '/api/v3/settings/app-connect',
+		reason: 'the apps that may connect are set through the settings API, no page yet'
+	},
+	{
 		method: 'GET',
 		path: '/api/v3/auth/oidc/callback',
 		reason: 'the identity provider sends the browser back here'

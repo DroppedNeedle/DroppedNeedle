@@ -2,6 +2,7 @@
 	import '../../../auth.css';
 	import { page } from '$app/state';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { takeSignInReturn } from '$lib/utils/signInReturn';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { ApiError } from '$lib/api/errors';
 	import { createOidcExchangeMutation } from '$lib/queries/auth/AuthMutations.svelte';
@@ -25,8 +26,8 @@
 			authStore.setUser(toAuthUser(data.user));
 			// hard navigation on purpose: the exchange call just set the session
 			// cookie, and a soft goto() can outrun it and bounce the first
-			// sign-in back to /login
-			window.location.assign(withBasePath('/'));
+			// sign-in back to /login; it lands where sign-in was asked from
+			window.location.assign(withBasePath(takeSignInReturn()));
 		} catch (e) {
 			error =
 				e instanceof ApiError

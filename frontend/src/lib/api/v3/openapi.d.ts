@@ -947,6 +947,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/auth/app-connect/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Allow an app connect request: issue its one-time code and answer the
+         *     address that hands it to the app. Needs a standard session, as creating
+         *     an app password by hand does.
+         */
+        post: operations["app_connect_authorize_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/app-connect/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What an app connect request asks for, for the confirmation page. */
+        get: operations["app_connect_request_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/app-connect/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trade an app connect code and its PKCE verifier for an app password of
+         *     the user who allowed it. The code is gone after this call, whatever it
+         *     answers.
+         */
+        post: operations["app_connect_token_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/auth/device-sessions": {
         parameters: {
             query?: never;
@@ -7526,6 +7585,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/app-connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the apps that may sign in through the browser and get an app password. */
+        get: operations["get_app_connect"];
+        /**
+         * Replace the apps that may sign in through the browser. An empty list turns
+         *     native app sign-in off.
+         */
+        put: operations["put_app_connect"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/connect-apps": {
         parameters: {
             query?: never;
@@ -9892,6 +9972,103 @@ export interface components {
              */
             total_listens: number;
         };
+        /**
+         * @description Native app sign-in ("app connect"): the apps that may get an app
+         *     password for the signed-in user after the user confirms it in the
+         *     browser (OAuth 2.0 authorization code with PKCE, RFC 6749/7636/8252).
+         *     Off while the list is empty, which is the default.
+         *
+         *     A section of its own, so that saving another one can never empty it.
+         */
+        AppConnect: {
+            /** @description Up to eight apps. */
+            clients: components["schemas"]["AppConnectClient"][];
+        };
+        /** @description One native app that may ask for an app password through the browser. */
+        AppConnectClient: {
+            /**
+             * @description What the app sends as `client_id`: 1-64 of `a-z`, `0-9`, `.`, `_`
+             *     and `-`, starting with a letter or digit.
+             */
+            client_id: string;
+            /**
+             * @description The name the confirmation page shows and the app password is
+             *     named after, such as `My Player`. Never taken from the request.
+             */
+            name: string;
+            /**
+             * @description The addresses the browser may hand the result to, matched exactly:
+             *     a private-use scheme named after a domain the app's maker owns
+             *     (`com.example.player:/connect`, RFC 8252 section 7.1) or an `https`
+             *     address. Up to four.
+             */
+            redirect_uris: string[];
+        };
+        /** @description Where "Allow" sends the browser. */
+        AppConnectRedirect: {
+            /** @description The app's address with the one-time `code` and the `state`. */
+            redirect: string;
+        };
+        /** @description What the confirmation page shows. */
+        AppConnectRequestView: {
+            /**
+             * @description The user holds the most app passwords allowed under other names, so
+             *     allowing would be refused until one is revoked.
+             */
+            at_limit: boolean;
+            /**
+             * @description Where "Cancel" sends the browser: the app's address with
+             *     `error=access_denied`.
+             */
+            cancel_redirect: string;
+            /** @description The app's id. */
+            client_id: string;
+            /** @description The app's name from the settings. */
+            client_name: string;
+            /**
+             * @description The device name the app reported, cleaned up; absent when it sent
+             *     none.
+             */
+            device_name?: string | null;
+            /** @description The name the new app password will carry. */
+            password_name: string;
+            /**
+             * @description The user already has a live app password of that name, which
+             *     allowing replaces.
+             */
+            replaces_existing: boolean;
+        };
+        /** @description A refused trade. */
+        AppConnectTokenError: {
+            /**
+             * @description `invalid_grant` (the code is unknown, used or expired, or does not
+             *     fit the app, address or verifier) or `invalid_request` (the body is
+             *     not a trade).
+             */
+            error: string;
+        };
+        /** @description The app's code trade. */
+        AppConnectTokenRequest: {
+            /** @description The app's id, as in the request. */
+            client_id: string;
+            /** @description The one-time code the browser handed back. */
+            code: string;
+            /** @description The PKCE verifier the challenge was made from. */
+            code_verifier: string;
+            /** @description The return address, as in the request. */
+            redirect_uri: string;
+        };
+        /** @description The app password the trade mints. */
+        AppConnectTokenResponse: {
+            /** @description The app password, shown this once. Subsonic takes it as `apiKey`. */
+            app_password: string;
+            /** @description Its id, as listed under the user's app passwords. */
+            id: string;
+            /** @description Its name, as listed. */
+            name: string;
+            /** @description The signed-in user's login name. */
+            username: string;
+        };
         /** @description Create an app password. */
         AppPasswordCreate: {
             /** @description Name; defaults to `App password`. */
@@ -11477,6 +11654,43 @@ export interface components {
              * @default true
              */
             transcoding_enabled: boolean;
+        };
+        /**
+         * @description What the app asks for, as it put it in the `/connect` address. Every
+         *     field is checked here; nothing is trusted for being present.
+         */
+        ConnectRequest: {
+            /**
+             * @description The app's id, one listed in the `app_connect` settings.
+             * @default
+             */
+            client_id: string;
+            /**
+             * @description `BASE64URL(SHA256(code_verifier))`, 43 characters, no padding.
+             * @default
+             */
+            code_challenge: string;
+            /**
+             * @description Must be `S256`.
+             * @default
+             */
+            code_challenge_method: string;
+            /**
+             * @description The device name the app reports, such as `Pixel 9`. Optional.
+             * @default null
+             */
+            name: string | null;
+            /**
+             * @description Where the browser hands the result back; exactly one of the app's
+             *     listed addresses.
+             * @default
+             */
+            redirect_uri: string;
+            /**
+             * @description The app's own value, handed back unchanged; up to 512 bytes.
+             * @default
+             */
+            state: string;
         };
         /**
          * @description Link the caller's own Navidrome or Jellyfin account on the server the
@@ -25296,6 +25510,171 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    app_connect_authorize_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Where to send the browser; never stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnectRedirect"];
+                };
+            };
+            /** @description The app or its address is not listed, or the request is malformed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A device session cannot allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description App connect is off: no app is listed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The user holds the most app passwords allowed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    app_connect_request_handler: {
+        parameters: {
+            query?: {
+                /** @description The app's id, one listed in the `app_connect` settings. */
+                client_id?: string;
+                /**
+                 * @description Where the browser hands the result back; exactly one of the app's
+                 *     listed addresses.
+                 */
+                redirect_uri?: string;
+                /** @description `BASE64URL(SHA256(code_verifier))`, 43 characters, no padding. */
+                code_challenge?: string;
+                /** @description Must be `S256`. */
+                code_challenge_method?: string;
+                /** @description The app's own value, handed back unchanged; up to 512 bytes. */
+                state?: string;
+                /** @description The device name the app reports, such as `Pixel 9`. Optional. */
+                name?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The request, checked */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnectRequestView"];
+                };
+            };
+            /** @description The app or its address is not listed, or the request is malformed (then `details.redirect` hands the error back to the app) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description App connect is off: no app is listed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    app_connect_token_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppConnectTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description The new app password, shown once */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnectTokenResponse"];
+                };
+            };
+            /** @description `invalid_grant` or `invalid_request` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnectTokenError"];
+                };
+            };
+            /** @description App connect is off: no app is listed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many trades from this address; see `Retry-After` */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -42673,6 +43052,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdvancedSettings"];
+                };
+            };
+        };
+    };
+    get_app_connect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description App connect apps */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnect"];
+                };
+            };
+        };
+    };
+    put_app_connect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppConnect"];
+            };
+        };
+        responses: {
+            /** @description The list as stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnect"];
+                };
+            };
+            /** @description An app's id, name or return address is not allowed, or there are more than eight */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

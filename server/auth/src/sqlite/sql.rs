@@ -108,6 +108,12 @@ droppedneedle_kernel::sql! {
     /// Live app passwords of one account.
     pub(super) ACTIVE_APP_PASSWORD_COUNT = "SELECT COUNT(*) FROM auth_app_passwords \
         WHERE user_id = ?1 AND revoked = 0";
+    /// Live app passwords of one account under any other name.
+    pub(super) ACTIVE_APP_PASSWORD_COUNT_OTHER_NAMES = "SELECT COUNT(*) \
+        FROM auth_app_passwords WHERE user_id = ?1 AND name != ?2 AND revoked = 0";
+    /// Revoke the live app passwords of one account that carry one name.
+    pub(super) REVOKE_APP_PASSWORDS_NAMED = "UPDATE auth_app_passwords SET revoked = 1 \
+        WHERE user_id = ?1 AND name = ?2 AND revoked = 0";
     /// Insert one app password.
     pub(super) INSERT_APP_PASSWORD = "INSERT INTO auth_app_passwords (id, user_id, name, \
         secret_sha256, secret_encrypted, created_at, last_used_at, last_client, revoked) \

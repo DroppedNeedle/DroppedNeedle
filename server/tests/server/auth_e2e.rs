@@ -135,6 +135,11 @@ impl E2e {
         self.runtime.db().sqlx()
     }
 
+    /// The data key the scratch deployment seals app passwords with.
+    pub(crate) fn crypto(&self) -> Arc<Crypto> {
+        Arc::clone(&self.crypto)
+    }
+
     /// The scratch database, for stores a test builds over it.
     pub(crate) fn db(&self) -> &droppedneedle_kernel::db::Db {
         self.runtime.db()
@@ -1183,6 +1188,9 @@ const PUBLIC_OPERATIONS: &[(&str, &str)] = &[
     ("POST", "/api/v3/auth/jellyfin/login"),
     ("POST", "/api/v3/auth/plex/start"),
     ("POST", "/api/v3/auth/plex/poll/login"),
+    // App connect's code trade: the one-time code and its PKCE verifier
+    // are the credential.
+    ("POST", "/api/v3/auth/app-connect/token"),
     // Token-identified callbacks from MusicBrainz and Spotify.
     ("GET", "/api/v3/library/contributions/musicbrainz/callback"),
     ("GET", "/api/v3/acquire/spotify/auth/callback"),

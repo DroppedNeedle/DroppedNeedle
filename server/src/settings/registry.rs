@@ -23,8 +23,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     WrappedSettings, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    ConnectApps, EditionPreferences, FilesystemWatcher, GetIt, LyricsSettings, PlainSection,
-    PublicAddress, SecuritySettings, UserPreferences, WantedWatcher,
+    AppConnect, ConnectApps, EditionPreferences, FilesystemWatcher, GetIt, LyricsSettings,
+    PlainSection, PublicAddress, SecuritySettings, UserPreferences, WantedWatcher,
 };
 use droppedneedle_kernel::runtime_config::{Masked, SecretSection, Section};
 
@@ -180,6 +180,13 @@ section_routes! {
             => "Connect Apps config";
         put put_connect_apps: "Save the inbound Connect Apps config."
             => "Saved config";
+    }
+    plain AppConnect at "/api/v3/settings/app-connect", read admin, write admin {
+        get get_app_connect: "Read the apps that may sign in through the browser and get an app password."
+            => "App connect apps";
+        put put_app_connect: "Replace the apps that may sign in through the browser. An empty list turns\nnative app sign-in off."
+            => "The list as stored",
+            (status = 400, description = "An app's id, name or return address is not allowed, or there are more than eight");
     }
     plain GetIt at "/api/v3/settings/get-it", read admin, write admin {
         get get_get_it: "Read the store-region settings."

@@ -1,4 +1,4 @@
-//! Access and inbound apps: security posture and Connect Apps.
+//! Access and inbound apps: security posture, Connect Apps and app connect.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -349,6 +349,185 @@ impl Section for ConnectApps {
     }
 }
 
+// --- app_connect -----------------------------------------------------------
+
+/// Most apps one server lists for app connect.
+pub const MAX_APP_CONNECT_CLIENTS: usize = 8;
+/// Most return addresses one app lists.
+pub const MAX_APP_CONNECT_REDIRECTS: usize = 4;
+/// Longest app name, in characters.
+pub const MAX_APP_CONNECT_NAME_LEN: usize = 48;
+
+/// One native app that may ask for an app password through the browser.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+pub struct AppConnectClient {
+    /// What the app sends as `client_id`: 1-64 of `a-z`, `0-9`, `.`, `_`
+    /// and `-`, starting with a letter or digit.
+    pub client_id: String,
+    /// The name the confirmation page shows and the app password is
+    /// named after, such as `My Player`. Never taken from the request.
+    pub name: String,
+    /// The addresses the browser may hand the result to, matched exactly:
+    /// a private-use scheme named after a domain the app's maker owns
+    /// (`com.example.player:/connect`, RFC 8252 section 7.1) or an `https`
+    /// address. Up to four.
+    pub redirect_uris: Vec<String>,
+}
+
+/// Native app sign-in ("app connect"): the apps that may get an app
+/// password for the signed-in user after the user confirms it in the
+/// browser (OAuth 2.0 authorization code with PKCE, RFC 6749/7636/8252).
+/// Off while the list is empty, which is the default.
+///
+/// A section of its own, so that saving another one can never empty it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+pub struct AppConnect {
+    /// Up to eight apps.
+    pub clients: Vec<AppConnectClient>,
+}
+
+impl AppConnect {
+    /// The app listed as `client_id` when `redirect_uri` is exactly one of
+    /// its addresses. No prefix or pattern ever matches.
+    #[must_use]
+    pub fn client(&self, client_id: &str, redirect_uri: &str) -> Option<&AppConnectClient> {
+        self.clients.iter().find(|client| {
+            client.client_id == client_id
+                && client
+                    .redirect_uris
+                    .iter()
+                    .any(|listed| listed == redirect_uri)
+        })
+    }
+
+    /// Whether any app is listed.
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        !self.clients.is_empty()
+    }
+}
+
+fn app_connect_error(field: &'static str, reason: String) -> ConfigError {
+    ConfigError::Validation {
+        section: AppConnect::KEY,
+        field,
+        reason,
+    }
+}
+
+/// Why `uri` cannot be an app's return address, if it cannot. It must be
+/// written the way it is matched (the parser's own spelling), so a request
+/// that spells it differently is refused rather than half-matched.
+fn redirect_problem(uri: &str) -> Option<&'static str> {
+    let Ok(parsed) = reqwest::Url::parse(uri) else {
+        return Some("is not an address");
+    };
+    if parsed.as_str() != uri {
+        return Some("is not written the way it is matched; write it in its plain form");
+    }
+    if parsed.fragment().is_some() || !parsed.username().is_empty() || parsed.password().is_some() {
+        return Some("may not carry a fragment or a user name");
+    }
+    match parsed.scheme() {
+        "https" => None,
+        "http" => Some("must use https or a private-use scheme"),
+        scheme if scheme.contains('.') => None,
+        _ => Some(
+            "must use https or a private-use scheme named after a domain, such as com.example.app",
+        ),
+    }
+}
+
+impl Section for AppConnect {
+    const KEY: &'static str = "app_connect";
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        if self.clients.len() > MAX_APP_CONNECT_CLIENTS {
+            return Err(app_connect_error(
+                "clients",
+                format!("holds more than {MAX_APP_CONNECT_CLIENTS} apps"),
+            ));
+        }
+        let mut seen: Vec<&str> = Vec::new();
+        for client in &self.clients {
+            let id = client.client_id.as_str();
+            let id_ok = (1..=64).contains(&id.len())
+                && id
+                    .bytes()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+                && id.bytes().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
+                });
+            if !id_ok {
+                return Err(app_connect_error(
+                    "client_id",
+                    format!("{id:?} must be 1-64 of a-z, 0-9, '.', '_' and '-'"),
+                ));
+            }
+            if seen.contains(&id) {
+                return Err(app_connect_error(
+                    "client_id",
+                    format!("{id:?} is listed twice"),
+                ));
+            }
+            seen.push(id);
+            let name = client.name.trim();
+            if name.is_empty()
+                || name.chars().count() > MAX_APP_CONNECT_NAME_LEN
+                || name.chars().any(char::is_control)
+                || name != client.name
+            {
+                return Err(app_connect_error(
+                    "name",
+                    format!(
+                        "of {id:?} must be 1-{MAX_APP_CONNECT_NAME_LEN} characters with no \
+                         control characters and no surrounding spaces"
+                    ),
+                ));
+            }
+            if client.redirect_uris.is_empty()
+                || client.redirect_uris.len() > MAX_APP_CONNECT_REDIRECTS
+            {
+                return Err(app_connect_error(
+                    "redirect_uris",
+                    format!("of {id:?} must hold 1-{MAX_APP_CONNECT_REDIRECTS} addresses"),
+                ));
+            }
+            for uri in &client.redirect_uris {
+                if let Some(problem) = redirect_problem(uri) {
+                    return Err(app_connect_error(
+                        "redirect_uris",
+                        format!("{uri:?} of {id:?} {problem}"),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A file edited by hand is never trusted further than a save: an app
+    /// that would not pass `validate` is dropped, and so is anything past
+    /// the limit, so a bad entry never lets an app in.
+    fn normalize(&mut self) {
+        let mut kept: Vec<AppConnectClient> = Vec::new();
+        for client in std::mem::take(&mut self.clients) {
+            if kept.len() == MAX_APP_CONNECT_CLIENTS
+                || kept.iter().any(|other| other.client_id == client.client_id)
+            {
+                continue;
+            }
+            let alone = AppConnect {
+                clients: vec![client],
+            };
+            if alone.validate().is_ok() {
+                kept.extend(alone.clients);
+            }
+        }
+        self.clients = kept;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,5 +595,94 @@ mod tests {
         edited.normalize();
         assert_eq!(edited.origins, ports[..8]);
         assert_eq!(edited.stated().len(), 8);
+    }
+
+    fn app(client_id: &str, name: &str, redirects: &[&str]) -> AppConnectClient {
+        AppConnectClient {
+            client_id: client_id.to_owned(),
+            name: name.to_owned(),
+            redirect_uris: redirects.iter().map(|&uri| uri.to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn app_connect_matches_listed_apps_exactly() {
+        let section = AppConnect {
+            clients: vec![app(
+                "my-player",
+                "My Player",
+                &["com.example.player:/connect"],
+            )],
+        };
+        assert!(section.validate().is_ok());
+        assert!(section.enabled());
+        assert!(AppConnect::default().validate().is_ok());
+        assert!(!AppConnect::default().enabled());
+        let found = section.client("my-player", "com.example.player:/connect");
+        assert_eq!(found.map(|client| client.name.as_str()), Some("My Player"));
+        for (client_id, redirect) in [
+            ("my-player", "com.example.player:/connect/"),
+            ("my-player", "com.example.player:/connec"),
+            ("my-player", "com.example.player:/connect?x=1"),
+            ("my-player", "COM.example.player:/connect"),
+            ("my-player", ""),
+            ("My-player", "com.example.player:/connect"),
+            ("other", "com.example.player:/connect"),
+        ] {
+            assert!(
+                section.client(client_id, redirect).is_none(),
+                "{client_id} {redirect}"
+            );
+        }
+    }
+
+    #[test]
+    fn app_connect_refuses_what_could_widen_it() {
+        let refused = |clients: Vec<AppConnectClient>| AppConnect { clients }.validate().is_err();
+        let ok = &["com.example.player:/connect"];
+        assert!(!refused(vec![app(
+            "a",
+            "A",
+            &["https://app.example.com/back"]
+        )]));
+        for uri in [
+            "http://app.example.com/back",
+            "javascript:alert(1)",
+            "myapp:/connect",
+            "com.example.player:/connect#x",
+            "https://user@app.example.com/",
+            "HTTPS://app.example.com/back",
+            "not an address",
+        ] {
+            assert!(refused(vec![app("a", "A", &[uri])]), "{uri}");
+        }
+        assert!(refused(vec![app("a", "A", &[])]));
+        assert!(refused(vec![app("a", "A", &[ok[0]; 5])]));
+        for id in ["", "-a", "A", "a b", "a/b", &"a".repeat(65)] {
+            assert!(refused(vec![app(id, "A", ok)]), "{id:?}");
+        }
+        for name in ["", " A", "A\u{7}", &"n".repeat(49)] {
+            assert!(refused(vec![app("a", name, ok)]), "{name:?}");
+        }
+        assert!(refused(vec![app("a", "A", ok), app("a", "B", ok)]));
+        let nine: Vec<AppConnectClient> = (0..9).map(|n| app(&format!("a{n}"), "A", ok)).collect();
+        assert!(refused(nine.clone()));
+
+        // A file edited by hand keeps only the apps a save would accept.
+        let mut edited = AppConnect {
+            clients: vec![
+                app("good", "Good", ok),
+                app("bad", "Bad", &["http://evil.example/"]),
+                app("good", "Twice", ok),
+            ],
+        };
+        edited.clients.extend(nine);
+        edited.normalize();
+        let ids: Vec<&str> = edited
+            .clients
+            .iter()
+            .map(|c| c.client_id.as_str())
+            .collect();
+        assert_eq!(ids, ["good", "a0", "a1", "a2", "a3", "a4", "a5", "a6"]);
     }
 }

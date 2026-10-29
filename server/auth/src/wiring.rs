@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use super::app_connect::AppConnectState;
 use super::federated::MediaLinks;
 use super::federated::jellyfin_http::JellyfinHttp;
 use super::federated::oidc::OidcLogin;
@@ -52,6 +53,8 @@ pub struct AuthSetup {
     pub jellyfin: JellyfinRouteState,
     /// Plex journey routes.
     pub plex: PlexRouteState,
+    /// Native app sign-in routes.
+    pub app_connect: AppConnectState,
     /// The sign-in sections, read by the provider list.
     pub sign_in: SignInSettings,
     /// The security section, read by the response security headers.
@@ -165,6 +168,7 @@ impl AuthSetup {
             base_path,
         )
         .with_stated_addresses(stated.clone());
+        let app_connect = AppConnectState::new(users.clone(), config_store.live());
         Self {
             users,
             session_auth: SessionAuth::new(auth.sessions.clone(), clock.clone(), base_path)
@@ -175,6 +179,7 @@ impl AuthSetup {
             oidc,
             jellyfin,
             plex,
+            app_connect,
             sign_in,
             security: config_store.live(),
             base_path: base_path.to_owned(),
@@ -229,6 +234,7 @@ impl AuthSetup {
 /// session. Linking a Plex account needs one, and connecting Plex for the
 /// server settings needs an admin.
 pub fn routes() -> Routes<AuthSetup> {
+    use super::app_connect::routes::*;
     use super::routes::federated::*;
     use super::routes::native::*;
 
@@ -248,6 +254,9 @@ pub fn routes() -> Routes<AuthSetup> {
         .public(routes!(plex_poll_login_handler))
         .user(routes!(plex_poll_link_handler))
         .user(routes!(plex_poll_connect_handler))
+        .user(routes!(app_connect_request_handler))
+        .user(routes!(app_connect_authorize_handler))
+        .public(routes!(app_connect_token_handler))
 }
 
 impl FromRef<AuthSetup> for UsersDeps {
@@ -283,5 +292,11 @@ impl FromRef<AuthSetup> for JellyfinRouteState {
 impl FromRef<AuthSetup> for PlexRouteState {
     fn from_ref(setup: &AuthSetup) -> Self {
         setup.plex.clone()
+    }
+}
+
+impl FromRef<AuthSetup> for AppConnectState {
+    fn from_ref(setup: &AuthSetup) -> Self {
+        setup.app_connect.clone()
     }
 }

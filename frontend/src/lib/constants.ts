@@ -1,5 +1,10 @@
 export const AUTH_FREE_PATHS = ['/login', '/setup', '/auth/callback', '/recover-password'];
 
+// Pages shown without the app shell (no navigation, no player): the signed-out
+// ones, and the app connect confirmation, which needs a session but is a
+// browser tab an app opened, not the app.
+export const SHELL_FREE_PATHS = [...AUTH_FREE_PATHS, '/connect'];
+
 // concert distances are stored in km but displayed in miles
 export const KM_PER_MILE = 1.609;
 

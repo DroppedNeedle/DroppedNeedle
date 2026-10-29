@@ -41,7 +41,10 @@ const PENDING: &[(&str, &str)] = &[];
 
 /// Fields read only through a method on their section, with the method.
 /// A row whose method nothing calls counts as unread.
-const READ_THROUGH: &[(&str, &str)] = &[("security_settings.frame_ancestors", "framing_sources")];
+const READ_THROUGH: &[(&str, &str)] = &[
+    ("security_settings.frame_ancestors", "framing_sources"),
+    ("app_connect.clients[].redirect_uris", "client"),
+];
 
 /// Rust source that defines, carries or edits settings rather than acting
 /// on them, as path prefixes from `server/`.

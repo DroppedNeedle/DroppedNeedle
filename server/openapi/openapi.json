@@ -2990,6 +2990,252 @@
         ]
       }
     },
+    "/api/v3/auth/app-connect/authorize": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Allow an app connect request: issue its one-time code and answer the\naddress that hands it to the app. Needs a standard session, as creating\nan app password by hand does.",
+        "operationId": "app_connect_authorize_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Where to send the browser; never stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConnectRedirect"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The app or its address is not listed, or the request is malformed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A device session cannot allow this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App connect is off: no app is listed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The user holds the most app passwords allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/auth/app-connect/request": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "What an app connect request asks for, for the confirmation page.",
+        "operationId": "app_connect_request_handler",
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "query",
+            "description": "The app's id, one listed in the `app_connect` settings.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "description": "Where the browser hands the result back; exactly one of the app's\nlisted addresses.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge",
+            "in": "query",
+            "description": "`BASE64URL(SHA256(code_verifier))`, 43 characters, no padding.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge_method",
+            "in": "query",
+            "description": "Must be `S256`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "The app's own value, handed back unchanged; up to 512 bytes.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "The device name the app reports, such as `Pixel 9`. Optional.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request, checked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConnectRequestView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The app or its address is not listed, or the request is malformed (then `details.redirect` hands the error back to the app)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App connect is off: no app is listed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/auth/app-connect/token": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Trade an app connect code and its PKCE verifier for an app password of\nthe user who allowed it. The code is gone after this call, whatever it\nanswers.",
+        "operationId": "app_connect_token_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppConnectTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The new app password, shown once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConnectTokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_grant` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConnectTokenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App connect is off: no app is listed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many trades from this address; see `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
     "/api/v3/auth/device-sessions": {
       "post": {
         "tags": [
@@ -28492,6 +28738,80 @@
         ]
       }
     },
+    "/api/v3/settings/app-connect": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the apps that may sign in through the browser and get an app password.",
+        "operationId": "get_app_connect",
+        "responses": {
+          "200": {
+            "description": "App connect apps",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConnect"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Replace the apps that may sign in through the browser. An empty list turns\nnative app sign-in off.",
+        "operationId": "put_app_connect",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppConnect"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The list as stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConnect"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An app's id, name or return address is not allowed, or there are more than eight",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/settings/connect-apps": {
       "get": {
         "tags": [
@@ -35179,6 +35499,175 @@
           }
         }
       },
+      "AppConnect": {
+        "type": "object",
+        "description": "Native app sign-in (\"app connect\"): the apps that may get an app\npassword for the signed-in user after the user confirms it in the\nbrowser (OAuth 2.0 authorization code with PKCE, RFC 6749/7636/8252).\nOff while the list is empty, which is the default.\n\nA section of its own, so that saving another one can never empty it.",
+        "required": [
+          "clients"
+        ],
+        "properties": {
+          "clients": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppConnectClient"
+            },
+            "description": "Up to eight apps."
+          }
+        }
+      },
+      "AppConnectClient": {
+        "type": "object",
+        "description": "One native app that may ask for an app password through the browser.",
+        "required": [
+          "client_id",
+          "name",
+          "redirect_uris"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "description": "What the app sends as `client_id`: 1-64 of `a-z`, `0-9`, `.`, `_`\nand `-`, starting with a letter or digit."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name the confirmation page shows and the app password is\nnamed after, such as `My Player`. Never taken from the request."
+          },
+          "redirect_uris": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The addresses the browser may hand the result to, matched exactly:\na private-use scheme named after a domain the app's maker owns\n(`com.example.player:/connect`, RFC 8252 section 7.1) or an `https`\naddress. Up to four."
+          }
+        }
+      },
+      "AppConnectRedirect": {
+        "type": "object",
+        "description": "Where \"Allow\" sends the browser.",
+        "required": [
+          "redirect"
+        ],
+        "properties": {
+          "redirect": {
+            "type": "string",
+            "description": "The app's address with the one-time `code` and the `state`."
+          }
+        }
+      },
+      "AppConnectRequestView": {
+        "type": "object",
+        "description": "What the confirmation page shows.",
+        "required": [
+          "client_id",
+          "client_name",
+          "password_name",
+          "replaces_existing",
+          "at_limit",
+          "cancel_redirect"
+        ],
+        "properties": {
+          "at_limit": {
+            "type": "boolean",
+            "description": "The user holds the most app passwords allowed under other names, so\nallowing would be refused until one is revoked."
+          },
+          "cancel_redirect": {
+            "type": "string",
+            "description": "Where \"Cancel\" sends the browser: the app's address with\n`error=access_denied`."
+          },
+          "client_id": {
+            "type": "string",
+            "description": "The app's id."
+          },
+          "client_name": {
+            "type": "string",
+            "description": "The app's name from the settings."
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The device name the app reported, cleaned up; absent when it sent\nnone."
+          },
+          "password_name": {
+            "type": "string",
+            "description": "The name the new app password will carry."
+          },
+          "replaces_existing": {
+            "type": "boolean",
+            "description": "The user already has a live app password of that name, which\nallowing replaces."
+          }
+        }
+      },
+      "AppConnectTokenError": {
+        "type": "object",
+        "description": "A refused trade.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "`invalid_grant` (the code is unknown, used or expired, or does not\nfit the app, address or verifier) or `invalid_request` (the body is\nnot a trade)."
+          }
+        }
+      },
+      "AppConnectTokenRequest": {
+        "type": "object",
+        "description": "The app's code trade.",
+        "required": [
+          "client_id",
+          "redirect_uri",
+          "code",
+          "code_verifier"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "description": "The app's id, as in the request."
+          },
+          "code": {
+            "type": "string",
+            "description": "The one-time code the browser handed back."
+          },
+          "code_verifier": {
+            "type": "string",
+            "description": "The PKCE verifier the challenge was made from."
+          },
+          "redirect_uri": {
+            "type": "string",
+            "description": "The return address, as in the request."
+          }
+        }
+      },
+      "AppConnectTokenResponse": {
+        "type": "object",
+        "description": "The app password the trade mints.",
+        "required": [
+          "app_password",
+          "id",
+          "name",
+          "username"
+        ],
+        "properties": {
+          "app_password": {
+            "type": "string",
+            "description": "The app password, shown this once. Subsonic takes it as `apiKey`."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id, as listed under the user's app passwords."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name, as listed."
+          },
+          "username": {
+            "type": "string",
+            "description": "The signed-in user's login name."
+          }
+        }
+      },
       "AppPasswordCreate": {
         "type": "object",
         "description": "Create an app password.",
@@ -38726,6 +39215,45 @@
             "type": "boolean",
             "description": "Allow transcoding for compat clients.",
             "default": true
+          }
+        }
+      },
+      "ConnectRequest": {
+        "type": "object",
+        "description": "What the app asks for, as it put it in the `/connect` address. Every\nfield is checked here; nothing is trusted for being present.",
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "description": "The app's id, one listed in the `app_connect` settings.",
+            "default": ""
+          },
+          "code_challenge": {
+            "type": "string",
+            "description": "`BASE64URL(SHA256(code_verifier))`, 43 characters, no padding.",
+            "default": ""
+          },
+          "code_challenge_method": {
+            "type": "string",
+            "description": "Must be `S256`.",
+            "default": ""
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The device name the app reports, such as `Pixel 9`. Optional.",
+            "default": null
+          },
+          "redirect_uri": {
+            "type": "string",
+            "description": "Where the browser hands the result back; exactly one of the app's\nlisted addresses.",
+            "default": ""
+          },
+          "state": {
+            "type": "string",
+            "description": "The app's own value, handed back unchanged; up to 512 bytes.",
+            "default": ""
           }
         }
       },

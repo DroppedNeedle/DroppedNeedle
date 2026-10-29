@@ -101,6 +101,7 @@ section_list! {
         SecuritySettings,
         PublicAddress,
         ConnectApps,
+        AppConnect,
         DownloadPolicy,
         MusicBrainzSettings,
         LyricsSettings,
