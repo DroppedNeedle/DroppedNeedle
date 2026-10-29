@@ -16,12 +16,15 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
-
 use crate::RequestPriority;
 use crate::degradation::{IntegrationStatus, record_current};
 use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{Answer, Backoff, Executor, Request, Spec, Url, standard_classify};
+
+mod models;
+
+use models::{ArtistCredit, Envelope, LookupAnswer, LookupRecording, LookupResult};
+pub use models::{BatchAnswer, BatchEntry, BatchIndex, BatchRecording, BatchRelease, BatchResult};
 
 /// Default AcoustID host. Tests point the client at a scripted fake instead.
 pub const DEFAULT_BASE_URL: &str = "https://api.acoustid.org";
@@ -39,8 +42,8 @@ const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// ([`ProviderError::Unauthorized`]); any other 4xx stays a rejection. A
 /// 200 whose `status` is not `ok` is [`ProviderError::Unavailable`]. A 429
 /// that names no wait rests a minute ("the
-/// historical 60s window"). The error body was recorded from the live
-/// service on 2026-10-15 (`server/tests/fixtures/acoustid/`).
+/// historical 60s window"). The error body was seen on 2026-10-15 per
+/// `server/tests/fixtures/acoustid/README.md`.
 pub static SPEC: Spec = Spec {
     source: SOURCE,
     health_key: SOURCE,
@@ -53,28 +56,16 @@ pub static SPEC: Spec = Spec {
 
 /// The AcoustID hook over the standard rules.
 pub fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
-    #[derive(Deserialize)]
-    struct Status {
-        #[serde(default)]
-        status: Option<String>,
-        #[serde(default)]
-        error: Option<Refusal>,
-    }
-    #[derive(Deserialize)]
-    struct Refusal {
-        #[serde(default)]
-        code: Option<i64>,
-    }
     let status = answer.reply.status();
-    let body = || serde_json::from_slice::<Status>(answer.reply.bytes()).ok();
+    let decoded = || answer.reply.json::<Envelope>().ok();
     if (400..500).contains(&status)
         && status != 429
-        && body().and_then(|body| body.error?.code) == Some(4)
+        && decoded().and_then(|envelope| envelope.error?.code) == Some(4)
     {
         return Err(ProviderError::Unauthorized { provider: SOURCE });
     }
     if status == 200
-        && let Some(said) = body().and_then(|body| body.status)
+        && let Some(said) = decoded().and_then(|envelope| envelope.status)
         && said != "ok"
     {
         return Err(ProviderError::Unavailable {
@@ -155,10 +146,10 @@ impl AcoustIdClient {
             .executor
             .send(self.lookup_request(form)?, priority)
             .await?;
-        let payload: serde_json::Value = reply.json().inspect_err(|error| {
+        let answer: LookupAnswer = reply.json().inspect_err(|error| {
             note_shape(&error.to_string());
         })?;
-        parse_lookup(&payload)
+        parse_lookup(answer)
     }
 
     /// Look many fingerprints up, up to [`MAX_BATCH`] per request
@@ -276,90 +267,59 @@ fn malformed() -> ProviderError {
     }
 }
 
-/// Fold a lookup payload into a match.
-fn parse_lookup(payload: &serde_json::Value) -> Result<Option<FingerprintMatch>, ProviderError> {
-    let Some(body) = payload.as_object() else {
-        return Err(malformed());
-    };
-    if body.get("status").and_then(serde_json::Value::as_str) != Some("ok") {
+/// Fold a lookup answer into a match.
+fn parse_lookup(answer: LookupAnswer) -> Result<Option<FingerprintMatch>, ProviderError> {
+    if answer.status != "ok" {
         return Err(malformed());
     }
-    // A missing or null `results` reads as "no results" (v2); only a
-    // non-list value is malformed.
-    let results = match body.get("results") {
-        None | Some(serde_json::Value::Null) => return Ok(None),
-        Some(serde_json::Value::Array(results)) => results,
-        Some(_) => return Err(malformed()),
-    };
-    let Some(best) = results.first() else {
+    // A missing or null `results` reads as no match (v2); any other type
+    // fails decoding.
+    let Some(best) = answer
+        .results
+        .and_then(|results| results.into_iter().next())
+    else {
         return Ok(None);
     };
-    let Some(best) = best.as_object() else {
-        return Err(malformed());
-    };
-    // A missing score reads as 0.0 and falls below the threshold (v2);
-    // only a present-but-unusable score is malformed. JSON booleans must
-    // not pass as numbers.
-    let score = match best.get("score") {
-        None | Some(serde_json::Value::Null) => 0.0,
-        Some(serde_json::Value::Number(number)) => match number.as_f64() {
-            Some(score) if score.is_finite() => score,
-            _ => return Err(malformed()),
-        },
-        Some(_) => return Err(malformed()),
-    };
+    // A missing score reads as 0.0 and falls below the threshold (v2).
+    let score = best.score.unwrap_or(0.0);
     if score < MIN_SCORE {
         return Ok(None);
     }
-    let recordings = match best.get("recordings") {
-        None | Some(serde_json::Value::Null) => &Vec::new(),
-        Some(serde_json::Value::Array(recordings)) => recordings,
-        Some(_) => return Err(malformed()),
-    };
+    let recordings = best.recordings.as_deref().unwrap_or_default();
+    // v2 dedupes recording ids case-insensitively but keeps the first
+    // spelling it saw.
     let mut recording_ids: Vec<String> = Vec::new();
-    let mut seen: Vec<String> = Vec::new();
-    let mut selected: Option<&serde_json::Map<String, serde_json::Value>> = None;
-    for recording in recordings.iter().filter_map(serde_json::Value::as_object) {
-        let Some(id) = recording.get("id").and_then(serde_json::Value::as_str) else {
-            continue;
-        };
-        let id = id.trim().to_owned();
-        if id.is_empty() {
-            continue;
+    let mut folded_seen: Vec<String> = Vec::new();
+    for recording in recordings {
+        let folded = recording.id.to_lowercase();
+        if !folded_seen.contains(&folded) {
+            folded_seen.push(folded);
+            recording_ids.push(recording.id.clone());
         }
-        // v2 dedupes recording ids case-insensitively but keeps the first
-        // spelling it saw.
-        let folded = id.to_lowercase();
-        if seen.contains(&folded) {
-            continue;
-        }
-        seen.push(folded);
-        recording_ids.push(id);
-        selected.get_or_insert(recording);
     }
     // A confident audio match with nothing to key the row on (v2 FAIL):
     // never "no match", and v2 queues it for manual review.
-    let (Some(recording), Some(recording_id)) = (selected, recording_ids.first().cloned()) else {
+    let Some(first) = recordings.first() else {
         return Err(ProviderError::Payload {
             provider: SOURCE,
             kind: PayloadKind::Contract,
             message: "AcoustID matched audio with no recording id".to_owned(),
         });
     };
-    let title = recording
-        .get("title")
-        .and_then(serde_json::Value::as_str)
+    let title = first
+        .title
+        .as_deref()
         .map(str::trim)
         .filter(|title| !title.is_empty())
         .map(str::to_owned);
     Ok(Some(FingerprintMatch {
-        recording_id,
+        recording_id: first.id.clone(),
         recording_ids,
         score,
         title,
-        artist: joined_artist_names(recording),
-        duration_secs: recording_duration_secs(recording),
-        release_group_ids: release_group_ids(recording, best),
+        artist: first.artists.as_deref().and_then(joined_artist_names),
+        duration_secs: first.duration.and_then(whole_seconds),
+        release_group_ids: release_group_ids(first, &best),
     }))
 }
 
@@ -425,84 +385,6 @@ impl BatchOutcome {
     }
 }
 
-// The batch answer's shape, verified 2026-10-15 against a live
-// `/v2/lookup` (format=json, batch=1, meta="recordingids releaseids"),
-// recorded in `server/tests/fixtures/acoustid/`: `{"status": "ok",
-// "fingerprints": [{"index": 0, "results": [{"id", "score",
-// "recordings": [{"id", "releases": [{"id"}]}]}]}]}`. A bad key answers
-// HTTP 400 with `{"status": "error", "error": {"code": 4, "message"}}`.
-
-/// A batch answer.
-#[derive(Debug, Clone, Deserialize)]
-pub struct BatchAnswer {
-    pub status: String,
-    #[serde(default)]
-    pub fingerprints: Vec<BatchEntry>,
-}
-
-/// The results for one query of a batch.
-#[derive(Debug, Clone, Deserialize)]
-pub struct BatchEntry {
-    pub index: BatchIndex,
-    #[serde(default)]
-    pub results: Option<Vec<BatchResult>>,
-}
-
-/// The query index, which AcoustID echoes as a number or a numeric
-/// string (seen in v2's answers; the 2026-10-15 probe had a number).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum BatchIndex {
-    Number(u64),
-    Text(String),
-}
-
-impl BatchIndex {
-    fn value(&self) -> Option<usize> {
-        match self {
-            BatchIndex::Number(number) => usize::try_from(*number).ok(),
-            BatchIndex::Text(text) => text.trim().parse().ok(),
-        }
-    }
-}
-
-/// One AcoustID track that matched a print.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct BatchResult {
-    /// AcoustID's own id for the track.
-    pub id: String,
-    #[serde(default)]
-    pub score: Option<f64>,
-    #[serde(default)]
-    pub recordings: Option<Vec<BatchRecording>>,
-}
-
-impl BatchResult {
-    /// The score, 0 when AcoustID gave none.
-    pub fn score(&self) -> f64 {
-        self.score.unwrap_or(0.0)
-    }
-
-    /// The MusicBrainz recordings AcoustID links to the track.
-    pub fn recordings(&self) -> &[BatchRecording] {
-        self.recordings.as_deref().unwrap_or_default()
-    }
-}
-
-/// A MusicBrainz recording linked to an AcoustID track.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct BatchRecording {
-    pub id: String,
-    #[serde(default)]
-    pub releases: Option<Vec<BatchRelease>>,
-}
-
-/// A MusicBrainz release a recording appears on.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct BatchRelease {
-    pub id: String,
-}
-
 /// Every recording and release of the results above [`BATCH_MIN_SCORE`].
 fn fold_batch(results: &[BatchResult]) -> BatchMatch {
     let mut matched = BatchMatch::default();
@@ -527,74 +409,35 @@ fn push_id(ids: &mut Vec<String>, id: &str) {
     }
 }
 
-/// Join the recording's artist names with `"; "`, skipping blanks (v2).
-fn joined_artist_names(recording: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
-    let artists = recording.get("artists")?.as_array()?;
-    let mut names: Vec<&str> = Vec::new();
-    for entry in artists {
-        let name = entry
-            .as_object()
-            .and_then(|artist| artist.get("name"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .unwrap_or("");
-        if !name.is_empty() {
-            names.push(name);
-        }
-    }
-    if names.is_empty() {
-        None
-    } else {
-        Some(names.join("; "))
-    }
+/// Join the credited names with `"; "`, skipping blanks (v2).
+fn joined_artist_names(credits: &[ArtistCredit]) -> Option<String> {
+    let names: Vec<&str> = credits
+        .iter()
+        .filter_map(|credit| credit.name.as_deref())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+    (!names.is_empty()).then(|| names.join("; "))
 }
 
-/// Read the recording duration: integers pass through, finite integral
-/// floats truncate, booleans and everything else read as absent (v2).
-fn recording_duration_secs(recording: &serde_json::Map<String, serde_json::Value>) -> Option<i64> {
-    match recording.get("duration") {
-        Some(serde_json::Value::Number(number)) => {
-            if let Some(int) = number.as_i64() {
-                Some(int)
-            } else if let Some(float) = number.as_f64() {
-                if float.is_finite() && float.fract() == 0.0 {
-                    Some(float as i64)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
+/// A recording length as whole seconds. A fraction reads as absent (v2).
+fn whole_seconds(seconds: f64) -> Option<i64> {
+    (seconds.is_finite() && seconds.fract() == 0.0).then_some(seconds as i64)
 }
 
-/// Merge release-group MBIDs from the recording level and the result level,
-/// deduped with order preserved (used by
-/// the download-verify release-group check). Unlike recording ids, these
-/// compare case-sensitively, exactly as v2 does.
-fn release_group_ids(
-    recording: &serde_json::Map<String, serde_json::Value>,
-    best: &serde_json::Map<String, serde_json::Value>,
-) -> Vec<String> {
+/// Release-group MBIDs from the recording and from the result, deduped with
+/// order preserved (used by the download-verify release-group check). Unlike
+/// recording ids, these compare case-sensitively, exactly as v2 does.
+fn release_group_ids(recording: &LookupRecording, best: &LookupResult) -> Vec<String> {
     let mut ids: Vec<String> = Vec::new();
-    for source in [recording.get("releasegroups"), best.get("releasegroups")] {
-        let groups = match source.and_then(serde_json::Value::as_array) {
-            Some(groups) => groups,
-            None => continue,
-        };
-        for group in groups {
-            let id = group
-                .as_object()
-                .and_then(|group| group.get("id"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .unwrap_or("");
-            if id.is_empty() || ids.iter().any(|known| known == id) {
-                continue;
-            }
-            ids.push(id.to_owned());
+    let groups = recording
+        .releasegroups
+        .iter()
+        .chain(best.releasegroups.iter())
+        .flatten();
+    for group in groups {
+        if !ids.contains(&group.id) {
+            ids.push(group.id.clone());
         }
     }
     ids

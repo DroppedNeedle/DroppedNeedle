@@ -164,46 +164,41 @@ fn acoustid_providers(
     (wire, providers)
 }
 
-fn acoustid_match_payload() -> serde_json::Value {
-    serde_json::json!({
-        "status": "ok",
-        "results": [{
-            "score": 0.95,
-            "id": "some-acoustid",
-            "recordings": [{
-                "id": "REC-1",
-                "title": "  Weird Fishes ",
-                "artists": [{"name": "Radiohead"}, {"name": "  "}, {"nope": 1}],
-                "duration": 318,
-                "releasegroups": [{"id": "rg1"}, {"id": "rg1"}, {"id": " rg2 "}],
-                "futureField": "ignored"
-            },
-            {"id": "rec-1", "title": "casefold duplicate"}],
-            "releasegroups": [{"id": "rg3"}, {"id": "rg1"}],
-            "futureResultField": 1
-        }],
-        "futureTopField": true
-    })
-}
+/// The recorded single lookup of the 10cc print, and the recorded answer for
+/// a print with no match (`tests/fixtures/acoustid/`).
+const SINGLE_LOOKUP: &[u8] = include_bytes!("../fixtures/acoustid/single_lookup.json");
+const SINGLE_NO_MATCH: &[u8] = include_bytes!("../fixtures/acoustid/single_no_match.json");
 
 #[tokio::test]
 async fn acoustid_lookup_posts_form_and_finds_match() {
-    let (wire, providers) = acoustid_providers([json_answer(200, &acoustid_match_payload())]);
+    let (wire, providers) = acoustid_providers([bytes_answer(200, SINGLE_LOOKUP.to_vec())]);
 
     let found = providers
         .acoustid
-        .lookup("api-key", "fingerprint-body", 212, PRIORITY)
+        .lookup("api-key", "fingerprint-body", 218, PRIORITY)
         .await
         .expect("answered")
         .expect("match found");
 
-    assert_eq!(found.recording_id, "REC-1");
-    assert_eq!(found.recording_ids, vec!["REC-1".to_owned()]);
-    assert!((found.score - 0.95).abs() < f64::EPSILON);
-    assert_eq!(found.title.as_deref(), Some("Weird Fishes"));
-    assert_eq!(found.artist.as_deref(), Some("Radiohead"));
-    assert_eq!(found.duration_secs, Some(318));
-    assert_eq!(found.release_group_ids, vec!["rg1", "rg2", "rg3"]);
+    assert_eq!(found.recording_id, "fe000616-c72c-43d4-8cba-a4083e99636b");
+    assert_eq!(
+        found.recording_ids,
+        vec!["fe000616-c72c-43d4-8cba-a4083e99636b".to_owned()]
+    );
+    assert!((found.score - 0.8158072).abs() < f64::EPSILON);
+    assert_eq!(found.title.as_deref(), Some("Sand in My Face"));
+    assert_eq!(found.artist.as_deref(), Some("10cc"));
+    assert_eq!(found.duration_secs, Some(219));
+    // The recording's sixteen release groups, in the order AcoustID lists them.
+    assert_eq!(found.release_group_ids.len(), 16);
+    assert_eq!(
+        found.release_group_ids.first().map(String::as_str),
+        Some("b9b7e8e5-3f28-4d7c-afa1-7affe08abdef")
+    );
+    assert_eq!(
+        found.release_group_ids.last().map(String::as_str),
+        Some("617d7f12-95e3-3469-965d-f3583c862384")
+    );
     let sent = wire.sent();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].method, Method::Post);
@@ -212,7 +207,7 @@ async fn acoustid_lookup_posts_form_and_finds_match() {
         form_value(&sent[0], "fingerprint").as_deref(),
         Some("fingerprint-body")
     );
-    assert_eq!(form_value(&sent[0], "duration").as_deref(), Some("212"));
+    assert_eq!(form_value(&sent[0], "duration").as_deref(), Some("218"));
     assert_eq!(
         form_value(&sent[0], "meta").as_deref(),
         Some("recordings releasegroups")
@@ -386,13 +381,19 @@ async fn acoustid_batch_tells_rejected_from_unavailable() {
 
 #[tokio::test]
 async fn acoustid_empty_and_low_score_results_are_no_match() {
+    let (_, providers) = acoustid_providers([bytes_answer(200, SINGLE_NO_MATCH.to_vec())]);
+    let found = providers.acoustid.lookup("key", "print", 5, PRIORITY).await;
+    assert!(
+        matches!(&found, Ok(None)),
+        "the recorded empty answer: {found:?}"
+    );
+
     for body in [
-        serde_json::json!({"status": "ok", "results": []}),
         serde_json::json!({"status": "ok"}),
         serde_json::json!({"status": "ok", "results": null}),
-        serde_json::json!({"status": "ok", "results": [{"score": 0.5}]}),
+        serde_json::json!({"status": "ok", "results": [{"id": "t", "score": 0.5}]}),
         // A missing score reads as 0.0 and falls below the threshold (v2).
-        serde_json::json!({"status": "ok", "results": [{"recordings": []}]}),
+        serde_json::json!({"status": "ok", "results": [{"id": "t", "recordings": []}]}),
     ] {
         let (_, providers) = acoustid_providers([json_answer(200, &body)]);
 
@@ -411,29 +412,35 @@ async fn acoustid_empty_and_low_score_results_are_no_match() {
 #[tokio::test]
 async fn acoustid_confident_match_without_recording_id_is_never_no_match() {
     // v2 FAIL: confident audio, nothing to key the row on. It must not read
-    // as a negative, so it is a contract failure (wiring routes it to
-    // manual review, exactly like v2).
-    let payload = serde_json::json!({
-        "status": "ok",
-        "results": [{"score": 0.99, "recordings": [{"title": "no id"}, 7, {"id": "  "}]}]
-    });
-    let (_, providers) = acoustid_providers([json_answer(200, &payload)]);
-
-    let found = providers
-        .acoustid
-        .lookup("key", "print", 200, PRIORITY)
-        .await;
-
-    assert!(
-        matches!(
-            found,
-            Err(ProviderError::Payload {
-                kind: PayloadKind::Contract,
-                ..
-            })
+    // as a negative, so it is a payload failure (wiring routes it to manual
+    // review, exactly like v2). No recording at all is a contract break; a
+    // recording without its id fails decoding.
+    for (body, kind) in [
+        (
+            serde_json::json!({"status": "ok", "results": [{"id": "t", "score": 0.99, "recordings": []}]}),
+            PayloadKind::Contract,
         ),
-        "got {found:?}"
-    );
+        (
+            serde_json::json!({"status": "ok", "results": [{"id": "t", "score": 0.99, "recordings": [{"title": "no id"}]}]}),
+            PayloadKind::Decode,
+        ),
+        (
+            serde_json::json!({"status": "ok", "results": [{"id": "t", "score": 0.99, "recordings": [{"id": "  "}]}]}),
+            PayloadKind::Decode,
+        ),
+    ] {
+        let (_, providers) = acoustid_providers([json_answer(200, &body)]);
+
+        let found = providers
+            .acoustid
+            .lookup("key", "print", 200, PRIORITY)
+            .await;
+
+        assert!(
+            matches!(&found, Err(ProviderError::Payload { kind: got, .. }) if *got == kind),
+            "{body}: got {found:?}"
+        );
+    }
 }
 
 #[test]

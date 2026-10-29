@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use droppedneedle_providers::coverart::{DownloadSize, EntityKind};
-use droppedneedle_providers::executor::ScriptedWire;
+use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
 use droppedneedle_providers::lastfm::LastFmCredentials;
 use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource};
@@ -58,6 +58,7 @@ enum Provider {
     MusicBrainzBrowse(&'static str),
     TicketmasterAttractions,
     TicketmasterEvents,
+    AcoustIdLookup,
     LastFm(LastFmRead),
 }
 
@@ -696,6 +697,20 @@ const ROWS: &[Row] = &[
         kind: PayloadKind::Decode,
         identity: "/_embedded/events/0/_embedded/attractions/0/id",
     },
+    Row {
+        name: "acoustid /v2/lookup, result id",
+        provider: Provider::AcoustIdLookup,
+        body: include_str!("../fixtures/acoustid/single_lookup.json"),
+        kind: PayloadKind::Decode,
+        identity: "/results/0/id",
+    },
+    Row {
+        name: "acoustid /v2/lookup, recording id",
+        provider: Provider::AcoustIdLookup,
+        body: include_str!("../fixtures/acoustid/single_lookup.json"),
+        kind: PayloadKind::Decode,
+        identity: "/results/0/recordings/0/id",
+    },
 ];
 
 /// Serves `body` from the provider's address and reads it through the
@@ -1134,6 +1149,30 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .browse_artist_release_groups(artist, 5, 0, Criticality::IdentityCritical)
                 .await?;
             Ok(!page.items.is_empty())
+        }
+        Provider::AcoustIdLookup => {
+            let wire = Arc::new(ScriptedWire::new());
+            wire.on(
+                Method::Post,
+                "http://fake/acoustid/v2/lookup",
+                Scripted::Answer {
+                    status: 200,
+                    headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+                    body: body.as_bytes().to_vec(),
+                },
+            );
+            let providers = Providers::unpaced_at(
+                wire,
+                ProviderEndpoints {
+                    acoustid: "http://fake/acoustid".to_owned(),
+                    ..ProviderEndpoints::closed()
+                },
+            );
+            let found = providers
+                .acoustid
+                .lookup("key", "print", 218, PRIORITY)
+                .await?;
+            Ok(found.is_some())
         }
         Provider::LastFm(read) => lastfm(read, body).await,
     }
