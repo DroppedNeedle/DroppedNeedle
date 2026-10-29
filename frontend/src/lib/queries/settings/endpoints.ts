@@ -1,7 +1,7 @@
 import { v3 } from '$lib/api/v3/endpoint';
 
 // v3 admin settings URLs, one per settings section. Download-client,
-// library and library-management sections keep their own feature modules.
+// library policy and library-management sections keep their own feature modules.
 export const SETTINGS_ENDPOINTS = {
 	advanced: () => v3('/api/v3/settings/advanced'),
 	cacheTtls: () => v3('/api/v3/settings/cache-ttls'),
@@ -14,6 +14,7 @@ export const SETTINGS_ENDPOINTS = {
 	jellyfinVerify: () => v3('/api/v3/settings/jellyfin/verify'),
 	lastfm: () => v3('/api/v3/settings/lastfm'),
 	lyrics: () => v3('/api/v3/settings/lyrics'),
+	libraryWatcher: () => v3('/api/v3/settings/library/watcher'),
 	navidrome: () => v3('/api/v3/settings/navidrome'),
 	navidromeVerify: () => v3('/api/v3/settings/navidrome/verify'),
 	navidromePlaylistSync: () => v3('/api/v3/settings/navidrome/playlist-sync'),

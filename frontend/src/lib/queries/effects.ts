@@ -39,6 +39,7 @@ import { SessionsQueryKeyFactory } from '$lib/queries/sessions/SessionsQueryKeyF
 import { SettingsQueryKeyFactory } from '$lib/queries/settings/SettingsQueryKeyFactory';
 import { SourcePlaylistQueryKeyFactory } from '$lib/queries/source-playlists/SourcePlaylistQueryKeyFactory';
 import { SpotifyQueryKeyFactory } from '$lib/queries/spotify/SpotifyQueryKeyFactory';
+import { SystemQueryKeyFactory } from '$lib/queries/system/SystemQueryKeyFactory';
 import {
 	FavoriteQueryKeyFactory,
 	PlaylistQueryKeyFactory
@@ -345,6 +346,8 @@ export const EFFECTS = {
 	],
 	/** The caller's signed-in sessions. */
 	sessionsChanged: (userId: UserId): Sweep[] => [{ key: SessionsQueryKeyFactory.list(userId) }],
+	/** The database backups and their checks. */
+	backupsChanged: (): Sweep[] => [{ key: SystemQueryKeyFactory.backups() }],
 	/** The metadata cache's sizes. */
 	cacheStatsChanged: (userId: UserId): Sweep[] => [
 		{ key: SettingsQueryKeyFactory.cacheStats(userId) }
@@ -509,6 +512,7 @@ export const remoteSourceChanged = fact('remoteSourceChanged');
 export const anyLibraryChanged = fact('anyLibraryChanged');
 export const personalMixApprovalsChanged = fact('personalMixApprovalsChanged');
 export const sessionsChanged = fact('sessionsChanged');
+export const backupsChanged = fact('backupsChanged');
 export const cacheStatsChanged = fact('cacheStatsChanged');
 export const anyArtistChanged = fact('anyArtistChanged');
 export const lyricsChanged = fact('lyricsChanged');

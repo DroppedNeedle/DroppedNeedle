@@ -14,6 +14,10 @@
 		saveTargetLibrarySettings
 	} from '$lib/queries/library/LibraryPolicyMutations.svelte';
 	import { requestLibraryRun } from '$lib/queries/library/LibraryOperationMutations.svelte';
+	import {
+		createSaveLibraryWatcherSettingsMutation,
+		getLibraryWatcherSettingsQuery
+	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
 	import { getLibraryStatsQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import {
 		getDownloadPolicyQuery,
@@ -52,6 +56,11 @@
 	const policyQuery = getDownloadPolicyQuery(() => authStore.isAdmin);
 	const savePolicy = saveDownloadPolicy();
 	const statsQuery = getLibraryStatsQuery();
+	// Only the switch is shown; the poll and batch intervals keep their values.
+	const watcher = createSettingsSection(
+		getLibraryWatcherSettingsQuery(() => authStore.isAdmin),
+		createSaveLibraryWatcherSettingsMutation()
+	);
 
 	let savedSettings = $state<TargetLibrarySettingsResponse | null>(null);
 	let impactDialog: HTMLDialogElement;
@@ -461,6 +470,20 @@
 					How often DroppedNeedle scans your library for new and changed files.
 				</p>
 				<LibraryScanScheduleControl />
+				{#if authStore.isAdmin}
+					<QueryBoundary query={watcher} what="the folder watcher">
+						{#snippet children(draft)}
+							<div class="space-y-3 pt-2">
+								<ToggleRow
+									label="Watch folders for changes"
+									description="Picks up new and changed files between scheduled scans."
+									bind:checked={draft.enabled}
+								/>
+								<SaveBar {...watcher.bar} />
+							</div>
+						{/snippet}
+					</QueryBoundary>
+				{/if}
 			</section>
 			<div class="divider my-0"></div>
 			<section class="space-y-2">

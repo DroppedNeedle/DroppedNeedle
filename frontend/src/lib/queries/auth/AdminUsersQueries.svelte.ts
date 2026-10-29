@@ -46,3 +46,11 @@ export const createDeleteUserMutation = () =>
 		mutationFn: (userId: string) => api.v3.DELETE(AUTH_ENDPOINTS.adminUser(userId)),
 		effects: refreshUsers
 	}));
+
+/** Signs one account out of every browser and device. App passwords keep working. */
+export const createRevokeUserSessionsMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (userId: string) => api.v3.DELETE(AUTH_ENDPOINTS.adminUserSessions(userId)),
+		// The user list does not show sessions.
+		effects: () => []
+	}));

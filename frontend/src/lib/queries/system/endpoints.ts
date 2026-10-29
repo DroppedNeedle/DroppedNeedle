@@ -3,5 +3,8 @@ import { v3 } from '$lib/api/v3/endpoint';
 // v3 system URLs, built through the typed registry: every template is a
 // literal the contract-coverage gate verifies against the generated spec.
 export const SYSTEM_ENDPOINTS = {
-	health: () => v3('/api/v3/system/health')
+	health: () => v3('/api/v3/system/health'),
+	backups: () => v3('/api/v3/admin/backups'),
+	restoreReport: (name: string) =>
+		v3('/api/v3/admin/backups/{name}/restore-report', { path: { name } })
 } as const;

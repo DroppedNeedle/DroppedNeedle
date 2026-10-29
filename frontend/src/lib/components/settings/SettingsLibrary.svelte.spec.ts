@@ -126,6 +126,15 @@ vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
 	getDownloadPolicyQuery: () => ({ data: { max_library_size_gb: 0 } }),
 	saveDownloadPolicy: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
+vi.mock('$lib/queries/settings/SectionSettingsQueries.svelte', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/queries/settings/SectionSettingsQueries.svelte')>()),
+	getLibraryWatcherSettingsQuery: () => ({
+		data: { enabled: true, poll_interval_seconds: 300, batch_window_seconds: 60 },
+		isPending: false,
+		isError: false
+	}),
+	createSaveLibraryWatcherSettingsMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
+}));
 vi.mock('$lib/queries/settings/LyricsSettingsQueries.svelte', () => ({
 	getLyricsSettingsQuery: () => ({ data: { enabled: true }, isPending: false, isError: false }),
 	createSaveLyricsSettingsMutation: () => ({ mutateAsync: vi.fn(), isPending: false })

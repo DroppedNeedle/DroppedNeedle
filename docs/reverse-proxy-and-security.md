@@ -1,6 +1,6 @@
 # Reverse proxy and security
 
-Running DroppedNeedle behind a reverse proxy, telling it its public address, and the HSTS and content-security policy settings under Settings > Security.
+Running DroppedNeedle behind a reverse proxy, telling it its public address, the HSTS and content-security policy settings under Settings > Security, signing out everywhere, and database backups.
 
 ## Contents
 
@@ -10,6 +10,8 @@ Running DroppedNeedle behind a reverse proxy, telling it its public address, and
 - [Addresses given to player apps](#addresses-given-to-player-apps)
 - [HSTS](#hsts)
 - [Content-security policy](#content-security-policy)
+- [Signing out everywhere](#signing-out-everywhere)
+- [Backups](#backups)
 
 ## Proxy headers
 
@@ -64,3 +66,23 @@ docker compose up -d droppedneedle
 ```
 
 It takes `enforce`, `report-only` or `off`.
+
+## Signing out everywhere
+
+Profile > Sessions lists the browsers and devices signed in to your account. "Sign out everywhere" signs out all of them, the one you are using too, and takes you to the sign-in page. App passwords for Subsonic and Jellyfin apps are separate: they keep working, and you revoke them under Profile > Connect Apps. An admin can do the same for any account from its row in Settings > Users.
+
+## Backups
+
+A backup is a copy of the database, which holds your settings, accounts, playlists and history, plus the undo copies Library Management keeps. Admins make and check them under Settings > Backups: "Back up now" makes one, and "Check" tests whether a backup would restore. DroppedNeedle also makes one by itself before an upgrade changes the database. The five newest are kept, in the `backups` folder next to `library.db`.
+
+Stored passwords and API keys in a backup are sealed with the key file `config/data_enc.key`. Keep a copy of that file with your backups: a backup cannot be used without it.
+
+Restoring is done on the host, never from the web UI. Stop the server, restore into an empty folder, and start it again on that folder:
+
+```bash
+docker compose stop droppedneedle
+docker compose run --rm droppedneedle droppedneedle-tool restore --backup /app/cache/backups/BACKUP.db --target-dir /app/cache/restored
+docker compose up -d droppedneedle
+```
+
+`restore` checks the backup first and never replaces a file. Point `LIBRARY_DB_PATH` at the restored database, or move it into place, before starting. More detail is in [Upgrading from v2](upgrading-from-v2.md#backups-and-restore).

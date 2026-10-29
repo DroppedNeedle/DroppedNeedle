@@ -18,6 +18,7 @@ const adminTabs = new Set([
 	'diagnostics',
 	'wrapped',
 	'users',
+	'backups',
 	'musicbrainz'
 ]);
 
@@ -50,6 +51,7 @@ const settingsTabLoaders: Record<string, SettingsLoader> = {
 	musicbrainz: () => import('./SettingsMusicBrainz.svelte'),
 	diagnostics: () => import('./SettingsDiagnostics.svelte'),
 	users: () => import('./SettingsUsers.svelte'),
+	backups: () => import('./SettingsBackups.svelte'),
 	security: () => import('./SettingsSecurity.svelte'),
 	plugins: () => import('./SettingsPlugins.svelte'),
 	wrapped: () => import('./SettingsWrapped.svelte'),

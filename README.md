@@ -120,6 +120,8 @@ docker compose up -d
 
 Before a new version changes the database schema, DroppedNeedle writes a verified backup of the database to `/app/cache/backups`. If an upgrade goes wrong, stop the container, delete `library.db-wal` and `library.db-shm` if they exist, put the backup back in place of `/app/cache/library.db`, copy everything in `/app/cache/backups/undo` into `/app/cache/undo` (files there are named by their content, so a plain copy that skips existing files is safe), and run the previous image. `droppedneedle-tool restore` does both for you, into an empty folder, under the database file name the server uses (`LIBRARY_DB_PATH`'s, when it is set), and never replaces a file. A backup holds your settings too. Stored passwords and API keys in it are sealed with the key file `/app/config/data_enc.key`, so keep that file with your backups. DroppedNeedle refuses to start on a database whose key file is missing or belongs to another database, and changes nothing. If the key is lost for good, `droppedneedle-tool reset-key --yes`, run with the server stopped, makes a new key and clears every stored password, API key, app password and service link, so they can be entered again. It replaces a lost key and does not change the Jellyfin ids of what you already have: stored album and artist ids survive it, and only items added afterwards get ids under the new key. See [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md#backups-and-restore).
 
+Admins can also back up at any time, and check that a backup would restore, under Settings > Backups. The five newest backups are kept. Restoring is always the host command above. See [Backups](docs/reverse-proxy-and-security.md#backups).
+
 Coming from v2? Follow [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md). Stop v2, switch the image tag to v3, and run `docker compose run --rm droppedneedle droppedneedle-tool upgrade` before you start it. It upgrades your data directory in place and keeps your v2 files in a `v2-backup` folder so you can go back. v3 refuses to start on a v2 data directory that has not been upgraded. The guide lists what comes across (accounts, settings, playlists, history, your library with its ids and matches, and the originals of files Library Management changed) and what stays behind.
 
 A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every push that changes the code, and may break. Pin a commit with `:dev-<short-sha>`.
@@ -304,7 +306,7 @@ Where things live in the UI:
 
 | Setting | Location |
 |-|-|
-| Library paths, import naming script, scan schedule, AcoustID key | Settings > Library |
+| Library paths, import naming script, scan schedule, folder watching, AcoustID key | Settings > Library |
 | Library Management profiles, previews, recovery | Library Management (admin) |
 | Download clients (slskd, SABnzbd), source priority, quality tiers, picking a copy, wanted watcher | Settings > Download Client |
 | Newznab indexers or Prowlarr | Settings > Indexers / Prowlarr |
@@ -328,6 +330,7 @@ Where things live in the UI:
 | Sidebar | Settings > Sidebar |
 | Main listening source (ListenBrainz or Last.fm) | Settings > Music Source |
 | MusicBrainz server (official or your own mirror) | Settings > MusicBrainz |
+| Database backups (admin) | Settings > Backups |
 | Users, roles, Jellyfin and Plex user import | Settings > Users |
 | Password breach checking, HSTS, the content-security policy, single sign-on (OIDC), who can download library files | Settings > Security |
 | Plugins | Settings > Plugins |
@@ -346,7 +349,7 @@ Where things live in the UI:
 | Trusted | Requests start immediately, no approval | Nothing admin side |
 | User | Requests wait for admin approval | Nothing admin side |
 
-The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Every login method toggles in the UI; no environment variables involved. Sessions last 30 days and die with the account if an admin deletes it.
+The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Every login method toggles in the UI; no environment variables involved. Sessions last 30 days and die with the account if an admin deletes it. "Sign out everywhere" on Profile > Sessions signs every browser and device out of your account; an admin can do it for anyone from Settings > Users. App passwords are separate and keep working.
 
 Forgot a password? An admin makes a one-time recovery code for the account under Settings > Users, and "Forgot password?" on the sign-in page takes it. If no admin can sign in either (for example single sign-on stopped working), make the code on the host. Stop the server first, because the command refuses to run while it is up:
 
@@ -413,7 +416,7 @@ Either way the user's own media account is linked for playback, so plays count f
 - [Library Management](docs/library-management.md): profiles, tags, artwork, lyrics, previews and Apply, Undo, editions, hand edits and retags.
 - [Requests and downloads](docs/downloads.md): editions and single tracks, following artists, held files, upgrades, choosing a copy, drop imports.
 - [Discovery, apps and accounts](docs/discovery.md): Home, Discover, radio, Weekly Mix, covers, Last.fm, ListenBrainz, Spotify and music apps.
-- [Reverse proxy and security](docs/reverse-proxy-and-security.md): proxy headers, base path, public address, HSTS, content-security policy.
+- [Reverse proxy and security](docs/reverse-proxy-and-security.md): proxy headers, base path, public address, HSTS, content-security policy, signing out everywhere, backups.
 - [Upgrading from v2](docs/upgrading-from-v2.md).
 - [MusicBrainz sources and self-hosted mirrors](docs/musicbrainz-mirror-selfhosting.md).
 

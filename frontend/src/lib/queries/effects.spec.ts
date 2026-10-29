@@ -126,6 +126,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key('admin', 'me', 'scrobble-preferences', 'personal-mix-approvals')
 	],
 	sessionsChanged: [key(U, 'auth', 'sessions', 'list')],
+	backupsChanged: [key('admin', 'system', 'backups')],
 	cacheStatsChanged: [key(U, 'admin', 'cache', 'stats')],
 	anyArtistChanged: [every('artist')],
 	lyricsChanged: [every('lyrics')],

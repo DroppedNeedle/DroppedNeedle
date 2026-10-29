@@ -23,6 +23,7 @@ export type EditionPreferences = Schemas['EditionPreferences'];
 export type EventsSettings = Schemas['EventsSettings'];
 export type GetItSettings = Schemas['GetIt'];
 export type LastFmSettings = Schemas['LastFmSettings'];
+export type LibraryWatcherSettings = Schemas['FilesystemWatcher'];
 export type NavidromeSettings = Schemas['NavidromeConnection'];
 export type OidcSettings = Schemas['OidcConnection'];
 export type PlexSettings = Schemas['PlexConnection'];
@@ -45,10 +46,11 @@ function section<T>(
 	};
 	return {
 		keys,
-		query: () =>
+		query: (enabled: () => boolean = () => true) =>
 			createQuery(() => ({
 				queryKey: keys.saved(authStore.user?.id),
-				queryFn: ({ signal }) => read(signal)
+				queryFn: ({ signal }) => read(signal),
+				enabled: enabled()
 			})),
 		save: () =>
 			createAppMutation(() => ({
@@ -106,6 +108,15 @@ const lastfm = section<LastFmSettings>(
 export const LastFmSettingsQueryKeyFactory = lastfm.keys;
 export const getLastFmSettingsQuery = lastfm.query;
 export const createSaveLastFmSettingsMutation = lastfm.save;
+
+// Read on the Library tab, which non-admins also open: pass `enabled`.
+const libraryWatcher = section<LibraryWatcherSettings>(
+	'library-watcher',
+	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.libraryWatcher(), { signal }),
+	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.libraryWatcher(), body)
+);
+export const getLibraryWatcherSettingsQuery = libraryWatcher.query;
+export const createSaveLibraryWatcherSettingsMutation = libraryWatcher.save;
 
 const navidrome = section<NavidromeSettings>(
 	'navidrome',

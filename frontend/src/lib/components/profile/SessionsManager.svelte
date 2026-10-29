@@ -1,16 +1,22 @@
 <script lang="ts">
-	import { KeyRound, Monitor, Smartphone, TriangleAlert } from 'lucide-svelte';
+	import { KeyRound, LogOut, Monitor, Smartphone, TriangleAlert } from 'lucide-svelte';
 	import { getSessionsQuery } from '$lib/queries/sessions/SessionsQuery.svelte';
-	import { createRevokeSessionMutation } from '$lib/queries/sessions/SessionsMutations.svelte';
+	import {
+		createRevokeSessionMutation,
+		createSignOutEverywhereMutation
+	} from '$lib/queries/sessions/SessionsMutations.svelte';
 	import type { SessionView } from '$lib/queries/sessions/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
 	const sessionsQuery = getSessionsQuery();
 	const sessions = $derived(sessionsQuery.data?.sessions ?? []);
 	const revoke = createRevokeSessionMutation();
+	const signOutEverywhere = createSignOutEverywhereMutation();
 
 	let confirmingId = $state<string | null>(null);
+	let signOutAllOpen = $state(false);
 
 	function kindLabel(kind: string): string {
 		if (kind === 'companion') return 'App';
@@ -149,5 +155,24 @@
 				{/each}
 			</ul>
 		{/if}
+		<div class="flex justify-end border-t border-base-300/30 px-5 py-3">
+			<Button
+				variant="danger-ghost"
+				size="sm"
+				icon={LogOut}
+				onclick={() => (signOutAllOpen = true)}
+			>
+				Sign out everywhere
+			</Button>
+		</div>
 	</div>
 </Card>
+
+<ConfirmDialog
+	bind:open={signOutAllOpen}
+	title="Sign out everywhere?"
+	message="Every browser and device is signed out, this one too. App passwords keep working."
+	confirmLabel="Sign out everywhere"
+	tone="danger"
+	onconfirm={() => signOutEverywhere.mutateAsync()}
+/>

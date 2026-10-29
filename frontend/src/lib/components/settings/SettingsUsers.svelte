@@ -2,6 +2,7 @@
 	import {
 		createAdminUserMutation,
 		createDeleteUserMutation,
+		createRevokeUserSessionsMutation,
 		createSetUserRoleMutation,
 		getAdminUsersQuery,
 		type AdminUser
@@ -26,7 +27,8 @@
 		Gauge,
 		Copy,
 		Check,
-		Clock3
+		Clock3,
+		LogOut
 	} from 'lucide-svelte';
 	import UserQuotaEditor from '$lib/components/settings/UserQuotaEditor.svelte';
 	import {
@@ -62,6 +64,7 @@
 	const setUserRole = createSetUserRoleMutation();
 	const createUser = createAdminUserMutation();
 	const deleteUser = createDeleteUserMutation();
+	const revokeSessions = createRevokeUserSessionsMutation();
 	const users = $derived(usersQuery.data?.users ?? []);
 	const total = $derived(usersQuery.data?.total ?? 0);
 	const loading = $derived(usersQuery.isFetching);
@@ -187,6 +190,22 @@
 		}
 	}
 
+	let userToSignOut = $state<UserRecord | null>(null);
+	let signOutOpen = $state(false);
+
+	function confirmSignOut(user: UserRecord) {
+		userToSignOut = user;
+		signOutOpen = true;
+	}
+
+	async function handleSignOut() {
+		const user = userToSignOut;
+		if (!user) return;
+		await revokeSessions.mutateAsync(user.id);
+		toastStore.show({ message: `Signed out ${user.display_name} everywhere`, type: 'success' });
+		userToSignOut = null;
+	}
+
 	function confirmDelete(user: UserRecord) {
 		userToDelete = user;
 		deleteOpen = true;
@@ -297,7 +316,7 @@
 
 <Card>
 	<div class="space-y-6">
-		<div class="flex items-center justify-between">
+		<div class="flex flex-wrap items-center justify-between gap-3">
 			<div>
 				<h2 class="text-lg font-semibold">User Management</h2>
 				<p class="text-sm text-base-content/50 mt-0.5">Manage accounts and roles.</p>
@@ -416,7 +435,7 @@
 					{@const canRecover = user.providers.includes('local')}
 					{@const isSelf = user.id === authStore.user?.id}
 					<div
-						class="flex items-center gap-3 p-3 bg-base-300/30 rounded-box hover:bg-base-300/50 transition-colors"
+						class="flex flex-wrap items-center gap-3 p-3 bg-base-300/30 rounded-box hover:bg-base-300/50 transition-colors"
 					>
 						<div
 							class="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 overflow-hidden"
@@ -431,7 +450,7 @@
 								<UserRound class="h-5 w-5 text-primary/60" />
 							{/if}
 						</div>
-						<div class="flex-1 min-w-0">
+						<div class="flex-1 min-w-32">
 							<p class="text-sm font-medium truncate">{user.display_name}</p>
 							{#if user.username_display ?? user.username}
 								<p class="text-xs text-base-content/40 truncate">
@@ -459,8 +478,8 @@
 								{/each}
 							</div>
 						{/if}
-						<div class="flex items-center gap-2 shrink-0">
-							<span class="badge {roleBadgeClass(user.role)} badge-sm gap-1">
+						<div class="flex w-full items-center justify-end gap-2 sm:w-auto sm:shrink-0">
+							<span class="badge {roleBadgeClass(user.role)} badge-sm hidden gap-1 sm:inline-flex">
 								<RoleIcon class="h-3 w-3" />
 								{roleLabel[user.role]}
 							</span>
@@ -468,7 +487,7 @@
 								<span class="loading loading-spinner loading-xs"></span>
 							{:else}
 								<select
-									class="select select-sm"
+									class="select select-sm w-28 shrink-0"
 									value={user.role}
 									onchange={(e) =>
 										void setRole(
@@ -497,6 +516,15 @@
 									label={`Create recovery code for ${user.display_name}`}
 									disabled={!canRecover}
 									onclick={() => openRecoveryDialog(user)}
+								/>
+							</span>
+							<span title={isSelf ? 'Sign yourself out from your profile' : undefined}>
+								<IconButton
+									size="sm"
+									icon={LogOut}
+									label="Sign out everywhere"
+									disabled={isSelf}
+									onclick={() => confirmSignOut(user)}
 								/>
 							</span>
 							<span title={isSelf ? 'You cannot delete your own account' : undefined}>
@@ -641,6 +669,20 @@
 	<p class="text-base-content/70">
 		Delete <span class="font-semibold text-base-content">{userToDelete?.display_name}</span>? This
 		permanently removes their account, login methods, and sessions. This cannot be undone.
+	</p>
+</ConfirmDialog>
+
+<ConfirmDialog
+	bind:open={signOutOpen}
+	title="Sign out everywhere?"
+	confirmLabel="Sign out"
+	tone="danger"
+	onconfirm={handleSignOut}
+	oncancel={() => (userToSignOut = null)}
+>
+	<p class="text-base-content/70">
+		Signs <span class="font-semibold text-base-content">{userToSignOut?.display_name}</span> out of every
+		browser and device. Their app passwords keep working.
 	</p>
 </ConfirmDialog>
 

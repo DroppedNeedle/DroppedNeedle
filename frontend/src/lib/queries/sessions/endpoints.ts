@@ -6,5 +6,6 @@ import { v3 } from '$lib/api/v3/endpoint';
 // file only.
 export const SESSIONS_ENDPOINTS = {
 	list: () => v3('/api/v3/auth/sessions'),
-	revoke: (sessionId: string) => v3('/api/v3/auth/sessions/{id}', { path: { id: sessionId } })
+	revoke: (sessionId: string) => v3('/api/v3/auth/sessions/{id}', { path: { id: sessionId } }),
+	logoutAll: () => v3('/api/v3/auth/logout-all')
 } as const;

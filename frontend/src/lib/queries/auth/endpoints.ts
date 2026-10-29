@@ -19,6 +19,8 @@ export const AUTH_ENDPOINTS = {
 	adminCreateUser: v3('/api/v3/admin/users'),
 	adminUser: (userId: string) => v3('/api/v3/admin/users/{id}', { path: { id: userId } }),
 	adminUserRole: (userId: string) => v3('/api/v3/admin/users/{id}/role', { path: { id: userId } }),
+	adminUserSessions: (userId: string) =>
+		v3('/api/v3/admin/users/{id}/sessions', { path: { id: userId } }),
 	adminPasswordRecovery: (userId: string) =>
 		v3('/api/v3/admin/users/{id}/recovery-code', { path: { id: userId } }),
 	adminImportJellyfin: v3('/api/v3/admin/import/jellyfin'),

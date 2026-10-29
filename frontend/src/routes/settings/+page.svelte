@@ -31,7 +31,8 @@
 		Blocks,
 		PanelLeft,
 		Activity,
-		Disc3
+		Disc3,
+		DatabaseBackup
 	} from 'lucide-svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
@@ -113,6 +114,7 @@
 		...(authStore.isAdmin
 			? [
 					{ id: 'users', label: 'Users', tier: 'system', icon: Users },
+					{ id: 'backups', label: 'Backups', tier: 'system', icon: DatabaseBackup },
 					{ id: 'security', label: 'Security', tier: 'system', icon: ShieldCheck },
 					{ id: 'plugins', label: 'Plugins', tier: 'system', icon: Blocks },
 					{ id: 'wrapped', label: 'Wrapped API', tier: 'system', icon: Gift },
