@@ -75,7 +75,7 @@ use droppedneedle_kernel::runtime_config::{ConfigStore, Live, Section};
 use droppedneedle_library::mutations::Mutations;
 use droppedneedle_library::operations::port::EditionPlans;
 use droppedneedle_library::publish::bin::DownloadTrees;
-use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
+use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::Providers;
 use tokio::sync::watch;
@@ -344,13 +344,15 @@ pub struct AcquirePorts {
     /// The library's album removal, for an admin removing a discovery
     /// batch with its albums.
     pub albums: Mutations,
+    /// The app's listening store: the Weekly Mix reads ListenBrainz links
+    /// and the auto-request preference through it.
+    pub listening: ListeningStore,
 }
 
 /// What the Weekly Mix builder is made from.
 struct MixInputs {
     providers: Arc<Providers>,
-    links: Arc<dyn ListenBrainzLinkStore>,
-    prefs: ListeningStore,
+    listening: ListeningStore,
     playlists: droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore,
 }
 
@@ -407,8 +409,7 @@ fn core(
         crate::requests::mix_sources::live_builder(
             &intake,
             &mix.providers,
-            mix.links,
-            mix.prefs,
+            mix.listening,
             mix.playlists,
             events.clone(),
         )
@@ -538,18 +539,10 @@ impl AcquireSetup {
                     staging_root: staging_root.clone(),
                 }),
                 release_poll: ports.release_poll,
-                mix: Some({
-                    let listening = ListeningStore::new(
-                        platform.db.clone(),
-                        platform.crypto.clone(),
-                        platform.clock.clone(),
-                    );
-                    MixInputs {
-                        providers: ports.providers,
-                        links: Arc::new(listening.clone()),
-                        prefs: listening,
-                        playlists: collections.playlists.clone(),
-                    }
+                mix: Some(MixInputs {
+                    providers: ports.providers,
+                    listening: ports.listening,
+                    playlists: collections.playlists.clone(),
                 }),
                 targets: clients.targets().clone(),
                 albums: Some(ports.albums),

@@ -173,8 +173,11 @@ fn rig() -> Rig {
     let store = Arc::new(PlaybackStore::new(
         db.clone(),
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
-        crypto.clone(),
-        Arc::new(clock.clone()),
+        droppedneedle_media::playback::listening::ListeningStore::new(
+            db.clone(),
+            crypto.clone(),
+            Arc::new(clock.clone()),
+        ),
         droppedneedle_kernel::jobs::queue::JobQueue::new(db.clone(), Arc::new(clock.clone())),
     ));
     let sinks = Arc::new(FakeSinks::default());

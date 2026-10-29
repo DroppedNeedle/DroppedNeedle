@@ -14,15 +14,16 @@ use axum::{
 };
 
 use droppedneedle_auth::{Role, User};
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::db::DbError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_plugins::models::StatusMessage;
 use droppedneedle_providers::listenbrainz::ListenBrainzVerifier;
 
 use super::listening::{
-    BoxFuture, ListenBrainzLink, ListenBrainzLinkStore as _, ListeningStore,
-    NOW_PLAYING_VISIBILITIES, PRIMARY_SOURCES, PrefsPatch, ScrobblePrefs,
+    BoxFuture, LinkSaveError, ListenBrainzLink, ListeningStore, NOW_PLAYING_VISIBILITIES,
+    PRIMARY_SOURCES, PrefsPatch, ScrobblePrefs,
 };
 use super::models::{
     LinkStatus, ListenBrainzConnectRequest, ScrobblePreferences, ScrobblePreferencesUpdate,
@@ -53,7 +54,7 @@ pub struct ListeningDeps {
 }
 
 /// Every way a ListenBrainz connect can fail.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ConnectError {
     /// No username was given. Usernames drive every per-user read; without
     /// one a "connected" account yields silently empty discovery.
@@ -62,15 +63,28 @@ pub enum ConnectError {
     RateLimited,
     /// The credential did not check out.
     Rejected(String),
-    /// The link failed to persist. The message is log-only.
-    StoreFailed(String),
+    /// The link failed to persist.
+    StoreFailed(LinkSaveError),
 }
 
 /// Every way a preferences save can fail.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum PrefsError {
     /// An enum field named an unknown value.
     InvalidValue(String),
+    /// The save did not land.
+    StoreFailed(DbError),
+}
+
+/// A database failure as an answer: busy asks the caller to try again,
+/// anything else is the fixed internal error.
+fn store_error(error: DbError) -> ApiError {
+    match error {
+        DbError::Busy { .. } | DbError::LaneClosed => {
+            ApiError::unavailable(Unavailable::ServerBusy, error)
+        }
+        other => ApiError::internal(other),
+    }
 }
 
 /// Connect one user's ListenBrainz account: verify first, store only on
@@ -92,19 +106,17 @@ pub async fn connect_listenbrainz(
         return Err(ConnectError::Rejected(outcome.message));
     }
     deps.store
-        .save(user_id, username, token)
+        .save_listenbrainz(user_id, username, token)
         .await
-        .map_err(|reason| {
-            tracing::warn!("listenbrainz link save failed: {reason}");
-            ConnectError::StoreFailed(reason)
-        })?;
+        .map_err(ConnectError::StoreFailed)?;
     Ok(ListenBrainzLink {
         username: username.to_owned(),
     })
 }
 
 /// Save one user's preferences. Enum fields are checked before anything
-/// is written; a saved visibility applies to the live feed at once; only
+/// is written; a save that does not land changes nothing else; a saved
+/// visibility applies to the live feed at once; only
 /// a real change of the auto-request toggle reaches the grant, so sending
 /// an unchanged full object back never queues a grant again.
 pub async fn update_prefs(
@@ -130,7 +142,10 @@ pub async fn update_prefs(
         )));
     }
     let before = deps.store.prefs(user_id).await;
-    deps.store.update_prefs(user_id, patch).await;
+    deps.store
+        .update_prefs(user_id, patch)
+        .await
+        .map_err(PrefsError::StoreFailed)?;
     if let Some(visibility) = &patch.now_playing_visibility {
         deps.presence.set_visibility(user_id, visibility);
     }
@@ -169,7 +184,7 @@ fn linked(link: ListenBrainzLink) -> LinkStatus {
 /// Read the caller's scrobble preferences.
 #[utoipa::path(
     get,
-    tag = "plugins",
+    tag = "listening",
     path = "/api/v3/me/scrobble-preferences",
     responses(
         (status = 200, description = "Scrobble preferences", body = ScrobblePreferences),
@@ -187,13 +202,14 @@ pub async fn get_scrobble_preferences(
 /// stored values.
 #[utoipa::path(
     put,
-    tag = "plugins",
+    tag = "listening",
     path = "/api/v3/me/scrobble-preferences",
     request_body = ScrobblePreferencesUpdate,
     responses(
         (status = 200, description = "Scrobble preferences", body = ScrobblePreferences),
         (status = 400, description = "Unknown enum value"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "The server is busy; try again"),
     )
 )]
 pub async fn update_scrobble_preferences(
@@ -214,6 +230,7 @@ pub async fn update_scrobble_preferences(
             prefs_response(&deps, user.user_id(), user.role()).await,
         )),
         Err(PrefsError::InvalidValue(message)) => Err(ApiError::invalid_input(message)),
+        Err(PrefsError::StoreFailed(error)) => Err(store_error(error)),
     }
 }
 
@@ -221,7 +238,7 @@ pub async fn update_scrobble_preferences(
 /// only a verified pair stores.
 #[utoipa::path(
     put,
-    tag = "plugins",
+    tag = "listening",
     path = "/api/v3/me/connections/listenbrainz",
     request_body = ListenBrainzConnectRequest,
     responses(
@@ -229,6 +246,7 @@ pub async fn update_scrobble_preferences(
         (status = 400, description = "Username required or credential rejected"),
         (status = 401, description = "Not authenticated"),
         (status = 429, description = "ListenBrainz is rate-limiting"),
+        (status = 503, description = "The server is busy; try again"),
     )
 )]
 pub async fn connect_listenbrainz_route(
@@ -243,14 +261,15 @@ pub async fn connect_listenbrainz_route(
         )),
         Err(ConnectError::RateLimited) => Err(ApiError::rate_limited(60)),
         Err(ConnectError::Rejected(message)) => Err(ApiError::invalid_input(message)),
-        Err(ConnectError::StoreFailed(reason)) => Err(ApiError::internal(reason)),
+        Err(ConnectError::StoreFailed(LinkSaveError::Db(error))) => Err(store_error(error)),
+        Err(ConnectError::StoreFailed(error)) => Err(ApiError::internal(error)),
     }
 }
 
 /// Read the caller's ListenBrainz link status. Unlinked reads as missing.
 #[utoipa::path(
     get,
-    tag = "plugins",
+    tag = "listening",
     path = "/api/v3/me/connections/listenbrainz",
     responses(
         (status = 200, description = "Link status", body = LinkStatus),
@@ -262,7 +281,7 @@ pub async fn listenbrainz_status(
     State(deps): State<ListeningDeps>,
     User(user): User,
 ) -> Result<Json<LinkStatus>, ApiError> {
-    match deps.store.status(user.user_id()).await {
+    match deps.store.listenbrainz_link(user.user_id()).await {
         Some(link) => Ok(Json(linked(link))),
         None => Err(ApiError::not_found()),
     }
@@ -271,19 +290,25 @@ pub async fn listenbrainz_status(
 /// Remove the caller's ListenBrainz link.
 #[utoipa::path(
     delete,
-    tag = "plugins",
+    tag = "listening",
     path = "/api/v3/me/connections/listenbrainz",
     responses(
         (status = 200, description = "Disconnect receipt", body = StatusMessage),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "No link"),
+        (status = 503, description = "The server is busy; try again"),
     )
 )]
 pub async fn disconnect_listenbrainz_route(
     State(deps): State<ListeningDeps>,
     User(user): User,
 ) -> Result<Json<StatusMessage>, ApiError> {
-    if deps.store.delete(user.user_id()).await {
+    if deps
+        .store
+        .delete_listenbrainz(user.user_id())
+        .await
+        .map_err(store_error)?
+    {
         Ok(Json(StatusMessage {
             status: "ok".to_owned(),
             message: "Disconnected listenbrainz".to_owned(),

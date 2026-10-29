@@ -20,7 +20,7 @@ use super::{ListeningError, ListeningResult};
 use crate::reads::catalog::mapping::should_include_release;
 use crate::reads::catalog::upstream::{CatalogLastFm, Upstream, user_lastfm};
 use crate::reads::discover::ports::BoxFuture;
-use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
+use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_media::remotes::adapter::RemoteHandle;
 use droppedneedle_media::remotes::connections::{ConnectionResolver, Reads, ResolveError};
 use droppedneedle_media::remotes::models::SourceName;
@@ -38,7 +38,6 @@ const WEEKLY_EXPLORATION_PATCH: &str = "weekly-exploration";
 pub struct LiveNetwork {
     upstream: Upstream,
     listenbrainz: ListenBrainzClient,
-    links: Arc<dyn ListenBrainzLinkStore>,
     jellyfin: Arc<ConnectionResolver>,
     http: reqwest::Client,
     listening: ListeningStore,
@@ -50,14 +49,12 @@ impl LiveNetwork {
         upstream: Upstream,
         providers: &Providers,
         http: reqwest::Client,
-        links: Arc<dyn ListenBrainzLinkStore>,
         jellyfin: Arc<ConnectionResolver>,
         listening: ListeningStore,
     ) -> Self {
         Self {
             listenbrainz: providers.listenbrainz.clone(),
             upstream,
-            links,
             jellyfin,
             http,
             listening,
@@ -82,9 +79,13 @@ impl LiveNetwork {
     /// The user's ListenBrainz identity, lending the token to reads that
     /// ListenBrainz gates for anonymous callers.
     async fn credentials(&self, user_id: &str) -> ListenBrainzCredentials {
-        let username = self.links.status(user_id).await.map(|link| link.username);
+        let username = self
+            .listening
+            .listenbrainz_link(user_id)
+            .await
+            .map(|link| link.username);
         let user_token = match username {
-            Some(_) => self.links.token_for(user_id).await,
+            Some(_) => self.listening.listenbrainz_token(user_id).await,
             None => None,
         };
         ListenBrainzCredentials {
@@ -227,7 +228,11 @@ impl ListeningNetwork for LiveNetwork {
 
     fn accounts<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, UserMusic> {
         Box::pin(async move {
-            let listenbrainz = self.links.status(user_id).await.map(|link| link.username);
+            let listenbrainz = self
+                .listening
+                .listenbrainz_link(user_id)
+                .await
+                .map(|link| link.username);
             let lastfm_link = user_lastfm(self.upstream.users(), user_id).await;
             let lastfm = self.lastfm(user_id).await.is_some();
             let jellyfin = match self.jellyfin.resolve(user_id, SourceName::Jellyfin).await {

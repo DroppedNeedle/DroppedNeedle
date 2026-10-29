@@ -683,7 +683,7 @@ impl Rig {
         let reads = crate::common::bundles::reads_at(
             &platform,
             auth.deps.clone(),
-            crate::common::reads_inputs(&dir),
+            crate::common::reads_inputs(&platform),
             &library,
             CollectionsState::new(
                 CollectionsDb::new(runtime.db().clone(), platform.clock.clone()),

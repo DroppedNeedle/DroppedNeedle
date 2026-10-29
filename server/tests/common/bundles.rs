@@ -112,6 +112,7 @@ pub fn acquire_at(
             collections: collections.clone(),
             providers,
             albums: droppedneedle_library::mutations::Mutations::new(library),
+            listening: super::listening_store(platform),
         },
         &outbound.spotify(),
         droppedneedle_kernel::jobs::queue::JobQueue::new(
@@ -265,6 +266,7 @@ pub fn media_at(
         Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
             acquire.requests.mixer.clone(),
         )),
+        super::listening_store(platform),
         droppedneedle_kernel::jobs::queue::JobQueue::new(
             platform.db.clone(),
             platform.clock.clone(),

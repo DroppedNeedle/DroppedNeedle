@@ -19,7 +19,7 @@ use crate::reads::discover::{
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::ConfigStore;
-use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
+use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_media::remotes::connections::ConnectionResolver;
 use droppedneedle_providers::{
     Providers,
@@ -35,8 +35,9 @@ pub struct DiscoverInputs {
     pub http: reqwest::Client,
     /// Shared limiters (ListenBrainz paces at 1/s).
     pub providers: Arc<Providers>,
-    /// Users' ListenBrainz links, for "your top albums".
-    pub listenbrainz_links: Arc<dyn ListenBrainzLinkStore>,
+    /// The app's listening store: users' ListenBrainz links, for "your
+    /// top albums", and their listening preferences.
+    pub listening: ListeningStore,
     /// The YouTube quota file (`<cache_dir>/youtube_quota.json`).
     pub youtube_quota_path: PathBuf,
     /// The Last.fm switch and the users' Last.fm links.
@@ -61,13 +62,8 @@ pub fn live_network(inputs: &DiscoverInputs, config: &ConfigStore) -> Arc<dyn Li
         live_upstream(inputs, config),
         &inputs.providers,
         inputs.http.clone(),
-        inputs.listenbrainz_links.clone(),
         inputs.remotes.clone(),
-        ListeningStore::new(
-            inputs.db.clone(),
-            inputs.users.crypto.clone(),
-            inputs.clock.clone(),
-        ),
+        inputs.listening.clone(),
     ))
 }
 

@@ -235,12 +235,11 @@ pub struct NowPlayingDeleteQuery {
 // Listening settings: scrobble preferences and the ListenBrainz link
 // ---------------------------------------------------------------------------
 
-/// One linked external account. Never carries the secret, only the name.
-/// The schema rename keeps this distinct from the remotes
-/// `ConnectionStatus` in the one OpenAPI document; the wire shape is
-/// unchanged.
+/// One linked listening account. Never carries the secret, only the name.
+/// Named apart from the remotes `ConnectionStatus` in the one OpenAPI
+/// document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = PluginConnectionStatus)]
+#[schema(as = ListeningLinkStatus)]
 pub struct LinkStatus {
     /// Service name (`listenbrainz` here).
     pub service: String,

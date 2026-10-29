@@ -8,27 +8,27 @@
 //! that cannot open a sealed value behave as unlinked, so no failure ever
 //! hands out a token.
 //!
-//! [`ListeningStore`] answers async callers (the settings routes, discovery,
-//! the Weekly Mix) and, through the `_blocking` reads, the synchronous
-//! reporting services in `sqlite.rs`. Both run the same statements.
+//! One [`ListeningStore`] is built at startup and handed to every caller:
+//! the settings routes, discovery, the Weekly Mix and, through the
+//! `_blocking` reads, the synchronous reporting services in `sqlite.rs`.
+//! A save that fails answers its error; reads log and fall back.
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-#[cfg(any(test, feature = "test-support"))]
-use std::{collections::HashMap, sync::Mutex};
 
+use droppedneedle_auth::sqlite::parse_lastfm;
 use droppedneedle_auth::times::to_iso;
 use droppedneedle_auth::users::stores::{LastFmKeys, LastFmSwitch};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
-use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::runtime_config::crypto::{Crypto, CryptoError};
 use rusqlite::{Connection, OptionalExtension};
 
-use super::ports::{VISIBILITY_FULL, VISIBILITY_OFFLINE, VISIBILITY_TRACK_HIDDEN};
+use super::ports::{ScrobbleTargets, VISIBILITY_FULL, VISIBILITY_OFFLINE, VISIBILITY_TRACK_HIDDEN};
 use super::sql;
 
-/// A boxed future, for the link store trait.
+/// A boxed future, for the ports the routes take.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Allowed `primary_music_source` values.
@@ -132,29 +132,20 @@ pub struct LastFmSession {
     pub session_key: String,
 }
 
-/// Per-user ListenBrainz links. Tokens are sealed at rest; a link whose
-/// ciphertext no longer opens reads as unlinked, never as an error. A trait
-/// so discovery and the Weekly Mix tests can link accounts without a
-/// database.
-pub trait ListenBrainzLinkStore: Send + Sync {
-    /// Store (or replace) one user's link, sealing the token.
-    fn save(&self, user_id: &str, username: &str, token: &str)
-    -> BoxFuture<'_, Result<(), String>>;
-    /// Non-secret link view, when the user has a usable link.
-    fn status(&self, user_id: &str) -> BoxFuture<'_, Option<ListenBrainzLink>>;
-    /// Whether any link row exists, even one whose ciphertext no longer opens.
-    fn has_link(&self, user_id: &str) -> BoxFuture<'_, bool>;
-    /// Decrypted token for server-side use only. Never serializes.
-    fn token_for(&self, user_id: &str) -> BoxFuture<'_, Option<String>>;
-    /// Remove one user's link. False means there was none.
-    fn delete(&self, user_id: &str) -> BoxFuture<'_, bool>;
+/// Why a ListenBrainz link was not saved.
+#[derive(Debug, thiserror::Error)]
+pub enum LinkSaveError {
+    /// The token could not be sealed.
+    #[error("the link could not be sealed: {0}")]
+    Seal(#[from] CryptoError),
+    /// The database refused the write.
+    #[error(transparent)]
+    Db(#[from] DbError),
 }
 
 /// Seal one ListenBrainz link into the document its row stores.
-fn seal_link(crypto: &Crypto, username: &str, token: &str) -> Result<String, String> {
-    crypto
-        .encrypt(&serde_json::json!({"user_token": token, "username": username}).to_string())
-        .map_err(|error| error.to_string())
+fn seal_link(crypto: &Crypto, username: &str, token: &str) -> Result<String, CryptoError> {
+    crypto.encrypt(&serde_json::json!({"user_token": token, "username": username}).to_string())
 }
 
 /// Open one sealed ListenBrainz link into its username and token.
@@ -173,21 +164,12 @@ fn usable_token(link: Option<(String, String)>) -> Option<String> {
         .filter(|token| !token.is_empty())
 }
 
-/// The Last.fm document in `user_connections`, its secrets still sealed.
-#[derive(serde::Deserialize)]
-struct LastFmDocument {
-    #[serde(default)]
-    api_key: Option<String>,
-    #[serde(default)]
-    shared_secret: Option<String>,
-    #[serde(default)]
-    session_key: Option<String>,
-}
-
 /// Listening preferences and scrobble links over the database. Reads go
 /// through the read pool, saves through the writer lane on the foreground
 /// class. A failed read logs and answers the defaults (preferences) or
-/// unlinked (links).
+/// unlinked (links); a failed save answers its error. ListenBrainz tokens
+/// are sealed at rest, and a link whose ciphertext no longer opens reads
+/// as unlinked.
 #[derive(Clone)]
 pub struct ListeningStore {
     db: Db,
@@ -229,13 +211,12 @@ impl ListeningStore {
 
     /// Save the fields `patch` names over the user's stored preferences,
     /// in one transaction so two partial saves never undo each other. A
-    /// failed save is logged and the stored row stays as it was.
-    pub async fn update_prefs(&self, user_id: &str, patch: &PrefsPatch) {
+    /// failed save leaves the stored row as it was.
+    pub async fn update_prefs(&self, user_id: &str, patch: &PrefsPatch) -> Result<(), DbError> {
         let user = user_id.to_owned();
         let patch = patch.clone();
         let now = to_iso(self.clock.now_unix());
-        let saved = self
-            .db
+        self.db
             .write(Lane::Foreground, "listening-prefs-save", move |tx| {
                 let mut prefs = read_prefs(tx, &user)?;
                 patch.apply(&mut prefs);
@@ -254,10 +235,7 @@ impl ListeningStore {
                 )?;
                 Ok::<_, DbError>(())
             })
-            .await;
-        if let Err(error) = saved {
-            tracing::warn!(%user_id, %error, "listening prefs save failed");
-        }
+            .await
     }
 
     /// The user's ListenBrainz token, read synchronously; `None` when
@@ -312,7 +290,7 @@ impl ListeningStore {
         else {
             return Ok(None);
         };
-        let Ok(document) = serde_json::from_str::<LastFmDocument>(&data) else {
+        let Some(document) = parse_lastfm(&data) else {
             tracing::warn!("last.fm connection row is corrupt; treating as unlinked");
             return Ok(None);
         };
@@ -320,11 +298,13 @@ impl ListeningStore {
             let plaintext = self.crypto.decrypt(sealed.as_deref()?).ok()?;
             (!plaintext.is_empty()).then_some(plaintext)
         };
-        let Some(session_key) = open(document.session_key) else {
+        let Some(session_key) = open(document.session_key_encrypted) else {
             return Ok(None);
         };
-        let (api_key, shared_secret) = match (open(document.api_key), open(document.shared_secret))
-        {
+        let (api_key, shared_secret) = match (
+            open(document.api_key_encrypted),
+            open(document.shared_secret_encrypted),
+        ) {
             (Some(api_key), Some(shared_secret)) => (api_key, shared_secret),
             _ => match instance_keys {
                 Some(keys) => (keys.api_key.clone(), keys.shared_secret.clone()),
@@ -336,6 +316,81 @@ impl ListeningStore {
             shared_secret,
             session_key,
         }))
+    }
+
+    /// The scrobble services the user linked, read synchronously: an
+    /// enabled ListenBrainz row (sealed whole, so presence is the signal)
+    /// and an enabled Last.fm row whose document carries a session key.
+    pub fn scrobble_links_blocking(&self, user_id: &str) -> Result<ScrobbleTargets, DbError> {
+        let (listenbrainz, lastfm) = self.db.read_blocking("playback-scrobble-links", |conn| {
+            Ok::<_, DbError>((
+                read_enabled_connection(conn, user_id, LISTENBRAINZ)?,
+                read_enabled_connection(conn, user_id, LASTFM)?,
+            ))
+        })?;
+        Ok(ScrobbleTargets {
+            listenbrainz: listenbrainz.is_some(),
+            lastfm: lastfm
+                .and_then(|data| parse_lastfm(&data))
+                .and_then(|link| link.session_key_encrypted)
+                .is_some_and(|key| !key.is_empty()),
+        })
+    }
+
+    /// Store (or replace) one user's ListenBrainz link, sealing the token.
+    pub async fn save_listenbrainz(
+        &self,
+        user_id: &str,
+        username: &str,
+        token: &str,
+    ) -> Result<(), LinkSaveError> {
+        let user = user_id.to_owned();
+        let sealed = seal_link(&self.crypto, username, token)?;
+        let now = to_iso(self.clock.now_unix());
+        self.db
+            .write(Lane::Foreground, "listening-link-save", move |tx| {
+                tx.execute(
+                    sql::SAVE_CONNECTION.text(),
+                    rusqlite::params![user, LISTENBRAINZ, sealed, now],
+                )?;
+                Ok::<_, DbError>(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// The non-secret view of the user's ListenBrainz link, when they have
+    /// a usable one.
+    pub async fn listenbrainz_link(&self, user_id: &str) -> Option<ListenBrainzLink> {
+        let sealed = self.listenbrainz_document(user_id, "status").await?;
+        open_link(&self.crypto, &sealed).map(|(username, _)| ListenBrainzLink { username })
+    }
+
+    /// Whether any ListenBrainz row exists, even one whose ciphertext no
+    /// longer opens.
+    pub async fn has_listenbrainz_link(&self, user_id: &str) -> bool {
+        self.listenbrainz_document(user_id, "has_link")
+            .await
+            .is_some()
+    }
+
+    /// The decrypted ListenBrainz token, for server-side use only.
+    pub async fn listenbrainz_token(&self, user_id: &str) -> Option<String> {
+        let sealed = self.listenbrainz_document(user_id, "token").await?;
+        usable_token(open_link(&self.crypto, &sealed))
+    }
+
+    /// Remove one user's ListenBrainz link. False means there was none.
+    pub async fn delete_listenbrainz(&self, user_id: &str) -> Result<bool, DbError> {
+        let user = user_id.to_owned();
+        self.db
+            .write(Lane::Foreground, "listening-link-delete", move |tx| {
+                Ok::<_, DbError>(
+                    tx.execute(sql::DELETE_CONNECTION.text(), [user.as_str(), LISTENBRAINZ])?,
+                )
+            })
+            .await
+            .map(|changed| changed > 0)
     }
 
     /// The stored ListenBrainz document, or `None` after logging a failed
@@ -371,164 +426,35 @@ fn read_prefs(conn: &Connection, user_id: &str) -> Result<ScrobblePrefs, DbError
     Ok(prefs.unwrap_or_default())
 }
 
+/// The stored document of one user's link to `service`, with whether the
+/// link is enabled.
+fn read_connection_row(
+    conn: &Connection,
+    user_id: &str,
+    service: &str,
+) -> Result<Option<(String, bool)>, DbError> {
+    Ok(conn
+        .query_row(sql::CONNECTION.text(), [user_id, service], |row| {
+            Ok((row.get(0)?, row.get::<_, i64>(1)? != 0))
+        })
+        .optional()?)
+}
+
 /// The stored document of one user's link to `service`.
 fn read_connection(
     conn: &Connection,
     user_id: &str,
     service: &str,
 ) -> Result<Option<String>, DbError> {
-    Ok(conn
-        .query_row(sql::CONNECTION.text(), [user_id, service], |row| row.get(0))
-        .optional()?)
+    Ok(read_connection_row(conn, user_id, service)?.map(|(data, _)| data))
 }
 
-impl ListenBrainzLinkStore for ListeningStore {
-    fn save(
-        &self,
-        user_id: &str,
-        username: &str,
-        token: &str,
-    ) -> BoxFuture<'_, Result<(), String>> {
-        let user = user_id.to_owned();
-        let sealed = seal_link(&self.crypto, username, token);
-        let now = to_iso(self.clock.now_unix());
-        Box::pin(async move {
-            let sealed = sealed?;
-            self.db
-                .write(Lane::Foreground, "listening-link-save", move |tx| {
-                    tx.execute(
-                        sql::SAVE_CONNECTION.text(),
-                        rusqlite::params![user, LISTENBRAINZ, sealed, now],
-                    )?;
-                    Ok(())
-                })
-                .await
-                .map_err(|error: DbError| {
-                    tracing::warn!(%error, "listenbrainz link save failed");
-                    error.to_string()
-                })
-        })
-    }
-
-    fn status(&self, user_id: &str) -> BoxFuture<'_, Option<ListenBrainzLink>> {
-        let user = user_id.to_owned();
-        Box::pin(async move {
-            let sealed = self.listenbrainz_document(&user, "status").await?;
-            open_link(&self.crypto, &sealed).map(|(username, _)| ListenBrainzLink { username })
-        })
-    }
-
-    fn has_link(&self, user_id: &str) -> BoxFuture<'_, bool> {
-        let user = user_id.to_owned();
-        Box::pin(async move {
-            self.listenbrainz_document(&user, "has_link")
-                .await
-                .is_some()
-        })
-    }
-
-    fn token_for(&self, user_id: &str) -> BoxFuture<'_, Option<String>> {
-        let user = user_id.to_owned();
-        Box::pin(async move {
-            let sealed = self.listenbrainz_document(&user, "token").await?;
-            usable_token(open_link(&self.crypto, &sealed))
-        })
-    }
-
-    fn delete(&self, user_id: &str) -> BoxFuture<'_, bool> {
-        let user = user_id.to_owned();
-        Box::pin(async move {
-            self.db
-                .write(Lane::Foreground, "listening-link-delete", move |tx| {
-                    Ok(tx.execute(sql::DELETE_CONNECTION.text(), [user.as_str(), LISTENBRAINZ])?)
-                })
-                .await
-                .map(|changed| changed > 0)
-                .unwrap_or_else(|error: DbError| {
-                    tracing::warn!(%error, "listenbrainz link delete failed");
-                    false
-                })
-        })
-    }
-}
-
-/// In-memory link store with sealed tokens, for tests that link accounts
-/// without a database.
-#[cfg(any(test, feature = "test-support"))]
-pub struct MemoryListenBrainzLinkStore {
-    crypto: Arc<Crypto>,
-    links: Mutex<HashMap<String, String>>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl std::fmt::Debug for MemoryListenBrainzLinkStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MemoryListenBrainzLinkStore")
-            .finish_non_exhaustive()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl MemoryListenBrainzLinkStore {
-    /// Empty store under one key.
-    pub fn new(crypto: Arc<Crypto>) -> Self {
-        Self {
-            crypto,
-            links: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn sealed_for(&self, user_id: &str) -> Option<String> {
-        self.links
-            .lock()
-            .ok()
-            .and_then(|guard| guard.get(user_id).cloned())
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ListenBrainzLinkStore for MemoryListenBrainzLinkStore {
-    fn save(
-        &self,
-        user_id: &str,
-        username: &str,
-        token: &str,
-    ) -> BoxFuture<'_, Result<(), String>> {
-        let stored = seal_link(&self.crypto, username, token).map(|sealed| {
-            if let Ok(mut guard) = self.links.lock() {
-                guard.insert(user_id.to_owned(), sealed);
-            }
-        });
-        Box::pin(async move { stored })
-    }
-
-    fn status(&self, user_id: &str) -> BoxFuture<'_, Option<ListenBrainzLink>> {
-        let link = self
-            .sealed_for(user_id)
-            .and_then(|sealed| open_link(&self.crypto, &sealed))
-            .map(|(username, _)| ListenBrainzLink { username });
-        Box::pin(async move { link })
-    }
-
-    fn has_link(&self, user_id: &str) -> BoxFuture<'_, bool> {
-        let linked = self.sealed_for(user_id).is_some();
-        Box::pin(async move { linked })
-    }
-
-    fn token_for(&self, user_id: &str) -> BoxFuture<'_, Option<String>> {
-        let token = usable_token(
-            self.sealed_for(user_id)
-                .and_then(|sealed| open_link(&self.crypto, &sealed)),
-        );
-        Box::pin(async move { token })
-    }
-
-    fn delete(&self, user_id: &str) -> BoxFuture<'_, bool> {
-        let removed = self
-            .links
-            .lock()
-            .map(|mut guard| guard.remove(user_id).is_some())
-            .unwrap_or(false);
-        Box::pin(async move { removed })
-    }
+/// The stored document of one user's enabled link to `service`.
+fn read_enabled_connection(
+    conn: &Connection,
+    user_id: &str,
+    service: &str,
+) -> Result<Option<String>, DbError> {
+    Ok(read_connection_row(conn, user_id, service)?
+        .and_then(|(data, enabled)| enabled.then_some(data)))
 }

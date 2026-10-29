@@ -24,6 +24,7 @@ use axum::extract::FromRef;
 
 use crate::playback::PlaybackDeps;
 use crate::playback::forwarding::{Courier, NowPlayingSender, NowPlayingWorker, ScrobbleJobs};
+use crate::playback::listening::ListeningStore;
 use crate::playback::listening_routes::{ListeningDeps, MixGrants};
 use crate::playback::presence::PresenceRegistry;
 use crate::playback::report::{MixedDedup, ScrobbleDedup};
@@ -145,8 +146,9 @@ impl MediaSetup {
     /// scrobbles and now-playing reports go through the one ListenBrainz
     /// client and the one Last.fm client of `providers`, and that
     /// ListenBrainz client checks a link before it is stored; `mix` is the
-    /// personal-mix standing grant the listening settings report and feed.
-    /// Scrobbles wait on `jobs`, whose clock `jobs_clock` measures their
+    /// personal-mix standing grant the listening settings report and feed;
+    /// `listening` is the app's one listening store, which reporting reads
+    /// and the listening settings save through. Scrobbles wait on `jobs`, whose clock `jobs_clock` measures their
     /// window.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
@@ -159,15 +161,12 @@ impl MediaSetup {
         ffmpeg: Option<PathBuf>,
         providers: &droppedneedle_providers::Providers,
         mix: Arc<dyn MixGrants>,
+        listening: ListeningStore,
         jobs: JobQueue,
         jobs_clock: Arc<dyn Clock>,
     ) -> Result<(Self, MediaWorkers), String> {
         let (db, app_config, config) = (&platform.db, &platform.config, &*platform.settings);
-        let (http_factory, ids, crypto) = (
-            &platform.http,
-            platform.ids.clone(),
-            platform.crypto.clone(),
-        );
+        let (http_factory, ids) = (&platform.http, platform.ids.clone());
         let http = http_factory.shared().clone();
         crate::stream::plugin_url::sweep_stale_spools();
         let library = LibraryFiles::new(db.clone(), library_roots);
@@ -204,13 +203,7 @@ impl MediaSetup {
         let stream = StreamState {
             engine: Arc::new(gateway),
         };
-        let store = Arc::new(PlaybackStore::new(
-            db.clone(),
-            ids,
-            crypto,
-            platform.clock.clone(),
-            jobs,
-        ));
+        let store = Arc::new(PlaybackStore::new(db.clone(), ids, listening, jobs));
         let (queue, rx) = ReportQueue::channel();
         let courier = Courier::new(
             providers.listenbrainz.clone(),

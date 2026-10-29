@@ -18,7 +18,7 @@ use super::wrapped::{
 };
 use droppedneedle_auth::sqlite::Users;
 use droppedneedle_kernel::clock::Clock;
-use droppedneedle_media::playback::listening::ListenBrainzLinkStore;
+use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::{ProviderError, RequestPriority};
 
@@ -38,7 +38,7 @@ const PRIORITY: RequestPriority = RequestPriority::UserInitiated;
 /// ListenBrainz client.
 pub struct ListenBrainzWrapped {
     users: Users,
-    links: Arc<dyn ListenBrainzLinkStore>,
+    links: ListeningStore,
     client: ListenBrainzClient,
     clock: Arc<dyn Clock>,
 }
@@ -47,7 +47,7 @@ impl ListenBrainzWrapped {
     /// Wire the data source; `clock` says which year is current.
     pub fn new(
         users: Users,
-        links: Arc<dyn ListenBrainzLinkStore>,
+        links: ListeningStore,
         client: ListenBrainzClient,
         clock: Arc<dyn Clock>,
     ) -> Self {
@@ -103,7 +103,7 @@ impl ListenBrainzWrapped {
             loved_tracks_count: 0,
             total_listens_estimated: 0,
         };
-        let Some(link) = self.links.status(user_id).await else {
+        let Some(link) = self.links.listenbrainz_link(user_id).await else {
             return Some(payload);
         };
         let username = link.username.as_str();
@@ -185,7 +185,7 @@ impl WrappedData for ListenBrainzWrapped {
         Box::pin(async move {
             let mut summaries = Vec::new();
             for user in self.all_users().await {
-                let linked = self.links.status(&user.id).await.is_some();
+                let linked = self.links.listenbrainz_link(&user.id).await.is_some();
                 summaries.push(WrappedUserSummary {
                     id: user.id,
                     display_name: user.display_name,

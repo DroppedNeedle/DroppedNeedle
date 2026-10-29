@@ -18,7 +18,7 @@ use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, open_runtime};
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
-use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore, PrefsPatch};
+use droppedneedle_media::playback::listening::{ListeningStore, PrefsPatch};
 use droppedneedle_media::playback::listening_routes::{
     ListeningDeps, MixGrants, connect_listenbrainz, routes, update_prefs,
 };
@@ -144,10 +144,10 @@ async fn connect_verifies_then_stores() {
         .await
         .unwrap();
     assert_eq!(link.username, "melody");
-    let status = rig.deps.store.status("user-1").await.unwrap();
+    let status = rig.deps.store.listenbrainz_link("user-1").await.unwrap();
     assert_eq!(status.username, "melody");
     assert_eq!(
-        rig.deps.store.token_for("user-1").await.as_deref(),
+        rig.deps.store.listenbrainz_token("user-1").await.as_deref(),
         Some("lb-token-1")
     );
     rig.runtime.shutdown().await;
@@ -179,7 +179,7 @@ async fn rejected_credentials_store_nothing() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert!(!rig.deps.store.has_link("user-1").await);
+    assert!(!rig.deps.store.has_listenbrainz_link("user-1").await);
     rig.runtime.shutdown().await;
 }
 
@@ -371,7 +371,8 @@ async fn sqlite_prefs_partial_upsert_survives_reopen() {
                 ..PrefsPatch::default()
             },
         )
-        .await;
+        .await
+        .expect("prefs save");
     let prefs = store.prefs("user-1").await;
     assert!(prefs.scrobble_to_listenbrainz);
     assert_eq!(prefs.primary_music_source, "lastfm");
@@ -397,7 +398,8 @@ async fn sqlite_prefs_partial_upsert_survives_reopen() {
                 ..PrefsPatch::default()
             },
         )
-        .await;
+        .await
+        .expect("prefs save");
     let prefs = store.prefs("user-1").await;
     assert_eq!(prefs.now_playing_visibility, "offline");
     assert!(prefs.scrobble_to_listenbrainz);
@@ -412,18 +414,22 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
     mirror_user(&runtime, "user-1").await;
     let store = store_over(&runtime);
 
-    assert!(!store.has_link("user-1").await);
+    assert!(!store.has_listenbrainz_link("user-1").await);
     store
-        .save("user-1", "melody", "lb-token-1")
+        .save_listenbrainz("user-1", "melody", "lb-token-1")
         .await
         .expect("save wins");
-    assert!(store.has_link("user-1").await);
+    assert!(store.has_listenbrainz_link("user-1").await);
     assert_eq!(
-        store.status("user-1").await.expect("link reads").username,
+        store
+            .listenbrainz_link("user-1")
+            .await
+            .expect("link reads")
+            .username,
         "melody"
     );
     assert_eq!(
-        store.token_for("user-1").await.as_deref(),
+        store.listenbrainz_token("user-1").await.as_deref(),
         Some("lb-token-1")
     );
     // The raw row holds ciphertext, never the token.
@@ -441,12 +447,16 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
         .expect("runtime reopens");
     let store = store_over(&runtime);
     assert_eq!(
-        store.status("user-1").await.expect("link reads").username,
+        store
+            .listenbrainz_link("user-1")
+            .await
+            .expect("link reads")
+            .username,
         "melody"
     );
-    assert!(store.delete("user-1").await);
-    assert!(!store.has_link("user-1").await);
-    assert!(!store.delete("user-1").await);
+    assert!(store.delete_listenbrainz("user-1").await.unwrap());
+    assert!(!store.has_listenbrainz_link("user-1").await);
+    assert!(!store.delete_listenbrainz("user-1").await.unwrap());
     runtime.shutdown().await;
 }
 
@@ -488,5 +498,42 @@ async fn saved_visibility_reaches_the_live_presence_feed() {
     .await
     .unwrap();
     assert!(registry.snapshot().is_empty(), "offline hides the session");
+    rig.runtime.shutdown().await;
+}
+
+/// A preferences save the database refuses answers an error, never the
+/// stored values as if it had landed.
+#[tokio::test]
+async fn a_refused_preferences_save_answers_an_error() {
+    let rig = rig().await;
+    rig.runtime
+        .db()
+        .write(Lane::Foreground, "scrobble-test-refuse", |tx| {
+            tx.execute_batch(
+                "CREATE TRIGGER refuse_prefs BEFORE INSERT ON user_listening_prefs \
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            )?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .expect("trigger installs");
+    let router = with_test_principal(
+        routes().with_state(rig.deps.clone()).into_router(),
+        user_session("user-1"),
+    );
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v3/me/scrobble-preferences")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"scrobble_to_listenbrainz": true}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     rig.runtime.shutdown().await;
 }

@@ -14,7 +14,7 @@ use futures_util::future::BoxFuture;
 use super::mix::MixSources;
 use super::sql;
 use droppedneedle_kernel::db::{Db, DbError};
-use droppedneedle_media::playback::listening::{ListenBrainzLinkStore, ListeningStore};
+use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };
@@ -29,14 +29,14 @@ const PRIORITY: RequestPriority = RequestPriority::BackgroundSync;
 /// Live ListenBrainz reads for the mix builder.
 pub struct LiveMixSources {
     client: ListenBrainzClient,
-    links: Arc<dyn ListenBrainzLinkStore>,
+    links: ListeningStore,
     db: Db,
 }
 
 impl LiveMixSources {
     /// Sources over the ListenBrainz client, the link store and the
     /// database holding `user_connections`.
-    pub fn new(client: ListenBrainzClient, links: Arc<dyn ListenBrainzLinkStore>, db: Db) -> Self {
+    pub fn new(client: ListenBrainzClient, links: ListeningStore, db: Db) -> Self {
         Self { client, links, db }
     }
 }
@@ -53,8 +53,8 @@ fn anonymous() -> ListenBrainzCredentials {
 impl MixSources for LiveMixSources {
     fn identity<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Option<ListenBrainzCredentials>> {
         Box::pin(async move {
-            let link = self.links.status(user_id).await?;
-            let token = self.links.token_for(user_id).await;
+            let link = self.links.listenbrainz_link(user_id).await?;
+            let token = self.links.listenbrainz_token(user_id).await;
             Some(ListenBrainzCredentials {
                 username: Some(link.username),
                 user_token: token,
@@ -165,19 +165,18 @@ impl MixSources for LiveMixSources {
 pub fn live_builder(
     requests: &super::RequestsState,
     providers: &droppedneedle_providers::Providers,
-    links: Arc<dyn ListenBrainzLinkStore>,
-    prefs: ListeningStore,
+    listening: ListeningStore,
     playlists: droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore,
     events: droppedneedle_kernel::events::EventHub,
 ) -> Arc<super::mix::PersonalMixBuilder> {
     let sources = Arc::new(LiveMixSources::new(
         providers.listenbrainz.clone(),
-        links,
+        listening.clone(),
         requests.library.db().clone(),
     ));
     Arc::new(super::mix::PersonalMixBuilder::new(
         sources,
-        prefs,
+        listening,
         playlists,
         requests.clone(),
         events,

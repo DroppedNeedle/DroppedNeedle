@@ -53,7 +53,7 @@ use droppedneedle_kernel::db::{Db, DbError, Lane};
 
 pub use app_passwords::AppPasswords;
 pub use federated::FederatedUsers;
-pub use lastfm::LastFmLinks;
+pub use lastfm::{LastFmLinks, parse_lastfm};
 pub use oidc::OidcStates;
 pub use recovery::RecoveryCodes;
 pub use sessions::{LoginWrite, Sessions, session_expires_at};

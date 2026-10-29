@@ -22452,7 +22452,7 @@
     "/api/v3/me/connections/listenbrainz": {
       "get": {
         "tags": [
-          "plugins"
+          "listening"
         ],
         "summary": "Read the caller's ListenBrainz link status. Unlinked reads as missing.",
         "operationId": "listenbrainz_status",
@@ -22462,7 +22462,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PluginConnectionStatus"
+                  "$ref": "#/components/schemas/ListeningLinkStatus"
                 }
               }
             }
@@ -22498,7 +22498,7 @@
       },
       "put": {
         "tags": [
-          "plugins"
+          "listening"
         ],
         "summary": "Link the caller's ListenBrainz account. The credential verifies first;\nonly a verified pair stores.",
         "operationId": "connect_listenbrainz_route",
@@ -22518,7 +22518,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PluginConnectionStatus"
+                  "$ref": "#/components/schemas/ListeningLinkStatus"
                 }
               }
             }
@@ -22552,6 +22552,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -22564,7 +22574,7 @@
       },
       "delete": {
         "tags": [
-          "plugins"
+          "listening"
         ],
         "summary": "Remove the caller's ListenBrainz link.",
         "operationId": "disconnect_listenbrainz_route",
@@ -22591,6 +22601,16 @@
           },
           "404": {
             "description": "No link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
             "content": {
               "application/json": {
                 "schema": {
@@ -22757,7 +22777,7 @@
     "/api/v3/me/scrobble-preferences": {
       "get": {
         "tags": [
-          "plugins"
+          "listening"
         ],
         "summary": "Read the caller's scrobble preferences.",
         "operationId": "get_scrobble_preferences",
@@ -22793,7 +22813,7 @@
       },
       "put": {
         "tags": [
-          "plugins"
+          "listening"
         ],
         "summary": "Update the caller's scrobble preferences. Absent fields keep their\nstored values.",
         "operationId": "update_scrobble_preferences",
@@ -22830,6 +22850,16 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
             "content": {
               "application/json": {
                 "schema": {
@@ -49676,6 +49706,27 @@
           "lastfm"
         ]
       },
+      "ListeningLinkStatus": {
+        "type": "object",
+        "description": "One linked listening account. Never carries the secret, only the name.\nNamed apart from the remotes `ConnectionStatus` in the one OpenAPI\ndocument.",
+        "required": [
+          "service"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the link is active."
+          },
+          "service": {
+            "type": "string",
+            "description": "Service name (`listenbrainz` here)."
+          },
+          "username": {
+            "type": "string",
+            "description": "Linked username."
+          }
+        }
+      },
       "LocalPasswordSet": {
         "type": "object",
         "description": "Set the first local password on an account without one.",
@@ -55872,27 +55923,6 @@
           "streaming_source",
           "library_writer"
         ]
-      },
-      "PluginConnectionStatus": {
-        "type": "object",
-        "description": "One linked external account. Never carries the secret, only the name.\nThe schema rename keeps this distinct from the remotes\n`ConnectionStatus` in the one OpenAPI document; the wire shape is\nunchanged.",
-        "required": [
-          "service"
-        ],
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "description": "Whether the link is active."
-          },
-          "service": {
-            "type": "string",
-            "description": "Service name (`listenbrainz` here)."
-          },
-          "username": {
-            "type": "string",
-            "description": "Linked username."
-          }
-        }
       },
       "PluginDetails": {
         "type": "object",

@@ -823,8 +823,13 @@ async fn a_play_outlasting_the_request_wait_is_still_recorded() {
     let history = PlaybackStore::new(
         runtime.db().clone(),
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
-        Arc::new(droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).unwrap()),
-        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        droppedneedle_media::playback::listening::ListeningStore::new(
+            runtime.db().clone(),
+            Arc::new(
+                droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).unwrap(),
+            ),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
         droppedneedle_kernel::jobs::queue::JobQueue::new(
             runtime.db().clone(),
             Arc::new(droppedneedle_kernel::clock::SystemClock),

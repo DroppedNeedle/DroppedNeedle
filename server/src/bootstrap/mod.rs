@@ -266,16 +266,15 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         config_store.live(),
         config_store.live(),
     );
+    // The one listening store: discovery, wrapped, the Weekly Mix,
+    // playback reporting and the listening settings all hold it.
+    let listening = ListeningStore::new(db.clone(), crypto.clone(), p.clock.clone());
     let reads_inputs = ReadsInputs {
         covers_dir: config.cache_dir.join("covers"),
         cover_cache_max_bytes: config.cover_cache_max_bytes,
         http: http.shared().clone(),
         providers: providers.clone(),
-        listenbrainz_links: Arc::new(ListeningStore::new(
-            db.clone(),
-            crypto.clone(),
-            p.clock.clone(),
-        )),
+        listening: listening.clone(),
         youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
         discover_warmer: config.discover_warmer,
     };
@@ -341,6 +340,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             mb_source,
             &plugin_host,
             &collections,
+            listening.clone(),
         ),
         &outbound.spotify(),
         queues.queue().clone(),
@@ -380,6 +380,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         outbound.ffmpeg.clone(),
         &providers,
         mix_hooks.clone(),
+        listening,
         queues.queue().clone(),
         queues.clock(),
     )
@@ -625,6 +626,7 @@ fn acquire_ports(
     mb_source: droppedneedle_providers::musicbrainz::LiveSource,
     plugin_host: &Arc<droppedneedle_plugins::host::PluginHost>,
     collections: &Stores,
+    listening: ListeningStore,
 ) -> AcquirePorts {
     AcquirePorts {
         library: Arc::new(
@@ -645,6 +647,7 @@ fn acquire_ports(
         collections: collections.clone(),
         providers: providers.clone(),
         albums: library.mutations.clone(),
+        listening,
     }
 }
 

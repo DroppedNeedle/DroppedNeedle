@@ -192,7 +192,7 @@ impl E2e {
                 providers: Arc::new(Providers::unpaced(Arc::new(
                     droppedneedle_providers::executor::ScriptedWire::new(),
                 ))),
-                ..crate::common::reads_inputs(&p.config.root_app_dir)
+                ..crate::common::reads_inputs(p)
             },
             &library,
             collections.wired(),
@@ -220,6 +220,7 @@ impl E2e {
             Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
                 acquire.requests.mixer.clone(),
             )),
+            crate::common::listening_store(p),
             droppedneedle_kernel::jobs::queue::JobQueue::new(p.db.clone(), p.clock.clone()),
             p.clock.clone(),
         )

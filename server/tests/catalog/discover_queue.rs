@@ -27,7 +27,6 @@ use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_catalog::reads::discover::wiring::{DiscoverInputs, deps_over, live_network};
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
-use droppedneedle_media::playback::listening::MemoryListenBrainzLinkStore;
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -505,20 +504,15 @@ fn queue_script() -> Script {
     }
 }
 
-/// What production discover is built from, over `rig`'s platform,
-/// `providers` and the users' ListenBrainz `links`.
-pub(crate) fn discover_inputs(
-    rig: &AuthRig,
-    dir: &Path,
-    providers: Providers,
-    links: MemoryListenBrainzLinkStore,
-) -> DiscoverInputs {
+/// What production discover is built from, over `rig`'s platform and
+/// `providers`, with the listening store on the rig's database.
+pub(crate) fn discover_inputs(rig: &AuthRig, dir: &Path, providers: Providers) -> DiscoverInputs {
     let platform = &rig.platform;
     DiscoverInputs {
         db: platform.db.clone(),
         http: platform.http.shared().clone(),
         providers: Arc::new(providers),
-        listenbrainz_links: Arc::new(links),
+        listening: crate::common::listening_store(platform),
         youtube_quota_path: dir.join("youtube_quota.json"),
         users: rig.deps.clone(),
         discover_warmer: false,
@@ -538,8 +532,7 @@ pub(crate) fn discover_deps(
     providers: Providers,
     script: impl FnOnce(&mut Arc<dyn ListeningNetwork>),
 ) -> ReadsDeps {
-    let links = MemoryListenBrainzLinkStore::new(rig.platform.crypto.clone());
-    let inputs = discover_inputs(rig, dir, providers, links);
+    let inputs = discover_inputs(rig, dir, providers);
     let mut network = live_network(&inputs, &rig.config);
     script(&mut network);
     deps_over(inputs, &rig.config, network)

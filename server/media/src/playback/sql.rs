@@ -53,8 +53,9 @@ droppedneedle_kernel::sql! {
           now_playing_visibility = excluded.now_playing_visibility, \
           updated_at = excluded.updated_at, \
           auto_request_personal_mix = excluded.auto_request_personal_mix";
-    /// The stored document of one user's link to one service.
-    pub(super) CONNECTION = "SELECT connection_data FROM user_connections \
+    /// The stored document of one user's link to one service, and whether
+    /// the link is enabled.
+    pub(super) CONNECTION = "SELECT connection_data, enabled FROM user_connections \
          WHERE user_id = ?1 AND service = ?2";
     /// Store or replace one user's link to one service.
     pub(super) SAVE_CONNECTION = "INSERT INTO user_connections \
@@ -66,9 +67,6 @@ droppedneedle_kernel::sql! {
     /// Remove one user's link to one service.
     pub(super) DELETE_CONNECTION = "DELETE FROM user_connections \
          WHERE user_id = ?1 AND service = ?2";
-    /// The enabled scrobble links of one user.
-    pub(super) SCROBBLE_LINKS = "SELECT service, connection_data FROM user_connections \
-         WHERE user_id = ?1 AND enabled = 1 AND service IN ('lastfm', 'listenbrainz')";
     /// One user's display name and username.
     pub(super) DISPLAY_NAMES = "SELECT display_name, username FROM auth_users WHERE id = ?1";
 }

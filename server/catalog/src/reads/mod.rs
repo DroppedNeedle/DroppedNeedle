@@ -124,7 +124,7 @@ impl ReadsSetup {
                 db: db.clone(),
                 http: inputs.http.clone(),
                 providers: inputs.providers.clone(),
-                listenbrainz_links: inputs.listenbrainz_links.clone(),
+                listening: inputs.listening.clone(),
                 youtube_quota_path: inputs.youtube_quota_path.clone(),
                 users: users.clone(),
                 discover_warmer: inputs.discover_warmer,
@@ -208,9 +208,9 @@ pub struct ReadsInputs {
     pub http: reqwest::Client,
     /// Shared provider limiters.
     pub providers: Arc<droppedneedle_providers::Providers>,
-    /// Users' ListenBrainz links (your-top charts, wrapped).
-    pub listenbrainz_links:
-        Arc<dyn droppedneedle_media::playback::listening::ListenBrainzLinkStore>,
+    /// The app's listening store: users' ListenBrainz links (your-top
+    /// charts, wrapped) and listening preferences.
+    pub listening: droppedneedle_media::playback::listening::ListeningStore,
     /// The YouTube quota file (`<cache_dir>/youtube_quota.json`).
     pub youtube_quota_path: std::path::PathBuf,
     /// Whether the discover warm cycle runs (`DISCOVER_WARMER_ENABLED`).
@@ -235,7 +235,7 @@ fn platform_state(
 
     let wrapped: Arc<dyn WrappedData> = Arc::new(ListenBrainzWrapped::new(
         users.users.clone(),
-        inputs.listenbrainz_links,
+        inputs.listening,
         inputs.providers.listenbrainz.clone(),
         Arc::clone(&users.clock),
     ));

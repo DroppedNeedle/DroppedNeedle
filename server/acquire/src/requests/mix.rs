@@ -258,7 +258,9 @@ impl PersonalMixBuilder {
             auto_request_personal_mix: Some(false),
             ..PrefsPatch::default()
         };
-        self.prefs.update_prefs(user_id, &patch).await;
+        if let Err(error) = self.prefs.update_prefs(user_id, &patch).await {
+            tracing::warn!(%user_id, %error, "personal mix intent could not be cleared");
+        }
     }
 
     /// Display state of the user's standing grant

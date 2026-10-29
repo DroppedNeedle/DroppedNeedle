@@ -950,7 +950,8 @@ async fn personal_mix_grant_build_and_refresh() {
                 ..PrefsPatch::default()
             },
         )
-        .await;
+        .await
+        .unwrap();
     hooks.on_toggle("u-ada", Role::User, true).await;
     assert_eq!(hooks.state("u-ada", Role::User, true).await, "pending");
     let approve = "/api/v3/requests/personal-mix-approvals/u-ada/approve";
@@ -992,7 +993,7 @@ async fn personal_mix_grant_build_and_refresh() {
         auto_request_personal_mix: Some(true),
         ..PrefsPatch::default()
     };
-    prefs.update_prefs("u-tris", &toggle).await;
+    prefs.update_prefs("u-tris", &toggle).await.unwrap();
     hooks.on_toggle("u-tris", Role::Trusted, true).await;
     assert_eq!(hooks.state("u-tris", Role::Trusted, true).await, "approved");
     let trusted = builder.build_for_user("u-tris", false).await.unwrap();

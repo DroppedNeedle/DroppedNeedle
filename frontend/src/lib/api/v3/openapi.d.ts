@@ -16299,6 +16299,19 @@ export interface components {
          * @enum {string}
          */
         ListenSource: "listenbrainz" | "lastfm";
+        /**
+         * @description One linked listening account. Never carries the secret, only the name.
+         *     Named apart from the remotes `ConnectionStatus` in the one OpenAPI
+         *     document.
+         */
+        ListeningLinkStatus: {
+            /** @description Whether the link is active. */
+            enabled?: boolean;
+            /** @description Service name (`listenbrainz` here). */
+            service: string;
+            /** @description Linked username. */
+            username?: string;
+        };
         /** @description Set the first local password on an account without one. */
         LocalPasswordSet: {
             /** @description New password, at least 12 chars. */
@@ -18859,20 +18872,6 @@ export interface components {
          * @enum {string}
          */
         PluginCapability: "scrobbler" | "purchase_links" | "download_client" | "indexer" | "subscriber" | "publisher" | "metadata_provider" | "scheduler" | "streaming_source" | "library_writer";
-        /**
-         * @description One linked external account. Never carries the secret, only the name.
-         *     The schema rename keeps this distinct from the remotes
-         *     `ConnectionStatus` in the one OpenAPI document; the wire shape is
-         *     unchanged.
-         */
-        PluginConnectionStatus: {
-            /** @description Whether the link is active. */
-            enabled?: boolean;
-            /** @description Service name (`listenbrainz` here). */
-            service: string;
-            /** @description Linked username. */
-            username?: string;
-        };
         /**
          * @description `GET /albums/{album_id}/plugin-details`: what metadata plugins add
          *     about an album. Each field is the first plugin's answer (plugins asked
@@ -39526,7 +39525,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PluginConnectionStatus"];
+                    "application/json": components["schemas"]["ListeningLinkStatus"];
                 };
             };
             /** @description Not authenticated */
@@ -39568,7 +39567,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PluginConnectionStatus"];
+                    "application/json": components["schemas"]["ListeningLinkStatus"];
                 };
             };
             /** @description Username required or credential rejected */
@@ -39591,6 +39590,15 @@ export interface operations {
             };
             /** @description ListenBrainz is rate-limiting */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -39629,6 +39637,15 @@ export interface operations {
             };
             /** @description No link */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -39799,6 +39816,15 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

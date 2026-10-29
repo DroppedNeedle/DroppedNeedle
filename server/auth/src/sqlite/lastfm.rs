@@ -32,8 +32,10 @@ fn render_lastfm(link: &LastFmConnection) -> String {
 }
 
 /// Parse a `connection_data` document. Corrupt rows read as absent (the user
-/// re-links); the caller logs the corruption so it never fails silently.
-fn parse_lastfm(data: &str) -> Option<LastFmConnection> {
+/// re-links); the caller logs the corruption so it never fails silently. A
+/// field that is not a string reads as missing, the rest of the document
+/// still counts.
+pub fn parse_lastfm(data: &str) -> Option<LastFmConnection> {
     let value: serde_json::Value = serde_json::from_str(data).ok()?;
     let object = value.as_object()?;
     let field = |name: &str| {

@@ -261,22 +261,31 @@ pub async fn loop_row(
     }
 }
 
-/// Reads inputs for production-shaped rigs: covers and the YouTube quota
-/// under `dir` and no linked ListenBrainz accounts.
-/// Nothing dials out unless a test asks for a cover or a chart.
-pub fn reads_inputs(dir: &Path) -> droppedneedle_catalog::reads::ReadsInputs {
+/// The listening store over `platform`, as bootstrap builds it.
+pub fn listening_store(
+    platform: &droppedneedle_kernel::platform::Platform,
+) -> droppedneedle_media::playback::listening::ListeningStore {
+    droppedneedle_media::playback::listening::ListeningStore::new(
+        platform.db.clone(),
+        platform.crypto.clone(),
+        platform.clock.clone(),
+    )
+}
+
+/// Reads inputs for production-shaped rigs over `platform`: covers and the
+/// YouTube quota under its app folder and the listening store on its
+/// database. Nothing dials out unless a test asks for a cover or a chart.
+pub fn reads_inputs(
+    platform: &droppedneedle_kernel::platform::Platform,
+) -> droppedneedle_catalog::reads::ReadsInputs {
     let http = test_http();
+    let dir = &platform.config.root_app_dir;
     droppedneedle_catalog::reads::ReadsInputs {
         covers_dir: dir.join("covers"),
         cover_cache_max_bytes: 16 * 1024 * 1024,
         http: http.shared().clone(),
         providers: Arc::new(droppedneedle_providers::Providers::closed()),
-        listenbrainz_links: Arc::new(
-            droppedneedle_media::playback::listening::MemoryListenBrainzLinkStore::new(Arc::new(
-                droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
-                    .expect("test key"),
-            )),
-        ),
+        listening: listening_store(platform),
         youtube_quota_path: dir.join("youtube_quota.json"),
         discover_warmer: false,
     }

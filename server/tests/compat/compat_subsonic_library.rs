@@ -1807,7 +1807,7 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     let reads = crate::common::bundles::reads_at(
         &platform,
         auth.deps.clone(),
-        crate::common::reads_inputs(&dir),
+        crate::common::reads_inputs(&platform),
         &library,
         CollectionsState::new(
             CollectionsDb::new(starved.db().clone(), platform.clock.clone()),
@@ -1985,7 +1985,7 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
     let reads = crate::common::bundles::reads_at(
         &platform,
         auth.deps.clone(),
-        crate::common::reads_inputs(&dir),
+        crate::common::reads_inputs(&platform),
         &library,
         CollectionsState::new(
             CollectionsDb::new(starved.db().clone(), platform.clock.clone()),

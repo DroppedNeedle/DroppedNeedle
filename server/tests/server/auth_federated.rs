@@ -1025,8 +1025,11 @@ async fn lastfm_links_with_the_instance_key_and_binds_tokens_to_the_user() {
     let store = PlaybackStore::new(
         e2e.db().clone(),
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
-        users.crypto.clone(),
-        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        droppedneedle_media::playback::listening::ListeningStore::new(
+            e2e.db().clone(),
+            users.crypto.clone(),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
         droppedneedle_kernel::jobs::queue::JobQueue::new(
             e2e.db().clone(),
             Arc::new(droppedneedle_kernel::clock::SystemClock),
