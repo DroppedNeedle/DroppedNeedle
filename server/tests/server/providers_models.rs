@@ -5,11 +5,14 @@
 
 use std::sync::Arc;
 
+use crate::common::ScratchDir;
+use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_providers::coverart::{DownloadSize, EntityKind};
 use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
 use droppedneedle_providers::lastfm::LastFmCredentials;
 use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource};
+use droppedneedle_providers::youtube::{YouTubeClient, YouTubeSettings, YoutubeError};
 use droppedneedle_providers::{
     PayloadKind, ProviderEndpoints, ProviderError, Providers, RequestPriority,
 };
@@ -60,6 +63,8 @@ enum Provider {
     TicketmasterEvents,
     AcoustIdLookup,
     LastFm(LastFmRead),
+    YouTubeSearch,
+    YouTubeVideos,
 }
 
 /// The Last.fm read a row's answer goes through.
@@ -711,6 +716,27 @@ const ROWS: &[Row] = &[
         kind: PayloadKind::Decode,
         identity: "/results/0/recordings/0/id",
     },
+    Row {
+        name: "youtube /search, video id",
+        provider: Provider::YouTubeSearch,
+        body: include_str!("../fixtures/youtube/search_found.json"),
+        kind: PayloadKind::Decode,
+        identity: "/items/0/id/videoId",
+    },
+    Row {
+        name: "youtube /videos, video id",
+        provider: Provider::YouTubeVideos,
+        body: include_str!("../fixtures/youtube/videos_found.json"),
+        kind: PayloadKind::Decode,
+        identity: "/items/0/id",
+    },
+    Row {
+        name: "youtube /videos, unknown id (empty list)",
+        provider: Provider::YouTubeVideos,
+        body: include_str!("../fixtures/youtube/videos_unknown_id.json"),
+        kind: PayloadKind::Decode,
+        identity: "/items",
+    },
 ];
 
 /// Serves `body` from the provider's address and reads it through the
@@ -1175,6 +1201,48 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
             Ok(found.is_some())
         }
         Provider::LastFm(read) => lastfm(read, body).await,
+        Provider::YouTubeSearch => {
+            let scratch = ScratchDir::new("youtube-search-row");
+            let wire = Arc::new(ScriptedWire::new());
+            wire.answer(
+                "http://fake/youtube/youtube/v3/search",
+                200,
+                &[],
+                body.as_bytes().to_vec(),
+            );
+            let providers = Providers::unpaced_at(
+                wire,
+                ProviderEndpoints {
+                    youtube: "http://fake/youtube".to_owned(),
+                    ..ProviderEndpoints::closed()
+                },
+            );
+            let client = YouTubeClient::new(
+                providers.youtube.clone(),
+                scratch.join("youtube_quota.json"),
+                YouTubeSettings {
+                    api_key: "k".to_owned(),
+                    enabled: true,
+                    api_enabled: true,
+                    daily_quota_limit: 80,
+                },
+                Arc::new(ManualClock::at(0)),
+                providers.cache.clone(),
+            )
+            .expect("the settings are valid");
+            let found = client
+                .search_video("Portishead", "Dummy", PRIORITY)
+                .await
+                .map_err(|error| match error {
+                    YoutubeError::Provider(error) => error,
+                    other => panic!("only a provider failure is possible here: {other}"),
+                })?;
+            Ok(found.is_some())
+        }
+        Provider::YouTubeVideos => {
+            youtube_check(200, body).await?;
+            Ok(true)
+        }
     }
 }
 
@@ -1383,4 +1451,55 @@ async fn recorded_answers_decode_and_need_their_identity() {
             row.kind
         );
     }
+}
+
+/// Serves `body` at `status` as the one answer of a YouTube key check.
+async fn youtube_check(status: u16, body: &str) -> Result<(), ProviderError> {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        "http://fake/youtube/youtube/v3/videos",
+        status,
+        &[],
+        body.as_bytes().to_vec(),
+    );
+    let providers = Providers::unpaced_at(
+        wire,
+        ProviderEndpoints {
+            youtube: "http://fake/youtube".to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    );
+    providers.youtube.check_key("k", PRIORITY).await
+}
+
+/// The refusals a YouTube answer carries. The forbidden part and the bad key
+/// are recorded answers. A spent quota is not recorded, since reaching it
+/// spends the day's quota, so its body names the reason Google's error
+/// reference gives for it.
+#[tokio::test]
+async fn youtube_refusals_map_to_their_variants() {
+    assert!(matches!(
+        youtube_check(
+            403,
+            include_str!("../fixtures/youtube/videos_forbidden_part.json")
+        )
+        .await,
+        Err(ProviderError::Forbidden { .. })
+    ));
+    assert!(matches!(
+        youtube_check(
+            400,
+            include_str!("../fixtures/youtube/search_invalid_key.json")
+        )
+        .await,
+        Err(ProviderError::BadRequest { status: 400, .. })
+    ));
+    assert!(matches!(
+        youtube_check(
+            403,
+            r#"{"error":{"code":403,"errors":[{"reason":"quotaExceeded"}]}}"#
+        )
+        .await,
+        Err(ProviderError::Disabled { .. })
+    ));
 }

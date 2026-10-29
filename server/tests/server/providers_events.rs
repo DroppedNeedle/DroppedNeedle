@@ -731,7 +731,7 @@ async fn youtube_upstream_429_and_bad_payload_map() {
     assert!(matches!(
         client.search_track("x", "no-id", USER).await,
         Err(YoutubeError::Provider(ProviderError::Payload {
-            kind: PayloadKind::Contract,
+            kind: PayloadKind::Decode,
             ..
         }))
     ));

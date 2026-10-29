@@ -1,0 +1,15 @@
+{
+  "error": {
+    "code": 403,
+    "message": "The request is not properly authorized to access video file or processing information. Note that the \u003ccode\u003efileDetails\u003c/code\u003e, \u003ccode\u003eprocessingDetails\u003c/code\u003e, and \u003ccode\u003esuggestions\u003c/code\u003e parts are only available to that video's owner.",
+    "errors": [
+      {
+        "message": "The request is not properly authorized to access video file or processing information. Note that the \u003ccode\u003efileDetails\u003c/code\u003e, \u003ccode\u003eprocessingDetails\u003c/code\u003e, and \u003ccode\u003esuggestions\u003c/code\u003e parts are only available to that video's owner.",
+        "domain": "youtube.video",
+        "reason": "forbidden",
+        "location": "part",
+        "locationType": "parameter"
+      }
+    ]
+  }
+}

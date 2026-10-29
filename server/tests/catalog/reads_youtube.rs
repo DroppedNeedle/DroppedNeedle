@@ -10,7 +10,8 @@ use axum::{
     Json, Router,
     body::Body,
     extract::Query,
-    http::{Request, StatusCode},
+    http::{Request, StatusCode, header},
+    response::IntoResponse,
     routing::get,
 };
 use droppedneedle_auth::Role;
@@ -50,8 +51,11 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
     (status, json)
 }
 
-/// A stand-in YouTube Data API search: a video for every query except
-/// those naming "no-video-here". Records each query it answers.
+const SEARCH_FOUND: &str = include_str!("../fixtures/youtube/search_found.json");
+
+/// A stand-in YouTube Data API search: the recorded answer for every query,
+/// except that a query naming "no-video-here" finds nothing. Records each
+/// query it answers.
 async fn youtube_stub() -> (String, Arc<Mutex<Vec<String>>>) {
     let queries: Arc<Mutex<Vec<String>>> = Arc::default();
     let seen = queries.clone();
@@ -62,16 +66,10 @@ async fn youtube_stub() -> (String, Arc<Mutex<Vec<String>>>) {
             async move {
                 let q = query.get("q").cloned().unwrap_or_default();
                 seen.lock().unwrap().push(q.clone());
-                let video = match q.as_str() {
-                    "Portishead Dummy full album" => "dummyAlbum1",
-                    "Portishead Roads" => "roadsTrack1",
-                    "Portishead Machine Gun" => "machineGun1",
-                    _ => "",
-                };
-                if video.is_empty() {
-                    Json(json!({"items": []}))
+                if q.contains("no-video-here") {
+                    Json(json!({"items": []})).into_response()
                 } else {
-                    Json(json!({"items": [{"id": {"videoId": video}}]}))
+                    ([(header::CONTENT_TYPE, "application/json")], SEARCH_FOUND).into_response()
                 }
             }
         }),
@@ -138,7 +136,7 @@ async fn youtube_links_journey() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let video = body["link"]["video_id"].as_str().unwrap().to_owned();
-    assert_eq!(video, "dummyAlbum1");
+    assert_eq!(video, "hd9OYCqBK88");
     assert_eq!(
         body["link"]["embed_url"],
         format!("https://www.youtube.com/embed/{video}")

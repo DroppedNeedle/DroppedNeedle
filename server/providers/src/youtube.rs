@@ -20,8 +20,9 @@
 //! Each reserved unit pays for exactly one request, so a search is sent
 //! once and never retried by the executor. The request itself goes through
 //! the executor at the `youtube` rate row, with the key as a query pair,
-//! never in an error or a log line. A 403 (the API's "quota exceeded"
-//! answer among others) is [`ProviderError::Forbidden`].
+//! never in an error or a log line. A 403 is [`ProviderError::Forbidden`],
+//! except one whose body names a spent quota: that is
+//! [`ProviderError::Disabled`], the provider's own daily cap.
 //!
 //! Charging rules, kept from v2's quota tests:
 //!
@@ -62,8 +63,12 @@ use crate::cache::{CacheKey, Fetched, KEEP, Policy, ProviderCacheStore, Source};
 use crate::client::{decode, parse_base, payload, unusable_base};
 use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{
-    Backoff, Executor, Request, Spec, USER_COOLDOWN_WAIT, Url, standard_classify,
+    Answer, Backoff, Executor, Request, Spec, USER_COOLDOWN_WAIT, Url, standard_classify,
 };
+
+mod models;
+
+use models::{GoogleErrorAnswer, SearchList, VideoList};
 
 /// The provider name errors carry, and its rate row.
 pub const SOURCE: &str = "youtube";
@@ -75,6 +80,12 @@ pub const DEFAULT_DAILY_QUOTA_LIMIT: u32 = 80;
 pub const MAX_DAILY_QUOTA_LIMIT: u32 = 10_000;
 /// Largest search answer read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+/// The video the key check asks for. The answer must name no other video.
+const CHECK_VIDEO_ID: &str = "dQw4w9WgXcQ";
+/// The reason a 403 gives when the daily quota is spent. Google's error
+/// reference lists it (https://developers.google.com/youtube/v3/docs/errors,
+/// read 2026-10-29); the spent-quota answer itself is not recorded.
+const QUOTA_SPENT: &str = "quotaExceeded";
 
 /// YouTube on the wire: the standard rules, v2's 10 second deadline.
 pub static SPEC: Spec = Spec {
@@ -84,8 +95,37 @@ pub static SPEC: Spec = Spec {
     max_body: MAX_BODY_BYTES,
     retry_after_default: Backoff::Fixed(Duration::from_secs(60)),
     retry_after_cap: MAX_RETRY_AFTER,
-    classify: standard_classify,
+    classify,
 };
+
+/// The status rules, with one YouTube answer of its own: a 403 whose body
+/// names a spent daily quota is `Disabled`. That is the provider's own cap,
+/// answered the same way until the quota resets, and not an outage. The
+/// message is ours, not the body's text.
+fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    if answer.reply.status() == 403 && quota_spent(answer) {
+        return Err(ProviderError::Disabled {
+            provider: SOURCE,
+            message: "the daily quota is used up".to_owned(),
+        });
+    }
+    standard_classify(answer)
+}
+
+/// Whether a refusal's body names the spent quota. A body that does not
+/// decode names none, so the 403 keeps its usual meaning.
+fn quota_spent(answer: &Answer<'_>) -> bool {
+    answer
+        .reply
+        .json::<GoogleErrorAnswer>()
+        .is_ok_and(|envelope| {
+            envelope
+                .error
+                .errors
+                .iter()
+                .any(|item| item.reason.as_deref() == Some(QUOTA_SPENT))
+        })
+}
 
 /// The YouTube Data API on the executor, built once with the providers.
 /// The quota-keeping [`YouTubeClient`] sends through it.
@@ -141,18 +181,12 @@ impl YouTubeApi {
         .map_err(|_| unusable_base(SOURCE))?
         .idempotent(false);
         let reply = self.executor.send(request, priority).await?;
-        let decoded: YouTubeSearchResponse = decode(&reply)?;
-        match decoded.items.into_iter().next() {
-            None => Ok(None),
-            Some(item) => match item.id.and_then(|id| id.video_id) {
-                Some(video_id) => Ok(Some(video_id)),
-                None => Err(payload(
-                    SOURCE,
-                    PayloadKind::Contract,
-                    "a search result without a video id",
-                )),
-            },
-        }
+        let decoded: SearchList = decode(&reply)?;
+        Ok(decoded
+            .items
+            .into_iter()
+            .next()
+            .map(|result| result.id.video_id.into_string()))
     }
 
     /// Check that `key` may read the API: one `videos.list` for a known
@@ -160,8 +194,10 @@ impl YouTubeApi {
     ///
     /// # Errors
     ///
-    /// The typed failure of the call: a 403 is a key that is invalid or
-    /// lacks the YouTube Data API.
+    /// The typed failure of the call: a 400 for a key YouTube does not know,
+    /// a 403 with the reason its answer names, and
+    /// [`ProviderError::Disabled`] for a spent daily quota. An answer that
+    /// does not decode, or names another video, is a payload error.
     pub async fn check_key(
         &self,
         key: &str,
@@ -171,11 +207,24 @@ impl YouTubeApi {
         let request = Request::get(
             base,
             &["youtube", "v3", "videos"],
-            &[("part", "id"), ("id", "dQw4w9WgXcQ"), ("key", key)],
+            &[("part", "id"), ("id", CHECK_VIDEO_ID), ("key", key)],
         )
         .map_err(|_| unusable_base(SOURCE))?
         .idempotent(false);
-        self.executor.send(request, priority).await.map(drop)
+        let reply = self.executor.send(request, priority).await?;
+        let listed: VideoList = decode(&reply)?;
+        if listed
+            .items
+            .iter()
+            .any(|item| item.id.as_str() != CHECK_VIDEO_ID)
+        {
+            return Err(payload(
+                SOURCE,
+                PayloadKind::Contract,
+                "a video the key check did not ask for",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -646,25 +695,4 @@ pub fn utc_date(unix_secs: i64) -> String {
         u8::from(date.month()),
         date.day()
     )
-}
-
-/// Search answer id block.
-#[derive(Debug, Clone, Deserialize)]
-struct YouTubeSearchId {
-    #[serde(default, rename = "videoId")]
-    video_id: Option<String>,
-}
-
-/// One search answer item.
-#[derive(Debug, Clone, Deserialize)]
-struct YouTubeSearchItem {
-    #[serde(default)]
-    id: Option<YouTubeSearchId>,
-}
-
-/// Search answer. `items` is required: a body without it is an invalid
-/// payload, kept from v2's required field.
-#[derive(Debug, Clone, Deserialize)]
-struct YouTubeSearchResponse {
-    items: Vec<YouTubeSearchItem>,
 }

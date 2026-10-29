@@ -1,0 +1,15 @@
+{
+  "kind": "youtube#videoListResponse",
+  "etag": "zOaqqoqYAK13dp6X8LRFlumVgk8",
+  "items": [
+    {
+      "kind": "youtube#video",
+      "etag": "vgifLjOhN0yCFLs_fzxafF1j5YY",
+      "id": "dQw4w9WgXcQ"
+    }
+  ],
+  "pageInfo": {
+    "totalResults": 1,
+    "resultsPerPage": 1
+  }
+}
