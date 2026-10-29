@@ -550,6 +550,7 @@
 		{jobId}
 		{preview}
 		token={token.value}
+		replaceToken={() => token.replace()}
 		{canApply}
 		copy={applyCopy}
 	/>

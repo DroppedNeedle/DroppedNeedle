@@ -2,6 +2,8 @@ import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
+import { ApiError } from '$lib/api/errors';
+
 import {
 	collisionItem,
 	h,
@@ -172,6 +174,26 @@ describe('LibraryManagementApplyDialog', () => {
 				confirmation: true
 			})
 		});
+	});
+
+	it('replaces a stored token the server refuses once, then applies with the same key', async () => {
+		sessionStorage.setItem('droppedneedle:library-management:preview-token:preview-1', 'old-token');
+		h.apply.mockRejectedValueOnce(
+			new ApiError(400, 'This change was not previewed.', 'PREVIEW_TOKEN_INVALID')
+		);
+		await render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await page.getByRole('button', { name: /Write tags and organize 1 file/ }).click();
+		await page.getByRole('textbox', { name: /CONFIRM/ }).fill('CONFIRM');
+		await page.getByRole('button', { name: 'Apply exact preview' }).click();
+
+		await vi.waitFor(() => expect(h.goto).toHaveBeenCalled());
+		expect(h.reissue).toHaveBeenCalledTimes(1);
+		expect(h.apply).toHaveBeenCalledTimes(2);
+		const [first, second] = h.apply.mock.calls.map(([input]) => input.request);
+		expect(first.preview_token).toBe('old-token');
+		expect(second.preview_token).toBe('resumed-token');
+		expect(second.idempotency_key).toBe(first.idempotency_key);
 	});
 
 	it('keeps apply disabled with a clause-specific reason and a token retry when reissue is denied', async () => {

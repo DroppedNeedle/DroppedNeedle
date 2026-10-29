@@ -716,6 +716,9 @@ pub enum ManagementError {
     Conflict(String),
     #[error("{0}")]
     Forbidden(&'static str),
+    /// A request that cannot be acted on as sent, with its own code (400).
+    #[error("{}", .0.message)]
+    Refused(crate::operations::reasons::Reason),
     #[error("store: {0}")]
     Store(String),
     /// The database was too busy to answer, or is shutting down.

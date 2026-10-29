@@ -14,6 +14,7 @@ import {
 	rememberLibraryManagementActivationSession,
 	rememberLibraryManagementPreviewToken
 } from '$lib/queries/library-management/LibraryManagementPreviewTokens';
+import { ApiError } from '$lib/api/errors';
 import { getLibraryManagementActivationPreviewQuery } from '$lib/queries/library-management/LibraryManagementQueries.svelte';
 import {
 	confirmLibraryManagementActivationMutation,
@@ -219,6 +220,16 @@ export class ActivationWizard {
 			this.reset();
 			return true;
 		} catch (error) {
+			if (error instanceof ApiError && error.code === 'PREVIEW_TOKEN_INVALID') {
+				// Dry runs are not reissued: run them again.
+				this.index = 0;
+				this.jobId = null;
+				this.token = '';
+				this.proofs = [];
+				this.phrase = '';
+				this.error = 'These dry runs can no longer be used. Run them again.';
+				return false;
+			}
 			this.error = error instanceof Error ? error.message : 'Could not enable file organization.';
 			return false;
 		}

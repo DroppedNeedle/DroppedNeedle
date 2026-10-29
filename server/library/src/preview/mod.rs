@@ -5,9 +5,11 @@
 //! data key under the flow's own [`Purpose`], over the person who
 //! previewed, the time, and the material the preview read and computed.
 //! Applying recomputes the material and checks the token against it: a
-//! different person, a changed selection or state, a token older than
-//! [`TTL_SECS`], or one that was altered is refused. The comparison takes
-//! the same time wherever the tokens differ.
+//! different person, a changed selection or state, a token past its
+//! expiry, or one that was altered is refused. A token lasts [`TTL_SECS`]
+//! from issue unless the flow keeps its own expiry ([`issue_until`]); the
+//! expiry is part of the MAC either way. The comparison takes the same
+//! time wherever the tokens differ.
 
 use crate::operations::reasons::Reason;
 use crate::settings::LibrarySettings;
@@ -27,6 +29,27 @@ pub struct Purpose(&'static str);
 pub const CORRECTION: Purpose = Purpose("catalog-correction-preview");
 /// Bulk changes to identification reviews.
 pub const REVIEW_BULK: Purpose = Purpose("review-bulk-preview");
+/// Library Management previews and activation dry runs.
+pub const MANAGEMENT: Purpose = Purpose("library-management-preview");
+
+/// When a token stops confirming.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expiry {
+    /// [`TTL_SECS`] after issue.
+    FromIssue,
+    /// At this time (unix seconds), which the flow keeps itself.
+    At(i64),
+}
+
+impl Expiry {
+    /// The one text the MAC carries for it.
+    fn canonical(self) -> String {
+        match self {
+            Self::FromIssue => format!("ttl:{TTL_SECS}"),
+            Self::At(at) => format!("until:{at}"),
+        }
+    }
+}
 
 fn mac(
     signer: &LibrarySettings,
@@ -34,8 +57,9 @@ fn mac(
     actor: &str,
     material: &str,
     issued_at: i64,
+    expiry: Expiry,
 ) -> String {
-    let message = format!("{actor}\0{issued_at}\0{material}");
+    let message = format!("{actor}\0{issued_at}\0{}\0{material}", expiry.canonical());
     signer
         .mac(purpose.0, message.as_bytes())
         .iter()
@@ -43,8 +67,29 @@ fn mac(
         .collect()
 }
 
+fn token(
+    signer: &LibrarySettings,
+    purpose: Purpose,
+    actor: &str,
+    material: &str,
+    issued_at: i64,
+    expiry: Expiry,
+) -> String {
+    format!(
+        "{issued_at}.{}",
+        mac(signer, purpose, actor, material, issued_at, expiry)
+    )
+}
+
+fn issued_at(token: &str) -> Result<i64, TokenFault> {
+    token
+        .split_once('.')
+        .and_then(|(issued, _)| issued.parse().ok())
+        .ok_or(TokenFault::Invalid)
+}
+
 /// A token for `material`, previewed by `actor` at `issued_at` (unix
-/// seconds).
+/// seconds), good for [`TTL_SECS`].
 pub fn issue(
     signer: &LibrarySettings,
     purpose: Purpose,
@@ -52,9 +97,13 @@ pub fn issue(
     material: &str,
     issued_at: i64,
 ) -> String {
-    format!(
-        "{issued_at}.{}",
-        mac(signer, purpose, actor, material, issued_at)
+    token(
+        signer,
+        purpose,
+        actor,
+        material,
+        issued_at,
+        Expiry::FromIssue,
     )
 }
 
@@ -63,19 +112,66 @@ pub fn verify(
     signer: &LibrarySettings,
     purpose: Purpose,
     actor: &str,
-    token: &str,
+    presented: &str,
     material: &str,
     now: i64,
 ) -> Result<(), TokenFault> {
-    let issued: i64 = token
-        .split_once('.')
-        .and_then(|(issued, _)| issued.parse().ok())
-        .ok_or(TokenFault::Invalid)?;
+    let issued = issued_at(presented)?;
     if issued > now.saturating_add(CLOCK_SLACK_SECS) || now.saturating_sub(issued) > TTL_SECS {
         return Err(TokenFault::Expired);
     }
-    if !constant_time_eq(token, &issue(signer, purpose, actor, material, issued)) {
+    let expected = token(signer, purpose, actor, material, issued, Expiry::FromIssue);
+    if !constant_time_eq(presented, &expected) {
         return Err(TokenFault::Stale);
+    }
+    Ok(())
+}
+
+/// As [`issue`], for a flow that keeps its own expiry: the token is good
+/// until `expires_at` (unix seconds).
+pub fn issue_until(
+    signer: &LibrarySettings,
+    purpose: Purpose,
+    actor: &str,
+    material: &str,
+    issued_at: i64,
+    expires_at: i64,
+) -> String {
+    token(
+        signer,
+        purpose,
+        actor,
+        material,
+        issued_at,
+        Expiry::At(expires_at),
+    )
+}
+
+/// Check a token from [`issue_until`] with the same `expires_at`. The MAC
+/// is checked first, so `Expired` means the token itself is genuine.
+pub fn verify_until(
+    signer: &LibrarySettings,
+    purpose: Purpose,
+    actor: &str,
+    presented: &str,
+    material: &str,
+    expires_at: i64,
+    now: i64,
+) -> Result<(), TokenFault> {
+    let issued = issued_at(presented)?;
+    let expected = token(
+        signer,
+        purpose,
+        actor,
+        material,
+        issued,
+        Expiry::At(expires_at),
+    );
+    if !constant_time_eq(presented, &expected) {
+        return Err(TokenFault::Stale);
+    }
+    if issued > now.saturating_add(CLOCK_SLACK_SECS) || now > expires_at {
+        return Err(TokenFault::Expired);
     }
     Ok(())
 }
@@ -85,7 +181,7 @@ pub fn verify(
 pub enum TokenFault {
     /// Not a token at all.
     Invalid,
-    /// Older than [`TTL_SECS`], or dated in the future.
+    /// Past its expiry, or dated in the future.
     Expired,
     /// Another person's, another flow's, altered, or the state it covers
     /// changed since.
@@ -176,6 +272,33 @@ mod tests {
         assert_eq!(
             check(REVIEW_BULK, "ann", "not a token", "material", at),
             Err(TokenFault::Invalid)
+        );
+
+        // A flow with its own expiry: good past 15 minutes, until then.
+        let until = at + 3 * TTL_SECS;
+        let kept = issue_until(&signer, MANAGEMENT, "ann", "job", at, until);
+        let check = |actor, token: &str, expires_at, now| {
+            verify_until(&signer, MANAGEMENT, actor, token, "job", expires_at, now)
+        };
+        assert_eq!(check("ann", &kept, until, at + 2 * TTL_SECS), Ok(()));
+        assert_eq!(
+            check("ann", &kept, until, until + 1),
+            Err(TokenFault::Expired)
+        );
+        assert_eq!(
+            check("bob", &kept, until, at),
+            Err(TokenFault::Stale),
+            "another person's token"
+        );
+        assert_eq!(
+            check("ann", &kept, until + 3600, at),
+            Err(TokenFault::Stale),
+            "the expiry is part of the MAC"
+        );
+        assert_eq!(
+            verify(&signer, MANAGEMENT, "ann", &kept, "job", at),
+            Err(TokenFault::Stale),
+            "a kept-expiry token is not a 15-minute one"
         );
     }
 }

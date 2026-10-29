@@ -156,7 +156,11 @@ export const applyLibraryManagementPreviewMutation = () =>
 			),
 		effects: catalog,
 		onSuccess: showQueued('Organization work queued'),
-		onError: showActionError('Could not apply this management preview')
+		onError: (error: Error) => {
+			// The apply dialog replaces a refused token and tries once more.
+			if (error instanceof ApiError && error.code === 'PREVIEW_TOKEN_INVALID') return;
+			showActionError('Could not apply this management preview')(error);
+		}
 	}));
 
 export const reissueLibraryManagementPreviewMutation = () =>

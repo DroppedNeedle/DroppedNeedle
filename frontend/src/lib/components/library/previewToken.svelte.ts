@@ -1,6 +1,8 @@
 // The private apply token of a sealed preview. It lives in session storage
 // from the moment the preview was made; after a browser restart it is gone,
-// so a ready preview asks the server to reissue it once per job.
+// so a ready preview asks the server to reissue it once per job. A token the
+// server no longer accepts (one from before an upgrade or a key reset) is
+// replaced the same way when apply refuses it.
 import { reissueLibraryManagementPreviewMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 import {
 	readLibraryManagementPreviewToken,
@@ -15,6 +17,8 @@ export interface PreviewToken {
 	/** A reissue for this job is running or has finished. */
 	readonly resuming: boolean;
 	retry(): void;
+	/** Replaces a token the server refused; the new one, or null when reissue failed. */
+	replace(): Promise<string | null>;
 }
 
 /** Call during component setup: it registers an effect. */
@@ -52,13 +56,16 @@ export function createPreviewToken(
 		void resume(jobId);
 	});
 
-	async function resume(jobId: string): Promise<void> {
+	async function resume(jobId: string): Promise<string | null> {
 		try {
 			const handle = await reissue.mutateAsync({ jobId });
 			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
-			if (handle.job_id === getJobId()) reissuedToken = handle.preview_token;
+			if (handle.job_id !== getJobId()) return null;
+			reissuedToken = handle.preview_token;
+			return handle.preview_token;
 		} catch {
 			if (jobId === getJobId()) failed = true;
+			return null;
 		}
 	}
 
@@ -76,6 +83,11 @@ export function createPreviewToken(
 			if (!getPreview()?.ready_for_confirmation) return;
 			failed = false;
 			attemptedJobId = null;
+		},
+		replace() {
+			const jobId = getJobId();
+			attemptedJobId = jobId;
+			return resume(jobId);
 		}
 	};
 }

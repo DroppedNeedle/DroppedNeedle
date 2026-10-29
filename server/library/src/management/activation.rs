@@ -174,7 +174,7 @@ impl Management {
                     &request.expected_settings_revision,
                 )
                 .map_err(settings_error)?;
-            let mut pin = self.check_proof(proof, &proposed, &current)?;
+            let mut pin = self.check_proof(proof, actor, &proposed, &current)?;
             // The dry run is current (its folders did not move), so the
             // pins name the folders' revision as the settings know it.
             pin.policy_revision = policy.clone();
@@ -217,21 +217,17 @@ impl Management {
         Ok(saved)
     }
 
-    /// The pins one proof gives, when it is a ready dry run of exactly
-    /// this folder under exactly these settings.
+    /// The pins one proof gives, when it is `actor`'s ready dry run of
+    /// exactly this folder under exactly these settings.
     fn check_proof(
         &self,
         proof: &ActivationProof,
+        actor: &str,
         proposed: &LibraryManagement,
         current_revision: &str,
     ) -> Result<ActivationProofPins, ManagementError> {
         let snapshot = self.snapshot(&proof.job_id)?;
-        let presented = sha256_hex(proof.preview_token.as_bytes());
-        if snapshot.token_hash.as_deref() != Some(presented.as_str()) {
-            return Err(ManagementError::Invalid(
-                "The dry run's confirmation token is not valid. Open the dry run again.".to_owned(),
-            ));
-        }
+        self.check_token(&snapshot, actor, &proof.preview_token)?;
         if !self.detail(&proof.job_id)?.ready_for_confirmation {
             return Err(stale(
                 "The dry run is not ready, expired, or out of date. Run a new dry run.",
@@ -269,7 +265,7 @@ impl Management {
             naming_revision: snapshot.naming_revision,
             policy_revision: snapshot.policy_revision,
             preview_token: proof.preview_token.clone(),
-            preview_hash: presented,
+            preview_hash: sha256_hex(proof.preview_token.as_bytes()),
             confirmed_at: self.setup.clock.now_secs(),
             confirmed_by: None,
         })

@@ -1299,7 +1299,7 @@ pub async fn get_edition_tags(
     request_body = EditionTagsApplyBody,
     responses(
         (status = 200, description = "Writing", body = EditionTagsJobView),
-        (status = 400, description = "Wrong token or no request key"),
+        (status = 400, description = "Wrong token, another curator's tag write, or no request key"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown tag write, or another curator's"),

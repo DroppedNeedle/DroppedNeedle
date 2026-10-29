@@ -4767,10 +4767,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * A new confirmation token for your own ready preview (the old one
-         *     stops working).
-         */
+        /** A new confirmation token for your own ready preview. */
         post: operations["reissue_management_preview"];
         delete?: never;
         options?: never;
@@ -30926,7 +30923,7 @@ export interface operations {
                     "application/json": components["schemas"]["EditionTagsJobView"];
                 };
             };
-            /** @description Wrong token or no request key */
+            /** @description Wrong token, another curator's tag write, or no request key */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -44669,7 +44666,7 @@ export interface operations {
                     "application/json": components["schemas"]["LibraryManagementSettingsResponse"];
                 };
             };
-            /** @description Missing confirmation or proof */
+            /** @description Missing confirmation or proof, or a dry run token that is not valid */
             400: {
                 headers: {
                     [name: string]: unknown;

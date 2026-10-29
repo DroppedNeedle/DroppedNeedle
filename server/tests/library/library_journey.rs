@@ -1215,7 +1215,7 @@ async fn undo_written(app: &TestApp, headers: &[(&str, &str)], tags: &str, job: 
 /// anything, though the profile renames. The writer's undo puts every tag
 /// back and leaves no record a wider preview would read as a change made
 /// outside the app. Another trusted user is told none of it exists; an
-/// admin reaches all of it. A held album, a custom edition and an album
+/// admin reaches all of it but applies only their own. A held album, a custom edition and an album
 /// still being placed are refused before any job is made.
 #[tokio::test]
 async fn an_editions_tags_are_written_as_the_folders_profile_says() {
@@ -1502,17 +1502,28 @@ async fn an_editions_tags_are_written_as_the_folders_profile_says() {
         "the writer's undo puts every tag back"
     );
 
-    // An admin applies and undoes a trusted user's write.
+    // Only the writer applies their write: an admin holding its token is
+    // refused, though an admin can undo it.
     let (status, queued) = app.call("POST", &tags, &tris, Some(ask(&revision))).await;
     assert_eq!(status, StatusCode::OK, "{queued}");
     let job = queued["job_id"].as_str().expect("job id").to_owned();
-    write_planned(
-        app,
-        &admin,
-        &format!("{tags}/{job}"),
-        &queued["preview_token"],
-    )
-    .await;
+    let uri = format!("{tags}/{job}");
+    let planned = settled_tag_write(app, &admin, &uri).await;
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{uri}/apply"),
+            &admin,
+            Some(json!({
+                "preview_token": queued["preview_token"],
+                "expected_row_revision": planned["row_revision"],
+                "idempotency_key": "apply-as-admin",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], json!("PREVIEW_TOKEN_INVALID"));
+    write_planned(app, &tris, &uri, &queued["preview_token"]).await;
     assert_ne!(file_sha256(&files[0]), originals[0]);
     undo_written(app, &admin, &tags, &job).await;
     assert_eq!(
@@ -1668,6 +1679,7 @@ async fn an_edition_tag_write_planned_after_another_choice_writes_nothing() {
             idempotency_key: "apply-pinned".to_owned(),
             confirmation: true,
         },
+        "admin",
     );
     assert!(applied.is_err(), "nothing can be written");
     while management_step(&managed.library).await {}
@@ -2142,6 +2154,20 @@ async fn bare_library_with(
     tag: &str,
     enrichment: Option<Arc<dyn droppedneedle_library::management::enrich::EnrichmentPort>>,
 ) -> (Scratch, LibrarySetup, PathBuf) {
+    bare_library_at(
+        tag,
+        enrichment,
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    )
+    .await
+}
+
+/// As [`bare_library_with`], with the platform on `clock`.
+async fn bare_library_at(
+    tag: &str,
+    enrichment: Option<Arc<dyn droppedneedle_library::management::enrich::EnrichmentPort>>,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+) -> (Scratch, LibrarySetup, PathBuf) {
     let scratch = Scratch {
         dir: ScratchDir::new(tag),
         identify: Arc::new(FakeProviders::default()),
@@ -2151,7 +2177,7 @@ async fn bare_library_with(
         .expect("scratch db opens");
     droppedneedle_kernel::schema::apply_migrations_blocking(&connection).expect("migrations apply");
     drop(connection);
-    let library = open_library(&scratch).await;
+    let library = open_library_on(&scratch, clock).await;
     let music = scratch.join("music");
     (scratch, library, music)
 }
@@ -2159,6 +2185,14 @@ async fn bare_library_with(
 /// A library bundle over the database and settings in `scratch`, as a
 /// restart would build it.
 async fn open_library(scratch: &Scratch) -> LibrarySetup {
+    open_library_on(scratch, Arc::new(droppedneedle_kernel::clock::SystemClock)).await
+}
+
+/// As [`open_library`], with the platform on `clock`.
+async fn open_library_on(
+    scratch: &Scratch,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+) -> LibrarySetup {
     let config = Arc::new(
         ConfigStore::scratch(
             scratch,
@@ -2175,6 +2209,7 @@ async fn open_library(scratch: &Scratch) -> LibrarySetup {
     let platform = crate::common::TestPlatform::on(&db, scratch)
         .settings(config)
         .config(app_config)
+        .clock(clock)
         .build()
         .await;
     library_with(
@@ -7241,6 +7276,175 @@ async fn automatic_next(library: &LibrarySetup) -> bool {
         .expect("automatic step")
 }
 
+/// A management preview's token and an activation dry run's token confirm
+/// only for the administrator who made them: another administrator who
+/// sends them is refused as an invalid token. They stay good until the
+/// preview's own expiry, not for a fixed 15 minutes.
+#[tokio::test]
+async fn a_management_token_confirms_only_for_its_admin_until_the_preview_expires() {
+    use crate::common::auth::{test_principal, with_test_principal};
+    use axum::body::Body;
+    use axum::http::Request;
+    use droppedneedle_auth::users::roles::{Role, SessionKind};
+    use droppedneedle_kernel::clock::{Clock, ManualClock};
+    use droppedneedle_kernel::runtime_config::sections::LibraryManagementRootAssignment;
+    use droppedneedle_library::management::service::Management;
+    use droppedneedle_library::management::settings as lm;
+    use tower::ServiceExt as _;
+
+    let clock = Arc::new(ManualClock::at(
+        droppedneedle_kernel::clock::SystemClock.now_ms(),
+    ));
+    let (scratch, library, music) =
+        bare_library_at("lib-management-tokens", None, clock.clone()).await;
+    plant(&music, "incoming/track.flac", "management_full.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "incoming/track.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    scratch
+        .identify
+        .set_recall(ambiguous_recall(&library.identify_store, &album));
+    assert_eq!(library.identification.identify_tick().await, 1);
+    library
+        .scan_store
+        .db()
+        .run_sql(
+            "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
+             ('admin-a', 'Ann', 'admin', 0), ('admin-b', 'Bob', 'admin', 0)",
+        )
+        .expect("admin rows");
+    crate::common::library::operations(&library)
+        .confirm_match(&album, shown_revision(&library, &album), "admin-a")
+        .expect("match confirmed");
+    let shown = library
+        .management_settings
+        .get_settings()
+        .expect("settings read");
+    let (settings, revision) = (shown.settings, shown.settings_revision);
+    let policy = library.core.policy_revision().expect("policy revision");
+
+    let services = crate::common::library::services(&library);
+    let signed_in = |user: &str| {
+        with_test_principal(
+            droppedneedle_library::http::management::routes()
+                .merge(droppedneedle_library::http::management_tools::routes())
+                .with_state(services.clone())
+                .into_router(),
+            test_principal(
+                user,
+                Role::Admin,
+                &format!("sess-{user}"),
+                SessionKind::Standard,
+            ),
+        )
+    };
+    let (ann, bob) = (signed_in("admin-a"), signed_in("admin-b"));
+    let call = |app: &axum::Router, uri: &str, body: Value| {
+        let request = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request builds");
+        let app = app.clone();
+        async move {
+            let response = app.oneshot(request).await.expect("router answers");
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body reads");
+            let json: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            (status, json)
+        }
+    };
+
+    let (status, preview) = call(
+        &ann,
+        "/api/v3/library/management/previews",
+        json!({
+            "selection": {"kind": "albums", "ids": [album]},
+            "profile_id": lm::PICARD_ORGANIZER_PROFILE_ID,
+            "expected_settings_revision": revision,
+            "expected_policy_revision": policy,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert!(management_step(&library).await, "planning runs");
+    let job = preview["job_id"].as_str().expect("job").to_owned();
+
+    let mut proposed = settings;
+    proposed
+        .root_assignments
+        .retain(|assignment| assignment.root_id != "music");
+    proposed
+        .root_assignments
+        .push(LibraryManagementRootAssignment {
+            root_id: "music".to_owned(),
+            profile_id: Some(lm::PICARD_ORGANIZER_PROFILE_ID.to_owned()),
+            enabled: true,
+            automatic_scan_discovered: true,
+            ..Default::default()
+        });
+    let (status, dry_run) = call(
+        &ann,
+        "/api/v3/settings/library-management/activation-previews",
+        json!({
+            "root_id": "music",
+            "settings": proposed,
+            "expected_settings_revision": revision,
+            "expected_policy_revision": policy,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dry_run}");
+    assert!(management_step(&library).await, "dry run planning runs");
+
+    let management = Management::new(&library);
+    let apply = format!("/api/v3/library/management/previews/{job}/apply");
+    let apply_body = || {
+        json!({
+            "preview_token": preview["preview_token"],
+            "expected_operation_row_revision":
+                management.detail(&job).expect("detail").job.row_revision,
+            "idempotency_key": "apply-1",
+            "confirmation": true,
+        })
+    };
+    let confirm = "/api/v3/settings/library-management/activation-confirmations";
+    let confirm_body = json!({
+        "settings": proposed,
+        "proofs": [{
+            "root_id": "music",
+            "job_id": dry_run["job_id"],
+            "preview_token": dry_run["preview_token"],
+        }],
+        "expected_settings_revision": revision,
+        "confirmation": true,
+    });
+
+    let (status, body) = call(&bob, &apply, apply_body()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], json!("PREVIEW_TOKEN_INVALID"));
+    let (status, body) = call(&bob, confirm, confirm_body.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], json!("PREVIEW_TOKEN_INVALID"));
+
+    clock.advance(20 * 60 * 1000);
+    let (status, body) = call(&ann, &apply, apply_body()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = call(&ann, confirm, confirm_body).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
 async fn management_step(library: &LibrarySetup) -> bool {
     let management = droppedneedle_library::management::service::Management::new(library);
     tokio::task::spawn_blocking(move || management.run_next("test-worker"))
@@ -7272,6 +7476,7 @@ async fn management_run(
                 idempotency_key: format!("apply-{}", handle.job_id),
                 confirmation: true,
             },
+            "admin",
         )
         .expect("apply queued");
     assert!(management_step(library).await, "apply runs");
@@ -7902,6 +8107,7 @@ async fn library_management_preview_apply_undo() {
             idempotency_key: "apply-1".to_owned(),
             confirmation: true,
         },
+        "admin",
     );
     assert!(wrong.is_err());
     management
@@ -7913,6 +8119,7 @@ async fn library_management_preview_apply_undo() {
                 idempotency_key: "apply-1".to_owned(),
                 confirmation: true,
             },
+            "admin",
         )
         .expect("apply queued");
     assert!(management_step(&library).await, "apply runs");
@@ -7950,6 +8157,7 @@ async fn library_management_preview_apply_undo() {
                 idempotency_key: "undo-apply-1".to_owned(),
                 confirmation: true,
             },
+            "admin",
         )
         .expect("undo queued");
     assert!(management_step(&library).await, "undo runs");
@@ -8357,6 +8565,7 @@ async fn management_apply(
                 idempotency_key: format!("apply-{}", handle.job_id),
                 confirmation: true,
             },
+            "admin",
         )
         .expect("apply queued");
     // Other queued work may go first; run the worker until this job ends.
@@ -8852,6 +9061,7 @@ async fn library_management_tools_journey() {
             idempotency_key: "apply-dry-run".to_owned(),
             confirmation: true,
         },
+        "admin",
     );
     assert!(refused.is_err(), "an activation preview cannot be applied");
     management
@@ -9041,7 +9251,7 @@ async fn library_management_tools_journey() {
 
     // A stop before the worker starts touches nothing.
     management
-        .apply(&resolve.job_id, apply_request(&resolve))
+        .apply(&resolve.job_id, apply_request(&resolve), "admin")
         .expect("resolution queued");
     assert_eq!(stop(&resolve.job_id).state.as_str(), "stopped");
     management_step(&library).await;
@@ -9068,7 +9278,7 @@ async fn library_management_tools_journey() {
         droppedneedle_library::publish::CrashPoint::AfterFirstRename,
     ));
     management
-        .apply(&resolve.job_id, apply_request(&resolve))
+        .apply(&resolve.job_id, apply_request(&resolve), "admin")
         .expect("resolution queued");
     management_step(&library).await;
     library.publishing.arm_publish_crash(None);
@@ -20824,6 +21034,7 @@ async fn a_translating_profile_writes_english_artist_names() {
                 idempotency_key: "names-undo-apply".to_owned(),
                 confirmation: true,
             },
+            "admin",
         )
         .expect("undo queued");
     assert!(management_step(&managed.library).await, "undo runs");

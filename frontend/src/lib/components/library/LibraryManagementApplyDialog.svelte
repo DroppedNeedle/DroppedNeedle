@@ -1,12 +1,14 @@
 <!--
 	The typed confirmation that applies a sealed preview. Apply sends the exact
 	preview token and row revision the page was showing, so the server refuses
-	it if anything changed since. On success the token is forgotten and the
-	page moves to the new operation.
+	it if anything changed since. A token the server no longer accepts is
+	replaced once and the same apply is sent again. On success the token is
+	forgotten and the page moves to the new operation.
 -->
 <script lang="ts">
 	import '$lib/components/library/library-management.css';
 	import { goto } from '$app/navigation';
+	import { ApiError } from '$lib/api/errors';
 	import { CircleCheckBig, ShieldAlert } from 'lucide-svelte';
 
 	import { LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE } from '$lib/queries/library-management/LibraryManagementConfirmation';
@@ -23,11 +25,13 @@
 		jobId: string;
 		preview: LibraryManagementPreviewDetailResponse;
 		token: string | null;
+		/** A new token for this preview after the server refused `token`. */
+		replaceToken: () => Promise<string | null>;
 		canApply: boolean;
 		copy: ManagementApplyCopy;
 	}
 
-	let { jobId, preview, token, canApply, copy }: Props = $props();
+	let { jobId, preview, token, replaceToken, canApply, copy }: Props = $props();
 	let dialog: HTMLDialogElement;
 	let heading: HTMLHeadingElement;
 	let opener: HTMLElement | null = null;
@@ -48,16 +52,27 @@
 	async function apply(): Promise<void> {
 		if (!token || !confirmed || !canApply) return;
 		error = '';
-		try {
-			const operation = await applyPreview.mutateAsync({
+		const idempotencyKey = createUuid();
+		const send = (previewToken: string) =>
+			applyPreview.mutateAsync({
 				jobId,
 				request: {
-					preview_token: token,
+					preview_token: previewToken,
 					expected_operation_row_revision: preview.operation_row_revision,
-					idempotency_key: createUuid(),
+					idempotency_key: idempotencyKey,
 					confirmation: true
 				}
 			});
+		try {
+			let operation: Awaited<ReturnType<typeof send>>;
+			try {
+				operation = await send(token);
+			} catch (cause) {
+				if (!(cause instanceof ApiError && cause.code === 'PREVIEW_TOKEN_INVALID')) throw cause;
+				const replaced = await replaceToken();
+				if (!replaced) throw cause;
+				operation = await send(replaced);
+			}
 			forgetLibraryManagementPreviewToken(jobId);
 			dialog.close();
 			await goto(

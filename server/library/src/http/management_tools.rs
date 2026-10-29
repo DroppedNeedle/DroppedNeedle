@@ -888,7 +888,7 @@ pub async fn get_management_activation_preview(
     request_body = ManagementActivationConfirmBody,
     responses(
         (status = 200, description = "Settings saved", body = LibraryManagementSettingsResponse),
-        (status = 400, description = "Missing confirmation or proof"),
+        (status = 400, description = "Missing confirmation or proof, or a dry run token that is not valid"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown dry run"),

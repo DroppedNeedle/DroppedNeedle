@@ -54,6 +54,9 @@ impl From<ManagementError> for ApiError {
             ManagementError::Invalid(message) => ApiError::invalid_input(message),
             ManagementError::Conflict(message) => ApiError::conflict(message),
             ManagementError::Forbidden(message) => ApiError::forbidden(message),
+            ManagementError::Refused(reason) => {
+                super::error::refused(axum::http::StatusCode::BAD_REQUEST, reason)
+            }
             ManagementError::Store(cause) => ApiError::internal(cause),
             ManagementError::Busy(cause) => ApiError::unavailable(Unavailable::ServerBusy, cause),
         }
@@ -679,7 +682,7 @@ pub async fn discard_management_preview(
 )]
 pub async fn apply_management_preview(
     State(management): State<Management>,
-    _caller: Admin,
+    caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<ManagementApplyBody>,
 ) -> Result<Json<OperationView>, ApiError> {
@@ -689,12 +692,11 @@ pub async fn apply_management_preview(
         idempotency_key: body.idempotency_key,
         confirmation: body.confirmation,
     };
-    let job = blocking(move || management.apply(&job_id, request)).await?;
+    let job = blocking(move || management.apply(&job_id, request, caller.user_id())).await?;
     Ok(Json(job_view(&job)))
 }
 
-/// A new confirmation token for your own ready preview (the old one
-/// stops working).
+/// A new confirmation token for your own ready preview.
 #[utoipa::path(
     post,
     tag = "library management",

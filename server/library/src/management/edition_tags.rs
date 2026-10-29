@@ -333,7 +333,7 @@ impl Management {
         caller: &Principal,
     ) -> Result<EditionTagsJob, EditionTagsError> {
         self.edition_tags_snapshot(album_id, job_id, caller)?;
-        self.apply(job_id, request)?;
+        self.apply(job_id, request, caller.user_id())?;
         self.edition_tags(album_id, job_id, caller)
     }
 

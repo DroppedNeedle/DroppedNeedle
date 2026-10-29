@@ -10360,7 +10360,7 @@
             }
           },
           "400": {
-            "description": "Wrong token or no request key",
+            "description": "Wrong token, another curator's tag write, or no request key",
             "content": {
               "application/json": {
                 "schema": {
@@ -17667,7 +17667,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "A new confirmation token for your own ready preview (the old one\nstops working).",
+        "summary": "A new confirmation token for your own ready preview.",
         "operationId": "reissue_management_preview",
         "parameters": [
           {
@@ -30758,7 +30758,7 @@
             }
           },
           "400": {
-            "description": "Missing confirmation or proof",
+            "description": "Missing confirmation or proof, or a dry run token that is not valid",
             "content": {
               "application/json": {
                 "schema": {

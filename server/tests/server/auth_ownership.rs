@@ -1317,7 +1317,6 @@ fn seed_tag_write(app: &TestApp, owner: &Who, album: &str, job: &str) {
                 overrides: String::new(),
             },
             catalog_revision: 0,
-            token_hash: "",
             now: 1.0,
             expires_at: 1e12,
             target_root_id: None,

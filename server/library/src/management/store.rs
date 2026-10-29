@@ -44,7 +44,6 @@ pub struct Snapshot {
     pub policy_revision: String,
     pub catalog_revision: i64,
     pub profile_snapshot_json: String,
-    pub token_hash: Option<String>,
     pub preview_created_at: Option<f64>,
     pub preview_expires_at: Option<f64>,
     pub target_root_id: Option<String>,
@@ -89,12 +88,12 @@ impl Snapshot {
 
 const SNAPSHOT_COLUMNS: &str = "s.mode, s.origin, s.phase, s.selection_json, s.profile_revision, \
      s.settings_revision, s.naming_revision, s.policy_revision, s.catalog_revision, \
-     s.profile_snapshot_json, s.preview_token_hash, s.preview_created_at, s.preview_expires_at, \
+     s.profile_snapshot_json, s.preview_created_at, s.preview_expires_at, \
      s.target_root_id, s.linked_operation_job_id, s.intent_json, s.summary_json, \
      j.idempotency_key, j.lease_expires_at, j.heartbeat_at, j.id, s.proposed_settings_revision";
 
 fn map_snapshot(conn: &Connection, row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Snapshot>> {
-    let job_id: String = row.get(20)?;
+    let job_id: String = row.get(19)?;
     let Some(job) = jobs::job(conn, &job_id)? else {
         return Ok(None);
     };
@@ -110,17 +109,16 @@ fn map_snapshot(conn: &Connection, row: &rusqlite::Row<'_>) -> rusqlite::Result<
         policy_revision: row.get(7)?,
         catalog_revision: row.get(8)?,
         profile_snapshot_json: row.get(9)?,
-        token_hash: row.get(10)?,
-        preview_created_at: row.get(11)?,
-        preview_expires_at: row.get(12)?,
-        target_root_id: row.get(13)?,
-        linked_job_id: row.get(14)?,
-        intent_json: row.get(15)?,
-        summary_json: row.get(16)?,
-        idempotency_key: row.get(17)?,
-        lease_expires_at: row.get(18)?,
-        heartbeat_at: row.get(19)?,
-        proposed_settings_revision: row.get(21)?,
+        preview_created_at: row.get(10)?,
+        preview_expires_at: row.get(11)?,
+        target_root_id: row.get(12)?,
+        linked_job_id: row.get(13)?,
+        intent_json: row.get(14)?,
+        summary_json: row.get(15)?,
+        idempotency_key: row.get(16)?,
+        lease_expires_at: row.get(17)?,
+        heartbeat_at: row.get(18)?,
+        proposed_settings_revision: row.get(20)?,
     }))
 }
 
@@ -152,7 +150,6 @@ pub struct NewJob<'a> {
     pub profile_snapshot_json: &'a str,
     pub revisions: &'a Revisions,
     pub catalog_revision: i64,
-    pub token_hash: &'a str,
     pub now: f64,
     pub expires_at: f64,
     pub target_root_id: Option<&'a str>,
@@ -183,11 +180,11 @@ pub fn insert_job(
     tx.execute(
         "INSERT INTO library_management_job_snapshots (job_id, mode, origin, phase, \
          selection_json, profile_revision, settings_revision, naming_revision, policy_revision, \
-         catalog_revision, profile_snapshot_json, preview_token_hash, preview_created_at, \
-         preview_expires_at, target_root_id, linked_operation_job_id, intent_json, summary_json, \
-         created_at, updated_at, proposed_settings_revision) \
-         VALUES (?1, ?2, ?17, ?19, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
-         ?14, ?15, ?16, ?11, ?11, ?18)",
+         catalog_revision, profile_snapshot_json, preview_created_at, preview_expires_at, \
+         target_root_id, linked_operation_job_id, intent_json, summary_json, created_at, \
+         updated_at, proposed_settings_revision) \
+         VALUES (?1, ?2, ?16, ?18, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
+         ?14, ?15, ?10, ?10, ?17)",
         params![
             job.id,
             job.mode,
@@ -198,7 +195,6 @@ pub fn insert_job(
             job.revisions.policy,
             job.catalog_revision,
             job.profile_snapshot_json,
-            job.token_hash,
             job.now,
             job.expires_at,
             job.target_root_id,
@@ -673,21 +669,6 @@ pub fn discard(
     now: f64,
 ) -> rusqlite::Result<bool> {
     jobs::discard_preview(tx, job_id, expected_revision, now)
-}
-
-/// Replace the preview token (a lost browser tab asks for a new one).
-pub fn rotate_token(
-    conn: &Connection,
-    job_id: &str,
-    token_hash: &str,
-    now: f64,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE library_management_job_snapshots SET preview_token_hash = ?2, updated_at = ?3 \
-         WHERE job_id = ?1",
-        params![job_id, token_hash, now],
-    )?;
-    Ok(())
 }
 
 /// One album's work row: state, failure code, result and bundle id.
