@@ -14,19 +14,17 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use super::host::PluginHost;
 use super::manifest::{PluginManifest, load_manifest};
 use super::models::PluginRefKind;
-use super::runtime::BoxFuture;
-use droppedneedle_kernel::clock::Clock;
-use droppedneedle_kernel::http_client::{BodyError, read_capped};
+use droppedneedle_providers::github::{GitHubRepos, MAX_ARCHIVE_BYTES};
+use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority};
 
-/// Largest install archive (32 MiB).
-pub const MAX_PLUGIN_ZIP_BYTES: usize = 32 * 1024 * 1024;
+/// Largest install archive (32 MiB), read under GitHub's archive cap.
+pub const MAX_PLUGIN_ZIP_BYTES: usize = MAX_ARCHIVE_BYTES;
 /// Most files in one archive.
 pub const MAX_PLUGIN_ZIP_ENTRIES: usize = 2000;
 /// Largest single file in an archive (32 MiB).
@@ -37,138 +35,6 @@ pub const MAX_PLUGIN_ZIP_DECOMPRESSED_BYTES: usize = 256 * 1024 * 1024;
 pub const INSTALL_RECORD: &str = ".droppedneedle-install.json";
 /// Shown with every install preview.
 pub const TRUST_WARNING: &str = "Only install plugins you trust. A plugin runs as its own program on your server with the same access to files and the network as DroppedNeedle itself. It is not sandboxed.";
-
-/// GitHub API origin.
-pub const API_BASE: &str = "https://api.github.com";
-/// GitHub archive download origin.
-pub const CODELOAD_BASE: &str = "https://codeload.github.com";
-
-/// Where installs reach GitHub.
-#[derive(Debug, Clone)]
-pub struct GitHubHosts {
-    /// API origin; production uses [`API_BASE`].
-    pub api: String,
-    /// Archive download origin; production uses [`CODELOAD_BASE`].
-    pub codeload: String,
-}
-
-/// What GitHub answered for one URL.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Fetched {
-    /// 200. The body, capped at [`MAX_PLUGIN_ZIP_BYTES`] while streaming.
-    Found(Vec<u8>),
-    /// 404 and nothing else: no such repository, release, ref or commit.
-    NotFound,
-    /// 401, or a 403 that is not a rate limit.
-    Denied,
-    /// 429, or a 403 that carries a rate-limit signal.
-    RateLimited {
-        /// Seconds until GitHub takes requests again, when it said.
-        retry_after: Option<u64>,
-    },
-    /// Any other status.
-    Failed(u16),
-}
-
-/// A fetch that got no usable answer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FetchError {
-    /// The body is over [`MAX_PLUGIN_ZIP_BYTES`].
-    TooLarge,
-    /// The request or the download broke: a fixed kind for the log, never
-    /// the transport's own text, which can carry the URL.
-    Transport(&'static str),
-}
-
-/// Fetch one URL and say what came back.
-pub trait ArchiveFetcher: Send + Sync {
-    /// GET one URL.
-    fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<Fetched, FetchError>>;
-}
-
-/// Production fetcher over the shared HTTP client.
-pub struct ReqwestFetcher {
-    http: reqwest::Client,
-    clock: Arc<dyn Clock>,
-}
-
-impl ReqwestFetcher {
-    /// Wrap a shared HTTP client; `clock` dates GitHub's rate-limit reset.
-    pub fn new(http: reqwest::Client, clock: Arc<dyn Clock>) -> Self {
-        Self { http, clock }
-    }
-}
-
-/// What a status other than 200 means, or `None` for a 200 whose body is
-/// still to read. Only a 404 is "not found".
-///
-/// From GitHub's "Rate limits for the REST API" page, read 2026-10-13: an
-/// exhausted hourly limit is a 403 or 429 with `x-ratelimit-remaining: 0`
-/// and `x-ratelimit-reset` as the Unix second it lifts; a secondary limit
-/// is a 403 or 429 with `retry-after` in seconds when GitHub sends it. A
-/// secondary limit sent as a bare 403 cannot be told from a refusal
-/// without reading the body, so it counts as denied.
-fn refusal(
-    status: reqwest::StatusCode,
-    headers: &reqwest::header::HeaderMap,
-    now: u64,
-) -> Option<Fetched> {
-    let number = |name: &str| {
-        headers
-            .get(name)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|text| text.trim().parse::<u64>().ok())
-    };
-    let retry_after = number("retry-after");
-    let exhausted = number("x-ratelimit-remaining") == Some(0);
-    let limited = status == reqwest::StatusCode::TOO_MANY_REQUESTS
-        || (status == reqwest::StatusCode::FORBIDDEN && (exhausted || retry_after.is_some()));
-    Some(match status {
-        reqwest::StatusCode::OK => return None,
-        reqwest::StatusCode::NOT_FOUND => Fetched::NotFound,
-        _ if limited => Fetched::RateLimited {
-            retry_after: retry_after.or_else(|| {
-                number("x-ratelimit-reset")
-                    .filter(|_| exhausted)
-                    .map(|reset| reset.saturating_sub(now))
-            }),
-        },
-        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => Fetched::Denied,
-        other => Fetched::Failed(other.as_u16()),
-    })
-}
-
-impl ArchiveFetcher for ReqwestFetcher {
-    fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<Fetched, FetchError>> {
-        Box::pin(async move {
-            let transport = |error: reqwest::Error| {
-                FetchError::Transport(if error.is_timeout() {
-                    "timed out"
-                } else if error.is_connect() {
-                    "could not connect"
-                } else {
-                    "request failed"
-                })
-            };
-            let response = self
-                .http
-                .get(url)
-                .header("accept", "application/vnd.github+json")
-                .send()
-                .await
-                .map_err(transport)?;
-            let now = u64::try_from(self.clock.now_unix()).unwrap_or(0);
-            if let Some(answer) = refusal(response.status(), response.headers(), now) {
-                return Ok(answer);
-            }
-            match read_capped(response, MAX_PLUGIN_ZIP_BYTES).await {
-                Ok(body) => Ok(Fetched::Found(body)),
-                Err(BodyError::TooLarge) => Err(FetchError::TooLarge),
-                Err(error @ BodyError::Transport(_)) => Err(FetchError::Transport(error.kind())),
-            }
-        })
-    }
-}
 
 /// One file inside an install archive.
 #[derive(Debug, Clone)]
@@ -294,6 +160,9 @@ pub enum InstallError {
     /// The repository at the recorded address has another GitHub id now:
     /// it was deleted and created again, maybe by someone else.
     RepositoryReplaced,
+    /// The commit an install was pinned to is no longer what the URL
+    /// names.
+    PreviewStale,
     /// Local filesystem failure. The message is log-only.
     Io(String),
 }
@@ -332,6 +201,9 @@ impl std::fmt::Display for InstallError {
             ),
             Self::RepositoryReplaced => f.write_str(
                 "The repository at this address was replaced since the plugin was installed. Install it again if you trust the new one",
+            ),
+            Self::PreviewStale => f.write_str(
+                "The repository changed since the preview. Preview it again to see what would be installed",
             ),
         }
     }
@@ -560,108 +432,89 @@ pub fn parse_source(url: &str, reference: Option<&str>) -> Result<InstallSource,
     })
 }
 
-/// `GET /repos/{owner}/{repo}`, of which only the id is read. Probed
-/// 2026-10-27 against the public API: `id` is a JSON integer, and an
-/// unknown repository answers 404.
-#[derive(Deserialize)]
-struct Repository {
-    id: u64,
-}
+/// Installs and updates are an admin waiting on the answer.
+const PRIORITY: RequestPriority = RequestPriority::UserInitiated;
 
-#[derive(Deserialize)]
-struct LatestRelease {
-    tag_name: String,
-}
-
-#[derive(Deserialize)]
-struct CommitInfo {
-    sha: String,
-}
-
-/// The body behind one URL, or `None` when GitHub has nothing there. Only
-/// a 404 is "nothing there": a refusal, a rate limit or a failure is an
-/// error, so it can never be mistaken for a repository with no releases.
-fn body_of(answer: Result<Fetched, FetchError>) -> Result<Option<Vec<u8>>, InstallError> {
-    match answer {
-        Ok(Fetched::Found(body)) => Ok(Some(body)),
-        Ok(Fetched::NotFound) => Ok(None),
-        Ok(Fetched::Denied) => Err(InstallError::Denied),
-        Ok(Fetched::RateLimited { retry_after }) => Err(InstallError::RateLimited { retry_after }),
-        Ok(Fetched::Failed(status)) => {
-            tracing::warn!(status, "GitHub failed a plugin request");
-            Err(InstallError::Download)
+/// What a GitHub failure means for an install. A 404 never gets here: the
+/// client answers it as "nothing there".
+fn github_fault(error: ProviderError) -> InstallError {
+    match error {
+        ProviderError::Unauthorized { .. } | ProviderError::Forbidden { .. } => {
+            InstallError::Denied
         }
-        Err(FetchError::TooLarge) => Err(InstallError::TooLarge),
-        Err(FetchError::Transport(reason)) => {
-            tracing::warn!(%reason, "plugin download failed");
-            Err(InstallError::Download)
-        }
+        limited @ ProviderError::RateLimited { .. } => InstallError::RateLimited {
+            retry_after: limited.retry_after_secs(),
+        },
+        ProviderError::Payload {
+            kind: PayloadKind::TooLarge,
+            ..
+        } => InstallError::TooLarge,
+        ProviderError::Payload { .. } => InstallError::Unreadable,
+        // The executor logged the failure.
+        _ => InstallError::Download,
     }
-}
-
-/// Decode one GitHub answer, or say it could not be read.
-fn decode<T: serde::de::DeserializeOwned>(body: &[u8], what: &str) -> Result<T, InstallError> {
-    serde_json::from_slice(body).map_err(|error| {
-        tracing::warn!(what, %error, "GitHub sent an unreadable answer to a plugin request");
-        InstallError::Unreadable
-    })
 }
 
 /// Resolve a commit-ish (tag, branch or SHA) to a commit SHA.
 async fn commit_for(
-    fetcher: &dyn ArchiveFetcher,
-    hosts: &GitHubHosts,
+    github: &GitHubRepos,
     source: &InstallSource,
     reference: &str,
 ) -> Result<Option<String>, InstallError> {
-    let url = format!(
-        "{}/repos/{}/{}/commits/{reference}",
-        hosts.api, source.owner, source.repo
-    );
-    let answer = fetcher.fetch(&url).await;
-    // This endpoint answers 422, not 404, for a tag, branch or commit the
-    // repository does not have (probed 2026-10-13 against the public API),
-    // and 409 for a repository with no commits (GitHub's "Get a commit"
-    // page). Both mean "no such ref" here and nowhere else.
-    if matches!(answer, Ok(Fetched::Failed(409 | 422))) {
-        return Ok(None);
-    }
-    let Some(body) = body_of(answer)? else {
+    let Some(sha) = github
+        .commit_sha(&source.owner, &source.repo, reference, PRIORITY)
+        .await
+        .map_err(github_fault)?
+    else {
         return Ok(None);
     };
-    let info: CommitInfo = decode(&body, "commit")?;
-    if !is_commit_sha(&info.sha) {
+    if !is_commit_sha(&sha) {
         tracing::warn!("GitHub named a commit that is not a SHA");
         return Err(InstallError::Unreadable);
     }
-    Ok(Some(info.sha.to_ascii_lowercase()))
+    Ok(Some(sha.to_ascii_lowercase()))
 }
 
-/// Resolve what the admin asked for to an exact commit.
+/// The GitHub reads [resolve] then [stage] make for `source`: the
+/// repository, the latest release when it asks for one, the commit and the
+/// archive.
+fn reads_for(source: &InstallSource) -> u32 {
+    let release = matches!(source.wanted, Wanted::LatestRelease | Wanted::NewestRelease);
+    3 + u32::from(release)
+}
+
+/// Turn down at once, spending nothing, an operation of `reads` requests the
+/// `github` row cannot cover, so its wait covers the whole operation.
+fn room_for(github: &GitHubRepos, reads: u32) -> Result<(), InstallError> {
+    github.room_for(reads).map_err(github_fault)
+}
+
+/// Resolve what the admin asked for to an exact commit. Refused at once,
+/// with nothing spent, when the `github` row cannot cover this and the
+/// download after it.
 pub async fn resolve(
-    fetcher: &dyn ArchiveFetcher,
-    hosts: &GitHubHosts,
+    github: &GitHubRepos,
     source: InstallSource,
 ) -> Result<ResolvedSource, InstallError> {
-    let url = format!("{}/repos/{}/{}", hosts.api, source.owner, source.repo);
-    let repository: Repository = match body_of(fetcher.fetch(&url).await)? {
-        Some(body) => decode(&body, "repository")?,
-        None => return Err(InstallError::NoRepository),
-    };
+    room_for(github, reads_for(&source))?;
+    let repository_id = github
+        .repository_id(&source.owner, &source.repo, PRIORITY)
+        .await
+        .map_err(github_fault)?
+        .ok_or(InstallError::NoRepository)?;
     let (ref_kind, reference) = match &source.wanted {
         Wanted::LatestRelease | Wanted::NewestRelease => {
-            let url = format!(
-                "{}/repos/{}/{}/releases/latest",
-                hosts.api, source.owner, source.repo
-            );
-            match body_of(fetcher.fetch(&url).await)? {
-                Some(body) => {
-                    let release: LatestRelease = decode(&body, "latest release")?;
-                    if !valid_ref(&release.tag_name) {
+            let latest = github
+                .latest_release_tag(&source.owner, &source.repo, PRIORITY)
+                .await
+                .map_err(github_fault)?;
+            match latest {
+                Some(tag) => {
+                    if !valid_ref(&tag) {
                         tracing::warn!("GitHub named a release tag that is not a usable ref");
                         return Err(InstallError::Unreadable);
                     }
-                    (PluginRefKind::Release, release.tag_name)
+                    (PluginRefKind::Release, tag)
                 }
                 None if source.wanted == Wanted::NewestRelease => {
                     return Err(InstallError::NoReleasesNow);
@@ -674,7 +527,7 @@ pub async fn resolve(
         Wanted::Tree(reference) => (PluginRefKind::Branch, reference.clone()),
         Wanted::Commit(sha) => (PluginRefKind::Commit, sha.to_ascii_lowercase()),
     };
-    let commit = commit_for(fetcher, hosts, &source, &reference)
+    let commit = commit_for(github, &source, &reference)
         .await?
         .ok_or_else(|| {
             InstallError::RefNotFound(match ref_kind {
@@ -695,24 +548,67 @@ pub async fn resolve(
     }
     Ok(ResolvedSource {
         source,
-        repository_id: repository.id,
+        repository_id,
         ref_kind,
         reference,
         commit,
     })
 }
 
+/// Resolve an install pinned to `pin`, the commit its preview showed, so
+/// exactly that commit installs. A URL that names its ref (a tag, branch or
+/// commit) already says what the install record holds, so only the
+/// repository is read; the archive is then fetched by the pinned SHA. A
+/// plain repository URL resolves as usual, since the record names the
+/// release tag, and must still land on the pinned commit.
+pub async fn resolve_pinned(
+    github: &GitHubRepos,
+    source: InstallSource,
+    pin: &str,
+) -> Result<ResolvedSource, InstallError> {
+    let pin = pin.trim().to_ascii_lowercase();
+    let (ref_kind, reference) = match &source.wanted {
+        Wanted::LatestRelease | Wanted::NewestRelease => {
+            let resolved = resolve(github, source).await?;
+            return if resolved.commit == pin {
+                Ok(resolved)
+            } else {
+                Err(InstallError::PreviewStale)
+            };
+        }
+        Wanted::Tag(tag) => (PluginRefKind::Tag, tag.clone()),
+        Wanted::Tree(reference) => (PluginRefKind::Branch, reference.clone()),
+        Wanted::Commit(sha) => (PluginRefKind::Commit, sha.to_ascii_lowercase()),
+    };
+    if !is_commit_sha(&pin) || (ref_kind == PluginRefKind::Commit && reference != pin) {
+        return Err(InstallError::PreviewStale);
+    }
+    // The repository and the archive.
+    room_for(github, 2)?;
+    let repository_id = github
+        .repository_id(&source.owner, &source.repo, PRIORITY)
+        .await
+        .map_err(github_fault)?
+        .ok_or(InstallError::NoRepository)?;
+    Ok(ResolvedSource {
+        source,
+        repository_id,
+        ref_kind,
+        reference,
+        commit: pin,
+    })
+}
+
 /// Download and validate one resolved source without installing it.
 pub async fn stage(
-    fetcher: &dyn ArchiveFetcher,
-    hosts: &GitHubHosts,
+    github: &GitHubRepos,
     resolved: ResolvedSource,
 ) -> Result<StagedPlugin, InstallError> {
-    let url = format!(
-        "{}/{}/{}/zip/{}",
-        hosts.codeload, resolved.source.owner, resolved.source.repo, resolved.commit
-    );
-    let archive = body_of(fetcher.fetch(&url).await)?
+    let source = &resolved.source;
+    let archive = github
+        .archive(&source.owner, &source.repo, &resolved.commit, PRIORITY)
+        .await
+        .map_err(github_fault)?
         .ok_or_else(|| InstallError::RefNotFound(format!("commit {}", resolved.commit)))?;
     if archive.len() > MAX_PLUGIN_ZIP_BYTES {
         return Err(InstallError::TooLarge);
@@ -946,34 +842,6 @@ mod tests {
                 "{bad}"
             );
         }
-    }
-
-    #[test]
-    fn only_a_404_reads_as_not_found() {
-        use reqwest::StatusCode;
-        use reqwest::header::{HeaderMap, HeaderValue};
-
-        let sorted = |status: u16, pairs: &[(&'static str, &'static str)]| {
-            let mut headers = HeaderMap::new();
-            for (name, value) in pairs {
-                headers.insert(*name, HeaderValue::from_static(value));
-            }
-            refusal(StatusCode::from_u16(status).unwrap(), &headers, 1000)
-        };
-        let limited = |retry_after| Some(Fetched::RateLimited { retry_after });
-        let exhausted = [
-            ("x-ratelimit-remaining", "0"),
-            ("x-ratelimit-reset", "1600"),
-        ];
-        assert_eq!(sorted(200, &[]), None);
-        assert_eq!(sorted(404, &[]), Some(Fetched::NotFound));
-        assert_eq!(sorted(401, &[]), Some(Fetched::Denied));
-        assert_eq!(sorted(403, &[]), Some(Fetched::Denied));
-        assert_eq!(sorted(403, &exhausted), limited(Some(600)));
-        assert_eq!(sorted(403, &[("retry-after", "30")]), limited(Some(30)));
-        assert_eq!(sorted(429, &[]), limited(None));
-        assert_eq!(sorted(422, &[]), Some(Fetched::Failed(422)));
-        assert_eq!(sorted(500, &[]), Some(Fetched::Failed(500)));
     }
 
     #[test]

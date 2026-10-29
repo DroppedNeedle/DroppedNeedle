@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { ShieldAlert } from 'lucide-svelte';
 	import {
+		githubWaitMessage,
 		installPreviewedPluginMutation,
 		previewPluginInstallMutation,
 		type PluginInstallPreview
@@ -14,6 +15,7 @@
 	const install = installPreviewedPluginMutation();
 
 	let repoUrl = $state('');
+	const paced = $derived(githubWaitMessage(preview.error) ?? githubWaitMessage(install.error));
 	let shown = $state<(PluginInstallPreview & { repository_url: string }) | null>(null);
 
 	function submitPreview(event: SubmitEvent) {
@@ -69,6 +71,9 @@
 	<code>/tree/…</code> or <code>/commit/…</code> link). Nothing is written until you confirm, and nothing
 	runs until you enable it.
 </p>
+{#if paced}
+	<p class="mt-1 text-sm text-warning" role="status">{paced}</p>
+{/if}
 
 {#if shown}
 	<Card variant="bordered" padding="md" class="mt-2">

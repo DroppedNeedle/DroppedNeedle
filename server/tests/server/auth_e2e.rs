@@ -260,7 +260,7 @@ impl E2e {
         .with_checkpoint(self.runtime.checkpoint().clone())
         .with_precache(jobs.precache_trigger());
         // The production plugins bundle over the scratch plugins folder,
-        // launching nothing, with GitHub's addresses closed.
+        // launching nothing, reading GitHub through the rig's providers.
         let ticks = droppedneedle_plugins::wiring::tick_store(p);
         let plugin_host = droppedneedle_plugins::host::PluginHost::new(
             p.config.plugins_dir(),
@@ -273,7 +273,7 @@ impl E2e {
             p,
             plugin_host,
             ticks,
-            crate::common::closed_outbound().plugin_hosts(),
+            providers.github_repos.clone(),
         );
         let settings =
             droppedneedle::settings::wiring::SettingsSetup::for_tests(Arc::clone(&p.ids))

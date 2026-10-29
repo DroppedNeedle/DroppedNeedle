@@ -62,6 +62,17 @@ In **Settings > Plugins**, paste the repository URL and press **Preview**.
   tag) as it is now.
 - `https://github.com/owner/repo/commit/<sha>` installs that commit.
 
+DroppedNeedle keeps its GitHub requests under GitHub's limit for servers
+without an account: 10 at once, then about 50 an hour, shared by installs,
+updates and DroppedNeedle's own update check. A preview uses 4 requests
+from a plain repository URL and 3 from the other kinds. An install uses
+4 from a plain URL and 2 from the others, and an update 3 or 4. So
+after the first preview and install, about six plain-URL installs fit in
+an hour. When a preview, install or update would not fit, it stops before
+sending anything and says how long to wait, for example "GitHub requests
+are paced. Try again in 3 minutes." That wait covers the whole operation,
+and it is usually DroppedNeedle's own pacing, not a limit from GitHub.
+
 The preview lists the plugin's name, version, author, the exact commit, and
 what the plugin asks to do. Press **Install** to write it. The plugin arrives
 disabled; enable it, fill in its settings, and save.

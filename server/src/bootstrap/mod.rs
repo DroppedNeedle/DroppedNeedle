@@ -513,7 +513,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
         pool: db.sqlx().clone(),
     }));
-    let plugins = PluginsSetup::build(p, plugin_host, plugin_ticks, outbound.plugin_hosts());
+    let plugins = PluginsSetup::build(p, plugin_host, plugin_ticks, providers.github_repos.clone());
     plugins.sync_ticks().await;
 
     // Attribution and scrobble drains: they deliver what is queued and end

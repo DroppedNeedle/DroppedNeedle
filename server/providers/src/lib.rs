@@ -121,6 +121,10 @@ pub struct ProviderEndpoints {
     pub youtube: String,
     /// The releases list behind the version check.
     pub github_releases: String,
+    /// GitHub API origin, which plugin installs read.
+    pub github_api: String,
+    /// GitHub archive download origin for plugin installs.
+    pub github_codeload: String,
 }
 
 impl ProviderEndpoints {
@@ -149,6 +153,8 @@ impl ProviderEndpoints {
             geocoding: "http://127.0.0.1:9/geocoding".to_owned(),
             youtube: "http://127.0.0.1:9/youtube".to_owned(),
             github_releases: "http://127.0.0.1:9/releases".to_owned(),
+            github_api: "http://127.0.0.1:9/github".to_owned(),
+            github_codeload: "http://127.0.0.1:9/codeload".to_owned(),
         }
     }
 }
@@ -203,6 +209,9 @@ pub struct Providers {
     pub youtube: youtube::YouTubeApi,
     /// GitHub releases for the version check.
     pub github: github::GitHubClient,
+    /// GitHub repository reads for plugin installs, on the version
+    /// check's row.
+    pub github_repos: github::GitHubRepos,
 }
 
 impl Providers {
@@ -344,9 +353,13 @@ impl Providers {
             executor(&youtube::SPEC, youtube::SOURCE),
             &endpoints.youtube,
         );
-        let github = github::GitHubClient::new(
-            executor(&github::SPEC, github::SOURCE),
-            &endpoints.github_releases,
+        let github_api = executor(&github::SPEC, github::SOURCE);
+        let github = github::GitHubClient::new(github_api.clone(), &endpoints.github_releases);
+        let github_repos = github::GitHubRepos::new(
+            github_api,
+            executor(&github::ARCHIVE_SPEC, github::SOURCE),
+            &endpoints.github_api,
+            &endpoints.github_codeload,
         );
         Self {
             limiters,
@@ -369,6 +382,7 @@ impl Providers {
             geocoding,
             youtube,
             github,
+            github_repos,
         }
     }
 

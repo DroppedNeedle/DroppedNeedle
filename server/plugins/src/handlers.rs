@@ -29,7 +29,7 @@ use super::ext::ExtCall;
 pub use super::ext::ExtRateLimiter;
 use super::host::{PluginHost, UninstallError, UpdateError};
 use super::install::{
-    ArchiveFetcher, InstallError, StagedPlugin, TRUST_WARNING, parse_source, resolve, stage,
+    InstallError, StagedPlugin, TRUST_WARNING, parse_source, resolve, resolve_pinned, stage,
 };
 use super::manifest::RouteMethod;
 use super::models::{
@@ -47,10 +47,8 @@ pub struct PluginsDeps {
     pub host: Arc<PluginHost>,
     /// Config store for masked settings reads.
     pub config: Arc<ConfigStore>,
-    /// Where installs reach GitHub.
-    pub github: super::install::GitHubHosts,
-    /// Install archive fetcher.
-    pub fetcher: Arc<dyn ArchiveFetcher>,
+    /// What installs and updates read GitHub through.
+    pub github: droppedneedle_providers::github::GitHubRepos,
     /// Tick-loop rebuilds, synced after every mutation.
     pub tick_sync: Arc<PluginTickLoops>,
     /// `/ext/` rate limiter.
@@ -68,11 +66,11 @@ fn map_install(error: InstallError) -> PluginError {
         }
         InstallError::Download => PluginError::Source(SourceFault::Unreachable),
         InstallError::Unreadable => PluginError::Source(SourceFault::Unreadable),
-        refused @ (InstallError::NoReleasesNow | InstallError::RepositoryReplaced) => {
-            PluginError::Conflict {
-                message: refused.to_string(),
-            }
-        }
+        refused @ (InstallError::NoReleasesNow
+        | InstallError::RepositoryReplaced
+        | InstallError::PreviewStale) => PluginError::Conflict {
+            message: refused.to_string(),
+        },
         other => PluginError::InvalidInput {
             message: other.to_string(),
         },
@@ -190,19 +188,21 @@ pub async fn list_plugins(
     Ok(Json(PluginListResponse { plugins }))
 }
 
-/// Resolve and download one install request without installing it.
+/// Resolve and download one install request without installing it,
+/// pinned to `pin` when a preview named the commit.
 async fn stage_request(
     deps: &PluginsDeps,
     url: &str,
     reference: Option<&str>,
+    pin: Option<&str>,
 ) -> Result<StagedPlugin, PluginError> {
     let source = parse_source(url, reference).map_err(map_install)?;
-    let resolved = resolve(deps.fetcher.as_ref(), &deps.github, source)
-        .await
-        .map_err(map_install)?;
-    stage(deps.fetcher.as_ref(), &deps.github, resolved)
-        .await
-        .map_err(map_install)
+    let resolved = match pin.map(str::trim).filter(|text| !text.is_empty()) {
+        Some(pin) => resolve_pinned(&deps.github, source, pin).await,
+        None => resolve(&deps.github, source).await,
+    }
+    .map_err(map_install)?;
+    stage(&deps.github, resolved).await.map_err(map_install)
 }
 
 /// Write a staged plugin to disk off the async workers, then re-sync ticks.
@@ -239,7 +239,8 @@ pub async fn preview_plugin_install(
     _admin: Admin,
     ValidJson(body): ValidJson<PluginInstallRequest>,
 ) -> Result<Json<PluginInstallPreview>, ApiError> {
-    let staged = stage_request(&deps, &body.repository_url, body.reference.as_deref()).await?;
+    let staged =
+        stage_request(&deps, &body.repository_url, body.reference.as_deref(), None).await?;
     let manifest = &staged.manifest;
     let installed_version = deps
         .host
@@ -291,18 +292,13 @@ pub async fn install_plugin(
     _admin: Admin,
     ValidJson(body): ValidJson<PluginInstallRequest>,
 ) -> Result<(StatusCode, Json<PluginInfo>), ApiError> {
-    let staged = stage_request(&deps, &body.repository_url, body.reference.as_deref()).await?;
-    if let Some(expected) = body
-        .commit
-        .as_deref()
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        && !expected.eq_ignore_ascii_case(&staged.resolved.commit)
-    {
-        return Err(ApiError::conflict(
-            "The repository changed since the preview. Preview it again to see what would be installed",
-        ));
-    }
+    let staged = stage_request(
+        &deps,
+        &body.repository_url,
+        body.reference.as_deref(),
+        body.commit.as_deref(),
+    )
+    .await?;
     let name = install_staged(&deps, staged).await?;
     let info = plugin_info(deps.host.as_ref(), deps.config.as_ref(), &name)?;
     Ok((StatusCode::CREATED, Json(info)))
@@ -344,14 +340,10 @@ pub async fn update_plugin_from_source(
     let source = record
         .update_source(body.reference.as_deref())
         .map_err(map_install)?;
-    let resolved = resolve(deps.fetcher.as_ref(), &deps.github, source)
-        .await
-        .map_err(map_install)?;
+    let resolved = resolve(&deps.github, source).await.map_err(map_install)?;
     record.same_repository(&resolved).map_err(map_install)?;
     let repository_id = resolved.repository_id;
-    let staged = stage(deps.fetcher.as_ref(), &deps.github, resolved)
-        .await
-        .map_err(map_install)?;
+    let staged = stage(&deps.github, resolved).await.map_err(map_install)?;
     if staged.manifest.name != name {
         return Err(ApiError::invalid_input(format!(
             "That repository now holds a plugin named '{}', not '{name}'",

@@ -19,7 +19,6 @@ use std::sync::Arc;
 use droppedneedle_acquire::wiring::{SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE, SpotifyEndpoints};
 use droppedneedle_auth::{users::hibp::RANGE_URL_PREFIX, wiring::Upstreams};
 use droppedneedle_library::{contrib::ContribProviders, identify::providers::IdentifyProviders};
-use droppedneedle_plugins::install::GitHubHosts;
 use droppedneedle_providers::{
     acoustid, audiodb, coverart, discogs, geocoding, github, itunes, lastfm, listenbrainz, lrclib,
     musicbrainz, plextv::PLEX_TV_BASE, preview, skiddle, ticketmaster, wikidata, youtube,
@@ -137,8 +136,8 @@ impl Outbound {
             discogs: discogs::API_BASE.to_owned(),
             lrclib: lrclib::API_BASE.to_owned(),
             github_releases: github::GITHUB_RELEASES_URL.to_owned(),
-            github_api: droppedneedle_plugins::install::API_BASE.to_owned(),
-            github_codeload: droppedneedle_plugins::install::CODELOAD_BASE.to_owned(),
+            github_api: github::API_BASE.to_owned(),
+            github_codeload: github::CODELOAD_BASE.to_owned(),
             youtube: youtube::YOUTUBE_API_HOST.to_owned(),
             acoustid: acoustid::DEFAULT_BASE_URL.to_owned(),
             pwned_passwords: RANGE_URL_PREFIX.to_owned(),
@@ -179,6 +178,8 @@ impl Outbound {
             geocoding: self.geocoding.clone(),
             youtube: self.youtube.clone(),
             github_releases: self.github_releases.clone(),
+            github_api: self.github_api.clone(),
+            github_codeload: self.github_codeload.clone(),
         }
     }
 
@@ -204,14 +205,6 @@ impl Outbound {
         droppedneedle_library::wiring::Endpoints {
             identify_providers: self.identify_providers.get(),
             contribution_providers: self.contribution_providers.get(),
-        }
-    }
-
-    /// The addresses plugin installs fetch from.
-    pub fn plugin_hosts(&self) -> GitHubHosts {
-        GitHubHosts {
-            api: self.github_api.clone(),
-            codeload: self.github_codeload.clone(),
         }
     }
 }

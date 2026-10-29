@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::common::plugin_fakes::{
-    FakeConnection, FakeFetcher, FakeLauncher, scrobble_plugin_event,
+    FakeConnection, FakeGitHub, FakeLauncher, scrobble_plugin_event,
 };
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -44,7 +44,7 @@ use droppedneedle_kernel::runtime_config::sections::{
 use droppedneedle_library::wiring::LibraryCore;
 use droppedneedle_plugins::handlers::{ExtRateLimiter, PluginsDeps, plugin_routes};
 use droppedneedle_plugins::host::PluginHost;
-use droppedneedle_plugins::install::{Fetched, InstallError, parse_source, resolve};
+use droppedneedle_plugins::install::{InstallError, parse_source, resolve};
 use droppedneedle_plugins::models::PluginRefKind;
 use droppedneedle_plugins::protocol::methods;
 use droppedneedle_plugins::runtime::{CallError, PublishPayload, ScrobbleEvent};
@@ -116,12 +116,11 @@ fn session(user_id: &str) -> Principal {
     )
 }
 
-fn deps_for(rig: &Rig, fetcher: Arc<FakeFetcher>) -> PluginsDeps {
+fn deps_for(rig: &Rig, remote: &Arc<FakeGitHub>) -> PluginsDeps {
     PluginsDeps {
         host: Arc::clone(&rig.host),
         config: Arc::clone(&rig.config),
-        github: droppedneedle::bootstrap::Outbound::live().plugin_hosts(),
-        fetcher,
+        github: remote.client(),
         tick_sync: Arc::new(PluginTickLoops::new(
             rig.platform.supervisor.clone(),
             rig.ticks.clone(),
@@ -133,7 +132,7 @@ fn deps_for(rig: &Rig, fetcher: Arc<FakeFetcher>) -> PluginsDeps {
 }
 
 fn router_as(rig: &Rig, user: &str) -> axum::Router {
-    let deps = deps_for(rig, Arc::new(FakeFetcher::new()));
+    let deps = deps_for(rig, &FakeGitHub::new());
     with_test_principal(
         plugin_routes().with_state(deps).into_router(),
         session(user),
@@ -305,17 +304,17 @@ const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
 const REPOSITORY: &str = "https://api.github.com/repos/acme/toy";
 
-fn github(fetcher: &FakeFetcher) {
-    fetcher.insert(REPOSITORY, br#"{"id": 1001}"#);
-    fetcher.insert(
+fn github(remote: &FakeGitHub) {
+    remote.insert(REPOSITORY, br#"{"id": 1001}"#);
+    remote.insert(
         "https://api.github.com/repos/acme/toy/releases/latest",
         br#"{"tag_name": "v1.0.0"}"#,
     );
-    fetcher.insert(
+    remote.insert(
         "https://api.github.com/repos/acme/toy/commits/v1.0.0",
         format!(r#"{{"sha": "{SHA}"}}"#).as_bytes(),
     );
-    fetcher.insert(
+    remote.insert(
         &format!("https://codeload.github.com/acme/toy/zip/{SHA}"),
         &toy_zip(None),
     );
@@ -348,9 +347,9 @@ fn toy_zip(code_link: Option<&str>) -> Vec<u8> {
 #[tokio::test]
 async fn install_previews_permissions_then_pins_the_previewed_commit() {
     let rig = rig("install").await;
-    let fetcher = Arc::new(FakeFetcher::new());
-    github(&fetcher);
-    let deps = deps_for(&rig, Arc::clone(&fetcher));
+    let remote = FakeGitHub::new();
+    github(&remote);
+    let deps = deps_for(&rig, &remote);
     let admin = with_test_principal(
         plugin_routes().with_state(deps).into_router(),
         session("admin-1"),
@@ -418,13 +417,13 @@ const DEFAULT_BRANCH: &str = "https://api.github.com/repos/acme/toy/commits/HEAD
 const BRANCH_SHA: &str = "89abcdef0123456789abcdef0123456789abcdef";
 
 /// The default branch holds unreleased code that would install fine.
-fn default_branch(fetcher: &FakeFetcher) {
-    fetcher.insert(REPOSITORY, br#"{"id": 1001}"#);
-    fetcher.insert(
+fn default_branch(remote: &FakeGitHub) {
+    remote.insert(REPOSITORY, br#"{"id": 1001}"#);
+    remote.insert(
         DEFAULT_BRANCH,
         format!(r#"{{"sha": "{BRANCH_SHA}"}}"#).as_bytes(),
     );
-    fetcher.insert(
+    remote.insert(
         &format!("https://codeload.github.com/acme/toy/zip/{BRANCH_SHA}"),
         &toy_zip(None),
     );
@@ -494,9 +493,12 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
         retry_after: retry_after.map(|seconds| seconds.to_string()),
         details_retry_after: retry_after,
     };
-    let cases = [
+    // A 403 that reports allowance left is a refusal; one with a named
+    // wait is a limit.
+    let cases: [(u16, &[(&str, &str)], _, _); 3] = [
         (
-            Fetched::Denied,
+            403,
+            &[("x-ratelimit-remaining", "59")],
             InstallError::Denied,
             refusal(
                 StatusCode::BAD_GATEWAY,
@@ -506,9 +508,8 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
             ),
         ),
         (
-            Fetched::RateLimited {
-                retry_after: Some(90),
-            },
+            429,
+            &[("retry-after", "90")],
             InstallError::RateLimited {
                 retry_after: Some(90),
             },
@@ -520,7 +521,8 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
             ),
         ),
         (
-            Fetched::Failed(502),
+            502,
+            &[],
             InstallError::Download,
             refusal(
                 StatusCode::BAD_GATEWAY,
@@ -531,37 +533,31 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
         ),
     ];
     let scope = TestApp::start("plugins-refused").await;
-    for (index, (answer, kind, expected)) in cases.into_iter().enumerate() {
+    for (index, (status, headers, kind, expected)) in cases.into_iter().enumerate() {
         let rig = rig(&format!("refused-{index}")).await;
-        let fetcher = Arc::new(FakeFetcher::new());
-        github(&fetcher);
-        default_branch(&fetcher);
-        fetcher.answer(LATEST_RELEASE, answer.clone());
+        let remote = FakeGitHub::new();
+        github(&remote);
+        default_branch(&remote);
+        remote.answer(LATEST_RELEASE, status, headers);
         let source = parse_source("https://github.com/acme/toy", None).unwrap();
-        assert_eq!(
-            resolve(
-                fetcher.as_ref(),
-                &droppedneedle::bootstrap::Outbound::live().plugin_hosts(),
-                source
-            )
-            .await,
-            Err(kind)
-        );
+        assert_eq!(resolve(&remote.client(), source).await, Err(kind));
 
-        let admin = admin_app(&scope, deps_for(&rig, Arc::clone(&fetcher)));
+        // Each request on a fresh `github` row, so a limit's wait is
+        // GitHub's own and not what is left of the last one.
+        let admin = || admin_app(&scope, deps_for(&rig, &remote));
         let body = json!({"repository_url": "https://github.com/acme/toy"});
         for uri in ["/api/v3/plugins/install/preview", "/api/v3/plugins/install"] {
-            let got = post_for_refusal(admin.clone(), uri, body.clone()).await;
+            let got = post_for_refusal(admin(), uri, body.clone()).await;
             assert_eq!(got, expected, "{uri}");
         }
         assert!(!rig.dir.join("plugins").join("toy").exists());
 
         // An installed release must not start following the branch either.
-        github(&fetcher);
-        let (got, _) = send(admin.clone(), "POST", "/api/v3/plugins/install", Some(body)).await;
+        github(&remote);
+        let (got, _) = send(admin(), "POST", "/api/v3/plugins/install", Some(body)).await;
         assert_eq!(got, StatusCode::CREATED);
-        fetcher.answer(LATEST_RELEASE, answer);
-        let got = post_for_refusal(admin, "/api/v3/plugins/toy/update", json!({})).await;
+        remote.answer(LATEST_RELEASE, status, headers);
+        let got = post_for_refusal(admin(), "/api/v3/plugins/toy/update", json!({})).await;
         assert_eq!(got, expected, "update");
         let record = rig.host.install_record("toy").unwrap();
         assert_eq!(
@@ -569,19 +565,123 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
             (PluginRefKind::Release, SHA)
         );
 
-        let requested = fetcher.requested.lock().unwrap();
+        let requested = remote.requested.lock().unwrap();
         assert!(!requested.iter().any(|url| url == DEFAULT_BRANCH));
     }
+}
+
+/// Installs read GitHub on the update check's rate row: once GitHub has
+/// told the check to wait, an install answers that wait without asking
+/// GitHub again.
+#[tokio::test]
+async fn an_install_waits_out_the_limit_the_update_check_met() {
+    let asked = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen = Arc::clone(&asked);
+    let github = axum::Router::new()
+        .route(
+            "/releases",
+            axum::routing::get(|| async {
+                (
+                    StatusCode::FORBIDDEN,
+                    [("x-ratelimit-remaining", "0"), ("retry-after", "600")],
+                )
+            }),
+        )
+        .fallback(move |uri: axum::http::Uri| {
+            let path = uri.path();
+            if path.starts_with("/github/") || path.starts_with("/codeload/") {
+                seen.lock().unwrap().push(path.to_owned());
+            }
+            async { StatusCode::NOT_FOUND }
+        });
+    let (origin, _github) = droppedneedle_testkit::usenet::serve_loopback(github)
+        .await
+        .unwrap();
+    let app = TestApp::start_with("plugins-shared-row", crate::common::outbound_at(&origin)).await;
+    let admin = app.login_admin().await;
+    let auth = [("authorization", admin.as_str())];
+
+    let (status, _) = app
+        .call("GET", "/api/v3/version/check-update", &auth, None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, headers, body) = app
+        .raw(
+            "POST",
+            "/api/v3/plugins/install/preview",
+            &auth,
+            Some(json!({"repository_url": "https://github.com/acme/toy"})),
+        )
+        .await;
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["error"]["code"], "UPSTREAM_RATE_LIMITED");
+    let wait: u64 = headers["retry-after"].to_str().unwrap().parse().unwrap();
+    // GitHub's wait, then the four reads of a preview at the row's 50 an
+    // hour (72 s each).
+    assert!((590..=888).contains(&wait), "retry-after {wait}");
+    assert!(
+        asked.lock().unwrap().is_empty(),
+        "the install asked GitHub while the row rested: {:?}",
+        asked.lock().unwrap()
+    );
+    app.stop().await;
+}
+
+/// A preview the `github` row cannot cover in full is turned down before
+/// its first request: it spends nothing, and its wait covers every read
+/// the preview needs.
+#[tokio::test]
+async fn a_preview_the_row_cannot_cover_spends_nothing() {
+    let rig = rig("row-short").await;
+    let remote = FakeGitHub::new();
+    github(&remote);
+    let providers = remote.paced();
+    let row = providers.limiter("github").unwrap();
+    let scope = TestApp::start("plugins-row-short").await;
+    let admin = admin_app(
+        &scope,
+        PluginsDeps {
+            github: providers.github_repos.clone(),
+            ..deps_for(&rig, &remote)
+        },
+    );
+    let body = json!({"repository_url": "https://github.com/acme/toy"});
+    // Two previews of four reads each leave two of the row's ten.
+    for _ in 0..2 {
+        let (status, _) = send(
+            admin.clone(),
+            "POST",
+            "/api/v3/plugins/install/preview",
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    assert_eq!(row.remaining(), 2);
+    let asked = remote.requested.lock().unwrap().len();
+
+    let got = post_for_refusal(admin, "/api/v3/plugins/install/preview", body).await;
+    assert_eq!(got.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(got.code, "UPSTREAM_RATE_LIMITED");
+    assert_eq!(row.remaining(), 2, "a refused preview spends no token");
+    assert_eq!(remote.requested.lock().unwrap().len(), asked);
+    let whole = row.retry_after(4).as_secs();
+    assert!(
+        got.details_retry_after.unwrap() >= whole,
+        "waits {:?}, the whole preview needs {whole}",
+        got.details_retry_after
+    );
 }
 
 #[tokio::test]
 async fn a_repository_without_releases_installs_its_default_branch() {
     let rig = rig("no-releases").await;
-    let fetcher = Arc::new(FakeFetcher::new());
-    fetcher.answer(LATEST_RELEASE, Fetched::NotFound);
-    default_branch(&fetcher);
+    let remote = FakeGitHub::new();
+    remote.answer(LATEST_RELEASE, 404, &[]);
+    default_branch(&remote);
     let scope = TestApp::start("plugins-no-releases").await;
-    let admin = admin_app(&scope, deps_for(&rig, fetcher));
+    let admin = admin_app(&scope, deps_for(&rig, &remote));
     let (status, installed) = send(
         admin,
         "POST",
@@ -600,11 +700,11 @@ async fn a_repository_without_releases_installs_its_default_branch() {
 #[tokio::test]
 async fn an_update_never_installs_from_a_replaced_repository() {
     let rig = rig("replaced").await;
-    let fetcher = Arc::new(FakeFetcher::new());
-    github(&fetcher);
+    let remote = FakeGitHub::new();
+    github(&remote);
     let admin = with_test_principal(
         plugin_routes()
-            .with_state(deps_for(&rig, Arc::clone(&fetcher)))
+            .with_state(deps_for(&rig, &remote))
             .into_router(),
         session("admin-1"),
     );
@@ -612,14 +712,14 @@ async fn an_update_never_installs_from_a_replaced_repository() {
     let (status, _) = send(admin.clone(), "POST", "/api/v3/plugins/install", Some(body)).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    fetcher.insert(REPOSITORY, br#"{"id": 2002}"#);
-    fetcher.insert(LATEST_RELEASE, br#"{"tag_name": "v2.0.0"}"#);
-    fetcher.insert(
+    remote.insert(REPOSITORY, br#"{"id": 2002}"#);
+    remote.insert(LATEST_RELEASE, br#"{"tag_name": "v2.0.0"}"#);
+    remote.insert(
         "https://api.github.com/repos/acme/toy/commits/v2.0.0",
         format!(r#"{{"sha": "{BRANCH_SHA}"}}"#).as_bytes(),
     );
     let new_code = format!("https://codeload.github.com/acme/toy/zip/{BRANCH_SHA}");
-    fetcher.insert(&new_code, &toy_zip(None));
+    remote.insert(&new_code, &toy_zip(None));
     let (status, error) = send(admin, "POST", "/api/v3/plugins/toy/update", Some(json!({}))).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(
@@ -627,20 +727,21 @@ async fn an_update_never_installs_from_a_replaced_repository() {
         "The repository at this address was replaced since the plugin was installed. Install it again if you trust the new one"
     );
     assert_eq!(rig.host.install_record("toy").unwrap().commit, SHA);
-    assert!(!fetcher.requested.lock().unwrap().contains(&new_code));
+    assert!(!remote.requested.lock().unwrap().contains(&new_code));
 }
 
 #[tokio::test]
 async fn a_ref_github_does_not_know_is_the_admins_mistake_not_an_outage() {
     let rig = rig("unknown-ref").await;
-    let fetcher = Arc::new(FakeFetcher::new());
-    fetcher.insert(REPOSITORY, br#"{"id": 1001}"#);
-    fetcher.answer(
+    let remote = FakeGitHub::new();
+    remote.insert(REPOSITORY, br#"{"id": 1001}"#);
+    remote.answer(
         "https://api.github.com/repos/acme/toy/commits/mian",
-        Fetched::Failed(422),
+        422,
+        &[],
     );
     let scope = TestApp::start("plugins-unknown-ref").await;
-    let admin = admin_app(&scope, deps_for(&rig, fetcher));
+    let admin = admin_app(&scope, deps_for(&rig, &remote));
     let (status, error) = send(
         admin,
         "POST",
@@ -659,15 +760,15 @@ async fn a_ref_github_does_not_know_is_the_admins_mistake_not_an_outage() {
 #[tokio::test]
 async fn unsafe_archives_never_reach_the_plugins_folder() {
     let rig = rig("unsafe").await;
-    let fetcher = Arc::new(FakeFetcher::new());
-    github(&fetcher);
-    fetcher.insert(
+    let remote = FakeGitHub::new();
+    github(&remote);
+    remote.insert(
         &format!("https://codeload.github.com/acme/toy/zip/{SHA}"),
         &toy_zip(Some("/etc/passwd")),
     );
     let admin = with_test_principal(
         plugin_routes()
-            .with_state(deps_for(&rig, fetcher))
+            .with_state(deps_for(&rig, &remote))
             .into_router(),
         session("admin-1"),
     );
@@ -687,7 +788,7 @@ async fn unsafe_archives_never_reach_the_plugins_folder() {
 async fn plugin_routes_need_sessions_and_admins() {
     let rig = rig("auth").await;
     let bare = plugin_routes()
-        .with_state(deps_for(&rig, Arc::new(FakeFetcher::new())))
+        .with_state(deps_for(&rig, &FakeGitHub::new()))
         .into_router();
     let (status, _) = send(bare, "GET", "/api/v3/plugins", None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

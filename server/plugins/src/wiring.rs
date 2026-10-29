@@ -21,10 +21,10 @@ use axum::extract::FromRef;
 use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
 use droppedneedle_kernel::mount::Routes;
 use droppedneedle_kernel::platform::Platform;
+use droppedneedle_providers::github::GitHubRepos;
 
 use super::handlers::{ExtRateLimiter, PluginsDeps, plugin_routes};
 use super::host::PluginHost;
-use super::install::{GitHubHosts, ReqwestFetcher};
 use super::process::ProcessLauncher;
 use super::runtime::PluginLauncher;
 use super::ticks::{PluginTickLoops, TICK_CANCEL_GRACE};
@@ -103,14 +103,14 @@ pub struct PluginsSetup {
 
 impl PluginsSetup {
     /// Bind the production seams over a host from [`new_host`] and the
-    /// tick store it was given: the HTTP fetcher, and tick loops over the
-    /// shared loop supervisor. Loads the host, which starts the enabled
-    /// plugins.
+    /// tick store it was given: the GitHub client installs read through,
+    /// and tick loops over the shared loop supervisor. Loads the host,
+    /// which starts the enabled plugins.
     pub fn build(
         platform: &Platform,
         host: Arc<PluginHost>,
         ticks: SqliteTickStore,
-        github: GitHubHosts,
+        github: GitHubRepos,
     ) -> Self {
         host.load_all();
         let supervisor = platform.supervisor.clone();
@@ -120,10 +120,6 @@ impl PluginsSetup {
             host: Arc::clone(&host),
             config: Arc::clone(host.config()),
             github,
-            fetcher: Arc::new(ReqwestFetcher::new(
-                platform.http.shared().clone(),
-                Arc::clone(&clock),
-            )),
             tick_sync: Arc::clone(&ticks),
             ext_limiter: Arc::new(ExtRateLimiter::new()),
             clock,

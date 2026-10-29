@@ -6,12 +6,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use droppedneedle_plugins::install::{ArchiveFetcher, FetchError, Fetched};
 use droppedneedle_plugins::protocol::RpcError;
 use droppedneedle_plugins::runtime::{
     BoxFuture, CallError, EventKind, EventPayload, HostServices, LaunchSpec, PluginConnection,
     PluginEvent, PluginLauncher, RuntimeState, RuntimeStatus, ScrobbleEvent,
 };
+use droppedneedle_providers::executor::{Prepared, WireAnswer, WireError};
+use droppedneedle_providers::github::{API_BASE, CODELOAD_BASE, GitHubRepos};
+use droppedneedle_providers::{ProviderEndpoints, Providers, Wire};
 use serde_json::Value;
 
 /// Stands in for a plugin's child process: answers each method from a
@@ -198,54 +200,98 @@ impl PluginLauncher for FakeLauncher {
     }
 }
 
-/// Stands in for GitHub: each URL gives the answer set for it, and a URL
-/// with none is a 404.
-pub struct FakeFetcher {
-    answers: Mutex<HashMap<String, Fetched>>,
+/// One scripted GitHub answer: status, headers, body.
+type GitHubAnswer = (u16, Vec<(String, String)>, Vec<u8>);
+
+/// Stands in for GitHub on the providers' wire: each URL gives the answer
+/// last set for it, and a URL with none is a 404.
+pub struct FakeGitHub {
+    answers: Mutex<HashMap<String, GitHubAnswer>>,
     /// Requested URLs, in order.
     pub requested: Mutex<Vec<String>>,
 }
 
-impl FakeFetcher {
-    /// Empty fetcher: every URL is a 404.
-    pub fn new() -> Self {
-        Self {
+impl FakeGitHub {
+    /// Empty fake: every URL is a 404.
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
             answers: Mutex::new(HashMap::new()),
             requested: Mutex::new(Vec::new()),
-        }
+        })
     }
 
     /// Serve bytes for one URL.
     pub fn insert(&self, url: &str, bytes: &[u8]) {
-        self.answer(url, Fetched::Found(bytes.to_vec()));
+        self.set(url, 200, &[], bytes.to_vec());
     }
 
-    /// Answer one URL with anything GitHub can say.
-    pub fn answer(&self, url: &str, answer: Fetched) {
+    /// Answer one URL with a bodiless status and these headers.
+    pub fn answer(&self, url: &str, status: u16, headers: &[(&str, &str)]) {
+        self.set(url, status, headers, Vec::new());
+    }
+
+    fn set(&self, url: &str, status: u16, headers: &[(&str, &str)], body: Vec<u8>) {
+        let headers = headers
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
         if let Ok(mut guard) = self.answers.lock() {
-            guard.insert(url.to_owned(), answer);
+            guard.insert(url.to_owned(), (status, headers, body));
         }
     }
-}
 
-impl Default for FakeFetcher {
-    fn default() -> Self {
-        Self::new()
+    /// The installer's GitHub client over this fake, with GitHub at its real
+    /// addresses, on a fresh `github` row that holds cooldowns but does not
+    /// pace.
+    pub fn client(self: &Arc<Self>) -> GitHubRepos {
+        let endpoints = ProviderEndpoints {
+            github_api: API_BASE.to_owned(),
+            github_codeload: CODELOAD_BASE.to_owned(),
+            ..ProviderEndpoints::closed()
+        };
+        Providers::unpaced_at(Arc::clone(self) as Arc<dyn Wire>, endpoints)
+            .github_repos
+            .clone()
     }
 }
 
-impl ArchiveFetcher for FakeFetcher {
-    fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<Fetched, FetchError>> {
+impl FakeGitHub {
+    /// The providers over this fake with the real `github` row, paced as
+    /// in production.
+    pub fn paced(self: &Arc<Self>) -> Providers {
+        Providers::over_wire(
+            Arc::clone(self) as Arc<dyn Wire>,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+            ProviderEndpoints {
+                github_api: API_BASE.to_owned(),
+                github_codeload: CODELOAD_BASE.to_owned(),
+                ..ProviderEndpoints::closed()
+            },
+        )
+    }
+}
+
+impl Wire for FakeGitHub {
+    fn send<'a>(&'a self, prepared: Prepared<'a>) -> BoxFuture<'a, Result<WireAnswer, WireError>> {
         Box::pin(async move {
+            let url = prepared.url.to_string();
             if let Ok(mut guard) = self.requested.lock() {
-                guard.push(url.to_owned());
+                guard.push(url.clone());
             }
-            Ok(self
+            let (status, headers, body) = self
                 .answers
                 .lock()
                 .ok()
-                .and_then(|guard| guard.get(url).cloned())
-                .unwrap_or(Fetched::NotFound))
+                .and_then(|guard| guard.get(&url).cloned())
+                .unwrap_or((404, Vec::new(), Vec::new()));
+            if body.len() > prepared.max_body {
+                return Err(WireError::TooLarge);
+            }
+            Ok(WireAnswer {
+                status,
+                headers,
+                body,
+            })
         })
     }
 }
