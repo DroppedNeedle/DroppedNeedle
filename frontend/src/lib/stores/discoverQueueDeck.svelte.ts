@@ -24,7 +24,7 @@ import {
 	watchDiscoverQueueStatus,
 	type QueueStatus
 } from '$lib/queries/discover/DiscoverQueueQueries';
-import { discoverQueueAutoGenerate } from '$lib/queries/settings/AdvancedSettingsReads.svelte';
+import { discoverQueueAutoGenerate } from '$lib/queries/AdvancedSettingsReads.svelte';
 import {
 	musicBrainzSourceKey,
 	subscribeMusicBrainzSourceScope,

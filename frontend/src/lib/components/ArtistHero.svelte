@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { coverSrc } from '$lib/api/covers';
-	import { useDirectRemoteImages } from '$lib/queries/settings/AdvancedSettingsReads.svelte';
+	import { useDirectRemoteImages } from '$lib/queries/AdvancedSettingsReads.svelte';
 	import { Check, MicVocal, RefreshCw } from 'lucide-svelte';
 	import type { ArtistInfo } from '$lib/types';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';

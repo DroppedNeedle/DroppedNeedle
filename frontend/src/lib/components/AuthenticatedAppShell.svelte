@@ -11,7 +11,7 @@
 		getIntegrationStatusQuery,
 		useIntegrationStatus
 	} from '$lib/queries/HomeIntegrationStatusQuery.svelte';
-	import { loadAdvancedSettings } from '$lib/queries/settings/AdvancedSettingsReads.svelte';
+	import { loadAdvancedSettings } from '$lib/queries/AdvancedSettingsReads.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';

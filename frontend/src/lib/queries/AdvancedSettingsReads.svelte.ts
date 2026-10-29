@@ -4,11 +4,11 @@ import { createQuery, queryOptions } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { SETTINGS_ENDPOINTS } from './endpoints';
+import { SETTINGS_ENDPOINTS } from './settings/endpoints';
 import {
 	AdvancedSettingsQueryKeyFactory,
 	type AdvancedSettings
-} from './SectionSettingsQueries.svelte';
+} from './settings/SectionSettingsQueries.svelte';
 
 const advancedSettingsQueryOptions = () =>
 	queryOptions({

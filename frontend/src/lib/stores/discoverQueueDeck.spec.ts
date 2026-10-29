@@ -37,7 +37,7 @@ const { queries, statusMock, settings, authMock } = vi.hoisted(() => {
 });
 
 vi.mock('$lib/queries/discover/DiscoverQueueQueries', () => queries);
-vi.mock('$lib/queries/settings/AdvancedSettingsReads.svelte', () => ({
+vi.mock('$lib/queries/AdvancedSettingsReads.svelte', () => ({
 	discoverQueueAutoGenerate: async () => settings.autoGenerate
 }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
