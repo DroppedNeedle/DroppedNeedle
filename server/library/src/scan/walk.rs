@@ -1162,6 +1162,120 @@ fn scope_device(
     current
 }
 
+/// True when a walk goes down into the entry at `path`: a real folder (a
+/// link to one is never followed) that is not the publisher's own.
+fn descends_into(path: &Path, file_type: &std::fs::FileType) -> bool {
+    file_type.is_dir() && !is_management_artifact(path)
+}
+
+/// What the files directly in one folder looked like.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FolderDigest {
+    /// A hash of each file's name, size and modification time.
+    pub digest: i64,
+    /// How many of the files are music files.
+    pub audio_files: i64,
+}
+
+/// One digest per folder under `root`, keyed by the folder's path in the
+/// root as on disk (`.` for the root), found by walking the tree the way a
+/// scan does: links are never followed and the publisher's files are
+/// skipped. Stat only. A folder whose path is not UTF-8 cannot be named in
+/// a scan scope, so its files count toward the nearest folder above it that
+/// can. An unreadable subfolder is skipped (a scan reports it); an
+/// unreadable root is an error. `stop` is asked before each folder; once it
+/// answers true the walk ends with `Interrupted`.
+pub fn folder_digests(
+    root: &Path,
+    stop: &dyn Fn() -> bool,
+) -> std::io::Result<HashMap<String, FolderDigest>> {
+    use sha2::{Digest as _, Sha256};
+
+    let mut digests: HashMap<String, FolderDigest> = HashMap::new();
+    // Each folder carries the key of the folder above it.
+    let mut stack: Vec<(PathBuf, Option<String>)> = vec![(root.to_owned(), None)];
+    while let Some((folder, above)) = stack.pop() {
+        if stop() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "folder walk stopped",
+            ));
+        }
+        let entries = match std::fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(error) if above.is_none() => return Err(error),
+            Err(error) => {
+                tracing::debug!(path = %folder.display(), %error, "folder watcher skipping an unreadable folder");
+                continue;
+            }
+        };
+        let relative = folder.strip_prefix(root).unwrap_or(Path::new(""));
+        let own_key = if relative.as_os_str().is_empty() {
+            Some(".".to_owned())
+        } else {
+            relative.to_str().map(|text| text.replace('\\', "/"))
+        };
+        let Some(key) = own_key.clone().or(above) else {
+            continue;
+        };
+        let mut files: Vec<(Vec<u8>, u64, i64)> = Vec::new();
+        let mut audio_files = 0i64;
+        for entry in entries {
+            let Ok(entry) = entry else { continue };
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if is_management_artifact(&path) {
+                continue;
+            }
+            if descends_into(&path, &file_type) {
+                stack.push((path, Some(key.clone())));
+                continue;
+            }
+            // Never follows a link: a link is recorded as itself.
+            let Ok(meta) = entry.metadata() else { continue };
+            if is_audio_file(&path) {
+                audio_files += 1;
+            }
+            files.push((
+                text_safe_posix(Path::new(&entry.file_name())).into_bytes(),
+                meta.len(),
+                mtime_ns_from_metadata(&meta),
+            ));
+        }
+        files.sort_unstable();
+        let mut hasher = Sha256::new();
+        if own_key.is_none() {
+            // Folded into the folder above: the path keeps a move between
+            // two such folders visible.
+            hasher.update(text_safe_posix(relative).as_bytes());
+            hasher.update([0]);
+        }
+        for (name, size, mtime_ns) in &files {
+            hasher.update(name);
+            hasher.update([0]);
+            hasher.update(size.to_le_bytes());
+            hasher.update(mtime_ns.to_le_bytes());
+        }
+        let hash = hasher.finalize();
+        let mut first = [0u8; 8];
+        first.copy_from_slice(&hash[..8]);
+        let digest = i64::from_le_bytes(first);
+        let slot = digests.entry(key).or_default();
+        if own_key.is_some() {
+            *slot = FolderDigest {
+                digest,
+                audio_files,
+            };
+        } else {
+            slot.digest = slot.digest.wrapping_add(digest);
+            slot.audio_files += audio_files;
+        }
+    }
+    Ok(digests)
+}
+
 /// Blocking walk producing inventory messages (v2 `producer`). Runs on the
 /// pool: stat-only, symlink-cautious, skip-and-report. `device` reads the
 /// filesystem of each folder the walk descends into, once, to report mounts.
@@ -1245,7 +1359,7 @@ fn produce_inventory(
             };
             let path = entry.path();
             if file_type.is_dir() {
-                if !is_management_artifact(&path) {
+                if descends_into(&path, &file_type) {
                     let own = device(&path);
                     if is_mount(directory_device, own) {
                         report_mount(&path);

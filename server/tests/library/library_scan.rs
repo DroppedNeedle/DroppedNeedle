@@ -28,7 +28,7 @@ use droppedneedle_library::scan::{
     LibraryScanCoordinator, NullTagReader, Phase, RootRegistry, RootSeamError, RunState, ScanKind,
     ScanPhase, ScanRequest, ScanRun, ScanScope, ScanState, ScanStoreError, ScanTrigger,
     ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError, TagReader,
-    WorkWakeups,
+    WatcherAction, WorkWakeups,
 };
 use droppedneedle_library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
@@ -9337,4 +9337,126 @@ async fn a_new_copy_at_a_path_needs_the_same_recording_and_new_audio() {
             );
         }
     }
+}
+
+/// A library with `scratch/music` as its one root, on `clock`, and the
+/// platform it runs on: a second library built on that platform is the
+/// same server after a restart.
+async fn watched(
+    scratch: &Path,
+    clock: Arc<droppedneedle_kernel::clock::ManualClock>,
+) -> (droppedneedle_kernel::platform::Platform, LibrarySetup) {
+    migrated_db(&scratch.join("app.db"));
+    let db = Db::open_for_tests(&scratch.join("app.db")).expect("database opens");
+    let platform = TestPlatform::on(&db, scratch)
+        .settings(config_store(scratch))
+        .clock(clock)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    library
+        .scans
+        .add_root(
+            Some("music".to_owned()),
+            scratch.join("music").to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    (platform, library)
+}
+
+/// The scopes of the one scan waiting or running, as (root, folder).
+fn waiting_scopes(library: &LibrarySetup) -> Vec<(String, String)> {
+    let runs = library.coordinator.current();
+    assert_eq!(runs.len(), 1, "one scan asked for");
+    let (_, scopes, _) = library.coordinator.snapshot(&runs[0].id).expect("run");
+    scopes
+        .into_iter()
+        .map(|scope| (scope.root_id, scope.relative_path))
+        .collect()
+}
+
+/// Changing a file in one of a thousand folders asks, once the batching
+/// window has passed, for one scan of that folder alone, however many
+/// changes the burst held.
+#[tokio::test]
+async fn the_folder_watcher_scans_only_the_folder_that_changed() {
+    let scratch = ScratchDir::new("watch-one-folder");
+    let music = scratch.join("music");
+    for n in 0..1000 {
+        let folder = music.join(format!("Artist/{n:04}"));
+        std::fs::create_dir_all(&folder).expect("mkdir");
+        std::fs::write(folder.join("cover.jpg"), b"x").expect("write");
+    }
+    let clock = Arc::new(droppedneedle_kernel::clock::ManualClock::at(
+        1_700_000_000_000,
+    ));
+    let (_platform, library) = watched(&scratch, clock.clone()).await;
+    let first = library.scans.watcher_tick().await;
+    assert!(matches!(first, WatcherAction::Idle { .. }), "{first:?}");
+
+    std::fs::write(music.join("Artist/0537/cover.jpg"), b"changed").expect("change");
+    let batching = library.scans.watcher_tick().await;
+    assert!(
+        matches!(batching, WatcherAction::Batching { .. }),
+        "{batching:?}"
+    );
+    std::fs::write(music.join("Artist/0537/notes.txt"), b"more").expect("change");
+    clock.advance(61_000);
+    assert_eq!(library.scans.watcher_tick().await, WatcherAction::Due);
+    assert_eq!(
+        waiting_scopes(&library),
+        [("music".to_owned(), "Artist/0537".to_owned())]
+    );
+}
+
+/// What the watcher saw outlives a restart: with nothing changed the first
+/// poll asks for no scan, and a change made while the server was down is
+/// still found.
+#[tokio::test]
+async fn the_folder_watcher_remembers_the_tree_across_a_restart() {
+    let scratch = ScratchDir::new("watch-restart");
+    let music = scratch.join("music");
+    std::fs::create_dir_all(music.join("A")).expect("mkdir");
+    std::fs::write(music.join("A/notes.txt"), b"x").expect("write");
+    let clock = Arc::new(droppedneedle_kernel::clock::ManualClock::at(
+        1_700_000_000_000,
+    ));
+    let (platform, library) = watched(&scratch, clock.clone()).await;
+    library.scans.watcher_tick().await;
+    std::fs::write(music.join("A/notes.txt"), b"changed").expect("change");
+    library.scans.watcher_tick().await;
+    clock.advance(61_000);
+    assert_eq!(library.scans.watcher_tick().await, WatcherAction::Due);
+    for _ in 0..50 {
+        library.scans.supervisor_tick().await;
+        if library.coordinator.current().is_empty() {
+            break;
+        }
+    }
+    assert!(library.coordinator.current().is_empty(), "the scan settles");
+    // The poll after the scan settled puts what it asked for on record.
+    library.scans.watcher_tick().await;
+
+    let (library, _) = library_at(&platform);
+    let first = library.scans.watcher_tick().await;
+    assert!(matches!(first, WatcherAction::Idle { .. }), "{first:?}");
+    clock.advance(61_000);
+    let second = library.scans.watcher_tick().await;
+    assert!(matches!(second, WatcherAction::Idle { .. }), "{second:?}");
+    assert!(
+        library.coordinator.current().is_empty(),
+        "no scan asked for"
+    );
+
+    std::fs::write(music.join("A/more.txt"), b"y").expect("change while down");
+    let (library, _) = library_at(&platform);
+    let first = library.scans.watcher_tick().await;
+    assert!(matches!(first, WatcherAction::Batching { .. }), "{first:?}");
+    clock.advance(61_000);
+    assert_eq!(library.scans.watcher_tick().await, WatcherAction::Due);
+    assert_eq!(
+        waiting_scopes(&library),
+        [("music".to_owned(), "A".to_owned())]
+    );
 }

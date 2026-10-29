@@ -20,14 +20,12 @@ use super::publish::paths::{Root, Sandbox};
 use super::publish::snapshots::{self, BlobStore};
 use super::scan::ScanStoreError;
 use super::scan::coordinator::{ResolverSource as _, ScanRequestError};
-use super::scan::models::EffectivePolicy;
+use super::scan::models::{Disposition, EffectivePolicy};
 use super::scan::supervisor::SupervisorInputs;
 use super::scan::supervisor::{
     request_dirty_scopes, startup_recovery, supervise_once, supervise_once_with_shutdown,
 };
-use super::scan::watcher::{
-    WatcherAction, WatcherSettings, WatcherState, clear_pending, watcher_request,
-};
+use super::scan::watcher::{Asked, WatcherAction, WatcherSettings, WatcherState, ask_for_changes};
 use super::scans::Scans;
 use super::service::Identification;
 use super::wiring::{LibraryCore, LibraryServices};
@@ -189,11 +187,11 @@ impl Scans {
             .await
     }
 
-    /// One watcher tick that stops its tree snapshot once `stop` is
-    /// cancelled; an interrupted root keeps its previous baseline.
+    /// One watcher tick that stops its tree walk once `stop` is
+    /// cancelled; an interrupted root keeps what is on record.
     pub async fn watcher_tick_with_shutdown(&self, stop: &CancellationToken) -> WatcherAction {
         // The state swaps out and back so no mutex guard crosses the
-        // snapshot await.
+        // walk and store awaits.
         let mut state = {
             let mut guard = self
                 .watcher_state
@@ -209,25 +207,34 @@ impl Scans {
             &registry,
             &(self.core.root_dirs)(),
             &self.pool,
+            &self.scan_store,
             self.core.clock.now_secs(),
             stop,
         )
         .await;
         if matches!(action, WatcherAction::Due) {
             let rules = super::settings::inclusion_rules(&registry);
-            let asked = match watcher_request(&registry, &rules, state.changed_roots()) {
-                None => {
-                    tracing::debug!("filesystem watcher dropping pending scan: no scopes");
-                    true
-                }
-                Some(request) => match self.coordinator.request_run(&request) {
+            ask_for_changes(
+                &mut state,
+                &registry,
+                &rules,
+                &self.pool,
+                &self.scan_store,
+                |request| match self.coordinator.request_run(request) {
+                    Ok(result) if result.disposition == Disposition::Conflict => {
+                        tracing::info!(
+                            "folder watcher scan waits: another kind of scan is in the way"
+                        );
+                        Asked::Refused
+                    }
                     Ok(result) => {
                         tracing::info!(
                             disposition = ?result.disposition,
-                            "filesystem watcher requested incremental scan"
+                            scopes = request.scopes.len(),
+                            "folder watcher requested incremental scan"
                         );
                         self.core.wakeups.notify("scan");
-                        true
+                        Asked::Run(result.run_id)
                     }
                     // A busy database: the changes stay pending and the
                     // next poll asks again.
@@ -237,17 +244,15 @@ impl Scans {
                         ),
                     ) => {
                         tracing::warn!(%error, "watcher scan request waits: the database is busy");
-                        false
+                        Asked::Later
                     }
                     Err(error) => {
                         tracing::warn!(%error, "watcher scan request failed");
-                        true
+                        Asked::Refused
                     }
                 },
-            };
-            if asked {
-                clear_pending(&mut state);
-            }
+            )
+            .await;
         }
         {
             let mut guard = self
@@ -837,7 +842,7 @@ fn identify_tick(
     }
 }
 
-/// The filesystem watcher's turn: snapshot, batch, request on due, then
+/// The folder watcher's turn: walk, batch, request on due, then
 /// wait as long as the saved settings say.
 struct WatcherTick {
     scans: Scans,
@@ -847,7 +852,7 @@ struct WatcherTick {
 impl Tick for WatcherTick {
     async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
         let (scans, handle, stop) = (self.scans.clone(), self.handle.clone(), ctx.token().clone());
-        // A snapshot of a large tree takes a while; the stop does not wait
+        // A walk of a large tree takes a while; the stop does not wait
         // for it.
         let action = tokio::task::spawn_blocking(move || {
             drive(

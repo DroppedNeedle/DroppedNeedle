@@ -1,17 +1,16 @@
-//! Zero-dependency recursive filesystem poller, work wakeups, dirty scopes.
+//! Folder watcher, work wakeups, dirty scopes.
 //!
-//! Port of v2's library filesystem watcher (supervisor hook C). The poller takes a recursive stat-only snapshot of every
-//! library root once per poll interval and, when a snapshot moves, enqueues
-//! a single incremental/automatic scan after a batching window so rapid
-//! bursts collapse into one request.
-//!
-//! Recursion matters: on Linux only the immediate parent's mtime
-//! moves when a nested file changes, so a shallow poll misses nested
-//! mutations silently. The walk is stat-only (no tag reads, no hashing)
-//! and runs on the blocking pool. Symlinks are never followed.
+//! The watcher walks every library root once per poll interval with the
+//! scan's own walk ([`folder_digests`]: stat only, links never followed,
+//! the publisher's files skipped) and keeps one digest per folder. When
+//! folders move it asks, after a batching window so a burst collapses into
+//! one request, for an incremental scan of just those folders. The digests
+//! it compares against are kept in `library_folder_digests` and written
+//! once the scan it asked for has settled, so a restart neither rescans a
+//! steady tree nor forgets a change the scan has not taken in yet.
 //!
 //! Accepted limitation: changes preserving both mtime and size are
-//! invisible to a stat-only snapshot and surface only through the rolling
+//! invisible to a stat-only walk and surface only through the rolling
 //! schedule or a manual scan.
 //!
 //! This module also owns [`WorkWakeups`] (the work revisions the loops
@@ -19,17 +18,21 @@
 //! settings saves).
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle_kernel::jobs::CancellationToken;
 use tokio::sync::watch;
 
-use super::fs::is_management_artifact;
-use super::models::{ScanKind, ScanRequest, ScanTrigger};
+use super::models::scope_covers_path;
+use super::models::{Outcome, RunState, ScanKind, ScanRequest, ScanScope, ScanTrigger};
 use super::pool::BlockingPool;
 use super::roots::RootRegistry;
 use super::scheduler::{InclusionRule, scheduled_scopes};
+use super::sqlite_store::SqliteScanStore;
+use super::stop::RunStop;
+use super::store::ScanStoreError;
+use super::walk::{FolderDigest, folder_digests};
 
 /// Default poll interval (v2 `DEFAULT_POLL_INTERVAL_SECONDS`).
 pub const DEFAULT_POLL_INTERVAL_SECS: f64 = 300.0;
@@ -54,85 +57,6 @@ impl Default for WatcherSettings {
             batch_window_seconds: DEFAULT_BATCH_WINDOW_SECS,
         }
     }
-}
-
-/// One snapshot entry: (mtime_ns, size_bytes, is_dir).
-pub type SnapshotEntry = (i64, u64, bool);
-/// Recursive stat-only snapshot keyed by root-relative path.
-pub type Snapshot = HashMap<String, SnapshotEntry>;
-
-/// Recursive stat-only snapshot of `root` (v2 `_snapshot_tree`).
-/// Unreadable subdirectories are skipped; a missing top-level root is an
-/// error, and the caller keeps its previous baseline instead of
-/// scan-storming on a transient unmount. `stop` is asked before each
-/// directory; once it answers true the walk ends with `Interrupted`, so
-/// shutdown never waits out a large tree.
-pub fn snapshot_tree(root: &Path, stop: &dyn Fn() -> bool) -> std::io::Result<Snapshot> {
-    let mut snapshot = Snapshot::new();
-    let mut stack = vec![root.to_owned()];
-    while let Some(current) = stack.pop() {
-        if stop() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
-                "watcher snapshot stopped for shutdown",
-            ));
-        }
-        let entries = match std::fs::read_dir(&current) {
-            Ok(entries) => entries.collect::<Vec<_>>(),
-            Err(error) => {
-                if current == root {
-                    return Err(error);
-                }
-                tracing::debug!(path = %current.display(), "filesystem watcher skipping unreadable directory");
-                continue;
-            }
-        };
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(_) => continue,
-            };
-            let file_type = match entry.file_type() {
-                Ok(file_type) => file_type,
-                Err(_) => continue,
-            };
-            // file_type() never follows symlinks: a symlinked directory is
-            // recorded as a single entry and never descended.
-            let is_dir = file_type.is_dir();
-            let meta = match entry.metadata() {
-                Ok(meta) => meta,
-                Err(_) => continue,
-            };
-            // entry.metadata follows symlinks while file_type did not; for
-            // symlinks re-stat without following so the snapshot records
-            // the link itself.
-            let meta = if file_type.is_symlink() {
-                match std::fs::symlink_metadata(entry.path()) {
-                    Ok(meta) => meta,
-                    Err(_) => continue,
-                }
-            } else {
-                meta
-            };
-            let relative = match entry.path().strip_prefix(root) {
-                Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
-                Err(_) => continue,
-            };
-            // The publisher's own staging and backup temps must not
-            // retrigger the watcher. The walk skips the same rule;
-            // skipping here drops both the entry and the descent, since
-            // the push below never runs.
-            if is_management_artifact(Path::new(&relative)) {
-                continue;
-            }
-            let mtime_ns = super::revision::mtime_ns_from_metadata(&meta);
-            snapshot.insert(relative, (mtime_ns, meta.len(), is_dir));
-            if is_dir && !file_type.is_symlink() {
-                stack.push(entry.path());
-            }
-        }
-    }
-    Ok(snapshot)
 }
 
 /// Work wakeups: one revision per kind of work ("scan", "identification")
@@ -222,13 +146,31 @@ impl DirtyScopes {
     }
 }
 
-/// Watcher loop state: per-root baselines plus the pending batch timer.
+/// Folder digests of one root, keyed by the folder's path in the root.
+pub type Digests = HashMap<String, FolderDigest>;
+
+/// Most folders one root names in a request; past it the watcher asks for
+/// the whole root, which is one walk instead of many.
+pub const MAX_FOLDER_SCOPES: usize = 100;
+
+/// What the watcher knows of one root.
+#[derive(Debug)]
+struct RootWatch {
+    path: PathBuf,
+    /// The digests on record, as in the table.
+    recorded: Digests,
+    /// What the last walk found.
+    seen: Digests,
+    /// The run asked to scan this root's changes, and the digests it was
+    /// asked for, recorded once it settles.
+    asked: Option<(String, Digests)>,
+}
+
+/// Watcher loop state: what each root looked like, plus the batch timer.
 #[derive(Debug, Default)]
 pub struct WatcherState {
-    baselines: HashMap<String, (String, Snapshot)>,
+    roots: HashMap<String, RootWatch>,
     pending_since: Option<f64>,
-    /// Roots that changed since the batch opened.
-    changed_roots: HashSet<String>,
 }
 
 impl WatcherState {
@@ -239,11 +181,6 @@ impl WatcherState {
     pub fn is_pending(&self) -> bool {
         self.pending_since.is_some()
     }
-
-    /// Roots that changed since the batch opened.
-    pub fn changed_roots(&self) -> &HashSet<String> {
-        &self.changed_roots
-    }
 }
 
 /// What one watcher iteration decided.
@@ -253,19 +190,166 @@ pub enum WatcherAction {
     Idle { sleep_secs: f64 },
     /// A mutation is batching; sleep until the window ends or the next poll.
     Batching { sleep_secs: f64 },
-    /// The window elapsed; the caller should request a scan now.
+    /// The window elapsed; the caller should ask for the scan now.
     Due,
 }
 
+/// What changed in one root since its recorded digests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Changes {
+    None,
+    /// These folders, each new or holding at least as many music files as
+    /// before, shallowest first.
+    Folders(Vec<String>),
+    /// A folder went away or lost music files. The loss is judged by a scan
+    /// of the whole root, as the scan's guard against a share that dropped
+    /// out weighs it against everything the scope holds.
+    WholeRoot,
+}
+
+/// Compare a walk with the recorded digests.
+pub fn changes(recorded: &Digests, seen: &Digests) -> Changes {
+    if recorded.keys().any(|folder| !seen.contains_key(folder)) {
+        return Changes::WholeRoot;
+    }
+    let mut folders = Vec::new();
+    for (folder, now) in seen {
+        match recorded.get(folder) {
+            Some(before) if before == now => {}
+            Some(before) if now.audio_files < before.audio_files => return Changes::WholeRoot,
+            _ => folders.push(folder.clone()),
+        }
+    }
+    if folders.is_empty() {
+        return Changes::None;
+    }
+    folders.sort_by(|left, right| depth(left).cmp(&depth(right)).then(left.cmp(right)));
+    Changes::Folders(folders)
+}
+
+/// Path depth in components; `.` is 0.
+fn depth(folder: &str) -> usize {
+    if folder == "." {
+        0
+    } else {
+        folder.split('/').count()
+    }
+}
+
+/// The row writes that turn `recorded` into `target`.
+fn row_changes(recorded: &Digests, target: &Digests) -> Vec<(String, Option<FolderDigest>)> {
+    let mut rows: Vec<(String, Option<FolderDigest>)> = target
+        .iter()
+        .filter(|(folder, digest)| recorded.get(*folder) != Some(digest))
+        .map(|(folder, digest)| (folder.clone(), Some(*digest)))
+        .collect();
+    rows.extend(
+        recorded
+            .keys()
+            .filter(|folder| !target.contains_key(*folder))
+            .map(|folder| (folder.clone(), None)),
+    );
+    rows
+}
+
+/// The scopes that scan root `root_id`'s `changes`, inside what the
+/// automatic schedule walks (`scheduled`). A folder inside another named
+/// folder adds nothing.
+pub fn change_scopes(
+    registry: &RootRegistry,
+    scheduled: &[ScanScope],
+    root_id: &str,
+    changes: &Changes,
+) -> Vec<ScanScope> {
+    let own = scheduled.iter().filter(|scope| scope.root_id == root_id);
+    let folders = match changes {
+        Changes::None => return Vec::new(),
+        Changes::Folders(folders) if folders.len() <= MAX_FOLDER_SCOPES => folders,
+        Changes::Folders(_) | Changes::WholeRoot => return own.cloned().collect(),
+    };
+    let root = registry.resolve(root_id);
+    let mut scopes: Vec<ScanScope> = Vec::new();
+    for folder in folders {
+        if scopes
+            .iter()
+            .any(|scope| scope_covers_path(&scope.relative_path, folder))
+        {
+            continue;
+        }
+        // A folder the schedule does not walk (in an excluded root, outside
+        // its included paths) is not scanned.
+        let Some(home) = own
+            .clone()
+            .find(|scope| scope_covers_path(&scope.relative_path, folder))
+        else {
+            continue;
+        };
+        let mut scope = home.clone();
+        if scope.relative_path != *folder {
+            scope.relative_path = folder.clone();
+            scope.estimated_count = None;
+            if let Some(root) = root {
+                scope.effective_policy = root.policy_for(&root.path.join(folder));
+            }
+        }
+        scopes.push(scope);
+    }
+    scopes
+}
+
+/// Run a store call on the blocking pool.
+async fn on_store<T: Send + 'static>(
+    pool: &BlockingPool,
+    store: &Arc<SqliteScanStore>,
+    call: impl FnOnce(&SqliteScanStore) -> Result<T, ScanStoreError> + Send + 'static,
+) -> Result<T, ScanStoreError> {
+    let store = Arc::clone(store);
+    pool.run(move || call(&store))
+        .await
+        .unwrap_or_else(|error| {
+            Err(ScanStoreError::Internal {
+                message: error.to_string(),
+            })
+        })
+}
+
+/// Record `target` as root `root_id`'s digests. True when it is on record.
+async fn record(
+    pool: &BlockingPool,
+    store: &Arc<SqliteScanStore>,
+    root_id: &str,
+    recorded: &Digests,
+    target: &Digests,
+) -> bool {
+    let rows = row_changes(recorded, target);
+    if rows.is_empty() {
+        return true;
+    }
+    let id = root_id.to_owned();
+    match on_store(pool, store, move |store| {
+        store.record_folder_digests(&id, &rows)
+    })
+    .await
+    {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(root_id, %error, "folder watcher could not record folder digests; tries again next poll");
+            false
+        }
+    }
+}
+
 /// Poll every root once and update the batch timer (v2
-/// `watch_library_filesystem` body, one iteration). Pure decision logic:
-/// the caller issues the scan request on [`WatcherAction::Due`].
+/// `watch_library_filesystem` body, one iteration). The caller asks for
+/// the scan on [`WatcherAction::Due`], through [`ask_for_changes`].
+#[allow(clippy::too_many_arguments)]
 pub async fn poll_once(
     state: &mut WatcherState,
     settings: &WatcherSettings,
     registry: &RootRegistry,
     root_paths: &HashMap<String, PathBuf>,
     pool: &BlockingPool,
+    store: &Arc<SqliteScanStore>,
     now: f64,
     stop: &CancellationToken,
 ) -> WatcherAction {
@@ -273,52 +357,102 @@ pub async fn poll_once(
     let window = settings.batch_window_seconds.max(0.0);
     let enabled = settings.enabled && registry.enabled();
     if enabled {
+        state
+            .roots
+            .retain(|root_id, _| root_paths.contains_key(root_id));
         for (root_id, root_path) in root_paths {
             if stop.is_cancelled() {
                 break;
             }
             let path = root_path.clone();
-            let pool = pool.clone();
-            let stop = stop.clone();
-            let snapshot = pool
-                .run(move || snapshot_tree(&path, &|| stop.is_cancelled()))
+            let walk_stop = stop.clone();
+            let walked = pool
+                .run(move || folder_digests(&path, &|| walk_stop.is_cancelled()))
                 .await
                 .unwrap_or_else(|error| Err(std::io::Error::other(error)));
-            let snapshot = match snapshot {
-                Ok(snapshot) => snapshot,
+            let seen = match walked {
+                Ok(seen) => seen,
                 Err(error) => {
-                    // Missing root: log and keep the previous baseline
-                    // instead of scan-storming on a transient unmount.
-                    tracing::debug!(root_id = %root_id, error = %error, "filesystem watcher root unreadable");
+                    // A missing root keeps what is on record instead of
+                    // scan-storming on a transient unmount.
+                    tracing::debug!(root_id = %root_id, error = %error, "folder watcher root unreadable");
                     continue;
                 }
             };
-            match state.baselines.get(root_id) {
-                None => {
-                    // First sighting: seed silently so a (re)start never
-                    // scans a steady tree.
-                    state
-                        .baselines
-                        .insert(root_id.clone(), (root_path.display().to_string(), snapshot));
-                }
-                Some((previous_path, _)) if previous_path != &root_path.display().to_string() => {
-                    // Re-pointed root id: reseed silently. Settings-driven
-                    // root changes are already covered by Hook B marks.
-                    state
-                        .baselines
-                        .insert(root_id.clone(), (root_path.display().to_string(), snapshot));
-                }
-                Some((_, previous)) => {
-                    if snapshot != *previous {
-                        state
-                            .baselines
-                            .insert(root_id.clone(), (root_path.display().to_string(), snapshot));
-                        state.changed_roots.insert(root_id.clone());
-                        if state.pending_since.is_none() {
-                            state.pending_since = Some(now);
-                        }
+            if !matches!(state.roots.get(root_id), Some(watch) if watch.path == *root_path) {
+                let moved = state.roots.remove(root_id).is_some();
+                let id = root_id.clone();
+                let recorded = match on_store(pool, store, move |store| store.folder_digests(&id))
+                    .await
+                {
+                    Ok(recorded) => recorded,
+                    Err(error) => {
+                        tracing::warn!(root_id = %root_id, %error, "folder watcher could not read folder digests; tries again next poll");
+                        continue;
                     }
+                };
+                let recorded = if moved || recorded.is_empty() {
+                    // A root seen for the first time, or pointed at another
+                    // folder, is taken as found without a scan: saving it in
+                    // the settings already asked for one.
+                    if !record(pool, store, root_id, &recorded, &seen).await {
+                        continue;
+                    }
+                    seen.clone()
+                } else {
+                    recorded
+                };
+                state.roots.insert(
+                    root_id.clone(),
+                    RootWatch {
+                        path: root_path.clone(),
+                        recorded,
+                        seen: Digests::new(),
+                        asked: None,
+                    },
+                );
+            }
+            let Some(watch) = state.roots.get_mut(root_id) else {
+                continue;
+            };
+            if let Some((run_id, asked)) = watch.asked.take() {
+                let id = run_id.clone();
+                let settled = match on_store(pool, store, move |store| {
+                    store.reread_run(&RunStop::never(), &id)
+                })
+                .await
+                {
+                    Ok((run, _, _)) => match run.state {
+                        // Done, or stopped by a person: on record either way.
+                        RunState::Ended {
+                            outcome: Outcome::Completed | Outcome::Cancelled,
+                            ..
+                        } => Some(true),
+                        // Failed or superseded: asked for again.
+                        RunState::Ended { .. } => Some(false),
+                        _ => None,
+                    },
+                    // Pruned from the history: it ended long ago.
+                    Err(ScanStoreError::NotFound { .. }) => Some(true),
+                    Err(error) => {
+                        tracing::warn!(root_id = %root_id, %error, "folder watcher could not read the scan it asked for");
+                        None
+                    }
+                };
+                match settled {
+                    Some(true) if record(pool, store, root_id, &watch.recorded, &asked).await => {
+                        watch.recorded = asked;
+                    }
+                    Some(false) => {}
+                    Some(true) | None => watch.asked = Some((run_id, asked)),
                 }
+            }
+            watch.seen = seen;
+            if watch.asked.is_none()
+                && changes(&watch.recorded, &watch.seen) != Changes::None
+                && state.pending_since.is_none()
+            {
+                state.pending_since = Some(now);
             }
         }
     }
@@ -339,159 +473,138 @@ pub async fn poll_once(
     }
 }
 
-/// Build the watcher's scan request: an incremental scan of the scheduled
-/// scopes of the roots that changed, so a change in one root never walks
-/// the others.
-pub fn watcher_request(
+/// How asking for the watcher's scan went.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Asked {
+    /// This run will scan the changes.
+    Run(String),
+    /// Not now (a busy database): the batch stays due.
+    Later,
+    /// Refused: the batch closes, and a later poll that still sees the
+    /// changes asks again.
+    Refused,
+}
+
+/// Ask, through `ask`, for an incremental scan of the folders that changed
+/// in every root not already waiting on a scan, and close the batch. A
+/// root whose changes lie where the schedule does not walk has them put
+/// on record at once.
+pub async fn ask_for_changes(
+    state: &mut WatcherState,
     registry: &RootRegistry,
     rules: &[InclusionRule],
-    changed_roots: &HashSet<String>,
-) -> Option<ScanRequest> {
-    let mut scopes = scheduled_scopes(registry, rules);
-    scopes.retain(|scope| changed_roots.contains(&scope.root_id));
-    if scopes.is_empty() {
-        // No scheduled scopes: drop the pending scan and let the caller
-        // clear the batch timer.
-        return None;
+    pool: &BlockingPool,
+    store: &Arc<SqliteScanStore>,
+    ask: impl FnOnce(&ScanRequest) -> Asked,
+) {
+    let scheduled = scheduled_scopes(registry, rules);
+    let mut root_ids: Vec<String> = state.roots.keys().cloned().collect();
+    root_ids.sort();
+    let mut scopes: Vec<ScanScope> = Vec::new();
+    let mut asking: Vec<String> = Vec::new();
+    for root_id in root_ids {
+        let Some(watch) = state.roots.get_mut(&root_id) else {
+            continue;
+        };
+        if watch.asked.is_some() {
+            continue;
+        }
+        let found = changes(&watch.recorded, &watch.seen);
+        if found == Changes::None {
+            continue;
+        }
+        let own = change_scopes(registry, &scheduled, &root_id, &found);
+        if own.is_empty() {
+            if record(pool, store, &root_id, &watch.recorded, &watch.seen).await {
+                watch.recorded = watch.seen.clone();
+            }
+            continue;
+        }
+        scopes.extend(own);
+        asking.push(root_id);
     }
-    Some(ScanRequest {
+    if scopes.is_empty() {
+        tracing::debug!("folder watcher closing its batch: nothing to scan");
+        state.pending_since = None;
+        return;
+    }
+    let request = ScanRequest {
         kind: ScanKind::Incremental,
         trigger: ScanTrigger::Automatic,
         scopes,
         requested_by_user_id: None,
         policy_revision: registry.policy_revision().to_owned(),
-    })
-}
-
-/// Clear the batch timer after the scan was requested (or dropped).
-pub fn clear_pending(state: &mut WatcherState) {
-    state.pending_since = None;
-    state.changed_roots.clear();
+    };
+    match ask(&request) {
+        Asked::Run(run_id) => {
+            for root_id in asking {
+                if let Some(watch) = state.roots.get_mut(&root_id) {
+                    watch.asked = Some((run_id.clone(), watch.seen.clone()));
+                }
+            }
+            state.pending_since = None;
+        }
+        Asked::Refused => state.pending_since = None,
+        Asked::Later => {}
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn digest(value: i64, audio_files: i64) -> FolderDigest {
+        FolderDigest {
+            digest: value,
+            audio_files,
+        }
+    }
+
+    /// A walk ignores the publisher's staging temps, so a publish never
+    /// sets the watcher off.
     #[test]
-    fn snapshot_records_nested_files_recursively() {
-        let scratch =
-            droppedneedle_kernel::db::scratch::ScratchDir::new("scan-snap").expect("scratch");
-        let root = scratch.to_path_buf();
-        std::fs::create_dir_all(root.join("sub")).expect("mkdir");
-        std::fs::write(root.join("sub").join("a.flac"), b"data").expect("write");
-        let first = snapshot_tree(&root, &|| false).expect("snapshot");
-        assert!(first.contains_key("sub/a.flac"));
-        assert!(first.contains_key("sub"));
-        std::fs::write(root.join("sub").join("a.flac"), b"longer-data").expect("rewrite");
-        let second = snapshot_tree(&root, &|| false).expect("snapshot");
-        assert_ne!(first, second);
-    }
-
-    #[tokio::test]
-    async fn poll_batches_mutation_into_due() {
-        let quiet = CancellationToken::new();
-        let scratch =
-            droppedneedle_kernel::db::scratch::ScratchDir::new("scan-watch").expect("scratch");
-        let root = scratch.to_path_buf();
-        std::fs::create_dir_all(&root).expect("mkdir");
-        std::fs::write(root.join("a.flac"), b"data").expect("write");
-        let registry = RootRegistry::new(
-            vec![super::super::roots::LibraryRoot::new(
-                "r1",
-                root.clone(),
-                super::super::models::EffectivePolicy::Automatic,
-            )],
-            true,
-            "rev-1",
-        );
-        let mut roots = HashMap::new();
-        roots.insert("r1".to_owned(), root.clone());
-        let pool = BlockingPool::new(2);
-        let settings = WatcherSettings {
-            enabled: true,
-            poll_interval_seconds: 5.0,
-            batch_window_seconds: 60.0,
-        };
-        let mut state = WatcherState::new();
-        // First sighting seeds silently: idle, not due.
-        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 0.0, &quiet).await;
-        assert!(matches!(action, WatcherAction::Idle { .. }));
-        // A mutation starts batching.
-        std::fs::write(root.join("b.flac"), b"data").expect("write");
-        let action = poll_once(
-            &mut state, &settings, &registry, &roots, &pool, 10.0, &quiet,
-        )
-        .await;
-        assert!(matches!(action, WatcherAction::Batching { .. }));
-        // Inside the window: still batching.
-        let action = poll_once(
-            &mut state, &settings, &registry, &roots, &pool, 20.0, &quiet,
-        )
-        .await;
-        assert!(matches!(action, WatcherAction::Batching { .. }));
-        // Past the window: due, for the root that changed only.
-        let action = poll_once(
-            &mut state, &settings, &registry, &roots, &pool, 71.0, &quiet,
-        )
-        .await;
-        assert_eq!(action, WatcherAction::Due);
-        let request = watcher_request(&registry, &[], state.changed_roots()).expect("request");
-        assert!(request.scopes.iter().all(|scope| scope.root_id == "r1"));
-        assert!(watcher_request(&registry, &[], &HashSet::new()).is_none());
-    }
-
-    #[tokio::test]
-    async fn staging_temps_do_not_trip_the_watcher() {
-        let quiet = CancellationToken::new();
+    fn staging_temps_leave_the_digests_alone() {
         let scratch = droppedneedle_kernel::db::scratch::ScratchDir::new("scan-watch-sidecar")
             .expect("scratch");
         let root = scratch.to_path_buf();
-        std::fs::create_dir_all(&root).expect("mkdir");
-        std::fs::write(root.join("a.flac"), b"data").expect("write");
-        let registry = RootRegistry::new(
-            vec![super::super::roots::LibraryRoot::new(
-                "r1",
-                root.clone(),
-                super::super::models::EffectivePolicy::Automatic,
-            )],
-            true,
-            "rev-1",
+        std::fs::create_dir_all(root.join("a")).expect("mkdir");
+        std::fs::write(root.join("a/1.flac"), b"data").expect("write");
+        let before = folder_digests(&root, &|| false).expect("walk");
+        std::fs::write(
+            root.join("a/.droppedneedle-management-j1.1.flac.tmp"),
+            b"staged",
+        )
+        .expect("write temp");
+        std::fs::create_dir_all(root.join(".droppedneedle-management-j2")).expect("mkdir");
+        assert_eq!(folder_digests(&root, &|| false).expect("walk"), before);
+        std::fs::write(root.join("a/2.flac"), b"data").expect("write music");
+        let after = folder_digests(&root, &|| false).expect("walk");
+        assert_eq!(
+            changes(&before, &after),
+            Changes::Folders(vec!["a".to_owned()])
         );
-        let mut roots = HashMap::new();
-        roots.insert("r1".to_owned(), root.clone());
-        let pool = BlockingPool::new(2);
-        let settings = WatcherSettings {
-            enabled: true,
-            poll_interval_seconds: 5.0,
-            batch_window_seconds: 60.0,
-        };
-        let mut state = WatcherState::new();
-        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 0.0, &quiet).await;
-        assert!(matches!(action, WatcherAction::Idle { .. }));
-        // A publish staging temp lands beside the music: still idle, with
-        // no batch pending.
-        let temp = root.join(".droppedneedle-management-j1.a.flac.tmp");
-        std::fs::write(&temp, b"staged").expect("write temp");
-        let action = poll_once(
-            &mut state, &settings, &registry, &roots, &pool, 10.0, &quiet,
-        )
-        .await;
-        assert!(matches!(action, WatcherAction::Idle { .. }));
-        assert!(!state.is_pending(), "staging temp leaves no batch pending");
-        // Rewriting the temp stays quiet too, while a real music file
-        // still trips the batch.
-        std::fs::write(&temp, b"staged-v2").expect("rewrite temp");
-        let action = poll_once(
-            &mut state, &settings, &registry, &roots, &pool, 20.0, &quiet,
-        )
-        .await;
-        assert!(matches!(action, WatcherAction::Idle { .. }));
-        std::fs::write(root.join("b.flac"), b"data").expect("write music");
-        let action = poll_once(
-            &mut state, &settings, &registry, &roots, &pool, 30.0, &quiet,
-        )
-        .await;
-        assert!(matches!(action, WatcherAction::Batching { .. }));
+    }
+
+    /// A folder that went away or lost music files asks for the whole root;
+    /// new and grown folders are named, shallowest first.
+    #[test]
+    fn losses_ask_for_the_whole_root() {
+        let recorded: Digests = [
+            (".".to_owned(), digest(1, 0)),
+            ("a".to_owned(), digest(2, 3)),
+        ]
+        .into();
+        let mut seen = recorded.clone();
+        seen.insert("a".to_owned(), digest(9, 3));
+        seen.insert("b/c".to_owned(), digest(4, 1));
+        seen.insert("b".to_owned(), digest(5, 0));
+        assert_eq!(
+            changes(&recorded, &seen),
+            Changes::Folders(vec!["a".to_owned(), "b".to_owned(), "b/c".to_owned()])
+        );
+        seen.insert("a".to_owned(), digest(9, 2));
+        assert_eq!(changes(&recorded, &seen), Changes::WholeRoot);
+        seen.remove("a");
+        assert_eq!(changes(&recorded, &seen), Changes::WholeRoot);
     }
 }

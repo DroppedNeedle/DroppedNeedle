@@ -412,6 +412,7 @@ mod artwork;
 pub use artwork::ArtworkSweep;
 mod catalog;
 mod commit;
+mod folder_digests;
 mod hands_off;
 mod held_scopes;
 mod inventory;

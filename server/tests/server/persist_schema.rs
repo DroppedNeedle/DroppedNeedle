@@ -70,7 +70,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 172);
+    assert_eq!(table_names(&pool).await.len(), 173);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -7839,6 +7839,39 @@ async fn media_rescans_leave_their_queue_for_the_jobs_table() {
     .await
     .unwrap();
     assert_eq!(noted, (None, None, None));
+}
+
+/// Migration 0103 adds the folder watcher's digests, empty, so the first
+/// poll after the upgrade takes each root as it finds it. A folder is one
+/// row per root, and a row needs a folder.
+#[tokio::test]
+async fn the_folder_watcher_gets_a_digest_table() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(102)).await.unwrap();
+    apply_migrations(&pool).await.unwrap();
+
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_folder_digests")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    sqlx::raw_sql(
+        "INSERT INTO library_folder_digests (root_id, relative_path, digest, audio_files) \
+         VALUES ('r', '.', -7, 0), ('r', 'A', 3, 2), ('s', 'A', 3, 2)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for refused in [
+        "INSERT INTO library_folder_digests VALUES ('r', 'A', 4, 1)",
+        "INSERT INTO library_folder_digests VALUES ('r', '', 4, 1)",
+        "INSERT INTO library_folder_digests VALUES ('r', 'B', 'x', 1)",
+    ] {
+        assert!(
+            sqlx::raw_sql(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
 }
 
 /// The runner's `-- no-transaction` path and the table-rebuild recipe in the
