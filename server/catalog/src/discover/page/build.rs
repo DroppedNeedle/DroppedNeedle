@@ -48,7 +48,13 @@ use crate::discover::sections::{self, Dedupe, Input, Page, SectionDef};
 
 /// Bound on any one upstream read in a build.
 const TASK_TIMEOUT: Duration = Duration::from_secs(25);
-/// Room past [`TASK_TIMEOUT`] for the Daily Mixes, which stop at it
+/// Bound on the Daily Mixes as a whole. They are built one after another,
+/// each from some 36 reads (three seeds, their similar artists and those
+/// artists' albums), so against a provider paced near one read a second
+/// [`TASK_TIMEOUT`] does not fit a single cold mix. The page builds in
+/// the background, so the longer bound keeps no one waiting.
+const MIXES_BUDGET: Duration = Duration::from_secs(120);
+/// Room past [`MIXES_BUDGET`] for the Daily Mixes, which stop at it
 /// themselves; the outer bound only catches a read that never returns.
 const MIXES_GRACE: Duration = Duration::from_secs(5);
 /// Bound on the Last.fm route into Top Picks during a ListenBrainz outage.
@@ -208,6 +214,19 @@ async fn bounded_by<T: Default>(
             T::default()
         }
     }
+}
+
+/// The outer bound on building one section.
+fn section_bound(key: SectionKey) -> Duration {
+    match key {
+        SectionKey::DailyMixes => MIXES_BUDGET + MIXES_GRACE,
+        _ => TASK_TIMEOUT,
+    }
+}
+
+/// When the Daily Mixes started at `now` stop building more.
+fn mixes_deadline(now: tokio::time::Instant) -> tokio::time::Instant {
+    now + MIXES_BUDGET
 }
 
 /// Run `builds` one after another until `deadline`, keeping what
@@ -409,12 +428,13 @@ impl Builder<'_> {
                 .filter(|def| def.dedupe != Dedupe::Artists)
                 .map(|def| async {
                     let name = def.key.name();
-                    let bound = match def.key {
-                        SectionKey::DailyMixes => TASK_TIMEOUT + MIXES_GRACE,
-                        _ => TASK_TIMEOUT,
-                    };
-                    let content =
-                        bounded_by(&self.ask, &name, bound, self.section(def.key, &ctx)).await;
+                    let content = bounded_by(
+                        &self.ask,
+                        &name,
+                        section_bound(def.key),
+                        self.section(def.key, &ctx),
+                    )
+                    .await;
                     (def.key, content)
                 }),
         )
@@ -1052,7 +1072,7 @@ impl Builder<'_> {
         if let Some(mixes) = self.memo.mixes(&key).await {
             return mixes;
         }
-        let deadline = tokio::time::Instant::now() + TASK_TIMEOUT;
+        let deadline = mixes_deadline(tokio::time::Instant::now());
         let ask = self.ask.watched();
         let (mixes, finished) = self
             .build_daily_mixes(
