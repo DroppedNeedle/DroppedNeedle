@@ -689,12 +689,72 @@ fn credit_rows(
         .collect()
 }
 
+/// The credits of a subject that moved to another artist row, as pairs of
+/// (index in `before`, index in `after`). A row credited on both sides is
+/// unchanged and is never a move's source or target, so a reorder records
+/// nothing. The removed and added credits left pair one to one by folded
+/// credited name, where that name is credited once on each side; then by
+/// position. A removed credit still unpaired moved to every added credit
+/// still unpaired, and with none left it was dropped, which is no move.
+fn credit_moves(before: &[CreditRow], after: &[CreditRow]) -> Vec<(usize, usize)> {
+    let credited = |rows: &[CreditRow], id: &str| rows.iter().any(|row| row.1 == id);
+    let mut removed: Vec<usize> = (0..before.len())
+        .filter(|&index| !credited(after, &before[index].1))
+        .collect();
+    let mut added: Vec<usize> = (0..after.len())
+        .filter(|&index| !credited(before, &after[index].1))
+        .collect();
+    let mut moves = Vec::new();
+
+    let name = |row: &CreditRow| {
+        row.2
+            .as_deref()
+            .map(fold_text)
+            .filter(|folded| !folded.is_empty())
+    };
+    let once = |rows: &[CreditRow], left: &[usize], folded: &str| {
+        left.iter()
+            .filter(|&&index| name(&rows[index]).as_deref() == Some(folded))
+            .count()
+            == 1
+    };
+    let by_name: Vec<(usize, usize)> = removed
+        .iter()
+        .filter_map(|&from| {
+            let folded = name(&before[from])?;
+            if !once(before, &removed, &folded) || !once(after, &added, &folded) {
+                return None;
+            }
+            let to = added
+                .iter()
+                .copied()
+                .find(|&to| name(&after[to]).as_deref() == Some(folded.as_str()))?;
+            Some((from, to))
+        })
+        .collect();
+    for (from, to) in by_name {
+        removed.retain(|&index| index != from);
+        added.retain(|&index| index != to);
+        moves.push((from, to));
+    }
+
+    removed.retain(|&from| {
+        let Some(slot) = added.iter().position(|&to| after[to].0 == before[from].0) else {
+            return true;
+        };
+        moves.push((from, added.remove(slot)));
+        false
+    });
+
+    for &from in &removed {
+        moves.extend(added.iter().map(|&to| (from, to)));
+    }
+    moves
+}
+
 /// Record each credit of `subject` that moved to another artist row
-/// ([`record_move`]): the same position on another row, the old row no
-/// longer on the subject at all. Lists of different lengths record
-/// nothing, so a credit dropped or split in two is never read as a move.
-/// A move involves an id when the file held one before or after, or a
-/// proof sat at the old credit.
+/// ([`credit_moves`], [`record_move`]). A move involves an id when the
+/// file held one before or after, or a proof sat at the old credit.
 fn record_moves(
     tx: &Connection,
     side: CreditSide,
@@ -703,18 +763,13 @@ fn record_moves(
     after: &[CreditRow],
     now: f64,
 ) -> rusqlite::Result<()> {
-    if before.len() != after.len() {
-        return Ok(());
-    }
     let kind = match side {
         CreditSide::Album => "album",
         CreditSide::Track => "track",
     };
-    for ((position, from, _, from_mbid), (to_position, to, _, to_mbid)) in before.iter().zip(after)
-    {
-        if position != to_position || from == to || after.iter().any(|row| &row.1 == from) {
-            continue;
-        }
+    for (from, to) in credit_moves(before, after) {
+        let (position, from, _, from_mbid) = &before[from];
+        let (_, to, _, to_mbid) = &after[to];
         let with_id = from_mbid.is_some()
             || to_mbid.is_some()
             || tx
@@ -797,6 +852,7 @@ fn write_album(
          local_artist_id = excluded.local_artist_id, credited_name = excluded.credited_name, \
          join_phrase = excluded.join_phrase, artist_mbid = excluded.artist_mbid",
     )?;
+    let mut written = 0i64;
     for (position, (credit, id)) in album_credits.iter().zip(album_artist_ids).enumerate() {
         album_artist_rows.execute(params![
             album_id,
@@ -806,7 +862,12 @@ fn write_album(
             credit.join_phrase,
             credit.mbid,
         ])?;
+        written += 1;
     }
+    tx.prepare_cached(
+        "DELETE FROM local_album_artists WHERE local_album_id = ?1 AND position >= ?2",
+    )?
+    .execute(params![album_id, written])?;
     let rows_after = credit_rows(tx, CreditSide::Album, album_id)?;
     if rows_after != rows_before {
         mark_stale(tx, album_id)?;
@@ -3428,4 +3489,44 @@ pub(crate) fn adopt_file(
     adopted: &Adopted<'_>,
 ) -> rusqlite::Result<String> {
     write_item(tx, None, item, Some(adopted)).map(|written| written.track_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CreditRow, credit_moves};
+
+    /// The moves between two credit lists, each credit keyed to a row of
+    /// its own exact name, as (from, to) names.
+    fn moves(before: &[&str], after: &[&str]) -> Vec<(String, String)> {
+        let rows = |names: &[&str]| -> Vec<CreditRow> {
+            (0i64..)
+                .zip(names)
+                .map(|(position, name)| {
+                    (position, (*name).to_owned(), Some((*name).to_owned()), None)
+                })
+                .collect()
+        };
+        let (before, after) = (rows(before), rows(after));
+        credit_moves(&before, &after)
+            .into_iter()
+            .map(|(from, to)| (before[from].1.clone(), after[to].1.clone()))
+            .collect()
+    }
+
+    fn moved(from: &str, to: &str) -> (String, String) {
+        (from.to_owned(), to.to_owned())
+    }
+
+    /// A row on both sides never moves; what is left pairs by name, then
+    /// by position, then to every credit added; a drop alone is no move.
+    #[test]
+    fn credits_pair_by_name_then_position_and_a_drop_is_no_move() {
+        assert_eq!(moves(&["A", "B"], &["B", "C"]), vec![moved("A", "C")]);
+        assert_eq!(moves(&["B", "A"], &["A", "B"]), Vec::new());
+        assert_eq!(moves(&["X", "Oh"], &["OH"]), vec![moved("Oh", "OH")]);
+        assert_eq!(moves(&["Oh", "Y"], &["Y", "Z"]), vec![moved("Oh", "Z")]);
+        assert_eq!(moves(&["Oh", "Y"], &["Y"]), Vec::new());
+        assert_eq!(moves(&["Oh"], &["OH", "Y"]), vec![moved("Oh", "OH")]);
+        assert_eq!(moves(&["Oh"], &["Ox", "Y"]), vec![moved("Oh", "Ox")]);
+    }
 }

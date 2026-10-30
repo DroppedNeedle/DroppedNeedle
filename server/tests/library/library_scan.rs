@@ -8037,6 +8037,82 @@ async fn a_linked_row_left_empty_by_a_sort_change_is_offered() {
     assert_eq!(groups[0].1, sorted_ids(&[&old, &new]));
 }
 
+/// A retag from "Oh" to "OH" with a featured artist records the credit
+/// moved by name although the credit count changed, so at the run end Oh
+/// merges into OH with its favorite. A later retag down to one credit
+/// leaves the album no credit past it.
+#[tokio::test]
+async fn a_case_change_with_a_featured_artist_carries_the_old_row_over() {
+    const RELEASE: &str = "bbbbbbbb-0000-4000-8000-0000000000f1";
+    let rig = ArtistRig::new("artist-follow-featured");
+    rig.put_on(
+        "A/01.flac",
+        "Album A",
+        Some(RELEASE),
+        plain(&["Oh"]),
+        plain(&["Oh"]),
+    );
+    rig.scan().await;
+    let old = rig.track_artist("A/01.flac", 0);
+    rig.listen("listener", &old);
+
+    let featured = listed(&["OH", "Y"], &[]);
+    rig.put_on("A/01.flac", "Album A", Some(RELEASE), featured, featured);
+    rig.scan().await;
+    let new = rig.track_artist("A/01.flac", 0);
+    assert_eq!(rig.name(&new), "OH");
+    assert_eq!(rig.retired_into(&old), Some(new.clone()));
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'artist' \
+             AND item_id = '{new}'"
+        )),
+        1
+    );
+
+    rig.put_on(
+        "A/01.flac",
+        "Album A",
+        Some(RELEASE),
+        plain(&["OH"]),
+        plain(&["OH"]),
+    );
+    rig.scan().await;
+    assert_eq!(
+        rig.count(
+            "SELECT COUNT(*) FROM local_album_artists c JOIN local_tracks t \
+             ON t.local_album_id = c.local_album_id WHERE t.relative_path = 'A/01.flac'"
+        ),
+        1
+    );
+}
+
+/// A retag from "Oh" to "Ox" with a featured artist records the move by
+/// position: Oh is not merged, and the list offers Oh and Ox as one group.
+#[tokio::test]
+async fn a_rename_with_a_featured_artist_is_offered_not_merged() {
+    let rig = ArtistRig::new("artist-follow-rename-featured");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+    rig.scan().await;
+    let old = rig.track_artist("A/01.flac", 0);
+    rig.listen("listener", &old);
+
+    let featured = listed(&["Ox", "Y"], &[]);
+    rig.put("A/01.flac", "Album A", featured, featured);
+    rig.scan().await;
+    let new = rig.track_artist("A/01.flac", 0);
+    assert_eq!(rig.name(&new), "Ox");
+    assert_eq!(rig.retired_into(&old), None);
+    assert_eq!(
+        open_groups(&rig),
+        vec![(
+            "credits_moved",
+            sorted_ids(&[&old, &new]),
+            Some(new.clone()),
+        )]
+    );
+}
+
 /// Two artists who share a name but not their MusicBrainz id get a row
 /// each.
 #[tokio::test]
