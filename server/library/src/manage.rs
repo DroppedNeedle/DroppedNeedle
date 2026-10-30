@@ -46,7 +46,7 @@ const PINNED_OVERRIDE: u64 = 0;
 /// Policy revision as the seal's u64: the registry fingerprint is
 /// 16 hex chars by construction.
 pub(super) fn policy_revision_u64(registry: &RootRegistry) -> u64 {
-    u64::from_str_radix(registry.policy_revision(), 16).unwrap_or(0)
+    u64::from_str_radix(registry.fingerprint(), 16).unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -570,10 +570,12 @@ pub enum PluginFileRefusal {
     FolderUnusable(&'static str),
     /// Another file has the name.
     Taken,
-    /// Another file's name differs from it only in capitals.
+    /// Another file's name differs from it only in letter case or Unicode
+    /// form (the gate compares NFC with full case folding).
     Lookalike,
-    /// The caller's own check refused it before anything waited or was
-    /// written.
+    /// The caller's admit read refused it before anything waited. A caller
+    /// also names a refusal from its own record hook this way: that
+    /// commit rolled back, so nothing was written.
     NotAdmitted,
     /// The write stopped partway; it finishes or is undone by itself.
     Pending,

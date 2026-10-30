@@ -165,7 +165,7 @@ async fn full_scan_throughput() {
             trigger: ScanTrigger::Manual,
             scopes: roots.scheduled_root_scopes(),
             requested_by_user_id: None,
-            policy_revision: roots.policy_revision().to_owned(),
+            policy_revision: roots.fingerprint().to_owned(),
         })
         .expect("scan requested");
     while library.scans.supervisor_tick().await && !library.coordinator.current().is_empty() {}

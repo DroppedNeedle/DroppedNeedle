@@ -1032,6 +1032,18 @@ pub fn render_path(
         .enumerate()
         .map(|(index, part)| clean_component(part, compat, index + 1 == parts.len()))
         .collect();
+    // Settings saved before `.` was refused as the replacement can still
+    // clean a name down to `.` or `..`.
+    if cleaned
+        .iter()
+        .any(|part| matches!(part.as_str(), "." | ".."))
+    {
+        return fault(
+            "The naming script made an empty folder or file name, or a path that leaves the library folder.",
+            1,
+            1,
+        );
+    }
     let relative = cleaned.join("/");
     let limit = usize::try_from(compat.maximum_path_length.max(1)).unwrap_or(4096);
     let absolute = format!("{}/{relative}", root.trim_end_matches('/'));

@@ -1200,7 +1200,7 @@ impl SubsonicStore {
             trigger: ScanTrigger::Subsonic,
             scopes: registry.scheduled_root_scopes(),
             requested_by_user_id: self.caller.clone(),
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
         });
         if let Err(error) = outcome {
             tracing::warn!(?error, "subsonic scan request was not admitted");

@@ -1238,7 +1238,7 @@ async fn a_plugin_write_is_journaled_and_keeps_no_ledger() {
         )
         .await
         .unwrap_err();
-    assert!(lookalike.message.contains("capitals"), "{lookalike:?}");
+    assert!(lookalike.message.contains("letter case"), "{lookalike:?}");
     assert!(
         !rig.dir.join("plugins/.data/.library-writes").exists(),
         "no ledger folder"
@@ -1397,7 +1397,8 @@ fn seed_files(rig: &Rig, count: usize) {
 
 /// A plugin may add 1000 files a day: the 1000th lands, the 1001st is
 /// refused and never placed, and the refusal shows with the plugin's
-/// health in the admin view until a write lands.
+/// health in the admin view until a write lands or the plugin is switched
+/// off.
 #[tokio::test]
 async fn the_1001st_file_in_a_day_is_refused_and_shown() {
     use droppedneedle_plugins::capabilities::library_files::QUOTA_FILES_PER_DAY;
@@ -1425,6 +1426,11 @@ async fn the_1001st_file_in_a_day_is_refused_and_shown() {
         json!(refused),
         "{body}"
     );
+
+    rig.host
+        .update_settings("toy", false, HashMap::new())
+        .unwrap();
+    assert_eq!(rig.host.library_refusal("toy"), None);
 }
 
 /// While another write holds the library, a write still waiting at its

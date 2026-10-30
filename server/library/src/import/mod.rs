@@ -671,7 +671,7 @@ impl Imports {
         };
         let dest_policy = |policy: EffectivePolicy| super::publish::planner::Adoption {
             policy,
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
             download_task_id: (import.origin == ImportOrigin::Download)
                 .then(|| import.task_id.clone()),
             source_path: None,

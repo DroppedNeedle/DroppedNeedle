@@ -20,6 +20,7 @@ use super::profile::{self, CompiledScripts, NamingFacts};
 use super::reasons::{self, ItemReason};
 use super::script;
 use super::selection::{AlbumScope, CatalogTrack};
+use super::service::ManagementParts;
 use super::{automatic, takeover};
 use crate::matching::model::Release;
 use crate::publish::planner::{
@@ -32,7 +33,6 @@ use crate::scan::models::EffectivePolicy;
 use crate::scan::roots::RootRegistry;
 use crate::scan::sqlite_store::holds_new_files;
 use crate::tags::{self, TagField};
-use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::Lane;
 
 /// Why an album's match keeps its files from being managed, if it does.
@@ -98,8 +98,8 @@ fn album_keeps_own_tags(ctx: &PlanContext<'_>, tracks: &[CatalogTrack]) -> bool 
 }
 
 /// Whether management may touch unconfirmed matches, read per call.
-pub(crate) fn manage_unconfirmed(setup: &LibrarySetup) -> bool {
-    setup.settings.editions.manage_unconfirmed()
+pub(crate) fn manage_unconfirmed(parts: &ManagementParts) -> bool {
+    parts.settings.editions.manage_unconfirmed()
 }
 
 /// Per-file tag overrides an administrator saved (album-wide and for the
@@ -162,7 +162,7 @@ pub fn overrides(conn: &Connection, album_id: &str, track_id: &str) -> rusqlite:
 
 /// Everything planning needs that is the same for every album.
 pub struct PlanContext<'a> {
-    pub setup: &'a LibrarySetup,
+    pub(crate) parts: &'a ManagementParts,
     pub pinned: &'a PinnedProfile,
     pub scripts: &'a CompiledScripts,
     pub sandbox: &'a Sandbox,
@@ -276,8 +276,8 @@ fn album_state(
     person: bool,
     edition: Option<&EditionPin>,
 ) -> Result<AlbumState, ManagementError> {
-    let store = &ctx.setup.identify_store;
-    let db = &ctx.setup.db;
+    let store = &ctx.parts.identify_store;
+    let db = &ctx.parts.db;
     if person
         && let Some(reason) = db
             .read_blocking("management.remap_gate", |conn| {
@@ -506,7 +506,7 @@ fn plan_file(
     overrides: &Overrides,
     extras: &super::enrich::AlbumExtras,
 ) -> Result<(), ItemReason> {
-    let store = &ctx.setup.identify_store;
+    let store = &ctx.parts.identify_store;
     let (recording_mbid, release_track_mbid, mapping_revision, release_track) =
         if super::custom::is_custom(release) {
             // A custom edition's tracks are the album's own files.
@@ -584,7 +584,7 @@ fn plan_file(
         reasons::file_unreadable()
     })?;
     let lyrics = super::enrich::lyrics(
-        ctx.setup.enrichment.as_deref(),
+        ctx.parts.enrichment.as_deref(),
         &ctx.pinned.profile.enrichment.lyrics,
         release,
         release_track,
@@ -842,11 +842,11 @@ fn keep_bytes(
     bytes: &[u8],
 ) -> Result<String, ManagementError> {
     use crate::publish::snapshots::SnapshotStore;
-    ctx.setup
+    ctx.parts
         .core
         .blobs
         .keep(
-            &ctx.setup.db,
+            &ctx.parts.db,
             Lane::Background,
             name,
             &[bytes],
@@ -1386,7 +1386,7 @@ fn acoustid_id_for(
 /// would read as "no match"). With `ids_only` only the files that would
 /// get an id are looked at, and no print is put in `extras`.
 pub(crate) fn acoustid_values(
-    setup: &LibrarySetup,
+    parts: &ManagementParts,
     sandbox: &Sandbox,
     profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
     subjects: &[AcoustIdSubject<'_>],
@@ -1397,7 +1397,7 @@ pub(crate) fn acoustid_values(
     use super::enrich::{AcoustIdAnswer, AcoustIdPrint};
     use droppedneedle_providers::acoustid::MAX_BATCH;
 
-    let port = setup.enrichment.as_deref();
+    let port = parts.enrichment.as_deref();
     // Without a key no id is looked up, so a file that wants only an id
     // is not decoded.
     let mut keyed: Option<bool> = None;
@@ -1429,7 +1429,7 @@ pub(crate) fn acoustid_values(
                 TagField::AcoustIdFingerprint,
                 held(TagField::AcoustIdFingerprint),
             );
-        let recording = match setup.identify_store.track_identity(subject.track_id) {
+        let recording = match parts.identify_store.track_identity(subject.track_id) {
             Ok(mapping) => mapping
                 .and_then(|mapping| mapping.recording_mbid)
                 .filter(|recording| !recording.trim().is_empty()),
@@ -1476,7 +1476,7 @@ pub(crate) fn acoustid_values(
         );
         // A stored print that cannot be read is logged and taken from the
         // audio again: that gives the same print.
-        let stored = setup
+        let stored = parts
             .identify_store
             .fingerprint(subject.track_id, &revision)
             .unwrap_or_else(|error| {
@@ -1551,7 +1551,7 @@ pub(crate) fn acoustid_values(
                     result.score() > droppedneedle_providers::acoustid::BATCH_MIN_SCORE
                         && !result.recordings().is_empty()
                 });
-                if let Err(error) = setup.identify_store.save_fingerprint(
+                if let Err(error) = parts.identify_store.save_fingerprint(
                     track,
                     revision,
                     &print.print,
@@ -1927,8 +1927,8 @@ pub fn plan_album(
         };
     // Only a person's own preview asks MusicBrainz at their priority.
     let mut extras = super::enrich::gather(
-        ctx.setup.enrichment.as_deref(),
-        &ctx.setup.identify_store,
+        ctx.parts.enrichment.as_deref(),
+        &ctx.parts.identify_store,
         &ctx.pinned.profile,
         &mut release,
         !person,
@@ -1937,7 +1937,7 @@ pub fn plan_album(
     // just stored, so a run that writes their ids and new names keeps
     // them. No merge here: it would move the album's revision under the
     // plan.
-    if let Err(error) = ctx.setup.identify_store.link_album_artists(&scope.album_id) {
+    if let Err(error) = ctx.parts.identify_store.link_album_artists(&scope.album_id) {
         tracing::warn!(
             %error,
             album_id = scope.album_id,
@@ -1949,7 +1949,7 @@ pub fn plan_album(
     measure_replaygain(ctx, tracks, scope.track_ids.is_none(), &mut extras);
     let mut saved = Vec::with_capacity(tracks.len());
     for track in tracks {
-        let mut overrides = ctx.setup.db.read_blocking("management.overrides", |conn| {
+        let mut overrides = ctx.parts.db.read_blocking("management.overrides", |conn| {
             Ok::<_, ManagementError>(overrides(conn, &scope.album_id, &track.id)?)
         })?;
         if let Some(edit) = ctx.tag_edit {
@@ -1968,7 +1968,7 @@ pub fn plan_album(
         })
         .collect();
     acoustid_values(
-        ctx.setup,
+        ctx.parts,
         ctx.sandbox,
         &ctx.pinned.profile,
         &subjects,
@@ -1997,7 +1997,7 @@ pub fn plan_album(
     // A person's preview of the album itself still plans, and says what
     // applying it does.
     if ctx.tag_edit.is_none()
-        && ctx.setup.db.read_blocking("management.is_marked", |conn| {
+        && ctx.parts.db.read_blocking("management.is_marked", |conn| {
             Ok::<_, ManagementError>(takeover::is_marked(conn, &scope.album_id)?)
         })?
     {
@@ -2025,7 +2025,7 @@ pub fn plan_album(
             added: None,
             removal: None,
         };
-        let probe = crate::adapters::FsSpaceProbe::new(ctx.setup.root_dirs.clone());
+        let probe = crate::adapters::FsSpaceProbe::new(ctx.parts.root_dirs.clone());
         if DiskPreflight::check(&bundle, &probe).is_err() {
             for item in items.iter_mut().filter(|item| item.desired.plan.is_some()) {
                 item.block(reasons::insufficient_space());
@@ -2069,19 +2069,19 @@ pub fn plan_one(
             release_group_mbid,
             album_identity_revision,
         } => {
-            let overrides = ctx.setup.db.read_blocking("management.overrides", |conn| {
+            let overrides = ctx.parts.db.read_blocking("management.overrides", |conn| {
                 Ok::<_, ManagementError>(overrides(conn, &scope.album_id, &track.id)?)
             })?;
             let mut extras = super::enrich::gather(
-                ctx.setup.enrichment.as_deref(),
-                &ctx.setup.identify_store,
+                ctx.parts.enrichment.as_deref(),
+                &ctx.parts.identify_store,
                 &ctx.pinned.profile,
                 &mut release,
                 false,
             );
             measure_replaygain(ctx, std::slice::from_ref(track), false, &mut extras);
             acoustid_values(
-                ctx.setup,
+                ctx.parts,
                 ctx.sandbox,
                 &ctx.pinned.profile,
                 &[AcoustIdSubject {

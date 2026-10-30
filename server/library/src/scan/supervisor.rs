@@ -47,7 +47,7 @@ pub fn scopes_for_dirty_ids(
             let mut scope = ScanScope::root(
                 &root.id,
                 &root.path.to_string_lossy(),
-                registry.policy_revision(),
+                registry.fingerprint(),
             );
             scope.effective_policy = root.policy;
             scopes.push(scope);
@@ -66,7 +66,7 @@ pub fn scopes_for_dirty_ids(
             relative_path: rule.relative_path.clone(),
             root_path: Some(root.path.to_string_lossy().into_owned()),
             effective_policy: root.policy,
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
             estimated_count: None,
         });
     }
@@ -101,7 +101,7 @@ where
         kind: ScanKind::Incremental,
         trigger: ScanTrigger::PolicyApply,
         requested_by_user_id: None,
-        policy_revision: registry.policy_revision().to_owned(),
+        policy_revision: registry.fingerprint().to_owned(),
         scopes: dirty_scopes,
     }) {
         Ok(result) if result.disposition != Disposition::Conflict => {
@@ -149,7 +149,7 @@ where
                 trigger: ScanTrigger::StartupResume,
                 scopes,
                 requested_by_user_id: None,
-                policy_revision: registry.policy_revision().to_owned(),
+                policy_revision: registry.fingerprint().to_owned(),
             });
             if let Err(error) = result {
                 tracing::warn!(error = %error, "target scan startup reconciliation request failed");

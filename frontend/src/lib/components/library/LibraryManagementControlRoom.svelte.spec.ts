@@ -63,6 +63,7 @@ const h = vi.hoisted(() => ({
 						artist_name: string | null;
 						cause: string;
 						noticed_at: number;
+						hand_back_given_up: boolean;
 					}>;
 			  }
 			| undefined,
@@ -406,13 +407,14 @@ beforeEach(() => {
 	h.handBackAll.mockResolvedValue({ albums: 2 });
 });
 
-function takenOver(id: string, title: string) {
+function takenOver(id: string, title: string, givenUp = false) {
 	return {
 		album_id: id,
 		album_title: title,
 		artist_name: 'Signal Artist',
 		cause: 'files_changed',
-		noticed_at: Date.UTC(2026, 9, 1, 12)
+		noticed_at: Date.UTC(2026, 9, 1, 12),
+		hand_back_given_up: givenUp
 	};
 }
 
@@ -428,13 +430,20 @@ describe('albums left unmanaged', () => {
 	});
 
 	it('lists the albums with one button each and no bulk button for one', async () => {
-		h.takeovers.data = { total: 1, handing_back: 0, items: [takenOver('album-1', 'Kept Mine')] };
+		h.takeovers.data = {
+			total: 1,
+			handing_back: 0,
+			items: [takenOver('album-1', 'Kept Mine', true)]
+		};
 		await render(LibraryManagementControlRoom);
 
 		await page
 			.getByText('1 album is left unmanaged because its files were changed outside DroppedNeedle')
 			.click();
 		await expect.element(page.getByRole('link', { name: 'Kept Mine' })).toBeVisible();
+		await expect
+			.element(page.getByText('Hand-back stopped: its files could not be read.'))
+			.toBeVisible();
 		await page.getByRole('button', { name: 'Manage it again' }).click();
 
 		expect(h.handBack).toHaveBeenCalledWith({ albumId: 'album-1' });

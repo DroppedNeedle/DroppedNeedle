@@ -16633,7 +16633,6 @@ export interface components {
             operation_row_revision: number;
             origin: string;
             phase: components["schemas"]["ManagementPhase"];
-            policy_revision: string;
             profile_id: string;
             profile_name: string;
             profile_revision: string;
@@ -17053,6 +17052,11 @@ export interface components {
             album_title: string;
             artist_name?: string | null;
             cause: components["schemas"]["ManagementTakeoverCause"];
+            /**
+             * @description A hand-back since then was given up because the album's files
+             *     could not be read.
+             */
+            hand_back_given_up: boolean;
             /**
              * Format: int64
              * @description When it stepped back, unix milliseconds.
@@ -19145,7 +19149,11 @@ export interface components {
             implemented_capabilities?: string[];
             /** @description Last start failure, crash or protocol problem. */
             last_error?: string | null;
-            /** @description Why the plugin's last library write was refused, until one lands. */
+            /**
+             * @description Why the plugin's last library write was refused. Cleared when a
+             *     write lands, the plugin is switched off or removed, or the server
+             *     restarts.
+             */
             library_refusal?: string | null;
             /**
              * Format: int64

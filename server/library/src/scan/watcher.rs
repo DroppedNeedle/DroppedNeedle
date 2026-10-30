@@ -533,7 +533,7 @@ pub async fn ask_for_changes(
         trigger: ScanTrigger::Automatic,
         scopes,
         requested_by_user_id: None,
-        policy_revision: registry.policy_revision().to_owned(),
+        policy_revision: registry.fingerprint().to_owned(),
     };
     match ask(&request) {
         Asked::Run(run_id) => {

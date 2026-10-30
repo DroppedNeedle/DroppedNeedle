@@ -459,7 +459,7 @@ pub fn plan(
             fingerprint: file.fingerprint.clone(),
             copy_stat,
             policy,
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
             home_already,
             linkable: copy_in != CopyIn::OldBin
                 && home_device(&home).is_some_and(|dev| dev == copy_stat.dev),

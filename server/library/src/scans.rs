@@ -131,19 +131,12 @@ impl Scans {
             .library
             .get()
             .map_err(|error| ServiceError::internal(&error))?;
-        let resolved = crate::policy::resolve(&settings)
-            .map_err(|error| ServiceError::internal(&format!("{error:?}")))?;
-        let stale = || ServiceError::Conflict {
-            message: "The library policy changed. Refresh this page and try again.".to_owned(),
-        };
-        if expected.is_some_and(|expected| expected != resolved.policy_revision) {
-            return Err(stale());
-        }
-        let wanted = super::settings::registry_from(&settings);
-        let live = self.core.refresh_registry();
-        if live.policy_revision() != wanted.policy_revision() {
-            return Err(stale());
-        }
+        let live = self
+            .core
+            .registry_matching(&settings, expected)
+            .ok_or_else(|| ServiceError::Conflict {
+                message: "The library policy changed. Refresh this page and try again.".to_owned(),
+            })?;
         Ok((settings, live))
     }
 
@@ -172,7 +165,7 @@ impl Scans {
                 trigger,
                 scopes,
                 requested_by_user_id: Some(user_id.to_owned()),
-                policy_revision: registry.policy_revision().to_owned(),
+                policy_revision: registry.fingerprint().to_owned(),
             })
             .map_err(request_error)
     }
@@ -279,7 +272,7 @@ impl Scans {
         // The refresh swaps the new root in and marks it dirty, so the
         // supervisor gives it an initial scan.
         let registry = self.core.refresh_registry();
-        let revision = registry.policy_revision().to_owned();
+        let revision = registry.fingerprint().to_owned();
         // Open (or reopen) the publish cell under the new root set.
         // A reconcile failure here is a 409: the root is registered
         // but publishing stays closed until recovery passes.
@@ -294,51 +287,6 @@ impl Scans {
                 .map_err(publish_error)?;
         }
         Ok((root, revision))
-    }
-
-    /// Request a manual scan over one root or every scheduled root.
-    pub fn request_scan(
-        &self,
-        root_id: Option<&str>,
-        user_id: &str,
-    ) -> Result<ScanRequestResult, ServiceError> {
-        let registry = self.core.live_registry();
-        let mut scopes = registry.scheduled_root_scopes();
-        if let Some(wanted) = root_id {
-            scopes.retain(|scope| scope.root_id == wanted);
-            if scopes.is_empty() {
-                return Err(ServiceError::NotFound);
-            }
-        }
-        let result = self
-            .coordinator
-            .request_run(&ScanRequest {
-                kind: ScanKind::Incremental,
-                trigger: ScanTrigger::Manual,
-                scopes,
-                requested_by_user_id: Some(user_id.to_owned()),
-                policy_revision: registry.policy_revision().to_owned(),
-            })
-            .map_err(|error| match error {
-                super::scan::coordinator::ScanRequestError::Disabled => ServiceError::Conflict {
-                    message: error.to_string(),
-                },
-                super::scan::coordinator::ScanRequestError::EmptyScopes => {
-                    ServiceError::InvalidInput {
-                        message: error.to_string(),
-                    }
-                }
-                super::scan::coordinator::ScanRequestError::StalePolicy
-                | super::scan::coordinator::ScanRequestError::UnknownRoots => {
-                    ServiceError::Conflict {
-                        message: error.to_string(),
-                    }
-                }
-                super::scan::coordinator::ScanRequestError::Store(cause) => {
-                    ServiceError::internal(&cause)
-                }
-            })?;
-        Ok(result)
     }
 
     /// Every current run and the latest finished ones. Blocking.
@@ -362,5 +310,20 @@ impl Scans {
             .inventory_for_run(run_id, RUN_DETAIL_FILES)
             .map_err(store_error)?;
         Ok((run, scopes, files))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scan request the database is too busy to record answers the
+    /// server-busy 503, never a fault.
+    #[test]
+    fn a_busy_scan_request_is_busy() {
+        let busy = ScanRequestError::Store(ScanStoreError::Busy {
+            operation: "scan.request".to_owned(),
+        });
+        assert!(matches!(request_error(busy), ServiceError::Busy { .. }));
     }
 }

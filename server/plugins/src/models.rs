@@ -108,7 +108,9 @@ pub struct PluginRuntimeInfo {
     /// until it has answered.
     #[serde(default)]
     pub health: Option<PluginHealth>,
-    /// Why the plugin's last library write was refused, until one lands.
+    /// Why the plugin's last library write was refused. Cleared when a
+    /// write lands, the plugin is switched off or removed, or the server
+    /// restarts.
     #[serde(default)]
     pub library_refusal: Option<String>,
 }

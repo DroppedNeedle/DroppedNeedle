@@ -7,6 +7,8 @@
 //! lane. Identify store methods take their own turn on the database, so
 //! they are never called inside a write here.
 
+use std::sync::Arc;
+
 use droppedneedle_kernel::db::Lane;
 
 use super::models::{
@@ -74,10 +76,33 @@ pub struct ApplyRequest {
     pub confirmation: bool,
 }
 
+/// What Library Management works with, taken from the setup once.
+#[derive(Clone)]
+pub(crate) struct ManagementParts {
+    pub(crate) db: droppedneedle_kernel::db::Db,
+    pub(crate) clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    pub(crate) ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator>,
+    pub(crate) settings: crate::settings::LibrarySettings,
+    pub(crate) core: crate::wiring::LibraryCore,
+    pub(crate) coordinator: Arc<crate::wiring::ScanCoordinator>,
+    pub(crate) identify_store: Arc<crate::identify::sqlite::SqliteIdentifyStore>,
+    pub(crate) enrichment: Option<Arc<dyn super::enrich::EnrichmentPort>>,
+    pub(crate) management_settings: Arc<super::settings::service::LibraryManagementService>,
+    pub(crate) publishing: crate::manage::Publishing,
+    pub(crate) mutations: crate::mutations::Mutations,
+    pub(crate) jobs: droppedneedle_kernel::jobs::queue::JobQueue,
+    pub(crate) wakeups: crate::scan::watcher::WorkWakeups,
+    pub(crate) publish: Arc<std::sync::Mutex<crate::manage::PublishCell>>,
+    pub(crate) placement: crate::manage::RootPlacement,
+    pub(crate) held_bundles: crate::manage::HeldBundles,
+    pub(crate) leftover_files: crate::manage::LeftoverFiles,
+    pub(crate) root_dirs: crate::wiring::RootDirs,
+}
+
 /// Management jobs over the library setup.
 #[derive(Clone)]
 pub struct Management {
-    pub(super) setup: LibrarySetup,
+    pub(super) parts: ManagementParts,
     /// Cancelled when the server shuts down; the worker then hands its
     /// job back to the queue between albums.
     shutdown: Option<droppedneedle_kernel::jobs::CancellationToken>,
@@ -99,7 +124,26 @@ pub(super) const LIBRARY_OFF: &str = crate::mutations::LIBRARY_OFF_TEXT;
 impl Management {
     pub fn new(setup: &LibrarySetup) -> Self {
         Self {
-            setup: setup.clone(),
+            parts: ManagementParts {
+                db: setup.db.clone(),
+                clock: setup.clock.clone(),
+                ids: setup.ids.clone(),
+                settings: setup.settings.clone(),
+                core: setup.core.clone(),
+                coordinator: setup.coordinator.clone(),
+                identify_store: setup.identify_store.clone(),
+                enrichment: setup.enrichment.clone(),
+                management_settings: setup.management_settings.clone(),
+                publishing: setup.publishing.clone(),
+                mutations: crate::mutations::Mutations::new(setup),
+                jobs: setup.jobs.clone(),
+                wakeups: setup.wakeups.clone(),
+                publish: setup.publish.clone(),
+                placement: setup.placement.clone(),
+                held_bundles: setup.held_bundles.clone(),
+                leftover_files: setup.leftover_files.clone(),
+                root_dirs: setup.root_dirs.clone(),
+            },
             shutdown: None,
         }
     }
@@ -116,7 +160,7 @@ impl Management {
     /// Whether the library-wide switch is off. Nothing new is planned or
     /// written while it is; recovery and read-only views still run.
     pub(super) fn library_off(&self) -> bool {
-        !self.setup.core.live_registry().enabled()
+        !self.parts.core.live_registry().enabled()
     }
 
     /// Refuse new file work while the library is switched off, as a scan
@@ -132,7 +176,7 @@ impl Management {
     /// before the settings page has read and saved it back.
     pub(super) fn settings(&self) -> Result<LibraryManagement, ManagementError> {
         let stored = self
-            .setup
+            .parts
             .settings
             .management
             .get()
@@ -145,14 +189,14 @@ impl Management {
     /// The stored settings as [`Self::settings`] gives them, or `None`
     /// when they do not read (logged once per revision).
     pub(super) fn readable_settings(&self) -> Option<LibraryManagement> {
-        let stored = self.setup.settings.management.read()?;
+        let stored = self.parts.settings.management.read()?;
         let mut settings = LibraryManagement::clone(&stored);
         crate::management::settings::complete_fields(&mut settings);
         Some(settings)
     }
 
     pub(super) fn snapshot(&self, job_id: &str) -> Result<Snapshot, ManagementError> {
-        self.setup.db.read_blocking("management.snapshot", |conn| {
+        self.parts.db.read_blocking("management.snapshot", |conn| {
             store::snapshot(conn, job_id)?.ok_or(ManagementError::NotFound(
                 "This management job does not exist.",
             ))
@@ -167,11 +211,11 @@ impl Management {
             return String::new();
         };
         preview::issue_until(
-            &self.setup.settings,
+            &self.parts.settings,
             preview::MANAGEMENT,
             actor,
             job_id,
-            self.setup.clock.now_secs() as i64,
+            self.parts.clock.now_secs() as i64,
             token_expiry(expires_at),
         )
     }
@@ -192,13 +236,13 @@ impl Management {
         }
         let expires_at = snapshot.preview_expires_at.ok_or_else(invalid)?;
         match preview::verify_until(
-            &self.setup.settings,
+            &self.parts.settings,
             preview::MANAGEMENT,
             actor,
             token,
             &snapshot.job.id,
             token_expiry(expires_at),
-            self.setup.clock.now_secs() as i64,
+            self.parts.clock.now_secs() as i64,
         ) {
             Ok(()) | Err(TokenFault::Expired) => Ok(()),
             Err(TokenFault::Invalid | TokenFault::Stale) => Err(invalid()),
@@ -236,7 +280,7 @@ impl Management {
         expected: &str,
         message: &str,
     ) -> Result<RootRegistry, ManagementError> {
-        self.setup
+        self.parts
             .core
             .registry_at(expected)
             .map_err(|error| ManagementError::Store(error.to_string()))?
@@ -287,7 +331,7 @@ impl Management {
             origin: Origin::Manual,
             actor: Some(actor),
             idempotency_key: request.idempotency_key.as_deref(),
-            revisions: profile::revisions(&stored, &pinned, registry.policy_revision()),
+            revisions: profile::revisions(&stored, &pinned, registry.fingerprint()),
             selection_json: serde_json::to_string(&selection)?,
             pinned: &pinned,
             target_root_id: request.target_root_id.as_deref(),
@@ -304,7 +348,7 @@ impl Management {
     pub(super) fn start_job(&self, spec: JobSpec<'_>) -> Result<PreviewHandle, ManagementError> {
         self.refuse_while_off()?;
         let profile_json = serde_json::to_string(spec.pinned)?;
-        let now = self.setup.clock.now_secs();
+        let now = self.parts.clock.now_secs();
         // A job no person asked for is the automatic worker's.
         let lane = if spec.actor.is_some() {
             Lane::Foreground
@@ -313,7 +357,7 @@ impl Management {
         };
         if let Some(key) = spec.idempotency_key
             && let Some(existing) = self
-                .setup
+                .parts
                 .db
                 .read_blocking("management.job_for_key", |conn| {
                     Ok::<_, ManagementError>(store::job_for_key(conn, key)?)
@@ -349,15 +393,15 @@ impl Management {
             });
         }
         let catalog_revision = self
-            .setup
+            .parts
             .db
             .read_blocking("management.catalog_revision", |conn| {
                 read_revision(conn).map_err(|error| ManagementError::Store(error.to_string()))
             })?;
         let expires_at = now + spec.retention_hours.max(1) as f64 * 3600.0;
-        let job_id = self.setup.ids.new_id();
+        let job_id = self.parts.ids.new_id();
         let summary = Summary::default();
-        self.setup
+        self.parts
             .db
             .write_blocking(lane, "management.insert_job", |tx| {
                 store::insert_job(
@@ -382,7 +426,7 @@ impl Management {
                     },
                 )
             })?;
-        jobs::wake(&self.setup.wakeups, OperationKind::LibraryManagement);
+        jobs::wake(&self.parts.wakeups, OperationKind::LibraryManagement);
         Ok(PreviewHandle {
             preview_token: self.issue_token(&job_id, spec.actor, expires_at),
             job_id,
@@ -411,7 +455,7 @@ impl Management {
             }
             None => found.push("Library Management settings could not be read.".to_owned()),
         }
-        if self.setup.core.live_registry().policy_revision() != snapshot.policy_revision {
+        if self.parts.core.live_registry().fingerprint() != snapshot.policy_revision {
             found.push(
                 "The library folders or their rules changed after this preview was made."
                     .to_owned(),
@@ -423,7 +467,7 @@ impl Management {
     /// One job as the preview and operation pages show it. Blocking.
     pub fn detail(&self, job_id: &str) -> Result<JobDetail, ManagementError> {
         let snapshot = self.snapshot(job_id)?;
-        let now = self.setup.clock.now_secs();
+        let now = self.parts.clock.now_secs();
         let expired = snapshot.preview_expires_at.is_none_or(|at| at <= now);
         let ready =
             snapshot.phase == ManagementPhase::Ready && snapshot.job.state == OperationState::Ready;
@@ -433,23 +477,23 @@ impl Management {
             Vec::new()
         };
         let undo = self
-            .setup
+            .parts
             .db
             .read_blocking("management.undo_counts", |conn| {
                 Ok::<_, ManagementError>(store::undo_counts(
                     conn,
                     job_id,
-                    self.setup.clock.today_day(),
+                    self.parts.clock.today_day(),
                 )?)
             })?;
         let baseline_available_count = self
-            .setup
+            .parts
             .db
             .read_blocking("management.baseline_available", |conn| {
                 Ok::<_, ManagementError>(store::baseline_available(conn, job_id)?)
             })?;
         let refresh_jobs = self
-            .setup
+            .parts
             .db
             .read_blocking("management.refresh_jobs", |conn| {
                 Ok::<_, ManagementError>(store::refresh_jobs(conn, job_id)?)
@@ -468,7 +512,6 @@ impl Management {
             profile_name,
             profile_revision: snapshot.profile_revision,
             settings_revision: snapshot.settings_revision,
-            policy_revision: snapshot.policy_revision,
             catalog_revision: snapshot.catalog_revision,
             target_root_id: snapshot.target_root_id,
             linked_job_id: snapshot.linked_job_id,
@@ -499,7 +542,7 @@ impl Management {
     ) -> Result<ItemPage, ManagementError> {
         self.snapshot(job_id)?;
         let limit = limit.clamp(1, PAGE_MAX);
-        self.setup.db.read_blocking("management.items", |conn| {
+        self.parts.db.read_blocking("management.items", |conn| {
             Ok(store::items_page(conn, job_id, after, limit, filter)?)
         })
     }
@@ -529,10 +572,10 @@ impl Management {
                 "That artwork is not in the preview.",
             ))?;
         let bytes = self
-            .setup
+            .parts
             .db
             .read_blocking("management.preview_artwork", |conn| {
-                Ok::<_, ManagementError>(self.setup.core.blobs.get(conn, sha256).ok())
+                Ok::<_, ManagementError>(self.parts.core.blobs.get(conn, sha256).ok())
             })?
             .ok_or(ManagementError::NotFound(
                 "That artwork is no longer kept; make a new preview.",
@@ -549,7 +592,7 @@ impl Management {
     ) -> Result<ResultPage, ManagementError> {
         self.snapshot(job_id)?;
         let limit = limit.clamp(1, PAGE_MAX);
-        self.setup.db.read_blocking("management.results", |conn| {
+        self.parts.db.read_blocking("management.results", |conn| {
             Ok(store::results(conn, job_id, after, limit)?)
         })
     }
@@ -562,14 +605,14 @@ impl Management {
     ) -> Result<JobDetail, ManagementError> {
         self.snapshot(job_id)?;
         let discarded =
-            self.setup
+            self.parts
                 .db
                 .write_blocking(Lane::Foreground, "management.discard", |tx| {
                     Ok::<_, ManagementError>(store::discard(
                         tx,
                         job_id,
                         expected_row_revision,
-                        self.setup.clock.now_secs(),
+                        self.parts.clock.now_secs(),
                     )?)
                 })?;
         if !discarded {
@@ -640,7 +683,7 @@ impl Management {
         refuse_activation(&snapshot)?;
         // The same apply sent again answers with the job as it is now.
         if self
-            .setup
+            .parts
             .db
             .read_blocking("management.apply_key", |conn| {
                 Ok::<_, ManagementError>(store::apply_key(conn, job_id)?)
@@ -648,7 +691,7 @@ impl Management {
             .as_deref()
             == Some(request.idempotency_key.as_str())
         {
-            return self.setup.db.read_blocking("management.apply_job", |conn| {
+            return self.parts.db.read_blocking("management.apply_job", |conn| {
                 jobs::job(conn, job_id)?.ok_or(ManagementError::NotFound(
                     "This management job does not exist.",
                 ))
@@ -681,7 +724,7 @@ impl Management {
             if self.recycle_for_duplicate(&snapshot)? {
                 // The incoming file is in the recycle bin: nothing else
                 // to write.
-                return self.setup.db.write_blocking(
+                return self.parts.db.write_blocking(
                     Lane::Foreground,
                     "management.complete_without_work",
                     |tx| {
@@ -689,7 +732,7 @@ impl Management {
                             tx,
                             job_id,
                             "DUPLICATE_RECYCLED",
-                            self.setup.clock.now_secs(),
+                            self.parts.clock.now_secs(),
                         )?;
                         store::record_apply_key(tx, job_id, &request.idempotency_key)?;
                         jobs::job(tx, job_id)?.ok_or(ManagementError::NotFound(
@@ -720,14 +763,14 @@ impl Management {
             JobMode::BaselineRestore => ManagementPhase::Restoring,
             _ => ManagementPhase::Applying,
         };
-        let now = self.setup.clock.now_secs();
+        let now = self.parts.clock.now_secs();
         // An automatic apply is the worker's; anything else is a request.
         let lane = if mode == JobMode::AutomaticApply {
             Lane::Background
         } else {
             Lane::Foreground
         };
-        let job = self.setup.db.write_blocking(lane, "management.begin", |tx| {
+        let job = self.parts.db.write_blocking(lane, "management.begin", |tx| {
             let current = jobs::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                 "This management job does not exist.",
             ))?;
@@ -795,7 +838,7 @@ impl Management {
                 "This management job does not exist.",
             ))
         })?;
-        jobs::wake(&self.setup.wakeups, OperationKind::LibraryManagement);
+        jobs::wake(&self.parts.wakeups, OperationKind::LibraryManagement);
         Ok(job)
     }
 
@@ -822,7 +865,7 @@ impl Management {
             return Err(stale("Only a finished apply can be undone."));
         }
         let bundles = self
-            .setup
+            .parts
             .db
             .read_blocking("management.applied_bundles", |conn| {
                 Ok::<_, ManagementError>(store::applied_bundles(conn, job_id)?)
@@ -832,9 +875,9 @@ impl Management {
                 "This operation wrote nothing, so there is nothing to undo.",
             ));
         }
-        let now = self.setup.clock.now_secs();
+        let now = self.parts.clock.now_secs();
         if let Some(existing) = self
-            .setup
+            .parts
             .db
             .read_blocking("management.undo_preview_job_for_key", |conn| {
                 Ok::<_, ManagementError>(store::job_for_key(conn, idempotency_key)?)
@@ -862,7 +905,7 @@ impl Management {
             });
         }
         let undos = self
-            .setup
+            .parts
             .db
             .read_blocking("management.live_undos", |conn| {
                 Ok::<_, ManagementError>(store::live_undos(conn, job_id, now)?)
@@ -881,7 +924,7 @@ impl Management {
         }
         let stored = self.settings()?;
         let expires_at = now + stored.preview_retention_hours.max(1) as f64 * 3600.0;
-        let new_id = self.setup.ids.new_id();
+        let new_id = self.parts.ids.new_id();
         let revisions = super::models::Revisions {
             profile: source.profile_revision.clone(),
             settings: source.settings_revision.clone(),
@@ -890,7 +933,7 @@ impl Management {
             overrides: String::new(),
         };
         let summary = Summary::default();
-        self.setup.db.write_blocking(
+        self.parts.db.write_blocking(
             Lane::Foreground,
             "management.undo_preview_insert_job",
             |tx| {
@@ -917,7 +960,7 @@ impl Management {
                 )
             },
         )?;
-        jobs::wake(&self.setup.wakeups, OperationKind::LibraryManagement);
+        jobs::wake(&self.parts.wakeups, OperationKind::LibraryManagement);
         Ok(PreviewHandle {
             preview_token: self.issue_token(&new_id, Some(actor), expires_at),
             job_id: new_id,
@@ -938,7 +981,7 @@ impl Management {
         } else {
             filter.limit.min(HISTORY_MAX)
         };
-        self.setup.db.read_blocking("management.history", |conn| {
+        self.parts.db.read_blocking("management.history", |conn| {
             Ok(store::history(conn, &filter)?)
         })
     }
@@ -951,13 +994,13 @@ impl Management {
     /// the album it was writing. The loop's first turn calls this.
     /// Blocking.
     pub fn recover_at_start(&self) -> Result<u64, ManagementError> {
-        self.setup
+        self.parts
             .db
             .write_blocking(Lane::Background, "management.recover_at_start", |tx| {
                 Ok::<_, ManagementError>(jobs::recover_at_start(
                     tx,
                     OperationKind::LibraryManagement,
-                    self.setup.clock.now_secs(),
+                    self.parts.clock.now_secs(),
                 )?)
             })
     }
@@ -967,12 +1010,12 @@ impl Management {
     /// the library is switched off. True when a job was worked on.
     /// Blocking.
     pub fn run_next(&self, worker: &str) -> Result<bool, ManagementError> {
-        if !self.setup.coordinator.current().is_empty() || self.library_off() {
+        if !self.parts.coordinator.current().is_empty() || self.library_off() {
             return Ok(false);
         }
-        let now = self.setup.clock.now_secs();
+        let now = self.parts.clock.now_secs();
         let Some((job_id, phase)) =
-            self.setup
+            self.parts
                 .db
                 .write_blocking(Lane::Background, "management.claim", |tx| {
                     let Some(job) = jobs::claim(tx, OperationKind::LibraryManagement, worker, now)?
@@ -1008,10 +1051,10 @@ impl Management {
                     }
                 };
                 let released =
-                    self.setup
+                    self.parts
                         .db
                         .write_blocking(Lane::Background, "management.release", |tx| {
-                            let now = self.setup.clock.now_secs();
+                            let now = self.parts.clock.now_secs();
                             Ok::<_, ManagementError>(jobs::release_until(
                                 tx,
                                 &job_id,
@@ -1028,7 +1071,7 @@ impl Management {
             }
             Err(error) => {
                 tracing::error!(%error, job_id, "management job failed");
-                self.setup
+                self.parts
                     .db
                     .write_blocking(Lane::Background, "management.fail_job", |tx| {
                         Ok::<_, ManagementError>(store::fail_job(
@@ -1036,7 +1079,7 @@ impl Management {
                             &job_id,
                             worker,
                             "MANAGEMENT_FAILED",
-                            self.setup.clock.now_secs(),
+                            self.parts.clock.now_secs(),
                         )?)
                     })?;
                 Ok(true)
@@ -1052,34 +1095,34 @@ impl Management {
             .as_ref()
             .is_some_and(|shutdown| shutdown.is_cancelled())
         {
-            self.setup
+            self.parts
                 .db
                 .write_blocking(Lane::Background, "management.release", |tx| {
                     Ok::<_, ManagementError>(jobs::release(
                         tx,
                         job_id,
                         worker,
-                        self.setup.clock.now_secs(),
+                        self.parts.clock.now_secs(),
                     )?)
                 })?;
             return Ok(true);
         }
-        self.setup
+        self.parts
             .db
             .write_blocking(Lane::Background, "management.checkpoint", |tx| {
-                Ok(jobs::checkpoint(tx, job_id, worker, self.setup.clock.now_secs())?.is_some())
+                Ok(jobs::checkpoint(tx, job_id, worker, self.parts.clock.now_secs())?.is_some())
             })
     }
 
     pub(super) fn heartbeat(&self, job_id: &str, worker: &str) -> Result<bool, ManagementError> {
-        self.setup
+        self.parts
             .db
             .write_blocking(Lane::Background, "management.heartbeat", |conn| {
                 Ok(jobs::heartbeat(
                     conn,
                     job_id,
                     worker,
-                    self.setup.clock.now_secs(),
+                    self.parts.clock.now_secs(),
                 )?)
             })
     }
@@ -1100,7 +1143,7 @@ impl Management {
         // change (the plan is then stale and its apply is refused).
         let before = if automatic {
             let selection: Selection = serde_json::from_str(&snapshot.selection_json)?;
-            self.setup
+            self.parts
                 .db
                 .read_blocking("management.state_revisions", |conn| {
                     Ok::<_, ManagementError>(takeover::state_revisions(conn, &selection.ids)?)
@@ -1108,7 +1151,7 @@ impl Management {
         } else {
             Default::default()
         };
-        self.setup
+        self.parts
             .db
             .write_blocking(Lane::Background, "management.clear_items", |conn| {
                 Ok::<_, ManagementError>(store::clear_items(conn, job_id)?)
@@ -1131,9 +1174,9 @@ impl Management {
             counted: changed,
             accepted,
         } = changed;
-        let now = self.setup.clock.now_secs();
+        let now = self.parts.clock.now_secs();
         let (finished, stepped_back) =
-            self.setup
+            self.parts
                 .db
                 .write_blocking(Lane::Background, "management.finish_planning", |tx| {
                     if !store::finish_planning(tx, job_id, worker, &summary, now)? {
@@ -1201,8 +1244,8 @@ impl Management {
             );
             for album in &albums {
                 super::automatic::queue_automatic_management(
-                    &self.setup.db,
-                    &*self.setup.clock,
+                    &self.parts.db,
+                    &*self.parts.clock,
                     album,
                 );
             }
@@ -1215,8 +1258,8 @@ impl Management {
             tracing::warn!(%error, job_id, "automatic management apply waits: the database is busy");
             for album in &albums {
                 super::automatic::queue_automatic_management(
-                    &self.setup.db,
-                    &*self.setup.clock,
+                    &self.parts.db,
+                    &*self.parts.clock,
                     album,
                 );
             }
@@ -1232,7 +1275,7 @@ impl Management {
         job_id: &str,
         before: &std::collections::HashMap<String, i64>,
     ) -> Result<(Vec<String>, takeover::Changed), ManagementError> {
-        self.setup
+        self.parts
             .db
             .read_blocking("management.changed_outside", |conn| {
                 let mut albums = Vec::new();
@@ -1276,7 +1319,7 @@ impl Management {
             return Ok(false);
         }
         let outcome = self
-            .setup
+            .parts
             .db
             .read_blocking("management.apply_automatic", |conn| {
                 Ok(jobs::job(conn, job_id)?)
@@ -1322,7 +1365,7 @@ impl Management {
     /// wants: it ends as done, and its files count as managed, so the
     /// album is not looked at again for nothing.
     fn finish_unchanged(&self, job_id: &str) -> Result<(), ManagementError> {
-        let ordinals = self.setup.db.write_blocking(
+        let ordinals = self.parts.db.write_blocking(
             Lane::Background,
             "management.finish_unchanged",
             |tx| {
@@ -1331,7 +1374,7 @@ impl Management {
                     tx,
                     job_id,
                     "MANAGEMENT_UNCHANGED",
-                    self.setup.clock.now_secs(),
+                    self.parts.clock.now_secs(),
                 )?;
                 Ok::<_, ManagementError>(store::bundle_ordinals(tx, job_id)?)
             },
@@ -1352,10 +1395,10 @@ impl Management {
         items: &[PlannedItem],
     ) -> Result<bool, ManagementError> {
         let job_id = snapshot.job.id.as_str();
-        self.setup
+        self.parts
             .db
             .write_blocking(Lane::Background, "management.keep_items", |tx| {
-                store::insert_items(tx, job_id, snapshot, items, self.setup.clock.now_secs())
+                store::insert_items(tx, job_id, snapshot, items, self.parts.clock.now_secs())
             })?;
         if self.checkpoint(job_id, worker)? {
             return Ok(false);
@@ -1372,24 +1415,24 @@ impl Management {
         let intent = planning_intent(snapshot)?;
         let selection: Selection = serde_json::from_str(&snapshot.selection_json)?;
         let scripts = CompiledScripts::new(&pinned);
-        let sandbox = self.setup.publishing.publish_sandbox().map_err(|error| {
+        let sandbox = self.parts.publishing.publish_sandbox().map_err(|error| {
             ManagementError::Conflict(format!("No library folder can be written: {error}"))
         })?;
-        let registry = self.setup.core.live_registry();
+        let registry = self.parts.core.live_registry();
         let mut albums = self
-            .setup
+            .parts
             .db
             .read_blocking("management.preview_albums", |conn| {
                 selection::albums(conn, &selection)
             })?;
         let ctx = PlanContext {
-            setup: &self.setup,
+            parts: &self.parts,
             pinned: &pinned,
             scripts: &scripts,
             sandbox: &sandbox,
             registry: &registry,
             target_root: snapshot.target_root_id.as_deref(),
-            manage_unconfirmed: planner::manage_unconfirmed(&self.setup),
+            manage_unconfirmed: planner::manage_unconfirmed(&self.parts),
             tag_edit: intent.tag_edit.as_ref(),
             job_id: &snapshot.job.id,
             analysis_until: std::time::Instant::now() + planner::RUN_ANALYSIS_BUDGET,
@@ -1431,7 +1474,7 @@ impl Management {
         let mut ordinal = 0;
         for (bundle_ordinal, scope) in albums.iter().enumerate() {
             let tracks = self
-                .setup
+                .parts
                 .db
                 .read_blocking("management.preview_tracks", |conn| {
                     selection::tracks(conn, scope)
@@ -1441,7 +1484,7 @@ impl Management {
             }
             let held = ctx.wide && person;
             let before = if held {
-                self.setup
+                self.parts
                     .db
                     .read_blocking("management.plan_preview_state_revisions", |conn| {
                         Ok::<_, ManagementError>(takeover::state_revisions(
@@ -1495,7 +1538,7 @@ impl Management {
         before: &std::collections::HashMap<String, i64>,
     ) -> Result<(), ManagementError> {
         let changed = self
-            .setup
+            .parts
             .db
             .read_blocking("management.hold_changed_changed_outside", |conn| {
                 Ok::<_, ManagementError>(takeover::changed_outside(conn, items, before)?)
@@ -1516,8 +1559,8 @@ impl Management {
         }
         if self.managed_automatically(album_id)? {
             let tracks: Vec<String> = changed.into_iter().map(|(_, track)| track).collect();
-            let now = self.setup.clock.now_secs();
-            self.setup
+            let now = self.parts.clock.now_secs();
+            self.parts
                 .db
                 .write_blocking(Lane::Background, "management.hold_changed", |tx| {
                     Ok::<_, ManagementError>(takeover::mark(
@@ -1544,14 +1587,14 @@ impl Management {
             .clone()
             .ok_or_else(|| ManagementError::Store("undo job has no source operation".to_owned()))?;
         let bundles = self
-            .setup
+            .parts
             .db
             .read_blocking("management.plan_undo_applied_bundles", |conn| {
                 Ok::<_, ManagementError>(store::applied_bundles(conn, &source_id)?)
             })?;
         // A partly successful earlier undo: only what it left is retried.
         let undone = self
-            .setup
+            .parts
             .db
             .read_blocking("management.undone_ordinals", |conn| {
                 Ok::<_, ManagementError>(store::undone_ordinals(conn, &source_id)?)
@@ -1564,7 +1607,7 @@ impl Management {
         let mut ordinal = 0;
         for (bundle_ordinal, bundle_id) in bundles {
             let source_items =
-                self.setup
+                self.parts
                     .db
                     .read_blocking("management.undo_bundle_items", |conn| {
                         Ok::<_, ManagementError>(store::bundle_items(
@@ -1609,7 +1652,7 @@ impl Management {
     ) -> Result<Vec<PlannedItem>, ManagementError> {
         let album_id = first.album_id.clone();
         let override_of = self.override_lookup(&album_id, Some((source_job, bundle_ordinal)))?;
-        let files = match self.setup.publishing.undo_files(bundle_id, &override_of) {
+        let files = match self.parts.publishing.undo_files(bundle_id, &override_of) {
             Ok(files) => files,
             Err(crate::service::ServiceError::NotFound) => Default::default(),
             Err(error) => return Err(ManagementError::Store(format!("{error:?}"))),
@@ -1742,7 +1785,7 @@ impl Management {
     ) -> Result<impl Fn(&str) -> u64 + 'a, ManagementError> {
         let saved = match undoes {
             Some((job, ordinal)) => {
-                self.setup
+                self.parts
                     .db
                     .read_blocking("management.override_lookup", |conn| {
                         Ok::<_, ManagementError>(store::edit_override_revisions(
@@ -1763,7 +1806,7 @@ impl Management {
 
     /// The current revision of a file's saved tag overrides.
     pub(super) fn override_revision(&self, album_id: &str, track_id: &str) -> u64 {
-        self.setup
+        self.parts
             .db
             .read_blocking("management.override_revision", |conn| {
                 Ok::<_, ManagementError>(planner::overrides(conn, album_id, track_id)?)
@@ -1801,8 +1844,8 @@ impl Management {
             }
             // A scan starting or the library being switched off hands the
             // job back between albums; it goes on when that is over.
-            if !self.setup.coordinator.current().is_empty() || self.library_off() {
-                self.setup.db.write_blocking(
+            if !self.parts.coordinator.current().is_empty() || self.library_off() {
+                self.parts.db.write_blocking(
                     Lane::Background,
                     "management.apply_work_release",
                     |tx| {
@@ -1810,26 +1853,26 @@ impl Management {
                             tx,
                             job_id,
                             worker,
-                            self.setup.clock.now_secs(),
+                            self.parts.clock.now_secs(),
                         )?)
                     },
                 )?;
                 return Ok(());
             }
-            let now = self.setup.clock.now_secs();
+            let now = self.parts.clock.now_secs();
             let Some(ordinal) =
-                self.setup
+                self.parts
                     .db
                     .write_blocking(Lane::Background, "management.claim_work", |tx| {
                         Ok::<_, ManagementError>(jobs::claim_work(tx, job_id, now)?)
                     })?
             else {
                 let refreshes = self.refresh_targets(&snapshot);
-                self.setup.db.write_blocking(
+                self.parts.db.write_blocking(
                     Lane::Background,
                     "management.finish_apply",
                     |tx| {
-                        if store::finish_apply(tx, job_id, worker, self.setup.clock.now_secs())? {
+                        if store::finish_apply(tx, job_id, worker, self.parts.clock.now_secs())? {
                             self.queue_refreshes(tx, job_id, &refreshes)?;
                         }
                         Ok::<_, ManagementError>(())
@@ -1842,7 +1885,7 @@ impl Management {
             else {
                 // The album's earlier publish is not settled yet: wait for
                 // recovery rather than publish it a second time.
-                self.setup.db.write_blocking(
+                self.parts.db.write_blocking(
                     Lane::Background,
                     "management.apply_work_yield",
                     |tx| {
@@ -1850,7 +1893,7 @@ impl Management {
                             tx,
                             job_id,
                             worker,
-                            self.setup.clock.now_secs(),
+                            self.parts.clock.now_secs(),
                         )?)
                     },
                 )?;
@@ -1858,7 +1901,7 @@ impl Management {
             };
             if failure.is_none()
                 && let Ok(recycled) = self
-                    .setup
+                    .parts
                     .db
                     .read_blocking("management.replaced_files", |conn| {
                         Ok::<_, ManagementError>(store::replaced_files(conn, &bundle_id)?)
@@ -1891,10 +1934,10 @@ impl Management {
             {
                 self.restore_replaced(source, ordinal)?;
             }
-            self.setup
+            self.parts
                 .db
                 .write_blocking(Lane::Background, "management.finish_work", |tx| {
-                    let now = self.setup.clock.now_secs();
+                    let now = self.parts.clock.now_secs();
                     store::finish_work(tx, job_id, ordinal, failure.as_ref(), &result, now)?;
                     jobs::heartbeat(tx, job_id, worker, now)?;
                     Ok::<_, ManagementError>(())
@@ -1912,7 +1955,7 @@ impl Management {
         bundle_id: &str,
     ) -> Result<serde_json::Map<String, serde_json::Value>, ManagementError> {
         let written: std::collections::HashSet<String> = self
-            .setup
+            .parts
             .db
             .read_blocking("management.record_applied_bundle_items", |conn| {
                 Ok::<_, ManagementError>(store::bundle_items(conn, job_id, ordinal)?)
@@ -1922,7 +1965,7 @@ impl Management {
             .filter_map(|item| item.track_id)
             .collect();
         let placed: Vec<(String, String)> = self
-            .setup
+            .parts
             .db
             .read_blocking("management.applied_bundle", |conn| {
                 JournalStore::new(conn)
@@ -1933,7 +1976,7 @@ impl Management {
             .filter_map(|journal| Some((journal.track_id?, journal.staged_sha256)))
             .filter(|(track_id, _)| written.contains(track_id))
             .collect();
-        self.setup
+        self.parts
             .db
             .write_blocking(Lane::Background, "management.record_applied", |tx| {
                 Ok(takeover::record_applied(tx, job_id, ordinal, &placed)?)
@@ -1943,7 +1986,7 @@ impl Management {
     /// Whether the publisher committed `bundle_id`. An unreadable journal
     /// counts as not committed, and says so in the log.
     pub(super) fn committed(&self, bundle_id: &str) -> bool {
-        self.setup
+        self.parts
             .held_bundles
             .committed(bundle_id)
             .unwrap_or_else(|error| {
@@ -1969,20 +2012,20 @@ impl Management {
         let job_id = snapshot.job.id.as_str();
         let written = |outcome: &str| serde_json::json!({ "outcome": outcome });
         if let Some(earlier) = self
-            .setup
+            .parts
             .db
             .read_blocking("management.work_bundle", |conn| {
                 Ok::<_, ManagementError>(jobs::work_bundle(conn, job_id, ordinal)?)
             })?
         {
-            if let Err(error) = self.setup.publishing.settle_publishes() {
+            if let Err(error) = self.parts.publishing.settle_publishes() {
                 tracing::warn!(%error, bundle_id = earlier, "publish recovery did not finish");
             }
             if self.committed(&earlier) {
                 return Ok(Some((None, earlier, written("committed"))));
             }
             let unsettled = self
-                .setup
+                .parts
                 .held_bundles
                 .unsettled(&earlier)
                 .unwrap_or_else(|error| {
@@ -1997,14 +2040,14 @@ impl Management {
                 return Ok(None);
             }
         }
-        let bundle_id = self.setup.ids.new_id();
-        self.setup
+        let bundle_id = self.parts.ids.new_id();
+        self.parts
             .db
             .write_blocking(Lane::Background, "management.set_work_bundle", |conn| {
                 Ok::<_, ManagementError>(jobs::set_work_bundle(conn, job_id, ordinal, &bundle_id)?)
             })?;
         let items = self
-            .setup
+            .parts
             .db
             .read_blocking("management.apply_album_bundle_items", |conn| {
                 Ok::<_, ManagementError>(store::bundle_items(conn, job_id, ordinal)?)
@@ -2022,7 +2065,7 @@ impl Management {
                 // the album waits for that instead of failing now.
                 Err(_)
                     if self
-                        .setup
+                        .parts
                         .held_bundles
                         .unsettled(&bundle_id)
                         .unwrap_or(true) =>
@@ -2060,9 +2103,9 @@ impl Management {
         let Some(first) = items.first() else {
             return Err(reasons::not_scheduled().into());
         };
-        let manage_unconfirmed = planner::manage_unconfirmed(&self.setup);
+        let manage_unconfirmed = planner::manage_unconfirmed(&self.parts);
         let state = self
-            .setup
+            .parts
             .db
             .read_blocking("management.album_gate", |conn| {
                 Ok::<_, ManagementError>((
@@ -2128,7 +2171,7 @@ impl Management {
             naming: profile::seal_revision(&snapshot.naming_revision),
             settings: profile::seal_revision(&snapshot.settings_revision),
         };
-        self.setup
+        self.parts
             .publishing
             .publish_plans(bundle_id, plans, pins, &override_of)
             .map_err(|error| {

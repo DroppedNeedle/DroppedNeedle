@@ -144,7 +144,7 @@ const ROWS: &str = "SELECT a.id, a.actor_user_id, a.action_kind, a.reason_code, 
         'AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR')) \
       OR (a.action_kind = 'retag_first_half' \
         AND a.reason_code = 'RETAG_FIRST_HALF_LEFT_AS_IT_WAS') \
-      OR (a.action_kind = 'album_artist' \
+      OR (a.action_kind = 'album_artist' AND a.local_album_id = ?1 \
         AND a.reason_code = 'PLACEHOLDER_ARTIST_FROM_TRACKS') \
       OR a.action_kind IN ('automatic_exact_edition', 'undo_automatic_edition', \
         'fold_undone', 'management_hand_back_given_up')) \

@@ -361,7 +361,8 @@ capability and use `await ctx.write_library_file(rel_path, data)`. It adds
 one new file under your first library folder and answers the full path. The path is relative,
 in lowercase letters, digits, `_`, `-`, `.` and `/`, without hidden or `..`
 parts. A file that already exists is never replaced, nor is a file whose
-name differs only in letter case: the call fails instead. A first library
+name differs only in letter case or Unicode form (`Straße` for
+`strasse`): the call fails instead. A first library
 folder set to Excluded, one that isn't there (a share not mounted), one
 reached through a link into another library folder, or one on a disk that
 can only add a file by checking first and then renaming, takes no plugin
@@ -379,7 +380,7 @@ then, or that the server stopped waiting for, is never put there. In rare
 cases a `host request timed out` answer means the file did land; a retry
 then answers that it already exists. Why the last write was refused shows
 on the plugin's card in Settings > Plugins, beside its health, until a
-write lands. After each write the library folder is scanned again, so the
+write lands, the plugin is switched off or removed, or the server restarts. After each write the library folder is scanned again, so the
 file, audio included, shows up like any other.
 
 Each write is a recorded library change, made the way the server makes its

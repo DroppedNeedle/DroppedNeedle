@@ -3207,7 +3207,7 @@ impl JoinRig {
                 trigger: ScanTrigger::Manual,
                 scopes: registry.scheduled_root_scopes(),
                 requested_by_user_id: None,
-                policy_revision: registry.policy_revision().to_owned(),
+                policy_revision: registry.fingerprint().to_owned(),
             })
             .expect("scan requested");
         self.library.scans.scan_startup_recovery().await;

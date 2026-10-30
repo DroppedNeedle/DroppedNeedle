@@ -61,7 +61,7 @@ impl Management {
     /// The library policy revision activation pins compare against (the
     /// settings' own revision of the roots and rules, as in v2).
     pub(super) fn activation_policy_revision(&self) -> Result<String, ManagementError> {
-        self.setup
+        self.parts
             .core
             .policy_revision()
             .map_err(|error| ManagementError::Store(error.to_string()))
@@ -69,7 +69,7 @@ impl Management {
 
     /// The settings page's service.
     fn settings_service(&self) -> Arc<LibraryManagementService> {
-        self.setup.management_settings.clone()
+        self.parts.management_settings.clone()
     }
 
     /// Start a dry run of one folder under proposed settings. Blocking.
@@ -92,7 +92,7 @@ impl Management {
         )?;
         let assignment = profile::root_assignment(&proposed, &request.root_id);
         let pinned = profile::pin_assignment(&proposed, &assignment)?;
-        let mut revisions = profile::revisions(&proposed, &pinned, registry.policy_revision());
+        let mut revisions = profile::revisions(&proposed, &pinned, registry.fingerprint());
         // Pinned to the settings saved now: the dry run goes stale when
         // anyone saves before it is confirmed.
         revisions.settings = request.expected_settings_revision.clone();
@@ -186,8 +186,8 @@ impl Management {
             .map_err(settings_error)?;
         // A dry run is never applied: once it has proved the settings it
         // is done, and no longer holds its albums as planned work.
-        let now = self.setup.clock.now_secs();
-        if let Err(error) = self.setup.db.write_blocking(
+        let now = self.parts.clock.now_secs();
+        if let Err(error) = self.parts.db.write_blocking(
             Lane::Foreground,
             "management.complete_without_work",
             |tx| {
@@ -202,13 +202,13 @@ impl Management {
         // Albums skipped while the folder was off or out of date get
         // another look.
         if let Err(error) =
-            self.setup
+            self.parts
                 .db
                 .write_blocking(Lane::Foreground, "management.wake", |conn| {
                     Ok::<_, ManagementError>(super::automatic::wake(
                         conn,
                         None,
-                        self.setup.clock.now_secs(),
+                        self.parts.clock.now_secs(),
                     )?)
                 })
         {
@@ -266,7 +266,7 @@ impl Management {
             policy_revision: snapshot.policy_revision,
             preview_token: proof.preview_token.clone(),
             preview_hash: sha256_hex(proof.preview_token.as_bytes()),
-            confirmed_at: self.setup.clock.now_secs(),
+            confirmed_at: self.parts.clock.now_secs(),
             confirmed_by: None,
         })
     }

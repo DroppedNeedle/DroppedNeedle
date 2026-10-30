@@ -201,7 +201,7 @@ impl LibraryCore {
                 return current;
             }
         };
-        if fresh.policy_revision() == current.policy_revision() {
+        if fresh.fingerprint() == current.fingerprint() {
             return current;
         }
         self.registry.update(fresh.clone());
@@ -227,21 +227,34 @@ impl LibraryCore {
     /// `expected_policy_revision`: the saved settings' revision of the
     /// roots and rules, as `GET /settings/library` shows it. The
     /// registry's own fingerprint is a different hash, kept internally.
+    /// Touches no file.
     pub fn policy_revision(&self) -> Result<String, ServiceError> {
         let settings = self.library_settings()?;
-        Ok(crate::policy::resolve_stored(&settings).policy_revision)
+        Ok(crate::policy::stored_revision(&settings))
     }
 
     /// The live registry, or `None` when the saved roots and rules no
     /// longer carry `expected` as their policy revision (see
     /// [`Self::policy_revision`]) or the registry does not match them.
     pub fn registry_at(&self, expected: &str) -> Result<Option<RootRegistry>, ServiceError> {
-        let live = self.live_registry();
         let settings = self.library_settings()?;
-        let current = crate::policy::resolve_stored(&settings).policy_revision == expected
-            && super::settings::registry_from(&settings).policy_revision()
-                == live.policy_revision();
-        Ok(current.then_some(live))
+        Ok(self.registry_matching(&settings, Some(expected)))
+    }
+
+    /// The live registry when it matches `settings` (and, when given,
+    /// `expected` is their policy revision), else `None`. Saved settings
+    /// that fail validation still carry the revision the page shows.
+    pub(crate) fn registry_matching(
+        &self,
+        settings: &TypedLibrary,
+        expected: Option<&str>,
+    ) -> Option<RootRegistry> {
+        if expected.is_some_and(|expected| crate::policy::stored_revision(settings) != expected) {
+            return None;
+        }
+        let live = self.live_registry();
+        (super::settings::registry_from(settings).fingerprint() == live.fingerprint())
+            .then_some(live)
     }
 
     fn library_settings(&self) -> Result<Arc<Plain<TypedLibrary>>, ServiceError> {

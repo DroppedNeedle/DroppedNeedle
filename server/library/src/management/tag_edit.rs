@@ -195,7 +195,7 @@ type SavedOverrides = BTreeMap<(String, String), (String, String, i64)>;
 
 impl Management {
     fn subject(&self, track_id: &str) -> Result<Subject, ManagementError> {
-        self.setup.db.read_blocking("management.subject", |conn| {
+        self.parts.db.read_blocking("management.subject", |conn| {
             conn.query_row(
                 "SELECT t.id, t.local_album_id, t.root_id, t.relative_path, t.row_revision, \
                  a.row_revision FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
@@ -220,7 +220,7 @@ impl Management {
     }
 
     fn saved_overrides(&self, subject: &Subject) -> Result<SavedOverrides, ManagementError> {
-        self.setup
+        self.parts
             .db
             .read_blocking("management.saved_overrides", |conn| {
                 let mut statement = conn.prepare(
@@ -248,7 +248,7 @@ impl Management {
     /// Blocking.
     pub fn tag_editor(&self, track_id: &str) -> Result<EditorContext, ManagementError> {
         let subject = self.subject(track_id)?;
-        let sandbox = self.setup.publishing.publish_sandbox().map_err(|_| {
+        let sandbox = self.parts.publishing.publish_sandbox().map_err(|_| {
             ManagementError::Conflict(
                 "The track's library folder is not available right now.".to_owned(),
             )
@@ -276,7 +276,7 @@ impl Management {
             &profile::root_assignment(&stored, &subject.root_id),
         )?;
         let saved = self.saved_overrides(&subject)?;
-        let store = &self.setup.identify_store;
+        let store = &self.parts.identify_store;
         let identity_reason = match store.album_identity(&subject.album_id)? {
             None => Some(reasons::identity_not_accepted().code),
             Some(album) if album.release_mbid.is_none() || album.release_group_mbid.is_none() => {
@@ -318,7 +318,7 @@ impl Management {
             profile_name: pinned.profile.name.clone(),
             settings_revision: crate::management::settings::settings_revision(&stored),
             policy_revision: self
-                .setup
+                .parts
                 .core
                 .policy_revision()
                 .map_err(|error| ManagementError::Store(error.to_string()))?,
@@ -376,7 +376,7 @@ impl Management {
                 expected_override_row_revision: existing.map(|(_, _, revision)| *revision),
                 previous: match existing {
                     Some((id, mode, _)) => {
-                        self.setup
+                        self.parts
                             .db
                             .read_blocking("management.create_tag_edit", |conn| {
                                 Ok::<_, ManagementError>(conn
@@ -410,7 +410,7 @@ impl Management {
             origin: Origin::Manual,
             actor: Some(actor),
             idempotency_key: request.idempotency_key.as_deref(),
-            revisions: profile::revisions(&stored, &pinned, registry.policy_revision()),
+            revisions: profile::revisions(&stored, &pinned, registry.fingerprint()),
             selection_json: serde_json::to_string(&selection)?,
             pinned: &pinned,
             target_root_id: None,

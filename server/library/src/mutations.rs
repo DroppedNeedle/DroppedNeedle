@@ -22,6 +22,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::jobs::queue::JobError;
@@ -293,7 +294,12 @@ struct TrackFile {
 /// with the operations service that plans an album's edition.
 #[derive(Clone)]
 pub struct Mutations {
-    setup: LibrarySetup,
+    db: droppedneedle_kernel::db::Db,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    core: super::wiring::LibraryCore,
+    coordinator: Arc<super::wiring::ScanCoordinator>,
+    jobs: droppedneedle_kernel::jobs::queue::JobQueue,
+    publishing: super::manage::Publishing,
     operations: super::operations::service::Operations,
 }
 
@@ -301,7 +307,12 @@ impl Mutations {
     /// Mutations over the setup's publisher, roots and store.
     pub fn new(setup: &LibrarySetup) -> Self {
         Self {
-            setup: setup.clone(),
+            db: setup.db.clone(),
+            clock: setup.clock.clone(),
+            core: setup.core.clone(),
+            coordinator: setup.coordinator.clone(),
+            jobs: setup.jobs.clone(),
+            publishing: setup.publishing.clone(),
             operations: super::wiring::operations(setup),
         }
     }
@@ -364,19 +375,16 @@ impl Mutations {
         } else {
             "CATALOG_REMOVAL"
         };
-        let release_group_mbid = self
-            .setup
-            .db
-            .read_blocking("mutations.remove_album", |conn| {
-                conn.query_row(
-                    "SELECT release_group_mbid FROM local_album_external_identities \
+        let release_group_mbid = self.db.read_blocking("mutations.remove_album", |conn| {
+            conn.query_row(
+                "SELECT release_group_mbid FROM local_album_external_identities \
                  WHERE local_album_id = ?1 AND release_group_mbid IS NOT NULL LIMIT 1",
-                    [&canonical],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()
-                .map_err(MutationError::from)
-            })?;
+                [&canonical],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(MutationError::from)
+        })?;
         let removal = Removal {
             reason_code,
             actor,
@@ -577,8 +585,7 @@ impl Mutations {
         track_id: &str,
         album_id: Option<&str>,
     ) -> Result<TrackFile, MutationError> {
-        self.setup
-            .db
+        self.db
             .read_blocking("mutations.indexed_track", |conn| {
                 conn.query_row(
                     "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
@@ -599,7 +606,7 @@ impl Mutations {
         let canonical = self
             .canonical_album(album_id)?
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
-        super::publish::put_back::removals(&self.setup.db, &canonical)
+        super::publish::put_back::removals(&self.db, &canonical)
             .map_err(|error| MutationError::Store(error.to_string()))
     }
 
@@ -621,7 +628,6 @@ impl Mutations {
             .canonical_album(album_id)?
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
         let missing = self
-            .setup
             .publishing
             .publish_put_back(removal_id, &canonical, actor)
             .map_err(put_back_refusal)?;
@@ -634,7 +640,7 @@ impl Mutations {
     /// `.recycle`. None while the download settings do not read, so
     /// nothing is recycled.
     pub fn bin_for(&self, root_id: &str) -> Option<PathBuf> {
-        let bins = self.bins(&self.setup.core.live_registry()).ok()?;
+        let bins = self.bins(&self.core.live_registry()).ok()?;
         bin_dir(&bins, root_id).ok()
     }
 
@@ -648,11 +654,11 @@ impl Mutations {
         root_id: &str,
         name: &str,
     ) -> Result<Option<PathBuf>, MutationError> {
-        let bins = self.bins(&self.setup.core.live_registry())?;
+        let bins = self.bins(&self.core.live_registry())?;
         Ok(fresh_entry(
             &bin_dir(&bins, root_id)?,
             name,
-            self.setup.clock.now_system(),
+            self.clock.now_system(),
         ))
     }
 
@@ -665,19 +671,18 @@ impl Mutations {
         let canonical = self
             .canonical_album(album_id)?
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
-        let registry = self.setup.core.live_registry();
+        let registry = self.core.live_registry();
         let scopes = rescan_scopes(&canonical, &self.album_tracks(&canonical)?, &registry);
         if scopes.is_empty() {
             return Err(MutationError::NotFound(ALBUM_HAS_NO_FILES));
         }
-        self.setup
-            .coordinator
+        self.coordinator
             .request_run(&ScanRequest {
                 kind: ScanKind::RescanFiles,
                 trigger: ScanTrigger::Manual,
                 scopes,
                 requested_by_user_id: Some(actor.to_owned()),
-                policy_revision: registry.policy_revision().to_owned(),
+                policy_revision: registry.fingerprint().to_owned(),
             })
             .map_err(|error| match error {
                 ScanRequestError::Disabled => MutationError::Conflict(LIBRARY_DISABLED),
@@ -699,8 +704,7 @@ impl Mutations {
         let canonical = self
             .canonical_album(album_id)?
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
-        self.setup
-            .db
+        self.db
             .write_blocking(Lane::Foreground, "mutations.reenable_management", |tx| {
                 let removed: Option<(String, String, f64, i64)> = tx
                     .query_row(
@@ -741,7 +745,7 @@ impl Mutations {
                     &before,
                     &serde_json::json!({}),
                     "MANAGEMENT_REENABLED",
-                    self.setup.clock.now_secs(),
+                    self.clock.now_secs(),
                 )?;
                 bump_catalog(tx)?;
                 Ok(true)
@@ -756,23 +760,26 @@ impl Mutations {
         let canonical = self
             .canonical_album(album_id)?
             .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
-        takeover::hand_back(&self.setup, &canonical, Some(actor)).map_err(|error| match error {
-            super::management::models::ManagementError::Conflict(_) => {
-                MutationError::Conflict(HAND_BACK_UNREADABLE)
-            }
-            super::management::models::ManagementError::Busy(cause) => MutationError::Busy(cause),
-            other => MutationError::Store(other.to_string()),
-        })
+        takeover::hand_back(&self.publishing, &canonical, Some(actor)).map_err(
+            |error| match error {
+                super::management::models::ManagementError::Conflict(_) => {
+                    MutationError::Conflict(HAND_BACK_UNREADABLE)
+                }
+                super::management::models::ManagementError::Busy(cause) => {
+                    MutationError::Busy(cause)
+                }
+                other => MutationError::Store(other.to_string()),
+            },
+        )
     }
 
     /// Ask for every album the app stepped back from to be handed back.
     /// The management worker does it, one album at a time. Returns how
     /// many albums now wait for their turn. Reads no file.
     pub fn hand_back_all(&self, actor: &str) -> Result<usize, MutationError> {
-        self.setup
-            .db
+        self.db
             .write_blocking(Lane::Foreground, "mutations.hand_back_all", |tx| {
-                Ok(takeover::stamp_all(tx, actor, self.setup.clock.now_secs())?)
+                Ok(takeover::stamp_all(tx, actor, self.clock.now_secs())?)
             })
     }
 
@@ -788,33 +795,31 @@ impl Mutations {
         removal: &Removal<'_>,
     ) -> Result<RemovalDone, MutationError> {
         if !recycle {
-            let jobs = &self.setup.jobs;
-            let changed = self.setup.db.write_blocking(
-                Lane::Foreground,
-                "mutations.remove_tracks",
-                |tx| {
-                    let now = self.setup.clock.now_secs();
-                    let changed =
-                        mark_missing(tx, tracks, removal.reason_code, removal.actor, now)?;
-                    if let Some(removed) = &removal.album_removed {
-                        let removal_id = uuid::Uuid::new_v4().to_string();
-                        AlbumRemovedJob::enqueue(tx, jobs, &removal_id, removed, now).map_err(
-                            |error| match error {
-                                JobError::Db(db) => MutationError::from(db),
-                                other => MutationError::Store(other.to_string()),
-                            },
-                        )?;
-                    }
-                    Ok::<_, MutationError>(changed)
-                },
-            )?;
+            let jobs = &self.jobs;
+            let changed =
+                self.db
+                    .write_blocking(Lane::Foreground, "mutations.remove_tracks", |tx| {
+                        let now = self.clock.now_secs();
+                        let changed =
+                            mark_missing(tx, tracks, removal.reason_code, removal.actor, now)?;
+                        if let Some(removed) = &removal.album_removed {
+                            let removal_id = uuid::Uuid::new_v4().to_string();
+                            AlbumRemovedJob::enqueue(tx, jobs, &removal_id, removed, now).map_err(
+                                |error| match error {
+                                    JobError::Db(db) => MutationError::from(db),
+                                    other => MutationError::Store(other.to_string()),
+                                },
+                            )?;
+                        }
+                        Ok::<_, MutationError>(changed)
+                    })?;
             tracing::info!(tracks = changed.len(), "library removal");
             return Ok(RemovalDone {
                 track_ids: changed,
                 ..RemovalDone::default()
             });
         }
-        let registry = self.setup.core.live_registry();
+        let registry = self.core.live_registry();
         let left_out = super::manage::left_out_now(&registry);
         if tracks.iter().any(|track| left_out.contains(&track.root_id)) {
             return Err(MutationError::Conflict(LIBRARY_FOLDER_LEFT_OUT));
@@ -837,7 +842,6 @@ impl Mutations {
             });
         }
         let done = self
-            .setup
             .publishing
             .publish_removal(
                 &targets,
@@ -862,7 +866,7 @@ impl Mutations {
     /// them. `Err` while a setting they come from does not read: removals
     /// then wait rather than pick another bin.
     fn bins(&self, registry: &RootRegistry) -> Result<Vec<Root>, MutationError> {
-        self.setup
+        self.core
             .bins
             .current(registry)
             .map(|choice| choice.roots)
@@ -874,49 +878,45 @@ impl Mutations {
     /// Resolve a local album id (following merges) or a release-group
     /// MBID to the live local album.
     fn canonical_album(&self, album_id: &str) -> Result<Option<String>, MutationError> {
-        self.setup
-            .db
-            .read_blocking("mutations.canonical_album", |conn| {
-                let mut current = album_id.to_owned();
-                for _ in 0..MAX_RETIRED_HOPS {
-                    let row: Option<Option<String>> = conn
-                        .query_row(
-                            "SELECT retired_into_album_id FROM local_albums WHERE id = ?1",
-                            [&current],
-                            |row| row.get(0),
-                        )
-                        .optional()?;
-                    match row {
-                        Some(None) => return Ok(Some(current)),
-                        Some(Some(next)) => current = next,
-                        None => break,
-                    }
+        self.db.read_blocking("mutations.canonical_album", |conn| {
+            let mut current = album_id.to_owned();
+            for _ in 0..MAX_RETIRED_HOPS {
+                let row: Option<Option<String>> = conn
+                    .query_row(
+                        "SELECT retired_into_album_id FROM local_albums WHERE id = ?1",
+                        [&current],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                match row {
+                    Some(None) => return Ok(Some(current)),
+                    Some(Some(next)) => current = next,
+                    None => break,
                 }
-                conn.query_row(
-                    "SELECT b.id FROM local_album_external_identities e \
+            }
+            conn.query_row(
+                "SELECT b.id FROM local_album_external_identities e \
                  JOIN local_albums b ON b.id = e.local_album_id \
                  WHERE lower(e.release_group_mbid) = lower(?1) \
                  AND b.retired_into_album_id IS NULL ORDER BY b.created_at LIMIT 1",
-                    [album_id],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(MutationError::from)
-            })
+                [album_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(MutationError::from)
+        })
     }
 
     fn album_tracks(&self, album_id: &str) -> Result<Vec<TrackFile>, MutationError> {
-        self.setup
-            .db
-            .read_blocking("mutations.album_tracks", |conn| {
-                let mut statement = conn.prepare(
-                    "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
+        self.db.read_blocking("mutations.album_tracks", |conn| {
+            let mut statement = conn.prepare(
+                "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
                  WHERE local_album_id = ?1 AND availability = 'indexed' \
                  ORDER BY disc_number, track_number, id",
-                )?;
-                let rows = statement.query_map([album_id], track_row)?;
-                Ok::<_, MutationError>(rows.collect::<rusqlite::Result<_>>()?)
-            })
+            )?;
+            let rows = statement.query_map([album_id], track_row)?;
+            Ok::<_, MutationError>(rows.collect::<rusqlite::Result<_>>()?)
+        })
     }
 }
 
@@ -954,7 +954,7 @@ fn rescan_scopes(album_id: &str, tracks: &[TrackFile], registry: &RootRegistry) 
                 relative_path: relative,
                 root_path: Some(root.path.to_string_lossy().into_owned()),
                 effective_policy: root.policy_for(&full),
-                policy_revision: registry.policy_revision().to_owned(),
+                policy_revision: registry.fingerprint().to_owned(),
                 estimated_count: None,
             });
     }

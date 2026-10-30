@@ -752,6 +752,9 @@ pub struct ManagementTakeoverView {
     pub cause: Cause,
     /// When it stepped back, unix milliseconds.
     pub noticed_at: i64,
+    /// A hand-back since then was given up because the album's files
+    /// could not be read.
+    pub hand_back_given_up: bool,
 }
 
 /// Albums DroppedNeedle stepped back from.
@@ -792,6 +795,7 @@ pub async fn list_management_takeovers(
                 artist_name: album.artist_name,
                 cause: album.cause,
                 noticed_at: album.noticed_at,
+                hand_back_given_up: album.hand_back_given_up,
             })
             .collect(),
         total: waiting.total,

@@ -773,7 +773,9 @@
 													>{album.artist_name ? ` · ${album.artist_name}` : ''} · {day(
 														album.noticed_at
 													)}</span
-												>{#if handBackRefusals[album.album_id]}<span
+												>{#if album.hand_back_given_up}<span class="block text-warning"
+														>Hand-back stopped: its files could not be read.</span
+													>{/if}{#if handBackRefusals[album.album_id]}<span
 														class="block text-warning"
 														role="status">{handBackRefusals[album.album_id]}</span
 													>{/if}</span

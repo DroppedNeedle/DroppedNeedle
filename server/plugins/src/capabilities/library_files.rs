@@ -75,7 +75,9 @@ impl LibraryWrites {
         reason
     }
 
-    fn landed(&self, plugin: &str) {
+    /// Forget the plugin's last refusal: a write landed, or the plugin was
+    /// switched off or removed.
+    pub(crate) fn clear(&self, plugin: &str) {
         if let Ok(mut refusals) = self.refusals.lock() {
             refusals.remove(plugin);
         }
@@ -180,8 +182,9 @@ impl Drop for CancelOnDrop {
 }
 
 impl PluginHost {
-    /// Why `plugin`'s last library write was refused, while no write has
-    /// landed since this start.
+    /// Why `plugin`'s last library write was refused. Kept in memory only:
+    /// a landed write, switching the plugin off, removing it or a restart
+    /// clears it.
     pub fn library_refusal(&self, plugin: &str) -> Option<String> {
         self.library_writes.last_refusal(plugin)
     }
@@ -235,14 +238,18 @@ impl PluginHost {
         .await;
         let refusal = match outcome {
             Ok((Ok(added), _)) => {
-                writes.landed(plugin);
+                writes.clear(plugin);
                 tracing::info!(plugin, rel_path, bytes, bundle_id = %added.bundle_id, "plugin added a library file");
                 return Ok((added.path.to_string_lossy().into_owned(), added.bundle_id));
             }
             Ok((Err(_), true)) => PluginFileRefusal::NotAdmitted,
             Ok((Err(refusal), false)) => refusal,
             Err(error) => {
-                return Err(writes.refuse(plugin, format!("library write stopped: {error}")));
+                tracing::warn!(plugin, rel_path, %error, "plugin library write did not finish");
+                return Err(writes.refuse(
+                    plugin,
+                    "the library write stopped before it finished; try again".to_owned(),
+                ));
             }
         };
         let reason = match refusal {
@@ -257,7 +264,9 @@ impl PluginHost {
                 format!("{rel_path} already exists; plugins only add new files")
             }
             PluginFileRefusal::Lookalike => {
-                format!("another file there differs from {rel_path} only in capitals")
+                format!(
+                    "another file there differs from {rel_path} only in letter case or Unicode form"
+                )
             }
             PluginFileRefusal::NotAdmitted => format!(
                 "the plugin has used its library write allowance ({} MiB or {} files a day); \
@@ -269,7 +278,10 @@ impl PluginHost {
                 "the library write stopped partway; it finishes or is undone by itself shortly"
                     .to_owned()
             }
-            PluginFileRefusal::Publish(error) => error.to_string(),
+            PluginFileRefusal::Publish(error) => {
+                tracing::warn!(plugin, rel_path, %error, "plugin library write failed");
+                "the library could not take the file; nothing was added".to_owned()
+            }
         };
         Err(writes.refuse(plugin, reason))
     }

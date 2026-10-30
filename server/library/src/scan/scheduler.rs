@@ -165,7 +165,7 @@ pub fn scheduled_scopes(registry: &RootRegistry, rules: &[InclusionRule]) -> Vec
             relative_path: rule.relative_path.clone(),
             root_path: Some(root_path.clone()),
             effective_policy: EffectivePolicy::Automatic,
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
             estimated_count: None,
         });
     }
@@ -211,7 +211,7 @@ where
         trigger: ScanTrigger::Automatic,
         scopes,
         requested_by_user_id: None,
-        policy_revision: registry.policy_revision().to_owned(),
+        policy_revision: registry.fingerprint().to_owned(),
     }) {
         Ok(disposition) => disposition != Disposition::Conflict,
         Err(_) => false,

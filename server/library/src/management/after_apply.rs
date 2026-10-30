@@ -52,17 +52,17 @@ impl Management {
     ) -> Result<Option<serde_json::Value>, ManagementError> {
         let job_id = snapshot.job.id.as_str();
         let items = self
-            .setup
+            .parts
             .db
             .read_blocking("management.record_bundle_items", |conn| {
                 Ok::<_, ManagementError>(store::bundle_items(conn, job_id, ordinal)?)
             })?;
         let intent = snapshot.intent();
         let mode = snapshot.job_mode();
-        let now = self.setup.clock.now_secs();
+        let now = self.parts.clock.now_secs();
         let mut extra = None;
         if let Some(edit) = &intent.tag_edit {
-            self.setup
+            self.parts
                 .db
                 .write_blocking(Lane::Background, "management.save_tag_edit", |tx| {
                     Ok::<_, ManagementError>(store::save_tag_edit(
@@ -88,13 +88,13 @@ impl Management {
         }
         if mode == Some(JobMode::Undo)
             && let Some(source) = snapshot.linked_job_id.as_deref()
-            && let Some(source) = self.setup.db.read_blocking("management.snapshot", |conn| {
+            && let Some(source) = self.parts.db.read_blocking("management.snapshot", |conn| {
                 Ok::<_, ManagementError>(store::snapshot(conn, source)?)
             })?
         {
             if let Some(edit) = source.intent().tag_edit {
                 // Undoing a tag edit also puts its kept values back.
-                self.setup.db.write_blocking(
+                self.parts.db.write_blocking(
                     Lane::Background,
                     "management.revert_tag_edit",
                     |tx| Ok::<_, ManagementError>(store::revert_tag_edit(tx, &edit, job_id, now)?),
@@ -106,7 +106,7 @@ impl Management {
         let written = items.iter().filter(|item| item.eligibility.writes());
         match mode {
             Some(JobMode::BaselineRestore) => {
-                self.setup
+                self.parts
                     .db
                     .write_blocking(Lane::Background, "management.mark_restored", |tx| {
                         for item in written {
@@ -122,7 +122,7 @@ impl Management {
             // puts the old state back.
             Some(JobMode::Apply | JobMode::AutomaticApply) if intent.tag_edit.is_none() => {
                 let (profile_id, _) = snapshot.profile_label();
-                let sandbox = self.setup.publishing.publish_sandbox().ok();
+                let sandbox = self.parts.publishing.publish_sandbox().ok();
                 struct Mark {
                     track_id: String,
                     album_id: String,
@@ -151,7 +151,7 @@ impl Management {
                         })
                     })
                     .collect();
-                self.setup
+                self.parts
                     .db
                     .write_blocking(Lane::Background, "management.mark_managed", |tx| {
                         use crate::identify::sqlite::{read_album_identity, read_track_identity};
@@ -204,7 +204,7 @@ impl Management {
             Some(JobMode::Apply | JobMode::AutomaticApply)
         ) && source.intent().tag_edit.is_none();
         if profile_run && self.managed_automatically(album_id)? {
-            self.setup
+            self.parts
                 .db
                 .write_blocking(Lane::Background, "management.run_undone", |tx| {
                     Ok::<_, ManagementError>(takeover::mark(
@@ -235,7 +235,7 @@ impl Management {
                 message: super::service::LIBRARY_OFF.to_owned(),
             });
         }
-        let applied = self.setup.publishing.undo_bundle(bundle_id, only_by)?;
+        let applied = self.parts.publishing.undo_bundle(bundle_id, only_by)?;
         if let Err(error) = self.bundle_undone(bundle_id) {
             tracing::warn!(%error, bundle_id, "undone bundle not recorded for management");
         }
@@ -246,7 +246,7 @@ impl Management {
     /// route that undoes a single bundle). Blocking.
     fn bundle_undone(&self, bundle_id: &str) -> Result<(), ManagementError> {
         let found: Option<(String, i64)> = self
-            .setup
+            .parts
             .db
             .read_blocking("management.undone_bundle", |conn| {
                 Ok::<_, ManagementError>(jobs::work_of_bundle(conn, bundle_id)?)
@@ -259,7 +259,7 @@ impl Management {
             tracing::warn!(%error, bundle_id, "replaced records not put back after an undo");
         }
         let Some(source) = self
-            .setup
+            .parts
             .db
             .read_blocking("management.bundle_undone_snapshot", |conn| {
                 Ok::<_, ManagementError>(store::snapshot(conn, &source_id)?)
@@ -267,17 +267,17 @@ impl Management {
         else {
             return Ok(());
         };
-        let now = self.setup.clock.now_secs();
+        let now = self.parts.clock.now_secs();
         if let Some(edit) = source.intent().tag_edit {
             // Undoing a tag edit also puts its kept values back.
-            return self.setup.db.write_blocking(
+            return self.parts.db.write_blocking(
                 Lane::Background,
                 "management.revert_tag_edit",
                 |tx| Ok::<_, ManagementError>(store::revert_tag_edit(tx, &edit, bundle_id, now)?),
             );
         }
         let items = self
-            .setup
+            .parts
             .db
             .read_blocking("management.bundle_undone_bundle_items", |conn| {
                 Ok::<_, ManagementError>(store::bundle_items(conn, &source_id, ordinal)?)
@@ -298,7 +298,7 @@ impl Management {
         source_job_id: &str,
         ordinal: i64,
     ) -> Result<(), ManagementError> {
-        self.setup
+        self.parts
             .db
             .write_blocking(Lane::Background, "management.restore_records", |tx| {
                 Ok::<_, ManagementError>(takeover::restore_records(tx, source_job_id, ordinal)?)
@@ -331,10 +331,10 @@ impl Management {
         job_id: &str,
         targets: &[RefreshTarget],
     ) -> Result<(), ManagementError> {
-        let due = self.setup.clock.now_ms().saturating_add(REFRESH_DELAY_MS);
+        let due = self.parts.clock.now_ms().saturating_add(REFRESH_DELAY_MS);
         for &target in targets {
             let queued = self
-                .setup
+                .parts
                 .jobs
                 .enqueue_at(
                     tx,
@@ -364,7 +364,7 @@ impl Management {
     ) -> Result<Vec<ExternalRefresh>, ManagementError> {
         let mut refreshes = Vec::with_capacity(jobs.len());
         for &(target, id) in jobs {
-            let status = self.setup.jobs.get(id).await?;
+            let status = self.parts.jobs.get(id).await?;
             refreshes.push(ExternalRefresh::read(target, status));
         }
         Ok(refreshes)

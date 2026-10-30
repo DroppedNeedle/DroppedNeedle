@@ -42,7 +42,6 @@ function operation(overrides: Record<string, unknown> = {}): Record<string, unkn
 		profile_name: 'Picard-style Organizer',
 		profile_revision: 'profile-revision-1',
 		settings_revision: 'settings-1',
-		policy_revision: 'policy-1',
 		catalog_revision: 1,
 		proposed_settings_revision: null,
 		target_root_id: null,

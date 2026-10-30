@@ -37,6 +37,9 @@ use droppedneedle_kernel::runtime_config::sections::{
 /// How long after it was last queued automatic management looks at an
 /// album (v2's settle window, per album).
 pub const SETTLE_SECONDS: f64 = 30.0;
+/// Shown in the skipped list for a waiting album a live identification
+/// job holds back; never stored.
+const IDENTIFYING: &str = "IDENTIFYING";
 /// How many times an album that is not ready yet is looked at again.
 const MAX_ATTEMPTS: i64 = 8;
 /// First wait before looking again; it doubles each time, up to six hours.
@@ -177,6 +180,11 @@ pub fn skip_reason(code: &str) -> ItemReason {
             code,
             "AcoustID could not be reached for this album's AcoustID IDs, so it waits.",
             "Nothing to do: it is looked at again by itself, at least every six hours.",
+        ),
+        IDENTIFYING => reason(
+            code,
+            "This album is being identified, so it waits.",
+            "Nothing to do: it goes ahead once identification finishes.",
         ),
         "UNCONFIRMED_MATCH" => reasons::unconfirmed_match(),
         "IDENTITY_NOT_ACCEPTED" => reasons::identity_not_accepted(),
@@ -356,7 +364,7 @@ impl Management {
     /// asking: the test automatic management makes before it looks.
     pub(super) fn managed_automatically(&self, album_id: &str) -> Result<bool, ManagementError> {
         let files = self
-            .setup
+            .parts
             .db
             .read_blocking("management.managed_automatically", |conn| {
                 Ok::<_, ManagementError>(album_files(conn, album_id)?)
@@ -384,7 +392,7 @@ impl Management {
             // for), and the look parks: only a placing or a matching still
             // to come can map it.
             Gate::NotYet(Verdict::Wait("TRACK_NOT_MAPPED")) => {
-                self.setup
+                self.parts
                     .db
                     .read_blocking("management.placing_attempts", |conn| {
                         Ok::<_, ManagementError>(
@@ -399,7 +407,7 @@ impl Management {
             return Ok(AutomaticWrites::default());
         }
         let pending = self
-            .setup
+            .parts
             .db
             .read_blocking("management.pending_writes", |conn| {
                 Ok::<_, ManagementError>(conn.query_row(
@@ -426,12 +434,12 @@ impl Management {
     /// its own tags, by the live folder settings. Blocking.
     pub fn keeps_own_tags(&self, album_id: &str) -> Result<bool, ManagementError> {
         let files = self
-            .setup
+            .parts
             .db
             .read_blocking("management.album_files", |conn| {
                 Ok::<_, ManagementError>(album_files(conn, album_id)?)
             })?;
-        let registry = self.setup.core.live_registry();
+        let registry = self.parts.core.live_registry();
         Ok(files
             .iter()
             .any(|file| planner::keeps_own_tags(&registry, &file.root_id, &file.relative_path)))
@@ -440,33 +448,40 @@ impl Management {
     /// Look at the next waiting album that has settled, while no scan
     /// runs. True when one was looked at or handed back. Blocking.
     pub fn automatic_step(&self, settle: &mut Settle) -> Result<bool, ManagementError> {
-        self.automatic_step_at(settle, self.setup.clock.now_secs())
+        self.step_at(settle, self.parts.clock.now_secs())
     }
 
-    /// [`Self::automatic_step`] at `now` (unix seconds). Blocking.
+    /// [`Self::automatic_step`] at `now` (unix seconds), so a test can
+    /// move time. Blocking.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn automatic_step_at(
         &self,
         settle: &mut Settle,
         now: f64,
     ) -> Result<bool, ManagementError> {
+        self.step_at(settle, now)
+    }
+
+    /// [`Self::automatic_step`] at `now` (unix seconds). Blocking.
+    fn step_at(&self, settle: &mut Settle, now: f64) -> Result<bool, ManagementError> {
         // Albums a person handed back all at once come first, one a step.
         // That writes no music file, so it waits for neither a scan nor a
         // settled album.
         if let Some(album_id) = self
-            .setup
+            .parts
             .db
             .read_blocking("management.next_stamped", |conn| {
                 Ok::<_, ManagementError>(takeover::next_stamped(conn, now)?)
             })?
         {
-            return match takeover::hand_back(&self.setup, &album_id, None) {
+            return match takeover::hand_back(&self.parts.publishing, &album_id, None) {
                 Ok(_) => Ok(true),
                 // Not a try that failed: the loop waits and it goes again.
                 Err(error @ ManagementError::Busy(_)) => Err(error),
                 Err(error) => {
                     // It waits before its next try; the loop pauses too.
                     tracing::warn!(%error, album_id, "album not handed back; tried again later");
-                    self.setup.db.write_blocking(
+                    self.parts.db.write_blocking(
                         Lane::Background,
                         "management.hand_back_failed",
                         |tx| {
@@ -479,7 +494,7 @@ impl Management {
                 }
             };
         }
-        if !self.setup.coordinator.current().is_empty() {
+        if !self.parts.coordinator.current().is_empty() {
             return Ok(false);
         }
         // The first looks after a start wait the settle window too, so a
@@ -502,8 +517,8 @@ impl Management {
         if off {
             return Ok(false);
         }
-        if planner::manage_unconfirmed(&self.setup) {
-            self.setup
+        if planner::manage_unconfirmed(&self.parts) {
+            self.parts
                 .db
                 .write_blocking(Lane::Background, "management.wake", |conn| {
                     Ok::<_, ManagementError>(wake(conn, Some("UNCONFIRMED_MATCH"), now)?)
@@ -512,10 +527,11 @@ impl Management {
         self.look_at_due(now, Some(now - SETTLE_SECONDS))
     }
 
-    /// Look at the next waiting album that is due, settled or not.
-    /// Blocking.
+    /// Look at the next waiting album that is due, settled or not, so a
+    /// test need not wait out the settle window. Blocking.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn automatic_next(&self) -> Result<bool, ManagementError> {
-        self.look_at_due(self.setup.clock.now_secs(), None)
+        self.look_at_due(self.parts.clock.now_secs(), None)
     }
 
     /// Look at the next album due at `now`. With `settled_before`, only
@@ -527,7 +543,7 @@ impl Management {
             return Ok(false);
         }
         let due: Option<(String, i64)> =
-            self.setup
+            self.parts
                 .db
                 .read_blocking("management.automatic_due", |conn| {
                     Ok::<_, ManagementError>(
@@ -585,7 +601,7 @@ impl Management {
             }
             Verdict::RetryAt(code, at) => Some((at.max(now + FIRST_RETRY_SECONDS), 0, code)),
         };
-        self.setup
+        self.parts
             .db
             .write_blocking(Lane::Background, "management.automatic_settle", |conn| {
                 match next {
@@ -606,25 +622,32 @@ impl Management {
 
     /// Albums automatic management skipped, newest first. Blocking.
     pub fn automatic_skipped(&self, limit: i64) -> Result<Vec<SkippedAlbum>, ManagementError> {
-        self.setup.db.read_blocking("management.automatic_skipped", |conn| {
-            let mut statement = conn.prepare(
-                "SELECT q.local_album_id, a.title, a.album_artist_name, q.last_reason_code, q.attempts, \
+        self.parts
+            .db
+            .read_blocking("management.automatic_skipped", |conn| {
+                let mut statement = conn.prepare(
+                    "SELECT q.local_album_id, a.title, a.album_artist_name, \
+                 COALESCE(q.last_reason_code, ?2), q.attempts, \
                  q.queued_at FROM library_management_automatic_queue q \
                  JOIN local_albums a ON a.id = q.local_album_id \
-                 WHERE q.last_reason_code IS NOT NULL ORDER BY q.queued_at DESC LIMIT ?1",
-            )?;
-            let rows = statement.query_map(params![limit.clamp(1, 200)], |row| {
-                Ok(SkippedAlbum {
-                    album_id: row.get(0)?,
-                    album_title: row.get(1)?,
-                    artist_name: row.get(2)?,
-                    reason: skip_reason(&row.get::<_, String>(3)?),
-                    attempts: row.get(4)?,
-                    updated_at: row.get(5)?,
-                })
-            })?;
-            Ok(rows.collect::<rusqlite::Result<_>>()?)
-        })
+                 WHERE q.last_reason_code IS NOT NULL OR EXISTS (SELECT 1 \
+                 FROM library_identify_jobs j WHERE j.local_album_id = q.local_album_id \
+                 AND j.state IN ('queued', 'running', 'deferred')) \
+                 ORDER BY q.queued_at DESC LIMIT ?1",
+                )?;
+                let rows =
+                    statement.query_map(params![limit.clamp(1, 200), IDENTIFYING], |row| {
+                        Ok(SkippedAlbum {
+                            album_id: row.get(0)?,
+                            album_title: row.get(1)?,
+                            artist_name: row.get(2)?,
+                            reason: skip_reason(&row.get::<_, String>(3)?),
+                            attempts: row.get(4)?,
+                            updated_at: row.get(5)?,
+                        })
+                    })?;
+                Ok(rows.collect::<rusqlite::Result<_>>()?)
+            })
     }
 
     /// The first checks of a look, which write nothing. `passing_hand_back`
@@ -636,7 +659,7 @@ impl Management {
         passing_hand_back: bool,
     ) -> Result<Gate, ManagementError> {
         let files = self
-            .setup
+            .parts
             .db
             .read_blocking("management.album_files", |conn| {
                 Ok::<_, ManagementError>(album_files(conn, album_id)?)
@@ -659,7 +682,7 @@ impl Management {
                     || assignment.automatic_scan_discovered);
             if writes_some
                 && self
-                    .setup
+                    .parts
                     .db
                     .read_blocking("management.retag_followed", |conn| {
                         Ok::<_, ManagementError>(retag_followed(conn, album_id)?)
@@ -675,8 +698,8 @@ impl Management {
             }
             return Ok(Gate::Closed(Verdict::Done("NOT_AUTOMATIC")));
         };
-        let registry = self.setup.core.live_registry();
-        let policy = registry.policy_revision().to_owned();
+        let registry = self.parts.core.live_registry();
+        let policy = registry.fingerprint().to_owned();
         let pinned_policy = self.activation_policy_revision()?;
         if !activation_is_current(&stored, &assignment, &pinned_policy)
             && !migration_carry_applies(&stored, &assignment, &pinned_policy)
@@ -687,7 +710,7 @@ impl Management {
         let mut states = Vec::new();
         for file in &files {
             states.push(
-                self.setup
+                self.parts
                     .db
                     .read_blocking("management.track_state", |conn| {
                         Ok::<_, ManagementError>(store::track_state(conn, &file.id)?)
@@ -701,7 +724,7 @@ impl Management {
         if restored {
             return Ok(Gate::Closed(Verdict::Park("RESTORED")));
         }
-        let excluded = self.setup.db.read_blocking("management.excluded", |conn| {
+        let excluded = self.parts.db.read_blocking("management.excluded", |conn| {
             Ok::<_, ManagementError>(
                 conn.query_row(
                     "SELECT 1 FROM library_management_exclusions WHERE local_album_id = ?1",
@@ -724,7 +747,7 @@ impl Management {
         // The only place an automatic file write starts: an album the app
         // stepped back from waits here until a person hands it back.
         let held = self
-            .setup
+            .parts
             .db
             .read_blocking("management.is_marked", |conn| {
                 Ok::<_, ManagementError>(
@@ -739,7 +762,7 @@ impl Management {
         // over an edition someone chose. A record the app wrote since does
         // not cancel it: that write took the retagged bytes as they were.
         if self
-            .setup
+            .parts
             .db
             .read_blocking("management.automatic_gate_retag_followed", |conn| {
                 Ok::<_, ManagementError>(retag_followed(conn, album_id)?)
@@ -747,7 +770,7 @@ impl Management {
         {
             return Ok(Gate::Follow);
         }
-        let Some(identity) = self.setup.identify_store.album_identity(album_id)? else {
+        let Some(identity) = self.parts.identify_store.album_identity(album_id)? else {
             return Ok(Gate::NotYet(Verdict::Wait("IDENTITY_NOT_ACCEPTED")));
         };
         // A custom edition is managed automatically only where the folder
@@ -755,7 +778,7 @@ impl Management {
         let custom = identity.release_mbid.is_none()
             && identity.release_group_mbid.is_some()
             && self
-                .setup
+                .parts
                 .db
                 .read_blocking("management.custom_edition", |conn| {
                     Ok::<_, ManagementError>(super::custom::active(conn, album_id)?)
@@ -764,7 +787,7 @@ impl Management {
         if custom && !assignment.automatic_custom_editions {
             return Ok(Gate::Closed(Verdict::Park("CUSTOM_EDITION")));
         }
-        let identities = &self.setup.identify_store;
+        let identities = &self.parts.identify_store;
         if !custom && (identity.release_mbid.is_none() || identity.release_group_mbid.is_none()) {
             return Ok(Gate::Closed(Verdict::Park("RELEASE_NOT_SELECTED")));
         }
@@ -783,9 +806,9 @@ impl Management {
                 _ => return Ok(Gate::NotYet(Verdict::Wait("TRACK_NOT_MAPPED"))),
             }
         }
-        let manage_unconfirmed = planner::manage_unconfirmed(&self.setup);
+        let manage_unconfirmed = planner::manage_unconfirmed(&self.parts);
         let gate = self
-            .setup
+            .parts
             .db
             .read_blocking("management.match_gate", |conn| {
                 Ok::<_, ManagementError>(planner::match_gate(conn, album_id, manage_unconfirmed)?)
@@ -800,7 +823,7 @@ impl Management {
         // checks cannot see yet. The album goes ahead once a scan settles
         // the folder.
         if self
-            .setup
+            .parts
             .db
             .read_blocking("management.holds_new_files", |conn| {
                 Ok::<_, ManagementError>(holds_new_files(conn, album_id)?)
@@ -811,7 +834,7 @@ impl Management {
         // A held album let go before it could be judged as a retag is
         // judged on the edition about to be written, before the first write.
         if self
-            .setup
+            .parts
             .db
             .read_blocking("management.remembered", |conn| {
                 Ok::<_, ManagementError>(remembered(conn, album_id)?)
@@ -837,7 +860,7 @@ impl Management {
     /// through.
     fn judged_by_hand(&self, album_id: &str) -> Result<bool, ManagementError> {
         if !self
-            .setup
+            .parts
             .db
             .read_blocking("management.judged_by_hand_remembered", |conn| {
                 Ok::<_, ManagementError>(remembered(conn, album_id)?)
@@ -846,16 +869,16 @@ impl Management {
             return Ok(false);
         }
         let names_release = self
-            .setup
+            .parts
             .identify_store
             .album_identity(album_id)?
             .is_some_and(|identity| identity.release_mbid.is_some());
         if !names_release {
             return Ok(false);
         }
-        let manage_unconfirmed = planner::manage_unconfirmed(&self.setup);
+        let manage_unconfirmed = planner::manage_unconfirmed(&self.parts);
         Ok(self
-            .setup
+            .parts
             .db
             .read_blocking("management.judged_by_hand_match_gate", |conn| {
                 Ok::<_, ManagementError>(planner::match_gate(conn, album_id, manage_unconfirmed)?)
@@ -866,14 +889,14 @@ impl Management {
     fn automatic_verdict(&self, album_id: &str) -> Result<Verdict, ManagementError> {
         let mut gate = self.automatic_gate(album_id, false)?;
         if let Gate::Judge { .. } = gate {
-            if self.setup.db.write_blocking(
+            if self.parts.db.write_blocking(
                 Lane::Background,
                 "management.judge_remembered",
                 |tx| {
                     Ok::<_, ManagementError>(judge_remembered(
                         tx,
                         album_id,
-                        self.setup.clock.now_secs(),
+                        self.parts.clock.now_secs(),
                     )?)
                 },
             )? {
@@ -886,14 +909,14 @@ impl Management {
         let opened = match gate {
             Gate::Closed(verdict) | Gate::NotYet(verdict) => return Ok(verdict),
             Gate::Follow => {
-                self.setup.db.write_blocking(
+                self.parts.db.write_blocking(
                     Lane::Background,
                     "management.mark_followed",
                     |tx| {
                         Ok::<_, ManagementError>(takeover::mark_followed(
                             tx,
                             album_id,
-                            self.setup.clock.now_secs(),
+                            self.parts.clock.now_secs(),
                         )?)
                     },
                 )?;
@@ -916,7 +939,7 @@ impl Management {
         } = opened;
         let pinned = profile::pin_assignment(&stored, &assignment)?;
         let revisions = profile::revisions(&stored, &pinned, &policy);
-        let sandbox = self.setup.publishing.publish_sandbox().ok();
+        let sandbox = self.parts.publishing.publish_sandbox().ok();
         let as_revision = |value: u64| i64::try_from(value).ok();
         let managed =
             files
@@ -951,10 +974,10 @@ impl Management {
         // looked at again by itself, rather than being planned without
         // them.
         if let Some(release_mbid) = identity.release_mbid.as_deref()
-            && let Some(mut release) = self.setup.identify_store.release(release_mbid, None)?
+            && let Some(mut release) = self.parts.identify_store.release(release_mbid, None)?
             && super::enrich::ensure_release_extras(
-                self.setup.enrichment.as_deref(),
-                &self.setup.identify_store,
+                self.parts.enrichment.as_deref(),
+                &self.parts.identify_store,
                 &pinned.profile,
                 &mut release,
                 true,
@@ -970,7 +993,7 @@ impl Management {
             let saved = files
                 .iter()
                 .map(|file| {
-                    self.setup.db.read_blocking("management.overrides", |conn| {
+                    self.parts.db.read_blocking("management.overrides", |conn| {
                         Ok(planner::overrides(conn, album_id, &file.id)?)
                     })
                 })
@@ -986,7 +1009,7 @@ impl Management {
                 })
                 .collect();
             let lookup = planner::acoustid_values(
-                &self.setup,
+                &self.parts,
                 sandbox,
                 &pinned.profile,
                 &subjects,
@@ -1018,7 +1041,7 @@ impl Management {
         // A hand-back asks for a fresh look: no run made before it, done,
         // stepped back or waiting, answers for the album.
         let key_material = match self
-            .setup
+            .parts
             .db
             .read_blocking("management.hand_backs", |conn| {
                 Ok::<_, ManagementError>(takeover::hand_backs(conn, album_id)?)
@@ -1028,14 +1051,14 @@ impl Management {
         };
         let mut key = format!("automatic:{}", sha256_hex(key_material.as_bytes()));
         if let Some(existing) = self
-            .setup
+            .parts
             .db
             .read_blocking("management.job_for_key", |conn| {
                 Ok::<_, ManagementError>(store::job_for_key(conn, &key)?)
             })?
         {
             let snapshot = self.snapshot(&existing)?;
-            let now = self.setup.clock.now_secs();
+            let now = self.parts.clock.now_secs();
             let expires = snapshot.preview_expires_at.unwrap_or(0.0);
             match (snapshot.job.state.as_str(), snapshot.phase.as_str()) {
                 // A run for exactly this is waiting or working.

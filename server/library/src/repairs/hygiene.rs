@@ -617,15 +617,17 @@ fn artist_from_tracks(
     )?;
     write_album_credits(tx, &album.id, &credits)?;
     // An album the placeholder kept unmatched is looked up again under
-    // its artist's name.
-    if identity(tx, &album.id)?.is_none() {
-        offer_again(tx, &album.id, (now * 1000.0) as i64)?;
-    }
+    // its artist's name. The undo takes that look back while it waits.
+    let offered_at_ms = (now * 1000.0) as i64;
+    let offered = identity(tx, &album.id)?.is_none() && offer_again(tx, &album.id, offered_at_ms)?;
     let after = serde_json::json!({
         "kind": "album_artist_from_tracks",
         "album_artist_id": primary.artist_id,
         "album_artist_name": source.album_artist,
+        "album_artist_name_folded": name,
+        "album_artist_sort_name": source.album_artist_sort,
         "credits": credits,
+        "identification_offered_at_ms": offered.then_some(offered_at_ms),
         "filesystem_writes": 0,
     });
     record_action(
@@ -678,7 +680,13 @@ struct ArtistBefore {
 struct ArtistAfter {
     album_artist_id: String,
     album_artist_name: String,
+    /// The folded and sort names, absent from audit rows written before
+    /// they were kept.
+    album_artist_name_folded: Option<String>,
+    album_artist_sort_name: Option<String>,
     credits: Vec<CreditRow>,
+    /// When the repair queued a fresh identification of the album.
+    identification_offered_at_ms: Option<i64>,
 }
 
 /// How [`undo_artist_from_tracks`] ended.
@@ -695,12 +703,12 @@ pub enum ArtistRepairUndo {
     Unknown,
 }
 
-/// The repair recorded as `action_id`, its album and what it replaced, or
-/// why [`undo_artist_from_tracks`] would refuse it.
+/// The repair recorded as `action_id`, its album, what it replaced and
+/// what it gave, or why [`undo_artist_from_tracks`] would refuse it.
 fn artist_standing(
     conn: &Connection,
     action_id: &str,
-) -> rusqlite::Result<Result<(String, ArtistBefore), ArtistRepairUndo>> {
+) -> rusqlite::Result<Result<(String, ArtistBefore, ArtistAfter), ArtistRepairUndo>> {
     let action: Option<(Option<String>, String, String)> = conn
         .prepare_cached(
             "SELECT local_album_id, before_json, after_json FROM library_catalog_actions \
@@ -719,19 +727,29 @@ fn artist_standing(
     ) else {
         return Ok(Err(ArtistRepairUndo::Unknown));
     };
-    let current: Option<(Option<String>, Option<String>)> = conn
+    type Names = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let current: Option<Names> = conn
         .prepare_cached(
-            "SELECT album_artist_id, album_artist_name FROM local_albums \
+            "SELECT album_artist_id, album_artist_name, album_artist_name_folded, \
+             album_artist_sort_name FROM local_albums \
              WHERE id = ?1 AND retired_into_album_id IS NULL",
         )?
-        .query_row(params![album_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_row(params![album_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
         .optional()?;
-    let unchanged = current
-        == Some((
-            Some(after.album_artist_id.clone()),
-            Some(after.album_artist_name.clone()),
-        ))
-        && credit_rows(conn, ALBUM_CREDITS, &album_id)? == after.credits;
+    let unchanged = current.is_some_and(|(id, name, folded, sort)| {
+        id.as_deref() == Some(after.album_artist_id.as_str())
+            && name.as_deref() == Some(after.album_artist_name.as_str())
+            && after.album_artist_name_folded.as_ref().is_none_or(|kept| {
+                folded.as_ref() == Some(kept) && sort == after.album_artist_sort_name
+            })
+    }) && credit_rows(conn, ALBUM_CREDITS, &album_id)? == after.credits;
     if !unchanged || artist_repair_undone(conn, &album_id)? {
         return Ok(Err(ArtistRepairUndo::Stale));
     }
@@ -748,7 +766,7 @@ fn artist_standing(
             return Ok(Err(ArtistRepairUndo::Stale));
         }
     }
-    Ok(Ok((album_id, before)))
+    Ok(Ok((album_id, before, after)))
 }
 
 /// Whether [`undo_artist_from_tracks`] would undo the repair recorded as
@@ -761,15 +779,16 @@ pub fn artist_repair_undoable(conn: &Connection, action_id: &str) -> rusqlite::R
 /// for `actor`: the album's artist id, name, folded name and sort name and
 /// its credits are what they were before it, an audit row
 /// ([`ARTIST_REPAIR_UNDONE`]) keeps the repair from running on the album
-/// again, and the catalog revision moves once. Only while the album still
-/// holds what the repair gave it. No artist row is made or deleted.
+/// again, and the catalog revision moves once. An identification the
+/// repair queued is taken back while it still waits. Only while the album
+/// still holds what the repair gave it. No artist row is made or deleted.
 pub fn undo_artist_from_tracks(
     tx: &Transaction<'_>,
     action_id: &str,
     actor: &str,
     now: f64,
 ) -> rusqlite::Result<ArtistRepairUndo> {
-    let (album_id, before) = match artist_standing(tx, action_id)? {
+    let (album_id, before, after) = match artist_standing(tx, action_id)? {
         Ok(repair) => repair,
         Err(outcome) => return Ok(outcome),
     };
@@ -791,6 +810,20 @@ pub fn undo_artist_from_tracks(
         ],
     )?;
     write_album_credits(tx, &album_id, &before.credits)?;
+    // The identification the repair queued goes too while it still waits:
+    // it would look the album up under the name just taken back.
+    if let Some(offered_ms) = after.identification_offered_at_ms {
+        let dropped = tx
+            .prepare_cached(
+                "DELETE FROM library_identify_jobs WHERE local_album_id = ?1 \
+                 AND state = 'queued' AND kind = 'historical' \
+                 AND requested_by_user_id IS NULL AND created_ms = ?2",
+            )?
+            .execute(params![album_id, offered_ms])?;
+        if dropped > 0 {
+            crate::identify::queue::bump_identification_stream(tx)?;
+        }
+    }
     record_action(
         tx,
         CatalogAction {

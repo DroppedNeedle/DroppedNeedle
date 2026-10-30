@@ -67,22 +67,23 @@ impl LibraryRoot {
     }
 }
 
-/// Registry of library roots plus the enabled flag. The policy revision is
-/// an opaque string: any settings change bumps it, which supersedes running
-/// scans through the coordinator checkpoint (v2 `policy_revision`).
+/// Registry of library roots plus the enabled flag. The fingerprint is an
+/// opaque hash of the roots, their rules and the flag: any change to them
+/// bumps it, which supersedes running scans through the coordinator
+/// checkpoint. It is not the settings' policy revision the pages show.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RootRegistry {
     roots: Vec<LibraryRoot>,
     enabled: bool,
-    policy_revision: String,
+    fingerprint: String,
 }
 
 impl RootRegistry {
-    pub fn new(roots: Vec<LibraryRoot>, enabled: bool, policy_revision: &str) -> Self {
+    pub fn new(roots: Vec<LibraryRoot>, enabled: bool, fingerprint: &str) -> Self {
         Self {
             roots,
             enabled,
-            policy_revision: policy_revision.to_owned(),
+            fingerprint: fingerprint.to_owned(),
         }
     }
 
@@ -90,8 +91,8 @@ impl RootRegistry {
         self.enabled
     }
 
-    pub fn policy_revision(&self) -> &str {
-        &self.policy_revision
+    pub fn fingerprint(&self) -> &str {
+        &self.fingerprint
     }
 
     pub fn roots(&self) -> &[LibraryRoot] {
@@ -119,11 +120,8 @@ impl RootRegistry {
             .iter()
             .filter(|root| root.policy != EffectivePolicy::Excluded)
             .map(|root| {
-                let mut scope = ScanScope::root(
-                    &root.id,
-                    &root.path.to_string_lossy(),
-                    &self.policy_revision,
-                );
+                let mut scope =
+                    ScanScope::root(&root.id, &root.path.to_string_lossy(), &self.fingerprint);
                 scope.effective_policy = root.policy;
                 scope
             })
@@ -254,8 +252,8 @@ impl PolicyResolver {
         &self.registry
     }
 
-    pub fn policy_revision(&self) -> &str {
-        self.registry.policy_revision()
+    pub fn fingerprint(&self) -> &str {
+        self.registry.fingerprint()
     }
 
     pub fn enabled(&self) -> bool {

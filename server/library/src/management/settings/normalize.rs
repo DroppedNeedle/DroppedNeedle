@@ -862,7 +862,7 @@ fn validate_profile_blocks(
     if compatibility.separator_replacement.chars().count() != 1
         || matches!(
             compatibility.separator_replacement.as_str(),
-            "/" | "\\" | "\x00"
+            "/" | "\\" | "\x00" | "."
         )
     {
         return Err(invalid(

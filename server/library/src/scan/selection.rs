@@ -29,7 +29,7 @@ pub fn select_scopes(
         let root_path = root.path.to_string_lossy();
         if selected.is_empty() || selected.contains(root.id.as_str()) {
             matched.insert(root.id.as_str());
-            let mut scope = ScanScope::root(&root.id, &root_path, registry.policy_revision());
+            let mut scope = ScanScope::root(&root.id, &root_path, registry.fingerprint());
             scope.effective_policy = root.policy;
             candidates.push(scope);
         }
@@ -44,7 +44,7 @@ pub fn select_scopes(
                 relative_path: rule.relative_path.clone(),
                 root_path: Some(root_path.clone().into_owned()),
                 effective_policy: rule.policy,
-                policy_revision: registry.policy_revision().to_owned(),
+                policy_revision: registry.fingerprint().to_owned(),
                 estimated_count: None,
             });
         }

@@ -181,7 +181,7 @@ impl Management {
         caller: &Principal,
     ) -> Result<PreviewHandle, EditionTagsError> {
         let found = self
-            .setup
+            .parts
             .db
             .read_blocking("management.edition_tags_album", |conn| {
                 Ok::<_, ManagementError>(album(conn, album_id, release_mbid)?)
@@ -216,7 +216,7 @@ impl Management {
         let [root] = found.roots.as_slice() else {
             return refused(TWO_FOLDERS);
         };
-        let registry = self.setup.core.live_registry();
+        let registry = self.parts.core.live_registry();
         if found
             .files
             .iter()
@@ -247,7 +247,7 @@ impl Management {
             origin: Origin::Manual,
             actor: Some(caller.user_id()),
             idempotency_key: None,
-            revisions: profile::revisions(&stored, &pinned, registry.policy_revision()),
+            revisions: profile::revisions(&stored, &pinned, registry.fingerprint()),
             selection_json: serde_json::to_string(&selection).map_err(ManagementError::from)?,
             pinned: &pinned,
             target_root_id: None,

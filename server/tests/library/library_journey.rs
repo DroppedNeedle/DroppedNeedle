@@ -2243,7 +2243,7 @@ async fn rescan(library: &LibrarySetup) {
             trigger: ScanTrigger::Manual,
             scopes: registry.scheduled_root_scopes(),
             requested_by_user_id: None,
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
         })
         .expect("scan requested");
     drain_scans(library).await;
@@ -10761,7 +10761,7 @@ async fn automatic_management_settles_per_album() {
             trigger: droppedneedle_library::scan::ScanTrigger::Manual,
             scopes: registry.scheduled_root_scopes(),
             requested_by_user_id: None,
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
         })
         .expect("scan requested");
     assert!(
@@ -17986,7 +17986,7 @@ async fn scan_held_while(
             trigger: ScanTrigger::Manual,
             scopes: registry.scheduled_root_scopes(),
             requested_by_user_id: None,
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
         })
         .expect("scan requested");
     let paths = HashMap::from([("music".to_owned(), music.to_owned())]);
@@ -20707,8 +20707,8 @@ async fn every_identified_album_gets_its_cleanup_across_restarts() {
 /// album is looked up again under the artist's name. A locked grouping is
 /// left alone. The album's history lists the change, and a curator can
 /// undo it while the album still holds what it gave: the album's earlier
-/// artist, sort name and credits come back, and later cleanups leave it
-/// there.
+/// artist, sort name and credits come back, the look-up it queued goes,
+/// and later cleanups leave it there.
 #[tokio::test]
 async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
     use droppedneedle_library::http::history::album_history_view;
@@ -20889,8 +20889,30 @@ async fn an_album_left_on_the_placeholder_artist_takes_its_tracks_artist() {
         "a refused undo changes nothing"
     );
     rename("Yes");
+    // So is one after the sort name changed.
+    let sort = |value: Option<&str>| {
+        db.execute(
+            "UPDATE local_albums SET album_artist_sort_name = ?2 WHERE id = ?1",
+            rusqlite::params![album, value],
+        )
+        .expect("sort name set");
+    };
+    let kept_sort: Option<String> = db
+        .query_row(
+            "SELECT album_artist_sort_name FROM local_albums WHERE id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("sort name read");
+    sort(Some("Band, The"));
+    assert_eq!(undo(&repair), "STALE_REVISION");
+    sort(kept_sort.as_deref());
 
     assert_eq!(undo(&repair), "restored");
+    assert!(
+        read("SELECT kind FROM library_identify_jobs WHERE state = 'queued'").is_empty(),
+        "the identification the repair queued is taken back"
+    );
     assert_eq!(
         read(
             "SELECT album_artist_id || ' ' || album_artist_name || ' ' || \

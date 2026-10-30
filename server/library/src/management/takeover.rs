@@ -22,7 +22,6 @@ use crate::clock::LibraryClock as _;
 use crate::operations::decisions::{CatalogAction, record_action};
 use crate::publish::record::changed_since_written;
 pub use crate::publish::record::record_sql;
-use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::Lane;
 
 /// Skip and block code of an album the app stepped back from.
@@ -523,11 +522,11 @@ pub(crate) fn hand_backs(conn: &Connection, album_id: &str) -> rusqlite::Result<
 /// album has no mark. Blocking: reads every file of the album, outside any
 /// transaction. Writes no file.
 pub(crate) fn hand_back(
-    setup: &LibrarySetup,
+    publishing: &crate::manage::Publishing,
     album_id: &str,
     actor: Option<&str>,
 ) -> Result<bool, ManagementError> {
-    let files = setup
+    let files = publishing
         .db
         .read_blocking("management.hand_back_files", |conn| {
             if !is_marked(conn, album_id)? {
@@ -555,10 +554,7 @@ pub(crate) fn hand_back(
             "The album's files could not be read, so it was not handed back.".to_owned(),
         )
     };
-    let sandbox = setup
-        .publishing
-        .publish_sandbox()
-        .map_err(|_| unreadable())?;
+    let sandbox = publishing.publish_sandbox().map_err(|_| unreadable())?;
     let hashed: Vec<(String, String, String, Option<String>)> = files
         .into_iter()
         .map(|(track_id, root_id, relative_path)| {
@@ -579,7 +575,7 @@ pub(crate) fn hand_back(
     if !hashed.is_empty() && hashed.iter().all(|(.., sha256)| sha256.is_none()) {
         return Err(unreadable());
     }
-    let now = setup.clock.now_secs();
+    let now = publishing.core.clock.now_secs();
     // A person's request writes on the foreground lane, the worker's turn
     // through a hand-back of every album on the background lane.
     let lane = if actor.is_some() {
@@ -587,56 +583,58 @@ pub(crate) fn hand_back(
     } else {
         Lane::Background
     };
-    setup.db.write_blocking(lane, "management.hand_back", |tx| {
-        let lifted = tx.execute(
-            "DELETE FROM library_album_takeovers WHERE local_album_id = ?1",
-            params![album_id],
-        )?;
-        if lifted == 0 {
-            return Ok(false);
-        }
-        // v2's record is spent: from here on the bytes below are the record.
-        // Every v3 writer of `managed_path_revision` sets the job, so a value
-        // with no job is v2's, even on a row a later write gave
-        // `written_sha256`. Kept there, it would be a v2 record again once
-        // that is cleared below.
-        tx.execute(
-            "UPDATE library_track_management_state SET managed_path_revision = NULL, \
+    publishing
+        .db
+        .write_blocking(lane, "management.hand_back", |tx| {
+            let lifted = tx.execute(
+                "DELETE FROM library_album_takeovers WHERE local_album_id = ?1",
+                params![album_id],
+            )?;
+            if lifted == 0 {
+                return Ok(false);
+            }
+            // v2's record is spent: from here on the bytes below are the record.
+            // Every v3 writer of `managed_path_revision` sets the job, so a value
+            // with no job is v2's, even on a row a later write gave
+            // `written_sha256`. Kept there, it would be a v2 record again once
+            // that is cleared below.
+            tx.execute(
+                "UPDATE library_track_management_state SET managed_path_revision = NULL, \
              row_revision = row_revision + 1 WHERE managed_path_revision IS NOT NULL \
              AND last_operation_job_id IS NULL AND local_track_id IN \
              (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
-            params![album_id],
-        )?;
-        tx.execute(
-            "UPDATE library_track_management_state SET written_sha256 = NULL \
+                params![album_id],
+            )?;
+            tx.execute(
+                "UPDATE library_track_management_state SET written_sha256 = NULL \
              WHERE written_sha256 IS NOT NULL AND local_track_id IN \
              (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
-            params![album_id],
-        )?;
-        for (track_id, root_id, relative_path, sha256) in &hashed {
-            let Some(sha256) = sha256 else { continue };
-            // Only for a file still where it was read.
-            tx.execute(
-                "INSERT INTO library_track_management_state (local_track_id, written_sha256) \
+                params![album_id],
+            )?;
+            for (track_id, root_id, relative_path, sha256) in &hashed {
+                let Some(sha256) = sha256 else { continue };
+                // Only for a file still where it was read.
+                tx.execute(
+                    "INSERT INTO library_track_management_state (local_track_id, written_sha256) \
                  SELECT id, ?4 FROM local_tracks WHERE id = ?1 AND local_album_id = ?5 \
                  AND root_id = ?2 AND relative_path = ?3 AND availability = 'indexed' \
                  ON CONFLICT (local_track_id) DO UPDATE SET \
                  written_sha256 = excluded.written_sha256",
-                params![track_id, root_id, relative_path, sha256, album_id],
-            )?;
-        }
-        tx.execute(
-            "UPDATE library_management_automatic_queue SET retag_followed_at = NULL \
+                    params![track_id, root_id, relative_path, sha256, album_id],
+                )?;
+            }
+            tx.execute(
+                "UPDATE library_management_automatic_queue SET retag_followed_at = NULL \
              WHERE local_album_id = ?1",
-            params![album_id],
-        )?;
-        if let Some(actor) = actor {
-            record_action(tx, handed_back_action(actor, album_id), now)?;
-        }
-        bump_catalog(tx)?;
-        super::automatic::queue(tx, album_id, now)?;
-        Ok::<_, ManagementError>(true)
-    })
+                params![album_id],
+            )?;
+            if let Some(actor) = actor {
+                record_action(tx, handed_back_action(actor, album_id), now)?;
+            }
+            bump_catalog(tx)?;
+            super::automatic::queue(tx, album_id, now)?;
+            Ok::<_, ManagementError>(true)
+        })
 }
 
 /// An album the app stepped back from, for the list a person hands back
@@ -649,6 +647,9 @@ pub struct TakenOver {
     pub cause: Cause,
     /// When the app stepped back, in milliseconds.
     pub noticed_at: i64,
+    /// A hand-back since then was given up: the album's files could not
+    /// be read.
+    pub hand_back_given_up: bool,
 }
 
 /// The albums the app stepped back from and nobody has handed back yet.
@@ -665,7 +666,7 @@ pub struct Waiting {
 impl super::service::Management {
     /// The albums the app stepped back from, newest first. Blocking.
     pub fn takeovers(&self, limit: i64) -> Result<Waiting, ManagementError> {
-        self.setup.db.read_blocking("management.takeovers", |conn| {
+        self.parts.db.read_blocking("management.takeovers", |conn| {
             Ok(waiting(conn, limit.clamp(1, 200))?)
         })
     }
@@ -680,7 +681,11 @@ pub fn waiting(conn: &Connection, limit: i64) -> rusqlite::Result<Waiting> {
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     let mut statement = conn.prepare(
-        "SELECT k.local_album_id, a.title, a.album_artist_name, k.cause, k.noticed_at \
+        "SELECT k.local_album_id, a.title, a.album_artist_name, k.cause, k.noticed_at, \
+         EXISTS(SELECT 1 FROM library_catalog_actions c \
+           WHERE c.local_album_id = k.local_album_id \
+           AND c.action_kind = 'management_hand_back_given_up' \
+           AND c.created_at * 1000 >= k.noticed_at) \
          FROM library_album_takeovers k JOIN local_albums a ON a.id = k.local_album_id \
          WHERE k.handed_back_at IS NULL \
          ORDER BY k.noticed_at DESC, k.local_album_id LIMIT ?1",
@@ -699,6 +704,7 @@ pub fn waiting(conn: &Connection, limit: i64) -> rusqlite::Result<Waiting> {
                 )
             })?,
             noticed_at: row.get(4)?,
+            hand_back_given_up: row.get(5)?,
         })
     })?;
     Ok(Waiting {

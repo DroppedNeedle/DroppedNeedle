@@ -557,6 +557,9 @@ impl PluginHost {
                     UpdateError::StoreFailed(error.to_string())
                 }
             })?;
+        if !enabled {
+            self.library_writes.clear(&plugin.manifest.name);
+        }
         self.load_all();
         self.get(name).ok_or(UpdateError::NotFound)
     }
@@ -576,6 +579,7 @@ impl PluginHost {
         {
             tracing::warn!(plugin = %name, %error, "plugin folder not fully removed");
         }
+        self.library_writes.clear(&plugin.manifest.name);
         self.load_all();
         tracing::info!(plugin = %name, "plugin uninstalled");
         Ok(())

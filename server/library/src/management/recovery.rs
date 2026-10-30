@@ -124,7 +124,7 @@ impl Management {
     /// yes. Blocking.
     pub fn download_publish_settled(&self, task_id: &str) -> Result<bool, ManagementError> {
         let folder = format!("{}/", crate::publish::import_staging::staging_rel(task_id));
-        self.setup
+        self.parts
             .db
             .read_blocking("management.download_publish_settled", |conn| {
                 let unsettled: bool = conn.query_row(
@@ -143,7 +143,7 @@ impl Management {
 
     /// What the publish journal holds. Blocking.
     pub fn recovery_diagnostics(&self) -> Result<Diagnostics, ManagementError> {
-        self.setup.db.read_blocking("management.recovery_diagnostics", |conn| {
+        self.parts.db.read_blocking("management.recovery_diagnostics", |conn| {
             let count = |sql: &str| conn.query_row(sql, [], |row| row.get::<_, i64>(0));
             let open = "state NOT IN ('cleaned', 'compensated', 'needs_attention')";
             let attention = "state = 'needs_attention' AND bundle_id NOT IN \
@@ -183,11 +183,11 @@ impl Management {
             for row in bundles.query_map(params![ATTENTION_LIST_MAX], attention_bundle)? {
                 diagnostics.needs_attention_bundles.push(row?);
             }
-            diagnostics.retrying_bundles = retrying_bundles(conn, self.setup.clock.now_ms())?;
+            diagnostics.retrying_bundles = retrying_bundles(conn, self.parts.clock.now_ms())?;
             Ok(diagnostics)
         })
         .map(|mut diagnostics| {
-            if let Some(report) = self.setup.leftover_files.latest() {
+            if let Some(report) = self.parts.leftover_files.latest() {
                 diagnostics.leftover_file_count = report.count as i64;
                 diagnostics.leftover_files = report.files;
             }
@@ -204,7 +204,7 @@ impl Management {
         bundle_id: &str,
         actor: &str,
     ) -> Result<Resolved, ManagementError> {
-        let journals: Vec<(String, String, String, String, String)> = self.setup.db.read_blocking("management.bundle_journals", |conn| {
+        let journals: Vec<(String, String, String, String, String)> = self.parts.db.read_blocking("management.bundle_journals", |conn| {
             let mut statement = conn.prepare(
                 "SELECT state, kind, dest_root, dest_rel, staged_sha256 FROM library_publish_journal \
                  WHERE bundle_id = ?1 ORDER BY id",
@@ -220,7 +220,7 @@ impl Management {
             ));
         }
         let earlier: Option<i64> =
-            self.setup
+            self.parts
                 .db
                 .read_blocking("management.resolution", |conn| {
                     Ok::<_, ManagementError>(conn
@@ -250,7 +250,7 @@ impl Management {
                     .to_owned(),
             ));
         }
-        let sandbox = self.setup.publishing.publish_sandbox().map_err(|_| {
+        let sandbox = self.parts.publishing.publish_sandbox().map_err(|_| {
             ManagementError::Conflict(
                 "The library folders are not available right now, so the files cannot be checked."
                     .to_owned(),
@@ -281,11 +281,11 @@ impl Management {
             )));
         }
         let verified = pending.len() as i64;
-        self.setup.db.write_blocking(Lane::Foreground, "management.resolve_bundle", |conn| {
+        self.parts.db.write_blocking(Lane::Foreground, "management.resolve_bundle", |conn| {
             conn.execute(
                 "INSERT OR IGNORE INTO library_publish_resolutions (bundle_id, resolved_by_user_id, \
                  verified_files, resolved_at) VALUES (?1, ?2, ?3, ?4)",
-                params![bundle_id, actor, verified, self.setup.clock.now_secs()],
+                params![bundle_id, actor, verified, self.parts.clock.now_secs()],
             )?;
             Ok::<_, ManagementError>(())
         })?;

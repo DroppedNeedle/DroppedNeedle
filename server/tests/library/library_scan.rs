@@ -17,6 +17,7 @@ use crate::common::{ScratchDir, TestPlatform, config_store, migrated_db};
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{Budget, Db, LaneLimits};
 use droppedneedle_kernel::jobs::CancellationToken;
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_library::identify::models::RecallResult;
 use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService};
@@ -30,6 +31,7 @@ use droppedneedle_library::scan::{
     ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError, TagReader,
     WatcherAction, WorkWakeups,
 };
+use droppedneedle_library::service::ServiceError;
 use droppedneedle_library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
 
@@ -113,7 +115,7 @@ async fn scan(library: &LibrarySetup) -> ScanRun {
             trigger: ScanTrigger::Manual,
             scopes: registry.scheduled_root_scopes(),
             requested_by_user_id: None,
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
         })
         .expect("scan requested");
     for _ in 0..50 {
@@ -483,7 +485,7 @@ async fn scan_folder(library: &LibrarySetup, folder: &str) -> ScanRun {
             trigger: ScanTrigger::Manual,
             scopes,
             requested_by_user_id: None,
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
         })
         .expect("scan requested");
     for _ in 0..50 {
@@ -1426,7 +1428,7 @@ async fn a_double_from_overlapping_roots_retires_into_one_row() {
             trigger: ScanTrigger::Manual,
             scopes: only_music,
             requested_by_user_id: None,
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
         })
         .expect("scan requested");
     for _ in 0..50 {
@@ -1594,8 +1596,46 @@ async fn unrecorded_scan_request_is_an_error() {
     let music = scratch.join("music");
     std::fs::create_dir_all(&music).expect("root");
     let library = bundle(&scratch).await;
+    let revision = library.core.policy_revision().expect("policy revision");
     // No such user in this database: the auth_users reference fails.
-    assert!(library.scans.request_scan(None, "no-such-user").is_err());
+    let refused = library
+        .scans
+        .request_scan_run(ScanKind::Incremental, &[], &revision, "no-such-user")
+        .expect_err("not recorded");
+    assert!(
+        matches!(refused, ServiceError::Internal { .. }),
+        "{refused:?}"
+    );
+}
+
+/// Saved library settings that no longer pass validation still load with
+/// the revision the page shows, and a scan request carrying it is taken.
+#[tokio::test]
+async fn a_scan_request_is_taken_while_saved_settings_need_fixing() {
+    let scratch = ScratchDir::new("scan-settings-need-fixing");
+    std::fs::create_dir_all(scratch.join("music")).expect("root");
+    let library = bundle(&scratch).await;
+    library
+        .settings
+        .store()
+        .update_secret_blocking::<TypedLibrary, String, _>(|stored| {
+            let mut settings = stored.into_inner();
+            settings.library_roots[0].label = String::new();
+            Ok(settings)
+        })
+        .expect("stored as is");
+    library
+        .db
+        .run_sql(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin-1', 'Admin', 'admin', 0);",
+        )
+        .expect("admin");
+    let revision = library.core.policy_revision().expect("policy revision");
+    library
+        .scans
+        .request_scan_run(ScanKind::Incremental, &[], &revision, "admin-1")
+        .expect("scan taken");
 }
 
 /// What happens between two scan windows: a listener, a curator or a

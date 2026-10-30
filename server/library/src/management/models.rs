@@ -574,7 +574,6 @@ pub struct JobDetail {
     pub profile_name: String,
     pub profile_revision: String,
     pub settings_revision: String,
-    pub policy_revision: String,
     pub catalog_revision: i64,
     pub target_root_id: Option<String>,
     pub linked_job_id: Option<String>,

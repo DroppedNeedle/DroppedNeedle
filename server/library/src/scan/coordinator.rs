@@ -962,7 +962,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 if root.policy == super::models::EffectivePolicy::Excluded {
                     return None;
                 }
-                scope.policy_revision = registry.policy_revision().to_owned();
+                scope.policy_revision = registry.fingerprint().to_owned();
                 scope.effective_policy = root.policy;
                 Some(scope)
             })
@@ -975,7 +975,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             trigger: run.trigger,
             scopes,
             requested_by_user_id: run.requested_by_user_id.clone(),
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: registry.fingerprint().to_owned(),
         };
         match self.request_run(&request) {
             Ok(result) => tracing::info!(
@@ -1699,7 +1699,7 @@ impl<T: TagReader + 'static> Checkpoint for LibraryScanCoordinator<T> {
     /// that cannot be read answers false, logged: the drive ends and the
     /// run keeps its state.
     fn check(&self, run_id: &str, frozen_policy_revision: &str) -> bool {
-        let current_policy_revision = self.resolvers.resolver().policy_revision().to_owned();
+        let current_policy_revision = self.resolvers.resolver().fingerprint().to_owned();
         if current_policy_revision == frozen_policy_revision
             && !self
                 .pending_control

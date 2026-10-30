@@ -126,7 +126,7 @@ impl Management {
             origin: Origin::Manual,
             actor: Some(actor),
             idempotency_key: Some(&request.idempotency_key),
-            revisions: profile::revisions(&stored, &pinned, registry.policy_revision()),
+            revisions: profile::revisions(&stored, &pinned, registry.fingerprint()),
             selection_json: serde_json::to_string(&selection)?,
             pinned: &pinned,
             target_root_id: None,
@@ -146,7 +146,7 @@ impl Management {
     ) -> Result<Option<Summary>, ManagementError> {
         let selection: Selection = serde_json::from_str(&snapshot.selection_json)?;
         let mut albums = self
-            .setup
+            .parts
             .db
             .read_blocking("management.restore_albums", |conn| {
                 selection::albums(conn, &selection)
@@ -164,7 +164,7 @@ impl Management {
         let mut ordinal = 0;
         for (bundle_ordinal, scope) in albums.iter().enumerate() {
             let tracks = self
-                .setup
+                .parts
                 .db
                 .read_blocking("management.restore_tracks", |conn| {
                     selection::tracks(conn, scope)
@@ -176,7 +176,7 @@ impl Management {
             let album_id = scope.album_id.clone();
             let override_of = |track_id: &str| self.override_revision(&album_id, track_id);
             let files = self
-                .setup
+                .parts
                 .publishing
                 .baseline_files(&track_ids, &override_of)
                 .map_err(|error| ManagementError::Store(format!("{error:?}")))?;
@@ -259,7 +259,7 @@ impl Management {
                 // file changed outside since the app wrote it: restore the
                 // album by itself for that.
                 let changed =
-                    self.setup
+                    self.parts
                         .db
                         .read_blocking("management.restore_changed", |conn| {
                             let mut changed = Vec::new();
@@ -288,8 +288,8 @@ impl Management {
                 // As a many-album preview does: where the folder is managed
                 // automatically, the album is left unmanaged too.
                 if !changed.is_empty() && self.managed_automatically(&scope.album_id)? {
-                    let now = self.setup.clock.now_secs();
-                    self.setup.db.write_blocking(
+                    let now = self.parts.clock.now_secs();
+                    self.parts.db.write_blocking(
                         Lane::Background,
                         "management.restore_mark_changed",
                         |tx| {
@@ -337,12 +337,12 @@ impl Management {
     /// What purging every saved original would remove. Blocking.
     pub fn purge_impact(&self) -> Result<PurgeImpact, ManagementError> {
         let (mut impact, kept) = self
-            .setup
+            .parts
             .db
             .read_blocking("management.purge_impact", |conn| {
                 Ok::<_, ManagementError>((purge_impact(conn)?, baseline_blob_sizes(conn)?))
             })?;
-        let dir = self.setup.core.blobs.dir();
+        let dir = self.parts.core.blobs.dir();
         impact.referenced_blob_bytes = kept
             .into_iter()
             .map(|(sha256, in_database)| {
@@ -374,11 +374,11 @@ impl Management {
         // Under the publish lock: no write is between saving an original
         // and referring to it while the purge runs.
         let publishing = self
-            .setup
+            .parts
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let outcome = self.setup.db.write_blocking(Lane::Foreground, "management.purge", |tx| {
+        let outcome = self.parts.db.write_blocking(Lane::Foreground, "management.purge", |tx| {
             let earlier = tx
                 .query_row(
                     "SELECT impact_token, purged_baseline_count, detached_reference_count \
@@ -441,7 +441,7 @@ impl Management {
                     actor,
                     impact.baseline_count,
                     detached,
-                    self.setup.clock.now_secs()
+                    self.parts.clock.now_secs()
                 ],
             )?;
             Ok(PurgeOutcome {
@@ -454,9 +454,9 @@ impl Management {
         // The sweep needs no publish lock: the undo folder's own lock keeps
         // it off a copy that is being kept.
         drop(publishing);
-        let blobs = &self.setup.core.blobs;
-        let cleaned = crate::publish::snapshots::sweep_unreferenced_blobs(&self.setup.db)
-            .and_then(|rows| Ok(rows + blobs.sweep(&self.setup.db)?))
+        let blobs = &self.parts.core.blobs;
+        let cleaned = crate::publish::snapshots::sweep_unreferenced_blobs(&self.parts.db)
+            .and_then(|rows| Ok(rows + blobs.sweep(&self.parts.db)?))
             .map_err(|error| ManagementError::Store(error.to_string()))?;
         tracing::info!(
             purged = outcome.purged_baseline_count,

@@ -84,7 +84,7 @@ pub const JOB_NAME: &str = "library-management";
 /// runs at once and requeues the jobs an earlier process left running;
 /// after that a queued job wakes it.
 pub fn start(management: Management, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
-    let mut wake = management.setup.wakeups.subscribe(MANAGEMENT_WAKEUP);
+    let mut wake = management.parts.wakeups.subscribe(MANAGEMENT_WAKEUP);
     wake.mark_changed();
     supervisor.on_wakeup(
         JOB_NAME,
@@ -163,8 +163,9 @@ async fn tick(management: &Management, worker: &str, shutdown: &CancellationToke
     .await
 }
 
-/// Start automatic management for the next album that waits for it, once
-/// the catalog has settled.
+/// Start automatic management for the next album that waits for it, while
+/// no scan runs, once the album has been quiet for the settle window and no
+/// identification of it is live.
 async fn automatic_tick(management: &Management, settle: &mut automatic::Settle) -> Step {
     let management = management.clone();
     let mut state = std::mem::take(settle);

@@ -385,11 +385,16 @@ fn overlap_warnings(normalized: &TypedLibrary) -> Vec<String> {
     warnings
 }
 
+/// The stored settings' policy revision, as [`resolve_stored`] gives it,
+/// without its availability warnings: it touches no file.
+pub fn stored_revision(stored: &TypedLibrary) -> String {
+    normalize(stored).map_or_else(|_| revision(stored), |normal| revision(&normal))
+}
+
 /// 409 unless `expected` is the stored settings' revision. Touches no
 /// file, so it may run inside a settings write.
 pub fn check_revision(stored: &TypedLibrary, expected: &str) -> Result<(), SettingsError> {
-    let current = normalize(stored).map_or_else(|_| revision(stored), |normal| revision(&normal));
-    if expected != current {
+    if expected != stored_revision(stored) {
         return Err(SettingsError::StaleRevision {
             message: "Library settings changed since this page loaded. Refresh and retry."
                 .to_owned(),

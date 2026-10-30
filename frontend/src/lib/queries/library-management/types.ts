@@ -173,7 +173,6 @@ export interface LibraryManagementPreviewDetailResponse {
 	profile_name: string;
 	profile_revision: string;
 	settings_revision: string;
-	policy_revision: string;
 	catalog_revision: number;
 	proposed_settings_revision: string | null;
 	target_root_id: string | null;

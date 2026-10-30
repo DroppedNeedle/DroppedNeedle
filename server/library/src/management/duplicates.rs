@@ -167,7 +167,7 @@ impl Management {
             origin: Origin::Manual,
             actor: Some(actor),
             idempotency_key: Some(&request.idempotency_key),
-            revisions: profile::revisions(&stored, &pinned, registry.policy_revision()),
+            revisions: profile::revisions(&stored, &pinned, registry.fingerprint()),
             selection_json: serde_json::to_string(&selection)?,
             pinned: &pinned,
             target_root_id: source.target_root_id.as_deref(),
@@ -198,7 +198,7 @@ impl Management {
             .requested_by_user_id
             .clone()
             .unwrap_or_default();
-        let mutations = crate::mutations::Mutations::new(&self.setup);
+        let mutations = &self.parts.mutations;
         let changed = || {
             ManagementError::Conflict(format!(
                 "{} {}",
@@ -236,7 +236,7 @@ impl Management {
         items: &[super::models::PlannedItem],
         plans: &mut [crate::publish::PlanItem],
     ) -> Result<(), Refused> {
-        let mutations = crate::mutations::Mutations::new(&self.setup);
+        let mutations = &self.parts.mutations;
         for item in items {
             let Some(first) = &item.desired.recycle_first else {
                 continue;
@@ -299,7 +299,7 @@ impl Management {
         ordinal: i64,
     ) -> Result<super::models::PlannedItem, ManagementError> {
         let page = self
-            .setup
+            .parts
             .db
             .read_blocking("management.source_item", |conn| {
                 Ok::<_, ManagementError>(store::items_page(
@@ -332,25 +332,25 @@ impl Management {
         let selection: Selection = serde_json::from_str(&snapshot.selection_json)?;
         let pinned = Self::pinned(snapshot)?;
         let scripts = CompiledScripts::new(&pinned);
-        let sandbox = self.setup.publishing.publish_sandbox().map_err(|error| {
+        let sandbox = self.parts.publishing.publish_sandbox().map_err(|error| {
             ManagementError::Conflict(format!("No library folder can be written: {error}"))
         })?;
-        let registry = self.setup.core.live_registry();
+        let registry = self.parts.core.live_registry();
         let ctx = PlanContext {
-            setup: &self.setup,
+            parts: &self.parts,
             pinned: &pinned,
             scripts: &scripts,
             sandbox: &sandbox,
             registry: &registry,
             target_root: snapshot.target_root_id.as_deref(),
-            manage_unconfirmed: planner::manage_unconfirmed(&self.setup),
+            manage_unconfirmed: planner::manage_unconfirmed(&self.parts),
             tag_edit: None,
             job_id: &snapshot.job.id,
             analysis_until: std::time::Instant::now() + planner::RUN_ANALYSIS_BUDGET,
             wide: false,
         };
         let albums = self
-            .setup
+            .parts
             .db
             .read_blocking("management.duplicate_albums", |conn| {
                 selection::albums(conn, &selection)
@@ -359,7 +359,7 @@ impl Management {
             return Ok(Some(Summary::default()));
         };
         let tracks = self
-            .setup
+            .parts
             .db
             .read_blocking("management.duplicate_tracks", |conn| {
                 selection::tracks(conn, scope)
@@ -393,7 +393,7 @@ impl Management {
             let source = self.snapshot(&intent.source_job_id)?;
             let blocked_one = self.source_item(&source, intent.source_plan_item_ordinal)?;
             let siblings =
-                self.setup
+                self.parts
                     .db
                     .read_blocking("management.duplicate_siblings", |conn| {
                         Ok::<_, ManagementError>(store::bundle_items(
@@ -481,7 +481,7 @@ impl Management {
                         .and_then(|path| crate::publish::paths::hash_regular_file(&path).ok())
                         .map(|hashed| hashed.sha256);
                     let tracked: Option<String> =
-                        self.setup
+                        self.parts
                             .db
                             .read_blocking("management.duplicate_tracked", |conn| {
                                 Ok::<_, ManagementError>(
@@ -506,7 +506,9 @@ impl Management {
                     // is two files, settled by hand.
                     let same_name =
                         item.dest_rel.as_deref() == Some(intent.existing_relative_path.as_str());
-                    let bin = crate::mutations::Mutations::new(&self.setup)
+                    let bin = self
+                        .parts
+                        .mutations
                         .bin_for(&intent.existing_root_id)
                         .map(|bin| bin.display().to_string())
                         .unwrap_or_else(|| "the recycle bin".to_owned());

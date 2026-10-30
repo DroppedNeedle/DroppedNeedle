@@ -50685,7 +50685,6 @@
           "profile_name",
           "profile_revision",
           "settings_revision",
-          "policy_revision",
           "catalog_revision",
           "selection",
           "summary",
@@ -50784,9 +50783,6 @@
           },
           "phase": {
             "$ref": "#/components/schemas/ManagementPhase"
-          },
-          "policy_revision": {
-            "type": "string"
           },
           "profile_id": {
             "type": "string"
@@ -51949,7 +51945,8 @@
           "album_id",
           "album_title",
           "cause",
-          "noticed_at"
+          "noticed_at",
+          "hand_back_given_up"
         ],
         "properties": {
           "album_id": {
@@ -51966,6 +51963,10 @@
           },
           "cause": {
             "$ref": "#/components/schemas/ManagementTakeoverCause"
+          },
+          "hand_back_given_up": {
+            "type": "boolean",
+            "description": "A hand-back since then was given up because the album's files\ncould not be read."
           },
           "noticed_at": {
             "type": "integer",
@@ -56767,7 +56768,7 @@
               "string",
               "null"
             ],
-            "description": "Why the plugin's last library write was refused, until one lands."
+            "description": "Why the plugin's last library write was refused. Cleared when a\nwrite lands, the plugin is switched off or removed, or the server\nrestarts."
           },
           "restarts": {
             "type": "integer",
