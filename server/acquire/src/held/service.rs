@@ -114,6 +114,7 @@ impl From<DropError> for HeldError {
             DropError::NotFound => Self::NotFound(GONE),
             DropError::Conflict(message) => Self::Refused(message),
             DropError::Unavailable(cause) => Self::Unavailable(cause),
+            DropError::Busy(operation) => Self::Busy(operation),
         }
     }
 }
@@ -615,7 +616,15 @@ impl HeldService {
                 return Err(error);
             }
         };
-        let ids: Vec<i64> = files.iter().map(|file| file.id).collect();
+        // The entry is claimed, so nothing else acts on it while its copies
+        // go. A copy that could not be removed keeps its row, still listed.
+        let mut ids: Vec<i64> = Vec::with_capacity(files.len());
+        for file in &files {
+            if self.remove(file).await {
+                ids.push(file.id);
+            }
+        }
+        let kept = files.len() - ids.len();
         let tasks: Vec<String> = files
             .iter()
             .filter_map(|file| file.source_task_id.clone())
@@ -642,13 +651,15 @@ impl HeldService {
                 return Err(error);
             }
         };
-        for file in &files {
-            self.remove(file).await;
-        }
         if let Some(item) = entry.drop_item_id {
             self.drops.tidy_item(item).await;
         }
         self.worker.wake();
+        if kept > 0 {
+            return Err(HeldError::Refused(
+                "A held file could not be deleted, so it is still listed. Check that the server can write to its folder, then try again.".to_owned(),
+            ));
+        }
         Ok(Acted {
             discarded,
             ..Acted::default()
@@ -716,8 +727,9 @@ impl HeldService {
         Ok(None)
     }
 
-    async fn remove(&self, file: &HeldFile) {
-        super::remove_copy(self.folders.dir(file.root), &file.path).await;
+    /// Remove a held file's copy; true once it is gone.
+    async fn remove(&self, file: &HeldFile) -> bool {
+        super::remove_copy(self.folders.dir(file.root), &file.path).await
     }
 
     /// Place held files as a person's choice: one batch per download they
@@ -852,16 +864,13 @@ impl HeldService {
                 Outcome::Imported { .. } => imported.push(file.id),
                 Outcome::Held { reason, detail, .. } => {
                     // A file the person chose to replace yours stays chosen
-                    // when the recycle bin refused your copy: once the bin
-                    // works, the same button tries again.
+                    // when your copy could not be taken away: once it can,
+                    // the same button tries again.
                     let (reason, detail) = match (file.reason, reason) {
                         (
                             chosen @ (Reason::NoBetterThanYours | Reason::VersionLowerQuality),
                             Reason::UpgradeBlocked,
-                        ) => (
-                            chosen,
-                            format!("Your copy could not go to the recycle bin: {detail}"),
-                        ),
+                        ) => (chosen, detail.clone()),
                         _ => (*reason, detail.clone()),
                     };
                     tracing::info!(
@@ -1074,6 +1083,9 @@ impl HeldService {
             let summary = match identify::assigned(library.as_ref(), &landing, group).await {
                 identify::Outcome::Matched(summary) => summary,
                 identify::Outcome::Review { reason, .. } => return Err(refused(reason)),
+                identify::Outcome::Busy => {
+                    return Err(HeldError::Busy("held match edition read".to_owned()));
+                }
                 identify::Outcome::Unavailable(detail) => {
                     tracing::warn!(entry_id = entry.id, %detail, "held match: MusicBrainz unavailable");
                     return Err(refused(Reason::MusicbrainzUnavailable));
@@ -1474,9 +1486,10 @@ impl HeldService {
     }
 
     /// Expire every entry past its expiry: each is claimed first (`held`
-    /// to `expired`, so one being acted on is skipped), and only once the
-    /// claim is written are its held copies removed. Nothing else is
-    /// deleted.
+    /// to `placing`, so one being acted on is skipped), then its held
+    /// copies are removed, and only the files whose copies are gone are
+    /// discarded. An entry with a copy that could not be removed stays
+    /// listed and the next prune tries again. Nothing else is deleted.
     async fn expire_due(&self) -> usize {
         let now = self.now();
         let due = match self
@@ -1492,9 +1505,11 @@ impl HeldService {
         let mut expired = 0;
         for entry_id in due {
             let claimed = self
-                .write("held.expire", move |rows, _| {
+                .write("held.expire_claim", move |rows, _| {
                     let item = rows.entry(entry_id)?.and_then(|entry| entry.drop_item_id);
-                    Ok(rows.expire(entry_id, now)?.map(|copies| (copies, item)))
+                    Ok(rows
+                        .claim_expired(entry_id, now)?
+                        .map(|copies| (copies, item)))
                 })
                 .await;
             let (copies, item) = match claimed {
@@ -1505,18 +1520,34 @@ impl HeldService {
                     continue;
                 }
             };
-            for (root, path) in &copies {
-                super::remove_copy(self.folders.dir(*root), path).await;
+            let mut gone = Vec::with_capacity(copies.len());
+            for (file_id, root, path) in &copies {
+                if super::remove_copy(self.folders.dir(*root), path).await {
+                    gone.push(*file_id);
+                }
             }
-            if let Some(item) = item {
-                self.drops.tidy_item(item).await;
+            let files = copies.len();
+            let finished = self
+                .write("held.expire", move |rows, _| {
+                    Ok(rows.expire(entry_id, &gone, now)?)
+                })
+                .await;
+            match finished {
+                Ok(true) => {
+                    if let Some(item) = item {
+                        self.drops.tidy_item(item).await;
+                    }
+                    tracing::info!(entry_id, files, "held entry expired after 90 days");
+                    expired += 1;
+                }
+                Ok(false) => {
+                    tracing::warn!(entry_id, "expired held entry kept: a copy was not removed");
+                }
+                Err(error) => {
+                    tracing::warn!(entry_id, %error, "expired held entry not finished; the prune finishes it");
+                    self.remember_cut_off(entry_id);
+                }
             }
-            tracing::info!(
-                entry_id,
-                files = copies.len(),
-                "held entry expired after 90 days"
-            );
-            expired += 1;
         }
         expired
     }

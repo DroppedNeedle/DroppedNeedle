@@ -380,6 +380,9 @@ pub struct HeldRows<'c> {
     conn: &'c Connection,
 }
 
+/// A held file a removed-album clean-up claimed: file id, entry id and path.
+pub type ClaimedFile = (i64, i64, String);
+
 impl<'c> HeldRows<'c> {
     pub fn new(conn: &'c Connection) -> Self {
         Self { conn }
@@ -724,21 +727,48 @@ impl<'c> HeldRows<'c> {
             .query_row(sql::COUNT_OPEN.text(), params![owner], |row| row.get(0))
     }
 
-    /// The download copies of an album held at or before `before`, in
-    /// entries waiting for a person (one being acted on is left alone):
-    /// `(file, entry, path below the held folder)`.
-    pub fn removed_album_files(
+    /// Claim the entries holding files of a removed album (release group
+    /// `release_group_mbid`, held at or before `before`) that still wait
+    /// for a person: `held` to `placing`, so no action runs on them while
+    /// their copies go. Answers each claimed entry and its held files
+    /// (`(file, entry, path)`). An entry a person is acting on is skipped.
+    pub fn claim_removed_album(
         &self,
         release_group_mbid: &str,
         before: i64,
-    ) -> rusqlite::Result<Vec<(i64, i64, String)>> {
+    ) -> rusqlite::Result<(Vec<i64>, Vec<ClaimedFile>)> {
         let mut statement = self.conn.prepare_cached(sql::REMOVED_ALBUM_FILES.text())?;
-        let rows = statement
+        let files: Vec<ClaimedFile> = statement
             .query_map(params![release_group_mbid, before], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?))
             })?
             .collect::<Result<_, _>>()?;
-        Ok(rows)
+        drop(statement);
+        let mut claimed: Vec<i64> = Vec::new();
+        for (_, entry, _) in &files {
+            if !claimed.contains(entry) && self.claim(*entry)? {
+                claimed.push(*entry);
+            }
+        }
+        let files = files
+            .into_iter()
+            .filter(|(_, entry, _)| claimed.contains(entry))
+            .collect();
+        Ok((claimed, files))
+    }
+
+    /// Decide one held file of an entry the caller claimed, leaving the
+    /// entry claimed for the caller to give back. Answers how many files moved.
+    pub fn resolve_claimed(
+        &self,
+        file_id: i64,
+        state: FileState,
+        now: i64,
+    ) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            sql::RESOLVE_FILE.text(),
+            params![file_id, state.code(), now],
+        )
     }
 
     /// Owner `user_id`'s files held as only the album version by their
@@ -768,28 +798,53 @@ impl<'c> HeldRows<'c> {
         Ok(rows)
     }
 
-    /// Claim an entry past its expiry for the prune: `held` to `expired`,
-    /// so one being acted on is skipped. Answers the copies to remove,
-    /// `None` when the claim was lost. A drop item it held settles too.
-    pub fn expire(
+    /// Claim an entry past its expiry for the prune (`held` to `placing`,
+    /// so one being acted on is skipped). Answers its held files' copies,
+    /// `None` when the claim was lost or it is not due.
+    pub fn claim_expired(
         &self,
         entry_id: i64,
         now: i64,
-    ) -> rusqlite::Result<Option<Vec<(HeldRoot, String)>>> {
+    ) -> rusqlite::Result<Option<Vec<(i64, HeldRoot, String)>>> {
+        let due = self
+            .entry(entry_id)?
+            .is_some_and(|entry| entry.state == EntryState::Held && entry.expires_at <= now);
+        if !due || !self.claim(entry_id)? {
+            return Ok(None);
+        }
+        let copies = self
+            .entry(entry_id)?
+            .map(|entry| {
+                entry
+                    .files
+                    .into_iter()
+                    .map(|file| (file.id, file.root, file.path))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Some(copies))
+    }
+
+    /// Finish the prune of claimed entry `entry_id`: the files in `gone`
+    /// (their copies removed) are discarded and the entry is given back.
+    /// With no held file left it expires and a drop item it held settles;
+    /// otherwise it waits, still listed, for the next prune. True when it
+    /// expired.
+    pub fn expire(&self, entry_id: i64, gone: &[i64], now: i64) -> rusqlite::Result<bool> {
+        for id in gone {
+            self.conn.execute(
+                sql::RESOLVE_FILE.text(),
+                params![id, FileState::Discarded.code(), now],
+            )?;
+        }
+        self.conn.execute(sql::RELEASE.text(), params![entry_id])?;
         if self
             .conn
             .execute(sql::EXPIRE_ENTRY.text(), params![entry_id, now])?
             == 0
         {
-            return Ok(None);
+            return Ok(false);
         }
-        let mut statement = self.conn.prepare_cached(sql::DISCARD_ALL_FILES.text())?;
-        let copies = statement
-            .query_map(params![entry_id, now], |row| {
-                Ok((HeldRoot::parse(&row.get::<_, String>(0)?), row.get(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        drop(statement);
         let item: Option<i64> = self
             .conn
             .query_row(sql::ENTRY_BY_ID.text(), params![entry_id], |row| row.get(6))
@@ -798,7 +853,7 @@ impl<'c> HeldRows<'c> {
         if let Some(item) = item {
             self.settle_item(item, "Removed after 90 days.", now)?;
         }
-        Ok(Some(copies))
+        Ok(true)
     }
 
     /// Entries waiting for a person whose automatic retry is due at `now`,

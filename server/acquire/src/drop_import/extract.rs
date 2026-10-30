@@ -205,14 +205,52 @@ fn walk_audio(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
 /// Extract only audio entries, refusing traversal, absolute paths and
 /// archives that unpack far larger than they claim. An entry holding more
 /// than its header declares fails to read, so the archive is refused as
-/// damaged; the cap on bytes written is our own bound on top. A file that
-/// fails part way is removed. An `Err` is a note for the person: the
-/// archive was not usable at all.
+/// damaged; the cap on bytes written is our own bound on top. An `Err` is
+/// a note for the person: the archive was not usable, and nothing from it
+/// stays.
 fn safe_extract(
     archive: &Path,
     target_dir: &Path,
     label: &str,
     notes: &mut Vec<String>,
+) -> Result<(), String> {
+    let fresh = !target_dir.exists();
+    let mut unpacked: Vec<PathBuf> = Vec::new();
+    let result = unpack(archive, target_dir, label, notes, &mut unpacked);
+    if result.is_err() {
+        discard(target_dir, fresh, &unpacked);
+    }
+    result
+}
+
+/// Remove what a failed archive unpacked: its whole folder when the
+/// unpacking made it, else only the files it wrote.
+fn discard(target_dir: &Path, fresh: bool, unpacked: &[PathBuf]) {
+    if fresh {
+        if let Err(error) = std::fs::remove_dir_all(target_dir)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(path = %target_dir.display(), %error, "failed archive's files not removed");
+        }
+        return;
+    }
+    for path in unpacked {
+        if let Err(error) = std::fs::remove_file(path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(path = %path.display(), %error, "failed archive's file not removed");
+        }
+    }
+}
+
+/// Unpack `archive` into `target_dir`, adding each file written to
+/// `unpacked`.
+fn unpack(
+    archive: &Path,
+    target_dir: &Path,
+    label: &str,
+    notes: &mut Vec<String>,
+    unpacked: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
     let corrupt = || format!("Couldn't read {label}: the archive is damaged.");
     let file = std::fs::File::open(archive).map_err(|_| corrupt())?;
@@ -269,22 +307,22 @@ fn safe_extract(
             std::fs::create_dir_all(parent).map_err(|_| corrupt())?;
         }
         let mut out = std::fs::File::create(&dest).map_err(|_| corrupt())?;
+        unpacked.push(dest);
         let copied = copy_entry(&mut entry, &mut out, cap, &mut written);
         drop(out);
-        if copied != Copied::Done
-            && let Err(error) = std::fs::remove_file(&dest)
-        {
-            tracing::warn!(path = %dest.display(), %error, "partly unpacked entry not removed");
-        }
+        let name = raw.to_string_lossy();
         match copied {
             Copied::Done => {}
             Copied::OverCap => {
-                notes.push(format!(
-                    "Stopped unpacking {label}: it unpacks far larger than it claims."
+                return Err(format!(
+                    "Skipped {label}: {name} unpacks far larger than it claims, so nothing from it was imported."
                 ));
-                return Ok(());
             }
-            Copied::Failed => return Err(corrupt()),
+            Copied::Failed => {
+                return Err(format!(
+                    "Couldn't read {label}: {name} is damaged, so nothing from it was imported."
+                ));
+            }
         }
     }
     if skipped > 0 {

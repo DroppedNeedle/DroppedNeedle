@@ -51,9 +51,6 @@ vi.mock('$lib/queries/requests/RequestQueries.svelte', () => ({
 		refetch: vi.fn()
 	})
 }));
-vi.mock('$lib/queries/downloads/DownloadQueries.svelte', () => ({
-	getRequestDownloadsQuery: () => ({ data: undefined })
-}));
 vi.mock('$lib/queries/requests/RequestMutations.svelte', () => ({
 	createCancelRequestMutation: () => mutations.cancel,
 	createBatchCancelRequestsMutation: () => mutations.batchCancel

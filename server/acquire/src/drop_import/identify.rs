@@ -51,6 +51,9 @@ pub enum Outcome {
     },
     /// MusicBrainz could not answer; worth another try later.
     Unavailable(String),
+    /// The database was busy reading the album's chosen edition: nothing
+    /// was decided, and the same work runs again shortly.
+    Busy,
 }
 
 fn review(reason: Reason) -> Outcome {
@@ -61,8 +64,12 @@ fn review(reason: Reason) -> Outcome {
 }
 
 /// The album's chosen edition did not read: never taken as none, so the
-/// files wait and are tried again.
+/// files wait and are tried again. A busy database is said apart, so the
+/// caller runs the work again instead of parking it.
 fn edition_unreadable(error: &DbError) -> Outcome {
+    if matches!(error, DbError::Busy { .. } | DbError::LaneClosed) {
+        return Outcome::Busy;
+    }
     Outcome::Unavailable(format!(
         "the album's chosen edition cannot be read: {error}"
     ))

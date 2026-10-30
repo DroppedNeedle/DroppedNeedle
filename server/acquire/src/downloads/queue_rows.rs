@@ -9,8 +9,6 @@
 //! "Scoped" means an admin sees every user's tasks, anyone
 //! else only their own.
 
-use std::collections::HashMap;
-
 use droppedneedle_kernel::db::statement::ListLen;
 use rusqlite::{OptionalExtension as _, Row, params};
 
@@ -18,7 +16,7 @@ use super::sql;
 use super::state::TaskStatus;
 use super::store::{DownloadStore, NewTask, StoreError, TaskRow};
 use crate::db::{ms_from_secs_f64 as ms, secs_f64_from_ms};
-use crate::held::store::{EntryState, FileState, HeldRows};
+use crate::held::store::{FileState, HeldRows};
 use crate::reason::Reason;
 use crate::requests::settle::relink;
 
@@ -79,21 +77,21 @@ pub struct AlbumPurge {
 
 impl DownloadStore<'_> {
     /// Download-side cleanup after an album left the library at
-    /// `removed_at` (unix seconds): its failed
-    /// or short tasks stop retrying, the held files `held` names
-    /// (`(file, entry)`) are discarded while their entry still waits for a
-    /// person, and its blocklist entries go. Only rows made at or before
-    /// the removal are touched, so a request made since keeps its own.
-    /// Live tasks are left alone; they are cancelled per task so their
-    /// transfers are torn down. The caller reads `held`
-    /// ([`HeldRows::removed_album_files`]) and deletes those copies first,
-    /// so a file held after that read keeps its row, and an entry a person
-    /// took up since keeps its rows for that action to settle.
+    /// `removed_at` (unix seconds): its failed or short tasks stop
+    /// retrying, the held files `gone` names (their copies already
+    /// removed) are discarded, the entries in `claimed` are given
+    /// back, and its blocklist entries go. Only rows made at or before the
+    /// removal are touched, so a request made since keeps its own. Live
+    /// tasks are left alone; they are cancelled per task so their
+    /// transfers are torn down. The caller claims the entries first
+    /// ([`HeldRows::claim_removed_album`]) and only then deletes their
+    /// copies, so an entry a person took up is never touched.
     pub fn purge_album(
         &self,
         release_group_mbid: &str,
         removed_at: f64,
-        held: &[(i64, i64)],
+        gone: &[i64],
+        claimed: &[i64],
         now: f64,
     ) -> Result<AlbumPurge, StoreError> {
         let cancelled: Vec<String> = self
@@ -112,21 +110,11 @@ impl DownloadStore<'_> {
         let rows = HeldRows::new(self.conn);
         let now_ms = ms(now);
         let mut held_removed = 0;
-        let mut waiting: HashMap<i64, bool> = HashMap::new();
-        for &(file, entry) in held {
-            let still_waiting = match waiting.get(&entry) {
-                Some(&known) => known,
-                None => {
-                    let known = rows
-                        .entry(entry)?
-                        .is_some_and(|row| row.state == EntryState::Held);
-                    waiting.insert(entry, known);
-                    known
-                }
-            };
-            if still_waiting {
-                held_removed += rows.resolve(entry, &[file], FileState::Discarded, now_ms)?;
-            }
+        for &file in gone {
+            held_removed += rows.resolve_claimed(file, FileState::Discarded, now_ms)?;
+        }
+        for &entry in claimed {
+            rows.release(entry, now_ms)?;
         }
         self.conn.execute(
             sql::PURGE_ALBUM_QUARANTINE.text(),
@@ -136,6 +124,11 @@ impl DownloadStore<'_> {
             retries_cancelled,
             held_removed,
         })
+    }
+
+    /// Whether a file of task `task_id` waits in the held list.
+    pub fn task_held(&self, task_id: &str) -> Result<bool, StoreError> {
+        Ok(HeldRows::new(self.conn).task_holds(task_id)?)
     }
 
     /// Store one poll's progress on a live task and stamp the poll.

@@ -57,22 +57,27 @@ impl HeldFolders {
     }
 }
 
-/// Remove one held copy below `dir`. A copy already gone is fine; any
-/// other failure is logged and leaves a stray file, which the held
-/// folder's sweep removes at the next start.
-pub(crate) async fn remove_copy(dir: &Path, path: &str) {
+/// Remove one held copy below `dir`. True once the copy is gone: removed
+/// now, already absent, or named by a path that cannot be ours. A copy
+/// that could not be removed (no permission, a read error) answers false
+/// and is logged, and the caller keeps its row so the held list still
+/// shows it.
+pub(crate) async fn remove_copy(dir: &Path, path: &str) -> bool {
     let folders = HeldFolders {
         held: dir.to_path_buf(),
         drop: dir.to_path_buf(),
     };
     let Some(path) = folders.locate(HeldRoot::Held, path) else {
         tracing::warn!(path, "held copy path refused");
-        return;
+        return true;
     };
-    if let Err(error) = tokio::fs::remove_file(&path).await
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        tracing::warn!(path = %path.display(), %error, "held copy not removed");
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "held copy not removed");
+            false
+        }
     }
 }
 

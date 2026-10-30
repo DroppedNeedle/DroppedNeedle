@@ -50,15 +50,6 @@ export const getDownloadsQueryOptions = () =>
 
 export const getDownloadsQuery = () => createQuery(() => getDownloadsQueryOptions());
 
-// The requests page reads the same list for its rows' live download state.
-export const getRequestDownloadsQuery = (getEnabled: Getter<boolean>) =>
-	createQuery(() => ({
-		...getDownloadsQueryOptions(),
-		enabled: getEnabled() && !!authStore.user?.id,
-		refetchInterval: SAFETY_POLL_MS,
-		refetchIntervalInBackground: false
-	}));
-
 // album-scoped: just this release group's tasks (album + per-track). Cheap (indexed
 // on release_group_mbid); the safety poll runs only while a task is in flight. Used by
 // the album page for live progress.

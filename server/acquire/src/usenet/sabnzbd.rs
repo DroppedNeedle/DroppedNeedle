@@ -604,7 +604,7 @@ impl SabnzbdClient {
             .await
             .map_err(|err| ClientError::transport(Service::Sabnzbd, transport_error(err)))?;
         let data = self.parse_json(response).await?;
-        serde_json::from_value(data).map_err(|err| non_json(err.to_string()))
+        serde_json::from_value(data).map_err(|err| non_json(decode_failure(&err)))
     }
 
     /// Idempotent GETs only: transient transport errors + 5xx retry with
@@ -668,13 +668,29 @@ impl SabnzbdClient {
 
     async fn parse_add(&self, response: reqwest::Response) -> Result<AddResponse, SabnzbdError> {
         let data = self.parse_json(response).await?;
-        serde_json::from_value(data).map_err(|err| non_json(err.to_string()))
+        serde_json::from_value(data).map_err(|err| non_json(decode_failure(&err)))
     }
 }
 
 /// A SABnzbd answer that is not the documented JSON.
 fn non_json(detail: String) -> SabnzbdError {
     ClientError::decode(Service::Sabnzbd, detail).into()
+}
+
+/// Where and how an answer failed to decode: the decoder's kind, line and
+/// column. Never its text or the body, which can quote values from the
+/// answer.
+fn decode_failure(error: &serde_json::Error) -> String {
+    let kind = match error.classify() {
+        serde_json::error::Category::Io => "read error",
+        serde_json::error::Category::Syntax => "not JSON",
+        serde_json::error::Category::Data => "unexpected shape",
+        serde_json::error::Category::Eof => "cut short",
+    };
+    if error.line() == 0 {
+        return kind.to_owned();
+    }
+    format!("{kind} at line {}, column {}", error.line(), error.column())
 }
 
 /// A SABnzbd API-level error: a refused key, or SABnzbd's own message.
@@ -736,7 +752,7 @@ fn parse_body(text: &str) -> Result<serde_json::Value, SabnzbdError> {
         return Err(api_error(message));
     }
     let data: serde_json::Value =
-        serde_json::from_str(text).map_err(|_| non_json(trimmed.chars().take(120).collect()))?;
+        serde_json::from_str(text).map_err(|err| non_json(decode_failure(&err)))?;
     if let Some(error_text) = data.get("error").and_then(serde_json::Value::as_str)
         && is_false(data.get("status"))
     {

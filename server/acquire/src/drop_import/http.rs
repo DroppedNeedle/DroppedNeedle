@@ -135,6 +135,7 @@ impl From<DropError> for ApiError {
             DropError::NotFound => RequestsError::NotFound,
             DropError::Conflict(message) => RequestsError::Conflict { message },
             DropError::Unavailable(cause) => RequestsError::internal(&cause),
+            DropError::Busy(operation) => RequestsError::Busy { operation },
         })
     }
 }
@@ -145,7 +146,14 @@ fn invalid(message: impl Into<String>) -> ApiError {
     })
 }
 
-fn too_large() -> ApiError {
+/// An upload refused as over the limit, logged with the size the sender
+/// declared (none when the body ran past the limit as it streamed).
+fn too_large(declared: Option<u64>) -> ApiError {
+    tracing::warn!(
+        bytes = declared,
+        limit = MAX_UPLOAD_BYTES,
+        "drop upload refused: over the size limit"
+    );
     ApiError::new(
         StatusCode::PAYLOAD_TOO_LARGE,
         PAYLOAD_TOO_LARGE,
@@ -157,7 +165,7 @@ fn too_large() -> ApiError {
 /// form part way is a cut-off or malformed upload.
 fn unreadable(error: MultipartError) -> ApiError {
     if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
-        too_large()
+        too_large(None)
     } else {
         invalid("The upload was cut off or malformed.")
     }
@@ -194,7 +202,7 @@ pub async fn upload_handler(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok());
     if declared.is_some_and(|length| length > MAX_UPLOAD_BYTES as u64) {
-        return Err(too_large());
+        return Err(too_large(declared));
     }
     let multipart = multipart.map_err(|_| invalid("Send the files as a multipart form."))?;
     tracing::info!(bytes = declared, "drop upload started");

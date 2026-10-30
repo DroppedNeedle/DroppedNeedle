@@ -7,12 +7,14 @@
 //!
 //! Safe to run again: only rows made at or before the removal are
 //! touched, so a request made since keeps its task, held files and watch.
-//! Held copies are deleted before the one write that discards their rows
-//! and finishes the job, so a run that stops in between finds them again.
-//! That write discards only the rows whose copies were deleted, and only
-//! in entries still waiting for a person: a file held in between keeps its
-//! row with its copy, and an entry a person took up since is left to that
-//! action.
+//! The entries holding the album's copies are claimed first, as a
+//! person's action claims one, so an entry a person is acting on is left
+//! to that action and nobody takes one up while its copies go. Only then
+//! are the copies deleted, and the one write that finishes the job
+//! discards the rows whose copies are gone and gives the entries back: a
+//! copy that could not be deleted keeps its row, still listed. A run that
+//! stops after the claim leaves the entries claimed until the next start
+//! gives them back.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -121,28 +123,36 @@ async fn clean_up(
     job: JobCtx,
     removed: &AlbumRemovedJob,
 ) -> Result<(), CleanupError> {
+    let clock_back = clock.clone();
     let group = removed.release_group_mbid.clone();
     let before = crate::db::ms_from_secs_f64(removed.removed_at);
-    let held = db
-        .read("downloads.removed_album_held", move |conn| {
-            Ok::<_, CleanupError>(HeldRows::new(conn).removed_album_files(&group, before)?)
-        })
+    let (claimed, held) = db
+        .write(
+            Lane::Background,
+            "downloads.removed_album_claim",
+            move |tx| Ok::<_, CleanupError>(HeldRows::new(tx).claim_removed_album(&group, before)?),
+        )
         .await?;
-    for (_, _, path) in &held {
-        super::held::remove_copy(held_dir, path).await;
+    let mut gone: Vec<i64> = Vec::with_capacity(held.len());
+    for (file, _, path) in &held {
+        if super::held::remove_copy(held_dir, path).await {
+            gone.push(*file);
+        }
     }
-    let held: Vec<(i64, i64)> = held
-        .into_iter()
-        .map(|(file, entry, _)| (file, entry))
-        .collect();
     let job_removed = removed.clone();
+    let given_back = claimed.clone();
     let cleaned = db
         .write(Lane::Background, "downloads.removed_album", move |tx| {
             let removed = job_removed;
             let group = removed.release_group_mbid.as_str();
             let now = crate::db::unix_secs_f64(clock.as_ref());
-            let purge =
-                DownloadStore::new(tx).purge_album(group, removed.removed_at, &held, now)?;
+            let purge = DownloadStore::new(tx).purge_album(
+                group,
+                removed.removed_at,
+                &gone,
+                &claimed,
+                now,
+            )?;
             let wanted_changed = if removed.stop_wanted {
                 stop_after_removal(tx, group, removed.removed_at)?
             } else {
@@ -155,7 +165,32 @@ async fn clean_up(
                 wanted_changed,
             })
         })
-        .await?;
+        .await;
+    let cleaned = match cleaned {
+        Ok(cleaned) => cleaned,
+        Err(error) => {
+            // The next run claims them again; a copy already deleted then
+            // reads as gone.
+            let now = clock_back.now_ms();
+            let released = db
+                .write(
+                    Lane::Background,
+                    "downloads.removed_album_release",
+                    move |tx| {
+                        let rows = HeldRows::new(tx);
+                        for entry in &given_back {
+                            rows.release(*entry, now)?;
+                        }
+                        Ok::<_, CleanupError>(())
+                    },
+                )
+                .await;
+            if let Err(released) = released {
+                tracing::warn!(%released, "held entries of a removed album stay claimed until the next start");
+            }
+            return Err(error);
+        }
+    };
     tracing::info!(
         release_group_mbid = removed.release_group_mbid,
         retries_cancelled = cleaned.retries_cancelled,

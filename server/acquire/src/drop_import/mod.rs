@@ -60,6 +60,8 @@ const MAX_FILES_PER_UNIT: usize = 60;
 const LIST_LIMIT: i64 = 50;
 /// Where uploads stream before a job exists.
 const INCOMING_DIR: &str = "_incoming";
+/// The longest wait before identification asks a busy database again.
+const BUSY_WAIT_MAX: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Who is asking.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,11 +81,17 @@ pub enum DropError {
     Conflict(String),
     /// Storage or the library failed; the cause is logged, not shown.
     Unavailable(String),
+    /// The database was busy during the operation; nothing changed and
+    /// the call can run again.
+    Busy(String),
 }
 
 impl From<StoreError> for DropError {
     fn from(error: StoreError) -> Self {
-        Self::Unavailable(error.to_string())
+        match error {
+            StoreError::Busy { operation } => Self::Busy(operation),
+            StoreError::Failed(_) => Self::Unavailable(error.to_string()),
+        }
     }
 }
 
@@ -344,6 +352,12 @@ impl DropImports {
         let landing = self.probe(library.as_ref(), paths).await;
         let summary = match identify::assigned(library.as_ref(), &landing, group).await {
             Outcome::Matched(summary) => summary,
+            Outcome::Busy => {
+                let mut back = item.clone();
+                back.status = item_status::NEEDS_REVIEW.to_owned();
+                self.store.save_item(&back, item_status::PROCESSING).await?;
+                return Err(DropError::Busy("drop match edition read".to_owned()));
+            }
             other => {
                 let reason = match other {
                     Outcome::Unavailable(detail) => {
@@ -351,7 +365,7 @@ impl DropImports {
                         Reason::MusicbrainzUnavailable
                     }
                     Outcome::Review { reason, .. } => reason,
-                    Outcome::Matched(_) => Reason::ImportFailed,
+                    Outcome::Matched(_) | Outcome::Busy => Reason::ImportFailed,
                 };
                 let mut back = item.clone();
                 back.status = item_status::NEEDS_REVIEW.to_owned();
@@ -628,7 +642,10 @@ impl DropImports {
                 .await;
             return Ok(());
         }
-        match identify::identify(library.as_ref(), &landing, folder).await {
+        match self
+            .identify_when_free(library.as_ref(), &landing, folder)
+            .await
+        {
             Outcome::Matched(summary) => {
                 let organised = self
                     .organise(job, item, library.as_ref(), &landing, &summary, false)
@@ -644,8 +661,32 @@ impl DropImports {
                 self.wait_whole(job, item, Reason::MusicbrainzUnavailable, None)
                     .await;
             }
+            // `identify_when_free` asks again until the database answers.
+            Outcome::Busy => {}
         }
         Ok(())
+    }
+
+    /// Identify a folder, asking again while the database is busy: a busy
+    /// read decides nothing, so it never parks the files for a person or
+    /// fails the item. The waits grow to [`BUSY_WAIT_MAX`].
+    async fn identify_when_free(
+        &self,
+        library: &dyn LandingLibrary,
+        landing: &Landing,
+        folder: &str,
+    ) -> Outcome {
+        let mut wait = std::time::Duration::from_secs(1);
+        loop {
+            match identify::identify(library, landing, folder).await {
+                Outcome::Busy => {
+                    tracing::info!(folder, "drop import waits for a busy database");
+                    tokio::time::sleep(wait).await;
+                    wait = (wait * 2).min(BUSY_WAIT_MAX);
+                }
+                other => return other,
+            }
+        }
     }
 
     /// Every staged file of an item waits in the held list for `reason`.
@@ -1339,11 +1380,16 @@ fn describe(done: &Counts, unreadable: usize, complete: bool) -> String {
     }
     if done.blocked > 0 {
         parts.push(format!(
-            "{} kept because your copy couldn't go to the recycle bin",
+            "{} kept because your copy couldn't be taken away",
             plural(done.blocked, "better file", "better files")
         ));
     }
-    let waiting = done.waiting;
+    // Skipped and kept files wait in the held list too; each is counted
+    // once, under why.
+    let waiting = done
+        .waiting
+        .saturating_sub(done.occupied)
+        .saturating_sub(done.blocked);
     if waiting > 0 {
         parts.push(format!(
             "{} left for review",

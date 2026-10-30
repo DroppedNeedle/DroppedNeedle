@@ -7,8 +7,8 @@ use crate::requests::error::RequestsError;
 use crate::requests::ledger::{RequestRecord, RequestStatus, validate_mbid};
 use crate::requests::models::{
     ActiveCountResponse, ActiveRequestsResponse, HistoryQuery, HistoryResponse,
-    REIMPORTABLE_FILTER, RequestItem, RequestKind, WaitingReason, WantedActionResponse, WantedItem,
-    WantedResponse, WantedRetryingItem,
+    REIMPORTABLE_FILTER, RequestItem, RequestKind, RequestTaskState, WaitingReason,
+    WantedActionResponse, WantedItem, WantedResponse, WantedRetryingItem,
 };
 use crate::requests::sqlite::WatchChange;
 use droppedneedle_auth::{Admin, Principal};
@@ -49,6 +49,7 @@ impl From<&RequestRecord> for RequestItem {
             size_remaining: None,
             status_messages: None,
             waiting_reason: None,
+            task_state: None,
             error_message: None,
             quality: None,
             protocol: None,
@@ -360,6 +361,7 @@ impl RequestsService {
         };
         match self.dispatch.task(task_id).await {
             Ok(Some(snapshot)) => {
+                item.task_state = RequestTaskState::of(&snapshot);
                 item.progress = Some(snapshot.progress_percent as f64);
                 item.size = snapshot.total_size_bytes.map(|total| total as f64);
                 item.size_remaining = snapshot

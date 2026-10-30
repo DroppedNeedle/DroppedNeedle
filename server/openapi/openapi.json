@@ -60165,6 +60165,17 @@
             ],
             "description": "Linked download task."
           },
+          "task_state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RequestTaskState",
+                "description": "The linked download's own state while it is in flight or held for\nreview, whoever started it: a request joined to another person's\ndownload reads it here. None when no download is live."
+              }
+            ]
+          },
           "track_release_group_mbid": {
             "type": [
               "string",
@@ -60248,6 +60259,17 @@
             "description": "Group heading, when grouped."
           }
         }
+      },
+      "RequestTaskState": {
+        "type": "string",
+        "description": "A live download's state as a request card shows it.",
+        "enum": [
+          "searching",
+          "awaiting_review",
+          "queued",
+          "downloading",
+          "importing"
+        ]
       },
       "RequestedControl": {
         "type": "string",

@@ -13,7 +13,6 @@
 	import { CircleCheck, TriangleAlert } from 'lucide-svelte';
 	import RequestCard from '$lib/components/RequestCard.svelte';
 	import type { RequestKind } from '$lib/queries/requests/types';
-	import { getRequestDownloadsQuery } from '$lib/queries/downloads/DownloadQueries.svelte';
 	import { getActiveRequestsQuery } from '$lib/queries/requests/RequestQueries.svelte';
 	import {
 		createBatchCancelRequestsMutation,
@@ -22,7 +21,8 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';
-	import { itemKind, itemRequestKey, liveRequestStatus, requestKey } from './requestItems';
+	import { liveRequestStatus } from '$lib/queries/requests/liveStatus';
+	import { itemKind, itemRequestKey, requestKey } from './requestItems';
 
 	interface Props {
 		active: boolean;
@@ -36,9 +36,7 @@
 	const activeLoading = $derived(activeListQuery.isPending);
 	const activeError = $derived(activeListQuery.isError ? "Couldn't load active requests" : null);
 
-	const tasksQuery = getRequestDownloadsQuery(() => active && activeItems.some((i) => i.task_id));
-	const tasksById = $derived(new Map((tasksQuery.data?.items ?? []).map((t) => [t.id, t])));
-	const liveStatusOf = (item: (typeof activeItems)[number]) => liveRequestStatus(item, tasksById);
+	const liveStatusOf = (item: (typeof activeItems)[number]) => liveRequestStatus(item);
 
 	$effect(() => {
 		onsummary?.({
@@ -162,7 +160,6 @@
 						<RequestCard
 							{item}
 							mode="active"
-							liveStatus={liveStatusOf(item)}
 							selectable
 							selected={selectedKeys.has(itemRequestKey(item))}
 							onselect={handleSelect}

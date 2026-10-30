@@ -207,6 +207,13 @@ pub struct TaskView {
     pub quality: Option<String>,
     /// Fetch source (`soulseek`, `usenet`, `plugin:<key>`).
     pub protocol: String,
+    /// The search job behind the task, once one ran.
+    pub search_job_id: Option<String>,
+    /// The candidate picked from that search, once one was.
+    pub candidate_index: Option<i64>,
+    /// A file of the task waits in the held list. Read only by
+    /// [`DownloadDispatch::task`]; false elsewhere.
+    pub held_for_review: bool,
 }
 
 impl From<TaskRow> for TaskView {
@@ -220,6 +227,9 @@ impl From<TaskRow> for TaskView {
             error_message: row.error_message,
             quality: row.quality_format,
             protocol: row.source,
+            search_job_id: row.search_job_id,
+            candidate_index: row.candidate_index,
+            held_for_review: false,
         }
     }
 }
@@ -410,9 +420,24 @@ impl DownloadDispatch {
             .map_err(DispatchError::from)
     }
 
-    /// One task, or `None` for an unknown id. Read on the read pool.
+    /// One task with whether a file of it waits in the held list, or
+    /// `None` for an unknown id. Read on the read pool.
     pub async fn task(&self, task_id: &str) -> Result<Option<TaskView>, DispatchError> {
-        Ok(self.journal.read_task(task_id).await?.map(TaskView::from))
+        let task_id = task_id.to_owned();
+        let read = self
+            .journal
+            .read("downloads.task_view", move |store| {
+                let Some(row) = store.get_task(&task_id)? else {
+                    return Ok(None);
+                };
+                let held = store.task_held(&task_id)?;
+                Ok(Some((row, held)))
+            })
+            .await?;
+        Ok(read.map(|(row, held)| TaskView {
+            held_for_review: held,
+            ..TaskView::from(row)
+        }))
     }
 
     /// The newest live task for an album, across users.

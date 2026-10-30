@@ -112,13 +112,11 @@ droppedneedle_kernel::sql! {
     /// Entries past their expiry at `?1`, oldest first, at most `?2`.
     pub(super) DUE_ENTRIES = "SELECT id FROM acquire_held_entries \
              WHERE state = 'held' AND expires_at <= ?1 ORDER BY expires_at, id LIMIT ?2";
-    /// Claim entry `?1` past its expiry at `?2` for the prune.
+    /// Entry `?1` past its expiry at `?2`, with no file left held, expires.
     pub(super) EXPIRE_ENTRY = "UPDATE acquire_held_entries SET state = 'expired', \
-             resolved_at = ?2 WHERE id = ?1 AND state = 'held' AND expires_at <= ?2";
-    /// Every held file of entry `?1`, discarded at `?2`; answers where
-    /// each copy is.
-    pub(super) DISCARD_ALL_FILES = "UPDATE acquire_held_files SET state = 'discarded', \
-             resolved_at = ?2 WHERE entry_id = ?1 AND state = 'held' RETURNING root, path";
+             resolved_at = ?2 WHERE id = ?1 AND state = 'held' AND expires_at <= ?2 \
+             AND NOT EXISTS (SELECT 1 FROM acquire_held_files \
+                 WHERE entry_id = ?1 AND state = 'held')";
     /// The reasons our side holds a file for, which it retries by itself
     /// (`Reason::kind` is `Library`).
     pub fragment LIBRARY_REASONS = "('target_occupied', 'upgrade_blocked', 'library_changed', \

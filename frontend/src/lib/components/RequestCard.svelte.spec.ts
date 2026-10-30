@@ -74,3 +74,25 @@ describe('a request card for a single found only on its album', () => {
 			.not.toBeInTheDocument();
 	});
 });
+
+describe('an active request card', () => {
+	it("shows the linked download's own state, not the request row's", async () => {
+		fakeApi({});
+		await renderWithQuery(RequestCard, {
+			item: {
+				...held,
+				status: 'downloading',
+				completed_at: undefined,
+				album_version_only: undefined,
+				user_id: 'user-2',
+				requester_count: 1,
+				task_id: 'task-1',
+				task_state: 'searching'
+			},
+			mode: 'active'
+		});
+
+		await expect.element(page.getByText('Searching')).toBeVisible();
+		await expect.element(page.getByText('Downloading')).not.toBeInTheDocument();
+	});
+});

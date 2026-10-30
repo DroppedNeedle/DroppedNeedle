@@ -953,38 +953,64 @@ async fn upload_and_settle(
     }
 }
 
-/// An entry whose header understates its size is refused whole: no part
-/// of it stays in staging and nothing from it reaches the library.
+/// An archive whose third entry is damaged (its header understates its
+/// size) is refused whole: the two good entries unpacked before it are
+/// discarded with it, nothing stays in staging, nothing reaches the
+/// library, and the job fails naming the bad entry.
 #[tokio::test]
-async fn an_entry_longer_than_its_header_leaves_nothing_behind() {
-    let (_db, library, _dir, auth) = bundles().await;
+async fn a_damaged_entry_discards_the_whole_archive() {
+    let (_db, library, dir, auth) = bundles().await;
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).expect("work dir");
     let acquire = acquire_over(
         &auth,
         &library,
         Arc::new(LibraryLanding::new(
             &library,
-            every_priority(Arc::new(OneRelease(release(&["Big"], &[None])))),
+            every_priority(Arc::new(OneRelease(release(
+                &["Mysterons", "Sour Times", "Big"],
+                &[None, None, None],
+            )))),
         )),
     );
     let curator = Viewer {
         user_id: "u-curator".to_owned(),
         admin: false,
     };
+    let good = [
+        tagged(&work, "flac_full_01.flac", "Dummy", "Mysterons", 1),
+        tagged(&work, "flac_full_01.flac", "Dummy", "Sour Times", 2),
+    ];
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let stored =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, bytes) in [
+        ("Dummy/01 - Mysterons.flac", &good[0]),
+        ("Dummy/02 - Sour Times.flac", &good[1]),
+    ] {
+        writer.start_file(name, stored).expect("zip entry");
+        writer.write_all(bytes).expect("zip bytes");
+    }
     writer
-        .start_file("Album/01 - Big.flac", stored)
+        .start_file("Dummy/03 - Big.flac", stored)
         .expect("zip entry");
     writer.write_all(&vec![7u8; 3 << 20]).expect("zip bytes");
     let mut bytes = writer.finish().expect("zip finish").into_inner();
-    // Claim 1 KiB unpacked in the local header (offset 22) and the central
-    // directory entry (offset 24); the stored data stays 3 MiB.
-    let central = bytes
-        .windows(4)
-        .position(|window| window == [0x50, 0x4b, 0x01, 0x02])
-        .expect("central directory");
-    for at in [22, central + 24] {
+    // Claim 1 KiB unpacked in the third entry's local header (offset 22)
+    // and its central directory entry (offset 24); the stored data stays
+    // 3 MiB.
+    let nth_header = |signature: [u8; 4]| {
+        bytes
+            .windows(4)
+            .enumerate()
+            .filter(|(_, window)| *window == signature)
+            .map(|(at, _)| at)
+            .nth(2)
+            .expect("third entry header")
+    };
+    let local = nth_header([0x50, 0x4b, 0x03, 0x04]);
+    let central = nth_header([0x50, 0x4b, 0x01, 0x02]);
+    for at in [local + 22, central + 24] {
         bytes[at..at + 4].copy_from_slice(&1024u32.to_le_bytes());
     }
     let incoming = acquire.drops.incoming_dir();
@@ -993,7 +1019,19 @@ async fn an_entry_longer_than_its_header_leaves_nothing_behind() {
     std::fs::write(&upload, &bytes).expect("upload");
 
     let job = upload_and_settle(&acquire, &curator, upload).await;
-    assert_eq!(job.status, "failed", "{:?}", job.error);
+    let indexed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_tracks")
+        .fetch_one(acquire.db.db().sqlx())
+        .await
+        .expect("catalog");
+    assert_eq!(indexed, 0, "files of the damaged archive were imported");
+    assert_eq!(job.status, "failed", "{:?}", job.items);
+    assert!(
+        job.error
+            .as_deref()
+            .is_some_and(|error| error.contains("Dummy/03 - Big.flac")),
+        "{:?}",
+        job.error
+    );
     assert!(job.items.is_empty(), "{:?}", job.items);
     let mut left = Vec::new();
     let mut pending = vec![PathBuf::from(&job.staging_dir)];
@@ -1011,11 +1049,6 @@ async fn an_entry_longer_than_its_header_leaves_nothing_behind() {
         }
     }
     assert!(left.is_empty(), "staging still holds {left:?}");
-    let indexed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_tracks")
-        .fetch_one(acquire.db.db().sqlx())
-        .await
-        .expect("catalog");
-    assert_eq!(indexed, 0);
 }
 
 /// An upload a restart cut off before it became items keeps its files when

@@ -4,6 +4,7 @@
 	import AlbumImage from './AlbumImage.svelte';
 	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
 	import type { RequestItem, RequestKind } from '$lib/queries/requests/types';
+	import { liveRequestStatus } from '$lib/queries/requests/liveStatus';
 	import { reimportDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { createFromAlbumMutation } from '$lib/queries/requests/RequestMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -35,9 +36,6 @@
 	interface Props {
 		item: RequestItem;
 		mode: 'active' | 'history';
-		// The linked download's own state on an active card (searching, awaiting
-		// review, downloading...), which the request row alone cannot tell.
-		liveStatus?: string;
 		// still being worked on despite the terminal status: 'retrying' = auto-retry
 		// ladder, 'watching' = wanted watcher. Renders a chip linking to the Wanted tab.
 		watchState?: 'retrying' | 'watching';
@@ -55,7 +53,6 @@
 	let {
 		item,
 		mode,
-		liveStatus,
 		watchState,
 		selectable = false,
 		selected = false,
@@ -133,7 +130,9 @@
 		}
 	});
 	const waiting = $derived(waitingNote !== null);
-	const status = $derived(mode === 'active' && liveStatus ? liveStatus : item.status);
+	// An active card shows the linked download's own state (searching,
+	// awaiting review...), which the request row alone cannot tell.
+	const status = $derived(mode === 'active' ? liveRequestStatus(item) : item.status);
 
 	const statusConfig = $derived.by((): StatusConfig => {
 		if (waiting) {

@@ -934,9 +934,7 @@ impl Imports {
                 super::mutations::join_inside(&root.path, &relative_path).map(|path| (root, path))
             });
             let Some((root, path)) = path else {
-                return Ok(Err(
-                    "the copy it replaces is not in a library folder".to_owned()
-                ));
+                return Ok(Err(OUTSIDE_ROOT.to_owned()));
             };
             match remove::probe(&root.path, &path) {
                 Ok(probe) => targets.push(Target {
@@ -948,9 +946,7 @@ impl Imports {
                 }),
                 Err(error) => {
                     tracing::warn!(%error, track_id, "the copy an imported file replaces could not be read");
-                    return Ok(Err(format!(
-                        "the copy it replaces could not be read: {error}"
-                    )));
+                    return Ok(Err("Your copy could not be read.".to_owned()));
                 }
             }
         }
@@ -1003,22 +999,26 @@ fn indexed_among(
     Ok(indexed)
 }
 
-/// Why a file is held when a track it replaces cannot be taken away.
+/// Why a file is held when a track it replaces cannot be taken away: one
+/// short sentence per cause, for the person to read. A publish failure's
+/// own text is logged, never shown.
 fn blocked_reason(refusal: &Refusal) -> String {
     match refusal {
-        Refusal::Busy => "another write holds the copy it replaces".to_owned(),
-        Refusal::LibraryOff => "the library is switched off".to_owned(),
-        Refusal::Changed => "the copy it replaces changed while it was read".to_owned(),
-        Refusal::OutsideRoot => "the copy it replaces is not in a library folder".to_owned(),
-        Refusal::BinsUnknown(cause) => format!("no recycle bin is known while {cause}"),
-        Refusal::NoBin(_) => {
-            "the library folder of the copy it replaces has no usable recycle bin".to_owned()
-        }
+        Refusal::Busy => "Another change to the library was using your copy.".to_owned(),
+        Refusal::LibraryOff => "The library is switched off.".to_owned(),
+        Refusal::Changed => "Your copy changed while it was being checked.".to_owned(),
+        Refusal::OutsideRoot => OUTSIDE_ROOT.to_owned(),
+        Refusal::BinsUnknown(cause) => format!("No recycle bin is known while {cause}."),
+        Refusal::NoBin(_) => "Your copy's library folder has no usable recycle bin.".to_owned(),
         Refusal::Publish { error, .. } => {
-            format!("the copy it replaces could not be taken away: {error}")
+            tracing::warn!(%error, "the copy an imported file replaces could not be taken away");
+            "Your copy could not be moved to the recycle bin.".to_owned()
         }
     }
 }
+
+/// A replaced copy outside every library folder, in the person's words.
+const OUTSIDE_ROOT: &str = "Your copy is not in a library folder.";
 
 /// Name of the file in a task's import folder that says where each staged
 /// copy came from, so a commit resumed after a crash keeps provenance.

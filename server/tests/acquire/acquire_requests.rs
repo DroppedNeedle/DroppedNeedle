@@ -439,6 +439,15 @@ async fn duplicate_ask_attaches_a_listener() {
     .await;
     assert_eq!(all["count"], 1);
     assert_eq!(all["items"][0]["task_id"], calls[0].id.as_str());
+
+    // The listener reads the download's own state on the shared row, though
+    // the task is the owner's and not in the listener's own task list.
+    let active = "/api/v3/requests/active";
+    let (_, bobs) = call(&state, Method::GET, active, Some(BOB), None).await;
+    assert_eq!(bobs["items"][0]["task_state"], "searching", "{bobs}");
+    dispatch.settle(&calls[0].id, TaskStatus::Downloading).await;
+    let (_, bobs) = call(&state, Method::GET, active, Some(BOB), None).await;
+    assert_eq!(bobs["items"][0]["task_state"], "downloading", "{bobs}");
 }
 
 const REL_1: &str = "44444444-4444-4444-8444-444444444444";

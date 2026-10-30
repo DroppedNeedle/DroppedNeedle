@@ -324,11 +324,10 @@ impl DownloadWorker {
                     tracing::info!(task_id = %task.id, folder = %rejection.detail, "landing waits for the library folder");
                     self.touch_poll(&task.id, now).await;
                 }
-                (Disposition::Temporary, Origin::Poll)
-                    if rejection.code == Reason::JournalUnreadable =>
-                {
+                (Disposition::Temporary, _) if rejection.code == Reason::JournalUnreadable => {
                     // A busy database never uses up the landing's waits, so
-                    // it can never fail the task: the next pass lands again.
+                    // it can never fail the task: the next pass lands again,
+                    // a reimport's too (it resumes a task left processing).
                     tracing::info!(task_id = %task.id, detail = %rejection.detail, "landing waits for the database");
                     let task_id = task.id.clone();
                     self.step("downloads.touch_poll", move |store| {

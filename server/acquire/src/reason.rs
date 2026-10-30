@@ -319,7 +319,7 @@ impl Reason {
                 "Another file already sits where this would go in your library."
             }
             Self::UpgradeBlocked => {
-                "Your copy could not be moved to the recycle bin, so the better file was not added. Both are kept."
+                "Your copy could not be taken away, so the better file was not added. Both are kept."
             }
             Self::LibraryChanged => {
                 "Something in the library changed while these files were going in, so nothing was changed."
@@ -465,7 +465,7 @@ impl Reason {
                 "Compare it with the one in your library: discard it if it is the same, otherwise move yours and try again."
             }
             Self::UpgradeBlocked => {
-                "Check that the recycle bin folder exists and can be written, then try again."
+                "Nothing to do: DroppedNeedle tries again by itself. If it keeps happening, check the recycle bin folder in Settings, Library."
             }
             Self::LibraryChanged => "Nothing to do: DroppedNeedle tries again by itself.",
             Self::LibraryUnavailable => {

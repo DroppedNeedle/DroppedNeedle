@@ -265,6 +265,11 @@ pub struct RequestItem {
     /// Why a live request has not started, when it waits.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub waiting_reason: Option<WaitingReason>,
+    /// The linked download's own state while it is in flight or held for
+    /// review, whoever started it: a request joined to another person's
+    /// download reads it here. None when no download is live.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_state: Option<RequestTaskState>,
     /// Last failure text from the linked task, when failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
@@ -322,6 +327,44 @@ pub struct RequestItem {
     pub release_mbid: Option<String>,
     /// Co-requester count beyond the owner.
     pub requester_count: u32,
+}
+
+/// A live download's state as a request card shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestTaskState {
+    /// No search has run for it yet.
+    Searching,
+    /// A person picks the copy, or decides on held files.
+    AwaitingReview,
+    /// A copy is picked and waits to start.
+    Queued,
+    /// The files are transferring.
+    Downloading,
+    /// The files arrived and are going into the library.
+    Importing,
+}
+
+impl RequestTaskState {
+    /// The state a task's row and held files give, `None` once it has
+    /// settled with nothing held.
+    pub fn of(task: &crate::dispatch::TaskView) -> Option<Self> {
+        use crate::downloads::state::TaskStatus;
+        if task.held_for_review {
+            return Some(Self::AwaitingReview);
+        }
+        match task.status {
+            TaskStatus::Queued if task.search_job_id.is_none() => Some(Self::Searching),
+            TaskStatus::Queued if task.candidate_index.is_none() => Some(Self::AwaitingReview),
+            TaskStatus::Queued => Some(Self::Queued),
+            TaskStatus::Downloading => Some(Self::Downloading),
+            TaskStatus::Processing => Some(Self::Importing),
+            TaskStatus::Completed
+            | TaskStatus::Partial
+            | TaskStatus::Failed
+            | TaskStatus::Cancelled => None,
+        }
+    }
 }
 
 /// Why a live request waits. It starts by itself once the cause clears.

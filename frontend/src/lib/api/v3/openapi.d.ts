@@ -20653,6 +20653,7 @@ export interface components {
             status_messages?: components["schemas"]["RequestStatusMessage"][] | null;
             /** @description Linked download task. */
             task_id?: string | null;
+            task_state?: null | components["schemas"]["RequestTaskState"];
             /** @description Containing release group for exact-track rows (album context). */
             track_release_group_mbid?: string | null;
             /** @description Track title for exact-track rows. */
@@ -20687,6 +20688,11 @@ export interface components {
             /** @description Group heading, when grouped. */
             title?: string | null;
         };
+        /**
+         * @description A live download's state as a request card shows it.
+         * @enum {string}
+         */
+        RequestTaskState: "searching" | "awaiting_review" | "queued" | "downloading" | "importing";
         /**
          * @description Pending control on a run, as the runs table stores it and the API
          *     reports it.

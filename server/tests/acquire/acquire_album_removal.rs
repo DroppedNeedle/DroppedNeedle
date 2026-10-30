@@ -192,12 +192,13 @@ async fn album_cleanup_leaves_what_came_after_the_removal() {
     assert!(new_held.exists(), "the new request's held file still stays");
 }
 
-/// The clean-up discards exactly the held rows it read and deleted the
-/// copies of: a file held between that read and the write, at a time
-/// before the removal, keeps its row and its copy, and an entry a person
-/// took up in between keeps its rows for that action.
+/// The clean-up claims the entries before it deletes their copies, as a
+/// person's action does: an entry a person is acting on keeps its rows and
+/// copy, nobody can take up an entry while its copies go, and a file held
+/// into a claimed entry after the claim keeps its row and its copy. Only
+/// the rows whose copies are gone are discarded.
 #[tokio::test]
-async fn album_cleanup_discards_only_the_held_rows_it_read() {
+async fn album_cleanup_claims_before_it_deletes() {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("fan", "Fan", "user").await.expect("user");
     let (platform, queue) = start(&db).await;
@@ -215,13 +216,15 @@ async fn album_cleanup_discards_only_the_held_rows_it_read() {
     }
     let late_held = held_dir.join("held-late.flac");
     std::fs::write(&late_held, b"late").expect("late held file");
+    let taken_held = held_dir.join("held-taken.flac");
+    std::fs::write(&taken_held, b"taken").expect("taken held file");
     let conn = droppedneedle_kernel::db::open_connection(db.path()).expect("db opens");
     conn.execute_batch(&format!(
         "INSERT INTO acquire_held_entries (id, user_id, origin, group_key, release_group_mbid, \
          state, created_at, expires_at) \
          VALUES (1, 'fan', 'download', 'album:rg-1', 'rg-1', 'held', {before_ms}, \
          {expires_ms}), \
-         (2, 'fan', 'download', 'album:rg-1:taken', 'rg-1', 'held', {before_ms}, \
+         (2, 'fan', 'download', 'album:rg-1:taken', 'rg-1', 'placing', {before_ms}, \
          {expires_ms}); \
          INSERT INTO acquire_held_files (entry_id, root, path, original_name, source, reason, \
          state, created_at) \
@@ -242,9 +245,9 @@ async fn album_cleanup_discards_only_the_held_rows_it_read() {
         removed_at,
     };
     let id = enqueue(&platform.db, &queue, "removal-1", &job).await;
-    // While the job runs, hold the writer (so its write cannot commit) until
-    // the handler has read the held rows and started deleting their copies,
-    // then hold the late file and take up the second entry as a person would.
+    // Once the handler has claimed the first entry, hold the writer (so its
+    // last write cannot commit) until it has started deleting the copies,
+    // then hold the late file and try to take the entry up as a person would.
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let old = old_held.clone();
@@ -258,7 +261,14 @@ async fn album_cleanup_discards_only_the_held_rows_it_read() {
                         |row| row.get(0),
                     )
                     .map_err(DbError::from)?;
-                if state != "running" {
+                let claimed: String = tx
+                    .query_row(
+                        "SELECT state FROM acquire_held_entries WHERE id = 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(DbError::from)?;
+                if state != "running" || claimed != "placing" {
                     return Ok::<_, DbError>(Some(state));
                 }
                 let wait = Instant::now() + Duration::from_secs(10);
@@ -272,18 +282,24 @@ async fn album_cleanup_discards_only_the_held_rows_it_read() {
                     [before_ms],
                 )
                 .map_err(DbError::from)?;
-                tx.execute(
-                    "UPDATE acquire_held_entries SET state = 'placing' WHERE id = 2",
-                    [],
-                )
-                .map_err(DbError::from)?;
+                let took = tx
+                    .execute(
+                        "UPDATE acquire_held_entries SET state = 'placing' \
+                         WHERE id = 1 AND state = 'held'",
+                        [],
+                    )
+                    .map_err(DbError::from)?;
+                assert_eq!(took, 0, "a person took up an entry whose copies were going");
                 Ok(None)
             })
             .await
             .expect("test write");
         match unclaimed {
             None => break,
-            Some(state) => assert_eq!(state, "queued", "the job ran before it was held"),
+            Some(state) => assert!(
+                state == "queued" || state == "running",
+                "the job finished before it was held: {state}"
+            ),
         }
         assert!(Instant::now() < deadline, "the clean-up was never claimed");
         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -309,7 +325,7 @@ async fn album_cleanup_discards_only_the_held_rows_it_read() {
             (1, true, "held".to_owned(), 1),
             (2, false, "held".to_owned(), 1),
         ],
-        "only the rows read, of entries still waiting, were discarded"
+        "only the rows whose copies went, of entries it claimed, were discarded"
     );
     let taken: String = conn
         .query_row(
@@ -327,6 +343,15 @@ async fn album_cleanup_discards_only_the_held_rows_it_read() {
         "the held files read went"
     );
     assert!(late_held.exists(), "the file held since stays");
+    assert!(taken_held.exists(), "the copy a person is acting on stays");
+    let first: String = conn
+        .query_row(
+            "SELECT state FROM acquire_held_entries WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("entry reads");
+    assert_eq!(first, "held", "the claimed entry is given back");
 }
 
 /// Old held copies in the read-then-write test.
