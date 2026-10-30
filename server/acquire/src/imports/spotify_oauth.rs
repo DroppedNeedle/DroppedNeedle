@@ -1,19 +1,11 @@
-//! Spotify OAuth: scopes, the redirect URI, the authorize URL, authorize
-//! states and the per-user link.
+//! Spotify OAuth: the redirect URI, authorize states and the per-user
+//! link. The authorize page's address and scopes are the providers'
+//! Spotify client's.
 //!
 //! The redirect URI has a single source (issue #298). Links and states persist
 //! in SQLite (see
 //! [`super::spotify_store`]); the admin app settings live in the
 //! `spotify_settings` section ([`crate::settings::ConfigSpotifySettings`]).
-
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
-
-/// OAuth scopes.
-pub const SPOTIFY_SCOPES: &str =
-    "playlist-read-private playlist-read-collaborative user-read-private";
-
-/// Spotify's authorize page.
-pub const SPOTIFY_AUTHORIZE_URL: &str = "https://accounts.spotify.com/authorize";
 
 /// OAuth callback path, as the callback's route annotation names it.
 pub const SPOTIFY_CALLBACK_PATH: &str = "/api/v3/acquire/spotify/auth/callback";
@@ -24,14 +16,6 @@ pub const SPOTIFY_LEGACY_CALLBACK_PATH: &str = "/api/v1/me/connections/spotify/a
 
 /// How long an authorize state stays valid.
 pub const STATE_TTL_SECS: i64 = 600;
-
-/// Characters a query value or path segment keeps as they are (RFC 3986
-/// unreserved); everything else is percent-encoded.
-pub(super) const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'_')
-    .remove(b'.')
-    .remove(b'~');
 
 /// Build the Spotify OAuth redirect URI, the single source of truth
 /// (issue #298). The authorize call,
@@ -58,22 +42,6 @@ pub fn redirect_uri(
     } else {
         format!("{base}{base_path}{callback_path}")
     }
-}
-
-/// The authorize URL for one app, redirect URI and state.
-pub fn authorize_url(client_id: &str, redirect_uri: &str, state: &str) -> String {
-    let query = [
-        ("client_id", client_id),
-        ("response_type", "code"),
-        ("redirect_uri", redirect_uri),
-        ("scope", SPOTIFY_SCOPES),
-        ("state", state),
-    ]
-    .iter()
-    .map(|(key, value)| format!("{key}={}", utf8_percent_encode(value, UNRESERVED)))
-    .collect::<Vec<_>>()
-    .join("&");
-    format!("{SPOTIFY_AUTHORIZE_URL}?{query}")
 }
 
 /// One stored per-user Spotify link.

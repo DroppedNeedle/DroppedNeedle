@@ -226,6 +226,17 @@ pub const RATES: &[RateRow] = &[
         url: "https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api",
     },
     RateRow {
+        source: "spotify",
+        per_second: Rate::Fixed(2.0),
+        burst: 5,
+        max_in_flight: None,
+        verified_on: "2026-10-30",
+        basis: "Counted per app in a rolling 30-second window, with no number published; \
+                past it 429 with Retry-After in seconds. Held at 2 per second, so a \
+                playlist import of a few dozen pages stays well under it.",
+        url: "https://developer.spotify.com/documentation/web-api/concepts/rate-limits",
+    },
+    RateRow {
         source: "ticketmaster",
         per_second: Rate::Fixed(2.0),
         burst: 1,

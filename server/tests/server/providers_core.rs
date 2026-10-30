@@ -1235,6 +1235,57 @@ async fn github_follows_a_renamed_repository() {
     assert_eq!(wire.sent().len(), 1, "the other host is never asked");
 }
 
+/// Spotify's 429 rests the `spotify` row for the wait it names, so an
+/// import pauses for Spotify instead of calling into its limit again: the
+/// next call a person makes is turned down at once without a request.
+#[tokio::test]
+async fn a_spotify_rate_limit_rests_its_row() {
+    use droppedneedle_providers::spotify;
+
+    let wire = Arc::new(ScriptedWire::new());
+    let me = format!("{}/me", spotify::API_BASE);
+    wire.on(
+        Method::Get,
+        &me,
+        answer(429, &[("retry-after", "30")], "{}"),
+    );
+    let providers = Providers::over_wire(
+        wire.clone(),
+        Arc::new(SystemClock),
+        ProviderEndpoints {
+            spotify_api: spotify::API_BASE.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    );
+
+    let error = providers
+        .spotify
+        .me("token", RequestPriority::UserInitiated)
+        .await
+        .expect_err("rate limited");
+    assert!(
+        matches!(error, ProviderError::RateLimited { retry_after: Some(wait), .. } if wait == Duration::from_secs(30)),
+        "{error:?}"
+    );
+    let cooling = providers.limiter(spotify::SOURCE).unwrap().cooling_for();
+    assert!(
+        cooling <= Duration::from_secs(30)
+            && cooling + Duration::from_secs(2) >= Duration::from_secs(30),
+        "rests {cooling:?}"
+    );
+
+    let again = providers
+        .spotify
+        .me("token", RequestPriority::UserInitiated)
+        .await
+        .expect_err("still resting");
+    assert!(
+        matches!(again, ProviderError::RateLimited { .. }),
+        "{again:?}"
+    );
+    assert_eq!(wire.sent().len(), 1, "the rest sends nothing");
+}
+
 /// YouTube's refusals answer honestly. A key it does not accept (the
 /// recorded 400) answers the refused-key 409 on search. A spent daily quota
 /// is a 503 naming YouTube with the wait until the quota day turns at 08:00

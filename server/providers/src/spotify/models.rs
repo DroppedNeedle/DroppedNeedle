@@ -1,4 +1,5 @@
-//! Spotify accounts and Web API wire shapes, read by `spotify_client.rs`.
+//! Spotify accounts and Web API wire shapes, read by the client in
+//! `spotify.rs`.
 //!
 //! Tolerant of unknown fields. Identity is required: a token answer
 //! without its `access_token`, a profile without its `id`, a playlist
@@ -120,7 +121,6 @@ pub struct Image {
 pub struct PlaylistInfo {
     /// Spotify playlist id. The import does not read it; decoding still
     /// requires it.
-    #[allow(dead_code)]
     pub id: String,
     /// Cover images, null when none.
     #[serde(default)]

@@ -41,6 +41,9 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 use droppedneedle_kernel::runtime_config::sections::{MbSourceMode, MusicBrainzSettings};
 use droppedneedle_kernel::runtime_config::{ConfigError, Secret};
 use droppedneedle_plugins::host::PluginHost;
+use droppedneedle_providers::images::check_spotify_cover_url;
+use droppedneedle_providers::spotify::TokenGrant;
+use droppedneedle_providers::{ProviderEndpoints, Providers, RequestPriority, ReqwestWire};
 use droppedneedle_testkit::imports::{
     LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_PLAYLIST_NO_TRACK_ID,
     SPOTIFY_TOKEN, serve_lidarr, serve_spotify,
@@ -54,7 +57,7 @@ use imports::lidarr::{LidarrClient, LidarrImportService};
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
 use imports::spotify::{ImportedTrack, SpotifyImportService};
 use imports::spotify_albums::AlbumResolver;
-use imports::spotify_client::{SpotifyClient, TokenGrant, allowed_cover_url};
+use imports::spotify_client::SpotifyClient;
 use imports::spotify_oauth::{
     PendingAuth, SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyConnection,
     redirect_uri,
@@ -80,11 +83,23 @@ fn http_client() -> reqwest::Client {
     reqwest::Client::new()
 }
 
-fn no_redirect_client() -> reqwest::Client {
-    droppedneedle_kernel::http_client::HttpClientFactory::new()
-        .expect("http factory builds")
-        .no_redirect()
-        .clone()
+/// The shared providers over the real wire, with Spotify at the given
+/// loopback mocks and every other provider closed.
+fn providers_at(
+    platform: &droppedneedle_kernel::platform::Platform,
+    api_base: &str,
+    accounts_base: &str,
+    cover_cdn: Option<&str>,
+) -> Providers {
+    Providers::unpaced_at(
+        Arc::new(ReqwestWire::new(&platform.http)),
+        ProviderEndpoints {
+            spotify_api: api_base.to_owned(),
+            spotify_accounts: accounts_base.to_owned(),
+            spotify_cover_cdn: cover_cdn.map(str::to_owned),
+            ..ProviderEndpoints::closed()
+        },
+    )
 }
 
 /// Fully wired module bundle for tests: the Spotify import on the
@@ -141,17 +156,9 @@ fn rig_with(
         playlists.clone(),
         db.clone(),
     ));
-    let providers = droppedneedle_providers::Providers::unpaced(Arc::new(
-        droppedneedle_providers::ReqwestWire::new(&platform.http),
-    ));
+    let providers = providers_at(platform, api_base, accounts_base, cover_cdn);
     let resolver = Arc::new(AlbumResolver::new(&providers, platform.settings.live()));
-    let spotify_client = SpotifyClient::new(
-        http.clone(),
-        no_redirect_client(),
-        api_base,
-        accounts_base,
-        cover_cdn,
-    );
+    let spotify_client = SpotifyClient::new(&providers);
     let service = Arc::new(SpotifyImportService::new(
         spotify_client.clone(),
         job_settings.map_or_else(
@@ -342,7 +349,7 @@ fn redirect_uri_prefers_origin_and_mounts_base_path_once() {
 
 #[test]
 fn cover_allowlist_blocks_non_cdn_and_plain_http() {
-    let allowed = |url: &str| allowed_cover_url(url, None).is_some();
+    let allowed = |url: &str| check_spotify_cover_url(url, None).is_some();
     assert!(allowed("https://i.scdn.co/image/abc"));
     assert!(!allowed("http://i.scdn.co/image/abc"));
     assert!(!allowed("https://evil.example.com/x.jpg"));
@@ -678,7 +685,9 @@ async fn authorize(bundle_deps: ImportsDeps, user_id: &str) -> (String, String) 
     .await;
     assert_eq!(status, StatusCode::OK);
     let auth_url = body["auth_url"].as_str().expect("auth url").to_owned();
-    assert!(auth_url.starts_with("https://accounts.spotify.com/authorize?"));
+    // The accounts host is the mock's, so the page is under its address.
+    assert!(auth_url.starts_with("http://127.0.0.1:"));
+    assert!(auth_url.contains("/authorize?"));
     assert!(auth_url.contains("test-client"));
     let state = state_from_auth_url(&auth_url);
     (auth_url, state)
@@ -1370,16 +1379,26 @@ async fn spotify_track_without_id_fails_the_import() {
 #[tokio::test]
 async fn spotify_cover_fetch_refuses_redirects_and_non_images() {
     let (_, _, covers, _) = serve_spotify().await.expect("mock serves");
-    let client = SpotifyClient::new(
-        http_client(),
-        no_redirect_client(),
+    let auth = AuthRig::new("imports").await;
+    let providers = providers_at(
+        &auth.platform,
         "http://127.0.0.1:1",
         "http://127.0.0.1:1",
         Some(&covers.base_url),
     );
+    let client = SpotifyClient::new(&providers);
+    let fetch = |url: String| {
+        let client = client.clone();
+        async move {
+            client
+                .fetch_cover(&url, RequestPriority::BackgroundSync)
+                .await
+                .expect("fetch works")
+        }
+    };
 
     let direct = format!("{}/covers/neon.jpg", covers.base_url);
-    let fetched = client.fetch_cover(&direct).await.expect("fetch works");
+    let fetched = fetch(direct).await;
     assert!(fetched.is_some());
     assert_eq!(
         fetched.map(|(_, content_type)| content_type).as_deref(),
@@ -1387,13 +1406,10 @@ async fn spotify_cover_fetch_refuses_redirects_and_non_images() {
     );
 
     let redirect = format!("{}/covers/redirect.jpg", covers.base_url);
-    assert_eq!(
-        client.fetch_cover(&redirect).await.expect("fetch works"),
-        None
-    );
+    assert_eq!(fetch(redirect).await, None);
 
     let text = format!("{}/covers/not-an-image.jpg", covers.base_url);
-    assert_eq!(client.fetch_cover(&text).await.expect("fetch works"), None);
+    assert_eq!(fetch(text).await, None);
 }
 
 #[tokio::test]

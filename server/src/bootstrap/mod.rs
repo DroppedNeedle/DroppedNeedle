@@ -342,7 +342,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             &collections,
             listening.clone(),
         ),
-        &outbound.spotify(),
         queues.queue().clone(),
     )
     .map_err(stage("acquire setup"))?;

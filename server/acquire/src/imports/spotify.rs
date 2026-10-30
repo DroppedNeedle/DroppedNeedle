@@ -13,11 +13,12 @@ use super::spotify_albums::{AlbumResolver, SpotifyAlbum};
 use super::spotify_client::{
     SpotifyClient, SpotifyError, TokenRefresher, best_image_url, playlist_track_count,
 };
-use super::spotify_models::{EntryTrack, PlaylistInfo};
-use super::spotify_oauth::{SpotifyConnection, authorize_url};
+use super::spotify_oauth::SpotifyConnection;
 use super::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks};
 use crate::settings::{ConfigSpotifySettings, settings_failed};
 use droppedneedle_kernel::runtime_config::ConfigError;
+use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::spotify::models::{EntryTrack, PlaylistInfo};
 
 /// One imported track row.
 #[derive(Debug, Clone, PartialEq)]
@@ -110,9 +111,11 @@ impl SpotifyImportService {
                 message: "Spotify is not configured by the administrator".to_owned(),
             });
         }
-        Ok(SpotifyAuthUrlResponse {
-            auth_url: authorize_url(&raw.client_id, redirect_uri, state),
-        })
+        let auth_url = self
+            .client
+            .authorize_url(&raw.client_id, redirect_uri, state)
+            .ok_or_else(|| ImportsError::internal(&"the spotify accounts address is unusable"))?;
+        Ok(SpotifyAuthUrlResponse { auth_url })
     }
 
     /// Wakes after each saved change to the Spotify app settings.
@@ -128,21 +131,22 @@ impl SpotifyImportService {
             .ok_or(SpotifyError::NotLinked)
     }
 
-    /// Refreshing API access over one user's link, or the error the app
-    /// settings do not read with.
+    /// Refreshing API access over one user's link for work at `priority`,
+    /// or the error the app settings do not read with.
     fn refresher(
         &self,
         user_id: &str,
         connection: SpotifyConnection,
+        priority: RequestPriority,
     ) -> Result<TokenRefresher<'_>, ImportFailure> {
         let raw = self.settings.get_raw().map_err(ImportFailure::Settings)?;
         Ok(TokenRefresher::new(
             &self.client,
             self.connections.as_ref(),
             user_id,
-            &raw.client_id,
-            raw.client_secret.expose(),
+            (&raw.client_id, raw.client_secret.expose()),
             connection,
+            priority,
         ))
     }
 
@@ -155,7 +159,8 @@ impl SpotifyImportService {
     ) -> Result<SpotifyPlaylistListResponse, ImportFailure> {
         let stored = self.link(user_id).await?;
         let mut spotify_user_id = stored.spotify_user_id.clone();
-        let refresher = self.refresher(user_id, stored)?;
+        // The listing answers a person waiting on the page.
+        let refresher = self.refresher(user_id, stored, RequestPriority::UserInitiated)?;
         if spotify_user_id.is_empty() {
             spotify_user_id = self.client.current_user(&refresher).await?.id;
         }
@@ -227,7 +232,14 @@ impl SpotifyImportService {
         spotify_playlist_id: &str,
         playlist_id: &str,
     ) -> Result<usize, ImportFailure> {
-        let refresher = self.refresher(user_id, self.link(user_id).await?)?;
+        // The import runs as a queued job after the route has answered, so
+        // it waits its turn on the rate row instead of failing when Spotify
+        // asks for a pause.
+        let refresher = self.refresher(
+            user_id,
+            self.link(user_id).await?,
+            RequestPriority::BackgroundSync,
+        )?;
         let (info, tracks) = tokio::join!(
             self.client.playlist(&refresher, spotify_playlist_id),
             self.client.playlist_tracks(&refresher, spotify_playlist_id)
@@ -344,7 +356,11 @@ impl SpotifyImportService {
         let Some(cover_url) = best_image_url(info.images.as_deref(), 250) else {
             return CoverOutcome::Skipped("no cover offered".to_owned());
         };
-        let fetched = match self.client.fetch_cover(&cover_url).await {
+        let fetched = match self
+            .client
+            .fetch_cover(&cover_url, RequestPriority::BackgroundSync)
+            .await
+        {
             Ok(fetched) => fetched,
             Err(cause) => {
                 return CoverOutcome::Skipped(format!(

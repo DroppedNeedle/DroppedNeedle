@@ -16,12 +16,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use droppedneedle_acquire::wiring::{SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE, SpotifyEndpoints};
 use droppedneedle_auth::{users::hibp::RANGE_URL_PREFIX, wiring::Upstreams};
 use droppedneedle_library::{contrib::ContribProviders, identify::providers::IdentifyProviders};
 use droppedneedle_providers::{
-    acoustid, audiodb, coverart, discogs, geocoding, github, itunes, lastfm, listenbrainz, lrclib,
-    musicbrainz, plextv::PLEX_TV_BASE, preview, skiddle, ticketmaster, wikidata, youtube,
+    acoustid, audiodb, coverart, discogs, geocoding, github, images, itunes, lastfm, listenbrainz,
+    lrclib, musicbrainz, plextv::PLEX_TV_BASE, preview, skiddle, spotify, ticketmaster, wikidata,
+    youtube,
 };
 
 /// A provider port the builder fills with its live client unless one is
@@ -73,6 +73,8 @@ pub struct Outbound {
     pub itunes: String,
     /// Deezer API origin (previews).
     pub deezer: String,
+    /// The origin Deezer serves artist pictures from.
+    pub deezer_images: String,
     /// Cover Art Archive origin.
     pub cover_art_archive: String,
     /// Discogs API origin.
@@ -95,7 +97,7 @@ pub struct Outbound {
     pub plex_tv: String,
     /// Spotify Web API root.
     pub spotify_api: String,
-    /// Spotify accounts origin (token exchange).
+    /// Spotify accounts origin: the authorize page and the token grants.
     pub spotify_accounts: String,
     /// A playlist cover origin allowed beside the Spotify CDN: the tests'
     /// mock CDN. `None` in production, where only https to `*.scdn.co`
@@ -132,6 +134,7 @@ impl Outbound {
             commons: wikidata::COMMONS_BASE.to_owned(),
             itunes: itunes::SEARCH_URL.to_owned(),
             deezer: preview::DEEZER_API_BASE.to_owned(),
+            deezer_images: images::DEEZER_CDN.to_owned(),
             cover_art_archive: coverart::COVER_ART_ARCHIVE_BASE.to_owned(),
             discogs: discogs::API_BASE.to_owned(),
             lrclib: lrclib::API_BASE.to_owned(),
@@ -142,8 +145,8 @@ impl Outbound {
             acoustid: acoustid::DEFAULT_BASE_URL.to_owned(),
             pwned_passwords: RANGE_URL_PREFIX.to_owned(),
             plex_tv: PLEX_TV_BASE.to_owned(),
-            spotify_api: SPOTIFY_API_BASE.to_owned(),
-            spotify_accounts: SPOTIFY_ACCOUNTS_BASE.to_owned(),
+            spotify_api: spotify::API_BASE.to_owned(),
+            spotify_accounts: spotify::ACCOUNTS_BASE.to_owned(),
             spotify_cover_cdn: None,
             ticketmaster: ticketmaster::TICKETMASTER_API_URL.to_owned(),
             skiddle: skiddle::SKIDDLE_API_URL.to_owned(),
@@ -180,6 +183,10 @@ impl Outbound {
             github_releases: self.github_releases.clone(),
             github_api: self.github_api.clone(),
             github_codeload: self.github_codeload.clone(),
+            spotify_api: self.spotify_api.clone(),
+            spotify_accounts: self.spotify_accounts.clone(),
+            spotify_cover_cdn: self.spotify_cover_cdn.clone(),
+            deezer_images: self.deezer_images.clone(),
         }
     }
 
@@ -188,15 +195,6 @@ impl Outbound {
         Upstreams {
             plex_tv: self.plex_tv.clone(),
             pwned_passwords: self.pwned_passwords.clone(),
-        }
-    }
-
-    /// The addresses the Spotify import reaches.
-    pub fn spotify(&self) -> SpotifyEndpoints {
-        SpotifyEndpoints {
-            api: self.spotify_api.clone(),
-            accounts: self.spotify_accounts.clone(),
-            cover_cdn: self.spotify_cover_cdn.clone(),
         }
     }
 

@@ -143,7 +143,6 @@ pub fn acquire_landing_at(
             albums: droppedneedle_library::mutations::Mutations::new(library),
             listening: super::listening_store(platform),
         },
-        &outbound.spotify(),
         droppedneedle_kernel::jobs::queue::JobQueue::new(
             platform.db.clone(),
             Arc::new(droppedneedle_kernel::clock::SystemClock),

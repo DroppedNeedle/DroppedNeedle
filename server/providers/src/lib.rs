@@ -4,8 +4,8 @@
 //! [`Providers`] is built once at boot and handed to every area. It holds
 //! one client per service (MusicBrainz, the Cover Art Archive,
 //! ListenBrainz, Last.fm, TheAudioDB, AcoustID, Discogs, iTunes, Deezer,
-//! LRCLIB, Wikidata, Ticketmaster, Skiddle, Open-Meteo, YouTube, GitHub
-//! and the image hosts), the limiters, the provider answer cache and the
+//! LRCLIB, Wikidata, Ticketmaster, Skiddle, Open-Meteo, YouTube, GitHub,
+//! Spotify and the image hosts), the limiters, the provider answer cache and the
 //! service health registry. Each client sends through its own [`Executor`].
 //!
 //! - [`executor`]: sends one request. It waits for a token at the caller's
@@ -62,6 +62,7 @@ pub mod preview;
 pub mod rates;
 pub mod singleflight;
 pub mod skiddle;
+pub mod spotify;
 pub mod ticketmaster;
 pub mod web_address;
 pub mod wikidata;
@@ -129,6 +130,15 @@ pub struct ProviderEndpoints {
     pub github_api: String,
     /// GitHub archive download origin for plugin installs.
     pub github_codeload: String,
+    /// Spotify Web API root.
+    pub spotify_api: String,
+    /// Spotify accounts origin: the authorize page and the token grants.
+    pub spotify_accounts: String,
+    /// A playlist cover origin allowed beside Spotify's CDN: the tests'
+    /// mock CDN. `None` in production.
+    pub spotify_cover_cdn: Option<String>,
+    /// The origin Deezer serves artist pictures from.
+    pub deezer_images: String,
 }
 
 impl ProviderEndpoints {
@@ -159,6 +169,10 @@ impl ProviderEndpoints {
             github_releases: "http://127.0.0.1:9/releases".to_owned(),
             github_api: "http://127.0.0.1:9/github".to_owned(),
             github_codeload: "http://127.0.0.1:9/codeload".to_owned(),
+            spotify_api: "http://127.0.0.1:9/spotify".to_owned(),
+            spotify_accounts: "http://127.0.0.1:9/spotify-accounts".to_owned(),
+            spotify_cover_cdn: None,
+            deezer_images: "http://127.0.0.1:9".to_owned(),
         }
     }
 }
@@ -190,7 +204,8 @@ pub struct Providers {
     /// AcoustID lookups for identification, imports and Library
     /// Management, on one bucket.
     pub acoustid: acoustid::AcoustIdClient,
-    /// Artist images and TheAudioDB thumbnails by URL.
+    /// Artist images, TheAudioDB thumbnails and Spotify playlist covers by
+    /// URL.
     pub images: images::ImageClient,
     /// Discogs releases for contributions.
     pub discogs: discogs::DiscogsClient,
@@ -216,6 +231,8 @@ pub struct Providers {
     /// GitHub repository reads for plugin installs, on the version
     /// check's row.
     pub github_repos: github::GitHubRepos,
+    /// Spotify: the token grants and the playlist reads of an import.
+    pub spotify: spotify::SpotifyClient,
 }
 
 impl Providers {
@@ -318,9 +335,16 @@ impl Providers {
             &endpoints.acoustid,
         );
         let images = images::ImageClient::new(
-            executor(&images::AUDIODB_SPEC, images::AUDIODB_MEDIA),
-            executor(&images::WIKIMEDIA_SPEC, images::WIKIMEDIA_MEDIA),
-            executor(&images::DEEZER_SPEC, preview::DEEZER),
+            images::ImageExecutors {
+                audiodb: executor(&images::AUDIODB_SPEC, images::AUDIODB_MEDIA),
+                wikimedia: executor(&images::WIKIMEDIA_SPEC, images::WIKIMEDIA_MEDIA),
+                deezer: executor(&images::DEEZER_SPEC, preview::DEEZER),
+                spotify: executor(&images::SPOTIFY_SPEC, spotify::SOURCE),
+            },
+            images::ImageHosts::new(
+                &endpoints.deezer_images,
+                endpoints.spotify_cover_cdn.as_deref(),
+            ),
         );
         let discogs = discogs::DiscogsClient::new(
             executor(&discogs::SPEC, discogs::SOURCE),
@@ -365,6 +389,11 @@ impl Providers {
             &endpoints.github_api,
             &endpoints.github_codeload,
         );
+        let spotify = spotify::SpotifyClient::new(
+            executor(&spotify::SPEC, spotify::SOURCE),
+            &endpoints.spotify_api,
+            &endpoints.spotify_accounts,
+        );
         Self {
             limiters,
             cache,
@@ -387,6 +416,7 @@ impl Providers {
             youtube,
             github,
             github_repos,
+            spotify,
         }
     }
 

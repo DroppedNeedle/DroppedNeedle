@@ -79,22 +79,6 @@ use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::Providers;
 use tokio::sync::watch;
 
-/// Spotify Web API root.
-pub const SPOTIFY_API_BASE: &str = "https://api.spotify.com/v1";
-/// Spotify accounts origin (token exchange).
-pub const SPOTIFY_ACCOUNTS_BASE: &str = "https://accounts.spotify.com";
-
-/// Where the Spotify import reaches Spotify.
-#[derive(Debug, Clone)]
-pub struct SpotifyEndpoints {
-    /// Spotify Web API root.
-    pub api: String,
-    /// Spotify accounts origin (token exchange).
-    pub accounts: String,
-    /// A cover origin allowed beside the Spotify CDN; tests only.
-    pub cover_cdn: Option<String>,
-}
-
 /// Every loop [`AcquireSetup::spawn_loops`] starts, by job name.
 pub const ACQUIRE_LOOPS: &[&str] = &[
     WANTED_JOB,
@@ -476,13 +460,13 @@ impl AcquireSetup {
     /// stores already opened on it. Credentials and tuning are read from
     /// its settings on use (decrypted in memory only); notices and import
     /// completions go to its event hub. `ports` are the other areas it
-    /// reaches. Spotify imports are queued on `queue`.
+    /// reaches; Spotify through the shared providers. Spotify imports are
+    /// queued on `queue`.
     pub fn build(
         platform: &Platform,
         users: UsersDeps,
         stores: AcquireStores,
         ports: AcquirePorts,
-        spotify: &SpotifyEndpoints,
         queue: JobQueue,
     ) -> Result<Self, String> {
         let db = stores.db.clone();
@@ -491,8 +475,7 @@ impl AcquireSetup {
             platform.ids.clone(),
             platform.settings.clone(),
         );
-        let http = &platform.http;
-        let (http, no_redirect) = (http.shared().clone(), http.no_redirect().clone());
+        let http = platform.http.shared().clone();
         let staging_root = config.imports_dir();
         let quota = Arc::new(QuotaLedger::new(config_store.live(), db.clone()));
         let clients = Arc::new(LiveClients::new(
@@ -521,6 +504,7 @@ impl AcquireSetup {
         let collections = ports.collections;
         let health = ports.providers.health.clone();
         let resolver = Arc::new(AlbumResolver::new(&ports.providers, config_store.live()));
+        let spotify_client = SpotifyClient::new(&ports.providers);
         let core = core(
             &stores,
             ids.clone(),
@@ -561,13 +545,6 @@ impl AcquireSetup {
             collections.playlists.clone(),
             db.clone(),
         ));
-        let spotify_client = SpotifyClient::new(
-            http.clone(),
-            no_redirect,
-            &spotify.api,
-            &spotify.accounts,
-            spotify.cover_cdn.as_deref(),
-        );
         let spotify_service = Arc::new(SpotifyImportService::new(
             spotify_client.clone(),
             spotify_settings.clone(),

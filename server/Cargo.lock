@@ -893,6 +893,7 @@ dependencies = [
 name = "droppedneedle-providers"
 version = "3.0.0"
 dependencies = [
+ "base64 0.22.1",
  "caseless",
  "droppedneedle-kernel",
  "futures-util",

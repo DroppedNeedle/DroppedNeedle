@@ -77,7 +77,11 @@ mod tests {
                 youtube: closed.clone(),
                 github_releases: closed.clone(),
                 github_api: closed.clone(),
-                github_codeload: closed,
+                github_codeload: closed.clone(),
+                spotify_api: closed.clone(),
+                spotify_accounts: closed.clone(),
+                spotify_cover_cdn: None,
+                deezer_images: closed,
             },
         ))
     }
