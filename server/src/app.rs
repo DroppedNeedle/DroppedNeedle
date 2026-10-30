@@ -14,10 +14,10 @@
 //!    case) a preflight answers 204 with compat CORS before auth, a
 //!    case-variant path is rewritten to the casing its compat route
 //!    recorded (Feishin posts lower-case Jellyfin paths), and every answer
-//!    carries compat CORS, so a native 404 or 405 there looks like a
-//!    disabled protocol's 404 and the enabled protocols cannot be
-//!    enumerated. Any other path goes through the debug-only CORS layer
-//!    when the constructor enables it.
+//!    carries compat CORS and no 404 carries `Allow`, so a native 404 or
+//!    405 there looks like a disabled protocol's 404 and the enabled
+//!    protocols and their routes cannot be enumerated. Any other path goes
+//!    through the debug-only CORS layer when the constructor enables it.
 //! 5. The router: the routes, a plain 404 fallback that serves the web UI
 //!    for a GET outside the API and compat paths, and a plain 405.
 //!
@@ -26,9 +26,11 @@
 //! fallback, layered ones included, so no layer on an inner router sees an
 //! OPTIONS or wrong-method request on an existing path: it goes straight to
 //! the 405. A layer also runs after its route matched, so a path it
-//! rewrote would never match again. Subsonic keeps its own 405 envelope
-//! because it sets its fallback before its layers, and a fallback that is
-//! not the default is never replaced.
+//! rewrote would never match again. Subsonic and Jellyfin keep their own
+//! wrong-method answers (Subsonic's envelope, Jellyfin's empty 404 while
+//! its API is off) because each sets its own fallback, and a fallback that
+//! is not the default is never replaced. Axum still adds `Allow` to such an
+//! answer outside the route's layers, so step 4 takes it off a 404.
 //!
 //! Inside the router, matching does not follow registration order (an
 //! overlap panics at build). Every route is registered through the kernel's
@@ -55,7 +57,13 @@
 //!   the session gate too: they carry their own app-password auth plus the
 //!   compat layers (CORS, limits), and never inherit `/api` session auth.
 
-use axum::{Router, extract::Request, middleware, response::IntoResponse};
+use axum::{
+    Router,
+    extract::Request,
+    http::{StatusCode, header},
+    middleware,
+    response::IntoResponse,
+};
 use tower::{Layer as _, ServiceExt as _};
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 
@@ -160,6 +168,9 @@ fn pre_routing(state: &AppState, routes: Router) -> Router {
         canonicalize_case(&templates, &mut request);
         let mut response = answer(routes.oneshot(request).await);
         stamp_cors(&mut response);
+        if response.status() == StatusCode::NOT_FOUND {
+            response.headers_mut().remove(header::ALLOW);
+        }
         response
     })
 }

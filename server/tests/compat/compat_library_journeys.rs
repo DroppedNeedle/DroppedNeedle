@@ -1215,9 +1215,10 @@ async fn media_path_auth_lockout_blocks_brute_force() {
         .as_str()
         .expect("song id")
         .to_owned();
-    let guess =
-        format!("/subsonic/rest/stream?id={song}&u={PLAYER}&p=wrong&v=1.16.1&c=probe&f=json");
-    for _ in 0..5 {
+    for guess in 0..5 {
+        let guess = format!(
+            "/subsonic/rest/stream?id={song}&u={PLAYER}&p=guess-{guess}&v=1.16.1&c=probe&f=json"
+        );
         app.raw("GET", &guess, &[], None).await;
     }
     let url = rest(&format!("stream?id={song}"), &auth);
@@ -1226,6 +1227,50 @@ async fn media_path_auth_lockout_blocks_brute_force() {
     assert!(!header_str(&headers, "retry-after").is_empty());
     let reject: Value = serde_json::from_slice(&bytes).expect("reject json");
     assert_eq!(reject["subsonic-response"]["error"]["code"], json!(0));
+    rig.stop().await;
+}
+
+/// A Subsonic app still sending a revoked app password as `p` or `apiKey`,
+/// or repeating one wrong password, is refused without locking out its
+/// address. The revoked password goes under a new username each time, so
+/// only its being revoked keeps it from counting.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stale_subsonic_app_does_not_lock_out_its_address() {
+    let rig = CompatApp::start("compat-stale-lockout").await;
+    let app = &rig.app;
+    let dave = app.login_user("dave").await;
+    let dave = [("authorization", dave.authorization.as_str())];
+    let (status, created) = app
+        .call_through_busy(
+            "POST",
+            "/api/v3/me/app-passwords",
+            &dave,
+            Some(json!({"name": "Old phone"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().expect("id");
+    let revoked = created["secret"].as_str().expect("secret");
+    let uri = format!("/api/v3/me/app-passwords/{id}");
+    let revoke = crate::common::through_busy(|| app.raw("DELETE", &uri, &dave, None)).await;
+    assert_eq!(revoke.0, StatusCode::NO_CONTENT);
+
+    let ping = "/subsonic/rest/ping?v=1.16.1&c=stale&f=json";
+    for n in 0..10 {
+        for refused in [
+            format!("{ping}&u=dave{n}&p={revoked}"),
+            format!("{ping}&apiKey={revoked}"),
+            format!("{ping}&u={PLAYER}&p=mistyped"),
+        ] {
+            let (status, body) = app.call("GET", &refused, &[], None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_ne!(body["subsonic-response"]["error"]["code"], json!(0));
+        }
+    }
+    let (_, body) = app
+        .call("GET", &rest("ping", &rig.subsonic_auth("probe")), &[], None)
+        .await;
+    assert_eq!(body["subsonic-response"]["status"], json!("ok"), "{body}");
     rig.stop().await;
 }
 

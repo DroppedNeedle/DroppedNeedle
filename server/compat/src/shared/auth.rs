@@ -74,5 +74,18 @@ pub fn auth_locked_out(limits: &mut CompatRateLimits, ip: &str, now: f64) -> Opt
 /// Post-denial accounting: feed one failure into backoff. Returns the
 /// fresh lockout length when this failure trips it.
 pub fn record_auth_denial(limits: &mut CompatRateLimits, ip: &str, now: f64) -> Option<u64> {
-    limits.record_auth_failure(ip, now)
+    limits.record_auth_failure(ip, None, now)
+}
+
+/// [`record_auth_denial`] for a refused credential the caller can name:
+/// the parts of what was presented (a scheme tag first). A repeat of the
+/// same credential from the same address counts once a minute; a different
+/// one, a new guess, always counts. Only a keyed hash of the parts is kept.
+pub fn record_credential_denial(
+    limits: &mut CompatRateLimits,
+    ip: &str,
+    presented: &[&[u8]],
+    now: f64,
+) -> Option<u64> {
+    limits.record_auth_failure(ip, Some(presented), now)
 }

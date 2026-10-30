@@ -36,9 +36,12 @@ use crate::subsonic::picture;
 use crate::subsonic::value::{
     Rendered, SubsonicFormat, parse_format, render_error, render_unknown_method, sniff_format,
 };
-use crate::subsonic::{Ctx, Settings, classify, endpoint, failure, normalize_endpoint};
+use crate::subsonic::{
+    Credentials, Ctx, Settings, classify, endpoint, failure, normalize_endpoint,
+};
 use droppedneedle_auth::compat_auth::jellyfin::extract_token;
 use droppedneedle_auth::compat_auth::prod::{ProdCompatPasswords, SecretMatch};
+use droppedneedle_auth::compat_auth::subsonic::decode_subsonic_password;
 use droppedneedle_auth::session::client_ip::ClientIp;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::TrustedProxies;
@@ -274,6 +277,8 @@ pub fn server_error_response(
 /// Jellyfin 401s feed backoff on the way out, except one marked
 /// [`auth::RevokedCredential`]: a device still sending a revoked app
 /// password is not guessing, and must not lock out others on its address.
+/// A refused token or sign-in body counts once a minute per address when
+/// repeated, so a stale device does not lock its address out either.
 /// Subsonic denials record in the adapter.
 pub async fn limits_layer(
     State(state): State<CompatLimits>,
@@ -303,6 +308,18 @@ pub async fn limits_layer(
         return reject(retry_after);
     }
     let is_jellyfin = path.to_lowercase().starts_with("/jellyfin");
+    // What a Jellyfin caller presented, to fold repeats of one refused
+    // credential: the sign-in body, or the token.
+    let presented = if !is_jellyfin {
+        None
+    } else if is_sign_in(&request) {
+        let (parts, body) = request.into_parts();
+        let body = sign_in_body(body).await;
+        request = Request::from_parts(parts, Body::from(body.clone()));
+        Some(("jellyfin:sign-in", body.to_vec()))
+    } else {
+        label_token(&request).map(|token| ("jellyfin:token", token.into_bytes()))
+    };
     if !exempt {
         let anonymous = if is_jellyfin {
             // The template axum matched, so the route table and the router
@@ -339,9 +356,39 @@ pub async fn limits_layer(
             .get::<auth::RevokedCredential>()
             .is_none()
     {
-        let _ = auth::record_auth_denial(&mut state.lock(), &ip, now);
+        let mut limits = state.lock();
+        let _ = match &presented {
+            Some((scheme, credential)) => auth::record_credential_denial(
+                &mut limits,
+                &ip,
+                &[scheme.as_bytes(), credential],
+                now,
+            ),
+            None => auth::record_auth_denial(&mut limits, &ip, now),
+        };
     }
     response
+}
+
+/// Whether `request` is a Jellyfin `AuthenticateByName`, by the template
+/// axum matched.
+fn is_sign_in(request: &Request) -> bool {
+    request.method() == axum::http::Method::POST
+        && request
+            .extensions()
+            .get::<MatchedPath>()
+            .is_some_and(|matched| matched.as_str() == "/jellyfin/Users/AuthenticateByName")
+}
+
+/// The sign-in body, read under the handler's own 64 KiB cap. One that
+/// cannot be read comes back empty, which the handler refuses with the 400
+/// it gives an unreadable body. The exact bytes identify the credential:
+/// never coarser than the username and password in them, so a new guess
+/// never passes for a repeat.
+async fn sign_in_body(body: Body) -> axum::body::Bytes {
+    axum::body::to_bytes(body, 64 * 1024)
+        .await
+        .unwrap_or_default()
 }
 
 /// Extract a Jellyfin request token for limit labeling. Synchronous: the
@@ -410,6 +457,8 @@ pub struct SubsonicState {
     pub limits: Arc<Mutex<ratelimit::CompatRateLimits>>,
     /// Clock origin for bucket timestamps.
     pub started: Arc<Instant>,
+    /// App passwords, to tell a revoked one from a guess.
+    pub passwords: ProdCompatPasswords,
     /// How apps reach this server, for the address in picture links.
     pub listener: ListenerConfig,
     /// Wall time, stamped on each request.
@@ -417,16 +466,14 @@ pub struct SubsonicState {
 }
 
 impl SubsonicState {
-    /// Wrap the verifier, store, audio, buckets, clock origin, listener
-    /// and wall clock.
-    #[allow(clippy::too_many_arguments)]
+    /// Wrap the verifier, store, audio, the limits layer's buckets, clock
+    /// origin and app passwords, listener and wall clock.
     pub fn new(
         verifier: SubsonicVerifier,
         store: SubsonicStore,
         audio: CompatAudio,
         settings: LiveSettings,
-        limits: Arc<Mutex<ratelimit::CompatRateLimits>>,
-        started: Arc<Instant>,
+        limits: &CompatLimits,
         listener: ListenerConfig,
         clock: Arc<dyn Clock>,
     ) -> Self {
@@ -435,8 +482,9 @@ impl SubsonicState {
             store,
             audio,
             settings,
-            limits,
-            started,
+            limits: limits.limits.clone(),
+            started: limits.started.clone(),
+            passwords: limits.passwords.clone(),
             listener,
             clock,
         }
@@ -617,15 +665,15 @@ async fn subsonic_dispatch(
     let method_entry = endpoint(&name);
     let ip = ratelimit::client_key(parts.extensions.get::<ClientIp>().map(|client| client.0));
     let now = state.now();
-    let record_denial = || {
-        let _ = auth::record_auth_denial(
-            &mut state
-                .limits
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()),
-            &ip,
-            now,
-        );
+    let record_denial = |credentials: Option<&Credentials>| {
+        let mut limits = state
+            .limits
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _ = match credentials.and_then(subsonic_presented) {
+            Some(presented) => auth::record_credential_denial(&mut limits, &ip, &presented, now),
+            None => auth::record_auth_denial(&mut limits, &ip, now),
+        };
     };
     // Principal buckets + backoff run here (post-verify); the lockout
     // pre-check and, for the public endpoint, the public bucket ran in the
@@ -636,11 +684,11 @@ async fn subsonic_dispatch(
         let credentials = match classify(&params) {
             Ok(Some(credentials)) => credentials,
             Ok(None) => {
-                record_denial();
+                record_denial(None);
                 return fail(SubsonicError::code_only(10));
             }
             Err(denied) => {
-                record_denial();
+                record_denial(None);
                 return fail(denied);
             }
         };
@@ -674,9 +722,12 @@ async fn subsonic_dispatch(
             Err(denied) => {
                 // Code 0 is a server-side failure (the credential store
                 // broke), not a wrong guess: it must not count toward the
-                // caller's lockout.
-                if denied.code != droppedneedle_auth::compat_auth::subsonic::GENERIC {
-                    record_denial();
+                // caller's lockout. Nor does a revoked app password: whoever
+                // sends it once held a working one.
+                if denied.code != droppedneedle_auth::compat_auth::subsonic::GENERIC
+                    && !presents_revoked(&state.passwords, &credentials).await
+                {
+                    record_denial(Some(&credentials));
                 }
                 return fail(denied);
             }
@@ -720,6 +771,40 @@ async fn subsonic_dispatch(
         Ok(rendered) => rendered_response(&rendered, head_only),
         Err(err) => fail(err),
     }
+}
+
+/// The parts that identify a refused Subsonic credential, so a repeat from
+/// one address counts once a minute. A token (`t` + `s`) has none: its salt
+/// changes every request, so each one counts.
+fn subsonic_presented(credentials: &Credentials) -> Option<Vec<&[u8]>> {
+    match credentials {
+        Credentials::Password {
+            username, password, ..
+        } => Some(vec![
+            b"subsonic:password",
+            username.as_bytes(),
+            password.as_bytes(),
+        ]),
+        Credentials::ApiKey { key } => Some(vec![b"subsonic:api-key", key.as_bytes()]),
+        Credentials::Token { .. } => None,
+    }
+}
+
+/// Whether refused credentials carry a revoked app password, by the same
+/// lookup Jellyfin's sign-in uses. A token (`t` + `s`) is never classed
+/// revoked: telling which secret made it would mean decrypting and trying
+/// every revoked one, and `reset-key` leaves none to try. A store failure
+/// answers `false`, so the denial counts.
+async fn presents_revoked(passwords: &ProdCompatPasswords, credentials: &Credentials) -> bool {
+    let secret = match credentials {
+        Credentials::Password { password, .. } => decode_subsonic_password(password),
+        Credentials::ApiKey { key } => key.clone(),
+        Credentials::Token { .. } => return false,
+    };
+    matches!(
+        passwords.match_secret(&secret).await,
+        Ok(SecretMatch::Revoked(_))
+    )
 }
 
 /// Redact a compat request target for access logs. Every persisted

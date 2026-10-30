@@ -1787,7 +1787,9 @@ fn walk() -> Vec<(&'static str, String, Access, &'static str)> {
 
 /// Who may call a route is the table's access column and nothing else:
 /// with no token, every signed-in route answers an empty 401 and no public
-/// one does. With the API off, every route is the empty 404.
+/// one does, and a method a route does not serve is a 405. With the API
+/// off, every route is the empty 404, a wrong method included, with no
+/// `Allow` to tell a real route from a missing one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_route_is_public_or_signed_in_by_the_table() {
     let mut public: Vec<(&str, &str)> = ROUTES
@@ -1823,6 +1825,13 @@ async fn every_route_is_public_or_signed_in_by_the_table() {
         assert_eq!(reply.status, StatusCode::OK, "{path}");
         assert_eq!(reply.json(), json!([]), "{path}");
     }
+    for (unserved, path) in unserved_methods() {
+        let from = walker_address();
+        let headers = vec![("x-forwarded-for", from.as_str())];
+        let reply = raw(&rig, unserved, &path, headers, None, None).await;
+        let what = format!("{unserved} {path}");
+        assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED, "{what}");
+    }
 
     set_jellyfin(&rig, false).await;
     for (verb, path, _, _) in walk() {
@@ -1838,6 +1847,7 @@ async fn every_route_is_public_or_signed_in_by_the_table() {
         let what = format!("{unserved} {path} with the API off");
         assert_eq!(reply.bare(), (404, 0), "{what}");
         assert_eq!(reply.header("access-control-allow-origin"), "*", "{what}");
+        assert_eq!(reply.header("allow"), "", "{what}");
     }
     rig.stop().await;
 }
@@ -1871,8 +1881,8 @@ async fn failed_sign_ins_lock_out_and_public_routes_do_not() {
     let rig = CompatApp::start("jf-sign-in-lockout").await;
     let login = "/jellyfin/Users/AuthenticateByName";
     let guesser = vec![("x-forwarded-for", "10.78.0.1")];
-    for _ in 0..5 {
-        let body = json!({"Username": PLAYER, "Pw": "nope"});
+    for guess in 0..5 {
+        let body = json!({"Username": PLAYER, "Pw": format!("guess-{guess}")});
         let reply = raw(&rig, "POST", login, guesser.clone(), None, Some(body)).await;
         assert_eq!(reply.bare(), (401, 0));
     }
@@ -1893,6 +1903,33 @@ async fn failed_sign_ins_lock_out_and_public_routes_do_not() {
         .await;
         assert_eq!(reply.status, StatusCode::OK);
     }
+    rig.stop().await;
+}
+
+/// A device repeating one wrong password or token is refused every time but
+/// counted once a minute, so it does not lock out its address: another app
+/// behind it then signs in. The sign-ins stay under the public bucket's
+/// burst of 20.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_repeated_wrong_credential_does_not_lock_out_its_address() {
+    let rig = CompatApp::start("jf-repeat-lockout").await;
+    let household = vec![("x-forwarded-for", "10.78.2.1")];
+    let login = "/jellyfin/Users/AuthenticateByName";
+    for _ in 0..19 {
+        let body = json!({"Username": PLAYER, "Pw": "mistyped"});
+        let reply = raw(&rig, "POST", login, household.clone(), None, Some(body)).await;
+        assert_eq!(reply.bare(), (401, 0));
+    }
+    let stale = finamp("a-deleted-users-token");
+    for _ in 0..50 {
+        let me = "/jellyfin/Users/Me";
+        let reply = raw(&rig, "GET", me, household.clone(), Some(&stale), None).await;
+        assert_eq!(reply.bare(), (401, 0));
+    }
+
+    let body = json!({"Username": PLAYER, "Pw": rig.secret});
+    let signed_in = raw(&rig, "POST", login, household, None, Some(body)).await;
+    assert_eq!(signed_in.status, StatusCode::OK);
     rig.stop().await;
 }
 

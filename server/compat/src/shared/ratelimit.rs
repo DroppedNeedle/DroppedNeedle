@@ -4,9 +4,12 @@
 //! (5/s, burst 20) for unauthenticated routes only (login, public probes),
 //! per-principal browse (30/s, burst 120) and mutation (5/s, burst 20)
 //! buckets for signed-in callers, and per-IP auth-failure backoff (5
-//! failures in 60s locks out for 10s, doubling to 5min). Media and artwork
-//! skip the buckets (a cover grid is dozens of requests at once); every 429
-//! carries `Retry-After`. Buckets and the bounded TTL maps are the native
+//! failures in 60s locks out for 10s, doubling to 5min). A repeat of one
+//! refused credential from one address counts once a minute, so a stale
+//! device sending the same wrong password does not lock its address out,
+//! while every new guess still counts. Media and artwork skip the buckets
+//! (a cover grid is dozens of requests at once); every 429 carries
+//! `Retry-After`. Buckets and the bounded TTL maps are the native
 //! limiter's ([`droppedneedle_auth::session::rate_limit`]).
 //!
 //! Clients are keyed as the native limiter keys them ([`client_key`]), so
@@ -17,6 +20,7 @@
 //! without sleeping; production passes its monotonic clock.
 
 use std::collections::VecDeque;
+use std::hash::{BuildHasher as _, RandomState};
 use std::net::IpAddr;
 
 use droppedneedle_auth::session::rate_limit::{BoundedMap, TokenBucket, address_key};
@@ -29,12 +33,21 @@ pub const AUTH_FAILURE_WINDOW_SECONDS: f64 = 60.0;
 pub const AUTH_INITIAL_COOLDOWN_SECONDS: f64 = 10.0;
 /// Longest lockout, seconds.
 pub const AUTH_MAX_COOLDOWN_SECONDS: f64 = 5.0 * 60.0;
+/// How long a refused credential, once counted for an address, is not
+/// counted again when the same address repeats it, seconds.
+pub const AUTH_REPEAT_WINDOW_SECONDS: f64 = 60.0;
+/// Refused credentials remembered per address. When more arrive inside the
+/// window the oldest is forgotten, and it counts again if it comes back.
+const REMEMBERED_CREDENTIALS: usize = 16;
 
 #[derive(Debug, Clone, Default)]
 struct AuthFailureState {
     events: VecDeque<f64>,
     blocked_until: f64,
     strikes: u32,
+    /// Keyed hashes of the refused credentials counted inside the repeat
+    /// window, with when each was counted.
+    counted: VecDeque<(u64, f64)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -85,6 +98,9 @@ pub struct CompatRateLimits {
     browse_by_principal: BoundedMap<TokenBucket>,
     mutation_by_principal: BoundedMap<TokenBucket>,
     auth_failures_by_ip: BoundedMap<AuthFailureState>,
+    /// Random per-process keys for the credential hashes, so a remembered
+    /// credential is never held in clear and cannot be worked back.
+    credential_keys: RandomState,
 }
 
 impl CompatRateLimits {
@@ -127,11 +143,31 @@ impl CompatRateLimits {
     }
 
     /// Record one auth failure; returns the fresh lockout length when
-    /// this failure trips it (v2 `record_auth_failure`).
-    pub fn record_auth_failure(&mut self, ip: &str, now: f64) -> Option<u64> {
+    /// this failure trips it (v2 `record_auth_failure`). `presented` is the
+    /// refused credential, as parts that together identify it; when the
+    /// same address had the same one counted inside the repeat window, this
+    /// failure is not counted. `None` always counts.
+    pub fn record_auth_failure(
+        &mut self,
+        ip: &str,
+        presented: Option<&[&[u8]]>,
+        now: f64,
+    ) -> Option<u64> {
+        let fingerprint = presented.map(|parts| self.credential_keys.hash_one(parts));
         let state = self
             .auth_failures_by_ip
             .entry(ip, now, AuthFailureState::default);
+        if let Some(fingerprint) = fingerprint {
+            let cutoff = now - AUTH_REPEAT_WINDOW_SECONDS;
+            state.counted.retain(|(_, at)| *at > cutoff);
+            if state.counted.iter().any(|(seen, _)| *seen == fingerprint) {
+                return None;
+            }
+            if state.counted.len() >= REMEMBERED_CREDENTIALS {
+                state.counted.pop_front();
+            }
+            state.counted.push_back((fingerprint, now));
+        }
         let cutoff = now - AUTH_FAILURE_WINDOW_SECONDS;
         while state.events.front().is_some_and(|first| *first <= cutoff) {
             state.events.pop_front();

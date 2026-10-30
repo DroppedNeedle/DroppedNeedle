@@ -215,8 +215,7 @@ impl CompatSetup {
             store.clone(),
             audio.clone(),
             settings.clone(),
-            limits.limits.clone(),
-            limits.started.clone(),
+            limits,
             listener.clone(),
             store.clock().clone(),
         ))
