@@ -89,6 +89,9 @@ describe('SearchSuggestions.svelte', () => {
 		globalThis.fetch = fetchSpy;
 
 		await renderComponent();
+		// Only the test moves the clock while it types: on a busy machine
+		// real time between two keystrokes can outlast the debounce.
+		vi.useFakeTimers({ shouldAdvanceTime: false });
 
 		const input = page.getByRole('searchbox');
 		await input.fill('m');
