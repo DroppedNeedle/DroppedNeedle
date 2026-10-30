@@ -50,6 +50,8 @@
 //! preview found before a restart costs nothing after it. Concurrent
 //! identical searches share one HTTP call and one reservation through the
 //! cache's one fetch per key, and share its outcome, a failure included.
+//! An answer is also held in memory for a few minutes, so a cache write
+//! that was dropped does not spend the unit again.
 //! Quota getters are async because the quota state sits behind an async
 //! lock. Wire the quota path to `<cache_dir>/youtube_quota.json`, and build
 //! one client per quota path: clones share its budget and settings.
@@ -406,13 +408,22 @@ struct QuotaState {
     count: u32,
 }
 
-/// State shared by every clone of one client: the quota file guard and
-/// the settings snapshot.
+/// How long a search's answer is also held in memory, so a cache write
+/// that was dropped (a full write queue, the cache off) does not spend a
+/// second quota unit on the same search right after.
+const RECENT_HOLD_MS: i64 = 10 * 60 * 1000;
+/// Most answers held in memory.
+const RECENT_MAX: usize = 512;
+
+/// State shared by every clone of one client: the quota file guard, the
+/// settings snapshot and the answers held in memory.
 #[derive(Debug)]
 struct ClientState {
     quota_path: PathBuf,
     quota: tokio::sync::Mutex<QuotaState>,
     settings: Mutex<YouTubeSettings>,
+    /// Recent answers by cache key, with when they landed.
+    recent: Mutex<HashMap<String, (Option<String>, i64)>>,
 }
 
 /// The YouTube client. Cheap to clone: clones share the quota file, the
@@ -452,6 +463,7 @@ impl YouTubeClient {
             quota_path,
             quota: tokio::sync::Mutex::new(loaded),
             settings: Mutex::new(settings),
+            recent: Mutex::new(HashMap::new()),
         });
         Ok(Self {
             api,
@@ -490,12 +502,11 @@ impl YouTubeClient {
         self.quota_status().await
     }
 
-    /// True when the pair already has a cached preview (or cached absence).
+    /// True when the pair has a cached preview or a fresh cached absence:
+    /// a search for it would not spend quota.
     pub async fn is_cached(&self, artist: &str, title: &str, kind: SearchKind) -> bool {
-        self.cache
-            .peek::<String>(&preview_key(kind, artist, title))
-            .await
-            .is_some()
+        let key = preview_key(kind, artist, title);
+        self.recent(&key).is_some() || self.cache.settled(&key).await
     }
 
     /// Cached flags for track pairs, keyed `artist|track` lowercased.
@@ -540,19 +551,55 @@ impl YouTubeClient {
         title: &str,
         priority: RequestPriority,
     ) -> Result<Option<String>, YoutubeError> {
+        let key = preview_key(kind, artist, title);
+        if let Some(answer) = self.recent(&key) {
+            return Ok(answer);
+        }
         let client = self.clone();
         let (artist, title) = (artist.to_owned(), title.to_owned());
-        self.cache
-            .get_or_fetch(
-                &preview_key(kind, &artist, &title),
-                PREVIEWS,
-                priority,
-                move |priority| async move {
-                    let found = client.dispatch(kind, &artist, &title, priority).await?;
-                    Ok(found.map_or(Fetched::Missing, Fetched::Found))
-                },
-            )
-            .await
+        let answer = self
+            .cache
+            .get_or_fetch(&key, PREVIEWS, priority, move |priority| async move {
+                let found = client.dispatch(kind, &artist, &title, priority).await?;
+                Ok::<_, YoutubeError>(found.map_or(Fetched::Missing, Fetched::Found))
+            })
+            .await?;
+        self.remember(&key, answer.clone());
+        Ok(answer)
+    }
+
+    /// The answer held in memory for `key`, when it landed recently.
+    fn recent(&self, key: &CacheKey) -> Option<Option<String>> {
+        let since = self.clock.now_ms().saturating_sub(RECENT_HOLD_MS);
+        self.lock_recent()
+            .get(key.as_str())
+            .filter(|(_, at)| *at > since)
+            .map(|(answer, _)| answer.clone())
+    }
+
+    /// Hold `answer` in memory for a short while, dropping what has aged
+    /// out, and the oldest answer when still full.
+    fn remember(&self, key: &CacheKey, answer: Option<String>) {
+        let now = self.clock.now_ms();
+        let since = now.saturating_sub(RECENT_HOLD_MS);
+        let mut recent = self.lock_recent();
+        recent.retain(|_, (_, at)| *at > since);
+        if recent.len() >= RECENT_MAX
+            && let Some(oldest) = recent
+                .iter()
+                .min_by_key(|(_, (_, at))| *at)
+                .map(|(key, _)| key.clone())
+        {
+            recent.remove(&oldest);
+        }
+        recent.insert(key.as_str().to_owned(), (answer, now));
+    }
+
+    fn lock_recent(&self) -> std::sync::MutexGuard<'_, HashMap<String, (Option<String>, i64)>> {
+        self.state
+            .recent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Reserve-then-fetch. The reservation lands in the file before any HTTP;

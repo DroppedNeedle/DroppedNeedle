@@ -467,8 +467,8 @@ pub struct BecauseYouListenTo {
     pub seed_artist_mbid: String,
     /// Similar-albums shelf.
     pub section: ChartSection,
-    /// Seed listen count backing the pick.
-    pub listen_count: i64,
+    /// Seed listen count backing the pick; null when the provider sent none.
+    pub listen_count: Option<i64>,
     /// Banner art URL, when resolved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub banner_url: Option<String>,

@@ -53,7 +53,7 @@
 			<h2 class="text-xl sm:text-2xl font-bold text-primary truncate">
 				{entry.seed_artist}
 			</h2>
-			{#if entry.listen_count > 0}
+			{#if entry.listen_count}
 				<span
 					class="inline-flex items-center gap-1.5 shrink-0 rounded-full px-3 py-1 text-xs font-medium bg-[rgb(var(--brand-discover)/0.12)] text-[rgb(var(--brand-discover))]"
 				>

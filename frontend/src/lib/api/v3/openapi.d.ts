@@ -11337,9 +11337,9 @@ export interface components {
             fanart_url?: string | null;
             /**
              * Format: int64
-             * @description Seed listen count backing the pick.
+             * @description Seed listen count backing the pick; null when the provider sent none.
              */
-            listen_count: number;
+            listen_count?: number | null;
             /** @description Similar-albums shelf. */
             section: components["schemas"]["ChartSection"];
             /** @description Seed artist name. */
@@ -22845,9 +22845,9 @@ export interface components {
             disc_number?: number | null;
             /**
              * Format: int64
-             * @description Listen or play count.
+             * @description Listen or play count, when the provider sent one.
              */
-            listen_count: number;
+            listen_count?: number | null;
             /** @description Release the listens point at, when known. */
             original_release_mbid?: string | null;
             /** @description Recording MBID, when known. */

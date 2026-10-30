@@ -99,7 +99,7 @@ pub fn trending_artists(rows: &[ArtistRow], source: ListenSource) -> Option<Char
         .map(|row| {
             SectionItem::Artist(ArtistRef {
                 musicbrainz_id: row.mbid.clone(),
-                listen_count: Some(row.listen_count),
+                listen_count: row.listen_count,
                 ..ArtistRef::named(row.name.clone())
             })
         })
@@ -153,7 +153,7 @@ pub fn your_top_albums_lastfm(rows: &[LastFmChartAlbum]) -> Option<ChartSection>
             .map(|row| {
                 let mut item = album(None, &row.name, Some(&row.artist_name), None, None);
                 item.cover_url = Some(row.image_url.clone()).filter(|url| !url.is_empty());
-                item.listen_count = Some(row.playcount);
+                item.listen_count = row.playcount;
                 SectionItem::Album(item)
             })
             .collect(),

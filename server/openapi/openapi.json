@@ -39138,8 +39138,7 @@
         "required": [
           "seed_artist",
           "seed_artist_mbid",
-          "section",
-          "listen_count"
+          "section"
         ],
         "properties": {
           "banner_url": {
@@ -39157,9 +39156,12 @@
             "description": "Fanart URL, when resolved."
           },
           "listen_count": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "Seed listen count backing the pick."
+            "description": "Seed listen count backing the pick; null when the provider sent none."
           },
           "section": {
             "$ref": "#/components/schemas/ChartSection",
@@ -65265,8 +65267,7 @@
         "description": "One of an artist's most played songs.",
         "required": [
           "title",
-          "artist_name",
-          "listen_count"
+          "artist_name"
         ],
         "properties": {
           "artist_name": {
@@ -65283,9 +65284,12 @@
             "minimum": 0
           },
           "listen_count": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "Listen or play count."
+            "description": "Listen or play count, when the provider sent one."
           },
           "original_release_mbid": {
             "type": [

@@ -72,7 +72,7 @@
 				{entry.seed_artist}
 			</h3>
 		</div>
-		{#if entry.listen_count > 0}
+		{#if entry.listen_count}
 			<span
 				class="hidden sm:inline-flex items-center gap-1.5 shrink-0 rounded-full px-2.5 py-1 text-xs font-medium bg-[rgb(var(--brand-discover)/0.12)] text-[rgb(var(--brand-discover))]"
 			>

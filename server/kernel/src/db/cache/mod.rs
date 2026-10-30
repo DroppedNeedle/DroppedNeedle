@@ -9,7 +9,7 @@
 //! warning.
 //!
 //! The file holds nothing that cannot be fetched again, so it has no
-//! migrations: its version stamp is a hash of the schema and the release,
+//! migrations: its version stamp is a hash of the schema, layout and build,
 //! and a file with another stamp, or one that is not a database, is deleted
 //! and made fresh at start. It is never backed up or exported. A file found
 //! corrupt while running turns the cache off for the run and is deleted, so
@@ -630,14 +630,27 @@ fn remove_regular(path: &Path) -> Result<(), String> {
     }
 }
 
-/// The file's version stamp: the schema and the release, so either change
-/// starts a new file. Never 0, which a new or half-made file reads.
+/// The build a file was made by: the image's tag (each release and each
+/// dev image has its own), else the crate version for a local build.
+const BUILD: &str = match option_env!("COMMIT_TAG") {
+    Some(tag) => tag,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
+/// How the file is laid out beyond its schema. Part of the stamp, so a
+/// file made another way is made fresh.
+const LAYOUT: &str = "auto_vacuum=incremental";
+
+/// The file's version stamp: the schema, the layout and the build, so any
+/// change starts a new file. Never 0, which a new or half-made file reads.
 fn version() -> i32 {
     let mut hash: u32 = 0x811c_9dc5;
     for byte in SCHEMA
         .bytes()
         .chain(":".bytes())
-        .chain(env!("CARGO_PKG_VERSION").bytes())
+        .chain(LAYOUT.bytes())
+        .chain(":".bytes())
+        .chain(BUILD.bytes())
     {
         hash ^= u32::from(byte);
         hash = hash.wrapping_mul(0x0100_0193);
@@ -755,6 +768,8 @@ fn open_current(path: &Path) -> rusqlite::Result<Option<(Connection, i64)>> {
 
 fn create(path: &Path) -> rusqlite::Result<Connection> {
     let mut connection = Connection::open_with_flags(path, open_flags(true))?;
+    // Set before any table exists, so freed pages can go back to the disk.
+    connection.execute_batch("PRAGMA auto_vacuum = INCREMENTAL")?;
     writer_pragmas(&connection)?;
     let transaction = connection.transaction()?;
     transaction.execute_batch(SCHEMA)?;
@@ -829,11 +844,13 @@ impl Writer {
     }
 
     /// One transaction for a batch of puts, deletes and clears; each
-    /// waiter is answered after the commit.
+    /// waiter is answered after the commit, and after a clear once the
+    /// freed space is back on the disk.
     fn commit(&mut self, ops: Vec<Op>) {
         if ops.is_empty() {
             return;
         }
+        let clears = ops.iter().any(|op| matches!(op, Op::Clear(_)));
         let mut total = self.total;
         let mut answers = Vec::new();
         let queued: Vec<(String, u64)> = ops
@@ -887,6 +904,9 @@ impl Writer {
             Ok(()) => {
                 self.total = total;
                 self.succeeded();
+                if clears && let Err(error) = self.reclaim() {
+                    self.failed(&error);
+                }
                 for (ack, gone) in answers {
                     let _ = ack.send(Ok(gone));
                 }
@@ -926,16 +946,28 @@ impl Writer {
                 Err(error) => return Err(self.failed(&error)),
             }
         }
-        let truncated: rusqlite::Result<(i64, i64, i64)> =
-            self.connection
-                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                });
-        if let Err(error) = truncated {
+        if let Err(error) = self.reclaim() {
             return Err(self.failed(&error));
         }
         self.succeeded();
         Ok(swept)
+    }
+
+    /// Hand the file's free pages back to the disk, then fold the journal
+    /// in and cut it back, so the file itself shrinks.
+    fn reclaim(&self) -> rusqlite::Result<()> {
+        let mut vacuum = self.connection.prepare("PRAGMA incremental_vacuum")?;
+        let mut freed = vacuum.query([])?;
+        // Each step frees one page.
+        while freed.next()?.is_some() {}
+        drop(freed);
+        drop(vacuum);
+        let _: (i64, i64, i64) =
+            self.connection
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?;
+        Ok(())
     }
 }
 
@@ -1041,6 +1073,27 @@ mod tests {
         holder.execute_batch("ROLLBACK").unwrap();
         let landed = settled(&cache, "musicbrainz:held").await;
         assert_eq!(landed.and_then(|row| row.value), Some(b"answer".to_vec()));
+    }
+
+    /// Clearing the cache gives its space back to the disk: the file
+    /// shrinks, not only the rows.
+    #[tokio::test]
+    async fn a_clear_shrinks_the_file() {
+        let cache = CacheDb::scratch();
+        assert!(cache.is_on());
+        let path = cache.inner.shared.path.clone();
+        let value = vec![7_u8; 4_000];
+        for at in 0..500 {
+            assert!(cache.put(row(&format!("musicbrainz:{at}"), &value)));
+        }
+        assert!(settled(&cache, "musicbrainz:0").await.is_some());
+        cache.sweep(0).await.expect("journal folded in");
+        let full = std::fs::metadata(&path).unwrap().len();
+        assert!(full > 1_000_000, "the rows are on disk: {full} bytes");
+
+        assert_eq!(cache.clear().await.expect("cleared"), 500);
+        let cleared = std::fs::metadata(&path).unwrap().len();
+        assert!(cleared < full / 10, "{full} bytes became {cleared}");
     }
 
     /// A file of another version, one that is not a database, and one

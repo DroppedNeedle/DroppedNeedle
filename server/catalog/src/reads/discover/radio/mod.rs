@@ -163,7 +163,7 @@ fn seed(mbid: &str, name: &str) -> ArtistRow {
     ArtistRow {
         name: name.to_owned(),
         mbid: Some(mbid.to_owned()),
-        listen_count: 0,
+        listen_count: None,
     }
 }
 

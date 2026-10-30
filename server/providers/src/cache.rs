@@ -14,8 +14,10 @@
 //! caller holding a stale row waits at most a second, then gets the row as
 //! it is while the fetch finishes and stores on its own. When the fetch
 //! fails, a row still inside its keep time is served and its source is
-//! marked degraded. A fetch during which any provider call failed stores
-//! nothing, so an outage is never kept as "nothing there".
+//! marked degraded; it is also served over a "nothing there" the fetch
+//! found past a failure, and a kept found row over a partial answer. A
+//! fetch during which any provider call failed stores nothing, so an
+//! outage is never kept as "nothing there".
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -144,6 +146,19 @@ impl CacheKey {
             hasher.update(collapsed.to_lowercase().as_bytes());
         }
         Self::new(source, &[kind, &format!("{:x}", hasher.finalize())])
+    }
+
+    /// A short tag of a secret that picks the answer (an API key), for a
+    /// key part: a changed secret is a new key, and the secret itself is
+    /// never written to the file.
+    #[must_use]
+    pub fn secret_tag(secret: &str) -> String {
+        let digest = Sha256::digest(secret.as_bytes());
+        digest
+            .iter()
+            .take(6)
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     }
 
     /// Mark a user's own listening data: kept one day at most, so it does
@@ -421,7 +436,22 @@ impl ProviderCacheStore {
                 Fetched::Missing => None,
             });
         };
+        let clean = landed
+            .notes
+            .iter()
+            .all(|note| note.status == IntegrationStatus::Ok);
         match (outcome, stale) {
+            // A kept answer beats one the fetch could not finish: a
+            // "nothing there" made past a failure, or a part of the answer
+            // where a whole one was kept.
+            (Ok(Fetched::Missing), Some(answer)) if !clean => {
+                relay(&landed.notes, true);
+                Ok(answer)
+            }
+            (Ok(Fetched::Partial(_)), Some(Some(answer))) => {
+                relay(&landed.notes, true);
+                Ok(Some(answer))
+            }
             (Ok(fetched), _) => {
                 relay(&landed.notes, false);
                 Ok(match fetched {
@@ -431,11 +461,7 @@ impl ProviderCacheStore {
             }
             (Err(_), Some(answer)) => {
                 relay(&landed.notes, true);
-                if landed
-                    .notes
-                    .iter()
-                    .all(|note| note.status == IntegrationStatus::Ok)
-                {
+                if clean {
                     degradation::record_current(
                         key.source().as_str(),
                         IntegrationStatus::Degraded,
@@ -565,6 +591,16 @@ impl ProviderCacheStore {
         self.kept(key).await.as_ref().and_then(decode)
     }
 
+    /// Whether a lookup of `key` is settled without asking: a found row
+    /// inside its keep time, or a fresh "nothing there". A stale "nothing
+    /// there" is asked again. Never dials out.
+    pub async fn settled(&self, key: &CacheKey) -> bool {
+        let now = self.clock.now_ms();
+        self.kept(key)
+            .await
+            .is_some_and(|row| row.kind == CacheKind::Found || row.fresh_until > now)
+    }
+
     /// The bytes of a fresh found row.
     pub async fn get_bytes(&self, key: &CacheKey) -> Option<Vec<u8>> {
         let now = self.clock.now_ms();
@@ -673,5 +709,50 @@ mod tests {
             store.peek::<String>(&key()).await,
             Some(Some("answer".to_owned()))
         );
+    }
+
+    /// A kept answer beats one the refresh could not finish: a "nothing
+    /// there" found past a failure, and a part of the answer where the
+    /// whole was kept, so an outage or a first page never blanks a page.
+    #[tokio::test]
+    async fn a_kept_row_beats_an_unfinished_refresh() {
+        let (store, clock) = store();
+        let ask = |fetched: Fetched<String>, fails: bool| {
+            let store = store.clone();
+            async move {
+                store
+                    .get_or_fetch(
+                        &key(),
+                        Policy::MUSICBRAINZ_ENTITY,
+                        RequestPriority::BackgroundSync,
+                        move |_| async move {
+                            if fails {
+                                degradation::record_current(
+                                    "musicbrainz",
+                                    IntegrationStatus::Error,
+                                    false,
+                                );
+                            }
+                            Ok::<_, String>(fetched)
+                        },
+                    )
+                    .await
+            }
+        };
+        let kept = Some("whole".to_owned());
+        assert_eq!(
+            ask(Fetched::Found("whole".to_owned()), false).await,
+            Ok(kept.clone())
+        );
+        settle(&store).await;
+        clock.advance(duration_ms(Policy::MUSICBRAINZ_ENTITY.fresh) + 1);
+
+        assert_eq!(ask(Fetched::Missing, true).await, Ok(kept.clone()));
+        assert_eq!(
+            ask(Fetched::Partial("part".to_owned()), false).await,
+            Ok(kept.clone())
+        );
+        settle(&store).await;
+        assert_eq!(store.peek::<String>(&key()).await, Some(kept));
     }
 }

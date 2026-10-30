@@ -133,7 +133,7 @@ fn listenbrainz_artists(rows: Vec<ArtistRow>) -> Vec<ArtistRef> {
                 musicbrainz_id: Some(mbid),
                 local_id: None,
                 image_url: None,
-                listen_count: Some(row.listen_count),
+                listen_count: row.listen_count,
                 in_library: false,
             })
         })
@@ -166,7 +166,7 @@ fn lastfm_artists(rows: Vec<ArtistRow>) -> Vec<ArtistRef> {
             musicbrainz_id: row.mbid,
             local_id: None,
             image_url: None,
-            listen_count: Some(row.listen_count),
+            listen_count: row.listen_count,
             in_library: false,
         })
         .collect()
@@ -183,7 +183,7 @@ fn lastfm_albums(rows: Vec<LastFmChartAlbum>) -> Vec<AlbumRef> {
             cover_url: Some(row.image_url).filter(|url| !url.is_empty()),
             release_date: None,
             year: None,
-            listen_count: Some(row.playcount),
+            listen_count: row.playcount,
             in_library: false,
             requested: false,
         })

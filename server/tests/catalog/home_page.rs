@@ -33,7 +33,7 @@ fn artist(name: &str, mbid: &str) -> ArtistRow {
     ArtistRow {
         name: name.to_owned(),
         mbid: Some(mbid.to_owned()),
-        listen_count: 10,
+        listen_count: Some(10),
     }
 }
 

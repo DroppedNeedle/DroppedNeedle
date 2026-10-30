@@ -1543,6 +1543,85 @@ async fn provider_answers_survive_a_restart() {
     app.stop().await;
 }
 
+/// The test settings with TheAudioDB's key saved as the test sets it.
+struct KeyedSettings {
+    inner: TestSettings,
+    audiodb_key: Mutex<String>,
+}
+
+impl CatalogSettings for KeyedSettings {
+    fn musicbrainz(&self) -> Option<MusicBrainzSettings> {
+        self.inner.musicbrainz()
+    }
+
+    fn preferences(&self) -> UserPreferences {
+        self.inner.preferences()
+    }
+
+    fn advanced(&self) -> AdvancedSettings {
+        AdvancedSettings {
+            audiodb_api_key: self.audiodb_key.lock().unwrap().as_str().into(),
+            ..self.inner.advanced()
+        }
+    }
+
+    fn listenbrainz_enabled(&self) -> bool {
+        self.inner.listenbrainz_enabled()
+    }
+
+    fn primary_source(&self) -> ListenSource {
+        self.inner.primary_source()
+    }
+
+    fn store_region(&self) -> Option<String> {
+        self.inner.store_region()
+    }
+}
+
+/// TheAudioDB answers depend on the key they were asked with: once the
+/// saved key changes, art kept under the old key is not served, and the
+/// new key is asked.
+#[tokio::test]
+async fn audiodb_art_is_kept_per_api_key() {
+    let mut routes = routes();
+    routes.push(Route {
+        path: "/audiodb/premium-key/artist-mb.php".to_owned(),
+        param: Some(("i", ARTIST)),
+        status: 200,
+        body: r#"{"artists": null}"#.to_owned(),
+    });
+    let fixtures = Fixtures::start_with(routes).await;
+    let dir = crate::common::ScratchDir::new("reads-catalog-audiodb-key");
+    crate::common::migrated_db(&dir.join("app.db"));
+    let rig = AuthRig::new("reads-catalog-audiodb-key").await;
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
+    let settings = Arc::new(KeyedSettings {
+        inner: TestSettings {
+            mb_url: format!("{}/mb/ws/2", fixtures.base),
+        },
+        audiodb_key: Mutex::new(String::new()),
+    });
+    let catalog = Catalog::new(
+        Upstream::new(
+            Arc::new(fixtures.providers(&http)),
+            settings.clone(),
+            rig.deps.clone(),
+        ),
+        local_catalog(&dir),
+    );
+
+    let free = catalog.artist_extended(ARTIST).await.unwrap();
+    assert_eq!(
+        free.images.thumb_url.as_deref(),
+        Some("https://r2.theaudiodb.com/images/media/artist/thumb/radiohead.jpg")
+    );
+
+    *settings.audiodb_key.lock().unwrap() = "premium-key".to_owned();
+    let premium = catalog.artist_extended(ARTIST).await.unwrap();
+    assert_eq!(fixtures.hits("/audiodb/premium-key/artist-mb.php"), 1);
+    assert_eq!(premium.images.thumb_url, None);
+}
+
 /// Now, by the system clock the cache under test runs on.
 fn unix_now() -> u64 {
     use droppedneedle_kernel::clock::Clock as _;

@@ -320,8 +320,8 @@ pub struct TopSong {
     pub original_release_mbid: Option<String>,
     /// That release's title, when known.
     pub release_name: Option<String>,
-    /// Listen or play count.
-    pub listen_count: i64,
+    /// Listen or play count, when the provider sent one.
+    pub listen_count: Option<i64>,
     /// Disc of the song on that release, once its tracklist is known.
     pub disc_number: Option<u32>,
     /// Track number on that disc, once the tracklist is known.

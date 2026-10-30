@@ -788,8 +788,7 @@ fn validate_ui(name: &str, table: RawUi) -> Result<(String, Vec<String>, String)
     if !entry.is_empty() {
         let normalized = entry.replace('\\', "/");
         if normalized.starts_with('/')
-            || normalized.starts_with("http://")
-            || normalized.starts_with("https://")
+            || droppedneedle_providers::web_address::web_address(&normalized).is_some()
             || normalized.split('/').any(|part| part == "..")
         {
             return Err(ManifestError(format!(

@@ -70,7 +70,7 @@ pub(crate) fn page_script() -> Script {
             artist: ArtistRow {
                 name: format!("Similar {n}"),
                 mbid: Some(mbid('b', n)),
-                listen_count: i64::from(n) * 100,
+                listen_count: Some(i64::from(n) * 100),
             },
             score: f64::from(n) * 100.0,
         })
@@ -97,13 +97,13 @@ pub(crate) fn page_script() -> Script {
         user_artists: vec![ArtistRow {
             name: "Seed".to_owned(),
             mbid: Some(SEED.to_owned()),
-            listen_count: 50,
+            listen_count: Some(50),
         }],
         fresh: vec![ranked(90, &mbid('f', 1), 0).album],
         sitewide_artists: vec![ArtistRow {
             name: "Everyone's Favourite".to_owned(),
             mbid: Some(mbid('c', 1)),
-            listen_count: 9000,
+            listen_count: Some(9000),
         }],
         sitewide_albums: vec![listened(ranked(70, &mbid('d', 1), 10_000))],
         similar: HashMap::from([(SEED.to_owned(), similar)]),
@@ -392,7 +392,7 @@ fn scored(prefix: char, n: u8, score: f64) -> ScoredArtist {
         artist: ArtistRow {
             name: format!("Artist {prefix}{n}"),
             mbid: Some(mbid(prefix, n)),
-            listen_count: 0,
+            listen_count: None,
         },
         score,
     }
@@ -402,7 +402,7 @@ fn seed(name: &str, n: u8) -> ArtistRow {
     ArtistRow {
         name: name.to_owned(),
         mbid: Some(mbid('e', n)),
-        listen_count: 10,
+        listen_count: Some(10),
     }
 }
 
@@ -456,7 +456,7 @@ async fn because_entries(on: bool) -> Vec<(String, String, String)> {
                     artist: ArtistRow {
                         name: "Artist b6".to_owned(),
                         mbid: None,
-                        listen_count: 0,
+                        listen_count: None,
                     },
                     score: 0.7,
                 },

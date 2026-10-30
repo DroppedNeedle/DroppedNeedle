@@ -262,18 +262,18 @@ impl Catalog {
     }
 
     /// Whether the artist's similar artists, top songs and top albums, at
-    /// these counts, are all held, fresh or stale, as `user_id` reads them.
-    /// A section ListenBrainz has nothing for counts once Last.fm's answer,
-    /// which then fills in, is held too.
+    /// these counts, are all held, fresh or stale, for a user who can
+    /// (`lastfm`) or cannot read Last.fm. A section ListenBrainz has
+    /// nothing for counts once Last.fm's answer, which then fills in, is
+    /// held too.
     pub(super) async fn artist_sections_held(
         &self,
-        user_id: &str,
+        lastfm: bool,
         mbid: &str,
         (similar, songs, albums): (u32, u32, u32),
     ) -> bool {
         let listenbrainz = self.preferred_source(None) == ListenSource::Listenbrainz
             && self.upstream().listenbrainz().is_some();
-        let mut lastfm = None;
         for (section, count) in [
             (Section::Similar, similar),
             (Section::TopSongs, songs),
@@ -287,11 +287,7 @@ impl Catalog {
                     Some(None) => {}
                 }
             }
-            let configured = match lastfm {
-                Some(configured) => configured,
-                None => *lastfm.insert(self.upstream().lastfm(user_id).await.is_some()),
-            };
-            if configured
+            if lastfm
                 && !self
                     .held(&self.section_key(ListenSource::Lastfm, mbid, count, section))
                     .await
@@ -300,6 +296,12 @@ impl Catalog {
             }
         }
         true
+    }
+
+    /// Whether `user_id` can read Last.fm (their own key or the
+    /// instance's). Decrypts the user's key, so callers ask once.
+    pub(super) async fn lastfm_readable(&self, user_id: &str) -> bool {
+        self.upstream().lastfm(user_id).await.is_some()
     }
 
     /// ListenBrainz rows for one section; `None` when ListenBrainz failed.
@@ -361,7 +363,7 @@ impl Catalog {
                             recording_mbid: recording.recording_mbid,
                             original_release_mbid: recording.release_mbid,
                             release_name: recording.release_name,
-                            listen_count: recording.listen_count,
+                            listen_count: Some(recording.listen_count),
                             disc_number: None,
                             track_number: None,
                         })
@@ -709,8 +711,8 @@ impl Catalog {
     /// Last.fm top albums of the similar artists, resolved to release
     /// groups. Last.fm names releases, so each album resolves through
     /// MusicBrainz once and the answer is cached a week; resolution runs
-    /// under a short deadline, and a partial list is cached only a minute
-    /// so the next visit fills in from the resolutions already made.
+    /// under a short deadline; a partial list is shown but not kept, and
+    /// the next visit fills in from the resolutions already made.
     async fn similar_albums_lastfm(
         &self,
         user_id: &str,
@@ -1122,7 +1124,7 @@ fn match_lastfm_albums(
         albums.push(AlbumRef {
             artist_name: Some(item.artist_name),
             musicbrainz_id: group,
-            listen_count: Some(item.playcount),
+            listen_count: item.playcount,
             ..AlbumRef::titled(item.name)
         });
     }

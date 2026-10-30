@@ -456,7 +456,7 @@ fn queue_script() -> Script {
         user_artists: vec![ArtistRow {
             name: "Seed".to_owned(),
             mbid: Some(SEED.to_owned()),
-            listen_count: 10,
+            listen_count: Some(10),
         }],
         similar: HashMap::from([(
             SEED.to_owned(),
@@ -464,7 +464,7 @@ fn queue_script() -> Script {
                 artist: ArtistRow {
                     name: "Similar".to_owned(),
                     mbid: Some(SIMILAR.to_owned()),
-                    listen_count: 5,
+                    listen_count: Some(5),
                 },
                 score: 5.0,
             }],
@@ -841,7 +841,7 @@ async fn a_user_without_lastfm_leaves_no_empty_answer_for_others() {
         lastfm_chart: vec![ArtistRow {
             name: "Charted".to_owned(),
             mbid: Some(SIMILAR.to_owned()),
-            listen_count: 7,
+            listen_count: Some(7),
         }],
         ..Script::default()
     };

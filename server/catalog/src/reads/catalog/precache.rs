@@ -90,11 +90,11 @@ impl Catalog {
         }
     }
 
-    /// Whether the artist's discovery sections are held as `user_id` reads
-    /// them, fresh or stale.
-    async fn artist_discovery_cached(&self, user_id: &str, mbid: &str) -> bool {
+    /// Whether the artist's discovery sections are held, fresh or stale,
+    /// for a user who can (`lastfm`) or cannot read Last.fm.
+    async fn artist_discovery_cached(&self, lastfm: bool, mbid: &str) -> bool {
         self.artist_sections_held(
-            user_id,
+            lastfm,
             mbid,
             (SIMILAR_COUNT, TOP_SONGS_COUNT, TOP_ALBUMS_COUNT),
         )
@@ -349,6 +349,9 @@ pub struct CatalogPrecache {
     catalog: Catalog,
     artwork: ArtworkService,
     settings: Live<AdvancedSettings>,
+    /// Whether the run's user can read Last.fm, found once per run: it
+    /// decrypts their key.
+    lastfm: tokio::sync::Mutex<Option<(String, bool)>>,
 }
 
 impl CatalogPrecache {
@@ -363,7 +366,21 @@ impl CatalogPrecache {
             catalog,
             artwork,
             settings,
+            lastfm: tokio::sync::Mutex::new(None),
         }
+    }
+
+    /// Whether `user_id` can read Last.fm, asked once per run.
+    async fn lastfm_readable(&self, user_id: &str) -> bool {
+        let mut known = self.lastfm.lock().await;
+        if let Some((user, readable)) = known.as_ref()
+            && user == user_id
+        {
+            return *readable;
+        }
+        let readable = self.catalog.lastfm_readable(user_id).await;
+        *known = Some((user_id.to_owned(), readable));
+        readable
     }
 }
 
@@ -384,7 +401,11 @@ impl PrecacheSources for CatalogPrecache {
     }
 
     fn library(&self) -> BoxFuture<'_, Result<PrecacheLibrary, String>> {
-        Box::pin(self.catalog.precache_library())
+        Box::pin(async move {
+            // A run starts here: the user's Last.fm access is asked again.
+            *self.lastfm.lock().await = None;
+            self.catalog.precache_library().await
+        })
     }
 
     fn artist_cached<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, bool> {
@@ -410,7 +431,12 @@ impl PrecacheSources for CatalogPrecache {
         user_id: &'a str,
         artist_mbid: &'a str,
     ) -> BoxFuture<'a, bool> {
-        Box::pin(self.catalog.artist_discovery_cached(user_id, artist_mbid))
+        Box::pin(async move {
+            let lastfm = self.lastfm_readable(user_id).await;
+            self.catalog
+                .artist_discovery_cached(lastfm, artist_mbid)
+                .await
+        })
     }
 
     fn warm_discovery<'a>(&'a self, user_id: &'a str, artist_mbid: &'a str) -> BoxFuture<'a, ()> {

@@ -281,8 +281,8 @@ pub struct TopItem {
     pub artist_name: String,
     /// MusicBrainz id (recording, release or artist), when Last.fm knows one.
     pub mbid: Option<String>,
-    /// Play count.
-    pub playcount: i64,
+    /// Play count, when Last.fm sent one.
+    pub playcount: Option<i64>,
     /// Artwork URL (extralarge preferred), empty when none was sent.
     pub image_url: String,
 }
@@ -1196,7 +1196,7 @@ fn top_item(item: &models::WireTopItem) -> Option<TopItem> {
             .unwrap_or("")
             .to_owned(),
         mbid: mbid_or_none(item.mbid.as_deref()),
-        playcount: count(item.playcount.as_ref()),
+        playcount: sent_count(item.playcount.as_ref()),
         image_url: pick_image(item.image.as_ref()),
     })
 }

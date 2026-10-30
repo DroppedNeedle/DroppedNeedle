@@ -238,22 +238,9 @@ impl Catalog {
         CacheKey::new(Source::MusicBrainz, &[&namespace, "release", mbid])
     }
 
-    /// Cache key of TheAudioDB's album art. A name match may be another
-    /// album's art, so whether the name search is on is in the key.
+    /// Cache key of TheAudioDB's album art.
     fn audiodb_album_key(&self, mbid: &str) -> CacheKey {
-        let fallback = self
-            .upstream()
-            .settings()
-            .advanced()
-            .audiodb_name_search_fallback;
-        CacheKey::new(
-            Source::AudioDb,
-            &[
-                if fallback { "by_name" } else { "by_id" },
-                "album",
-                &mbid.to_ascii_lowercase(),
-            ],
-        )
+        self.audiodb_key("album", mbid)
     }
 
     /// The cached release-group detail. Sources that hand over a release

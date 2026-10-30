@@ -175,7 +175,7 @@ fn stat_artist(row: ArtistStat) -> ArtistRow {
     ArtistRow {
         name: row.artist_name,
         mbid: row.artist_mbids.into_iter().next(),
-        listen_count: row.listen_count,
+        listen_count: Some(row.listen_count),
     }
 }
 
@@ -360,7 +360,7 @@ impl ListeningNetwork for LiveNetwork {
                     artist: ArtistRow {
                         name: row.artist_name,
                         mbid: Some(row.artist_mbid),
-                        listen_count: row.listen_count,
+                        listen_count: Some(row.listen_count),
                     },
                 })
                 .collect())
@@ -632,7 +632,7 @@ impl ListeningNetwork for LiveNetwork {
                     artist: ArtistRow {
                         name: row.name,
                         mbid: row.mbid,
-                        listen_count: 0,
+                        listen_count: None,
                     },
                 })
                 .collect())
@@ -792,7 +792,7 @@ impl ListeningNetwork for LiveNetwork {
                     name: track.album_name,
                     artist_name: track.artist_name,
                     mbid: track.album_mbid,
-                    playcount: 0,
+                    playcount: None,
                     image_url: track.image_url,
                 })
                 .collect())
@@ -901,7 +901,7 @@ impl ListeningNetwork for LiveNetwork {
                     Some(ArtistRow {
                         name: hit.name.filter(|name| !name.is_empty())?,
                         mbid: Some(hit.id),
-                        listen_count: 0,
+                        listen_count: None,
                     })
                 })
                 .collect())
@@ -1105,7 +1105,7 @@ impl ListeningNetwork for LiveNetwork {
                 .map(|artist| ArtistRow {
                     name: artist.name,
                     mbid: artist.artist_mbid,
-                    listen_count: 0,
+                    listen_count: None,
                 })
                 .collect())
         })

@@ -898,7 +898,7 @@ impl Builder<'_> {
                 &row.name,
                 Some(&row.artist_name),
                 None,
-                (row.playcount > 0).then_some(row.playcount),
+                row.playcount.filter(|count| *count > 0),
             );
             if item.cover_url.is_none() && !row.image_url.is_empty() {
                 item.cover_url = Some(row.image_url.clone());
@@ -1123,7 +1123,7 @@ impl Builder<'_> {
             .map(|(mbid, name)| ArtistRow {
                 name: name.unwrap_or_else(|| format!("{label} artist")),
                 mbid: Some(mbid.clone()),
-                listen_count: 0,
+                listen_count: None,
             })
             .collect();
         let pools = self
@@ -1508,7 +1508,7 @@ impl Builder<'_> {
             .map(|(mbid, (_, name, _))| ArtistRow {
                 name: name.clone(),
                 mbid: Some(mbid.clone()),
-                listen_count: 0,
+                listen_count: None,
             })
             .collect();
         let albums = join_all(rows.iter().map(|artist| {
@@ -1850,11 +1850,7 @@ impl Builder<'_> {
                 continue;
             };
             if seen.insert(mbid) {
-                items.push(artist(
-                    row.mbid.as_deref(),
-                    &row.name,
-                    Some(row.listen_count),
-                ));
+                items.push(artist(row.mbid.as_deref(), &row.name, row.listen_count));
             }
         }
         items.truncate(SHELF_SIZE);
@@ -1990,7 +1986,7 @@ fn because_sections(
             items.push(artist(
                 scored.artist.mbid.as_deref(),
                 &scored.artist.name,
-                Some(scored.artist.listen_count),
+                scored.artist.listen_count,
             ));
         }
         if items.is_empty() || (items.len() < 3 && !sections.is_empty()) {
@@ -2037,7 +2033,7 @@ fn artists_you_might_like(
     let items = rows
         .into_iter()
         .take(SHELF_SIZE)
-        .map(|row| artist(row.mbid.as_deref(), &row.name, Some(row.listen_count)))
+        .map(|row| artist(row.mbid.as_deref(), &row.name, row.listen_count))
         .collect();
     shelf(
         "Artists You Might Like",
@@ -2060,11 +2056,7 @@ fn artist_shelf(
             continue;
         };
         if seen.insert(mbid) {
-            items.push(artist(
-                row.mbid.as_deref(),
-                &row.name,
-                Some(row.listen_count),
-            ));
+            items.push(artist(row.mbid.as_deref(), &row.name, row.listen_count));
         }
     }
     items.truncate(SHELF_SIZE);

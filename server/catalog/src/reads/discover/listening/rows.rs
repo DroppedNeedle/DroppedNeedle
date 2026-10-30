@@ -37,7 +37,7 @@ pub struct ArtistRow {
     /// MusicBrainz artist id, when the provider knows it.
     pub mbid: Option<String>,
     /// Listens or plays behind the row, when the provider counts them.
-    pub listen_count: i64,
+    pub listen_count: Option<i64>,
 }
 
 /// One album row keyed by its release group.
@@ -133,8 +133,8 @@ pub struct LastFmChartAlbum {
     pub artist_name: String,
     /// MusicBrainz id Last.fm holds for the album.
     pub mbid: Option<String>,
-    /// Plays behind the row (0 for scrobbles).
-    pub playcount: i64,
+    /// Plays behind the row, when Last.fm counts them (none for scrobbles).
+    pub playcount: Option<i64>,
     /// Artwork URL, empty when none.
     pub image_url: String,
 }

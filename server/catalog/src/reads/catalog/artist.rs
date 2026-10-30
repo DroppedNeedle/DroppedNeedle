@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
+use droppedneedle_providers::audiodb;
 use droppedneedle_providers::degradation::scoped;
 use droppedneedle_providers::musicbrainz::{
     Criticality, MAX_PAGE_LIMIT, MbArtist, ReleaseGroupRef,
@@ -234,19 +235,33 @@ impl Catalog {
         CacheKey::new(Source::MusicBrainz, &[&namespace, "artist_rgs", mbid])
     }
 
-    /// Cache key of TheAudioDB's artist art. A name match may be another
-    /// artist's picture, so whether the name search is on is in the key.
+    /// Cache key of TheAudioDB's artist art.
     pub(super) fn audiodb_artist_key(&self, mbid: &str) -> CacheKey {
-        let fallback = self
-            .upstream()
-            .settings()
-            .advanced()
-            .audiodb_name_search_fallback;
+        self.audiodb_key("artist", mbid)
+    }
+
+    /// Cache key of one TheAudioDB answer. A name match may be another
+    /// artist's or album's art, so whether the name search is on is in the
+    /// key; so is a tag of the saved API key, since the free key answers
+    /// less than a premium one and a mistyped key answers nothing.
+    pub(super) fn audiodb_key(&self, kind: &str, mbid: &str) -> CacheKey {
+        let advanced = self.upstream().settings().advanced();
+        let api_key = advanced.audiodb_api_key.expose().trim();
+        let api_key = if api_key.is_empty() {
+            audiodb::FREE_API_KEY
+        } else {
+            api_key
+        };
         CacheKey::new(
             Source::AudioDb,
             &[
-                if fallback { "by_name" } else { "by_id" },
-                "artist",
+                if advanced.audiodb_name_search_fallback {
+                    "by_name"
+                } else {
+                    "by_id"
+                },
+                &CacheKey::secret_tag(api_key),
+                kind,
                 &mbid.to_ascii_lowercase(),
             ],
         )
@@ -688,7 +703,7 @@ impl Catalog {
         tokio::spawn(async move {
             let outcome = catalog.walk_discography(&artist, &key, seed, total).await;
             if let Err(error) = outcome {
-                tracing::warn!(artist = %artist, %error, "discography walk failed; partial list stays");
+                tracing::warn!(artist = %artist, %error, "discography walk failed; nothing stored");
             }
             catalog
                 .inner
