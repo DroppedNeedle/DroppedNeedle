@@ -757,7 +757,7 @@ async fn links_need_the_admin_server() {
 /// rest.
 #[tokio::test]
 async fn linked_connections_survive_a_restart() {
-    use droppedneedle_kernel::db::{DbConfig, open_runtime};
+    use droppedneedle_kernel::db::{DbConfig, LaneLimits, TEST_PATIENCE, open_runtime};
     use remotes::folders::FolderStore as _;
 
     let rig = Rig::open("remotes-durable").await;
@@ -799,9 +799,23 @@ async fn linked_connections_survive_a_restart() {
     } = rig;
     drop(platform);
     runtime.shutdown().await;
-    let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-        .await
-        .expect("db reopens");
+    // Reopened with the patient limits the rig opened it with, so a loaded
+    // host slows the reads below instead of answering busy.
+    let config = DbConfig::new(&dir.join("app.db"))
+        .with_lane_limits(LaneLimits::patient())
+        .with_read_wait(TEST_PATIENCE);
+    let deadline = std::time::Instant::now() + crate::common::PATIENCE;
+    let runtime = loop {
+        match open_runtime(&config).await {
+            Ok(runtime) => break runtime,
+            Err(error)
+                if crate::common::busy_open(&error) && std::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            Err(error) => panic!("db reopens: {error}"),
+        }
+    };
     let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
         .build()
         .await;
@@ -1689,38 +1703,58 @@ async fn images_over_the_cap_by_declared_length_are_refused() {
 /// as soon as it crosses it: most of the body is never read.
 #[tokio::test]
 async fn images_streaming_past_the_cap_are_cut_off() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     const CHUNK: usize = 64 * 1024;
     const TOTAL: usize = remotes::adapter::MAX_IMAGE_BYTES * 4;
 
-    use futures_util::StreamExt as _;
-    let sent = Arc::new(AtomicUsize::new(0));
-    let counter = sent.clone();
-    let app = Router::new().fallback(move || {
-        let counter = counter.clone();
-        async move {
-            let chunks = futures_util::stream::iter(0..TOTAL / CHUNK).map(move |_| {
-                counter.fetch_add(CHUNK, Ordering::SeqCst);
-                Ok::<_, std::io::Error>(vec![0u8; CHUNK])
-            });
-            Body::from_stream(chunks)
+    /// The bytes one answer handed out, reported when its body is dropped:
+    /// the server has stopped sending, so the count is final.
+    struct Sent {
+        bytes: usize,
+        report: tokio::sync::mpsc::UnboundedSender<usize>,
+    }
+    impl Drop for Sent {
+        fn drop(&mut self) {
+            let _ = self.report.send(self.bytes);
         }
-    });
-    let (base_url, task) = serve_fake(app).await;
-    for (source, handle) in every_source(&base_url) {
-        sent.store(0, Ordering::SeqCst);
+    }
+
+    for source in ["jellyfin", "navidrome", "plex"] {
+        let (report, mut reports) = tokio::sync::mpsc::unbounded_channel();
+        let app = Router::new().fallback(move || {
+            let sent = Sent {
+                bytes: 0,
+                report: report.clone(),
+            };
+            async move {
+                let chunks = futures_util::stream::unfold(sent, |mut sent| async move {
+                    (sent.bytes < TOTAL).then(|| {
+                        sent.bytes += CHUNK;
+                        (Ok::<_, std::io::Error>(vec![0u8; CHUNK]), sent)
+                    })
+                });
+                Body::from_stream(chunks)
+            }
+        });
+        let (base_url, task) = serve_fake(app).await;
+        let handle = every_source(&base_url)
+            .into_iter()
+            .find_map(|(name, handle)| (name == source).then_some(handle))
+            .expect("a source by that name");
         let outcome = handle.image_bytes("any", 300).await;
         assert!(
             matches!(outcome, Err(AdapterError::NotFound)),
             "{source} kept an endless image: {:?}",
             outcome.map(|(bytes, _)| bytes.len())
         );
-        assert!(
-            sent.load(Ordering::SeqCst) < TOTAL / 2,
-            "{source} read most of the oversized body"
-        );
+        // The server notices the dropped connection in its own time; wait
+        // for that rather than reading a count it may still be adding to.
+        let sent = tokio::time::timeout(crate::common::PATIENCE, reports.recv())
+            .await
+            .expect("the server stops sending")
+            .expect("the answer reports its bytes");
+        assert!(sent < TOTAL / 2, "{source} read most of the oversized body");
+        task.abort();
     }
-    task.abort();
 }
 
 /// An API answer that declares a length over the cap is an upstream

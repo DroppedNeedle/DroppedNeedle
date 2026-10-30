@@ -9,7 +9,7 @@ use droppedneedle_acquire::follows::{self, Follows};
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::reads::collections::{self, CollectionsState, db::CollectionsDb};
-use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
+use droppedneedle_kernel::db::{DbConfig, DbRuntime, LaneLimits, TEST_PATIENCE, open_runtime};
 
 use axum::{
     Router,
@@ -101,10 +101,25 @@ impl Rig {
             .unwrap();
     }
 
+    /// Open the database with patient limits, as `scratch_runtime` does:
+    /// a loaded host slows a read or write instead of answering busy, which
+    /// the fault test would read as a wrong status.
     async fn boot(dir: &ScratchDir) -> DbRuntime {
-        open_runtime(&DbConfig::new(&dir.join("app.db")))
-            .await
-            .unwrap()
+        let config = DbConfig::new(&dir.join("app.db"))
+            .with_lane_limits(LaneLimits::patient())
+            .with_read_wait(TEST_PATIENCE);
+        let deadline = std::time::Instant::now() + crate::common::PATIENCE;
+        loop {
+            match open_runtime(&config).await {
+                Ok(runtime) => return runtime,
+                Err(error)
+                    if crate::common::busy_open(&error) && std::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+                Err(error) => panic!("database opens: {error}"),
+            }
+        }
     }
 
     fn state(&self) -> CollectionsState {
@@ -755,22 +770,13 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
 async fn store_faults_render_fixed_500_envelopes() {
     let rig = Rig::open().await;
     // Every read below fails inside SQLite on a table that is not there.
-    rig.runtime
-        .db()
-        .write(
-            droppedneedle_kernel::db::Lane::Foreground,
-            "break tables",
-            |tx| {
-                tx.execute_batch(
-                    "ALTER TABLE playlists RENAME TO gone_playlists; \
-                     ALTER TABLE library_user_favorites RENAME TO gone_favorites; \
-                     ALTER TABLE user_followed_artists RENAME TO gone_follows;",
-                )?;
-                Ok::<_, droppedneedle_kernel::db::DbError>(())
-            },
-        )
-        .await
-        .unwrap();
+    crate::common::break_schema(
+        rig.runtime.db(),
+        "ALTER TABLE playlists RENAME TO gone_playlists; \
+         ALTER TABLE library_user_favorites RENAME TO gone_favorites; \
+         ALTER TABLE user_followed_artists RENAME TO gone_follows;",
+    )
+    .await;
     let scope = TestApp::start("reads-collections-faults").await;
     let app = scope.request_scope(collections::routes().with_state(rig.state()).into_router());
     for uri in [

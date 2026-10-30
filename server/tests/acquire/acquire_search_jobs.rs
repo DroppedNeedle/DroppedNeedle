@@ -186,7 +186,7 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
     };
 
     // The job tells its owner about every change of status.
-    let view = tokio::time::timeout(Duration::from_secs(30), async {
+    let view = tokio::time::timeout(crate::common::PATIENCE, async {
         loop {
             let view = jobs.get(&owner, &job_id).await.expect("job reads");
             if view.row.status != "searching" {
@@ -661,7 +661,7 @@ impl KeptRig {
         let StartOutcome::Searching(job_id) = started else {
             panic!("nothing was searched: {started:?}");
         };
-        let view = tokio::time::timeout(Duration::from_secs(30), async {
+        let view = tokio::time::timeout(crate::common::PATIENCE, async {
             loop {
                 let view = self.jobs.get(owner, &job_id).await.expect("job reads");
                 if view.row.status != "searching" {

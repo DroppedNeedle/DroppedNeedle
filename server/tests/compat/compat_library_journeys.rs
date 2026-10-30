@@ -1115,7 +1115,9 @@ async fn transcodes_alike_on_every_stream_route() {
         let runs = rig.ffmpeg_runs("airbag").len();
         let mut answers = Vec::new();
         for (route, url, headers) in routes {
-            let (status, got, bytes) = app.raw(method, url, headers, None).await;
+            // A busy answer streamed nothing, so asking again is safe.
+            let (status, got, bytes) =
+                crate::common::through_busy(|| app.raw(method, url, headers, None)).await;
             let label = format!("{case}: {route}");
             assert_eq!(status, StatusCode::OK, "{label}");
             assert_eq!(header_str(&got, "content-encoding"), "identity", "{label}");
@@ -1344,14 +1346,9 @@ async fn subsonic_made_playlist_cover_is_private_to_its_readers() {
     let cover = |auth: String| {
         let id = id.clone();
         async move {
-            let (status, headers, body) = app
-                .raw(
-                    "GET",
-                    &rest(&format!("getCoverArt?id={id}"), &auth),
-                    &[],
-                    None,
-                )
-                .await;
+            let uri = rest(&format!("getCoverArt?id={id}"), &auth);
+            let (status, headers, body) =
+                crate::common::through_busy(|| app.raw("GET", &uri, &[], None)).await;
             assert_eq!(status, StatusCode::OK);
             (
                 header_str(&headers, "content-type"),
@@ -1360,7 +1357,19 @@ async fn subsonic_made_playlist_cover_is_private_to_its_readers() {
             )
         }
     };
-    let (kind, cache, picture) = cover(owner).await;
+    // An album art read that fails on a loaded host (the album's row read
+    // waiting out the read pool) is logged and answers that one request
+    // with the placeholder. The made cover is the same on every ask, so the
+    // owner asks again until it comes.
+    let (kind, cache, picture) = app
+        .until("the owner gets the cover made from the album", || {
+            let asked = cover(owner.clone());
+            async move {
+                let answer = asked.await;
+                (answer.0 != "image/webp").then_some(answer)
+            }
+        })
+        .await;
     assert_eq!(
         (kind.as_str(), cache.as_str()),
         ("image/png", "private, max-age=3600")
