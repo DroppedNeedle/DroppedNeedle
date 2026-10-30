@@ -290,7 +290,10 @@ export const LibraryV3Api = {
 	artistMerge: () => v3('/api/v3/library/artists/merge'),
 	// Album rows a scan would not join by itself, for a person to join or
 	// dismiss.
-	retagPairs: () => v3('/api/v3/library/retag-pairs'),
+	retagPairs: (albumId?: string, cursor?: string) =>
+		v3('/api/v3/library/retag-pairs', {
+			query: { ...(albumId ? { album_id: albumId } : {}), ...(cursor ? { cursor } : {}) }
+		}),
 	joinRetagPair: (oldAlbumId: string, newAlbumId: string) =>
 		v3('/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/join', {
 			path: { old_album_id: oldAlbumId, new_album_id: newAlbumId }

@@ -74,7 +74,9 @@ const h = vi.hoisted(() => ({
 	handBack: vi.fn(),
 	handBackAll: vi.fn(),
 	retagPairs: {
-		data: undefined as { total: number; pairs: Array<Record<string, unknown>> } | undefined,
+		data: undefined as
+			| { total: number; items: Array<Record<string, unknown>>; next_cursor: string | null }
+			| undefined,
 		isPending: false,
 		isError: false,
 		error: null,
@@ -479,7 +481,7 @@ function retagPair(id: string) {
 		title,
 		album_artist_name: 'Signal Artist',
 		track_count: 10,
-		identity_revision: 1,
+		identity_token: '0',
 		edition: null
 	});
 	return {
@@ -493,7 +495,7 @@ function retagPair(id: string) {
 
 describe('albums that might be one album retagged', () => {
 	it('says nothing when no pair is waiting', async () => {
-		h.retagPairs.data = { total: 0, pairs: [] };
+		h.retagPairs.data = { total: 0, items: [], next_cursor: null };
 		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('Ready previews')).toBeVisible();
@@ -501,7 +503,7 @@ describe('albums that might be one album retagged', () => {
 	});
 
 	it('counts the pairs and opens to their cards', async () => {
-		h.retagPairs.data = { total: 2, pairs: [retagPair('a'), retagPair('b')] };
+		h.retagPairs.data = { total: 2, items: [retagPair('a'), retagPair('b')], next_cursor: null };
 		await render(LibraryManagementControlRoom);
 
 		await page.getByText('2 pairs of albums might each be one album retagged').click();

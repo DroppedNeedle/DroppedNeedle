@@ -12,8 +12,7 @@ use super::artists;
 use super::membership::{self, Run};
 use super::models::{
     Applied, ApplyMeta, ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, CorrectionKind,
-    MembershipKind, MembershipOutcome, MembershipRequest, PairJoinRequest, Previewed,
-    RetagPairList,
+    MembershipKind, MembershipOutcome, MembershipRequest, PairJoinRequest, Previewed, RetagPair,
 };
 use super::reasons;
 use super::reset;
@@ -189,10 +188,17 @@ impl Corrections {
 
 /// Retag pairs a person joins or dismisses.
 impl Corrections {
-    /// The open pairs a person decides on, newest first.
-    pub fn retag_pairs(&self) -> Result<RetagPairList, CorrectionError> {
-        self.db
-            .read_blocking("corrections.retag_pairs", retag_pairs::list)
+    /// One page of the open pairs a person decides on, newest first, and
+    /// how many there are; with `album`, only those naming it.
+    pub fn retag_pairs(
+        &self,
+        album: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<RetagPair>, u64), CorrectionError> {
+        self.db.read_blocking("corrections.retag_pairs", |conn| {
+            retag_pairs::list(conn, album, limit, offset)
+        })
     }
 
     /// Join a pair; returns the album that stays.

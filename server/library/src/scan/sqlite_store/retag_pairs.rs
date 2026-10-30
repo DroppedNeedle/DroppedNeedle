@@ -178,3 +178,31 @@ pub(super) fn record(
         ])?;
     Ok(written > 0)
 }
+
+/// End the dismissed pairs whose new album is `album_id` or was merged
+/// into it since, when this run
+/// moved tracks from it back to the pair's old album and it holds no
+/// indexed track any more. The person's answer was about a rename that is
+/// undone, so it must not stop a later rename of the old album from being
+/// joined. Returns how many ended.
+pub(super) fn end_dismissed_returned(
+    conn: &Connection,
+    run_id: &str,
+    album_id: &str,
+) -> rusqlite::Result<usize> {
+    conn.prepare_cached(
+        "DELETE FROM library_retag_pairs WHERE state = ?3 AND new_album_id IN \
+         (SELECT id FROM local_albums WHERE id = ?2 OR retired_into_album_id = ?2) \
+         AND NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?2 \
+           AND t.availability = 'indexed') \
+         AND EXISTS (SELECT 1 FROM library_scan_album_moves m \
+           JOIN local_tracks t ON t.id = m.local_track_id \
+           WHERE m.run_id = ?1 AND m.previous_album_id = ?2 \
+           AND t.local_album_id = library_retag_pairs.old_album_id)",
+    )?
+    .execute(params![
+        run_id,
+        album_id,
+        RetagPairState::Dismissed.as_str()
+    ])
+}

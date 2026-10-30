@@ -108,6 +108,11 @@ pub const EDITION_CONFLICT_KEPT: Reason = reason(
     "The merged albums had different editions; the album keeps its own and the others are dropped.",
     "Check the album's edition once the change is applied.",
 );
+pub const EDITION_JOIN_KEPT: Reason = reason(
+    "EDITION_KEPT_BY_JOIN",
+    "The albums were joined and you kept one edition; the other is listed here.",
+    "Nothing to do, or pick it to use it instead.",
+);
 pub const EDITION_PIN_WINS: Reason = reason(
     "EDITION_CHOSEN_WINS",
     "One of these albums has an edition picked by hand; it wins over the automatic ones.",
@@ -152,8 +157,8 @@ pub const PAIR_ALBUM_GONE: Reason = reason(
 );
 pub const PAIR_REVISIONS_REQUIRED: Reason = reason(
     "RETAG_PAIR_REVISIONS_REQUIRED",
-    "The edition revisions of both albums are needed.",
-    "Send expected_identity_revisions with an entry for each album.",
+    "The edition tokens of both albums are needed.",
+    "Send expected_identity_tokens with an entry for each album.",
 );
 pub const PAIR_EDITION_CHANGED: Reason = reason(
     "STALE_REVISION",

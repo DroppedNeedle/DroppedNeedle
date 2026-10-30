@@ -234,5 +234,7 @@ export const LibraryQueryKeyFactory = {
 		artist: string
 	) => key(userScope(userId), 'library', 'reidentification-releases', albumId, title, artist),
 	scanSchedule: () => key(ADMIN, 'library', 'scan-schedule'),
-	retagPairs: () => key(ADMIN, 'library', 'retag-pairs')
+	retagPairs: () => key(ADMIN, 'library', 'retag-pairs'),
+	albumRetagPairs: (albumId: string) =>
+		[...LibraryQueryKeyFactory.retagPairs(), 'album', albumId] as const
 };

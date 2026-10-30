@@ -19,7 +19,7 @@ use super::models::{
     MembershipOutcome, MembershipRequest,
 };
 use super::reasons;
-use crate::identify::sqlite::{offer_album, retarget_references};
+use crate::identify::sqlite::{bump_identification_stream, offer_album, retarget_references};
 use crate::management::takeover;
 
 /// One stored track the change reads.
@@ -368,7 +368,8 @@ pub(crate) fn retire(
          AND state IN ('queued', 'deferred')",
         params![album_id],
     )?;
-    Ok(())
+    // Its reviews and queued jobs went: open review screens refetch.
+    bump_identification_stream(tx)
 }
 
 /// Lock tracks to `album_id` by hand.

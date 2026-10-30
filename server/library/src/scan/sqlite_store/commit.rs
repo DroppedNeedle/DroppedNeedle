@@ -2935,6 +2935,14 @@ fn write_window(
     emptied.sort();
     emptied.dedup();
     for album_id in emptied {
+        let ended = retag_pairs::end_dismissed_returned(tx, &window.run_id, &album_id)?;
+        if ended > 0 {
+            tracing::info!(
+                album_id,
+                ended,
+                "dismissed retag pair ended: its tracks are back on the old album"
+            );
+        }
         match follow_regrouped(tx, &window.run_id, &album_id, window.now)? {
             Some(gone) => {
                 for offer in offered

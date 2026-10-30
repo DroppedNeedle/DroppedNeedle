@@ -17,7 +17,9 @@
 //! only its release group, since nothing re-activates a custom edition.
 //!
 //! A pair whose new album was merged into another since stands for that
-//! album: a retired id points one step at the live album it became.
+//! album: a retired id points one step at the live album it became. Two
+//! pairs of one old album whose new albums now stand for the same album
+//! are listed once, as the newest of them, and a dismiss acts on every one.
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
@@ -25,7 +27,6 @@ use super::edition::{self, Identity, album_title, drop_edition, open_review};
 use super::membership::load_album;
 use super::models::{
     CorrectionError, DroppedEdition, PairEdition, PairJoinRequest, PairReason, PairSide, RetagPair,
-    RetagPairList,
 };
 use super::reasons;
 use super::retag_merge::{JoinCause, MergeOutcome, merge_retagged};
@@ -52,38 +53,54 @@ const SHOWN: [(RetagPairReason, PairReason); 4] = [
     ),
 ];
 
-/// At most this many pairs are listed.
-const LIMIT: i64 = 100;
-
 /// Open pairs with a reason a person decides on, both albums live, the
-/// new album standing for the album it was merged into since. Pairs
-/// already joined that way are left out.
-const OPEN_PAIRS: &str = "FROM library_retag_pairs p \
+/// new album standing for the album it was merged into since, and with
+/// `?6` an album id, only those naming it. Pairs already joined that way
+/// are left out. One row per old album and the album its new one stands
+/// for: the newest pair's reason and time (SQLite takes the bare columns
+/// from the row that holds the `MAX`).
+const OPEN_PAIRS: &str = "SELECT p.old_album_id AS old_id, \
+     COALESCE(n.retired_into_album_id, n.id) AS new_id, p.reason AS reason, \
+     MAX(p.recorded_at) AS recorded_at \
+     FROM library_retag_pairs p \
      JOIN local_albums o ON o.id = p.old_album_id \
      JOIN local_albums n ON n.id = p.new_album_id \
      LEFT JOIN local_albums t ON t.id = n.retired_into_album_id \
      WHERE p.state = ?1 AND p.reason IN (?2, ?3, ?4, ?5) \
      AND o.retired_into_album_id IS NULL \
      AND (n.retired_into_album_id IS NULL OR t.retired_into_album_id IS NULL) \
-     AND COALESCE(n.retired_into_album_id, n.id) <> p.old_album_id";
+     AND COALESCE(n.retired_into_album_id, n.id) <> p.old_album_id \
+     AND (?6 IS NULL OR p.old_album_id = ?6 OR COALESCE(n.retired_into_album_id, n.id) = ?6) \
+     GROUP BY p.old_album_id, COALESCE(n.retired_into_album_id, n.id)";
 
-/// The open pairs, newest first, with how many there are.
-pub(super) fn list(conn: &Connection) -> Result<RetagPairList, CorrectionError> {
-    let values = params![
+/// One page of the open pairs, newest first, with how many there are;
+/// with `album`, only the pairs naming it.
+pub(super) fn list(
+    conn: &Connection,
+    album: Option<&str>,
+    limit: u32,
+    offset: u32,
+) -> Result<(Vec<RetagPair>, u64), CorrectionError> {
+    let filter = params![
         RetagPairState::Open.as_str(),
         SHOWN[0].0.as_str(),
         SHOWN[1].0.as_str(),
         SHOWN[2].0.as_str(),
         SHOWN[3].0.as_str(),
+        album,
     ];
-    let total: i64 = conn.query_row(&format!("SELECT COUNT(*) {OPEN_PAIRS}"), values, |row| {
-        row.get(0)
-    })?;
+    let total: u64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM ({OPEN_PAIRS})"),
+        filter,
+        |row| row.get(0),
+    )?;
+    let values = params![
+        filter[0], filter[1], filter[2], filter[3], filter[4], filter[5], limit, offset,
+    ];
     let rows: Vec<(String, String, String, i64)> = conn
         .prepare(&format!(
-            "SELECT p.old_album_id, COALESCE(n.retired_into_album_id, n.id), p.reason, \
-             p.recorded_at {OPEN_PAIRS} \
-             ORDER BY p.recorded_at DESC, p.old_album_id, p.new_album_id LIMIT {LIMIT}"
+            "SELECT old_id, new_id, reason, recorded_at FROM ({OPEN_PAIRS}) \
+             ORDER BY recorded_at DESC, old_id, new_id LIMIT ?7 OFFSET ?8"
         ))?
         .query_map(values, |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
@@ -107,7 +124,26 @@ pub(super) fn list(conn: &Connection) -> Result<RetagPairList, CorrectionError> 
             recorded_at,
         });
     }
-    Ok(RetagPairList { pairs, total })
+    Ok((pairs, total))
+}
+
+/// The edition as a card shows it: its revision with what it names and
+/// how it was chosen. A dropped edition chosen again starts at revision 1, so
+/// the revision alone could match one shown before the drop.
+fn identity_token(identity: Option<&Identity>) -> String {
+    identity.map_or_else(
+        || "0".to_owned(),
+        |found| {
+            format!(
+                "{}:{}:{}:{}:{}",
+                found.row_revision,
+                found.decision_source,
+                found.release_group_mbid,
+                found.release_mbid.as_deref().unwrap_or_default(),
+                u8::from(found.custom)
+            )
+        },
+    )
 }
 
 fn side(conn: &Connection, album_id: &str) -> Result<PairSide, CorrectionError> {
@@ -124,7 +160,7 @@ fn side(conn: &Connection, album_id: &str) -> Result<PairSide, CorrectionError> 
         title,
         album_artist_name,
         track_count,
-        identity_revision: identity.as_ref().map_or(0, |found| found.row_revision),
+        identity_token: identity_token(identity.as_ref()),
         edition: identity.map(|found| PairEdition {
             chosen: DecisionSource::parse(&found.decision_source)
                 .is_some_and(DecisionSource::is_persons_choice),
@@ -168,17 +204,16 @@ pub(super) fn join(
     // A card shown before the new album was merged away names the album
     // that is gone.
     let shown_before_merge =
-        new != stored_new && !request.expected_identity_revisions.contains_key(&new);
+        new != stored_new && !request.expected_identity_tokens.contains_key(&new);
     if shown_before_merge || load_album(tx, old)?.is_none() || load_album(tx, &new)?.is_none() {
         return Err(CorrectionError::Conflict(reasons::PAIR_ALBUM_GONE));
     }
     for album in [old, new.as_str()] {
         let expected = request
-            .expected_identity_revisions
+            .expected_identity_tokens
             .get(album)
             .ok_or(CorrectionError::Invalid(reasons::PAIR_REVISIONS_REQUIRED))?;
-        let current = edition::identity(tx, album)?.map_or(0, |found| found.row_revision);
-        if *expected != current {
+        if *expected != identity_token(edition::identity(tx, album)?.as_ref()) {
             return Err(CorrectionError::Conflict(reasons::PAIR_EDITION_CHANGED));
         }
     }
@@ -205,7 +240,7 @@ pub(super) fn join(
                 let reason = if found.custom {
                     reasons::EDITION_CUSTOM_CLEARED
                 } else {
-                    reasons::EDITION_CONFLICT_KEPT
+                    reasons::EDITION_JOIN_KEPT
                 };
                 dropped.push(drop_for_join(tx, found, reason)?);
             }
@@ -262,25 +297,31 @@ fn drop_for_join(
     ))
 }
 
-/// Mark the pair dismissed. False when it was dismissed already.
+/// Mark dismissed every open pair of `old` with `new` or an album merged
+/// into `new` since: the one pair the list shows for them. False when
+/// none was open.
 pub(super) fn dismiss(
     tx: &Transaction<'_>,
     old: &str,
     new: &str,
     now_ms: i64,
 ) -> Result<bool, CorrectionError> {
-    let Some((stored_new, state)) = find(tx, old, new)? else {
+    if find(tx, old, new)?.is_none() {
         return Err(CorrectionError::NotFound(reasons::PAIR_NOT_FOUND));
-    };
-    if state == RetagPairState::Dismissed {
-        return Ok(false);
     }
-    tx.execute(
+    let dismissed = tx.execute(
         "UPDATE library_retag_pairs SET state = ?3, updated_at = ?4 \
-         WHERE old_album_id = ?1 AND new_album_id = ?2",
-        params![old, stored_new, RetagPairState::Dismissed.as_str(), now_ms],
+         WHERE old_album_id = ?1 AND state = ?5 AND new_album_id IN \
+         (SELECT id FROM local_albums WHERE id = ?2 OR retired_into_album_id = ?2)",
+        params![
+            old,
+            new,
+            RetagPairState::Dismissed.as_str(),
+            now_ms,
+            RetagPairState::Open.as_str()
+        ],
     )?;
-    Ok(true)
+    Ok(dismissed > 0)
 }
 
 /// The recorded pair of `old` and `new`, where `new` is the pair's new

@@ -19163,13 +19163,54 @@
         ],
         "summary": "List album rows that look like one retagged album and wait for a\nperson to join or dismiss them.",
         "operationId": "list_retag_pairs",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "query",
+            "description": "Only the pairs naming this album, as their old or new album.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 100 (default 100); more is read as 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Open pairs, newest first",
+            "description": "One page of open pairs, newest first",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RetagPairListResponse"
+                  "$ref": "#/components/schemas/Page_RetagPairView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -19209,7 +19250,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "Mark a retag pair as two different albums. A scan never joins it then.",
+        "summary": "Mark a retag pair as two different albums. A scan never joins it then,\nuntil its tracks are back on the old album.",
         "operationId": "dismiss_retag_pair",
         "parameters": [
           {
@@ -54487,6 +54528,69 @@
           }
         }
       },
+      "Page_RetagPairView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Two album rows that look like one retagged album, which the scan would\nnot join by itself.",
+              "required": [
+                "old_album",
+                "new_album",
+                "reason",
+                "editions_differ",
+                "recorded_at"
+              ],
+              "properties": {
+                "editions_differ": {
+                  "type": "boolean",
+                  "description": "Two different chosen editions remain once a custom edition on the\nold album is left out: the join must name the one to keep."
+                },
+                "new_album": {
+                  "$ref": "#/components/schemas/RetagPairAlbumView",
+                  "description": "The row the files sit on now, or the album it was merged into\nsince. A join keeps this one."
+                },
+                "old_album": {
+                  "$ref": "#/components/schemas/RetagPairAlbumView",
+                  "description": "The row the files left. It holds the favorites, plays and links."
+                },
+                "reason": {
+                  "$ref": "#/components/schemas/RetagPairReasonView"
+                },
+                "recorded_at": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "When the scan recorded the pair (Unix milliseconds)."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
       "Page_ReviewView": {
         "type": "object",
         "description": "One page of a list.",
@@ -60532,7 +60636,7 @@
           "title",
           "album_artist_name",
           "track_count",
-          "identity_revision"
+          "identity_token"
         ],
         "properties": {
           "album_artist_name": {
@@ -60551,10 +60655,9 @@
           "id": {
             "type": "string"
           },
-          "identity_revision": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The edition's revision, 0 for none. Send it back with a join."
+          "identity_token": {
+            "type": "string",
+            "description": "The edition as shown: its revision with what it names, `0` for\nnone. Send it back with a join, unread."
           },
           "title": {
             "type": "string"
@@ -60611,15 +60714,14 @@
         "type": "object",
         "description": "Join a retag pair.",
         "required": [
-          "expected_identity_revisions"
+          "expected_identity_tokens"
         ],
         "properties": {
-          "expected_identity_revisions": {
+          "expected_identity_tokens": {
             "type": "object",
-            "description": "Each album's `identity_revision` as shown, by album id. Both albums\nmust be named.",
+            "description": "Each album's `identity_token` as shown, by album id. Both albums\nmust be named.",
             "additionalProperties": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string"
             },
             "propertyNames": {
               "type": "string"
@@ -60644,26 +60746,6 @@
           "album_id": {
             "type": "string",
             "description": "The album that stays. The old album's id now opens it."
-          }
-        }
-      },
-      "RetagPairListResponse": {
-        "type": "object",
-        "description": "The open retag pairs, newest first (at most 100), and how many there\nare.",
-        "required": [
-          "pairs",
-          "total"
-        ],
-        "properties": {
-          "pairs": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RetagPairView"
-            }
-          },
-          "total": {
-            "type": "integer",
-            "format": "int64"
           }
         }
       },

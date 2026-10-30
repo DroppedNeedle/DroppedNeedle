@@ -8,7 +8,7 @@
 	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
 	import RecycledRemovals from '$lib/components/library/RecycledRemovals.svelte';
 	import AlbumHistory from '$lib/components/library/AlbumHistory.svelte';
-	import RetagPairCard from '$lib/components/library/RetagPairCard.svelte';
+	import AlbumRetagPairs from '$lib/components/library/AlbumRetagPairs.svelte';
 	import EditionPlate from '$lib/components/library/edition/EditionPlate.svelte';
 	import AlbumOrganizationDialog from '$lib/components/library/AlbumOrganizationDialog.svelte';
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
@@ -24,7 +24,6 @@
 		getAlbumEditionStatusQuery,
 		getEditionPlanQuery
 	} from '$lib/queries/albums/EditionQueries.svelte';
-	import { getRetagPairsQuery } from '$lib/queries/library/LibraryRetagPairQueries.svelte';
 	import { notesByFile } from './albumEdition';
 	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
@@ -87,13 +86,6 @@
 	);
 	const fileNotes = $derived(
 		editionPlanQuery.data?.album_id === albumId ? notesByFile(editionPlanQuery.data) : undefined
-	);
-
-	const retagPairsQuery = getRetagPairsQuery(() => authStore.isAdmin);
-	const retagPairs = $derived(
-		(retagPairsQuery.data?.pairs ?? []).filter(
-			(pair) => pair.old_album.id === albumId || pair.new_album.id === albumId
-		)
 	);
 
 	const reviewLabel = $derived(
@@ -310,9 +302,9 @@
 			/>
 		{/if}
 
-		{#each retagPairs as pair (`${pair.old_album.id}/${pair.new_album.id}`)}
-			<div class="mt-6"><RetagPairCard {pair} currentAlbumId={albumId} /></div>
-		{/each}
+		{#if authStore.isAdmin}
+			<AlbumRetagPairs {albumId} class="mt-6" />
+		{/if}
 
 		<section class="mt-8" aria-labelledby="local-tracks-title">
 			<div class="flex items-center gap-2">

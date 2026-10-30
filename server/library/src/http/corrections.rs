@@ -15,10 +15,11 @@ use axum::{
     http::StatusCode,
 };
 use droppedneedle_kernel::error::{ApiError, Unavailable};
-use droppedneedle_kernel::extract::ValidJson;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::page::{Page, PageRequest};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 use super::blocking;
 use super::error::refused;
@@ -27,7 +28,7 @@ use crate::corrections::Corrections;
 use crate::corrections::models::{
     Applied, ApplyMeta, ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, EditionChangeKind,
     IdentityChoice, MembershipKind, MembershipOutcome, MembershipRequest, PairJoinRequest,
-    ProviderChoice, RetagPairList,
+    ProviderChoice, RetagPair,
 };
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::Admin;
@@ -620,10 +621,25 @@ pub struct RetagPairJoinBody {
     /// `editions_differ` is true, and must be absent otherwise.
     #[serde(default)]
     pub keep_edition_of: Option<String>,
-    /// Each album's `identity_revision` as shown, by album id. Both albums
+    /// Each album's `identity_token` as shown, by album id. Both albums
     /// must be named.
-    pub expected_identity_revisions: BTreeMap<String, i64>,
+    pub expected_identity_tokens: BTreeMap<String, String>,
 }
+
+/// Which retag pairs to list, and paging.
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct RetagPairQuery {
+    /// Only the pairs naming this album, as their old or new album.
+    pub album_id: Option<String>,
+    /// Page size, 1 to 100 (default 100); more is read as 100.
+    pub limit: Option<u32>,
+    /// `next_cursor` from the previous page.
+    pub cursor: Option<String>,
+}
+
+/// Most retag pairs on one page.
+const PAIRS_PAGE_MAX: usize = 100;
 
 /// A joined retag pair.
 #[derive(Debug, Serialize, ToSchema)]
@@ -645,8 +661,10 @@ pub struct RetagPairDismissResponse {
     get,
     tag = "library management",
     path = "/api/v3/library/retag-pairs",
+    params(RetagPairQuery),
     responses(
-        (status = 200, description = "Open pairs, newest first", body = RetagPairList),
+        (status = 200, description = "One page of open pairs, newest first", body = Page<RetagPair>),
+        (status = 400, description = "Bad cursor"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
     )
@@ -654,8 +672,24 @@ pub struct RetagPairDismissResponse {
 pub async fn list_retag_pairs(
     State(corrections): State<Corrections>,
     _caller: Admin,
-) -> Result<Json<RetagPairList>, ApiError> {
-    Ok(Json(blocking(move || corrections.retag_pairs()).await?))
+    ValidQuery(query): ValidQuery<RetagPairQuery>,
+) -> Result<Json<Page<RetagPair>>, ApiError> {
+    let paging = PageRequest::<u32>::read(
+        query.limit,
+        query.cursor.as_deref(),
+        PAIRS_PAGE_MAX,
+        PAIRS_PAGE_MAX,
+    )?;
+    let (limit, offset) = (paging.limit as u32, paging.after.unwrap_or(0));
+    let album = query.album_id;
+    let (items, total) =
+        blocking(move || corrections.retag_pairs(album.as_deref(), limit, offset)).await?;
+    Ok(Json(Page::at_offset(
+        items,
+        offset.into(),
+        limit.into(),
+        total,
+    )))
 }
 
 /// Join a retag pair: the old album is merged into the new one. A custom
@@ -690,14 +724,15 @@ pub async fn join_retag_pair(
         old_album_id,
         new_album_id,
         keep_edition_of: body.keep_edition_of,
-        expected_identity_revisions: body.expected_identity_revisions,
+        expected_identity_tokens: body.expected_identity_tokens,
         actor: caller.user_id().to_owned(),
     };
     let album_id = blocking(move || corrections.join_retag_pair(&request)).await?;
     Ok(Json(RetagPairJoinResponse { album_id }))
 }
 
-/// Mark a retag pair as two different albums. A scan never joins it then.
+/// Mark a retag pair as two different albums. A scan never joins it then,
+/// until its tracks are back on the old album.
 #[utoipa::path(
     post,
     tag = "library management",

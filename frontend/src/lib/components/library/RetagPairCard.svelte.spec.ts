@@ -43,7 +43,7 @@ function side(
 		title,
 		album_artist_name: 'Artist',
 		track_count: id === 'old' ? 12 : 11,
-		identity_revision: id === 'old' ? 3 : 7,
+		identity_token: id === 'old' ? '3:a' : '7:b',
 		edition: edition
 			? {
 					chosen: true,
@@ -99,7 +99,7 @@ describe('RetagPairCard', () => {
 				oldAlbumId: 'old',
 				newAlbumId: 'new',
 				keepEditionOf: 'old',
-				expectedIdentityRevisions: { old: 3, new: 7 }
+				expectedIdentityTokens: { old: '3:a', new: '7:b' }
 			})
 		);
 	});

@@ -5121,7 +5121,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Mark a retag pair as two different albums. A scan never joins it then. */
+        /**
+         * Mark a retag pair as two different albums. A scan never joins it then,
+         *     until its tracks are back on the old album.
+         */
         post: operations["dismiss_retag_pair"];
         delete?: never;
         options?: never;
@@ -18142,6 +18145,36 @@ export interface components {
             total: number | null;
         };
         /** @description One page of a list. */
+        Page_RetagPairView: {
+            items: {
+                /**
+                 * @description Two different chosen editions remain once a custom edition on the
+                 *     old album is left out: the join must name the one to keep.
+                 */
+                editions_differ: boolean;
+                /**
+                 * @description The row the files sit on now, or the album it was merged into
+                 *     since. A join keeps this one.
+                 */
+                new_album: components["schemas"]["RetagPairAlbumView"];
+                /** @description The row the files left. It holds the favorites, plays and links. */
+                old_album: components["schemas"]["RetagPairAlbumView"];
+                reason: components["schemas"]["RetagPairReasonView"];
+                /**
+                 * Format: int64
+                 * @description When the scan recorded the pair (Unix milliseconds).
+                 */
+                recorded_at: number;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
         Page_ReviewView: {
             items: {
                 /** @description Local album id. */
@@ -20816,10 +20849,10 @@ export interface components {
             edition?: null | components["schemas"]["RetagPairEditionView"];
             id: string;
             /**
-             * Format: int64
-             * @description The edition's revision, 0 for none. Send it back with a join.
+             * @description The edition as shown: its revision with what it names, `0` for
+             *     none. Send it back with a join, unread.
              */
-            identity_revision: number;
+            identity_token: string;
             title: string;
             /**
              * Format: int64
@@ -20844,11 +20877,11 @@ export interface components {
         /** @description Join a retag pair. */
         RetagPairJoinBody: {
             /**
-             * @description Each album's `identity_revision` as shown, by album id. Both albums
+             * @description Each album's `identity_token` as shown, by album id. Both albums
              *     must be named.
              */
-            expected_identity_revisions: {
-                [key: string]: number;
+            expected_identity_tokens: {
+                [key: string]: string;
             };
             /**
              * @description The album whose chosen edition stays. Required when
@@ -20860,15 +20893,6 @@ export interface components {
         RetagPairJoinResponse: {
             /** @description The album that stays. The old album's id now opens it. */
             album_id: string;
-        };
-        /**
-         * @description The open retag pairs, newest first (at most 100), and how many there
-         *     are.
-         */
-        RetagPairListResponse: {
-            pairs: components["schemas"]["RetagPairView"][];
-            /** Format: int64 */
-            total: number;
         };
         /**
          * @description Why the scan left a retag pair for a person.
@@ -37300,20 +37324,36 @@ export interface operations {
     };
     list_retag_pairs: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only the pairs naming this album, as their old or new album. */
+                album_id?: string;
+                /** @description Page size, 1 to 100 (default 100); more is read as 100. */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Open pairs, newest first */
+            /** @description One page of open pairs, newest first */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RetagPairListResponse"];
+                    "application/json": components["schemas"]["Page_RetagPairView"];
+                };
+            };
+            /** @description Bad cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */

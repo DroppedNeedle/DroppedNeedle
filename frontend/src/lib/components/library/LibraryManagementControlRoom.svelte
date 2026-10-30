@@ -796,26 +796,26 @@
 				<QueryBoundary
 					query={retagPairsQuery}
 					what="albums that might be one album"
-					isEmpty={(data) => data.total === 0}
+					isEmpty={(data) => data.items.length === 0}
 				>
 					{#snippet loading()}{/snippet}
 					{#snippet empty()}{/snippet}
 					{#snippet children(retagPairs)}
 						<details class="rounded-lg border border-base-content/10 p-3">
 							<summary class="cursor-pointer text-sm font-semibold"
-								>{retagPairs.total}
-								{retagPairs.total === 1
+								>{retagPairs.total ?? retagPairs.items.length}
+								{(retagPairs.total ?? retagPairs.items.length) === 1
 									? 'pair of albums might be one album'
 									: 'pairs of albums might each be one album'} retagged</summary
 							>
 							<div class="mt-3 flex flex-col gap-3">
-								{#each retagPairs.pairs as pair (`${pair.old_album.id}/${pair.new_album.id}`)}
+								{#each retagPairs.items as pair (`${pair.old_album.id}/${pair.new_album.id}`)}
 									<RetagPairCard {pair} />
 								{/each}
 							</div>
-							{#if retagPairs.total > retagPairs.pairs.length}
+							{#if retagPairs.next_cursor}
 								<p class="mt-3 text-sm text-base-content/60">
-									Showing the newest {retagPairs.pairs.length}.
+									Showing the newest {retagPairs.items.length}.
 								</p>
 							{/if}
 						</details>

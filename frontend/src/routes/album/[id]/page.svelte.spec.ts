@@ -202,7 +202,7 @@ function routes(): FakeApi {
 		'GET /api/v3/youtube/track-links/{album_id}': [],
 		'GET /api/v3/covers/release-group/{release_group_id}': undefined,
 		'POST /api/v3/ratings/lookup': { albums: {}, artists: {}, tracks: {} },
-		'GET /api/v3/library/retag-pairs': { pairs: [], total: 0 },
+		'GET /api/v3/library/retag-pairs': { items: [], next_cursor: null, total: 0 },
 		'DELETE /api/v3/library/tracks/{id}': ({ params }) => removed(params.id)
 	});
 }

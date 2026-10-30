@@ -381,6 +381,7 @@ pub fn review_reason(code: &str) -> Reason {
             "Albums were combined and their other editions were dropped; they are listed here.",
             "Nothing to do, or pick one of them to use it instead.",
         ),
+        "EDITION_KEPT_BY_JOIN" => crate::corrections::reasons::EDITION_JOIN_KEPT,
         other => match_reason(other),
     }
 }

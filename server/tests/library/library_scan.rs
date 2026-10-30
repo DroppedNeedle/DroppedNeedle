@@ -4089,6 +4089,106 @@ async fn dismissed_album_is_not_joined_by_a_later_rename() {
     assert_eq!(rig.retired_into(&old), None, "the dismissed album stays");
 }
 
+/// A dismissed pair ends once its tracks are back on its old album: the
+/// person's answer was about a split that is undone. A later rename of
+/// that album over two sittings is joined like any other.
+#[tokio::test]
+async fn dismissed_pair_ends_when_its_tracks_come_back() {
+    let (mut rig, files, old) = plain_album("scan-across-dismissed-then-back", 6).await;
+    rig.run(&favorite(&old));
+    rig.run("DELETE FROM library_identify_jobs");
+    let after = rig.after.clone();
+    rig.tag(&files[..3], &after);
+    rig.scan().await;
+    let new = rig.album_of("a/t000.flac");
+    assert_ne!(new, old, "the split half sits on a row of its own");
+    assert_eq!(rig.album_of("a/t005.flac"), old);
+    rig.run(&format!(
+        "DELETE FROM library_retag_pairs; \
+         INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
+         recorded_at, updated_at) VALUES ('{old}', '{new}', 'tracks_elsewhere', \
+         'dismissed', 0, 0);"
+    ));
+    // Played or starred while apart, so the emptied row stays.
+    rig.run(&favorite(&new));
+
+    let before = rig.before.clone();
+    rig.tag(&files[..3], &before);
+    rig.scan().await;
+    assert_eq!(rig.album_of("a/t000.flac"), old, "the tracks are back");
+
+    let last = "scan-across-dismissed-then-back last";
+    rig.tag(&files[..3], last);
+    rig.scan().await;
+    rig.tag(&files[3..], last);
+    rig.scan().await;
+    let renamed = rig.album_of("a/t000.flac");
+    assert_eq!(rig.album_of("a/t005.flac"), renamed);
+    assert_eq!(
+        rig.retired_into(&old),
+        Some(renamed),
+        "the rename is joined"
+    );
+    assert_eq!(retag_pairs(&rig), Vec::new(), "the dismissed pair ended");
+}
+
+/// The same when the pair's new album was merged into another since: the
+/// tracks leaving that album for the old one end the pair.
+#[tokio::test]
+async fn dismissed_pair_ends_when_its_tracks_come_back_from_a_merge() {
+    let mut rig = RegroupRig::new("scan-across-dismissed-merged-back");
+    let files: Vec<String> = (0..6).map(|n| format!("a/t{n:03}.flac")).collect();
+    let extra = vec!["a/z.flac".to_owned()];
+    let (before, after) = (rig.before.clone(), rig.after.clone());
+    let third = "scan-across-dismissed-merged-back third";
+    rig.tag(&files, &before);
+    rig.tag(&extra, third);
+    rig.scan().await;
+    rig.run(PERSON);
+    let old = rig.album_of("a/t000.flac");
+    let merged_into = rig.album_of("a/z.flac");
+    rig.run(&favorite(&old));
+    rig.run("DELETE FROM library_identify_jobs");
+    rig.tag(&files[..3], &after);
+    rig.scan().await;
+    let new = rig.album_of("a/t000.flac");
+    assert_ne!(new, old, "the split half sits on a row of its own");
+    rig.run(&format!(
+        "DELETE FROM library_retag_pairs; \
+         INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
+         recorded_at, updated_at) VALUES ('{old}', '{new}', 'tracks_elsewhere', \
+         'dismissed', 0, 0);"
+    ));
+    rig.run(&favorite(&new));
+
+    // The split half joins the third album, its own row merged into it.
+    std::fs::remove_file(rig.root.join("a/z.flac")).expect("removed");
+    rig.tag(&files[..3], third);
+    rig.scan().await;
+    assert_eq!(rig.album_of("a/t000.flac"), merged_into);
+    rig.run(&format!(
+        "UPDATE local_albums SET retired_into_album_id = '{merged_into}' WHERE id = '{new}'"
+    ));
+
+    rig.tag(&files[..3], &before);
+    rig.scan().await;
+    assert_eq!(rig.album_of("a/t000.flac"), old, "the tracks are back");
+
+    let last = "scan-across-dismissed-merged-back last";
+    rig.tag(&files[..3], last);
+    rig.scan().await;
+    rig.tag(&files[3..], last);
+    rig.scan().await;
+    let renamed = rig.album_of("a/t000.flac");
+    assert_eq!(rig.album_of("a/t005.flac"), renamed);
+    assert_eq!(
+        rig.retired_into(&old),
+        Some(renamed),
+        "the rename is joined"
+    );
+    assert_eq!(retag_pairs(&rig), Vec::new(), "the dismissed pair ended");
+}
+
 /// A track judged by when it left the album would make an album that was
 /// there before look like part of it, once the track moved on again. An
 /// album with a chosen release has three files retagged to a new name and
@@ -6199,31 +6299,37 @@ async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
         .await;
     let (library, _) = library_at(&platform);
     let corrections = crate::common::library::services(&library).corrections;
-    let listed = corrections.retag_pairs().expect("pairs listed");
-    assert_eq!(listed.total, 2);
-    let revision = |album: &str| {
+    let (listed, total) = corrections.retag_pairs(None, 100, 0).expect("pairs listed");
+    assert_eq!(total, 2);
+    let token = |album: &str| {
         listed
-            .pairs
             .iter()
             .flat_map(|pair| [&pair.old_album, &pair.new_album])
             .find(|side| side.id == album)
             .expect("listed")
-            .identity_revision
+            .identity_token
+            .clone()
     };
     corrections
         .join_retag_pair(&PairJoinRequest {
             old_album_id: old.clone(),
             new_album_id: one.clone(),
             keep_edition_of: None,
-            expected_identity_revisions: BTreeMap::from([
-                (old.clone(), revision(&old)),
-                (one.clone(), revision(&one)),
+            expected_identity_tokens: BTreeMap::from([
+                (old.clone(), token(&old)),
+                (one.clone(), token(&one)),
             ]),
             actor: "u1".to_owned(),
         })
         .expect("joined");
     assert_eq!(rig.retired_into(&old), Some(one));
-    assert_eq!(corrections.retag_pairs().expect("pairs listed").total, 0);
+    assert_eq!(
+        corrections
+            .retag_pairs(None, 100, 0)
+            .expect("pairs listed")
+            .1,
+        0
+    );
 }
 
 // ---------------------------------------------------------------------------

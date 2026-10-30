@@ -18582,6 +18582,21 @@ async fn retag_pairs_list_join_and_dismiss() {
         )
     };
     let db = app.db();
+    // The edition token a card shows for an album, from its stored row.
+    let token = |album: &str| -> String {
+        use rusqlite::OptionalExtension as _;
+        db.query_row(
+            "SELECT row_revision || ':' || decision_source || ':' || release_group_mbid || ':' \
+             || COALESCE(release_mbid, '') || ':' || EXISTS(SELECT 1 FROM \
+             library_custom_edition_active c WHERE c.local_album_id = ?1) \
+             FROM local_album_external_identities WHERE local_album_id = ?1",
+            [album],
+            |row| row.get(0),
+        )
+        .optional()
+        .expect("identity reads")
+        .unwrap_or_else(|| "0".to_owned())
+    };
     app.seed(
         &[
             "INSERT INTO auth_users (id, display_name, role, created_at) \
@@ -18657,7 +18672,7 @@ async fn retag_pairs_list_join_and_dismiss() {
         (
             "POST",
             join_a.clone(),
-            Some(json!({"expected_identity_revisions": {}})),
+            Some(json!({"expected_identity_tokens": {}})),
         ),
         (
             "POST",
@@ -18702,7 +18717,7 @@ async fn retag_pairs_list_join_and_dismiss() {
     };
     let listed = list().await;
     assert_eq!(listed["total"], json!(6), "{listed}");
-    let order: Vec<(String, String, String, bool)> = listed["pairs"]
+    let order: Vec<(String, String, String, bool)> = listed["items"]
         .as_array()
         .expect("pairs")
         .iter()
@@ -18729,35 +18744,51 @@ async fn retag_pairs_list_join_and_dismiss() {
             expect("a-old", "a-new", "chosen_matches_differ", true),
         ]
     );
-    let shown_a = &listed["pairs"][5];
+    let shown_a = &listed["items"][5];
     assert_eq!(
         shown_a["old_album"]["edition"],
         json!({"release_group_mbid": "rg-a", "release_mbid": "rel-a-old", "chosen": true,
                "custom": false})
     );
-    assert_eq!(shown_a["old_album"]["identity_revision"], json!(3));
+    assert_eq!(
+        shown_a["old_album"]["identity_token"],
+        json!("3:manual:rg-a:rel-a-old:0")
+    );
     assert_eq!(shown_a["old_album"]["track_count"], json!(1));
     assert_eq!(
-        listed["pairs"][2]["old_album"]["edition"]["custom"],
+        listed["items"][2]["old_album"]["edition"]["custom"],
         json!(true)
     );
+    // An album's own pairs, a page at a time.
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/retag-pairs?album_id={a_new}&limit=1"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], json!(1), "{body}");
+    assert_eq!(body["items"][0]["old_album"]["id"], json!(a_old));
+    assert_eq!(body["next_cursor"], json!(null));
 
     // Refusals change nothing.
     let before = pair_snapshot(&db, &a_old, &a_new);
     let refusals = [
         (
-            json!({"keep_edition_of": a_new, "expected_identity_revisions": {&a_old: 3}}),
+            json!({"keep_edition_of": a_new, "expected_identity_tokens": {&a_old: token(&a_old)}}),
             StatusCode::BAD_REQUEST,
             "RETAG_PAIR_REVISIONS_REQUIRED",
         ),
         (
-            json!({"expected_identity_revisions": {&a_old: 3, &a_new: 3}}),
+            json!({"expected_identity_tokens": {&a_old: token(&a_old), &a_new: token(&a_new)}}),
             StatusCode::BAD_REQUEST,
             "KEEP_EDITION_REQUIRED",
         ),
         (
             json!({"keep_edition_of": a_old,
-                   "expected_identity_revisions": {&a_old: 2, &a_new: 3}}),
+                   "expected_identity_tokens": {&a_old: "2", &a_new: token(&a_new)}}),
             StatusCode::CONFLICT,
             "STALE_REVISION",
         ),
@@ -18769,10 +18800,27 @@ async fn retag_pairs_list_join_and_dismiss() {
         assert_eq!(pair_snapshot(&db, &a_old, &a_new), before, "{code}");
     }
 
+    // An edition dropped and another chosen at the same revision since the
+    // card was shown: the card's token no longer matches.
+    let shown = json!({"keep_edition_of": a_old,
+                       "expected_identity_tokens": {&a_old: token(&a_old), &a_new: token(&a_new)}});
+    let swap = |release: &str| {
+        format!(
+            "DELETE FROM local_album_external_identities WHERE local_album_id = '{a_old}'; {}",
+            choose("a-old", "rg-a", release)
+        )
+    };
+    app.seed(swap("'rel-a-other'")).await;
+    let (status, body) = app.call("POST", &join_a, &headers, Some(shown)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
+    app.seed(swap("'rel-a-old'")).await;
+    assert_eq!(pair_snapshot(&db, &a_old, &a_new), before);
+
     // Keep the old album's edition: it lands on the new album, which
     // takes the old album's id, people's marks and history.
     let keep_old = json!({"keep_edition_of": a_old,
-                          "expected_identity_revisions": {&a_old: 3, &a_new: 3}});
+                          "expected_identity_tokens": {&a_old: token(&a_old), &a_new: token(&a_new)}});
     for _ in 0..2 {
         let (status, body) = app
             .call("POST", &join_a, &headers, Some(keep_old.clone()))
@@ -18800,7 +18848,7 @@ async fn retag_pairs_list_join_and_dismiss() {
     );
     let reviews = pending_reviews(&db, &a_new);
     assert_eq!(reviews.len(), 1, "{reviews:?}");
-    assert_eq!(reviews[0].0, "EDITION_KEPT_OVER_CONFLICT");
+    assert_eq!(reviews[0].0, "EDITION_KEPT_BY_JOIN");
     assert!(reviews[0].1.contains("rel-a-new"), "{}", reviews[0].1);
     assert_eq!(
         remap_row(&db, &a_new).map(|row| row.0).as_deref(),
@@ -18870,7 +18918,7 @@ async fn retag_pairs_list_join_and_dismiss() {
             &format!("/api/v3/library/retag-pairs/{b_old}/{b_new}/join"),
             &headers,
             Some(json!({"keep_edition_of": b_new,
-                        "expected_identity_revisions": {&b_old: 3, &b_new: 3}})),
+                        "expected_identity_tokens": {&b_old: token(&b_old), &b_new: token(&b_new)}})),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -18882,14 +18930,14 @@ async fn retag_pairs_list_join_and_dismiss() {
     );
     let reviews = pending_reviews(&db, &b_new);
     assert_eq!(reviews.len(), 1, "{reviews:?}");
-    assert_eq!(reviews[0].0, "EDITION_KEPT_OVER_CONFLICT");
+    assert_eq!(reviews[0].0, "EDITION_KEPT_BY_JOIN");
     assert!(reviews[0].1.contains("rel-b-old"), "{}", reviews[0].1);
 
     // Open work on the old album holds the join back, changing nothing;
     // once it is gone the split joins without an edition to choose.
     let (c_old, c_new) = (id("c-old"), id("c-new"));
     let join_c = format!("/api/v3/library/retag-pairs/{c_old}/{c_new}/join");
-    let plain = json!({"expected_identity_revisions": {&c_old: 0, &c_new: 0}});
+    let plain = json!({"expected_identity_tokens": {&c_old: token(&c_old), &c_new: token(&c_new)}});
     let before = pair_snapshot(&db, &c_old, &c_new);
     let (status, body) = app
         .call("POST", &join_c, &headers, Some(plain.clone()))
@@ -18918,7 +18966,9 @@ async fn retag_pairs_list_join_and_dismiss() {
             "POST",
             &format!("/api/v3/library/retag-pairs/{d_old}/{d_new}/join"),
             &headers,
-            Some(json!({"expected_identity_revisions": {&d_old: 3, &d_new: 3}})),
+            Some(
+                json!({"expected_identity_tokens": {&d_old: token(&d_old), &d_new: token(&d_new)}}),
+            ),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -18950,7 +19000,7 @@ async fn retag_pairs_list_join_and_dismiss() {
             &format!("/api/v3/library/retag-pairs/{e_old}/{e_new}/join"),
             &headers,
             Some(json!({"keep_edition_of": e_old,
-                        "expected_identity_revisions": {&e_old: 3, &e_new: 3}})),
+                        "expected_identity_tokens": {&e_old: token(&e_old), &e_new: token(&e_new)}})),
         )
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
@@ -18982,15 +19032,17 @@ async fn retag_pairs_list_join_and_dismiss() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let listed = list().await;
     assert_eq!(listed["total"], json!(1), "{listed}");
-    assert_eq!(listed["pairs"][0]["old_album"]["id"], json!(f_old));
-    assert_eq!(listed["pairs"][0]["new_album"]["id"], json!(f_third));
+    assert_eq!(listed["items"][0]["old_album"]["id"], json!(f_old));
+    assert_eq!(listed["items"][0]["new_album"]["id"], json!(f_third));
     let f_new = id("f-new");
     let (status, body) = app
         .call(
             "POST",
             &format!("/api/v3/library/retag-pairs/{f_old}/{f_new}/join"),
             &headers,
-            Some(json!({"expected_identity_revisions": {&f_old: 0, &f_new: 0}})),
+            Some(
+                json!({"expected_identity_tokens": {&f_old: token(&f_old), &f_new: token(&f_new)}}),
+            ),
         )
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "a card shown before: {body}");
@@ -19000,7 +19052,7 @@ async fn retag_pairs_list_join_and_dismiss() {
             "POST",
             &format!("/api/v3/library/retag-pairs/{f_old}/{f_third}/join"),
             &headers,
-            Some(json!({"expected_identity_revisions": {&f_old: 0, &f_third: 0}})),
+            Some(json!({"expected_identity_tokens": {&f_old: token(&f_old), &f_third: token(&f_third)}})),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -19051,7 +19103,7 @@ async fn retag_pairs_list_join_and_dismiss() {
             &format!("/api/v3/library/retag-pairs/{h_old}/{h_new}/join"),
             &headers,
             Some(json!({"keep_edition_of": h_old,
-                        "expected_identity_revisions": {&h_old: 3, &h_new: 3}})),
+                        "expected_identity_tokens": {&h_old: token(&h_old), &h_new: token(&h_new)}})),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -19066,7 +19118,7 @@ async fn retag_pairs_list_join_and_dismiss() {
             &join_i,
             &headers,
             Some(json!({"keep_edition_of": i_old,
-                        "expected_identity_revisions": {&i_old: 3, &i_new: 3}})),
+                        "expected_identity_tokens": {&i_old: token(&i_old), &i_new: token(&i_new)}})),
         )
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
@@ -19092,12 +19144,15 @@ async fn retag_pairs_list_join_and_dismiss() {
             "POST",
             &format!("/api/v3/library/retag-pairs/{}/{b_new}/join", id("g-one")),
             &headers,
-            Some(json!({"expected_identity_revisions": {}})),
+            Some(json!({"expected_identity_tokens": {}})),
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     let listed = list().await;
-    assert_eq!(listed, json!({"pairs": [], "total": 0}));
+    assert_eq!(
+        listed,
+        json!({"items": [], "next_cursor": null, "total": 0})
+    );
     rig.stop().await;
 }
 
@@ -22844,9 +22899,8 @@ async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
         "parked"
     );
     let corrections = crate::common::library::services(&managed.library).corrections;
-    let listed = corrections.retag_pairs().expect("pairs listed");
+    let (listed, _) = corrections.retag_pairs(None, 100, 0).expect("pairs listed");
     let pairs: Vec<_> = listed
-        .pairs
         .iter()
         .map(|pair| {
             (
@@ -22894,7 +22948,13 @@ async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
         actions,
         "a second scan writes nothing"
     );
-    assert_eq!(corrections.retag_pairs().expect("pairs listed").total, 1);
+    assert_eq!(
+        corrections
+            .retag_pairs(None, 100, 0)
+            .expect("pairs listed")
+            .1,
+        1
+    );
 
     assert!(
         Mutations::new(&managed.library)
@@ -22951,9 +23011,9 @@ async fn a_custom_edition_replaced_by_hand_is_merged_by_a_person() {
         Some("replaced_hands_off")
     );
     let corrections = crate::common::library::services(&managed.library).corrections;
-    let listed = corrections.retag_pairs().expect("pairs listed");
-    assert_eq!(listed.pairs.len(), 1);
-    let pair = &listed.pairs[0];
+    let (listed, _) = corrections.retag_pairs(None, 100, 0).expect("pairs listed");
+    assert_eq!(listed.len(), 1);
+    let pair = &listed[0];
     assert_eq!(
         (pair.old_album.id.as_str(), pair.new_album.id.as_str()),
         (album.as_str(), replacement.as_str())
@@ -22970,9 +23030,9 @@ async fn a_custom_edition_replaced_by_hand_is_merged_by_a_person() {
             old_album_id: album.clone(),
             new_album_id: replacement.clone(),
             keep_edition_of: None,
-            expected_identity_revisions: std::collections::BTreeMap::from([
-                (album.clone(), pair.old_album.identity_revision),
-                (replacement.clone(), pair.new_album.identity_revision),
+            expected_identity_tokens: std::collections::BTreeMap::from([
+                (album.clone(), pair.old_album.identity_token.clone()),
+                (replacement.clone(), pair.new_album.identity_token.clone()),
             ]),
             actor: "admin".to_owned(),
         })

@@ -98,9 +98,9 @@
 				oldAlbumId: oldAlbum.id,
 				newAlbumId: newAlbum.id,
 				keepEditionOf: pair.editions_differ ? keep : null,
-				expectedIdentityRevisions: {
-					[oldAlbum.id]: oldAlbum.identity_revision,
-					[newAlbum.id]: newAlbum.identity_revision
+				expectedIdentityTokens: {
+					[oldAlbum.id]: oldAlbum.identity_token,
+					[newAlbum.id]: newAlbum.identity_token
 				}
 			});
 			if (currentAlbumId && joined.album_id !== currentAlbumId) {

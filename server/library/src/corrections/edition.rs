@@ -399,7 +399,7 @@ pub(crate) fn open_review(
             now_ms
         ],
     )?;
-    Ok(())
+    crate::identify::sqlite::bump_identification_stream(tx)
 }
 
 fn album_tracks(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<Vec<String>> {

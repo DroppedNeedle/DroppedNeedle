@@ -23,8 +23,7 @@
 	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
 	import RecycledRemovals from '$lib/components/library/RecycledRemovals.svelte';
 	import AlbumHistory from '$lib/components/library/AlbumHistory.svelte';
-	import RetagPairCard from '$lib/components/library/RetagPairCard.svelte';
-	import { getRetagPairsQuery } from '$lib/queries/library/LibraryRetagPairQueries.svelte';
+	import AlbumRetagPairs from '$lib/components/library/AlbumRetagPairs.svelte';
 	import {
 		getLibraryAlbumCopiesQuery,
 		getLibraryAlbumDetailQuery,
@@ -74,14 +73,6 @@
 	);
 	const rate = setRating();
 	const heart = setFavorite();
-	const retagPairsQuery = getRetagPairsQuery(() => authStore.isAdmin);
-	const retagPairs = $derived(
-		localAlbumId
-			? (retagPairsQuery.data?.pairs ?? []).filter(
-					(pair) => pair.old_album.id === localAlbumId || pair.new_album.id === localAlbumId
-				)
-			: []
-	);
 	const primaryError = $derived(state.primaryError);
 	const albumNotFound = $derived(primaryError instanceof ApiError && primaryError.status === 404);
 	const providerUnavailable = $derived.by(() => {
@@ -202,9 +193,9 @@
 				/>
 			{/if}
 
-			{#each retagPairs as pair (`${pair.old_album.id}/${pair.new_album.id}`)}
-				<RetagPairCard {pair} currentAlbumId={localAlbumId} />
-			{/each}
+			{#if authStore.isAdmin && localAlbumId}
+				<AlbumRetagPairs albumId={localAlbumId} />
+			{/if}
 
 			{#if localCopies.length > 1}
 				<Card variant="bordered" padding="md" as="section" aria-label="Copies in your library">
