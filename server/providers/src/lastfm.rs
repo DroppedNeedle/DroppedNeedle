@@ -157,8 +157,8 @@ pub struct AuthToken {
 }
 
 /// A session reply from `auth.getSession`. Name and key are both required:
-/// an answer missing either is a failure.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// an answer missing either is a failure. Its debug form never shows the key.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Session {
     /// Linked Last.fm username.
     pub name: String,
@@ -166,6 +166,16 @@ pub struct Session {
     pub key: String,
     /// Subscriber flag.
     pub subscriber: i64,
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("name", &self.name)
+            .field("key", &"<redacted>")
+            .field("subscriber", &self.subscriber)
+            .finish()
+    }
 }
 
 /// A plain tag.
@@ -193,10 +203,10 @@ pub struct ArtistInfo {
     pub name: String,
     /// MusicBrainz artist id.
     pub mbid: Option<String>,
-    /// Listener count.
-    pub listeners: i64,
-    /// Play count.
-    pub playcount: i64,
+    /// Listener count; `None` when Last.fm sent none.
+    pub listeners: Option<i64>,
+    /// Play count; `None` when Last.fm sent none.
+    pub playcount: Option<i64>,
     /// Last.fm URL.
     pub url: String,
     /// Biography summary.
@@ -218,10 +228,10 @@ pub struct AlbumInfo {
     pub artist_name: String,
     /// MusicBrainz release id.
     pub mbid: Option<String>,
-    /// Listener count.
-    pub listeners: i64,
-    /// Play count.
-    pub playcount: i64,
+    /// Listener count; `None` when Last.fm sent none.
+    pub listeners: Option<i64>,
+    /// Play count; `None` when Last.fm sent none.
+    pub playcount: Option<i64>,
     /// Last.fm URL.
     pub url: String,
     /// Artwork URL (extralarge preferred, else the last image).
@@ -1059,7 +1069,13 @@ pub fn api_sig(params: &[(String, String)], shared_secret: &str) -> String {
 
 /// A count, 0 when Last.fm sent none or sent text that is not a number.
 fn count(value: Option<&models::Lenient>) -> i64 {
-    value.and_then(models::Lenient::value).unwrap_or(0)
+    sent_count(value).unwrap_or(0)
+}
+
+/// A count Last.fm sent, or `None` when it sent none or sent text that is
+/// not a number.
+fn sent_count(value: Option<&models::Lenient>) -> Option<i64> {
+    value.and_then(models::Lenient::value)
 }
 
 /// Pick the artwork URL: `extralarge` wins, otherwise the last image wins.
@@ -1106,8 +1122,8 @@ fn artist_info(artist: models::WireArtistInfo) -> Option<ArtistInfo> {
     let bio = artist.bio.as_ref().and_then(models::Section::get);
     Some(ArtistInfo {
         mbid: mbid_or_none(artist.mbid.as_deref()),
-        listeners: count(stats.and_then(|stats| stats.listeners.as_ref())),
-        playcount: count(stats.and_then(|stats| stats.playcount.as_ref())),
+        listeners: sent_count(stats.and_then(|stats| stats.listeners.as_ref())),
+        playcount: sent_count(stats.and_then(|stats| stats.playcount.as_ref())),
         url: web_address::or_empty(artist.url),
         bio_summary: bio.and_then(|bio| bio.summary.clone()).unwrap_or_default(),
         bio_content: bio.and_then(|bio| bio.content.clone()).unwrap_or_default(),
@@ -1149,8 +1165,8 @@ fn album_info(album: models::WireAlbumInfo) -> Option<AlbumInfo> {
             .unwrap_or("")
             .to_owned(),
         mbid: mbid_or_none(album.mbid.as_deref()),
-        listeners: count(album.listeners.as_ref()),
-        playcount: count(album.playcount.as_ref()),
+        listeners: sent_count(album.listeners.as_ref()),
+        playcount: sent_count(album.playcount.as_ref()),
         image_url: pick_image(album.image.as_ref()),
         summary: album
             .wiki

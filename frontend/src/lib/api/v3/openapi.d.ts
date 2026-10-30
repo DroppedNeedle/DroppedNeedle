@@ -15060,14 +15060,14 @@ export interface components {
         LastFmAlbumEnrichment: {
             /**
              * Format: int64
-             * @description Listener count.
+             * @description Listener count; null when Last.fm sent none.
              */
-            listeners: number;
+            listeners?: number | null;
             /**
              * Format: int64
-             * @description Play count.
+             * @description Play count; null when Last.fm sent none.
              */
-            playcount: number;
+            playcount?: number | null;
             /** @description Wiki summary, HTML stripped. */
             summary?: string | null;
             /** @description Tags. */
@@ -15084,14 +15084,14 @@ export interface components {
             bio?: string | null;
             /**
              * Format: int64
-             * @description Listener count.
+             * @description Listener count; null when Last.fm sent none.
              */
-            listeners: number;
+            listeners?: number | null;
             /**
              * Format: int64
-             * @description Play count.
+             * @description Play count; null when Last.fm sent none.
              */
-            playcount: number;
+            playcount?: number | null;
             /** @description Similar artists. */
             similar_artists: components["schemas"]["LastFmSimilarArtist"][];
             /** @description Short summary, HTML stripped. */

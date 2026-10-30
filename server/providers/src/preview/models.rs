@@ -2,11 +2,13 @@
 //!
 //! Tolerant of unknown fields. A track's, an album's and an artist's id is the
 //! identity of the answer and is required: one without it fails decoding. A
-//! track whose preview is missing, null or empty is absence for that track
-//! only. An error answer is an error object inside a 200; the classifier in
-//! `preview.rs` reads it before these shapes decode.
+//! track whose preview is missing, null, empty or not a web address is
+//! absence for that track only. An error answer is an error object inside a
+//! 200; the classifier in `preview.rs` reads it before these shapes decode.
 
 use serde::Deserialize;
+
+use crate::web_address::{self, WebAddress};
 
 /// The track search, `GET /search`. The artist query and the field-scoped track
 /// query both answer with it.
@@ -34,9 +36,10 @@ pub struct Track {
     /// Position within the album.
     #[serde(default)]
     pub track_position: Option<i64>,
-    /// 30-second MP3 URL. It is signed and expires, so it is resolved just in time.
-    #[serde(default)]
-    pub preview: Option<String>,
+    /// 30-second MP3 URL. It is signed and expires, so it is resolved just in
+    /// time. Anything but an http or https address reads as none.
+    #[serde(default, deserialize_with = "web_address::or_none")]
+    pub preview: Option<WebAddress>,
     /// The track's artist.
     #[serde(default)]
     pub artist: Option<Artist>,

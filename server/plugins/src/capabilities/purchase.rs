@@ -9,6 +9,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use droppedneedle_providers::WebAddress;
 use serde_json::json;
 
 use super::super::host::PluginHost;
@@ -50,12 +51,11 @@ impl PluginHost {
         let mut links = Vec::new();
         for found in answers.into_iter().flatten().flatten() {
             for mut link in found.into_iter().take(LINKS_PER_PLUGIN) {
-                let url = link.url.trim().to_owned();
+                let Some(url) = WebAddress::parse(&link.url).map(String::from) else {
+                    continue;
+                };
                 let label = link.label.trim().to_owned();
-                if label.is_empty()
-                    || !(url.starts_with("https://") || url.starts_with("http://"))
-                    || !seen.insert(url.clone())
-                {
+                if label.is_empty() || !seen.insert(url.clone()) {
                     continue;
                 }
                 if !matches!(link.kind.as_str(), "digital" | "physical" | "free") {

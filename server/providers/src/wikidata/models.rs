@@ -28,8 +28,8 @@ pub struct EntityData {
 /// One entity. Only its id and sitelinks are read.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Entity {
-    /// The entity id. Required: an entity without it fails decoding.
-    #[allow(dead_code)]
+    /// The entity id. Required: an entity without it fails decoding. A
+    /// redirected id's answer names its target here.
     pub id: String,
     /// Sitelinks keyed by wiki id ("enwiki", ...).
     #[serde(default)]
@@ -54,6 +54,8 @@ pub struct Sitelink {
 /// An id that names no entity: tests/fixtures/wikidata/claims_no_such_entity.json.
 /// An id the id builder refuses: tests/fixtures/wikidata/claims_invalid_id.json.
 /// A merged item: tests/fixtures/wikidata/claims_unresolved_redirect.json.
+/// That item's target, Q1, for `property=P18`, recorded on 2026-10-30:
+/// tests/fixtures/wikidata/claims_redirect_target_p18.json.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum ClaimsAnswer {

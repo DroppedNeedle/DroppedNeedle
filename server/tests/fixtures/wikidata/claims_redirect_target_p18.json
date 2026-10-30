@@ -1,0 +1,80 @@
+{
+  "claims": {
+    "P18": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P18",
+          "hash": "3272ea6af333ecf870fc4bf4ec8f6b69ce597e5e",
+          "datavalue": {
+            "value": "NASA-HS201427a-HubbleUltraDeepField2014-20140603.jpg",
+            "type": "string"
+          },
+          "datatype": "commonsMedia"
+        },
+        "type": "statement",
+        "id": "Q1$b852c6ed-4908-e8ba-b1e6-87c2076d4eef",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "97e1ef3a43f95ecb5bccc43ef0ec2fe012ec2e3a",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P4656": [
+                {
+                  "snaktype": "value",
+                  "property": "P4656",
+                  "hash": "413b0d11e6b85ac254a2727dba45ea2e46edf417",
+                  "datavalue": {
+                    "value": "https://en.wikipedia.org/w/index.php?title=Universe&oldid=1023252612",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "310b274d63e66368136725901cc45223a90c3842",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2021-05-22T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143",
+              "P4656",
+              "P813"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

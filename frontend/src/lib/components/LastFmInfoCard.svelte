@@ -10,8 +10,8 @@
 	interface Props {
 		text: string | null | undefined;
 		tags: { name: string; url?: string | null }[];
-		listeners: number;
-		playcount: number;
+		listeners?: number | null;
+		playcount?: number | null;
 		url: string | null | undefined;
 		loading?: boolean;
 		enabled?: boolean;
@@ -44,7 +44,7 @@
 
 	let hasText = $derived(!!text);
 	let hasTags = $derived(tags.length > 0);
-	let hasStats = $derived(listeners > 0 || playcount > 0);
+	let hasStats = $derived((listeners ?? 0) > 0 || (playcount ?? 0) > 0);
 	let hasContent = $derived(hasText || hasTags || hasStats);
 </script>
 
@@ -85,13 +85,13 @@
 
 		{#if hasStats}
 			<div class="flex flex-wrap gap-4 text-sm">
-				{#if listeners > 0}
+				{#if listeners != null && listeners > 0}
 					<span class="flex items-center gap-1.5 text-base-content/70">
 						<Users class="h-4 w-4" />
 						{formatListenCount(listeners, true)} listeners
 					</span>
 				{/if}
-				{#if playcount > 0}
+				{#if playcount != null && playcount > 0}
 					<span class="flex items-center gap-1.5 text-base-content/70">
 						<Headphones class="h-4 w-4" />
 						{formatListenCount(playcount)}

@@ -131,12 +131,25 @@ fn reset_in(reply: &Reply, now_unix: i64) -> Option<Duration> {
 /// One user's ListenBrainz identity. The username scopes reads; the token
 /// authenticates them. Both are optional because the metadata reads need no
 /// token (per the management notes), while submissions and validation do.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// Its debug form never shows the token.
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct ListenBrainzCredentials {
     /// ListenBrainz username.
     pub username: Option<String>,
     /// User token, sent as `Authorization: Token <token>`.
     pub user_token: Option<String>,
+}
+
+impl std::fmt::Debug for ListenBrainzCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ListenBrainzCredentials")
+            .field("username", &self.username)
+            .field(
+                "user_token",
+                &self.user_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 /// One listen. Track and artist names are required;

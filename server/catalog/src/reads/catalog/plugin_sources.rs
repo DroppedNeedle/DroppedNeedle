@@ -13,6 +13,8 @@ use droppedneedle_plugins::capabilities::metadata::{
 };
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_plugins::manifest::Capability;
+use droppedneedle_providers::WebAddress;
+use droppedneedle_providers::web_address::web_address;
 
 /// Every plugin's answer merged by the gap rule, as the catalog shows it.
 /// Text is reduced to plain text, links to `http(s)` and the image to
@@ -33,15 +35,19 @@ fn merged(answers: Gathered<Vec<PluginEnrichment>>) -> Gathered<PluginDetails> {
             .map(plain_text)
             .filter(|tag| !tag.is_empty() && !tag.contains('\n'))
             .collect();
-        clean.links.retain(|link| {
-            (link.starts_with("https://") || link.starts_with("http://"))
-                && !link
-                    .chars()
-                    .any(|c| c.is_whitespace() || c == '"' || c == '<')
-        });
-        clean.image_urls.retain(|url| {
-            url.starts_with("https://") && !url.chars().any(|c| c.is_whitespace() || c == '"')
-        });
+        clean.links = clean
+            .links
+            .iter()
+            .filter_map(|link| WebAddress::parse(link))
+            .map(String::from)
+            .collect();
+        clean.image_urls = clean
+            .image_urls
+            .iter()
+            .filter_map(|url| web_address(url))
+            .filter(|url| url.scheme() == "https")
+            .map(String::from)
+            .collect();
         fields.fill_gaps(&clean);
     }
     Gathered {

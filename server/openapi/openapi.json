@@ -47546,20 +47546,24 @@
         "type": "object",
         "description": "`GET /albums/{album_id}/lastfm`.",
         "required": [
-          "tags",
-          "listeners",
-          "playcount"
+          "tags"
         ],
         "properties": {
           "listeners": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "Listener count."
+            "description": "Listener count; null when Last.fm sent none."
           },
           "playcount": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "Play count."
+            "description": "Play count; null when Last.fm sent none."
           },
           "summary": {
             "type": [
@@ -47589,8 +47593,6 @@
         "description": "`GET /artists/{artist_mbid}/lastfm`. Empty when Last.fm is off or the\nuser has no Last.fm key.",
         "required": [
           "tags",
-          "listeners",
-          "playcount",
           "similar_artists"
         ],
         "properties": {
@@ -47602,14 +47604,20 @@
             "description": "Biography, HTML stripped."
           },
           "listeners": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "Listener count."
+            "description": "Listener count; null when Last.fm sent none."
           },
           "playcount": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "Play count."
+            "description": "Play count; null when Last.fm sent none."
           },
           "similar_artists": {
             "type": "array",

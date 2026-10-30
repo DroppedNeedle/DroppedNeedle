@@ -29,6 +29,7 @@ use crate::error::{MAX_RETRY_AFTER, ProviderError};
 use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 use crate::itunes::ITunesClient;
 use crate::itunes::models::SongSearch;
+use crate::web_address::{self, WebAddress};
 
 mod models;
 
@@ -171,7 +172,7 @@ fn deezer_title(hit: &Track) -> String {
 
 /// The preview URL of a Deezer track, when Deezer has one.
 fn deezer_preview(hit: &Track) -> Option<&str> {
-    hit.preview.as_deref().filter(|url| !url.is_empty())
+    hit.preview.as_ref().map(WebAddress::as_str)
 }
 
 impl PreviewClient {
@@ -388,11 +389,14 @@ impl PreviewClient {
         Ok(page
             .results
             .iter()
-            .find(|hit| !hit.preview_url.is_empty() && names_match(artist, &hit.artist_name))
-            .map(|hit| PreviewTrack {
+            .find_map(|hit| {
+                let preview_url = hit.preview_url.as_ref()?;
+                names_match(artist, &hit.artist_name).then_some((hit, preview_url))
+            })
+            .map(|(hit, preview_url)| PreviewTrack {
                 title: hit.track_name.clone(),
                 artist_name: hit.artist_name.clone(),
-                preview_url: hit.preview_url.clone(),
+                preview_url: preview_url.to_string(),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position: None,
             }))
@@ -418,9 +422,9 @@ impl PreviewClient {
         };
         let mut results = Vec::new();
         for hit in &page.results {
-            if hit.preview_url.is_empty() {
+            let Some(preview_url) = hit.preview_url.as_ref() else {
                 continue;
-            }
+            };
             if !names_match(artist, &hit.artist_name) {
                 continue;
             }
@@ -431,7 +435,7 @@ impl PreviewClient {
             results.push(PreviewTrack {
                 title: hit.track_name.clone(),
                 artist_name: hit.artist_name.clone(),
-                preview_url: hit.preview_url.clone(),
+                preview_url: preview_url.to_string(),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position,
             });
@@ -502,7 +506,7 @@ impl PreviewClient {
                 } else {
                     hit_artist.to_owned()
                 },
-                preview_url: hit.preview.clone().unwrap_or_default(),
+                preview_url: web_address::or_empty(hit.preview.clone()),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position: None,
             });

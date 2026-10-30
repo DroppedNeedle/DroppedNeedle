@@ -75,9 +75,14 @@ pub struct SongHit {
     /// Album title.
     #[serde(default, rename = "collectionName")]
     pub collection_name: String,
-    /// 30-second AAC preview URL.
-    #[serde(default, rename = "previewUrl")]
-    pub preview_url: String,
+    /// 30-second AAC preview URL; anything but an http or https address
+    /// reads as none.
+    #[serde(
+        default,
+        rename = "previewUrl",
+        deserialize_with = "web_address::or_none"
+    )]
+    pub preview_url: Option<WebAddress>,
     /// Position within the album.
     #[serde(default, rename = "trackNumber")]
     pub track_number: Option<i64>,

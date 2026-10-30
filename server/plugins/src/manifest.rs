@@ -574,7 +574,9 @@ fn validate_manifest(dir_name: &str, raw: RawManifest) -> Result<PluginManifest,
     }
 
     let homepage = plugin.homepage.trim().to_owned();
-    if !homepage.is_empty() && droppedneedle_auth::federated::web_address(&homepage).is_none() {
+    if !homepage.is_empty()
+        && droppedneedle_providers::web_address::web_address(&homepage).is_none()
+    {
         return Err(fail(format!(
             "{name}: homepage must be an http or https address"
         )));

@@ -4,6 +4,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_providers::web_address::web_address;
 
 use super::error::PluginError;
 use super::host::PluginHost;
@@ -97,8 +98,7 @@ pub async fn serve(
     let normalized = entry.replace('\\', "/");
     if normalized.is_empty()
         || normalized.starts_with('/')
-        || normalized.starts_with("http://")
-        || normalized.starts_with("https://")
+        || web_address(&normalized).is_some()
         || normalized.split('/').any(|part| part == "..")
         || normalized.contains('\0')
     {

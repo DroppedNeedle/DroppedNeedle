@@ -232,7 +232,10 @@ impl SearchCounts {
             .into_iter()
             .zip(outcomes)
             .map(|(item, outcome)| ArtistEnrichment {
-                listen_count: notes.keep(outcome).flatten().map(|info| info.listeners),
+                listen_count: notes
+                    .keep(outcome)
+                    .flatten()
+                    .and_then(|info| info.listeners),
                 ..bare_artist(item)
             })
             .collect()
@@ -268,7 +271,10 @@ impl SearchCounts {
             .into_iter()
             .zip(outcomes)
             .map(|(item, outcome)| AlbumEnrichment {
-                listen_count: notes.keep(outcome).flatten().map(|info| info.playcount),
+                listen_count: notes
+                    .keep(outcome)
+                    .flatten()
+                    .and_then(|info| info.playcount),
                 ..bare_album(item)
             })
             .collect()

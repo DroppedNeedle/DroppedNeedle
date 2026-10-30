@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use droppedneedle_providers::degradation::scoped;
 use droppedneedle_providers::musicbrainz::{Criticality, MbRelease, MbReleaseGroup};
-use droppedneedle_providers::{CacheKey, Fetched, Policy, ProviderError, RequestPriority, Source};
+use droppedneedle_providers::{
+    CacheKey, Fetched, Policy, ProviderError, RequestPriority, Source, WebAddress,
+};
 
 use super::artist::checked_mbid;
 use super::error::CatalogError;
@@ -937,10 +939,11 @@ impl Catalog {
             let extras = self.purchase_links.links(&query).await;
             complete &= extras.complete;
             for extra in extras.value {
-                let url = extra.url.trim();
-                if !(url.starts_with("https://") || url.starts_with("http://"))
-                    || links.iter().any(|known| known.url == url)
-                {
+                let Some(address) = WebAddress::parse(&extra.url) else {
+                    continue;
+                };
+                let url = address.as_str();
+                if links.iter().any(|known| known.url == url) {
                     continue;
                 }
                 let store = mapping::store_for(url);

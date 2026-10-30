@@ -539,8 +539,8 @@ async fn lastfm_artist_info_found_with_lenient_counts() {
         info.mbid.as_deref(),
         Some("a74b1b7f-71a5-4011-9441-d0b5e4122711")
     );
-    assert_eq!(info.listeners, 8_489_583, "string counts parse");
-    assert_eq!(info.playcount, 1_431_560_207);
+    assert_eq!(info.listeners, Some(8_489_583), "string counts parse");
+    assert_eq!(info.playcount, Some(1_431_560_207));
     assert!(info.bio_summary.starts_with("Placeholder summary."));
     assert_eq!(info.tags.len(), 5);
     assert_eq!(info.similar.len(), 5);

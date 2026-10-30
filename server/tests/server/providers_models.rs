@@ -866,7 +866,7 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
         Provider::ItunesAlbum => {
             let found = itunes(body)
                 .itunes
-                .find_album("Nirvana", "Nevermind", "US", PRIORITY)
+                .find_album("Nirvana", "Nirvana", "US", PRIORITY)
                 .await?;
             Ok(found.is_some())
         }
@@ -1548,6 +1548,26 @@ async fn a_lastfm_link_that_is_not_a_web_address_reads_as_none() {
     assert_eq!(artist.tags[0].url, "");
     assert_eq!(artist.similar[0].url, "");
     assert_eq!(artist.tags[1].url, "https://www.last.fm/tag/alternative");
+}
+
+/// A count Last.fm did not send is absent, never a real-looking 0.
+#[tokio::test]
+async fn a_lastfm_count_that_was_not_sent_reads_as_absent() {
+    let mut answer: serde_json::Value =
+        serde_json::from_str(include_str!("../fixtures/lastfm/artist_getinfo.json"))
+            .expect("recorded body parses");
+    answer
+        .pointer_mut("/artist/stats")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("the recorded artist has counts")
+        .remove("playcount")
+        .expect("the recorded artist has a play count");
+    let artist = lastfm_artist_info(&answer.to_string())
+        .await
+        .expect("the answer still decodes")
+        .expect("the artist is kept");
+    assert_eq!(artist.playcount, None);
+    assert_eq!(artist.listeners, Some(8_489_583));
 }
 
 /// A decode failure says where and how the answer broke, never what it

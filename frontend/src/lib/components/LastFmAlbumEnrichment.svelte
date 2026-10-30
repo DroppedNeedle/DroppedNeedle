@@ -14,8 +14,8 @@
 <LastFmInfoCard
 	text={enrichment?.summary}
 	tags={enrichment?.tags ?? []}
-	listeners={enrichment?.listeners ?? 0}
-	playcount={enrichment?.playcount ?? 0}
+	listeners={enrichment?.listeners}
+	playcount={enrichment?.playcount}
 	url={enrichment?.url}
 	{loading}
 	{enabled}

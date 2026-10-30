@@ -27,7 +27,12 @@ Every endpoint the client calls has a fixture:
   the id builder refuses. HTTP 200 with an `error` object, code `param-invalid`.
 - `claims_unresolved_redirect.json`: the same request for `entity=Q13165295`, the
   redirect above. HTTP 200 with an `error` object, code `unresolved-redirect`.
-  This endpoint does not resolve a merged item to its target.
+  This endpoint does not resolve a merged item to its target. Checked again on
+  2026-10-30: the same answer, and Special:EntityData still answers Q13165295
+  with the one entity `Q1`.
+- `claims_redirect_target_p18.json`, recorded on 2026-10-30: the same request
+  for that target, `entity=Q1&property=P18`, HTTP 200. The image claim,
+  `NASA-HS201427a-HubbleUltraDeepField2014-20140603.jpg`.
 - `claims_all.json`: `GET https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=Q11649&format=json`,
   HTTP 200, every claim of the item (114 properties). P18 is
   `Nirvana around 1992.jpg` and P2722, the Deezer artist id, is `415`.

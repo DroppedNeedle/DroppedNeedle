@@ -16,6 +16,7 @@
 
 use std::time::Duration;
 
+use droppedneedle_providers::WebAddress;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -81,9 +82,9 @@ impl EnrichmentFields {
             && let Some(image) = plugin
                 .image_urls
                 .iter()
-                .find(|url| url.starts_with("https://") || url.starts_with("http://"))
+                .find_map(|url| WebAddress::parse(url))
         {
-            self.image_url = Some(image.clone());
+            self.image_url = Some(image.into());
         }
     }
 }

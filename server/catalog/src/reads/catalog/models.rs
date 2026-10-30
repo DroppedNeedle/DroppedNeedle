@@ -383,10 +383,10 @@ pub struct LastFmArtistEnrichment {
     pub summary: Option<String>,
     /// Tags.
     pub tags: Vec<LastFmTag>,
-    /// Listener count.
-    pub listeners: i64,
-    /// Play count.
-    pub playcount: i64,
+    /// Listener count; null when Last.fm sent none.
+    pub listeners: Option<i64>,
+    /// Play count; null when Last.fm sent none.
+    pub playcount: Option<i64>,
     /// Similar artists.
     pub similar_artists: Vec<LastFmSimilarArtist>,
     /// Last.fm page.
@@ -400,10 +400,10 @@ pub struct LastFmAlbumEnrichment {
     pub summary: Option<String>,
     /// Tags.
     pub tags: Vec<LastFmTag>,
-    /// Listener count.
-    pub listeners: i64,
-    /// Play count.
-    pub playcount: i64,
+    /// Listener count; null when Last.fm sent none.
+    pub listeners: Option<i64>,
+    /// Play count; null when Last.fm sent none.
+    pub playcount: Option<i64>,
     /// Last.fm page.
     pub url: Option<String>,
 }

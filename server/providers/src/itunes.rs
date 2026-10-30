@@ -1,8 +1,9 @@
 //! iTunes Search API: the "Get it" purchase-link fallback.
 //!
 //! A Rust port of v2's iTunes repository. The keyless Search API returns hits
-//! by other artists and tribute albums too, so a result is only trusted when
-//! its artist fuzzy-matches the requested one. The wire shapes, and the dates
+//! by other artists, tribute albums and the artist's other records too, so a
+//! result is only trusted when its artist fuzzy-matches the requested one and
+//! its title names the requested album. The wire shapes, and the dates
 //! they were verified on, are in `itunes/models.rs`.
 //!
 //! Requests go through the executor at the `itunes` row (about 20 calls a
@@ -56,7 +57,7 @@ pub const ARTIST_MATCH_THRESHOLD: f64 = 80.0;
 pub struct AlbumResult {
     /// Store page URL.
     pub url: String,
-    /// Album title.
+    /// Album title, as the store names it.
     pub collection_name: String,
     /// Album artist.
     pub artist_name: String,
@@ -154,10 +155,48 @@ pub fn token_set_ratio(a: &str, b: &str) -> f64 {
         .max(similarity(&full_a, &full_b))
 }
 
-/// Pick the first trustworthy album hit: the row must be
-/// a `collection` with a store URL and an artist, and the artist must
-/// fuzzy-match the requested one. The collection name falls back to the
-/// requested album title when the wire omits it.
+/// `text` without `suffix`, compared ignoring ASCII case.
+fn strip_suffix_ignore_case<'a>(text: &'a str, suffix: &str) -> Option<&'a str> {
+    let at = text.len().checked_sub(suffix.len())?;
+    text.get(at..)
+        .filter(|tail| tail.eq_ignore_ascii_case(suffix))
+        .and_then(|_| text.get(..at))
+}
+
+/// A title's words without its trailing edition notes: a bracketed part
+/// ("(Remastered)", "[Deluxe Edition]") or the store's " - Single" and
+/// " - EP" suffixes. A note is kept when nothing would be left without it.
+fn title_words(title: &str) -> Vec<String> {
+    let mut base = title.trim();
+    loop {
+        let shorter = if let Some(rest) = base.strip_suffix(')') {
+            rest.rfind('(').map(|at| &rest[..at])
+        } else if let Some(rest) = base.strip_suffix(']') {
+            rest.rfind('[').map(|at| &rest[..at])
+        } else {
+            strip_suffix_ignore_case(base, " - Single")
+                .or_else(|| strip_suffix_ignore_case(base, " - EP"))
+        };
+        match shorter.map(str::trim_end) {
+            Some(rest) if !tokens(rest).is_empty() => base = rest,
+            _ => return tokens(base),
+        }
+    }
+}
+
+/// True when a hit's title names the album asked for: the same words, case
+/// and punctuation aside, or the same words once edition notes are dropped
+/// from both. "Nevermind (Remastered)" is Nevermind; "MTV Unplugged In New
+/// York" and "Greatest Hits Vol. 2" for "Greatest Hits" are not.
+fn titles_match(wanted: &str, got: &str) -> bool {
+    let words = tokens(wanted);
+    !words.is_empty() && (words == tokens(got) || title_words(wanted) == title_words(got))
+}
+
+/// Pick the first trustworthy album hit: the row must be a `collection` with
+/// a store URL, an artist and a title, the artist must fuzzy-match the
+/// requested one and the title must name the requested album. No such hit is
+/// no link.
 pub fn select_album(
     results: &[AlbumHit],
     artist_name: &str,
@@ -170,19 +209,18 @@ pub fn select_album(
         let Some(url) = hit.collection_view_url.as_ref() else {
             continue;
         };
-        if hit.artist_name.is_empty() {
+        if hit.artist_name.is_empty() || hit.collection_name.is_empty() {
             continue;
         }
         if token_set_ratio(artist_name, &hit.artist_name) < ARTIST_MATCH_THRESHOLD {
             continue;
         }
+        if !titles_match(album_title, &hit.collection_name) {
+            continue;
+        }
         return Some(AlbumResult {
             url: url.to_string(),
-            collection_name: if hit.collection_name.is_empty() {
-                album_title.to_owned()
-            } else {
-                hit.collection_name.clone()
-            },
+            collection_name: hit.collection_name.clone(),
             artist_name: hit.artist_name.clone(),
         });
     }

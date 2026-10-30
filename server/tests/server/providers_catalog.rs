@@ -292,25 +292,34 @@ async fn discogs_search_hit_without_its_id_fails_the_page() {
 /// Verified against itunes.apple.com/search on 2026-10-20: tests/fixtures/itunes/search_album.json.
 const ITUNES_ALBUMS: &str = include_str!("../fixtures/itunes/search_album.json");
 
+/// The "Get it" link names the album asked for, or there is none. The recorded
+/// search for Nevermind holds no Nevermind by Nirvana: its rows by other
+/// artists, tribute albums included, fail the artist gate, and Nirvana's own
+/// "MTV Unplugged In New York" fails the title gate.
 #[tokio::test]
-async fn itunes_contract_tolerates_unknown_fields() {
-    // The recorded answer has many fields the client does not read. Its rows by
-    // other artists, tribute albums included, fail the artist gate.
+async fn itunes_link_names_the_album_asked_for_or_none() {
     let wire = scripted(ITUNES, &[(200, &[], ITUNES_ALBUMS)]);
     let found = catalog_providers(&wire)
         .itunes
         .find_album("Nirvana", "Nevermind", "US", PRIORITY)
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(found.artist_name, "Nirvana");
-    assert!(found.url.starts_with("https://music.apple.com/us/album/"));
+    assert_eq!(found, None);
     let sent = wire.sent();
     assert_eq!(sent[0].query("term").as_deref(), Some("Nirvana Nevermind"));
     assert_eq!(sent[0].query("country").as_deref(), Some("US"));
 
+    let wire = scripted(ITUNES, &[(200, &[], ITUNES_ALBUMS)]);
+    let found = catalog_providers(&wire)
+        .itunes
+        .find_album("Nirvana", "Nirvana", "US", PRIORITY)
+        .await
+        .unwrap()
+        .expect("the self-titled record is in the answer");
+    assert_eq!(found.collection_name, "Nirvana");
+    assert!(found.url.starts_with("https://music.apple.com/us/album/"));
+
     assert!(itunes::token_set_ratio("Nirvana", "Piano Tribute Players") < 80.0);
-    assert!(itunes::token_set_ratio("Nirvana", "Nirvana") >= 80.0);
 }
 
 /// A 404 is absence and every other status keeps its own meaning; before,
@@ -932,14 +941,6 @@ async fn wikidata_recorded_absence_answers_read_as_absent() {
             .unwrap(),
         None
     );
-    let merged = include_str!("../fixtures/wikidata/claims_unresolved_redirect.json");
-    assert_eq!(
-        claim(scripted(CLAIMS, &[(200, &[], merged)]))
-            .await
-            .unwrap(),
-        None
-    );
-
     let wire = scripted(
         CLAIMS,
         &[(
@@ -999,6 +1000,62 @@ async fn wikidata_redirected_id_reads_the_target_entity() {
         .await
         .unwrap();
     assert_eq!(title.as_deref(), Some("Universe"));
+}
+
+/// An artist whose link names a merged item still gets its picture: the claims
+/// endpoint refuses the merged id, so it is resolved to its target through
+/// Special:EntityData and the target's image is read.
+#[tokio::test]
+async fn wikidata_merged_item_reads_the_targets_image() {
+    let wire = scripted(
+        CLAIMS,
+        &[
+            (
+                200,
+                &[],
+                include_str!("../fixtures/wikidata/claims_unresolved_redirect.json"),
+            ),
+            (
+                200,
+                &[],
+                include_str!("../fixtures/wikidata/claims_redirect_target_p18.json"),
+            ),
+        ],
+    );
+    wire.answer(
+        "http://fake/data/wiki/Special:EntityData/Q13165295.json",
+        200,
+        &[],
+        include_str!("../fixtures/wikidata/entity_redirect.json"),
+    );
+    wire.answer(
+        COMMONS,
+        200,
+        &[],
+        include_str!("../fixtures/wikidata/commons_imageinfo_found.json"),
+    );
+    let image = catalog_providers(&wire)
+        .wikidata
+        .get_artist_image("Q13165295", PRIORITY)
+        .await
+        .unwrap();
+    assert!(image.is_some());
+    let sent = wire.sent();
+    let claims: Vec<_> = sent
+        .iter()
+        .filter(|request| request.query("action").as_deref() == Some("wbgetclaims"))
+        .map(|request| request.query("entity"))
+        .collect();
+    assert_eq!(
+        claims,
+        [Some("Q13165295".to_owned()), Some("Q1".to_owned())]
+    );
+    assert_eq!(
+        sent.last()
+            .and_then(|request| request.query("titles"))
+            .as_deref(),
+        Some("File:NASA-HS201427a-HubbleUltraDeepField2014-20140603.jpg")
+    );
 }
 
 /// An answer with no entity for the id asked is a payload error unless it holds

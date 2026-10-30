@@ -34,6 +34,7 @@ use crate::RequestPriority;
 use crate::client::{decode, parse_base, payload, unusable_base};
 use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
+use crate::web_address::WebAddress;
 
 use models::{
     Claim, ClaimsAnswer, Entity, EntityData, ExtMetadata, ExtractAnswer, ImageAnswer, ImageInfo,
@@ -272,12 +273,7 @@ fn commons_credit(info: &ImageInfo) -> Option<CommonsCredit> {
 /// `raw` as an http or https address with a host and no credentials, else
 /// `None`.
 fn web_url(raw: &str) -> Option<String> {
-    let url = Url::parse(raw.trim()).ok()?;
-    let usable = matches!(url.scheme(), "http" | "https")
-        && url.host_str().is_some_and(|host| !host.is_empty())
-        && url.username().is_empty()
-        && url.password().is_none();
-    usable.then(|| url.to_string())
+    WebAddress::parse(raw).map(String::from)
 }
 
 /// HTML reduced to one line of plain text: tags dropped, character
@@ -354,8 +350,14 @@ fn reference(name: &str) -> Option<char> {
     char::from_u32(code).filter(|character| !character.is_control())
 }
 
+/// The error code `wbgetclaims` answers for a merged item: it does not resolve
+/// the id to its target, Special:EntityData does. Verified against
+/// www.wikidata.org/w/api.php on 2026-10-20 and again on 2026-10-30:
+/// tests/fixtures/wikidata/claims_unresolved_redirect.json.
+const UNRESOLVED_REDIRECT: &str = "unresolved-redirect";
+
 /// The error codes that read as absence: the id names no entity, or it is a
-/// merged item that this endpoint does not resolve to its target.
+/// merged item whose target could not be read.
 /// Verified against www.wikidata.org/w/api.php on 2026-10-20: `no-such-entity`
 /// for a well-formed unknown id (tests/fixtures/wikidata/claims_no_such_entity.json),
 /// `param-invalid` for an id the id builder refuses (claims_invalid_id.json), and
@@ -363,7 +365,7 @@ fn reference(name: &str) -> Option<char> {
 fn reads_as_absent(code: &str) -> bool {
     matches!(
         code,
-        "no-such-entity" | "param-invalid" | "unresolved-redirect"
+        "no-such-entity" | "param-invalid" | UNRESOLVED_REDIRECT
     )
 }
 
@@ -500,6 +502,19 @@ impl WikidataClient {
         lang: &str,
         priority: RequestPriority,
     ) -> Result<Option<String>, ProviderError> {
+        let Some(answer) = self.entity_data(wikidata_id, priority).await? else {
+            return Ok(None);
+        };
+        sitelink_title(&answer, wikidata_id, lang)
+    }
+
+    /// The Special:EntityData answer for one item id, or `None` on a 404 and
+    /// for an id that is not an item id (never sent).
+    async fn entity_data(
+        &self,
+        wikidata_id: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<EntityData>, ProviderError> {
         if !is_item_id(wikidata_id) {
             return Ok(None);
         }
@@ -515,8 +530,22 @@ impl WikidataClient {
         else {
             return Ok(None);
         };
-        let answer: EntityData = decode(&reply)?;
-        sitelink_title(&answer, wikidata_id, lang)
+        decode(&reply).map(Some)
+    }
+
+    /// The item a merged id now names: Special:EntityData answers a
+    /// redirected id with its target under the target's own id. `None` when
+    /// the answer names no other item.
+    async fn redirect_target(
+        &self,
+        wikidata_id: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
+        let Some(answer) = self.entity_data(wikidata_id, priority).await? else {
+            return Ok(None);
+        };
+        let target = &entity_for(&answer, wikidata_id)?.id;
+        Ok((target != wikidata_id && is_item_id(target)).then(|| target.clone()))
     }
 
     /// Fetch one plain-text intro extract.
@@ -715,20 +744,59 @@ impl WikidataClient {
     }
 
     /// Fetch one property's statements, or every property's with `None`,
-    /// with 404 as absence. An id that is not
-    /// an item id is never sent and reads as absence, and so does an error
-    /// answer that `reads_as_absent` lists. Any other error answer is a payload
-    /// error.
+    /// with 404 as absence. A merged item's id is resolved to its target once
+    /// and the target's statements are read. An id that is not an item id is
+    /// never sent and reads as absence, and so does an error answer that
+    /// `reads_as_absent` lists. Any other error answer is a payload error.
     ///
     /// # Errors
     ///
-    /// The typed failure of the call or of its answer.
+    /// The typed failure of a call or of its answer.
     async fn fetch_claims(
         &self,
         wikidata_id: &str,
         property: Option<&str>,
         priority: RequestPriority,
     ) -> Result<Option<HashMap<String, Vec<Claim>>>, ProviderError> {
+        let mut id = wikidata_id.to_owned();
+        let mut followed = false;
+        loop {
+            let Some(answer) = self.claims_answer(&id, property, priority).await? else {
+                return Ok(None);
+            };
+            match answer {
+                ClaimsAnswer::Claims { claims } => return Ok(Some(claims)),
+                ClaimsAnswer::Refused { error }
+                    if error.code == UNRESOLVED_REDIRECT && !followed =>
+                {
+                    followed = true;
+                    let Some(target) = self.redirect_target(&id, priority).await? else {
+                        return Ok(None);
+                    };
+                    id = target;
+                }
+                ClaimsAnswer::Refused { error } if reads_as_absent(&error.code) => {
+                    return Ok(None);
+                }
+                ClaimsAnswer::Refused { .. } => {
+                    return Err(payload(
+                        SOURCE,
+                        PayloadKind::Contract,
+                        "the API answered with an error",
+                    ));
+                }
+            }
+        }
+    }
+
+    /// One `wbgetclaims` answer, or `None` on a 404 and for an id that is not
+    /// an item id (never sent).
+    async fn claims_answer(
+        &self,
+        wikidata_id: &str,
+        property: Option<&str>,
+        priority: RequestPriority,
+    ) -> Result<Option<ClaimsAnswer>, ProviderError> {
         if !is_item_id(wikidata_id) {
             return Ok(None);
         }
@@ -741,14 +809,6 @@ impl WikidataClient {
         else {
             return Ok(None);
         };
-        match decode::<ClaimsAnswer>(&reply)? {
-            ClaimsAnswer::Claims { claims } => Ok(Some(claims)),
-            ClaimsAnswer::Refused { error } if reads_as_absent(&error.code) => Ok(None),
-            ClaimsAnswer::Refused { .. } => Err(payload(
-                SOURCE,
-                PayloadKind::Contract,
-                "the API answered with an error",
-            )),
-        }
+        decode(&reply).map(Some)
     }
 }

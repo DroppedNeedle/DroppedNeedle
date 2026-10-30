@@ -54,7 +54,7 @@ use self::jellyfin_login::JellyfinProfile;
 use self::plex::PlexProfile;
 use crate::users::stores::BoxFuture;
 
-pub use droppedneedle_providers::web_address::web_address;
+use droppedneedle_providers::web_address::web_address;
 
 /// Failure of a federated login or import step. HTTP mapping lives in the
 /// handler layer: `Authentication` is 401 on login routes (403 on the Plex
