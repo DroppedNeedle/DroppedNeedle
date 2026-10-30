@@ -2930,3 +2930,162 @@ fn older_plays_are_filed_only_on_a_clear_match() {
     tx.commit().expect("commit");
     assert_eq!(report(&conn), (summary, counts));
 }
+
+/// A second library track, "Mysterons" (five minutes), on the seeded album.
+const SECOND_TRACK: &str = "\
+    INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+     path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+     artist_name, album_title, album_title_folded, file_format, duration_seconds, \
+     ingest_source, imported_at, membership_source) \
+     VALUES ('track-2', 'album-1', 'root-1', '/music/mysterons.flac', 'mysterons.flac', \
+     'hash-2', 1024, 0, 'rev-2', 'Mysterons', 'mysterons', 'Portishead', 'Dummy', 'dummy', \
+     'flac', 300.0, 'seed', 0, 'manual');";
+
+/// Whether the presence sweep at `at` (unix seconds) keeps the listener's
+/// compat entry.
+fn present_at(rig: &Rig, at: i64) -> bool {
+    rig.deps.presence.sweep(at);
+    !rig.deps.presence.snapshot().is_empty()
+}
+
+/// A Subsonic app reports a start, then only pauses, resumes and seeks:
+/// no heartbeat. Last.fm and ListenBrainz hear about each track once, never
+/// about a pause, again after a repeat-one or a stop; and the listener stays
+/// "now playing" for the rest of the track plus the usual 45 s, a pause for
+/// 45 s only, without another report.
+#[test]
+fn a_subsonic_track_is_forwarded_once_and_present_until_it_ends() {
+    use droppedneedle_compat::playback::CompatPlayback;
+    let rig = rig();
+    rig.sql().execute_batch(SECOND_TRACK).expect("second track");
+    let playback = CompatPlayback::new(rig.deps.clone());
+    let report = |state: &str, position_ms: i64| {
+        assert!(playback.report_playback("track-1", "user-1", "xarif", state, position_ms, true));
+    };
+
+    report("starting", 0);
+    assert_eq!(rig.sinks.now_playing_calls(), 1, "the start is forwarded");
+    rig.clock.advance(30_000);
+    report("playing", 30_000);
+    rig.clock.advance(30_000);
+    report("playing", 120_000); // a seek
+    assert_eq!(rig.sinks.now_playing_calls(), 1, "same track: not again");
+    rig.clock.advance(10_000);
+    report("paused", 130_000);
+    assert_eq!(
+        rig.sinks.now_playing_calls(),
+        1,
+        "a pause is never forwarded"
+    );
+    assert!(present_at(&rig, NOW + 70 + 45), "a pause holds 45 s");
+    assert!(!present_at(&rig, NOW + 70 + 46), "and no longer");
+    rig.clock.advance(20_000);
+    report("playing", 130_000); // resume at NOW + 90
+    assert_eq!(rig.sinks.now_playing_calls(), 1, "a short pause: not again");
+    // 110 s of the 240 s left, plus 45 s
+    assert!(present_at(&rig, NOW + 90 + 110 - 1), "present to the end");
+    assert!(present_at(&rig, NOW + 90 + 110 + 45), "and 45 s past it");
+    assert!(!present_at(&rig, NOW + 90 + 110 + 46), "then gone");
+
+    rig.clock.set((NOW + 300) * 1000);
+    report("starting", 0); // repeat one, past the track's length
+    assert_eq!(rig.sinks.now_playing_calls(), 2, "a repeat is forwarded");
+    assert!(
+        present_at(&rig, NOW + 300 + 239),
+        "a start holds the whole track"
+    );
+    assert!(
+        playback.report_playback("track-2", "user-1", "xarif", "starting", 0, true),
+        "next track"
+    );
+    assert_eq!(
+        rig.sinks.now_playing_calls(),
+        3,
+        "a track change is forwarded"
+    );
+    report("starting", 0); // back to track 1 at once
+    assert_eq!(rig.sinks.now_playing_calls(), 4, "so is the change back");
+    report("stopped", 10_000);
+    assert!(
+        rig.deps.presence.snapshot().is_empty(),
+        "stopped clears presence"
+    );
+    report("starting", 0);
+    assert_eq!(
+        rig.sinks.now_playing_calls(),
+        5,
+        "a start after a stop is forwarded"
+    );
+}
+
+/// A first report that is a pause tells nobody; the classic Subsonic
+/// now-playing call (`scrobble?submission=false`) shares the once-per-track
+/// rule with `reportPlayback`.
+#[test]
+fn a_paused_first_report_and_the_classic_now_playing_follow_the_same_rule() {
+    use droppedneedle_compat::playback::{CompatPlayback, Reporter};
+    let rig = rig();
+    let playback = CompatPlayback::new(rig.deps.clone());
+    assert!(playback.report_playback("track-1", "user-1", "xarif", "paused", 5_000, true));
+    assert_eq!(rig.sinks.now_playing_calls(), 0);
+    assert!(
+        rig.deps.presence.snapshot().len() == 1,
+        "presence still shows the pause"
+    );
+    playback.now_playing(
+        Reporter::Subsonic,
+        "track-1",
+        "user-1",
+        Some("xarif"),
+        None,
+        false,
+    );
+    assert_eq!(rig.sinks.now_playing_calls(), 1);
+    assert!(playback.report_playback("track-1", "user-1", "xarif", "playing", 6_000, true));
+    playback.now_playing(
+        Reporter::Subsonic,
+        "track-1",
+        "user-1",
+        Some("xarif"),
+        None,
+        false,
+    );
+    assert_eq!(rig.sinks.now_playing_calls(), 1, "one track, one forward");
+}
+
+/// Jellyfin apps report progress every few seconds: their presence keeps the
+/// 45 s lifetime, and every start is still forwarded.
+#[test]
+fn jellyfin_reports_keep_their_lifetime_and_every_start_forwards() {
+    use droppedneedle_compat::playback::{CompatPlayback, Reporter};
+    let rig = rig();
+    let playback = CompatPlayback::new(rig.deps.clone());
+    playback.now_playing(
+        Reporter::Jellyfin,
+        "track-1",
+        "user-1",
+        Some("finamp"),
+        None,
+        false,
+    );
+    playback.now_playing(
+        Reporter::Jellyfin,
+        "track-1",
+        "user-1",
+        Some("finamp"),
+        None,
+        false,
+    );
+    assert_eq!(rig.sinks.now_playing_calls(), 2);
+    playback.progress(
+        Reporter::Jellyfin,
+        "track-1",
+        "user-1",
+        Some("finamp"),
+        Some(1_000),
+        false,
+    );
+    assert_eq!(rig.sinks.now_playing_calls(), 2, "progress never forwards");
+    assert!(present_at(&rig, NOW + 45));
+    assert!(!present_at(&rig, NOW + 46), "45 s without a report");
+}
