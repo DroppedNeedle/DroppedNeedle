@@ -1185,3 +1185,97 @@ async fn library_holds_a_group_only_through_an_indexed_track_on_a_live_copy() {
         "a merged-away copy holds nothing"
     );
 }
+
+/// An album a removal took the last files of leaves the web lists and its
+/// artist's page, and still opens by its id. One whose files left the
+/// disk after a removal stays listed, so a vanished folder still shows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_removed_album_leaves_the_web_lists() {
+    use crate::common::compat::{CompatApp, PLAYER};
+
+    let rig = CompatApp::unscanned("reads-library-removed").await;
+    rig.app.seed(ALBUM_KINDS).await;
+    rig.app
+        .seed(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, year, \
+             grouping_source, created_at, updated_at) VALUES \
+             ('al-removed', 'root', 'k-removed', 'Set Removed', 'set removed', 'Aurora', \
+             'aurora', 'ar-aurora', 2000, 'automatic', 80, 80), \
+             ('al-vanished', 'root', 'k-vanished', 'Set Vanished', 'set vanished', 'Aurora', \
+             'aurora', 'ar-aurora', 2001, 'automatic', 90, 90); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, availability, missing_at, \
+             ingest_source, imported_at, membership_source) VALUES \
+             ('tk-removed', 'al-removed', 'root', '/m/7.flac', '7.flac', 'h7', 1000, 1, 's7', \
+             'Binned', 'binned', 'Set Removed', 'set removed', 'flac', 'missing', 50000, 'scan', \
+             1, 'automatic'), \
+             ('tk-binned', 'al-vanished', 'root', '/m/8.flac', '8.flac', 'h8', 1000, 1, 's8', \
+             'Binned', 'binned', 'Set Vanished', 'set vanished', 'flac', 'missing', 50000, 'scan', \
+             1, 'automatic'), \
+             ('tk-vanished', 'al-vanished', 'root', '/m/9.flac', '9.flac', 'h9', 1000, 1, 's9', \
+             'Vanished', 'vanished', 'Set Vanished', 'set vanished', 'flac', 'missing', 60000, \
+             'scan', 1, 'automatic'); \
+             INSERT INTO library_catalog_actions (id, action_kind, local_album_id, \
+             local_track_id, before_json, after_json, reason_code, created_at) VALUES \
+             ('act-removed', 'remove_track', 'al-removed', 'tk-removed', '{}', '{}', \
+             'ALBUM_FILES_RECYCLED', 50000), \
+             ('act-binned', 'remove_track', 'al-vanished', 'tk-binned', '{}', '{}', \
+             'FILE_RECYCLED', 50000);",
+        )
+        .await;
+    let (status, login) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/auth/login",
+            &[],
+            Some(serde_json::json!({
+                "username": PLAYER,
+                "password": format!("{PLAYER}-password-1234"),
+                "transport": "bearer",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{login}");
+    let bearer = format!("Bearer {}", login["token"].as_str().expect("token"));
+    let native = [("authorization", bearer.as_str())];
+    let listed = [
+        "al-empty",
+        "al-excluded",
+        "al-live",
+        "al-missing",
+        "al-pair-a",
+        "al-pair-b",
+        "al-vanished",
+    ];
+
+    let (status, page) = rig
+        .app
+        .call("GET", "/api/v3/library/albums?limit=200", &native, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(sorted_ids(&page["items"], "id"), listed);
+    assert_eq!(page["total"], 7, "{page}");
+
+    let (status, led) = rig
+        .app
+        .call(
+            "GET",
+            "/api/v3/library/artists/ar-aurora/albums?limit=200",
+            &native,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{led}");
+    assert_eq!(sorted_ids(&led["items"], "id"), listed);
+    assert_eq!(led["total"], 7, "{led}");
+
+    let (status, album) = rig
+        .app
+        .call("GET", "/api/v3/library/albums/al-removed", &native, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{album}");
+    assert_eq!(album["id"], "al-removed", "{album}");
+}

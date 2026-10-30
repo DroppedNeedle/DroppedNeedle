@@ -9,6 +9,12 @@
 //!   (gone from disk or in the recycle bin) and excluded ones do not count.
 //!   The web UI lists a live album without files, with no tracks; player
 //!   apps never see it.
+//! - **Removed.** An album without files whose last files left it by a
+//!   removal (a person's, a duplicate resolution's, an upgrade's): its
+//!   newest missing track has a `remove_track` action from that moment
+//!   on. The web UI's lists leave it out; it still opens by its id, so its
+//!   page and the recycle bin can put it back. Files missing from disk
+//!   since keep it listed, so a folder that vanished still shows.
 //! - **Live track.** A track every read shows is indexed and sits on a
 //!   live album. Merges retire only emptied albums, so a track left on a
 //!   retired one is a leftover no read lists, counts or returns.
@@ -38,6 +44,27 @@
 macro_rules! live_album {
     ($album:literal) => {
         concat!("+", $album, ".retired_into_album_id IS NULL")
+    };
+}
+
+/// An album the web UI lists, over an album alias: live, and not removed.
+macro_rules! listed_album {
+    ($album:literal) => {
+        concat!(
+            "+",
+            $album,
+            ".retired_into_album_id IS NULL AND NOT (+",
+            $album,
+            ".has_indexed_track = 0 AND EXISTS (SELECT 1 FROM local_tracks rmt \
+             WHERE rmt.local_album_id = ",
+            $album,
+            ".id AND rmt.availability = 'missing' AND rmt.missing_at = \
+             (SELECT MAX(rml.missing_at) FROM local_tracks rml WHERE rml.local_album_id = ",
+            $album,
+            ".id AND +rml.availability = 'missing') AND EXISTS (SELECT 1 \
+             FROM library_catalog_actions rma WHERE rma.local_track_id = rmt.id \
+             AND rma.action_kind = 'remove_track' AND rma.created_at >= rmt.missing_at)))"
+        )
     };
 }
 
@@ -108,4 +135,6 @@ macro_rules! owned_artist {
     };
 }
 
-pub(crate) use {live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec};
+pub(crate) use {
+    listed_album, live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec,
+};
