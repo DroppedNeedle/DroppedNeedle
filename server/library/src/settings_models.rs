@@ -253,7 +253,7 @@ pub struct LibraryManagementProfileExportResponse {
     pub mime_type: String,
     /// Portable document (JSON).
     pub document: String,
-    /// Share code (`DNLP1:...`).
+    /// Share code (`DNLP2:...`).
     pub share_code: String,
     /// Bundle hash (import pins to the reviewed hash).
     pub bundle_hash: String,

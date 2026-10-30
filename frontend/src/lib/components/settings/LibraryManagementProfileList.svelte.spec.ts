@@ -95,12 +95,12 @@ describe('LibraryManagementProfileList', () => {
 			.upload(new File(['x'.repeat(1_048_577)], 'oversized.dnprofile'));
 		await expect.element(dialog.getByText('Profile files must be 1 MiB or smaller.')).toBeVisible();
 		await expect.element(dialog.getByRole('button', { name: 'Review profile' })).toBeDisabled();
-		await dialog.getByRole('textbox', { name: 'Or paste a text code' }).fill('DNLP1:shared');
+		await dialog.getByRole('textbox', { name: 'Or paste a text code' }).fill('DNLP2:shared');
 		await expect.element(dialog.getByText('shared.dnprofile')).not.toBeInTheDocument();
 		await dialog.getByRole('button', { name: 'Review profile' }).click();
 
 		expect(h.previewProfileImport).toHaveBeenCalledWith({
-			content: 'DNLP1:shared',
+			content: 'DNLP2:shared',
 			expected_settings_revision: 'settings-1'
 		});
 		await expect.element(dialog.getByText('Custom and inactive')).toBeVisible();
@@ -111,7 +111,7 @@ describe('LibraryManagementProfileList', () => {
 		await dialog.getByRole('button', { name: 'Import custom profile' }).click();
 
 		expect(h.importProfile).toHaveBeenCalledWith({
-			content: 'DNLP1:shared',
+			content: 'DNLP2:shared',
 			reviewed_bundle_hash: 'b'.repeat(64),
 			name: 'Shared organizer',
 			expected_settings_revision: 'reviewed-settings-1'

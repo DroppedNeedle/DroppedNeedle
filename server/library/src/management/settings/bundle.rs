@@ -1,12 +1,13 @@
 //! Profile sharing: export and import bundles.
 //!
 //! Bundles are deterministic and inert. The portable document carries the
-//! profile with identity fields stripped and script references rewritten to
+//! profile without its identity and with script references rewritten to
 //! `naming-N`/`tagging-N` keys; the share code is the same document
-//! zlib-compressed (level 9) and base64url-encoded behind the `DNLP1:`
+//! zlib-compressed (level 9) and base64url-encoded behind the `DNLP2:`
 //! prefix. Both forms verify against the `sha256:` checksum over the
-//! canonical payload. A bundle naming an option this version no longer
-//! has is refused.
+//! canonical payload. A bundle naming an option this version does not
+//! have is refused, and so is one shared from v2 (a `DNLP1:` code or a
+//! version 1 document), whose profile shape v3 no longer reads.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,19 +21,21 @@ use uuid::Uuid;
 use super::invalid;
 use super::normalize::normalize;
 use droppedneedle_kernel::runtime_config::sections::{
-    FieldMode, LibraryManagement, LibraryManagementProfile, NamingScript, ReplayGainMode,
-    TaggingScript,
+    ArtworkManagementSettings, EnrichmentManagementSettings, FieldMode, GenreManagementSettings,
+    IdentityManagementSettings, LibraryManagement, LibraryManagementProfile,
+    MetadataManagementSettings, NamingScript, OrganizationManagementSettings,
+    ProfileNotificationSettings, ReplayGainMode, TaggingScript,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Bundle document format tag.
 pub const PROFILE_BUNDLE_FORMAT: &str = "droppedneedle-library-profile";
 /// Bundle document version.
-pub const PROFILE_BUNDLE_VERSION: i64 = 1;
+pub const PROFILE_BUNDLE_VERSION: i64 = 2;
 /// Export MIME type.
 pub const PROFILE_BUNDLE_MIME_TYPE: &str = "application/vnd.droppedneedle.profile+json";
 /// Share-code prefix.
-pub const PROFILE_SHARE_CODE_PREFIX: &str = "DNLP1:";
+pub const PROFILE_SHARE_CODE_PREFIX: &str = "DNLP2:";
 /// Largest accepted bundle document (1 MiB).
 pub const MAX_PROFILE_BUNDLE_BYTES: usize = 1_048_576;
 /// Largest accepted share code (1.5M chars).
@@ -42,8 +45,11 @@ pub const PROFILE_PREVIEW_NAMESPACE: &str = "54f7ffdf-3c94-58d4-8c08-7a21304ea02
 /// Longest profile or script name (v2 `MAX_MANAGEMENT_NAME_LENGTH`).
 pub const MAX_MANAGEMENT_NAME_LENGTH: usize = 120;
 
-/// Bundle identity fields: stripped on export, refused on import.
-const BUNDLE_IDENTITY_FIELDS: &[&str] = &["id", "preset_origin", "preset_version", "revision"];
+/// The document version and share-code prefix v2 wrote.
+const V2_BUNDLE_VERSION: i64 = 1;
+const V2_SHARE_CODE_PREFIX: &str = "DNLP1:";
+const V2_BUNDLE_REFUSED: &str =
+    "This profile was shared from DroppedNeedle v2, which v3 cannot read. Share it again from v3.";
 
 /// A script carried by a bundle: portable key plus name and source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,12 +63,98 @@ pub struct PortableScript {
     pub source: String,
 }
 
+/// A profile as a bundle carries it: the profile section's settings
+/// without its identity (id, preset origin and version, revision), with
+/// script ids rewritten to portable keys. Any other field is refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PortableProfile {
+    /// Display name.
+    pub name: String,
+    /// Description.
+    pub description: String,
+    /// Metadata block; `tagging_script_ids` holds portable keys.
+    pub metadata: MetadataManagementSettings,
+    /// Genre block.
+    pub genres: GenreManagementSettings,
+    /// Artwork block.
+    pub artwork: ArtworkManagementSettings,
+    /// Organization block; its naming script ids hold portable keys.
+    pub organization: OrganizationManagementSettings,
+    /// Enrichment block.
+    pub enrichment: EnrichmentManagementSettings,
+    /// Identity policy.
+    pub identity: IdentityManagementSettings,
+    /// Notifications.
+    pub notification: ProfileNotificationSettings,
+}
+
+impl From<&LibraryManagementProfile> for PortableProfile {
+    fn from(profile: &LibraryManagementProfile) -> Self {
+        // Destructured in full so a new profile field has to be placed
+        // here, either carried or left out as identity.
+        let LibraryManagementProfile {
+            id: _,
+            name,
+            description,
+            preset_origin: _,
+            preset_version: _,
+            revision: _,
+            metadata,
+            genres,
+            artwork,
+            organization,
+            enrichment,
+            identity,
+            notification,
+        } = profile.clone();
+        Self {
+            name,
+            description,
+            metadata,
+            genres,
+            artwork,
+            organization,
+            enrichment,
+            identity,
+            notification,
+        }
+    }
+}
+
+impl Default for PortableProfile {
+    fn default() -> Self {
+        Self::from(&LibraryManagementProfile::default())
+    }
+}
+
+impl PortableProfile {
+    /// The live profile under a fresh id, with no preset or revision.
+    fn into_profile(self, id: &str) -> LibraryManagementProfile {
+        LibraryManagementProfile {
+            id: id.to_owned(),
+            name: self.name,
+            description: self.description,
+            preset_origin: None,
+            preset_version: None,
+            revision: String::new(),
+            metadata: self.metadata,
+            genres: self.genres,
+            artwork: self.artwork,
+            organization: self.organization,
+            enrichment: self.enrichment,
+            identity: self.identity,
+            notification: self.notification,
+        }
+    }
+}
+
 /// Bundle payload: portable profile plus its script dependencies.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PortablePayload {
     /// Profile with identity stripped and script ids rewritten to keys.
-    pub profile: Value,
+    pub profile: PortableProfile,
     /// Naming scripts in reference order.
     #[serde(default)]
     pub naming_scripts: Vec<PortableScript>,
@@ -140,11 +232,12 @@ fn bundle_canonical_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
-/// SHA-256 hex of the bundle canonical payload encoding.
-fn bundle_hash(payload: &PortablePayload) -> String {
-    let value = serde_json::to_value(payload).unwrap_or(Value::Null);
+/// SHA-256 hex of the bundle canonical payload encoding. Import hashes
+/// the payload as written, so a bundle from a release that lacked a
+/// field added since still verifies.
+fn bundle_hash(payload: &Value) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(bundle_canonical_json(&value).as_bytes());
+    hasher.update(bundle_canonical_json(payload).as_bytes());
     format!("{:x}", hasher.finalize())
 }
 
@@ -159,67 +252,34 @@ fn ordered_unique(values: Vec<Option<String>>) -> Vec<String> {
     ordered
 }
 
-/// Rewrite a profile into portable form: identity fields stripped and
-/// script ids rewritten to portable keys.
+/// Rewrite a profile into portable form: identity left out and script
+/// ids rewritten to portable keys.
 fn portable_profile(
     profile: &LibraryManagementProfile,
     naming_keys: &BTreeMap<String, String>,
     tagging_keys: &BTreeMap<String, String>,
-) -> Result<Value, SettingsError> {
-    let mut value = serde_json::to_value(profile)
-        .map_err(|_| invalid("The profile could not be prepared for sharing."))?;
-    let Value::Object(ref mut map) = value else {
-        return Err(invalid("Profile sharing requires an object profile."));
+) -> Result<PortableProfile, SettingsError> {
+    let key_for = |keys: &BTreeMap<String, String>, id: &str| {
+        keys.get(id)
+            .cloned()
+            .ok_or_else(|| invalid("The profile references a script that is no longer available."))
     };
-    for field in BUNDLE_IDENTITY_FIELDS {
-        map.remove(*field);
-    }
-    let metadata = map
-        .get_mut("metadata")
-        .and_then(Value::as_object_mut)
-        .ok_or_else(|| invalid("The profile could not be prepared for sharing."))?;
-    let tagging_ids = metadata
-        .get("tagging_script_ids")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid("The profile could not be prepared for sharing."))?;
-    let mut portable_tagging = Vec::with_capacity(tagging_ids.len());
-    for id in tagging_ids {
-        let key = id
-            .as_str()
-            .and_then(|id| tagging_keys.get(id))
-            .ok_or_else(|| {
-                invalid("The profile references a script that is no longer available.")
-            })?;
-        portable_tagging.push(Value::String(key.clone()));
-    }
-    metadata.insert(
-        "tagging_script_ids".to_owned(),
-        Value::Array(portable_tagging),
-    );
-    let organization = map
-        .get_mut("organization")
-        .and_then(Value::as_object_mut)
-        .ok_or_else(|| invalid("The profile could not be prepared for sharing."))?;
-    let naming_key = organization
-        .get("naming_script_id")
-        .and_then(Value::as_str)
-        .and_then(|id| naming_keys.get(id))
-        .ok_or_else(|| invalid("The profile references a script that is no longer available."))?
-        .clone();
-    organization.insert("naming_script_id".to_owned(), Value::String(naming_key));
-    if organization
-        .get("multi_disc_naming_script_id")
-        .is_some_and(|id| !id.is_null())
-    {
-        let key = organization
-            .get("multi_disc_naming_script_id")
-            .and_then(Value::as_str)
-            .and_then(|id| naming_keys.get(id))
-            .ok_or_else(|| invalid("The profile references a script that is no longer available."))?
-            .clone();
-        organization.insert("multi_disc_naming_script_id".to_owned(), Value::String(key));
-    }
-    Ok(value)
+    let mut portable = PortableProfile::from(profile);
+    portable.metadata.tagging_script_ids = profile
+        .metadata
+        .tagging_script_ids
+        .iter()
+        .map(|id| key_for(tagging_keys, id))
+        .collect::<Result<_, _>>()?;
+    portable.organization.naming_script_id =
+        key_for(naming_keys, &profile.organization.naming_script_id)?;
+    portable.organization.multi_disc_naming_script_id = profile
+        .organization
+        .multi_disc_naming_script_id
+        .as_deref()
+        .map(|id| key_for(naming_keys, id))
+        .transpose()?;
+    Ok(portable)
 }
 
 /// Export a profile as a share bundle: pretty document, share code,
@@ -298,11 +358,13 @@ pub fn export_profile_bundle(
             })
             .collect(),
     };
-    let digest = bundle_hash(&payload);
+    let payload_value =
+        serde_json::to_value(&payload).map_err(|cause| SettingsError::internal(&cause))?;
+    let digest = bundle_hash(&payload_value);
     let document_value = serde_json::json!({
         "format": PROFILE_BUNDLE_FORMAT,
         "version": PROFILE_BUNDLE_VERSION,
-        "payload": payload,
+        "payload": payload_value,
         "checksum": format!("sha256:{digest}"),
     });
     let mut document = serde_json::to_string_pretty(&document_value)
@@ -326,7 +388,7 @@ pub fn export_profile_bundle(
 }
 
 /// Compress a canonical document into a share code (zlib level 9,
-/// base64url without padding, behind the `DNLP1:` prefix).
+/// base64url without padding, behind the share-code prefix).
 fn encode_share_code(document: &[u8]) -> Result<String, SettingsError> {
     use base64::Engine;
     use flate2::{Compression, write::ZlibEncoder};
@@ -394,10 +456,14 @@ fn decode_share_code(content: &str) -> Result<Vec<u8>, SettingsError> {
     Ok(decoded)
 }
 
-/// Parse a bundle document or share code: structural decode, format
-/// and version gate, unknown-field rejection, then checksum verify.
+/// Parse a bundle document or share code: v2 refusal, structural decode,
+/// format and version gate, unknown-field rejection, then checksum
+/// verify.
 pub fn parse_profile_bundle(content: &str) -> Result<ParsedProfileBundle, SettingsError> {
     let stripped = content.trim();
+    if stripped.starts_with(V2_SHARE_CODE_PREFIX) {
+        return Err(invalid(V2_BUNDLE_REFUSED));
+    }
     let document_bytes: Vec<u8> = if stripped.starts_with(PROFILE_SHARE_CODE_PREFIX) {
         decode_share_code(stripped)?
     } else {
@@ -409,23 +475,41 @@ pub fn parse_profile_bundle(content: &str) -> Result<ParsedProfileBundle, Settin
         }
         stripped.as_bytes().to_vec()
     };
-    let raw: Value = serde_json::from_slice(&document_bytes)
-        .map_err(|_| invalid("The profile bundle is not valid versioned JSON."))?;
-    let document: PortableDocument = serde_json::from_value(raw)
-        .map_err(|_| invalid("The profile bundle is not valid versioned JSON."))?;
-    if document.format != PROFILE_BUNDLE_FORMAT {
+    let not_versioned_json = || invalid("The profile bundle is not valid versioned JSON.");
+    let raw: Value = serde_json::from_slice(&document_bytes).map_err(|_| not_versioned_json())?;
+    if !raw.is_object() {
+        return Err(not_versioned_json());
+    }
+    if raw.get("format").and_then(Value::as_str) != Some(PROFILE_BUNDLE_FORMAT) {
         return Err(invalid(
             "This file is not a DroppedNeedle Library Management profile.",
         ));
     }
-    if document.version != PROFILE_BUNDLE_VERSION {
+    match raw.get("version").and_then(Value::as_i64) {
+        Some(PROFILE_BUNDLE_VERSION) => {}
+        Some(V2_BUNDLE_VERSION) => return Err(invalid(V2_BUNDLE_REFUSED)),
+        Some(version) => {
+            return Err(invalid(&format!(
+                "Unsupported profile bundle version: {version}."
+            )));
+        }
+        None => return Err(not_versioned_json()),
+    }
+    let raw_payload = raw.get("payload").cloned().unwrap_or(Value::Null);
+    let raw_profile = raw_payload.get("profile").cloned().unwrap_or(Value::Null);
+    let decoded = serde_json::from_value::<PortableDocument>(raw);
+    let known = match &decoded {
+        Ok(document) => serde_json::to_value(&document.payload.profile),
+        Err(_) => serde_json::to_value(PortableProfile::default()),
+    }
+    .map_err(|cause| SettingsError::internal(&cause))?;
+    if let Some(field) = first_unknown_field(&raw_profile, &known, &mut Vec::new()) {
         return Err(invalid(&format!(
-            "Unsupported profile bundle version: {}.",
-            document.version
+            "Unknown or unsupported profile field: {field}."
         )));
     }
-    reject_unknown_profile_fields(&document.payload.profile, &[])?;
-    let digest = bundle_hash(&document.payload);
+    let document = decoded.map_err(|_| not_versioned_json())?;
+    let digest = bundle_hash(&raw_payload);
     if document.checksum != format!("sha256:{digest}") {
         return Err(invalid(
             "The profile bundle checksum does not match its contents.",
@@ -437,165 +521,25 @@ pub fn parse_profile_bundle(content: &str) -> Result<ParsedProfileBundle, Settin
     })
 }
 
-/// Allowed object keys at a profile path. Mirrors the v2 schema walk:
-/// identity fields are refused at the root (export strips them).
-fn allowed_profile_keys(path: &[&str]) -> Option<&'static [&'static str]> {
-    let keys: &'static [&'static str] = match path {
-        [] => &[
-            "name",
-            "description",
-            "metadata",
-            "genres",
-            "artwork",
-            "organization",
-            "enrichment",
-            "identity",
-            "notification",
-        ],
-        ["metadata"] => &[
-            "enabled",
-            "fields",
-            "artist_credits",
-            "relationships",
-            "tagging_script_ids",
-            "preserve_fields",
-            "scrub_unmanaged_tags",
-            "preserve_embedded_art_during_scrub",
-        ],
-        ["metadata", "fields"] => &["field", "mode", "clear_when_canonical_missing"],
-        ["metadata", "artist_credits"] => {
-            &["standardization", "translate_names", "preferred_locales"]
-        }
-        ["metadata", "relationships"] => &["enabled", "types"],
-        ["genres"] => &[
-            "enabled",
-            "mode",
-            "sources",
-            "maximum_count",
-            "musicbrainz_minimum_count",
-            "listenbrainz_minimum_count",
-            "lastfm_minimum_weight",
-            "listenbrainz_curated_only",
-            "lastfm_whitelist_only",
-            "canonicalize",
-            "allowlist",
-            "denylist",
-            "aliases",
-            "preferred_casing",
-            "write_primary_only_for_constrained_formats",
-        ],
-        ["genres", "aliases"] => &["source", "target"],
-        ["artwork"] => &[
-            "embedded_enabled",
-            "external_enabled",
-            "local_file_patterns",
-            "embedded_maximum_size",
-            "embedded_format",
-            "external_maximum_size",
-            "external_format",
-            "never_replace_with_smaller",
-        ],
-        ["organization"] => &[
-            "rename_enabled",
-            "move_enabled",
-            "naming_script_id",
-            "multi_disc_naming_script_id",
-            "compatibility",
-            "move_sidecars",
-            "sidecar_patterns",
-        ],
-        ["organization", "compatibility"] => &[
-            "windows_compatible",
-            "replace_non_ascii",
-            "replace_spaces_with_underscores",
-            "separator_replacement",
-            "maximum_component_length",
-            "maximum_path_length",
-            "unicode_normalization",
-            "extension_case",
-            "windows_legacy_path_limit",
-        ],
-        ["enrichment"] => &["lyrics", "replaygain"],
-        ["enrichment", "lyrics"] => &[
-            "enabled",
-            "write_plain",
-            "write_synced",
-            "preserve_existing",
-            "required",
-        ],
-        ["enrichment", "replaygain"] => &["enabled", "mode", "album_aware", "required"],
-        ["identity"] => &["automatic_edition_acceptance_enabled"],
-        ["notification"] => &["refresh_external_servers"],
-        _ => return None,
-    };
-    Some(keys)
-}
-
-/// Reject unknown or unsupported profile fields, naming the first
-/// offender by dotted path. Arrays check their items against the
-/// array's own path (matching v2's schema walk).
-fn reject_unknown_profile_fields(value: &Value, path: &[&str]) -> Result<(), SettingsError> {
-    match value {
-        Value::Object(map) => {
-            if let Some(allowed) = allowed_profile_keys(path) {
-                let mut unknown: Vec<&str> = map
-                    .keys()
-                    .filter(|key| !allowed.contains(&key.as_str()))
-                    .map(String::as_str)
-                    .collect();
-                if !unknown.is_empty() {
-                    unknown.sort();
-                    let mut location: Vec<&str> = path.to_vec();
-                    location.push(unknown[0]);
-                    return Err(invalid(&format!(
-                        "Unknown or unsupported profile field: {}.",
-                        location.join(".")
-                    )));
-                }
-            }
-            for (key, item) in map {
-                let mut child = path.to_vec();
-                child.push(key.as_str());
-                // Borrow-safe: recurse with a scratch join.
-                reject_unknown_profile_fields_owned(item, child)?;
-            }
-            Ok(())
-        }
-        Value::Array(items) => {
-            for item in items {
-                if item.is_object() {
-                    reject_unknown_profile_fields(item, path)?;
-                }
-            }
-            Ok(())
-        }
-        _ => Ok(()),
-    }
-}
-
-fn reject_unknown_profile_fields_owned(
-    value: &Value,
-    path: Vec<&str>,
-) -> Result<(), SettingsError> {
-    // Only descend where the schema has object shapes; leaves and
-    // unknown branches stop here (the parent already gated the key).
-    match path.as_slice() {
-        []
-        | ["metadata"]
-        | ["metadata", "fields"]
-        | ["metadata", "artist_credits"]
-        | ["metadata", "relationships"]
-        | ["genres"]
-        | ["genres", "aliases"]
-        | ["artwork"]
-        | ["organization"]
-        | ["organization", "compatibility"]
-        | ["enrichment"]
-        | ["enrichment", "lyrics"]
-        | ["enrichment", "replaygain"]
-        | ["identity"]
-        | ["notification"] => reject_unknown_profile_fields(value, &path),
-        _ => Ok(()),
+/// The first field, as a dotted path, that the bundle's profile has and
+/// the typed profile does not: an option this version does not have.
+/// Array items are checked against their array's path.
+fn first_unknown_field(given: &Value, known: &Value, path: &mut Vec<String>) -> Option<String> {
+    match (given, known) {
+        (Value::Object(given), Value::Object(known)) => given.iter().find_map(|(key, value)| {
+            path.push(key.clone());
+            let found = match known.get(key) {
+                None => Some(path.join(".")),
+                Some(known) => first_unknown_field(value, known, path),
+            };
+            path.pop();
+            found
+        }),
+        (Value::Array(given), Value::Array(known)) => given
+            .iter()
+            .zip(known)
+            .find_map(|(value, known)| first_unknown_field(value, known, path)),
+        _ => None,
     }
 }
 
@@ -636,108 +580,49 @@ fn validate_dependency_collection(
     Ok(())
 }
 
-/// Rewrite a parsed payload into a live profile value: portable keys
-/// become the assigned script ids, identity is stamped fresh.
-fn materialized_profile_value(
+/// Turn a parsed payload into a live profile: portable keys become the
+/// assigned script ids, identity is stamped fresh.
+fn materialized_profile(
     parsed: &ParsedProfileBundle,
     profile_id: &str,
     naming_ids: &BTreeMap<String, String>,
     tagging_ids: &BTreeMap<String, String>,
-) -> Result<Value, SettingsError> {
-    let mut value = parsed.payload.profile.clone();
-    let Value::Object(ref mut map) = value else {
-        return Err(invalid("The shared profile is not an object."));
-    };
-    let metadata_tagging: Vec<String> = map
-        .get("metadata")
-        .and_then(|metadata| metadata.get("tagging_script_ids"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid("The shared profile is missing script assignments."))?
-        .iter()
-        .map(|key| {
-            key.as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| invalid("The shared tagging-script assignments are invalid."))
-        })
-        .collect::<Result<_, _>>()?;
-    let naming_key = map
-        .get("organization")
-        .and_then(|organization| organization.get("naming_script_id"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| invalid("The shared naming-script assignment is invalid."))?
-        .to_owned();
-    let optional_key = |block: &str, field: &str| -> Result<Option<String>, SettingsError> {
-        match map.get(block).and_then(|block| block.get(field)) {
-            None | Some(Value::Null) => Ok(None),
-            Some(Value::String(key)) => Ok(Some(key.clone())),
-            Some(_) => Err(invalid("A shared naming-script assignment is invalid.")),
-        }
-    };
-    let multi_disc_key = optional_key("organization", "multi_disc_naming_script_id")?;
-    if map
-        .get("metadata")
-        .is_none_or(|metadata| !metadata.is_object())
-        || map
-            .get("organization")
-            .is_none_or(|organization| !organization.is_object())
-    {
-        return Err(invalid("The shared profile is missing script assignments."));
-    }
-    let mut referenced_naming = vec![naming_key.clone()];
-    referenced_naming.extend(multi_disc_key.clone());
+) -> Result<LibraryManagementProfile, SettingsError> {
+    let portable = &parsed.payload.profile;
+    let naming_key = &portable.organization.naming_script_id;
+    let multi_disc_key = &portable.organization.multi_disc_naming_script_id;
+    let tagging_keys = &portable.metadata.tagging_script_ids;
+    let mut referenced_naming = vec![Some(naming_key.clone())];
+    referenced_naming.push(multi_disc_key.clone());
     validate_dependency_collection(
         &parsed.payload.naming_scripts,
-        &ordered_unique(referenced_naming.into_iter().map(Some).collect()),
+        &ordered_unique(referenced_naming),
         "naming script",
     )?;
     validate_dependency_collection(
         &parsed.payload.tagging_scripts,
-        &ordered_unique(metadata_tagging.clone().into_iter().map(Some).collect()),
+        &ordered_unique(tagging_keys.iter().cloned().map(Some).collect()),
         "tagging script",
     )?;
-    let assigned_tagging: Vec<Value> = metadata_tagging
+    let assigned = |ids: &BTreeMap<String, String>, key: &str| {
+        ids.get(key)
+            .cloned()
+            .ok_or_else(|| invalid("The shared profile references a missing script."))
+    };
+    let assigned_tagging = tagging_keys
         .iter()
-        .map(|key| {
-            tagging_ids
-                .get(key)
-                .map(|id| Value::String(id.clone()))
-                .ok_or_else(|| invalid("The shared profile references a missing script."))
-        })
+        .map(|key| assigned(tagging_ids, key))
         .collect::<Result<_, _>>()?;
-    let assigned_naming = naming_ids
-        .get(&naming_key)
-        .ok_or_else(|| invalid("The shared profile references a missing script."))?;
+    let assigned_naming = assigned(naming_ids, naming_key)?;
     let assigned_multi_disc = multi_disc_key
-        .map(|key| {
-            naming_ids
-                .get(&key)
-                .cloned()
-                .ok_or_else(|| invalid("The shared profile references a missing script."))
-        })
+        .as_deref()
+        .map(|key| assigned(naming_ids, key))
         .transpose()?;
-    if let Some(metadata) = map.get_mut("metadata").and_then(Value::as_object_mut) {
-        metadata.insert(
-            "tagging_script_ids".to_owned(),
-            Value::Array(assigned_tagging),
-        );
-    }
-    if let Some(organization) = map.get_mut("organization").and_then(Value::as_object_mut) {
-        organization.insert(
-            "naming_script_id".to_owned(),
-            Value::String(assigned_naming.clone()),
-        );
-        organization.insert(
-            "multi_disc_naming_script_id".to_owned(),
-            assigned_multi_disc
-                .map(Value::String)
-                .unwrap_or(Value::Null),
-        );
-    }
-    map.insert("id".to_owned(), Value::String(profile_id.to_owned()));
-    map.insert("preset_origin".to_owned(), Value::Null);
-    map.insert("preset_version".to_owned(), Value::Null);
-    map.insert("revision".to_owned(), Value::String(String::new()));
-    Ok(value)
+    let mut profile = portable.clone().into_profile(profile_id);
+    profile.metadata.tagging_script_ids = assigned_tagging;
+    profile.organization.naming_script_id = assigned_naming;
+    profile.organization.multi_disc_naming_script_id = assigned_multi_disc;
+    Ok(profile)
 }
 
 /// Materialize a parsed bundle into a live profile and scripts with
@@ -749,9 +634,7 @@ pub fn materialize_profile_bundle(
     naming_ids: &BTreeMap<String, String>,
     tagging_ids: &BTreeMap<String, String>,
 ) -> Result<MaterializedProfileBundle, SettingsError> {
-    let value = materialized_profile_value(parsed, profile_id, naming_ids, tagging_ids)?;
-    let profile: LibraryManagementProfile = serde_json::from_value(value)
-        .map_err(|_| invalid("The shared profile contains invalid settings."))?;
+    let profile = materialized_profile(parsed, profile_id, naming_ids, tagging_ids)?;
     if profile
         .metadata
         .fields

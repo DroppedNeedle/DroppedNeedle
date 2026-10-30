@@ -48748,7 +48748,7 @@
           },
           "share_code": {
             "type": "string",
-            "description": "Share code (`DNLP1:...`)."
+            "description": "Share code (`DNLP2:...`)."
           }
         }
       },

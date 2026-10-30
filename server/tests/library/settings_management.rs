@@ -1,7 +1,7 @@
 //! Library Management: the profile routes (create, export, import
 //! preview, import) over HTTP, and profile sharing against the golden
 //! bundle (export bytes and preview ids), name collisions on import, and
-//! refusal of malformed bundles.
+//! refusal of malformed bundles and of bundles shared from v2.
 
 use crate::common;
 
@@ -9,10 +9,11 @@ use std::path::PathBuf;
 
 use common::FixedIdGenerator;
 use droppedneedle_kernel::runtime_config::sections::{
-    LibraryManagement, LibraryManagementProfile, NamingScript, TaggingScript,
+    FieldMode, LibraryManagement, LibraryManagementProfile, ManagedField, NamingScript,
+    TaggingScript,
 };
 use droppedneedle_library::management::settings::{
-    export_profile_bundle, materialize_profile_bundle, parse_profile_bundle,
+    export_profile_bundle, materialize_profile_bundle, normalize, parse_profile_bundle,
     preview_materialized_profile, profile_aspects, profile_import_warnings, resolve_import_names,
 };
 
@@ -82,9 +83,13 @@ fn golden_tagging() -> Vec<TaggingScript> {
     ]
 }
 
+/// A shared profile comes back as it left: the document and the share
+/// code parse to the same hash, and the imported profile carries the
+/// same settings and scripts under its new ids.
 #[test]
-fn export_matches_golden_bytes() {
-    let bundle = export_profile_bundle(&golden_profile(), &golden_naming(), &golden_tagging())
+fn a_bundle_round_trips() {
+    let profile = golden_profile();
+    let bundle = export_profile_bundle(&profile, &golden_naming(), &golden_tagging())
         .expect("golden profile exports");
     assert_eq!(
         bundle.bundle_hash,
@@ -97,9 +102,59 @@ fn export_matches_golden_bytes() {
     // Share codes are zlib streams, and zlib builds emit different but
     // equally valid bytes, so the share code pins a round trip to the
     // same hash instead of exact bytes.
-    assert!(bundle.share_code.starts_with("DNLP1:"));
-    let reparsed = parse_profile_bundle(&bundle.share_code).expect("our share code parses");
-    assert_eq!(reparsed.bundle_hash, bundle.bundle_hash);
+    assert!(bundle.share_code.starts_with("DNLP2:"));
+    let from_code = parse_profile_bundle(&bundle.share_code).expect("our share code parses");
+    let from_document = parse_profile_bundle(&bundle.document).expect("our document parses");
+    assert_eq!(from_code.bundle_hash, bundle.bundle_hash);
+    assert_eq!(from_document.bundle_hash, bundle.bundle_hash);
+
+    let imported = preview_materialized_profile(&from_code).expect("preview materializes");
+    let naming = &imported.naming_scripts[0];
+    let tagging = &imported.tagging_scripts[0];
+    assert_eq!(
+        (naming.name.as_str(), naming.source.as_str()),
+        ("Standard", "{title}")
+    );
+    assert_eq!(
+        (tagging.name.as_str(), tagging.source.as_str()),
+        ("Tag", "set genre = \"Rock\"")
+    );
+    let mut expected = profile;
+    expected.id = imported.profile.id.clone();
+    expected.revision = imported.profile.revision.clone();
+    expected.metadata.tagging_script_ids = vec![tagging.id.clone()];
+    expected.organization.naming_script_id = naming.id.clone();
+    // Import normalizes, as every save does: compare against the same.
+    let mut normalized = LibraryManagement {
+        default_profile_id: expected.id.clone(),
+        profiles: vec![expected],
+        naming_scripts: imported.naming_scripts.clone(),
+        tagging_scripts: imported.tagging_scripts.clone(),
+        ..LibraryManagement::default()
+    };
+    normalize(&mut normalized).expect("profile normalizes");
+    assert_eq!(imported.profile, normalized.profiles[0]);
+}
+
+/// v2's profile shape is not v3's: a code or a document shared from v2
+/// is refused with one message saying to share it again from v3.
+#[test]
+fn a_v2_bundle_is_refused() {
+    let mut v2_document: serde_json::Value =
+        serde_json::from_str(&fixture("management_bundle_golden.document.txt"))
+            .expect("golden document is JSON");
+    v2_document["version"] = serde_json::json!(1);
+    for input in [
+        fixture("management_bundle_v2.share_code.txt"),
+        v2_document.to_string(),
+    ] {
+        let error = parse_profile_bundle(&input).expect_err("v2 bundle refused");
+        assert_eq!(
+            error.to_string(),
+            "This profile was shared from DroppedNeedle v2, which v3 cannot read. \
+             Share it again from v3."
+        );
+    }
 }
 
 #[test]
@@ -166,10 +221,15 @@ fn import_renames_collisions_and_resolves() {
 #[test]
 fn bad_bundles_are_refused() {
     let golden = fixture("management_bundle_golden.document.txt");
-    let code = fixture("management_bundle_golden.share_code.txt");
+    let code = export_profile_bundle(&golden_profile(), &golden_naming(), &golden_tagging())
+        .expect("golden profile exports")
+        .share_code;
     let mut unknown_field: serde_json::Value =
         serde_json::from_str(&golden).expect("golden document is JSON");
     unknown_field["payload"]["profile"]["metadata"]["bogus"] = serde_json::json!(1);
+    let mut identity_field: serde_json::Value =
+        serde_json::from_str(&golden).expect("golden document is JSON");
+    identity_field["payload"]["profile"]["id"] = serde_json::json!("x");
     let mut wrong_format: serde_json::Value =
         serde_json::from_str(&golden).expect("golden document is JSON");
     wrong_format["format"] = serde_json::json!("something-else");
@@ -177,6 +237,10 @@ fn bad_bundles_are_refused() {
         (
             unknown_field.to_string(),
             "Unknown or unsupported profile field: metadata.bogus.",
+        ),
+        (
+            identity_field.to_string(),
+            "Unknown or unsupported profile field: id.",
         ),
         (
             golden.replacen("Golden Export", "Golden Exporx", 1),
@@ -188,7 +252,7 @@ fn bad_bundles_are_refused() {
         ),
         ("   ".to_owned(), "Paste a profile code"),
         (code[..code.len() / 2].to_owned(), ""),
-        ("DNLP1:".to_owned(), ""),
+        ("DNLP2:".to_owned(), "empty or too large"),
     ] {
         let error = parse_profile_bundle(&input).expect_err("refused");
         assert!(format!("{error:?}").contains(reason), "{reason}: {error:?}");
@@ -202,8 +266,11 @@ fn materialize_refuses_legacy_settings() {
     // A PortablePayload with a Preserve field trips the legacy refusal
     // before any id mapping runs.
     let mut legacy = parsed.clone();
-    legacy.payload.profile["metadata"]["fields"] =
-        serde_json::json!([{"field": "title", "mode": "preserve"}]);
+    legacy.payload.profile.metadata.fields = vec![ManagedField {
+        field: "title".to_owned(),
+        mode: FieldMode::Preserve,
+        clear_when_canonical_missing: false,
+    }];
     let naming: std::collections::BTreeMap<String, String> =
         [("naming-1".to_owned(), uuid::Uuid::new_v4().to_string())]
             .into_iter()
@@ -637,7 +704,24 @@ async fn profile_create_export_preview_import_round_trip() {
         .as_str()
         .expect("share code")
         .to_owned();
-    assert!(share_code.starts_with("DNLP1:"));
+    assert!(share_code.starts_with("DNLP2:"));
+
+    let (status, refused) = call(
+        "POST",
+        format!("{base}/profile-imports/preview"),
+        Some(json!({
+            "content": fixture("management_bundle_v2.share_code.txt"),
+            "expected_settings_revision": revision,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("shared from DroppedNeedle v2")),
+        "{refused}"
+    );
 
     let (status, preview) = call(
         "POST",

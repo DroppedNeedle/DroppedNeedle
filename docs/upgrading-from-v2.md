@@ -278,9 +278,9 @@ machine and its data folders can run it.
   or 1 is refused. Port yours first ("Porting a v2 plugin" in
   [PLUGINS.md](../PLUGINS.md)), or ask its author to, then install it
   again from Settings > Plugins.
-- **v2 profile share codes.** A Library Management profile share code made
-  in v2 does not import into v3. Share the profile again from v3 to get a
-  code v3 reads.
+- **v2 profile share codes and files.** A Library Management profile share
+  code (`DNLP1:`) or `.dnprofile` file made in v2 does not import into v3.
+  Share the profile again from v3 to get a code or file v3 reads.
 - **Wanted watches going dormant.** v2 stopped checking a watch once it was
   older than "Go dormant after (days)", 365 by default, until someone
   resumed it. v3 keeps checking a watch until the album arrives or someone

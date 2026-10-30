@@ -15586,7 +15586,7 @@ export interface components {
             mime_type: string;
             /** @description Settings revision at export time. */
             settings_revision: string;
-            /** @description Share code (`DNLP1:...`). */
+            /** @description Share code (`DNLP2:...`). */
             share_code: string;
         };
         /** @description Import-preview request (accepts a document or a share code). */

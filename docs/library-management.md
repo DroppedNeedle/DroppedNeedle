@@ -36,6 +36,8 @@ The two AcoustID fields come from the file's audio. The fingerprint is the Chrom
 
 The genre row is the Genres section's switch and mode. Merge is offered for the fields that hold several values. Profiles saved before keep writing what they wrote: a tag that used to be written along with another field (artist sort with artist, the release facts with album, original date with date, disc subtitle with disc number, the release track ID with the recording ID) takes that field's mode, the older spellings (`albumartist`, `track`, `disc`, `year`) fold into their field, and a preserved field still preserves the tags it covered. Profiles that already listed ISRC or album artists now write them. MP4 files have no place for performer or arranger: when a profile or a tagging script would set one there, the preview says so and the file keeps what it has.
 
+A profile can be shared: export gives a `.dnprofile` file and a text code starting `DNLP2:`, carrying the profile's settings and the naming and tagging scripts it uses. Import shows what the profile will do before anything is saved and adds it beside your own profiles, renaming it when the name is taken. A code or file shared from v2 (a code starting `DNLP1:`) is refused; share the profile again from v3.
+
 ## Tags, credits and artist names
 
 ### Tags and ID3 versions

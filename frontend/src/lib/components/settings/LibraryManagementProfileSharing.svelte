@@ -414,10 +414,10 @@
 					<section class="flex flex-col">
 						<TextAreaField
 							label="Or paste a text code"
-							help="Codes begin with DNLP1:. Pasting a code replaces the selected file."
+							help="Codes begin with DNLP2:. Pasting a code replaces the selected file."
 							mono
 							rows={6}
-							placeholder="DNLP1:…"
+							placeholder="DNLP2:…"
 							value={importFilename ? '' : importContent}
 							oninput={updateContent}
 						/>

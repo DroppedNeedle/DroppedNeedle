@@ -36,9 +36,10 @@ pub use bundle::{
     MAX_PROFILE_SHARE_CODE_CHARS, MaterializedProfileBundle, PROFILE_BUNDLE_FORMAT,
     PROFILE_BUNDLE_MIME_TYPE, PROFILE_BUNDLE_VERSION, PROFILE_PREVIEW_NAMESPACE,
     PROFILE_SHARE_CODE_PREFIX, ParsedProfileBundle, PortableDocument, PortablePayload,
-    PortableScript, ProfileImportWarning, export_profile_bundle, materialize_profile_bundle,
-    parse_profile_bundle, preview_materialized_profile, profile_aspects, profile_bundle_filename,
-    profile_import_warnings, resolve_import_names, unique_import_name,
+    PortableProfile, PortableScript, ProfileImportWarning, export_profile_bundle,
+    materialize_profile_bundle, parse_profile_bundle, preview_materialized_profile,
+    profile_aspects, profile_bundle_filename, profile_import_warnings, resolve_import_names,
+    unique_import_name,
 };
 pub use impact::{
     ChangeImpact, active_automatic, classify, is_restrictive_profile_change, scope_payload,
