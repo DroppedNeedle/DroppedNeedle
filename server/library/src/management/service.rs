@@ -1889,11 +1889,7 @@ impl Management {
                 && snapshot.job_mode() == Some(JobMode::Undo)
                 && let Some(source) = snapshot.linked_job_id.as_deref()
             {
-                self.setup.db.write_blocking(
-                    Lane::Background,
-                    "management.restore_records",
-                    |tx| Ok::<_, ManagementError>(takeover::restore_records(tx, source, ordinal)?),
-                )?;
+                self.restore_replaced(source, ordinal)?;
             }
             self.setup
                 .db

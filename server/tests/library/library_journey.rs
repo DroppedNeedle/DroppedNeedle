@@ -13759,10 +13759,82 @@ async fn a_wide_preview_in_a_manual_folder_blocks_without_marking() {
 /// still leaves the album alone.
 #[tokio::test]
 async fn an_undone_profile_run_gives_the_hand_edit_back() {
+    undone_profile_run_gives_the_hand_edit_back("lib-takeover-undo-hand-edit", false).await;
+}
+
+/// The same when the run is undone one bundle at a time rather than by an
+/// undo of the whole run.
+#[tokio::test]
+async fn a_single_bundle_undo_gives_the_hand_edit_back() {
+    undone_profile_run_gives_the_hand_edit_back("lib-takeover-undo-bundle-hand-edit", true).await;
+}
+
+/// Undoing a kept tag edit one bundle at a time drops the kept value, as
+/// an undo of the whole edit does, so a later run does not write the
+/// edited value back.
+#[tokio::test]
+async fn a_single_bundle_undo_drops_a_kept_tag_edit() {
+    use droppedneedle_library::management::models::TagEditMode;
+    use droppedneedle_library::management::tag_edit::TagEditRequest;
+
+    let managed = ManagedLibrary::start("lib-undo-bundle-tag-edit", |_| {}).await;
+    let (_, tracks) = managed.add_album("first", 1).await;
+    let management = managed.management();
+    let saved = management
+        .create_tag_edit(
+            TagEditRequest {
+                local_track_id: tracks[0].clone(),
+                mode: TagEditMode::SaveOverride,
+                expected_settings_revision: managed.settings_revision(),
+                expected_policy_revision: managed
+                    .library
+                    .core
+                    .policy_revision()
+                    .expect("policy revision"),
+                fields: vec![("title".to_owned(), serde_json::json!("Edited Title"))],
+                idempotency_key: Some("edit".to_owned()),
+            },
+            "admin",
+        )
+        .expect("edit preview");
+    assert!(
+        management_step(&managed.library).await,
+        "edit planning runs"
+    );
+    let applied = management_apply(&managed.library, &saved).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    let kept = || -> i64 {
+        managed
+            .db()
+            .query_row(
+                "SELECT COUNT(*) FROM library_management_overrides WHERE local_track_id = ?1",
+                [&tracks[0]],
+                |row| row.get(0),
+            )
+            .expect("overrides counted")
+    };
+    assert_eq!(kept(), 1, "the edit is kept");
+
+    let bundle: String = managed
+        .db()
+        .query_row(
+            "SELECT bundle_id FROM library_operation_work \
+             WHERE job_id = ?1 AND bundle_id IS NOT NULL",
+            [&saved.job_id],
+            |row| row.get(0),
+        )
+        .expect("the edit's bundle");
+    management
+        .undo_bundle(&bundle, None)
+        .expect("bundle undone");
+    assert_eq!(kept(), 0, "the undo drops the kept value too");
+}
+
+async fn undone_profile_run_gives_the_hand_edit_back(name: &str, one_bundle: bool) {
     use droppedneedle_library::management::models::{Eligibility, SelectionKind};
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let managed = ManagedLibrary::start("lib-takeover-undo-hand-edit", |_| {}).await;
+    let managed = ManagedLibrary::start(name, |_| {}).await;
     let (other, _) = managed.add_album("first", 1).await;
     let (album, tracks) = managed.add_album("second", 1).await;
     managed.worker_looks().await;
@@ -13778,16 +13850,31 @@ async fn an_undone_profile_run_gives_the_hand_edit_back() {
     let run = managed.apply(SelectionKind::Albums, &[&album], "own").await;
 
     let management = managed.management();
-    let detail = management.detail(&run).expect("detail");
-    let undo = management
-        .undo_preview(&run, detail.job.row_revision, "undo", "admin")
-        .expect("undo preview");
-    assert!(
-        management_step(&managed.library).await,
-        "undo planning runs"
-    );
-    let undone = management_apply(&managed.library, &undo).await;
-    assert_eq!(undone.job.state.as_str(), "succeeded");
+    if one_bundle {
+        let bundle: String = managed
+            .db()
+            .query_row(
+                "SELECT bundle_id FROM library_operation_work \
+                 WHERE job_id = ?1 AND bundle_id IS NOT NULL",
+                [&run],
+                |row| row.get(0),
+            )
+            .expect("the run's bundle");
+        management
+            .undo_bundle(&bundle, None)
+            .expect("bundle undone");
+    } else {
+        let detail = management.detail(&run).expect("detail");
+        let undo = management
+            .undo_preview(&run, detail.job.row_revision, "undo", "admin")
+            .expect("undo preview");
+        assert!(
+            management_step(&managed.library).await,
+            "undo planning runs"
+        );
+        let undone = management_apply(&managed.library, &undo).await;
+        assert_eq!(undone.job.state.as_str(), "succeeded");
+    }
     let file = managed.path(&tracks[0]);
     assert_eq!(
         read_fields(&file).expect("tags read")[&TagField::Title],

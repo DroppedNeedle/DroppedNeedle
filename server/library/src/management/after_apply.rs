@@ -222,8 +222,9 @@ impl Management {
 
     /// Undo one published bundle (see
     /// [`Publishing::undo_bundle`](crate::manage::Publishing::undo_bundle)).
-    /// An undone run of the profile is not run again by itself; the undo
-    /// stands either way. Blocking.
+    /// An undone run of the profile gives back the records it replaced
+    /// and is not run again by itself, and an undone tag edit drops what
+    /// it kept; the undo stands either way. Blocking.
     pub fn undo_bundle(
         &self,
         bundle_id: &str,
@@ -236,7 +237,7 @@ impl Management {
         }
         let applied = self.setup.publishing.undo_bundle(bundle_id, only_by)?;
         if let Err(error) = self.bundle_undone(bundle_id) {
-            tracing::warn!(%error, bundle_id, "undone bundle not recorded for automatic management");
+            tracing::warn!(%error, bundle_id, "undone bundle not recorded for management");
         }
         Ok(applied)
     }
@@ -253,6 +254,10 @@ impl Management {
         let Some((source_id, ordinal)) = found else {
             return Ok(());
         };
+        // Each step stands on its own: one failing does not skip the next.
+        if let Err(error) = self.restore_replaced(&source_id, ordinal) {
+            tracing::warn!(%error, bundle_id, "replaced records not put back after an undo");
+        }
         let Some(source) = self
             .setup
             .db
@@ -262,6 +267,15 @@ impl Management {
         else {
             return Ok(());
         };
+        let now = self.setup.clock.now_secs();
+        if let Some(edit) = source.intent().tag_edit {
+            // Undoing a tag edit also puts its kept values back.
+            return self.setup.db.write_blocking(
+                Lane::Background,
+                "management.revert_tag_edit",
+                |tx| Ok::<_, ManagementError>(store::revert_tag_edit(tx, &edit, bundle_id, now)?),
+            );
+        }
         let items = self
             .setup
             .db
@@ -269,11 +283,26 @@ impl Management {
                 Ok::<_, ManagementError>(store::bundle_items(conn, &source_id, ordinal)?)
             })?;
         match items.first() {
-            Some(item) => {
-                self.run_undone(&source, &item.album_id, None, self.setup.clock.now_secs())
-            }
+            Some(item) => self.run_undone(&source, &item.album_id, None, now),
             None => Ok(()),
         }
+    }
+
+    /// After an undo of `source_job_id`'s run on the album at `ordinal`,
+    /// whether by an undo job or the route that undoes a single bundle,
+    /// put back the records a run of the whole profile replaced
+    /// ([`takeover::restore_records`]), so a hand edit the undo brings
+    /// back is the user's again. Blocking.
+    pub(super) fn restore_replaced(
+        &self,
+        source_job_id: &str,
+        ordinal: i64,
+    ) -> Result<(), ManagementError> {
+        self.setup
+            .db
+            .write_blocking(Lane::Background, "management.restore_records", |tx| {
+                Ok::<_, ManagementError>(takeover::restore_records(tx, source_job_id, ordinal)?)
+            })
     }
 
     /// The media servers a finished run asks to rescan: every server whose
