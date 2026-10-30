@@ -16,12 +16,20 @@
 //! fewer iterations) returns a fresh hash at the pin, which the login writes
 //! in the same transaction as its session. A hash at or above the pin is
 //! never rehashed, so a login never weakens a stored hash.
+//!
+//! Each verify or hash holds about 19 MiB while it runs, so the async entry
+//! points ([`Passwords::verify_bounded`], [`Passwords::hash_bounded`]) take
+//! one of a fixed number of slots first. A burst of sign-ins then queues
+//! instead of taking memory without limit, and a caller that waits past
+//! [`SLOT_WAIT`] hears [`SlotError::Busy`], which answers "server busy".
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use argon2::password_hash::SaltString;
 use argon2::{Algorithm, Argon2, Params, PasswordHash, PasswordHasher as _, PasswordVerifier as _};
 use thiserror::Error;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::federated::password_import::HashScheme;
 
@@ -31,6 +39,14 @@ pub const OWASP_M_COST_KIB: u32 = 19 * 1024;
 pub const OWASP_T_COST: u32 = 2;
 /// OWASP minimum parallelism.
 pub const OWASP_P_COST: u32 = 1;
+
+/// Most hashing slots on any host: 8 at 19 MiB is about 152 MiB at peak.
+const MAX_SLOTS: usize = 8;
+
+/// How long a caller waits for a slot before it is told the server is busy:
+/// the database pool's checkout limit, so a sign-in waits no longer on
+/// hashing than it would on a full read pool.
+pub const SLOT_WAIT: Duration = Duration::from_secs(5);
 
 /// Fixed dummy password. It never authenticates; the dummy verify burns one
 /// native verify against [`DUMMY_HASH`] so a missing credential costs what a
@@ -52,6 +68,23 @@ pub enum HashError {
     /// Salt encoding or the Argon2id run itself failed.
     #[error("password hash failed")]
     HashFailed,
+}
+
+/// Why a bounded verify or hash did not run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum SlotError {
+    /// Every slot stayed taken for [`SLOT_WAIT`].
+    #[error("password hashing slots busy")]
+    Busy,
+    /// The blocking task running the work failed.
+    #[error("password hashing task failed")]
+    Failed,
+}
+
+/// One held hashing slot; dropping it frees the slot.
+#[derive(Debug)]
+pub struct HashSlot {
+    _permit: OwnedSemaphorePermit,
 }
 
 /// A local credential as its row stores it: the scheme tag and the hash.
@@ -79,13 +112,16 @@ pub enum Verdict {
     },
 }
 
-/// Hashes and verifies passwords. Synchronous by design: hashing is CPU
-/// work, and callers run it on the blocking pool. Verification fails
-/// closed: malformed hashes, overlong passwords and unknown scheme tags all
-/// verify as wrong.
+/// Hashes and verifies passwords. [`Passwords::hash`] and
+/// [`Passwords::verify`] are synchronous CPU work; request paths use the
+/// bounded async forms, which run them on the blocking pool under a slot.
+/// Clones share the slots. Verification fails closed: malformed hashes,
+/// overlong passwords and unknown scheme tags all verify as wrong.
 #[derive(Clone)]
 pub struct Passwords {
     argon2: Arc<Argon2<'static>>,
+    slots: Arc<Semaphore>,
+    slot_wait: Duration,
     #[cfg(test)]
     verifies: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -97,10 +133,19 @@ impl std::fmt::Debug for Passwords {
 }
 
 impl Passwords {
-    /// Build with the pinned OWASP parameters. Construction is infallible:
-    /// the pinned constants are valid, and the crate default (identical
-    /// OWASP values in argon2 0.5) is the unreachable fallback.
+    /// Build with the pinned OWASP parameters and one slot per core, at
+    /// most [`MAX_SLOTS`]: the work is CPU-bound, so more at once than
+    /// there are cores adds memory and no throughput.
     pub fn new() -> Self {
+        let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+        Self::bounded(cores.clamp(1, MAX_SLOTS), SLOT_WAIT)
+    }
+
+    /// Build with `slots` hashing slots (at least one), each caller waiting
+    /// at most `slot_wait` for one. Construction is infallible: the pinned
+    /// constants are valid, and the crate default (identical OWASP values
+    /// in argon2 0.5) is the unreachable fallback.
+    pub fn bounded(slots: usize, slot_wait: Duration) -> Self {
         let params =
             Params::new(OWASP_M_COST_KIB, OWASP_T_COST, OWASP_P_COST, None).unwrap_or_default();
         Self {
@@ -109,9 +154,54 @@ impl Passwords {
                 argon2::Version::V0x13,
                 params,
             )),
+            slots: Arc::new(Semaphore::new(slots.max(1))),
+            slot_wait,
             #[cfg(test)]
             verifies: Arc::default(),
         }
+    }
+
+    /// Wait up to the slot wait for a hashing slot.
+    pub async fn slot(&self) -> Result<HashSlot, SlotError> {
+        match tokio::time::timeout(self.slot_wait, Arc::clone(&self.slots).acquire_owned()).await {
+            Ok(Ok(permit)) => Ok(HashSlot { _permit: permit }),
+            Ok(Err(_)) | Err(_) => Err(SlotError::Busy),
+        }
+    }
+
+    /// Run `work` on the blocking pool under a slot. The slot goes with the
+    /// work, so a caller that gives up early does not free it while the
+    /// hash still runs.
+    async fn run<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&Self) -> T + Send + 'static,
+    ) -> Result<T, SlotError> {
+        let slot = self.slot().await?;
+        let passwords = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _slot = slot;
+            work(&passwords)
+        })
+        .await
+        .map_err(|_| SlotError::Failed)
+    }
+
+    /// [`Passwords::verify`] off the async workers, under a slot.
+    pub async fn verify_bounded(
+        &self,
+        password: String,
+        stored: Option<StoredPassword>,
+    ) -> Result<Verdict, SlotError> {
+        self.run(move |passwords| passwords.verify(&password, stored.as_ref()))
+            .await
+    }
+
+    /// [`Passwords::hash`] off the async workers, under a slot.
+    pub async fn hash_bounded(
+        &self,
+        password: String,
+    ) -> Result<Result<String, HashError>, SlotError> {
+        self.run(move |passwords| passwords.hash(&password)).await
     }
 
     /// Hash a password with Argon2id at the pin, or fail. There is no

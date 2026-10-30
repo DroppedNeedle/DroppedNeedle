@@ -11,7 +11,10 @@
 //!   Bearer mode returns the raw token once in the body and sets no cookie.
 //!   The handoff itself renders in the route layer
 //!   ([`crate::routes::login_handoff`]).
-//! - Password hashing runs on the blocking pool, never on an async worker.
+//! - Password hashing runs on the blocking pool, never on an async worker,
+//!   and only under one of the shared hashing slots. A sign-in that waits
+//!   too long for a slot is [`LoginError::Busy`]. The dummy verify for an
+//!   unknown user takes a slot the same way, so it costs the same.
 //! - The session row, a rehash of a stored hash weaker than the pin and
 //!   `last_login_at` are written in one transaction, and only while the
 //!   stored credential is still the one the password was checked against
@@ -30,7 +33,7 @@ use super::{
     store::{NewSession, SessionStoreError},
     tokens,
 };
-use crate::passwords::{Passwords, StoredPassword, Verdict};
+use crate::passwords::{Passwords, SlotError, StoredPassword, Verdict};
 use crate::sqlite::{LoginWrite, Sessions, Users};
 
 /// Login transport: cookie (browser default) or Bearer (devices and scripts).
@@ -87,8 +90,9 @@ pub enum LoginError {
     /// Storage or entropy failure: 500 without detail.
     #[error("login unavailable")]
     Unavailable,
-    /// The database was too busy to answer in time: 503 with `Retry-After`.
-    #[error("login store busy")]
+    /// The database or the hashing slots were too busy to answer in time:
+    /// 503 with `Retry-After`.
+    #[error("login busy")]
     Busy,
 }
 
@@ -142,13 +146,15 @@ impl LoginService {
         let raw_token = tokens::mint_token().map_err(|_| LoginError::Unavailable)?;
         for _ in 0..LOGIN_ATTEMPTS {
             let credential = self.users.login_credential(&username_lc).await?;
-            let passwords = self.passwords.clone();
             let stored = credential.as_ref().map(|found| found.password.clone());
-            let password = request.password.clone();
-            let verdict =
-                tokio::task::spawn_blocking(move || passwords.verify(&password, stored.as_ref()))
-                    .await
-                    .map_err(|_| LoginError::Unavailable)?;
+            let verdict = self
+                .passwords
+                .verify_bounded(request.password.clone(), stored)
+                .await
+                .map_err(|error| match error {
+                    SlotError::Busy => LoginError::Busy,
+                    SlotError::Failed => LoginError::Unavailable,
+                })?;
             let (Some(credential), Verdict::Verified { rehash }) = (credential, verdict) else {
                 return Err(LoginError::InvalidCredentials);
             };

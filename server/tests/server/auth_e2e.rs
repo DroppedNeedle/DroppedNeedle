@@ -26,6 +26,7 @@ use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::compat_auth::subsonic::{
     SubsonicDenied, SubsonicParams, WRONG_CREDENTIALS, authenticate, md5_hex,
 };
+use droppedneedle_auth::passwords::Passwords;
 use droppedneedle_auth::prod::ProdAuth;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::wiring::{AuthSetup, Upstreams};
@@ -2156,6 +2157,53 @@ async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
             .expect("holder joins")
             .expect("held read succeeds");
     }
+    let (status, body, _) =
+        login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn sign_in_waits_out_full_hashing_slots_as_busy() {
+    let mut e2e = E2e::open("hash-slots-full").await;
+    // One slot and a short wait, so the busy answer comes without the real
+    // five-second wait.
+    e2e.bundle.passwords = Passwords::bounded(1, Duration::from_millis(250));
+    setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    let held = e2e
+        .bundle
+        .passwords
+        .slot()
+        .await
+        .expect("the one slot is free");
+    let sign_in = |username: &str| {
+        json!({
+            "username": username,
+            "password": "e2e-owner-password-1",
+            "transport": "bearer",
+        })
+    };
+    // A known user and an unknown one (the dummy verify) wait alike.
+    for username in ["e2e-owner", "nobody-here"] {
+        let (status, body, headers) = call_once(
+            e2e.router(),
+            "POST",
+            "/api/v3/auth/login",
+            &[],
+            Some(sign_in(username)),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{username}: {body}"
+        );
+        assert_eq!(
+            headers.get("retry-after").map(|v| v.as_bytes()),
+            Some(&b"1"[..])
+        );
+        assert_eq!(body["error"]["code"], "SERVER_BUSY", "{body}");
+    }
+    drop(held);
     let (status, body, _) =
         login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     assert_eq!(status, StatusCode::OK, "{body}");

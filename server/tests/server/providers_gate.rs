@@ -82,6 +82,7 @@ const RULES: &[Rule] = &[
                  bound on capped answers, not a rate",
             ),
             ("kernel/src/db/cache/mod.rs", LOCAL),
+            ("auth/src/passwords.rs", LOCAL),
         ],
     },
     Rule {

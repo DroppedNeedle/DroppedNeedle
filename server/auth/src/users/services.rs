@@ -6,7 +6,7 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 
 use super::super::federated::password_import::HashScheme;
-use super::super::passwords::{StoredPassword, Verdict};
+use super::super::passwords::{SlotError, StoredPassword, Verdict};
 use super::super::session::store::NewSession;
 use super::super::session::tokens;
 use super::error::UsersError;
@@ -165,34 +165,43 @@ async fn screen_password(deps: &UsersDeps, password: &str) -> Result<(), UsersEr
     Ok(())
 }
 
-/// Hash off the IO loop: Argon2id is slow by design. A hashing failure
-/// fails the request (fixed 500); no sentinel hash is ever persisted.
+/// Hash off the IO loop under a hashing slot: Argon2id is slow and large
+/// by design. No slot in time is busy (503); a hashing failure fails the
+/// request (fixed 500); no sentinel hash is ever persisted.
 async fn hash_password(deps: &UsersDeps, password: &str) -> Result<String, UsersError> {
-    let passwords = deps.passwords.clone();
-    let owned = password.to_owned();
-    tokio::task::spawn_blocking(move || passwords.hash(&owned))
+    deps.passwords
+        .hash_bounded(password.to_owned())
         .await
-        .map_err(|cause| UsersError::internal(&format_args!("password hash panicked: {cause}")))?
+        .map_err(slot_error)?
         .map_err(|cause| UsersError::internal(&cause))
 }
 
 /// Verify off the IO loop, for the same reason. Unknown scheme tags fail
 /// closed (dummy work, then false).
-async fn check_password(deps: &UsersDeps, password: &str, scheme: &str, hash: &str) -> bool {
-    let passwords = deps.passwords.clone();
-    let password = password.to_owned();
+async fn check_password(
+    deps: &UsersDeps,
+    password: &str,
+    scheme: &str,
+    hash: &str,
+) -> Result<bool, UsersError> {
     let stored = StoredPassword {
         scheme: scheme.to_owned(),
         hash: hash.to_owned(),
     };
-    tokio::task::spawn_blocking(move || {
-        matches!(
-            passwords.verify(&password, Some(&stored)),
-            Verdict::Verified { .. }
-        )
-    })
-    .await
-    .unwrap_or(false)
+    let verdict = deps
+        .passwords
+        .verify_bounded(password.to_owned(), Some(stored))
+        .await
+        .map_err(slot_error)?;
+    Ok(matches!(verdict, Verdict::Verified { .. }))
+}
+
+/// No hashing slot in time is busy; a failed hashing task is a fault.
+fn slot_error(error: SlotError) -> UsersError {
+    match error {
+        SlotError::Busy => UsersError::Busy,
+        SlotError::Failed => UsersError::internal(&error),
+    }
 }
 
 /// Scheme tag written on every new hash row.
@@ -353,7 +362,7 @@ pub async fn change_password(
         .ok_or_else(|| UsersError::Conflict {
             message: "No local password is set for this account".to_owned(),
         })?;
-    if !check_password(deps, current_password, &local.scheme, &local.hash).await {
+    if !check_password(deps, current_password, &local.scheme, &local.hash).await? {
         return Err(UsersError::Unauthorized {
             message: "Current password is incorrect".to_owned(),
         });
