@@ -21,11 +21,13 @@
 //! records the change, so they survive a restart and a write that
 //! stopped before it recorded anything spends nothing. A write whose
 //! change was unwound (refused at placement, past its budget, or undone
-//! by recovery after a crash) no longer counts. The last refusal is kept
-//! per plugin so it can be shown with the plugin's health.
+//! by recovery after a crash) no longer counts; the library says which
+//! writes still stand. A plugin already over its allowance is refused on
+//! a read, before it waits for the library. The last refusal is kept per
+//! plugin and shown with the plugin's health.
 //!
-//! Like v2, a plugin may add audio files; the next library scan picks
-//! them up like any other file.
+//! Like v2, a plugin may add audio files. An add, and its undo, mark the
+//! library folder for the scan, which picks the change up shortly.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,7 +38,7 @@ use super::super::host::PluginHost;
 use super::super::manifest::Capability;
 use super::super::protocol::MAX_MESSAGE_BYTES;
 use droppedneedle_library::manage::PluginFileRefusal;
-use droppedneedle_library::publish::{JournalState, PublishError};
+use droppedneedle_library::publish::{PublishError, add};
 
 /// Bytes one plugin may write per rolling day.
 pub const QUOTA_BYTES_PER_DAY: usize = 100 * 1024 * 1024;
@@ -78,13 +80,47 @@ impl LibraryWrites {
             refusals.remove(plugin);
         }
     }
+
+    fn last_refusal(&self, plugin: &str) -> Option<String> {
+        self.refusals
+            .lock()
+            .ok()
+            .and_then(|refusals| refusals.get(plugin).cloned())
+    }
 }
 
-/// Count the plugin's writes of the last day and, when `bytes` more fit
-/// both allowances, add this one as `bundle_id`. Runs in the transaction
-/// that records the change. A write whose change was unwound is not
-/// counted, and neither is one that never wrote its journal row; rows
-/// older than a day are deleted.
+/// Whether `bytes` more fit both of the plugin's allowances, counting its
+/// writes of the day before `now_ms` that still stand in the library.
+fn fits(
+    conn: &rusqlite::Connection,
+    plugin: &str,
+    bytes: usize,
+    now_ms: i64,
+) -> Result<bool, PublishError> {
+    let rows: Vec<(String, i64)> = conn
+        .prepare_cached(
+            "SELECT bundle_id, bytes FROM plugin_library_writes \
+             WHERE plugin = ?1 AND written_at > ?2",
+        )?
+        .query_map(rusqlite::params![plugin, now_ms - QUOTA_WINDOW_MS], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+    let standing = add::standing(conn, &ids)?;
+    let (mut files, mut used) = (0usize, 0usize);
+    for (id, written) in &rows {
+        if standing.contains(id) {
+            files += 1;
+            used = used.saturating_add(usize::try_from(*written).unwrap_or(usize::MAX));
+        }
+    }
+    Ok(files < QUOTA_FILES_PER_DAY && used.saturating_add(bytes) <= QUOTA_BYTES_PER_DAY)
+}
+
+/// When `bytes` more fit the plugin's allowances, add this write as
+/// `bundle_id`. Runs in the transaction that records the change, after
+/// deleting rows older than a day.
 fn reserve(
     conn: &rusqlite::Connection,
     plugin: &str,
@@ -94,20 +130,7 @@ fn reserve(
 ) -> Result<bool, PublishError> {
     conn.prepare_cached("DELETE FROM plugin_library_writes WHERE written_at <= ?1")?
         .execute([now_ms - QUOTA_WINDOW_MS])?;
-    let (files, used): (i64, i64) = conn
-        .prepare_cached(
-            "SELECT COUNT(*), COALESCE(SUM(w.bytes), 0) FROM plugin_library_writes w
-             WHERE w.plugin = ?1 AND EXISTS (
-                 SELECT 1 FROM library_publish_journal j
-                 WHERE j.bundle_id = w.bundle_id AND j.state <> ?2)",
-        )?
-        .query_row(
-            rusqlite::params![plugin, JournalState::Compensated.as_str()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-    let files = usize::try_from(files).unwrap_or(usize::MAX);
-    let used = usize::try_from(used).unwrap_or(usize::MAX);
-    if files >= QUOTA_FILES_PER_DAY || used.saturating_add(bytes) > QUOTA_BYTES_PER_DAY {
+    if !fits(conn, plugin, bytes, now_ms)? {
         return Ok(false);
     }
     conn.prepare_cached(
@@ -157,6 +180,12 @@ impl Drop for CancelOnDrop {
 }
 
 impl PluginHost {
+    /// Why `plugin`'s last library write was refused, while no write has
+    /// landed since this start.
+    pub fn library_refusal(&self, plugin: &str) -> Option<String> {
+        self.library_writes.last_refusal(plugin)
+    }
+
     /// Add one file to the library for `plugin`. Answers the stored path
     /// and the id of the recorded change, or the reason it was refused.
     pub async fn write_library_file(
@@ -189,6 +218,7 @@ impl PluginHost {
         let library = self.library.clone();
         let (name, relative) = (plugin.to_owned(), rel_path.to_owned());
         let outcome = tokio::task::spawn_blocking(move || {
+            let admit = |conn: &rusqlite::Connection, now_ms: i64| fits(conn, &name, bytes, now_ms);
             let over_allowance = AtomicBool::new(false);
             let on_record = |conn: &rusqlite::Connection, bundle_id: &str, now_ms: i64| {
                 if reserve(conn, &name, bundle_id, bytes, now_ms)? {
@@ -197,8 +227,9 @@ impl PluginHost {
                 over_allowance.store(true, Ordering::SeqCst);
                 Err(PublishError::Validation("over the daily allowance".into()))
             };
-            let added =
-                library.add_plugin_file(&name, &relative, data, deadline, &cancelled, &on_record);
+            let added = library.add_plugin_file(
+                &name, &relative, data, deadline, &cancelled, &admit, &on_record,
+            );
             (added, over_allowance.load(Ordering::SeqCst))
         })
         .await;
@@ -208,17 +239,7 @@ impl PluginHost {
                 tracing::info!(plugin, rel_path, bytes, bundle_id = %added.bundle_id, "plugin added a library file");
                 return Ok((added.path.to_string_lossy().into_owned(), added.bundle_id));
             }
-            Ok((Err(_), true)) => {
-                return Err(writes.refuse(
-                    plugin,
-                    format!(
-                        "the plugin has used its library write allowance ({} MiB or {} files a \
-                         day); try again later",
-                        QUOTA_BYTES_PER_DAY / (1024 * 1024),
-                        QUOTA_FILES_PER_DAY
-                    ),
-                ));
-            }
+            Ok((Err(_), true)) => PluginFileRefusal::NotAdmitted,
             Ok((Err(refusal), false)) => refusal,
             Err(error) => {
                 return Err(writes.refuse(plugin, format!("library write stopped: {error}")));
@@ -235,6 +256,15 @@ impl PluginHost {
             PluginFileRefusal::Taken => {
                 format!("{rel_path} already exists; plugins only add new files")
             }
+            PluginFileRefusal::Lookalike => {
+                format!("another file there differs from {rel_path} only in capitals")
+            }
+            PluginFileRefusal::NotAdmitted => format!(
+                "the plugin has used its library write allowance ({} MiB or {} files a day); \
+                 try again later",
+                QUOTA_BYTES_PER_DAY / (1024 * 1024),
+                QUOTA_FILES_PER_DAY
+            ),
             PluginFileRefusal::Pending => {
                 "the library write stopped partway; it finishes or is undone by itself shortly"
                     .to_owned()

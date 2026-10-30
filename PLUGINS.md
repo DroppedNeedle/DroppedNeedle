@@ -377,8 +377,10 @@ The write has 8 seconds: it waits for the library to be free (no move or
 other change running) and then fails, and a file not in place by
 then, or that the server stopped waiting for, is never put there. In rare
 cases a `host request timed out` answer means the file did land; a retry
-then answers that it already exists. After each write the library folder
-is scanned again, so the file, audio included, shows up like any other.
+then answers that it already exists. Why the last write was refused shows
+on the plugin's card in Settings > Plugins, beside its health, until a
+write lands. After each write the library folder is scanned again, so the
+file, audio included, shows up like any other.
 
 Each write is a recorded library change, made the way the server makes its
 own: the file is written beside its destination under a hidden name and

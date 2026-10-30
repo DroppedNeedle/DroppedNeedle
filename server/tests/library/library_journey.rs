@@ -4844,6 +4844,7 @@ async fn a_switched_off_library_takes_no_file_changes() {
         b"hello".to_vec(),
         std::time::Instant::now() + std::time::Duration::from_secs(5),
         &Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        &|_, _| Ok(true),
         &|_, _, _| Ok(()),
     );
     match added {

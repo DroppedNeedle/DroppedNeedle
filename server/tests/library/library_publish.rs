@@ -5325,6 +5325,112 @@ fn undo_takes_a_plugin_file_only_while_unchanged() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+/// A plugin's file the scan made into a track goes missing once its add
+/// is undone, with no scan asked for: the undo marks the folder for the
+/// scan. Undo then answers 409 with the reason for an add already taken
+/// back, for the take-back itself, and for a file changed or gone since.
+#[tokio::test]
+async fn a_taken_back_plugin_file_leaves_the_library() {
+    use axum::http::StatusCode;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    let app = crate::common::TestApp::start("plugin-take-back").await;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    // A folder the walk finds empty reads as unmounted and keeps its
+    // tracks, so another file stays beside the plugin's.
+    let music = app.config.root_app_dir.join("music");
+    let flac = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    std::fs::create_dir_all(music.join("kept")).unwrap();
+    std::fs::write(music.join("kept/01.flac"), &flac).unwrap();
+    app.add_library_folder("music", &music).await;
+    let core = app.state().library.core.clone();
+    let add = |rel: &'static str, bytes: Vec<u8>| {
+        let core = core.clone();
+        async move {
+            tokio::task::spawn_blocking(move || {
+                core.add_plugin_file(
+                    "toy",
+                    rel,
+                    bytes,
+                    std::time::Instant::now() + std::time::Duration::from_secs(30),
+                    &Arc::new(AtomicBool::new(false)),
+                    &|_: &Connection, _: i64| Ok(true),
+                    &|_: &Connection, _: &str, _: i64| Ok(()),
+                )
+            })
+            .await
+            .unwrap()
+            .unwrap()
+            .bundle_id
+        }
+    };
+    let availability = |rel: &str| -> Option<String> {
+        app.db()
+            .query_row(
+                "SELECT availability FROM local_tracks \
+                 WHERE root_id = 'music' AND relative_path = ?1",
+                [rel],
+                |row| row.get(0),
+            )
+            .ok()
+    };
+    let undo = |bundle: String| {
+        app.call(
+            "POST",
+            "/api/v3/library/manage/undo",
+            &headers,
+            Some(serde_json::json!({"bundle_id": bundle})),
+        )
+    };
+    let refused = |body: &serde_json::Value, why: &str| {
+        let message = body["error"]["message"].as_str().unwrap_or_default();
+        assert!(
+            message.starts_with("Undo blocked: ") && message.contains(why),
+            "{body}"
+        );
+    };
+
+    let added = add("album/01.flac", flac).await;
+    app.until("the scan indexes the plugin's file", || async {
+        (availability("album/01.flac").as_deref() == Some("indexed")).then_some(())
+    })
+    .await;
+    let (status, body) = undo(added.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let take_back = body["bundle_id"].as_str().unwrap().to_owned();
+    assert!(!music.join("album/01.flac").exists());
+    app.until("the scan finds the track gone", || async {
+        (availability("album/01.flac").as_deref() == Some("missing")).then_some(())
+    })
+    .await;
+
+    let (status, body) = undo(added).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    refused(&body, "already taken away");
+    let (status, body) = undo(take_back).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    refused(&body, "can't be undone");
+
+    let changed = add("notes/two.txt", b"plugin".to_vec()).await;
+    std::fs::write(music.join("notes/two.txt"), b"a person's edit").unwrap();
+    let (status, body) = undo(changed).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    refused(&body, "notes/two.txt changed since the plugin wrote it");
+    assert_eq!(
+        std::fs::read(music.join("notes/two.txt")).unwrap(),
+        b"a person's edit"
+    );
+
+    let gone = add("notes/three.txt", b"plugin".to_vec()).await;
+    std::fs::remove_file(music.join("notes/three.txt")).unwrap();
+    let (status, body) = undo(gone).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    refused(&body, "notes/three.txt is no longer there");
+    app.stop().await;
+}
+
 // --- Folders: a write removes only the folders it made, and prunes the
 // sources it moved away from. ---
 

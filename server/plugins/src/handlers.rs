@@ -116,6 +116,7 @@ fn plugin_info(
             .copied()
             .unwrap_or(0),
         health: plugin.health(),
+        library_refusal: host.library_refusal(&manifest.name),
     });
     let install = host.install_record(name).map(|record| PluginInstallInfo {
         repository_url: record.repository_url,

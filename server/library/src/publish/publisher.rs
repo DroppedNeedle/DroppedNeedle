@@ -111,8 +111,9 @@ pub(super) fn enqueue_after_commit(
         })
 }
 
-/// The catalog revision: a change counter every commit bumps once. Read
-/// caches key on it, so a commit invalidates them.
+/// The catalog revision: a change counter bumped once by every commit that
+/// changes catalog rows. Read caches key on it, so such a commit
+/// invalidates them.
 pub fn read_revision(conn: &Connection) -> Result<u64, PublishError> {
     let rev: i64 = conn.query_row(
         "SELECT value FROM library_catalog_revision WHERE singleton = 1",
@@ -161,7 +162,8 @@ pub fn locate(conn: &Connection, track_id: &str) -> Result<Option<Located>, Publ
 
 /// Commit one bundle: check every moved track's rows are still as
 /// sealed, move every track row (and its album's root) to its
-/// published location, and bump the catalog revision once. Track and
+/// published location, and bump the catalog revision once. A file added
+/// with no track, or its undo, moves no row and skips the bump. Track and
 /// album ids stay as they are. Files an import fetched for a library
 /// album join it, and are placed on its edition in the same
 /// transaction. An import's match is sealed in it too
@@ -942,10 +944,7 @@ impl<P: SpaceProbe> Publisher<P> {
         live: &SealRecheck,
         bytes: Vec<u8>,
     ) -> Result<PublishOutcome, PublishError> {
-        self.added_bytes = Some(bytes);
-        let outcome = self.publish_recorded(sealed, live, &BTreeMap::new(), None, None);
-        self.added_bytes = None;
-        outcome
+        self.publish_adding(sealed, live, &BTreeMap::new(), None, Some(bytes), None)
     }
 
     /// [`Self::publish_add`] within `terms`: a file not placed by its
@@ -958,13 +957,14 @@ impl<P: SpaceProbe> Publisher<P> {
         bytes: Vec<u8>,
         terms: AddTerms<'_>,
     ) -> Result<PublishOutcome, PublishError> {
-        self.added_bytes = Some(bytes);
-        self.add_budget = Some((terms.deadline, terms.cancelled));
-        let outcome =
-            self.publish_recorded(sealed, live, &BTreeMap::new(), None, Some(terms.on_record));
-        self.added_bytes = None;
-        self.add_budget = None;
-        outcome
+        self.publish_adding(
+            sealed,
+            live,
+            &BTreeMap::new(),
+            None,
+            Some(bytes),
+            Some(terms),
+        )
     }
 
     /// [`Self::publish`], recording the account that applied the bundle
@@ -981,7 +981,36 @@ impl<P: SpaceProbe> Publisher<P> {
         docs: &BTreeMap<String, TagDocument>,
         applied_by: Option<&str>,
     ) -> Result<PublishOutcome, PublishError> {
-        self.publish_recorded(sealed, live, docs, applied_by, None)
+        self.publish_adding(sealed, live, docs, applied_by, None, None)
+    }
+
+    /// Every publish starts here: it sets the added file's bytes and
+    /// budget for this publish alone, so a publish that stopped partway
+    /// never leaves them to the next one, and clears them after.
+    fn publish_adding(
+        &mut self,
+        sealed: &SealedPreview,
+        live: &SealRecheck,
+        docs: &BTreeMap<String, TagDocument>,
+        applied_by: Option<&str>,
+        bytes: Option<Vec<u8>>,
+        terms: Option<AddTerms<'_>>,
+    ) -> Result<PublishOutcome, PublishError> {
+        self.added_bytes = bytes;
+        let on_record = match terms {
+            Some(terms) => {
+                self.add_budget = Some((terms.deadline, terms.cancelled));
+                Some(terms.on_record)
+            }
+            None => {
+                self.add_budget = None;
+                None
+            }
+        };
+        let outcome = self.publish_recorded(sealed, live, docs, applied_by, on_record);
+        self.added_bytes = None;
+        self.add_budget = None;
+        outcome
     }
 
     /// [`Self::publish_as`], running `on_record` in the transaction that

@@ -293,7 +293,13 @@ impl PluginManifest {
                         .unwrap_or(60);
                     format!("Runs on its own every {minutes} minutes")
                 }
-                Capability::LibraryWriter => "Can add new files to your music library (never replaces one), up to 100 MiB a day".to_owned(),
+                Capability::LibraryWriter => {
+                    use super::capabilities::library_files::{QUOTA_BYTES_PER_DAY, QUOTA_FILES_PER_DAY};
+                    format!(
+                        "Can add new files to your music library (never replaces one), up to {} MiB and {QUOTA_FILES_PER_DAY} files a day",
+                        QUOTA_BYTES_PER_DAY / (1024 * 1024)
+                    )
+                }
                 Capability::StreamingSource => "Can serve audio for tracks missing from your library, from a file or a web address".to_owned(),
             };
             lines.push(line);

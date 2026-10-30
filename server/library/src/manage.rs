@@ -570,11 +570,20 @@ pub enum PluginFileRefusal {
     FolderUnusable(&'static str),
     /// Another file has the name.
     Taken,
+    /// Another file's name differs from it only in capitals.
+    Lookalike,
+    /// The caller's own check refused it before anything waited or was
+    /// written.
+    NotAdmitted,
     /// The write stopped partway; it finishes or is undone by itself.
     Pending,
     /// The publish refused or failed. Nothing was added.
     Publish(PublishError),
 }
+
+/// A read a plugin write runs before it waits for the publish lock, with
+/// the time in unix milliseconds: `false` refuses the write at once.
+pub type AdmitPluginFile<'a> = &'a dyn Fn(&rusqlite::Connection, i64) -> Result<bool, PublishError>;
 
 /// How long a plugin write pauses between tries for a busy library.
 const PLUGIN_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
@@ -592,8 +601,11 @@ impl super::wiring::LibraryCore {
     /// `deadline`, never waiting on a folder while it holds the lock, and
     /// stops once `cancelled` is set; nothing is recorded until both are
     /// held and the write is still wanted, and the file is never placed
-    /// past the deadline or once `cancelled` is set. `on_record` runs in
-    /// the transaction that records the change. Blocking.
+    /// past the deadline or once `cancelled` is set. `admit` runs first,
+    /// on a read, so a write it refuses never waits for the lock;
+    /// `on_record` runs in the transaction that records the change.
+    /// Blocking.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_plugin_file(
         &self,
         plugin: &str,
@@ -601,9 +613,23 @@ impl super::wiring::LibraryCore {
         bytes: Vec<u8>,
         deadline: std::time::Instant,
         cancelled: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+        admit: AdmitPluginFile<'_>,
         on_record: super::publish::publisher::OnRecord<'_>,
     ) -> Result<AddedPluginFile, PluginFileRefusal> {
         use std::sync::atomic::Ordering;
+        let now_ms = self.clock.now_ms();
+        match self
+            .held_bundles
+            .db
+            .read_blocking("publish.plugin_admit", |conn| admit(conn, now_ms))
+        {
+            Ok(true) => {}
+            Ok(false) => return Err(PluginFileRefusal::NotAdmitted),
+            // The record's own check still runs in its transaction.
+            Err(error) => {
+                tracing::warn!(%error, plugin, "a plugin write's first check could not read");
+            }
+        }
         let library = self
             .library
             .get()
@@ -773,7 +799,14 @@ impl super::wiring::LibraryCore {
         } else if out_of_time && std::time::Instant::now() >= deadline {
             PluginFileRefusal::Busy
         } else if matches!(error, PublishError::Collision(_)) {
-            PluginFileRefusal::Taken
+            // The name itself is free when the other file is a lookalike.
+            if path.symlink_metadata().is_ok() {
+                PluginFileRefusal::Taken
+            } else if path.parent().is_some_and(std::path::Path::is_dir) {
+                PluginFileRefusal::Lookalike
+            } else {
+                PluginFileRefusal::Publish(error)
+            }
         } else {
             PluginFileRefusal::Publish(error)
         })
@@ -2259,8 +2292,7 @@ impl Publishing {
             }
         };
         // A track the scan made from the file goes missing at the next scan.
-        self.core.dirty.mark(&root_id);
-        self.core.wakeups.notify("scan");
+        self.core.rescan(&root_id);
         Ok(AppliedBundle {
             bundle_id,
             outcome,

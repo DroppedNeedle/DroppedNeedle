@@ -247,6 +247,10 @@ droppedneedle_kernel::sql! {
              AND json_extract(o.bundle_json, '$.added.origin.plugin') = ?1 \
              AND (o.created_at < ?2 OR (o.created_at = ?2 AND o.bundle_id < ?3)) \
              ORDER BY o.created_at DESC, o.bundle_id DESC LIMIT ?4";
+    /// Which of the bundles in the JSON array `?1` still stand: each wrote
+    /// a journal row that was not unwound.
+    pub(super) STANDING_BUNDLES = "SELECT DISTINCT bundle_id FROM library_publish_journal \
+             WHERE bundle_id IN (SELECT value FROM json_each(?1)) AND state <> 'compensated'";
     /// A track's (`?1`) root, relative path and availability.
     pub(super) TRACK_PLACE = "SELECT root_id, relative_path, availability FROM local_tracks \
              WHERE id = ?1";

@@ -265,6 +265,21 @@ pub fn plugin_files(
         .collect()
 }
 
+/// Which of `bundle_ids` still stand in the library: each wrote its
+/// journal row and was not unwound. A write that stopped before its row,
+/// or was put back as it was, changed nothing.
+pub fn standing(
+    conn: &Connection,
+    bundle_ids: &[String],
+) -> Result<std::collections::HashSet<String>, PublishError> {
+    let ids = serde_json::to_string(bundle_ids)?;
+    let standing = conn
+        .prepare_cached(sql::STANDING_BUNDLES.text())?
+        .query_map([ids], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(standing)
+}
+
 /// The text an undo's recorded bundle holds for the add it undoes.
 fn undoes_marker(bundle_id: &str) -> String {
     format!("\"undoes\":{}", serde_json::Value::from(bundle_id))

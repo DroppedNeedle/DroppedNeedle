@@ -1229,6 +1229,16 @@ async fn a_plugin_write_is_journaled_and_keeps_no_ledger() {
     assert_eq!(refused.code, -32001);
     assert!(refused.message.contains("already exists"), "{refused:?}");
     assert_eq!(std::fs::read(&placed).unwrap(), b"first");
+
+    std::fs::write(music.join("notes/Two.txt"), b"theirs").unwrap();
+    let lookalike = runtime
+        .host_request(
+            methods::HOST_LIBRARY_WRITE,
+            json!({"rel_path": "notes/two.txt", "data_base64": "eA=="}),
+        )
+        .await
+        .unwrap_err();
+    assert!(lookalike.message.contains("capitals"), "{lookalike:?}");
     assert!(
         !rig.dir.join("plugins/.data/.library-writes").exists(),
         "no ledger folder"
@@ -1361,6 +1371,135 @@ async fn the_daily_allowance_survives_a_restart() {
         .unwrap_err();
     assert!(refused.contains("allowance"), "{refused}");
     assert!(!music.join("notes/after.txt").exists());
+}
+
+/// Record that the toy plugin wrote `count` one-byte files just now, each
+/// in a change that landed.
+fn seed_files(rig: &Rig, count: usize) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let seeds = format!(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {count})"
+    );
+    let conn = droppedneedle_kernel::db::open_connection(&rig.dir.join("app.db")).unwrap();
+    conn.execute_batch(&format!(
+        "{seeds} INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+             staged, staged_sha256, state) \
+         SELECT 'many-' || i || '-add-000', 'many-' || i, 'add', 'music', 'seed/many-' || i, \
+             '.dn-seed', 'abc', 'cleaned' FROM n; \
+         {seeds} INSERT INTO plugin_library_writes (bundle_id, plugin, bytes, written_at) \
+         SELECT 'many-' || i, 'toy', 1, {now} FROM n;"
+    ))
+    .unwrap();
+}
+
+/// A plugin may add 1000 files a day: the 1000th lands, the 1001st is
+/// refused and never placed, and the refusal shows with the plugin's
+/// health in the admin view until a write lands.
+#[tokio::test]
+async fn the_1001st_file_in_a_day_is_refused_and_shown() {
+    use droppedneedle_plugins::capabilities::library_files::QUOTA_FILES_PER_DAY;
+
+    let rig = rig("write-files-a-day").await;
+    let music = music_root(&rig).await;
+    enable_toy(&rig, WRITER_MANIFEST);
+    seed_files(&rig, QUOTA_FILES_PER_DAY - 1);
+    rig.host
+        .write_library_file("toy", "notes/last.txt", b"1".to_vec())
+        .await
+        .unwrap();
+    let refused = rig
+        .host
+        .write_library_file("toy", "notes/over.txt", b"1".to_vec())
+        .await
+        .unwrap_err();
+    assert!(refused.contains("1000 files a day"), "{refused}");
+    assert!(!music.join("notes/over.txt").exists());
+
+    let (status, body) = send(router_as(&rig, "admin-1"), "GET", "/api/v3/plugins", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["plugins"][0]["runtime"]["library_refusal"],
+        json!(refused),
+        "{body}"
+    );
+}
+
+/// While another write holds the library, a write still waiting at its
+/// deadline is refused as busy and places nothing, and a plugin over its
+/// allowance is refused at once without waiting for the library.
+#[tokio::test]
+async fn a_held_library_refuses_late_and_over_allowance_writes() {
+    use droppedneedle_library::manage::PluginFileRefusal;
+    use droppedneedle_plugins::capabilities::library_files::QUOTA_FILES_PER_DAY;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Instant;
+
+    let rig = rig("write-held").await;
+    let music = music_root(&rig).await;
+    // A host over a whole library, so the test can hold its publisher.
+    let (library, _) = crate::common::library::library_at(&rig.platform);
+    let host = PluginHost::new(
+        rig.dir.join("plugins"),
+        Arc::clone(&rig.config),
+        Arc::new(FakeLauncher::new()),
+        rig.ticks.clone(),
+        library.core.clone(),
+    );
+    write_plugin(&rig.dir, "toy", WRITER_MANIFEST);
+    host.load_all();
+    host.update_settings("toy", true, HashMap::new()).unwrap();
+    let (reached, at_place) = std::sync::mpsc::channel::<()>();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    library.publishing.set_publish_hooks(
+        Some(Box::new(move |_: &Path| {
+            let _ = reached.send(());
+            let _ = released.recv();
+        })),
+        None,
+    );
+    let writer = Arc::clone(&host);
+    let first = tokio::spawn(async move {
+        writer
+            .write_library_file("toy", "notes/first.txt", b"first".to_vec())
+            .await
+    });
+    tokio::task::spawn_blocking(move || at_place.recv_timeout(Duration::from_secs(10)))
+        .await
+        .unwrap()
+        .expect("the first write reaches placement");
+
+    let core = library.core.clone();
+    let late = tokio::task::spawn_blocking(move || {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        core.add_plugin_file(
+            "toy",
+            "notes/late.txt",
+            b"late".to_vec(),
+            Instant::now() + Duration::from_millis(200),
+            &cancelled,
+            &|_: &rusqlite::Connection, _: i64| Ok(true),
+            &|_: &rusqlite::Connection, _: &str, _: i64| Ok(()),
+        )
+    })
+    .await
+    .unwrap();
+    assert!(matches!(late, Err(PluginFileRefusal::Busy)), "{late:?}");
+    assert!(!music.join("notes/late.txt").exists());
+
+    seed_files(&rig, QUOTA_FILES_PER_DAY);
+    let refused = host
+        .write_library_file("toy", "notes/over.txt", b"1".to_vec())
+        .await
+        .unwrap_err();
+    assert!(refused.contains("allowance"), "{refused}");
+
+    release.send(()).unwrap();
+    first.await.unwrap().unwrap();
+    library.publishing.set_publish_hooks(None, None);
+    assert!(!music.join("notes/over.txt").exists());
 }
 
 const BIG_MANIFEST: &str = "[plugin]\n\

@@ -181,6 +181,11 @@
 										{/if}
 									</div>
 								{/if}
+								{#if plugin.runtime.library_refusal}
+									<p class="mt-1 text-xs break-words text-warning">
+										Library write refused: {plugin.runtime.library_refusal}
+									</p>
+								{/if}
 								{#if plugin.runtime.last_error && plugin.runtime.state !== 'running'}
 									<div
 										class="mt-1 flex items-center gap-2 rounded-lg bg-error/10 px-3 py-2 text-xs text-error"

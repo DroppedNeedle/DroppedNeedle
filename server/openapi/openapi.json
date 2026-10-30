@@ -56606,6 +56606,13 @@
             ],
             "description": "Last start failure, crash or protocol problem."
           },
+          "library_refusal": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the plugin's last library write was refused, until one lands."
+          },
           "restarts": {
             "type": "integer",
             "format": "int64",

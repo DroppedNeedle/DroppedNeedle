@@ -19066,6 +19066,8 @@ export interface components {
             implemented_capabilities?: string[];
             /** @description Last start failure, crash or protocol problem. */
             last_error?: string | null;
+            /** @description Why the plugin's last library write was refused, until one lands. */
+            library_refusal?: string | null;
             /**
              * Format: int64
              * @description Restarts since it was enabled.
