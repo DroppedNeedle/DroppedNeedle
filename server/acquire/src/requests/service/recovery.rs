@@ -39,13 +39,7 @@ impl RequestsService {
                 }
                 if self
                     .store
-                    .update_status(
-                        kind,
-                        &record.key,
-                        RequestStatus::Cancelled,
-                        Some(now),
-                        Some(record.generation),
-                    )
+                    .cancel(kind, &record.key, now, Some(record.generation))
                     .await?
                 {
                     report.cancelled += 1;

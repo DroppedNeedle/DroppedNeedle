@@ -394,7 +394,9 @@ impl DownloadDispatch {
     /// Cancel one task: it goes terminal and its live attempts move to
     /// cleanup with a discard disposition in the same transaction, so the
     /// worker's cleanup pass aborts the transfer and discards the client
-    /// record. Unknown or finished ids are a no-op success.
+    /// record. A failed or partial task is marked cancelled so it is not
+    /// retried by itself. Unknown, completed or cancelled ids are a no-op
+    /// success.
     pub async fn cancel(&self, task_id: &str) -> Result<(), DispatchError> {
         let task_id = task_id.to_owned();
         let clock = self.journal.db().clock().clone();

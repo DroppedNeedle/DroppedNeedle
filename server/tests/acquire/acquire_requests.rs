@@ -35,6 +35,7 @@ use axum::{
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::DownloadDispatch;
 use droppedneedle_acquire::downloads::state::{AttemptState, TaskStatus};
+use droppedneedle_acquire::downloads::worker::{DownloadWorker, WorkerConfig};
 use droppedneedle_acquire::downloads::{PlannedAlbum, ReplaceVersion};
 use droppedneedle_acquire::follows::ImportArtist;
 use droppedneedle_acquire::requests::{
@@ -590,6 +591,58 @@ async fn cancel_matrix() {
     assert_eq!(stopped["status"], "cancelled", "{history}");
 }
 
+// A requester's cancel that meets a download which has just failed stops it
+// for good: the automatic retry neither starts the album again nor moves the
+// request back. Retrying the stopped download by hand brings the request
+// back with it.
+#[tokio::test]
+async fn a_cancel_outlasts_the_automatic_retry() {
+    let (state, db, dispatch) = setup().await;
+    ask(&state, TRUSTED, MBID_A).await;
+    let first = dispatch.task(1).await;
+    // The download fails as the cancel arrives, before the request follows.
+    let failed = first.clone();
+    db.write("test.fail_behind", move |tx| {
+        tx.execute(
+            "UPDATE download_tasks SET status = 'failed', completed_at = 1000 WHERE id = ?1",
+            rusqlite::params![failed],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let uri = format!("/api/v3/requests/active/{MBID_A}");
+    let (_, cancelled) = call(&state, Method::DELETE, &uri, Some(TRUSTED), None).await;
+    assert_eq!(cancelled["success"], true, "{cancelled}");
+
+    let journal = dispatch.dispatch.journal().clone();
+    let worker = Arc::new(DownloadWorker::fixed(
+        journal.clone(),
+        Vec::new(),
+        WorkerConfig::default(),
+        EventHub::new(),
+        Default::default(),
+    ));
+    worker.run_once(1).await;
+    let row = state.store.get(RequestKind::Album, MBID_A).await.unwrap();
+    assert_eq!(row.unwrap().status.as_str(), "cancelled");
+    assert_eq!(
+        dispatch.ids().await,
+        std::slice::from_ref(&first),
+        "nothing starts again"
+    );
+
+    let source = journal.read_task(&first).await.unwrap().unwrap();
+    let successor = worker
+        .retry_now(&source)
+        .await
+        .expect("a hand retry starts");
+    let row = state.store.get(RequestKind::Album, MBID_A).await.unwrap();
+    let row = row.unwrap();
+    assert_eq!(row.status.as_str(), "downloading");
+    assert_eq!(row.task_id.as_deref(), Some(successor.as_str()));
+}
+
 // The request-count quota counts durable rows, so a restart does not reset
 // it, and the refusal writes nothing.
 #[tokio::test]
@@ -769,8 +822,8 @@ async fn wanted_view_and_actions() {
     .await;
     assert_eq!(resumed["state"], "watching");
     state
-        .wanted
-        .mark_fulfilled(MBID_A, "in_library", 1_700_000_100)
+        .store
+        .settle_in_library(MBID_A, "in_library", 1_700_000_100)
         .await
         .unwrap();
     assert_eq!(

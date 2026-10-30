@@ -161,13 +161,15 @@ async fn seed_task(db: &AcquireDb, id: &str, rg_mbid: &str, status: TaskStatus) 
 }
 
 /// Move one task to `status` with a plain write, as something outside the
-/// journal would: its requests are left for the status sweep.
+/// journal would: its requests are left for the status sweep. Only a
+/// settled task gets a completion time.
 async fn behind(db: &AcquireDb, id: &str, status: TaskStatus) {
     let id = id.to_owned();
+    let completed_at = status.is_terminal().then_some(NOW as f64);
     db.write("test.behind", move |tx| {
         tx.execute(
             "UPDATE download_tasks SET status = ?2, completed_at = ?3 WHERE id = ?1",
-            rusqlite::params![id, status.as_str(), NOW as f64],
+            rusqlite::params![id, status.as_str(), completed_at],
         )?;
         Ok(())
     })
@@ -209,7 +211,7 @@ struct Wanted {
     deps: WantedDeps,
     library: Arc<LibraryPresence>,
     events: EventHub,
-    _slskd: MockSlskd,
+    slskd: MockSlskd,
 }
 
 /// The sources the saved settings turn on, over the slskd mock, with
@@ -280,7 +282,7 @@ async fn wanted_with_slskd(db: &AcquireDb, slskd_on: bool) -> Wanted {
         },
         library,
         events,
-        _slskd: slskd,
+        slskd,
     }
 }
 
@@ -1189,4 +1191,51 @@ async fn wanted_redispatch_imports_the_failed_request() {
     let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
     assert_eq!(watch.state, WatchState::Fulfilled);
     assert_eq!(recorded.keys(), ["rg-blue"], "announced once");
+}
+
+/// A release group key the request routes accept.
+const RG_WANTED: &str = "44444444-4444-4444-8444-444444444444";
+
+// Cancelling a request the wanted watcher downloaded again stops its watch,
+// even while the watcher is searching for the album: the search that
+// answers after the cancel starts nothing, and the request stays cancelled.
+#[tokio::test]
+async fn cancelling_a_wanted_download_stops_its_watch() {
+    let db = AcquireDb::scratch().unwrap();
+    let rig = wanted(&db).await;
+    seed_request(&rig.deps.ledger, RG_WANTED, "failed", None).await;
+    wanted_tick(NOW, &rig.deps).await;
+    let watch = rig.deps.watches.get(RG_WANTED).await.unwrap().unwrap();
+    let checked = wanted_tick(watch.next_check_at as i64, &rig.deps).await;
+    assert_eq!(checked.dispatched, 1);
+
+    let requests = RequestsService::new(&RequestsState::new(
+        &db,
+        Arc::new(QuotaLedger::unlimited(db.clone())),
+        rig.deps.downloads.clone(),
+    ));
+    let owner = Principal::acting_for("user-1", Role::User, None);
+    let watch = rig.deps.watches.get(RG_WANTED).await.unwrap().unwrap();
+    rig.slskd.reset();
+    rig.slskd.set_handler_delay_ms(1_000);
+    let cancel = async {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while rig.slskd.max_in_flight() == 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the watcher's search never reached slskd"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        requests
+            .cancel_one(&owner, RG_WANTED, RequestKind::Album)
+            .await
+            .unwrap();
+    };
+    let (checked, ()) = tokio::join!(wanted_tick(watch.next_check_at as i64, &rig.deps), cancel);
+    assert_eq!(checked.dispatched, 0);
+    assert_eq!(status_of(&rig.deps.ledger, RG_WANTED).await, "cancelled");
+    let watch = rig.deps.watches.get(RG_WANTED).await.unwrap().unwrap();
+    assert_eq!(watch.state, WatchState::Stopped);
+    assert_eq!(tasks(&db).await.len(), 1, "no second download");
 }

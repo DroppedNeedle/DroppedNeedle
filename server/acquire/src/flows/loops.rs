@@ -288,6 +288,29 @@ async fn check_watch(
                 });
                 return Ok(());
             }
+            // A stop, a cancel or a re-ask waiting for approval may have
+            // arrived while the sources were searched: a person decides
+            // first. A stopped watch stays stopped; a waiting one is listed
+            // again once the request is decided.
+            let still_watching = deps
+                .watches
+                .get(&watch.key)
+                .await?
+                .is_some_and(|current| current.state == WatchState::Watching);
+            if !still_watching {
+                return Ok(());
+            }
+            let row = deps.ledger.get(RequestKind::Album, &watch.key).await?;
+            if row.as_ref().is_some_and(|row| {
+                matches!(
+                    row.status,
+                    RequestStatus::AwaitingApproval | RequestStatus::Cancelling
+                )
+            }) {
+                return Ok(());
+            }
+            // A cancel between this read and the link fails the link.
+            let generation = row.map(|row| row.generation);
             let dispatch = album_dispatch(
                 &watch.user_id,
                 &watch.key,
@@ -301,9 +324,18 @@ async fn check_watch(
             match deps.downloads.dispatch(&dispatch).await {
                 Ok(outcome) => {
                     let task_id = outcome.task_id().to_owned();
-                    deps.ledger
-                        .link_task(RequestKind::Album, &watch.key, &task_id, None)
+                    let linked = deps
+                        .ledger
+                        .link_task(RequestKind::Album, &watch.key, &task_id, generation)
                         .await?;
+                    if !linked && outcome.started() && cancelled_meanwhile(deps, watch).await? {
+                        // The request was cancelled after the check above:
+                        // the download it never asked for stops too.
+                        if let Err(cause) = deps.downloads.cancel(&task_id).await {
+                            tracing::warn!(%task_id, %cause, "wanted dispatch cancel failed");
+                        }
+                        return Ok(());
+                    }
                     deps.watches
                         .record_check(
                             &watch.key,
@@ -353,6 +385,23 @@ async fn check_watch(
         }
     }
     Ok(())
+}
+
+/// Whether the watch's request reads cancelled or mid-cancel now.
+async fn cancelled_meanwhile(
+    deps: &WantedDeps,
+    watch: &WantedWatch,
+) -> Result<bool, RequestsError> {
+    Ok(deps
+        .ledger
+        .get(RequestKind::Album, &watch.key)
+        .await?
+        .is_some_and(|row| {
+            matches!(
+                row.status,
+                RequestStatus::Cancelled | RequestStatus::Cancelling
+            )
+        }))
 }
 
 /// Ask every source that is on for the watch's album, through the same

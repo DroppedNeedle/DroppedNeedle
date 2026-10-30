@@ -351,13 +351,7 @@ impl RequestsService {
         if record.status == RequestStatus::AwaitingApproval {
             if !self
                 .store
-                .update_status(
-                    kind,
-                    &mbid,
-                    RequestStatus::Cancelled,
-                    Some(now),
-                    Some(record.generation),
-                )
+                .cancel(kind, &mbid, now, Some(record.generation))
                 .await?
             {
                 return Ok(Decided::Changed);
@@ -417,13 +411,7 @@ impl RequestsService {
             return Ok(false);
         }
         self.store
-            .update_status(
-                kind,
-                mbid,
-                RequestStatus::Cancelled,
-                Some(now),
-                Some(current.generation),
-            )
+            .cancel(kind, mbid, now, Some(current.generation))
             .await
     }
 
@@ -721,17 +709,7 @@ impl RequestsService {
             && !cancel_linked(&self.dispatch, task_id).await
         {
             RequesterCancel::StopFailed
-        } else if !self
-            .store
-            .update_status(
-                kind,
-                mbid,
-                RequestStatus::Cancelled,
-                Some(now),
-                Some(generation),
-            )
-            .await?
-        {
+        } else if !self.store.cancel(kind, mbid, now, Some(generation)).await? {
             RequesterCancel::Changed
         } else {
             return Ok(RequesterCancel::CancelledTask);

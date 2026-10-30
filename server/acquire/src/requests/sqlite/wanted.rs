@@ -240,27 +240,6 @@ impl WantedStore {
         .await
     }
 
-    /// Mark a watch fulfilled (the album reached the library).
-    pub async fn mark_fulfilled(
-        &self,
-        key: &str,
-        outcome: &str,
-        now: u64,
-    ) -> Result<(), RequestsError> {
-        let key = key.to_lowercase();
-        let outcome = outcome.to_owned();
-        self.db
-            .write_background("wanted.fulfilled", move |tx| {
-                tx.execute(
-                    sql::MARK_FULFILLED.text(),
-                    params![key, WatchState::Fulfilled, outcome, ms_from_secs(now)],
-                )?;
-                Ok(())
-            })
-            .await
-            .map_err(|error| lane_error("wanted.fulfilled", error))
-    }
-
     /// Stop one watch: watching becomes stopped. Owners
     /// and admins only.
     pub async fn stop(

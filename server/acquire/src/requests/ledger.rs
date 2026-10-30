@@ -160,8 +160,12 @@ pub fn can_request_transition(from: RequestStatus, to: RequestStatus) -> bool {
         // An admin decides; the owner may withdraw; an album the library
         // already holds leaves nothing to approve.
         S::AwaitingApproval => matches!(to, S::Pending | S::Rejected | S::Cancelled | S::Imported),
-        // A cancel lands, or a failed one puts the row back.
-        S::Cancelling => matches!(to, S::Cancelled | S::Pending | S::Queued | S::Downloading),
+        // A cancel lands, or a failed one puts the row back. A download
+        // that completes before the cancel reaches it imports the row.
+        S::Cancelling => matches!(
+            to,
+            S::Cancelled | S::Pending | S::Queued | S::Downloading | S::Imported
+        ),
         // Finished rows start again through a new ask or a retry, and
         // follow a new download of their album. A failed or short one the
         // library now holds settles as imported.
@@ -585,7 +589,7 @@ mod tests {
         for to in [Pending, Rejected, Cancelled, Imported] {
             allowed.push((AwaitingApproval, to));
         }
-        for to in [Cancelled, Pending, Queued, Downloading] {
+        for to in [Cancelled, Pending, Queued, Downloading, Imported] {
             allowed.push((Cancelling, to));
         }
         for from in [Failed, Cancelled, Incomplete] {

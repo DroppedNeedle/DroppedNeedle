@@ -703,8 +703,37 @@ impl RequestStore {
             .map_err(|error| lane_error("requests.update_status", error))
     }
 
+    /// Cancel one row behind the generation CAS (`None` skips the guard),
+    /// stamping `at`. An album's wanted watch stops in the same write, so
+    /// the watcher does not download it again. Answers whether the row
+    /// moved.
+    pub async fn cancel(
+        &self,
+        kind: RequestKind,
+        key: &str,
+        at: u64,
+        expected_generation: Option<u64>,
+    ) -> Result<bool, RequestsError> {
+        let stored = row_key(kind, key);
+        let expected = guard(expected_generation);
+        self.db
+            .write("requests.cancel", move |tx| {
+                let changed = tx.execute(
+                    sql::UPDATE_STATUS.text(),
+                    params![stored, RequestStatus::Cancelled, ms_from_secs(at), expected],
+                )?;
+                if changed > 0 && kind == RequestKind::Album {
+                    tx.execute(sql::STOP_ROW_WATCH.text(), params![stored])?;
+                }
+                Ok(changed > 0)
+            })
+            .await
+            .map_err(|error| lane_error("requests.cancel", error))
+    }
+
     /// Link one row to its download task behind the generation CAS (`None`
-    /// skips the guard). The row reads downloading, and the task records
+    /// skips the guard). A task already retried links the row to its
+    /// newest retry. The row reads downloading, and the task records
     /// which request it serves. A row waiting for approval, mid-cancel,
     /// rejected or imported is not linked. Answers whether the row moved.
     pub async fn link_task(
@@ -719,6 +748,7 @@ impl RequestStore {
         let expected = guard(expected_generation);
         self.db
             .write("requests.link_task", move |tx| {
+                let task_id = settle::retry_head(tx, &task_id)?;
                 let changed =
                     tx.execute(sql::LINK_ROW.text(), params![stored, task_id, expected])?;
                 if changed > 0 {
@@ -945,6 +975,9 @@ impl RequestStore {
                         sql::CANCEL_ROW.text(),
                         params![stored, RequestStatus::Cancelled, ms_from_secs(now)],
                     )?;
+                    if kind == RequestKind::Album {
+                        tx.execute(sql::STOP_ROW_WATCH.text(), params![stored])?;
+                    }
                     return Ok(Some(CancelDecision::CancelledDirect));
                 }
                 if !record.status.is_cancellable() {

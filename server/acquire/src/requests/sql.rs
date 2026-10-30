@@ -14,13 +14,14 @@ use crate::landing::sql::OWNED_TRACKS_FROM;
 droppedneedle_kernel::sql! {
     /// Settle the rows linked to one task (`?1`) as `?2`, stamping
     /// `completed_at` with `?3` unless it is NULL. Live rows always match;
-    /// with `?4` set, failed and incomplete rows match too (a completed
-    /// task imports them).
+    /// with `?4` set, failed, incomplete and mid-cancel rows match too (a
+    /// completed task imports them: a cancel that lost the race to the
+    /// download reads as what happened).
     pub(crate) SETTLE_TASK_ROWS = "UPDATE request_history SET status = ?2, \
              completed_at = COALESCE(?3, completed_at), generation = generation + 1 \
          WHERE download_task_id = ?1 \
            AND (status IN ('pending', 'queued', 'downloading') \
-                OR (?4 AND status IN ('failed', 'incomplete'))) \
+                OR (?4 AND status IN ('failed', 'incomplete', 'cancelling'))) \
          RETURNING musicbrainz_id_lower, request_kind, user_id, track_release_group_mbid";
     /// An album row (`?1`, lowercased) whose album the library holds:
     /// imported at `?2` unless a person decided it or it is mid-cancel.
@@ -34,6 +35,15 @@ droppedneedle_kernel::sql! {
     /// release_group_mbid)`.
     pub(crate) TASK_ALBUM = "SELECT download_type, release_group_mbid FROM download_tasks \
          WHERE id = ?1";
+    /// Stop the wanted watches of the album rows linked to task `?1` that
+    /// read cancelled: a cancelled request is not downloaded again.
+    pub(crate) STOP_CANCELLED_WATCHES = "UPDATE wanted_watches SET state = 'stopped' \
+         WHERE state = 'watching' AND release_group_mbid_lower IN ( \
+           SELECT musicbrainz_id_lower FROM request_history \
+           WHERE download_task_id = ?1 AND request_kind = 'album' AND status = 'cancelled')";
+    /// Stop the wanted watch of album `?1` (lowercased).
+    pub(crate) STOP_ROW_WATCH = "UPDATE wanted_watches SET state = 'stopped' \
+         WHERE release_group_mbid_lower = ?1 AND state = 'watching'";
     /// The album's watch (`?1`) is fulfilled, with outcome `?2` at `?3`.
     pub(crate) FULFIL_WATCH = "UPDATE wanted_watches SET state = 'fulfilled', \
              last_outcome = ?2, last_checked_at = ?3, new_candidate_count = 0 \
@@ -46,13 +56,28 @@ droppedneedle_kernel::sql! {
          WHERE musicbrainz_id_lower = ?1 AND (?3 IS NULL OR generation = ?3) \
            AND status IN ('pending', 'queued', 'downloading', 'failed', 'incomplete', \
                           'cancelled')";
-    /// Move the rows that followed task `?1` onto its retry `?2`.
+    /// Move the rows that followed task `?1` onto its retry `?2`. A
+    /// cancelled row moves only with a retry of a stopped download, which
+    /// only a person starts: the automatic retry takes failed and partial
+    /// tasks, and never undoes a cancel.
     pub(crate) RELINK_ROWS = "UPDATE request_history SET download_task_id = ?2, \
              status = 'downloading', completed_at = NULL, generation = generation + 1 \
          WHERE download_task_id = ?1 \
-           AND status IN ('pending', 'queued', 'downloading', 'failed', 'incomplete', \
-                          'cancelled') \
+           AND (status IN ('pending', 'queued', 'downloading', 'failed', 'incomplete') \
+                OR (status = 'cancelled' AND EXISTS (SELECT 1 FROM download_tasks s \
+                    WHERE s.id = ?1 AND s.status = 'cancelled'))) \
          RETURNING musicbrainz_id_lower";
+    /// The newest retry of task `?1` when `?1` already failed or fell short:
+    /// a row linked after its task was retried follows the retry.
+    pub(crate) RETRY_HEAD = "SELECT n.id FROM download_tasks t JOIN download_tasks n \
+           ON n.user_id = t.user_id AND n.download_type = t.download_type \
+          AND (t.download_type = 'track' OR n.release_group_mbid = t.release_group_mbid) \
+          AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '') \
+          AND n.origin = 'retry' AND n.retry_count > t.retry_count \
+          AND (n.created_at > t.created_at \
+               OR (n.created_at = t.created_at AND n.rowid > t.rowid)) \
+         WHERE t.id = ?1 AND t.status IN ('failed', 'partial') \
+         ORDER BY n.retry_count DESC, n.created_at DESC, n.rowid DESC LIMIT 1";
     /// The request a task (`?1`) serves (`?2`), the link's other end.
     pub(crate) MARK_TASK_REQUEST = "UPDATE download_tasks SET request_history_mbid = ?2 \
          WHERE id = ?1";
@@ -250,8 +275,14 @@ droppedneedle_kernel::sql! {
     pub(crate) WATCHES_FOR = WATCH_SELECT
         + " WHERE ?1 OR w.user_id = ?2 ORDER BY w.created_at DESC, w.release_group_mbid_lower";
     /// Watches in state `?1` due at `?2`, oldest due first, at most `?3`.
+    /// A watch whose request waits for approval or is being cancelled
+    /// waits too: a person decides that album first.
     pub(crate) WATCHES_DUE = WATCH_SELECT
         + " WHERE w.state = ?1 AND w.next_check_at <= ?2 \
+           AND NOT EXISTS (SELECT 1 FROM request_history rh \
+             WHERE rh.musicbrainz_id_lower = w.release_group_mbid_lower \
+               AND rh.request_kind = 'album' \
+               AND rh.status IN ('awaiting_approval', 'cancelling')) \
          ORDER BY w.next_check_at, w.release_group_mbid_lower LIMIT ?3";
     /// Stopped and fulfilled watches last touched before `?1`.
     pub(crate) PRUNE_WATCHES = "DELETE FROM wanted_watches \
@@ -279,9 +310,6 @@ droppedneedle_kernel::sql! {
     /// The candidates watch `?1` has seen: `(source, identity)`.
     pub(crate) SEEN_CANDIDATES = "SELECT source, identity FROM wanted_seen_candidates \
          WHERE release_group_mbid_lower = ?1";
-    /// Mark watch `?1` as `?2` with outcome `?3` at `?4`.
-    pub(crate) MARK_FULFILLED = "UPDATE wanted_watches SET state = ?2, last_outcome = ?3, \
-         last_checked_at = ?4, new_candidate_count = 0 WHERE release_group_mbid_lower = ?1";
     /// Move watch `?1` from state `?3` to `?2`.
     pub(crate) MOVE_WATCH = "UPDATE wanted_watches SET state = ?2 \
          WHERE release_group_mbid_lower = ?1 AND state = ?3";

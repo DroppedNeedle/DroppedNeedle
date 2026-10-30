@@ -1062,14 +1062,25 @@ impl<'conn> DownloadStore<'conn> {
     /// Cancel one task: a live task goes `cancelled` and every attempt still
     /// acquiring or in use moves to `cleanup_pending` with a discard
     /// disposition, so the cleanup pass aborts the client transfer and
-    /// drops its records. Answers false when the task is missing or already
-    /// terminal (nothing to stop).
+    /// drops its records. A task that failed or fell short just before the
+    /// cancel reached it is marked cancelled too, so its automatic retry
+    /// never starts, and its kept files go to cleanup. Answers false when
+    /// the task is missing, completed or already cancelled.
     pub fn cancel_task(&self, task_id: &str, now: f64) -> Result<bool, StoreError> {
         let changed = self
             .conn
             .execute(sql::CANCEL_TASK.text(), rusqlite::params![ms(now), task_id])?;
         if changed == 0 {
-            return Ok(false);
+            let stopped = self.conn.execute(
+                sql::STOP_RETRIES.text(),
+                rusqlite::params![task_id, ms(now)],
+            )?;
+            if stopped == 0 {
+                return Ok(false);
+            }
+            self.release_task_kept(task_id, now)?;
+            self.settle_requests(task_id, TaskStatus::Cancelled, now)?;
+            return Ok(true);
         }
         self.conn.execute(
             sql::CANCEL_ATTEMPTS.text(),

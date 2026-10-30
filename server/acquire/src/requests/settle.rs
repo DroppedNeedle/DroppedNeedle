@@ -27,8 +27,8 @@ pub struct Fulfilled {
 }
 
 /// The status a request takes when its task settles as `outcome`, and
-/// whether failed and incomplete rows follow too. `None` for a task that
-/// is still live.
+/// whether failed, incomplete and mid-cancel rows follow too. `None` for
+/// a task that is still live.
 fn settled_status(outcome: TaskStatus) -> Option<(RequestStatus, bool)> {
     match outcome {
         TaskStatus::Completed => Some((RequestStatus::Imported, true)),
@@ -65,9 +65,10 @@ fn fulfilled_rows(
 
 /// Settle every request linked to `task_id`, which just settled as
 /// `outcome`: live rows take the task's result, and a completed task also
-/// imports failed and incomplete rows (a retry that served them). Rows
-/// mid-cancel, waiting for approval or already final stay as they are. A
-/// completed album also fulfils its wanted watch. Answers the rows that
+/// imports failed and incomplete rows (a retry that served them) and rows
+/// mid-cancel (the download won the race). Rows waiting for approval or
+/// already final stay as they are. A completed album also fulfils its
+/// wanted watch, and a cancelled one stops it. Answers the rows that
 /// reached the library.
 pub(crate) fn on_task_settled(
     conn: &Connection,
@@ -83,6 +84,10 @@ pub(crate) fn on_task_settled(
         conn.prepare_cached(sql::SETTLE_TASK_ROWS.text())?,
         params![task_id, status, stamp, finished_too],
     )?;
+    if outcome == TaskStatus::Cancelled {
+        conn.prepare_cached(sql::STOP_CANCELLED_WATCHES.text())?
+            .execute(params![task_id])?;
+    }
     if outcome != TaskStatus::Completed {
         return Ok(Vec::new());
     }
@@ -120,9 +125,21 @@ pub(crate) fn on_album_in_library(
     Ok(rows)
 }
 
+/// The task a row being linked to `task_id` should follow: the newest
+/// retry of it when it already failed and was retried before the link
+/// landed, else `task_id` itself.
+pub(crate) fn retry_head(conn: &Connection, task_id: &str) -> rusqlite::Result<String> {
+    let head: Option<String> = conn
+        .prepare_cached(sql::RETRY_HEAD.text())?
+        .query_row(params![task_id], |row| row.get(0))
+        .optional()?;
+    Ok(head.unwrap_or_else(|| task_id.to_owned()))
+}
+
 /// Point every request that followed `from` at its retry `to`: the row
 /// reads downloading again, and the retry records which request it serves.
-/// Rows a person decided, waiting for approval or mid-cancel stay put.
+/// Rows a person decided, waiting for approval or mid-cancel stay put, and
+/// a cancelled row moves only when a person retried the stopped download.
 pub(crate) fn relink(conn: &Connection, from: &str, to: &str) -> rusqlite::Result<()> {
     let keys: Vec<String> = conn
         .prepare_cached(sql::RELINK_ROWS.text())?
@@ -174,7 +191,11 @@ mod tests {
             };
             let mut from = LIVE.to_vec();
             if finished_too {
-                from.extend([RequestStatus::Failed, RequestStatus::Incomplete]);
+                from.extend([
+                    RequestStatus::Failed,
+                    RequestStatus::Incomplete,
+                    RequestStatus::Cancelling,
+                ]);
             }
             for from in from {
                 assert!(
