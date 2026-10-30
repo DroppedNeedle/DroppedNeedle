@@ -2436,7 +2436,7 @@ fn a_left_out_folder_is_listed_in_the_settings_warnings() {
 /// that root has no bin, and no other bin stands in.
 #[test]
 fn bin_entries_never_follow_a_symlink_below_the_bin() {
-    use publish::bin::{BinRefusal, CONFIGURED_BIN_ID, choose, fresh_entry};
+    use publish::bin::{BinRefusal, CONFIGURED_BIN_ID, fresh_entry};
     use std::os::unix::fs::symlink;
 
     let fix = fixture("bin-symlink");
@@ -2462,7 +2462,7 @@ fn bin_entries_never_follow_a_symlink_below_the_bin() {
     std::fs::create_dir_all(&disk).unwrap();
     let linked = fix.dir.join("bin-link");
     symlink(&disk, &linked).unwrap();
-    let choice = choose(&linked.display().to_string(), &library, &[]);
+    let choice = choose_bins(&linked.display().to_string(), &library, &[]).unwrap();
     let resolved = std::fs::canonicalize(&disk).unwrap();
     assert_eq!(choice.refused, None);
     assert_eq!(
@@ -2472,7 +2472,7 @@ fn bin_entries_never_follow_a_symlink_below_the_bin() {
     std::fs::create_dir_all(music.join("Band")).unwrap();
     let into_library = fix.dir.join("into-library");
     symlink(music.join("Band"), &into_library).unwrap();
-    let refused = choose(&into_library.display().to_string(), &library, &[]);
+    let refused = choose_bins(&into_library.display().to_string(), &library, &[]).unwrap();
     assert_eq!(refused.refused, Some(BinRefusal::OverlapsLibrary));
     assert_eq!(refused.roots, vec![Root::recycle_of("music", &music)]);
 
@@ -2509,7 +2509,7 @@ fn bin_entries_never_follow_a_symlink_below_the_bin() {
         Root::library("music", music),
         Root::library("other", other.clone()),
     ];
-    let choice = choose("", &both, &[]);
+    let choice = choose_bins("", &both, &[]).unwrap();
     assert_eq!(choice.roots, vec![Root::recycle_of("other", &other)]);
     assert_eq!(
         choice.unusable,
@@ -2523,10 +2523,13 @@ fn bin_entries_never_follow_a_symlink_below_the_bin() {
 /// next pass finishes the move.
 #[test]
 fn a_bin_copy_that_did_not_sync_keeps_the_set_aside_file() {
+    use std::os::unix::fs::PermissionsExt as _;
+
     let fix = fixture("bin-unsynced");
     let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
     let entry = fix.dir.join("bin/entry/a.flac");
     let occupier = replace_into(&fix, &mut bundle, &entry);
+    std::fs::set_permissions(&occupier, std::fs::Permissions::from_mode(0o640)).unwrap();
     let (sealed, live) = seal(&bundle);
     let mut publisher = open_publisher(&fix);
     publisher.set_bin_seams(Seams {
@@ -2549,6 +2552,11 @@ fn a_bin_copy_that_did_not_sync_keeps_the_set_aside_file() {
     drop(publisher);
     reconcile(&restart(&fix), &fix.sandbox).unwrap();
     assert_eq!(std::fs::read(&entry).unwrap(), b"replaced-library-file");
+    assert_eq!(
+        std::fs::metadata(&entry).unwrap().permissions().mode() & 0o777,
+        0o640,
+        "the copy keeps the file's permission bits"
+    );
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
@@ -2578,7 +2586,7 @@ fn nothing_goes_to_a_bin_while_the_bins_are_unknown() {
         blobs(&fix),
     );
     let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
-    assert!(matches!(err, PublishError::Interrupted(_)), "got {err:?}");
+    assert!(matches!(err, PublishError::BinsUnknown(_)), "got {err:?}");
     assert_eq!(std::fs::read(&occupier).unwrap(), b"replaced-library-file");
     drop(publisher);
 
@@ -2603,6 +2611,209 @@ fn nothing_goes_to_a_bin_while_the_bins_are_unknown() {
     reconcile(&restart(&fix), &fix.sandbox).unwrap();
     assert_eq!(std::fs::read(&entry).unwrap(), b"replaced-library-file");
     assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// The bins a session would choose for `library` from the configured
+/// path, with `downloads` as the download folders.
+fn choose_bins(
+    configured: &str,
+    library: &[Root],
+    downloads: &[PathBuf],
+) -> Result<publish::bin::BinChoice, &'static str> {
+    let resolved: Vec<publish::paths::ResolvedRoot> = library
+        .iter()
+        .map(|root| publish::paths::ResolvedRoot::of(&root.id, &root.dir))
+        .collect();
+    publish::bin::choose(configured, &resolved, &mut || Ok(downloads.to_vec()))
+}
+
+/// A folder made unsearchable for a test, searchable again when dropped.
+struct Unsearchable(PathBuf);
+
+impl Unsearchable {
+    fn new(dir: &std::path::Path) -> Self {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        Self(dir.to_path_buf())
+    }
+}
+
+impl Drop for Unsearchable {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+/// A configured recycle bin that cannot be reached (a folder above it
+/// cannot be searched) makes a committed replacement wait under its hidden
+/// name: no library folder's `.recycle` stands in, and the journal still
+/// names the configured bin. Once the bin can be reached, the next pass
+/// moves the file into it.
+#[test]
+fn an_unreachable_bin_makes_the_replaced_file_wait() {
+    use publish::bin::fresh_entry;
+
+    let fix = fixture("bin-unreachable");
+    let music = fix.dir.join("music");
+    let vault = fix.dir.join("vault");
+    std::fs::create_dir_all(vault.join("bin")).unwrap();
+    let configured = vault.join("bin").display().to_string();
+    let library = vec![
+        Root::library("music", music.clone()),
+        Root::library("incoming", fix.dir.join("incoming")),
+    ];
+    let sandbox_now = || match choose_bins(&configured, &library, &[]) {
+        Ok(choice) => {
+            let mut roots = library.clone();
+            roots.extend(choice.roots);
+            Sandbox::new(roots).unwrap()
+        }
+        Err(cause) => Sandbox::new(library.clone())
+            .unwrap()
+            .with_bins_unknown(cause),
+    };
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let bin = std::fs::canonicalize(vault.join("bin")).unwrap();
+    let entry = fresh_entry(&bin, "a.flac", std::time::SystemTime::now()).unwrap();
+    replace_into(&fix, &mut bundle, &entry);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = Publisher::new(
+        sandbox_now(),
+        restart(&fix),
+        FixedSpace(u64::MAX),
+        jobs(&restart(&fix)),
+        std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
+        blobs(&fix),
+    );
+    publisher.set_crash_point(Some(CrashPoint::AfterCatalogCommit));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &docs),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+
+    let locked = Unsearchable::new(&vault);
+    if std::fs::read_dir(&vault).is_ok() {
+        eprintln!("skipped: this user can search a folder at mode 000 (running as root)");
+        return;
+    }
+    reconcile(&restart(&fix), &sandbox_now()).unwrap();
+    assert!(!music.join(".recycle").exists(), "no other bin stood in");
+    let named: String = open_db(&fix)
+        .query_row(
+            "SELECT recycle_to FROM library_publish_replacements",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(named, entry.display().to_string());
+    let set_aside = hidden_leftovers(&music)
+        .iter()
+        .filter(|path| {
+            std::fs::read(path).ok().as_deref() == Some(b"replaced-library-file".as_slice())
+        })
+        .count();
+    assert_eq!(
+        set_aside, 1,
+        "the replaced file waits under its hidden name"
+    );
+
+    drop(locked);
+    reconcile(&restart(&fix), &sandbox_now()).unwrap();
+    assert_eq!(std::fs::read(&entry).unwrap(), b"replaced-library-file");
+    assert!(!music.join(".recycle").exists());
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A replaced file whose bin is no longer the session's goes to a fresh
+/// entry in the bin that serves its folder now, and every record of where
+/// it went follows: the journal and the retired track's path. A removed
+/// track keeps its own path.
+#[test]
+fn a_rebind_moves_every_record_of_the_replaced_file() {
+    let fix = fixture("rebind-records");
+    let other_bin = |fix: &Fixture| {
+        Sandbox::new(vec![
+            Root::library("music", fix.dir.join("music")),
+            Root::library("incoming", fix.dir.join("incoming")),
+            Root::bin("bin2", fix.dir.join("bin2")),
+        ])
+        .unwrap()
+    };
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let occupier = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+    std::fs::create_dir_all(occupier.parent().unwrap()).unwrap();
+    std::fs::write(&occupier, b"replaced-library-file").unwrap();
+    open_db(&fix)
+        .execute(
+            "UPDATE local_tracks SET relative_path = 'organized/a.flac' WHERE id = 'track-s'",
+            [],
+        )
+        .unwrap();
+    bundle.items[0].replaces = Some(publish::Replacement {
+        sha256: sha256_hex(b"replaced-library-file"),
+        track_id: Some("track-s".to_string()),
+        recycle_to: fix.dir.join("bin/entry/a.flac").display().to_string(),
+    });
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterCatalogCommit));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &docs),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+
+    reconcile(&restart(&fix), &other_bin(&fix)).unwrap();
+    let conn = open_db(&fix);
+    let named: String = conn
+        .query_row(
+            "SELECT recycle_to FROM library_publish_replacements WHERE replaced_track_id = 'track-s'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(named.starts_with(&fix.dir.join("bin2").display().to_string()));
+    assert_eq!(std::fs::read(&named).unwrap(), b"replaced-library-file");
+    let file_path: String = conn
+        .query_row(
+            "SELECT file_path FROM local_tracks WHERE id = 'track-s'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(file_path, named, "the retired track names its file's place");
+
+    let fix = fixture("rebind-removed");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let bundle = removal_bundle(
+        &fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac")],
+    );
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterCatalogCommit));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &BTreeMap::new()),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+    let path_of = |fix: &Fixture| -> String {
+        open_db(fix)
+            .query_row(
+                "SELECT file_path FROM local_tracks WHERE id = 'track-a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    let before = path_of(&fix);
+    reconcile(&restart(&fix), &other_bin(&fix)).unwrap();
+    assert_eq!(files_under(&fix.dir.join("bin2")).len(), 1);
+    assert_eq!(path_of(&fix), before, "a removed track keeps its path");
 }
 
 // --- Removal briefs: a removed file is set aside, then binned; never lost. ---
@@ -5103,7 +5314,7 @@ fn a_bin_inside_slskds_folders_is_refused() {
     let library = [Root::library("music", music)];
 
     for bin in [incomplete.join("bin"), downloads.join("bin")] {
-        let choice = publish::bin::choose(&bin.to_string_lossy(), &library, &trees);
+        let choice = choose_bins(&bin.to_string_lossy(), &library, &trees).unwrap();
         assert_eq!(
             choice.refused,
             Some(BinRefusal::OverlapsDownloads),

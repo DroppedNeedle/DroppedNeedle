@@ -264,7 +264,7 @@ impl Management {
                     }));
                 }
                 Err(MutationError::Conflict(reason)) if reason.code == RECYCLE_BIN_UNKNOWN.code => {
-                    return Err(Refused::Busy(ManagementError::BinsUnknown));
+                    return Err(Refused::Busy(ManagementError::BinsUnknown(reason)));
                 }
                 Err(MutationError::Conflict(reason)) => {
                     return Err(Refused::Busy(ManagementError::Busy(

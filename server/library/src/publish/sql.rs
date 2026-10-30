@@ -49,6 +49,10 @@ droppedneedle_kernel::sql! {
     /// A fresh bin entry (`?2`) for a replaced file not yet recycled.
     pub(super) JOURNAL_SET_RECYCLE_TO = "UPDATE library_publish_replacements \
              SET recycle_to = ?2 WHERE journal_id = ?1 AND recycled_at IS NULL";
+    /// Retired track `?1`, whose path still names bin entry `?2`, now
+    /// names `?3`.
+    pub(super) TRACK_FOLLOW_REBIN = "UPDATE local_tracks SET file_path = ?3, \
+             row_revision = row_revision + 1 WHERE id = ?1 AND file_path = ?2";
     /// One page of recycled copies due to expire: copies that reached the
     /// bin before `?1` (unix seconds), are not expired yet and whose row
     /// is done, after the cursor (`?2` recycled at, `?3` journal id), at

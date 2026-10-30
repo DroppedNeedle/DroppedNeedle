@@ -393,6 +393,9 @@ Run from the repo root. `make help` lists every target.
   The one other link followed is a library folder's `.recycle`, and only
   once its target is checked to lie outside every library and download
   folder.
+- A configured recycle bin that cannot be reached makes removals and
+  upgrades wait; files never fall back to a library folder's `.recycle`
+  while it is down.
 - "Never overwrite" is enforced by the operating system call that places the
   file, not by a check made before it. A library on a filesystem that offers
   no such call still works and shows a warning.

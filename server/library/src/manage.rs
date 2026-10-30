@@ -569,6 +569,7 @@ impl PublishCell {
         let resolved = resolve_roots(registry);
         let left_out = left_out(&resolved);
         self.log_left_out(&left_out);
+        let bins = self.bins.current_over(&resolved).map(|choice| choice.roots);
         let kept = |root: &Root| !left_out.contains(&root.id);
         SessionRoots {
             library: Self::root_dirs(registry).into_iter().filter(kept).collect(),
@@ -581,7 +582,7 @@ impl PublishCell {
                 .filter(|root| !left_out.contains(&root.id))
                 .map(|root| (root.id, root.real))
                 .collect(),
-            bins: self.bins.current(registry).map(|choice| choice.roots),
+            bins,
         }
     }
 
@@ -1161,6 +1162,9 @@ pub(crate) fn publish_error(error: PublishError) -> ServiceError {
                 .to_owned(),
         },
         PublishError::Interrupted(cause) => ServiceError::Busy { cause },
+        error @ PublishError::BinsUnknown(_) => ServiceError::Busy {
+            cause: error.to_string(),
+        },
         PublishError::Store(message) | PublishError::TimedOut(message) => {
             ServiceError::internal(&message)
         }

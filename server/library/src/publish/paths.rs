@@ -215,7 +215,13 @@ impl Sandbox {
                 return PlacementMode::Unknown;
             }
         }
-        let mode = place::probe(&bin.dir);
+        let mode = match probe_held_dir(&bin.dir) {
+            Ok(mode) => mode,
+            Err(error) => {
+                tracing::warn!(bin = bin.id, %error, "recycle bin folder refused");
+                return PlacementMode::Unknown;
+            }
+        };
         if mode == PlacementMode::Check {
             tracing::info!(
                 bin = bin.id,
@@ -565,7 +571,8 @@ impl ResolvedRoot {
         }
     }
 
-    fn folder(&self) -> &Path {
+    /// The real folder, or the configured path while it does not resolve.
+    pub fn folder(&self) -> &Path {
         self.real.as_deref().unwrap_or(&self.configured)
     }
 }
@@ -1182,6 +1189,26 @@ pub(crate) fn incoming_temp(recycle_to: &Path) -> Option<PathBuf> {
         "{HIDDEN_PREFIX}incoming-{}",
         short_hash(&recycle_to.to_string_lossy())
     )))
+}
+
+/// Probe placement in `dir` through a handle on the folder itself, opened
+/// without following a link: a folder that turned into a link after its
+/// check is refused, not probed through.
+#[cfg(target_os = "linux")]
+fn probe_held_dir(dir: &Path) -> std::io::Result<PlacementMode> {
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_PATH | libc::O_NOFOLLOW | libc::O_DIRECTORY)
+        .open(dir)?;
+    let through = PathBuf::from(format!("/proc/self/fd/{}", held.as_raw_fd()));
+    Ok(place::probe(&through))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_held_dir(dir: &Path) -> std::io::Result<PlacementMode> {
+    Ok(place::probe(dir))
 }
 
 /// Make `dir` and any folder above it that is missing. Answers the

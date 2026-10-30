@@ -1263,25 +1263,38 @@ impl<P: SpaceProbe> Publisher<P> {
         }
         // A replaced file's bin entry is checked before anything moves.
         // While the bins are unknown the publish waits, as a busy database
-        // makes it.
+        // makes it. An entry in a bin the session no longer holds is
+        // rebound after the commit to the bin that serves its root now, so
+        // it passes while that root has one, and waits while it has none.
         let entries = items
             .iter()
-            .filter_map(|item| item.replaces.as_ref())
-            .map(|replaced| replaced.recycle_to.as_str())
+            .filter_map(|item| {
+                item.replaces
+                    .as_ref()
+                    .map(|replaced| (item.dest_root.as_str(), replaced.recycle_to.as_str()))
+            })
             .chain(
                 removal
                     .into_iter()
                     .flat_map(|removal| &removal.items)
-                    .filter_map(|item| item.file.as_ref())
-                    .map(|file| file.recycle_to.as_str()),
+                    .filter_map(|item| {
+                        item.file
+                            .as_ref()
+                            .map(|file| (item.seal.root_id.as_str(), file.recycle_to.as_str()))
+                    }),
             );
-        for recycle_to in entries {
+        for (root_id, recycle_to) in entries {
             if let Some(cause) = self.sandbox.bins_unknown() {
+                return Err(PublishError::BinsUnknown(cause));
+            }
+            let recycle_to = Path::new(recycle_to);
+            if self.sandbox.bin_holding(recycle_to).is_some() {
+                self.sandbox.ensure_under_bin(recycle_to)?;
+            } else if self.sandbox.bin_for(root_id).is_err() {
                 return Err(PublishError::Interrupted(format!(
-                    "no recycle bin is known while {cause}"
+                    "library root {root_id} has no usable recycle bin"
                 )));
             }
-            self.sandbox.ensure_under_bin(Path::new(recycle_to))?;
         }
         let bin_copies = put_back
             .into_iter()
@@ -1289,9 +1302,7 @@ impl<P: SpaceProbe> Publisher<P> {
             .filter(|item| !item.home_already && item.copy_in == super::planner::CopyIn::Bin);
         for item in bin_copies {
             if let Some(cause) = self.sandbox.bins_unknown() {
-                return Err(PublishError::Interrupted(format!(
-                    "no recycle bin is known while {cause}"
-                )));
+                return Err(PublishError::BinsUnknown(cause));
             }
             self.sandbox.ensure_under_bin(Path::new(&item.copy))?;
         }
@@ -1976,6 +1987,7 @@ impl<P: SpaceProbe> Publisher<P> {
             PublishError::InjectedCrash(_)
                 | PublishError::Cleanup(_)
                 | PublishError::Interrupted(_)
+                | PublishError::BinsUnknown(_)
         )
     }
 

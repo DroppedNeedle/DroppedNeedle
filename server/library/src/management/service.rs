@@ -1039,7 +1039,7 @@ impl Management {
             // shutdown, with why it waits on its work, and the worker waits
             // before it takes it again. A put-back that fails leaves it to
             // its lease.
-            Err(error @ (ManagementError::Busy(_) | ManagementError::BinsUnknown)) => {
+            Err(error @ (ManagementError::Busy(_) | ManagementError::BinsUnknown(_))) => {
                 let cause = match &error {
                     ManagementError::Busy(cause) => {
                         tracing::warn!(job_id, "management job waits: {cause}");
@@ -2181,6 +2181,11 @@ impl Management {
                 if let crate::publish::PublishError::Interrupted(cause) = &error {
                     tracing::warn!(%error, job_id = snapshot.job.id, "management publish waits");
                     return Refused::Busy(ManagementError::Busy(cause.clone()));
+                }
+                if let crate::publish::PublishError::BinsUnknown(cause) = error {
+                    return Refused::Busy(ManagementError::BinsUnknown(
+                        crate::mutations::bins_unknown(cause),
+                    ));
                 }
                 let reason = reasons::from_publish(&error);
                 let detail = error.detail();

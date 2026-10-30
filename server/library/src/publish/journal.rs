@@ -388,6 +388,20 @@ impl<'a> JournalWriter<'a> {
         Ok(changed == 1)
     }
 
+    /// Point retired track `track_id`, whose path still names the old bin
+    /// entry `from`, at the fresh entry `to`. A track whose path is
+    /// anything else (put back, removed, moved since) keeps it.
+    pub fn follow_rebin(&self, track_id: &str, from: &str, to: &str) -> Result<(), PublishError> {
+        let changed = self
+            .tx
+            .prepare_cached(sql::TRACK_FOLLOW_REBIN.text())?
+            .execute(rusqlite::params![track_id, from, to])?;
+        if changed > 0 {
+            crate::catalog_revision::bump_catalog(self.tx)?;
+        }
+        Ok(())
+    }
+
     /// Move a row from `expected` to `next`, bumping its sequence. A row
     /// already at `next` is touched the same way, so the write always
     /// changes a row and syncs what came before it. A row in any other

@@ -265,6 +265,11 @@ pub enum PublishError {
     /// and leaves the bundle to recovery.
     #[error("store: {0}")]
     Interrupted(String),
+    /// No recycle bin is known (a setting it comes from cannot be read,
+    /// or the configured bin cannot be reached), so a publish that would
+    /// send a file to a bin waits before anything moves.
+    #[error("no recycle bin is known while {0}")]
+    BinsUnknown(&'static str),
     /// A write ran past its time budget and was rolled back: nothing it
     /// would have written landed.
     #[error("store: {0}")]
@@ -324,6 +329,7 @@ impl PublishError {
             | Self::InjectedCrash(_)
             | Self::Store(_)
             | Self::Interrupted(_)
+            | Self::BinsUnknown(_)
             | Self::TimedOut(_) => None,
         }
     }
@@ -347,6 +353,7 @@ impl PublishError {
             | Self::InjectedCrash(_)
             | Self::Store(_)
             | Self::Interrupted(_)
+            | Self::BinsUnknown(_)
             | Self::TimedOut(_) => None,
         }
     }

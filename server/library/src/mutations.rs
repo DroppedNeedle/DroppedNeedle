@@ -115,6 +115,21 @@ pub const RECYCLE_BIN_UNKNOWN: Reason = reason(
     "No recycle bin is known while the download or SABnzbd settings can't be read, so nothing was removed.",
     "Open those settings and save them again, then try again.",
 );
+pub const RECYCLE_BIN_UNREACHABLE: Reason = reason(
+    "RECYCLE_BIN_UNKNOWN",
+    "The recycle bin folder can't be reached, so nothing was removed.",
+    "Check that its drive or share is mounted and the server can open it, then try again.",
+);
+
+/// What a person reads while no recycle bin is known because `cause`.
+pub fn bins_unknown(cause: &'static str) -> Reason {
+    tracing::debug!(cause, "no recycle bin is known");
+    if cause == crate::publish::bin::BIN_UNREACHABLE {
+        RECYCLE_BIN_UNREACHABLE
+    } else {
+        RECYCLE_BIN_UNKNOWN
+    }
+}
 pub const LIBRARY_BUSY: Reason = reason(
     "LIBRARY_BUSY",
     "A scan or a management run is working in this library folder right now.",
@@ -875,10 +890,7 @@ impl Mutations {
             .bins
             .current(registry)
             .map(|choice| choice.roots)
-            .map_err(|cause| {
-                tracing::debug!(cause, "no recycle bin is known");
-                MutationError::Conflict(RECYCLE_BIN_UNKNOWN)
-            })
+            .map_err(|cause| MutationError::Conflict(bins_unknown(cause)))
     }
     /// Resolve a local album id (following merges) or a release-group
     /// MBID to the live local album.
@@ -1010,10 +1022,7 @@ fn refusal(refused: Refusal) -> MutationError {
         Refusal::LibraryOff => MutationError::Conflict(LIBRARY_OFF),
         Refusal::Changed => MutationError::Conflict(REMOVAL_CHANGED),
         Refusal::OutsideRoot => MutationError::Conflict(FILE_OUTSIDE_ROOT),
-        Refusal::BinsUnknown(cause) => {
-            tracing::debug!(cause, "no recycle bin is known");
-            MutationError::Conflict(RECYCLE_BIN_UNKNOWN)
-        }
+        Refusal::BinsUnknown(cause) => MutationError::Conflict(bins_unknown(cause)),
         Refusal::NoBin(root) => {
             tracing::warn!(root, "a removal found no usable recycle bin");
             MutationError::Conflict(NO_RECYCLE_BIN)
@@ -1024,6 +1033,7 @@ fn refusal(refused: Refusal) -> MutationError {
         }
         Refusal::Publish { error, kept: false } => match error {
             PublishError::Interrupted(cause) => MutationError::Busy(cause),
+            PublishError::BinsUnknown(cause) => MutationError::Conflict(bins_unknown(cause)),
             PublishError::Validation(_) | PublishError::Catalog(_) | PublishError::Collision(_) => {
                 tracing::info!(%error, "a removal found its files or tracks changed");
                 MutationError::Conflict(REMOVAL_CHANGED)
@@ -1071,10 +1081,7 @@ fn put_back_refusal(refused: PutBackRefusal) -> MutationError {
         PutBackRefusal::OutsideRoot => MutationError::Conflict(FILE_OUTSIDE_ROOT),
         PutBackRefusal::FolderMissing => MutationError::Conflict(LIBRARY_FOLDER_MISSING),
         PutBackRefusal::Excluded => MutationError::Conflict(RESTORE_FOLDER_EXCLUDED),
-        PutBackRefusal::BinsUnknown(cause) => {
-            tracing::debug!(cause, "no recycle bin is known");
-            MutationError::Conflict(RECYCLE_BIN_UNKNOWN)
-        }
+        PutBackRefusal::BinsUnknown(cause) => MutationError::Conflict(bins_unknown(cause)),
         PutBackRefusal::Occupied => MutationError::Conflict(RESTORE_PATH_OCCUPIED),
         PutBackRefusal::AllGone => MutationError::Conflict(RECYCLED_FILES_GONE),
         PutBackRefusal::TrackElsewhere => MutationError::Conflict(RESTORE_TRACK_ELSEWHERE),
@@ -1083,6 +1090,7 @@ fn put_back_refusal(refused: PutBackRefusal) -> MutationError {
         PutBackRefusal::CopyUnreadable => MutationError::Files(RECYCLED_COPY_UNREADABLE),
         PutBackRefusal::Publish(error) => match error {
             PublishError::Interrupted(cause) => MutationError::Busy(cause),
+            PublishError::BinsUnknown(cause) => MutationError::Conflict(bins_unknown(cause)),
             PublishError::Collision(_) => {
                 tracing::info!(%error, "a file took a removed file's place during its put-back");
                 MutationError::Conflict(RESTORE_PATH_OCCUPIED)

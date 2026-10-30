@@ -208,7 +208,7 @@ fn settled(what: &'static str, result: Result<bool, ManagementError>) -> Step {
             tracing::warn!("{what} waits: {cause}");
             Step::Busy
         }
-        Err(error @ ManagementError::BinsUnknown) => {
+        Err(error @ ManagementError::BinsUnknown(_)) => {
             tracing::debug!("{what} waits: {error}");
             Step::Busy
         }

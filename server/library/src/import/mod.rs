@@ -628,6 +628,7 @@ impl Imports {
                         error:
                             error @ (PublishError::Store(_)
                             | PublishError::Interrupted(_)
+                            | PublishError::BinsUnknown(_)
                             | PublishError::TimedOut(_)),
                         ..
                     }) => return Err(fault(error.to_string())),

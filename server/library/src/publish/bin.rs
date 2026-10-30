@@ -8,9 +8,11 @@
 //! inside a library root (other than as that root's `.recycle`), or that
 //! overlaps a download folder, is not used: each root's `.recycle` takes
 //! its place, logged once per change and shown on the download settings.
-//! While the download settings cannot be read the bins are unknown, and
-//! nothing that would go into a bin moves.
+//! While the download settings cannot be read, or the configured bin's
+//! folder cannot be reached, the bins are unknown and nothing that would
+//! go into a bin moves: no `.recycle` stands in for a bin that is down.
 
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -23,7 +25,7 @@ use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 
 use super::PublishError;
 use super::journal::{FileJournal, JournalKind, JournalReplacement, JournalWriter};
-use super::paths::{self, FileStat, Root, RootKind, Sandbox};
+use super::paths::{self, FileStat, ResolvedRoot, Root, RootKind, Sandbox};
 use super::place::Seams;
 use super::publisher::durable;
 use crate::scan::fs::RECYCLE_BIN_DIRECTORY_NAME;
@@ -43,7 +45,9 @@ pub type DownloadTrees = Arc<dyn Fn() -> Option<Vec<PathBuf>> + Send + Sync>;
 pub enum BinRefusal {
     /// The path is not absolute, or has a `..` in it.
     NotAbsolute,
-    /// The path could not be resolved.
+    /// The path could not be resolved: permission denied, an I/O error or
+    /// a link loop. A configured bin like this makes files wait; a
+    /// `.recycle` link like this leaves its root with no bin.
     Unresolvable,
     /// It is, holds or sits inside a library folder.
     OverlapsLibrary,
@@ -59,7 +63,7 @@ impl BinRefusal {
                 "The recycle bin path is not a full path, so each library folder's .recycle is used instead."
             }
             Self::Unresolvable => {
-                "The recycle bin path can't be read, so each library folder's .recycle is used instead."
+                "The recycle bin folder can't be reached, so removals and upgrades wait until it can."
             }
             Self::OverlapsLibrary => {
                 "The recycle bin overlaps a library folder, so each library folder's .recycle is used instead."
@@ -87,67 +91,89 @@ pub struct BinChoice {
 /// Pick the bins for library roots `library` from the configured path:
 /// the resolved configured folder when it passes every check, else each
 /// root's `.recycle`. A `.recycle` that is a symlink is resolved and
-/// checked the same way; one that fails leaves its root with no bin.
-pub fn choose(configured: &str, library: &[Root], downloads: &[PathBuf]) -> BinChoice {
+/// checked the same way; one that fails leaves its root with no bin. The
+/// roots come resolved; the download folders are asked for only when a
+/// bin could reach them (a configured one, or a `.recycle` link), once.
+/// `Err` while they cannot be read, or while the configured folder cannot
+/// be reached ([`BIN_UNREACHABLE`]): then nothing moves into a bin and no
+/// `.recycle` stands in.
+pub fn choose(
+    configured: &str,
+    library: &[ResolvedRoot],
+    downloads: &mut dyn FnMut() -> Result<Vec<PathBuf>, BinsUnknown>,
+) -> Result<BinChoice, BinsUnknown> {
     let real_library: Vec<PathBuf> = library
         .iter()
-        .map(|root| resolve_existing(&root.dir).unwrap_or_else(|_| root.dir.clone()))
+        .map(|root| root.folder().to_path_buf())
         .collect();
-    let real_downloads: Vec<PathBuf> = downloads
-        .iter()
-        .map(|tree| resolve_existing(tree).unwrap_or_else(|_| tree.clone()))
-        .collect();
-    let clear = |target: &Path| check_target(target, &real_library, &real_downloads);
-    let per_root = |refused| {
-        let mut choice = BinChoice {
-            roots: Vec::new(),
-            refused,
-            unusable: Vec::new(),
-        };
-        for root in library {
-            let own = root.dir.join(RECYCLE_BIN_DIRECTORY_NAME);
-            let linked =
-                std::fs::symlink_metadata(&own).is_ok_and(|meta| meta.file_type().is_symlink());
-            if !linked {
-                choice.roots.push(Root::recycle_of(&root.id, &root.dir));
-                continue;
-            }
-            let target = std::fs::canonicalize(&own)
-                .map_err(|_| BinRefusal::Unresolvable)
-                .and_then(|target| clear(&target).map_or(Ok(target), Err));
-            match target {
-                Ok(target) => choice.roots.push(Root {
-                    dir: target,
-                    ..Root::recycle_of(&root.id, &root.dir)
-                }),
-                Err(refusal) => choice.unusable.push((root.id.clone(), refusal)),
-            }
+    let mut real_downloads: Option<Vec<PathBuf>> = None;
+    let mut clear = |target: &Path| -> Result<Option<BinRefusal>, BinsUnknown> {
+        if real_downloads.is_none() {
+            real_downloads = Some(
+                downloads()?
+                    .iter()
+                    .map(|tree| resolve_existing(tree).unwrap_or_else(|_| tree.clone()))
+                    .collect(),
+            );
         }
-        choice
+        let trees = real_downloads.as_deref().unwrap_or_default();
+        Ok(check_target(target, &real_library, trees))
     };
     let trimmed = configured.trim();
-    if trimmed.is_empty() {
-        return per_root(None);
+    let mut refused = None;
+    if !trimmed.is_empty() {
+        let path = Path::new(trimmed);
+        if !path.is_absolute()
+            || path
+                .components()
+                .any(|part| matches!(part, Component::ParentDir))
+        {
+            refused = Some(BinRefusal::NotAbsolute);
+        } else {
+            let resolved = resolve_existing(path).map_err(|_| BIN_UNREACHABLE)?;
+            match clear(&resolved)? {
+                Some(refusal) => refused = Some(refusal),
+                None => {
+                    return Ok(BinChoice {
+                        roots: vec![Root::bin(CONFIGURED_BIN_ID, resolved)],
+                        refused: None,
+                        unusable: Vec::new(),
+                    });
+                }
+            }
+        }
     }
-    let path = Path::new(trimmed);
-    if !path.is_absolute()
-        || path
-            .components()
-            .any(|part| matches!(part, Component::ParentDir))
-    {
-        return per_root(Some(BinRefusal::NotAbsolute));
-    }
-    let Ok(resolved) = resolve_existing(path) else {
-        return per_root(Some(BinRefusal::Unresolvable));
-    };
-    if let Some(refusal) = clear(&resolved) {
-        return per_root(Some(refusal));
-    }
-    BinChoice {
-        roots: vec![Root::bin(CONFIGURED_BIN_ID, resolved)],
-        refused: None,
+    let mut choice = BinChoice {
+        roots: Vec::new(),
+        refused,
         unusable: Vec::new(),
+    };
+    for root in library {
+        let own = root.configured.join(RECYCLE_BIN_DIRECTORY_NAME);
+        let linked =
+            std::fs::symlink_metadata(&own).is_ok_and(|meta| meta.file_type().is_symlink());
+        if !linked {
+            choice
+                .roots
+                .push(Root::recycle_of(&root.id, &root.configured));
+            continue;
+        }
+        let target = match std::fs::canonicalize(&own) {
+            Ok(target) => match clear(&target)? {
+                None => Ok(target),
+                Some(refusal) => Err(refusal),
+            },
+            Err(_) => Err(BinRefusal::Unresolvable),
+        };
+        match target {
+            Ok(target) => choice.roots.push(Root {
+                dir: target,
+                ..Root::recycle_of(&root.id, &root.configured)
+            }),
+            Err(refusal) => choice.unusable.push((root.id.clone(), refusal)),
+        }
     }
+    Ok(choice)
 }
 
 /// Why a resolved bin folder may not be used: it is, holds or sits inside
@@ -196,8 +222,17 @@ fn resolve_existing(path: &Path) -> std::io::Result<PathBuf> {
     }
 }
 
-/// Why no bin is known: the setting that cannot be read.
+/// Why no bin is known: a setting that cannot be read, or
+/// [`BIN_UNREACHABLE`].
 pub type BinsUnknown = &'static str;
+
+/// The configured recycle bin folder cannot be reached (permission
+/// denied, an I/O error, a link loop): files wait for it rather than go
+/// to a library folder's `.recycle`.
+pub const BIN_UNREACHABLE: BinsUnknown = "the recycle bin folder can't be reached";
+
+const POLICY_UNREAD: BinsUnknown = "the download settings cannot be read";
+const DOWNLOADS_UNREAD: BinsUnknown = "the slskd or SABnzbd settings cannot be read";
 
 /// Where the library's bins come from: the download settings' recycle bin
 /// path, checked against the library roots and the download folders.
@@ -206,8 +241,16 @@ pub struct BinSource {
     policy: Live<DownloadPolicy>,
     library: Live<TypedLibrary>,
     downloads: DownloadTrees,
-    /// What was last logged about the bins, so each change is logged once.
-    logged: Arc<Mutex<Option<String>>>,
+    logged: Arc<Mutex<Logged>>,
+}
+
+/// What was logged about the bins: the last problem line, so each change
+/// is logged once, and each cause a wait was logged for, so a bin that
+/// comes and goes does not log on every flip.
+#[derive(Default)]
+struct Logged {
+    problems: Option<String>,
+    waits: BTreeSet<BinsUnknown>,
 }
 
 impl BinSource {
@@ -226,54 +269,47 @@ impl BinSource {
         }
     }
 
-    /// The bins for `registry`'s roots now. `Err` with the cause while the
-    /// download settings, or a setting naming a download folder, cannot be
-    /// read: then nothing moves into a bin and no other bin stands in.
+    /// The bins for `registry`'s roots now. Blocking: it resolves the
+    /// roots.
     pub fn current(&self, registry: &RootRegistry) -> Result<BinChoice, BinsUnknown> {
-        let choice = self.read(registry);
-        self.log_once(match &choice {
-            Ok(choice) => problems(choice),
-            Err(cause) => Some(format!("no recycle bin is known while {cause}")),
-        });
+        self.current_over(&resolve_roots(registry))
+    }
+
+    /// The bins for `roots`, already resolved, now. `Err` with the cause
+    /// while the download settings or a setting naming a download folder
+    /// cannot be read, or while the configured bin cannot be reached: then
+    /// nothing moves into a bin and no other bin stands in.
+    pub fn current_over(&self, roots: &[ResolvedRoot]) -> Result<BinChoice, BinsUnknown> {
+        let choice = self.read(roots, None);
+        self.log(&choice);
         choice
     }
 
-    fn read(&self, registry: &RootRegistry) -> Result<BinChoice, BinsUnknown> {
-        let policy = self
-            .policy
-            .read()
-            .ok_or("the download settings cannot be read")?;
-        let library = library_roots(registry);
-        // The download folders matter only to a bin that could reach them:
-        // a configured one, or a `.recycle` that is a link.
-        let reaches_out = !policy.recycle_bin_path.trim().is_empty()
-            || library.iter().any(|root| {
-                std::fs::symlink_metadata(root.dir.join(RECYCLE_BIN_DIRECTORY_NAME))
-                    .is_ok_and(|meta| meta.file_type().is_symlink())
-            });
-        let downloads = if reaches_out {
-            (self.downloads)().ok_or("the slskd or SABnzbd settings cannot be read")?
-        } else {
-            Vec::new()
+    fn read(
+        &self,
+        roots: &[ResolvedRoot],
+        downloads: Option<&[PathBuf]>,
+    ) -> Result<BinChoice, BinsUnknown> {
+        let policy = self.policy.read().ok_or(POLICY_UNREAD)?;
+        let mut trees = || match downloads {
+            Some(trees) => Ok(trees.to_vec()),
+            None => (self.downloads)().ok_or(DOWNLOADS_UNREAD),
         };
-        Ok(choose(&policy.recycle_bin_path, &library, &downloads))
+        choose(&policy.recycle_bin_path, roots, &mut trees)
     }
 
     /// The bins expiry may delete from for `registry`'s roots now, with a
-    /// line for each bin left out ([`expiry_guard`]). `Err` with the cause
-    /// while the download settings, or a setting naming a download folder,
-    /// cannot be read. Logs nothing: expiry keeps its own log memory.
+    /// line for each bin left out ([`expiry_guard`]). The bins are the
+    /// ones a session would choose, from the same resolved roots and
+    /// download folders. `Err` with the cause while they are unknown.
+    /// Logs nothing: expiry keeps its own log memory.
     pub fn for_expiry(
         &self,
         registry: &RootRegistry,
     ) -> Result<(Vec<Root>, Vec<String>), BinsUnknown> {
-        let choice = self.read(registry)?;
-        let downloads = (self.downloads)().ok_or("the slskd or SABnzbd settings cannot be read")?;
-        let resolved: Vec<paths::ResolvedRoot> = registry
-            .roots()
-            .iter()
-            .map(|root| paths::ResolvedRoot::of(&root.id, &root.path))
-            .collect();
+        let resolved = resolve_roots(registry);
+        let downloads = (self.downloads)().ok_or(DOWNLOADS_UNREAD)?;
+        let choice = self.read(&resolved, Some(&downloads))?;
         let left_out = paths::left_out(&resolved);
         Ok(expiry_guard(
             choice.roots,
@@ -291,21 +327,47 @@ impl BinSource {
             return None;
         }
         let library = self.library.read()?;
-        let downloads = (self.downloads)()?;
         let registry = crate::settings::registry_from(&library);
-        choose(configured, &library_roots(&registry), &downloads).refused
+        let mut trees = || (self.downloads)().ok_or(DOWNLOADS_UNREAD);
+        match choose(configured, &resolve_roots(&registry), &mut trees) {
+            Ok(choice) => choice.refused,
+            Err(BIN_UNREACHABLE) => Some(BinRefusal::Unresolvable),
+            Err(_) => None,
+        }
     }
 
-    fn log_once(&self, state: Option<String>) {
+    fn log(&self, choice: &Result<BinChoice, BinsUnknown>) {
         let mut logged = self.logged.lock().unwrap_or_else(PoisonError::into_inner);
-        if *logged == state {
-            return;
+        match choice {
+            Ok(choice) => {
+                let state = problems(choice);
+                if logged.problems != state {
+                    if let Some(text) = &state {
+                        tracing::warn!("{text}");
+                    }
+                    logged.problems = state;
+                }
+            }
+            Err(cause) if logged.waits.insert(cause) => {
+                tracing::warn!("no recycle bin is known while {cause}; removals and upgrades wait");
+            }
+            Err(cause) => {
+                tracing::debug!(
+                    "no recycle bin is known while {cause}; removals and upgrades wait"
+                );
+            }
         }
-        if let Some(text) = &state {
-            tracing::warn!("{text}");
-        }
-        *logged = state;
     }
+}
+
+/// Every saved root of `registry` with the real folder it resolves to now.
+/// Blocking: it reads the disk.
+fn resolve_roots(registry: &RootRegistry) -> Vec<ResolvedRoot> {
+    registry
+        .roots()
+        .iter()
+        .map(|root| ResolvedRoot::of(&root.id, &root.path))
+        .collect()
 }
 
 /// What is wrong with `choice`, in one line for the log.
@@ -313,12 +375,21 @@ fn problems(choice: &BinChoice) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     if let Some(refusal) = choice.refused {
         lines.push(format!(
-            "the configured recycle bin is not used ({refusal:?}); each library folder's .recycle is"
+            "the configured recycle bin is not used: {}",
+            refusal.message()
         ));
     }
     for (root, refusal) in &choice.unusable {
+        let why = match refusal {
+            BinRefusal::Unresolvable => "its .recycle is a link that can't be followed",
+            BinRefusal::NotAbsolute
+            | BinRefusal::OverlapsLibrary
+            | BinRefusal::OverlapsDownloads => {
+                "its .recycle links into a library or download folder"
+            }
+        };
         lines.push(format!(
-            "library root {root} has no usable recycle bin: its .recycle links somewhere it may not ({refusal:?}); its files wait"
+            "library root {root} has no usable recycle bin: {why}; its files wait"
         ));
     }
     (!lines.is_empty()).then(|| lines.join("; "))
@@ -482,7 +553,8 @@ pub fn expiry_guard(
 /// Move a committed row's replaced file from its set-aside name into its
 /// bin entry, then record when it got there. An entry whose bin is no
 /// longer one of the session's gets a fresh entry in the bin that serves
-/// the row's root now, written durably before the file moves. The entry
+/// the row's root now, written durably before the file moves, with the
+/// retired track's path when it still names the old entry. The entry
 /// is checked under its bin (no symlink below the bin's folder) and the
 /// file goes in by the bin's own placement mode. While the bins are
 /// unknown nothing moves. A removal's file (a `remove` row) may sit under
@@ -533,7 +605,14 @@ pub(super) fn recycle_replaced(
         })?;
         let text = fresh.to_string_lossy().into_owned();
         let moved = durable(db, "publish.journal_rebin", |tx| {
-            JournalWriter::new(tx).set_recycle_to(&journal.id, &text)
+            let writer = JournalWriter::new(tx);
+            if !writer.set_recycle_to(&journal.id, &text)? {
+                return Ok(false);
+            }
+            if let Some(track_id) = &replaced.track_id {
+                writer.follow_rebin(track_id, &replaced.recycle_to, &text)?;
+            }
+            Ok(true)
         })?;
         if !moved {
             return Err(PublishError::Cleanup(
