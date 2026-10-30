@@ -23,7 +23,7 @@ fn watch_action(change: WatchChange) -> Result<WantedActionResponse, RequestsErr
     match change {
         WatchChange::Done(watch) => Ok(WantedActionResponse {
             success: true,
-            state: watch.state.as_str().to_owned(),
+            state: watch.state,
         }),
         WatchChange::NotFound => Err(RequestsError::NotFound),
         WatchChange::Fulfilled => Err(RequestsError::InvalidInput {
@@ -44,7 +44,7 @@ impl From<&RequestRecord> for RequestItem {
             cover_url: None,
             requested_at: record.requested_at,
             completed_at: record.completed_at,
-            status: record.status.as_str().to_owned(),
+            status: record.status,
             progress: None,
             eta: None,
             size: None,

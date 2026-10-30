@@ -57,6 +57,18 @@ pub struct UsenetSearchBackend {
     pub backend: UsenetBackend,
 }
 
+/// How the stored quality settings read: a v1 tier range, a v2 recipe, a
+/// policy with codecs a recipe cannot express, or a recipe that does not
+/// validate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QualityRecipeStatus {
+    V1,
+    V2,
+    NonConvertible,
+    Invalid,
+}
+
 /// GET view of the acquisition policy: the stored policy plus the
 /// read-only recipe verdict, recomputed on every read and never saved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -64,8 +76,8 @@ pub struct DownloadPolicyView {
     /// The stored policy.
     #[serde(flatten)]
     pub policy: DownloadPolicy,
-    /// Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`.
-    pub quality_recipe_status: String,
+    /// Read-only recipe verdict.
+    pub quality_recipe_status: QualityRecipeStatus,
     /// Recipe verdict detail, when any.
     pub quality_recipe_error: Option<String>,
     /// Why the recycle bin path is not used, when it is not: each library
@@ -217,8 +229,8 @@ pub struct PolicySummaryResponse {
     pub summary: String,
     /// Whether a down-level image reproduces acquisition behavior.
     pub legacy_rollback_compatible: bool,
-    /// Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`.
-    pub quality_recipe_status: String,
+    /// Read-only recipe verdict.
+    pub quality_recipe_status: QualityRecipeStatus,
     /// Recipe verdict detail, when any.
     pub quality_recipe_error: Option<String>,
 }

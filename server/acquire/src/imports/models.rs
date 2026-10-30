@@ -167,8 +167,7 @@ pub struct SpotifyImportResponse {
 /// Terminal-or-live state of one `spotify:import` job.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SpotifyJobStatus {
-    /// `running`, `done`, or `error`.
-    pub state: String,
+    pub state: SpotifyJobState,
     /// Internal playlist id the job populates.
     pub playlist_id: String,
     /// Tracks written on success.
@@ -177,12 +176,23 @@ pub struct SpotifyJobStatus {
     pub message: Option<String>,
 }
 
+/// Where a Spotify import job is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SpotifyJobState {
+    /// The playlist is being filled.
+    Running,
+    /// The playlist is filled.
+    Done,
+    /// The import stopped; `message` says why.
+    Error,
+}
+
 /// Per-source release gate verdict. Each source gates independently: one
 /// red gate never flips another.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SourceGate {
-    /// `slskd`, `sabnzbd`, `newznab`, or `lidarr_import`.
-    pub source: String,
+    pub source: GateSource,
     /// Admin master switch for this source.
     pub enabled: bool,
     /// Credentials/URL present.
@@ -195,12 +205,34 @@ pub struct SourceGate {
     pub message: String,
 }
 
+/// The source a release gate is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GateSource {
+    Slskd,
+    Sabnzbd,
+    Newznab,
+    LidarrImport,
+}
+
+/// The acquisition health verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AcquireHealthStatus {
+    /// Every source that is on answers.
+    Ok,
+    /// A source that is on does not answer.
+    Degraded,
+    /// No download source is on.
+    Error,
+}
+
 /// Acquisition health smoke. `ready`
 /// says whether a download source is on; the gates unpack per source.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AcquireHealth {
-    /// Overall verdict: `ok`, `degraded`, or `error`.
-    pub status: String,
+    /// Overall verdict.
+    pub status: AcquireHealthStatus,
     /// True when a download source is on: slskd, SABnzbd or a plugin
     /// download client. Requests are taken while it is false, and wait.
     pub ready: bool,
@@ -244,9 +276,7 @@ pub struct DownloadsMountView {
     /// Imports can move files into a library root in one step. When false
     /// they copy and then delete, which is slower but still works.
     pub move_supported: bool,
-    /// `ok`, `not_set`, `missing`, `not_writable`, `different_mount`,
-    /// `different_filesystem`, or `stat_error`.
-    pub reason: String,
+    pub reason: super::mount::MountReason,
     /// The mount path inside DroppedNeedle's container.
     pub path: String,
 }

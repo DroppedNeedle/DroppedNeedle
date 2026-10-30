@@ -5,7 +5,10 @@
 //! default order derivation, the v2 recipe legacy projection, and the
 //! user-facing summary sentence. No I/O: the caller supplies the policy.
 
-use droppedneedle_kernel::runtime_config::sections::QualityRecipeEntry;
+use super::models::QualityRecipeStatus;
+use droppedneedle_kernel::runtime_config::sections::{
+    QualityRecipeEntry, RecipeFormat, RecipeQuality,
+};
 use serde::{Deserialize, Serialize};
 
 /// Canonical five tiers, best first.
@@ -24,8 +27,8 @@ fn tier_label(key: &str) -> &str {
 
 /// Recipe entry label for the summary sentence.
 fn recipe_entry_label(entry: &QualityRecipeEntry) -> String {
-    if entry.format == "flac" {
-        if entry.quality == "custom" {
+    if entry.format == RecipeFormat::Flac {
+        if entry.quality == RecipeQuality::Custom {
             let khz = entry.sample_rate_hz.unwrap_or(0) as f64 / 1000.0;
             return format!(
                 "FLAC {}-bit/{} kHz",
@@ -33,21 +36,21 @@ fn recipe_entry_label(entry: &QualityRecipeEntry) -> String {
                 khz.round() as i64
             );
         }
-        return format!("FLAC {}", entry.quality.replace('_', "/"));
+        return format!("FLAC {}", entry.quality.as_str().replace('_', "/"));
     }
-    if entry.quality == "custom" {
+    if entry.quality == RecipeQuality::Custom {
         return format!(
             "MP3 {}-{} kbps",
             entry.min_bitrate_kbps.unwrap_or(0),
             entry.max_bitrate_kbps.unwrap_or(0)
         );
     }
-    format!("MP3 {} kbps", entry.quality.replace('_', "-"))
+    format!("MP3 {} kbps", entry.quality.as_str().replace('_', "-"))
 }
 
 /// Canonical v1 tiers touched by one recipe entry (rollback projection).
 pub fn recipe_entry_legacy_tiers(entry: &QualityRecipeEntry) -> Vec<&'static str> {
-    if entry.format == "flac" {
+    if entry.format == RecipeFormat::Flac {
         return vec!["lossless"];
     }
     match entry.quality.as_str() {
@@ -144,33 +147,33 @@ pub fn compose_summary(inputs: &SummaryInputs) -> String {
     sentence + "."
 }
 
-/// Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`.
+/// Read-only recipe verdict.
 pub fn recipe_status(
     recipe: &[QualityRecipeEntry],
     flac_mp3_only: bool,
     recipe_valid: bool,
     recipe_error: Option<&str>,
-) -> (String, Option<String>) {
+) -> (QualityRecipeStatus, Option<String>) {
     if !recipe.is_empty() {
         if !recipe_valid {
             return (
-                "invalid".to_owned(),
+                QualityRecipeStatus::Invalid,
                 Some(recipe_error.unwrap_or("invalid quality recipe").to_owned()),
             );
         }
         if !flac_mp3_only {
             return (
-                "non_convertible".to_owned(),
+                QualityRecipeStatus::NonConvertible,
                 Some("v2 recipes require FLAC/MP3-only mode".to_owned()),
             );
         }
-        return ("v2".to_owned(), None);
+        return (QualityRecipeStatus::V2, None);
     }
     if flac_mp3_only {
-        ("v1".to_owned(), None)
+        (QualityRecipeStatus::V1, None)
     } else {
         (
-            "non_convertible".to_owned(),
+            QualityRecipeStatus::NonConvertible,
             Some("legacy policy allows codecs outside FLAC/MP3".to_owned()),
         )
     }

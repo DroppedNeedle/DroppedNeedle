@@ -24,7 +24,7 @@ const watch: WantedWatchItem = {
 	musicbrainz_id: 'rg-blue-lines',
 	album_title: 'Blue Lines',
 	artist_name: 'Massive Attack',
-	kind: 'album',
+	kind: 'missing',
 	state: 'watching',
 	check_count: 2,
 	created_at: now - 86400,

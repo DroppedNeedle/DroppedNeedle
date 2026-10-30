@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use super::ledger::RequestStatus;
+
 /// What kind of thing a request asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -118,6 +120,7 @@ pub struct BatchCancelBody {
     /// MBIDs to cancel.
     pub musicbrainz_ids: Vec<String>,
     /// Request kind; defaults to album.
+    #[schema(value_type = Option<RequestKind>)]
     pub kind: Option<String>,
 }
 
@@ -161,7 +164,7 @@ pub struct IntakeResponse {
     /// Canonical MBID.
     pub musicbrainz_id: String,
     /// Row status after this call.
-    pub status: String,
+    pub status: RequestStatus,
     /// Linked download task, when dispatched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
@@ -170,8 +173,8 @@ pub struct IntakeResponse {
 /// Exact-track intake response.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct TrackIntakeResponse {
-    /// `queued`, `awaiting_approval`, or `already_in_library`.
-    pub status: String,
+    /// `queued` or `awaiting_approval`.
+    pub status: RequestStatus,
     /// Linked download task, when dispatched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
@@ -190,9 +193,22 @@ pub struct BatchIntakeResponse {
     pub skipped: u32,
     /// Rows over the batch cap; always zero (cap rejects the batch instead).
     pub overflow: u32,
-    /// Batch decision: `pending`, `awaiting_approval`, `already_requested`,
-    /// or `failed`.
-    pub status: String,
+    /// Batch decision.
+    pub status: BatchIntakeStatus,
+}
+
+/// What a batch ask did as a whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchIntakeStatus {
+    /// Downloads started.
+    Pending,
+    /// The rows wait for an admin.
+    AwaitingApproval,
+    /// Every row was already asked for.
+    AlreadyRequested,
+    /// Nothing was recorded or started.
+    Failed,
 }
 
 /// Batch-cancel response.
@@ -244,7 +260,7 @@ pub struct RequestItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<u64>,
     /// Row status.
-    pub status: String,
+    pub status: RequestStatus,
     /// Download progress percent (0-100) from the linked task, when linked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress: Option<f64>,
@@ -464,8 +480,8 @@ pub struct WantedItem {
     pub artist_name: String,
     /// Album title.
     pub album_title: String,
-    /// `missing` (whole album) or `partial` (filling gaps).
-    pub kind: String,
+    /// The whole album or the gaps of a short one.
+    pub kind: super::ledger::WatchKind,
     /// Watch state.
     pub state: super::ledger::WatchState,
     /// Passed checks so far.
@@ -546,7 +562,7 @@ pub struct WantedActionResponse {
     /// Whether the action applied.
     pub success: bool,
     /// Watch state after this call.
-    pub state: String,
+    pub state: super::ledger::WatchState,
 }
 
 /// One pending personal-mix auto-request approval.
@@ -574,15 +590,23 @@ pub struct PersonalMixApprovalsResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[schema(as = RequestsRefreshResponse)]
 pub struct RefreshResponse {
-    /// `started` or `already_running`.
-    pub status: String,
+    pub status: MixRefreshStatus,
+}
+
+/// Whether a personal-mix refresh started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MixRefreshStatus {
+    /// A build started.
+    Started,
+    /// A build for this user is already running.
+    AlreadyRunning,
 }
 
 /// Edition-acquire outcome.
 #[derive(Debug, Clone, Default, Serialize, ToSchema)]
 pub struct EditionAcquireResponse {
-    /// `started`, `already_in_progress`, or `already_complete`.
-    pub status: String,
+    pub status: EditionAcquireStatus,
     /// Human outcome.
     pub message: String,
     /// Linked download task, when dispatched.
@@ -608,6 +632,19 @@ pub struct EditionAcquireResponse {
     /// when it is as good or better.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub versions: Option<u32>,
+}
+
+/// What an edition acquire did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EditionAcquireStatus {
+    /// A download for the edition's tracks started, or waits for a source.
+    #[default]
+    Started,
+    /// Another download of the album is still working.
+    AlreadyInProgress,
+    /// The library already holds every track asked for.
+    AlreadyComplete,
 }
 
 /// Which library copy "get missing tracks" works on.

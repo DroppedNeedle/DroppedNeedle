@@ -49,6 +49,7 @@ pub enum Reason {
     LibraryUnavailable,
     NamingScriptFailed,
     LibraryFolderMissing,
+    LibraryOff,
     LocalFault,
     // Source: this download is skipped and another tried.
     FilesMissing,
@@ -110,7 +111,7 @@ pub enum ReasonKind {
 
 impl Reason {
     /// Every reason, in declaration order.
-    pub const ALL: [Reason; 66] = [
+    pub const ALL: [Reason; 67] = [
         Self::WeakMatch,
         Self::NoArtistEvidence,
         Self::MostlyUnmatched,
@@ -139,6 +140,7 @@ impl Reason {
         Self::LibraryUnavailable,
         Self::NamingScriptFailed,
         Self::LibraryFolderMissing,
+        Self::LibraryOff,
         Self::LocalFault,
         Self::FilesMissing,
         Self::FilesUnlisted,
@@ -210,6 +212,7 @@ impl Reason {
             Self::LibraryUnavailable => "library_unavailable",
             Self::NamingScriptFailed => "naming_script_failed",
             Self::LibraryFolderMissing => "library_folder_missing",
+            Self::LibraryOff => "library_off",
             Self::LocalFault => "local_fault",
             Self::FilesMissing => "files_missing",
             Self::FilesUnlisted => "files_unlisted",
@@ -330,6 +333,9 @@ impl Reason {
             }
             Self::LibraryFolderMissing => {
                 "The library folder isn't there, so the files wait where they are."
+            }
+            Self::LibraryOff => {
+                "The local library is switched off, so the files wait where they are."
             }
             Self::LocalFault => {
                 "Something on this server stopped the import (for example a full disk or a folder it cannot write)."
@@ -477,6 +483,9 @@ impl Reason {
             Self::LibraryFolderMissing => {
                 "Check the library folder in Settings, Library, and that the server can write to it. Downloads go ahead by themselves once it is back."
             }
+            Self::LibraryOff => {
+                "Turn it on under Settings > Library. Downloads go ahead by themselves once it is on."
+            }
             Self::LocalFault => "Check free space and folder permissions, then retry import.",
             Self::FilesMissing => {
                 "Wait a few minutes and retry import. If it keeps happening, check that the download folder is shared with DroppedNeedle."
@@ -584,6 +593,7 @@ impl Reason {
             | Self::LibraryUnavailable
             | Self::NamingScriptFailed
             | Self::LibraryFolderMissing
+            | Self::LibraryOff
             | Self::LocalFault => ReasonKind::Library,
             Self::FilesMissing
             | Self::FilesUnlisted
@@ -674,6 +684,7 @@ impl Reason {
             | Self::LibraryUnavailable
             | Self::NamingScriptFailed
             | Self::LibraryFolderMissing
+            | Self::LibraryOff
             | Self::LocalFault
             | Self::FilesMissing
             | Self::FilesUnlisted
@@ -854,6 +865,7 @@ mod tests {
             (Reason::LibraryChanged, Rejected(Temporary)),
             (Reason::NamingScriptFailed, Rejected(LocalFault)),
             (Reason::LibraryFolderMissing, Rejected(LocalFault)),
+            (Reason::LibraryOff, Rejected(LocalFault)),
             (Reason::LocalFault, Rejected(LocalFault)),
             (Reason::OutsideDownloadsFolder, Rejected(LocalFault)),
             (Reason::Stalled, FailedOver { blocklisted: true }),

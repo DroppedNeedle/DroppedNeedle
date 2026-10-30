@@ -49,7 +49,8 @@ impl LibraryWait {
     pub fn reason(&self) -> Reason {
         match self {
             Self::Missing(_) => Reason::LibraryFolderMissing,
-            Self::Unavailable(_) | Self::NotAnswering(_) | Self::Off => Reason::LibraryUnavailable,
+            Self::Unavailable(_) | Self::NotAnswering(_) => Reason::LibraryUnavailable,
+            Self::Off => Reason::LibraryOff,
         }
     }
 

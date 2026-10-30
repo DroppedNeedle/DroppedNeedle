@@ -15,8 +15,8 @@ use crate::requests::ledger::{
     BeginOutcome, RequestRecord, RequestStatus, meaningful_name, validate_mbid,
 };
 use crate::requests::models::{
-    AlbumIntake, BatchIntake, BatchIntakeResponse, IntakeResponse, RequestKind, TrackIntake,
-    TrackIntakeResponse, WaitingReason,
+    AlbumIntake, BatchIntake, BatchIntakeResponse, BatchIntakeStatus, IntakeResponse, RequestKind,
+    TrackIntake, TrackIntakeResponse, WaitingReason,
 };
 use crate::requests::quota::QuotaLedger;
 use droppedneedle_auth::Principal;
@@ -108,7 +108,7 @@ fn track_duplicate(existing: &RequestRecord) -> TrackIntakeResponse {
         RequestStatus::Queued
     };
     TrackIntakeResponse {
-        status: status.as_str().to_owned(),
+        status,
         task_id: existing.task_id.clone(),
     }
 }
@@ -537,7 +537,7 @@ impl RequestsService {
                 success: false,
                 message: "Request could not be recorded".to_owned(),
                 musicbrainz_id: mbid,
-                status: RequestStatus::Failed.as_str().to_owned(),
+                status: RequestStatus::Failed,
                 task_id: None,
             }),
             BeginOutcome::Won(won) => {
@@ -547,7 +547,7 @@ impl RequestsService {
                         success: true,
                         message: "Request submitted, awaiting admin approval".to_owned(),
                         musicbrainz_id: mbid,
-                        status: RequestStatus::AwaitingApproval.as_str().to_owned(),
+                        status: RequestStatus::AwaitingApproval,
                         task_id: None,
                     });
                 }
@@ -646,21 +646,21 @@ impl RequestsService {
                 Ok(track_duplicate(&winner))
             }
             BeginOutcome::Existing(_) => Ok(TrackIntakeResponse {
-                status: RequestStatus::Queued.as_str().to_owned(),
+                status: RequestStatus::Queued,
                 task_id: None,
             }),
             BeginOutcome::Won(won) => {
                 self.announce_created(&won);
                 if needs_approval {
                     return Ok(TrackIntakeResponse {
-                        status: RequestStatus::AwaitingApproval.as_str().to_owned(),
+                        status: RequestStatus::AwaitingApproval,
                         task_id: None,
                     });
                 }
                 // A track row always has its owner, so no actor stands in.
                 let task_id = self.dispatch_won(&won, DispatchOrigin::User, "").await?;
                 Ok(TrackIntakeResponse {
-                    status: RequestStatus::Queued.as_str().to_owned(),
+                    status: RequestStatus::Queued,
                     task_id,
                 })
             }
@@ -757,7 +757,7 @@ impl RequestsService {
                 requested: 0,
                 skipped,
                 overflow: 0,
-                status: "already_requested".to_owned(),
+                status: BatchIntakeStatus::AlreadyRequested,
             });
         }
 
@@ -791,7 +791,7 @@ impl RequestsService {
                 requested: 0,
                 skipped,
                 overflow: 0,
-                status: RequestStatus::Failed.as_str().to_owned(),
+                status: BatchIntakeStatus::Failed,
             });
         }
 
@@ -867,7 +867,7 @@ impl RequestsService {
                     requested: 0,
                     skipped,
                     overflow: 0,
-                    status: "already_requested".to_owned(),
+                    status: BatchIntakeStatus::AlreadyRequested,
                 });
             }
             return Ok(BatchIntakeResponse {
@@ -876,7 +876,7 @@ impl RequestsService {
                 requested: 0,
                 skipped,
                 overflow: 0,
-                status: RequestStatus::Failed.as_str().to_owned(),
+                status: BatchIntakeStatus::Failed,
             });
         }
         if needs_approval {
@@ -886,7 +886,7 @@ impl RequestsService {
                 requested: created.len() as u32,
                 skipped,
                 overflow: 0,
-                status: RequestStatus::AwaitingApproval.as_str().to_owned(),
+                status: BatchIntakeStatus::AwaitingApproval,
             });
         }
 
@@ -898,9 +898,9 @@ impl RequestsService {
             skipped,
             overflow: 0,
             status: if dispatched > 0 {
-                RequestStatus::Pending.as_str().to_owned()
+                BatchIntakeStatus::Pending
             } else {
-                RequestStatus::Failed.as_str().to_owned()
+                BatchIntakeStatus::Failed
             },
         })
     }
@@ -1054,7 +1054,7 @@ impl RequestsService {
                 success: true,
                 message: "Already downloading, so the edition stays as it is".to_owned(),
                 musicbrainz_id: existing.key.clone(),
-                status: RequestStatus::Downloading.as_str().to_owned(),
+                status: RequestStatus::Downloading,
                 task_id: existing.task_id.clone(),
             });
         }
@@ -1083,7 +1083,7 @@ impl RequestsService {
             success: true,
             message: message.to_owned(),
             musicbrainz_id: existing.key.clone(),
-            status: existing.status.as_str().to_owned(),
+            status: existing.status,
             task_id: existing.task_id.clone(),
         })
     }
@@ -1173,7 +1173,7 @@ fn accepted(key: &str, task_id: Option<String>) -> IntakeResponse {
         success: true,
         message: "Request accepted".to_owned(),
         musicbrainz_id: key.to_owned(),
-        status: status.as_str().to_owned(),
+        status,
         task_id,
     }
 }

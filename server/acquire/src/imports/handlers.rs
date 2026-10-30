@@ -44,8 +44,8 @@ use super::lidarr::{
 use super::models::{
     AcquireHealth, LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportRequest,
     LidarrImportResponse, LidarrTestResponse, SabnzbdStatusResponse, SlskdStatusResponse,
-    SpotifyAuthUrlResponse, SpotifyImportRequest, SpotifyImportResponse, SpotifyJobStatus,
-    SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
+    SpotifyAuthUrlResponse, SpotifyImportRequest, SpotifyImportResponse, SpotifyJobState,
+    SpotifyJobStatus, SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
 };
 use super::spotify::{ImportFailure, SpotifyImportService};
 use super::spotify_albums::AlbumResolver;
@@ -633,7 +633,7 @@ pub async fn get_spotify_job(
     let status = match state {
         // An import waiting on settings that do not read says so.
         ImportState::Running => SpotifyJobStatus {
-            state: "running".to_owned(),
+            state: SpotifyJobState::Running,
             playlist_id,
             track_count: None,
             message: deps
@@ -649,14 +649,14 @@ pub async fn get_spotify_job(
                 .await
                 .map_err(|cause| ImportsError::internal(&cause))?;
             SpotifyJobStatus {
-                state: "done".to_owned(),
+                state: SpotifyJobState::Done,
                 playlist_id,
                 track_count: Some(i64::try_from(tracks).unwrap_or(i64::MAX)),
                 message: None,
             }
         }
         ImportState::Error { message } => SpotifyJobStatus {
-            state: "error".to_owned(),
+            state: SpotifyJobState::Error,
             playlist_id,
             track_count: None,
             message: Some(message),

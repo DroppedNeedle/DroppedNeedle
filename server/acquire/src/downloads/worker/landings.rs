@@ -21,11 +21,9 @@ use crate::downloads::quarantine::QuarantineReason;
 use crate::downloads::sources::{DownloadSource, SourceHandle};
 use crate::downloads::state::{AttemptState, TaskStatus};
 use crate::downloads::store::{AttemptRow, ReimportStart, TaskOutcome, TaskRow};
-use crate::landing::ports::LIBRARY_OFF_DETAIL;
 use crate::landing::specs::Disposition;
 use crate::landing::{LandingReport, LandingResult};
 use crate::reason::Reason;
-use droppedneedle_library::mutations::LIBRARY_OFF_TEXT;
 
 /// The outcome a reason records when its own sentence is the log text.
 fn said(reason: Reason) -> TaskOutcome<'static> {
@@ -317,11 +315,17 @@ impl DownloadWorker {
                     )
                     .await;
                 }
-                (_, Origin::Poll) if rejection.code == Reason::LibraryFolderMissing => {
+                (_, Origin::Poll)
+                    if matches!(
+                        rejection.code,
+                        Reason::LibraryFolderMissing | Reason::LibraryOff
+                    ) =>
+                {
                     // The files are fine and the folder may come back by
-                    // itself (a share mounting again): the landing waits
-                    // without using up its waits and lands again then.
-                    tracing::info!(task_id = %task.id, folder = %rejection.detail, "landing waits for the library folder");
+                    // itself (a share mounting again, the library switched
+                    // on): the landing waits without using up its waits and
+                    // lands again then.
+                    tracing::info!(task_id = %task.id, detail = %rejection.detail, "landing waits for the library");
                     self.touch_poll(&task.id, now).await;
                 }
                 (Disposition::Temporary, _) if rejection.code == Reason::JournalUnreadable => {
@@ -344,12 +348,7 @@ impl DownloadWorker {
                     // Our own fault, or a reimport that cannot fail over:
                     // keep the files for another try.
                     tracing::info!(task_id = %task.id, code = %rejection.code, detail = %rejection.detail, "landing kept for retry");
-                    let outcome = if rejection.detail == LIBRARY_OFF_DETAIL {
-                        TaskOutcome::new(rejection.code, LIBRARY_OFF_TEXT)
-                    } else {
-                        said(rejection.code)
-                    };
-                    self.settle_failed(task, attempt, outcome, true, was_partial, now)
+                    self.settle_failed(task, attempt, said(rejection.code), true, was_partial, now)
                         .await;
                 }
             },
@@ -579,7 +578,9 @@ impl DownloadWorker {
                 .await
                 .unwrap_or(false);
             if off {
-                return Err(ReimportError::Unavailable(LIBRARY_OFF_TEXT.to_owned()));
+                return Err(ReimportError::Unavailable(
+                    droppedneedle_library::mutations::LIBRARY_OFF_TEXT.to_owned(),
+                ));
             }
         }
         let Some(task) = self

@@ -12,7 +12,8 @@
 //! (`crate::probes`).
 
 use super::models::{
-    AcquireHealth, DownloadsMountView, SabnzbdStatusResponse, SlskdStatusResponse, SourceGate,
+    AcquireHealth, AcquireHealthStatus, DownloadsMountView, GateSource, SabnzbdStatusResponse,
+    SlskdStatusResponse, SourceGate,
 };
 use super::mount::SlskdMountReport;
 use crate::readiness::Readiness;
@@ -139,7 +140,7 @@ pub fn smoke(probes: &HealthProbes, readiness: &Readiness) -> AcquireHealth {
 
     let gates = vec![
         SourceGate {
-            source: "slskd".to_owned(),
+            source: GateSource::Slskd,
             enabled: slskd.enabled,
             configured: slskd.configured,
             reachable: slskd.reachable,
@@ -147,7 +148,7 @@ pub fn smoke(probes: &HealthProbes, readiness: &Readiness) -> AcquireHealth {
             message: slskd.message,
         },
         SourceGate {
-            source: "sabnzbd".to_owned(),
+            source: GateSource::Sabnzbd,
             enabled: sabnzbd.enabled,
             configured: sabnzbd.configured,
             reachable: sabnzbd.reachable,
@@ -155,7 +156,7 @@ pub fn smoke(probes: &HealthProbes, readiness: &Readiness) -> AcquireHealth {
             message: sabnzbd.message,
         },
         SourceGate {
-            source: "newznab".to_owned(),
+            source: GateSource::Newznab,
             enabled: indexers.iter().any(|indexer| indexer.enabled),
             configured: indexers.iter().any(|indexer| indexer.configured),
             reachable: indexers.iter().any(|indexer| indexer.reachable),
@@ -163,7 +164,7 @@ pub fn smoke(probes: &HealthProbes, readiness: &Readiness) -> AcquireHealth {
             message: newznab_message,
         },
         SourceGate {
-            source: "lidarr_import".to_owned(),
+            source: GateSource::LidarrImport,
             enabled: lidarr.enabled,
             configured: lidarr.configured,
             reachable: lidarr.reachable,
@@ -175,13 +176,12 @@ pub fn smoke(probes: &HealthProbes, readiness: &Readiness) -> AcquireHealth {
     // Error when no source is on, degraded when an enabled path is down,
     // ok when every enabled path is up.
     let status = if !ready {
-        "error"
+        AcquireHealthStatus::Error
     } else if gates.iter().any(|gate| gate.enabled && !gate.open) {
-        "degraded"
+        AcquireHealthStatus::Degraded
     } else {
-        "ok"
-    }
-    .to_owned();
+        AcquireHealthStatus::Ok
+    };
 
     AcquireHealth {
         status,
@@ -204,7 +204,7 @@ pub fn slskd_status(probe: &dyn SlskdProbe) -> SlskdStatusResponse {
         mount: report.as_ref().map(|report| DownloadsMountView {
             ok: report.mount.ok,
             move_supported: report.mount.move_supported,
-            reason: report.mount.reason.as_str().to_owned(),
+            reason: report.mount.reason,
             path: report.mount.path.clone(),
         }),
         mount_advisory: report.as_ref().and_then(|r| r.advisory.clone()),

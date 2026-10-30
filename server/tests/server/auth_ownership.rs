@@ -30,7 +30,7 @@ use droppedneedle_acquire::held::store::{
     EntryOrigin, GroupKey, HeldRoot, HeldRows, NewEntry, NewFile,
 };
 use droppedneedle_acquire::reason::Reason;
-use droppedneedle_acquire::requests::ledger::{RequestStatus, WantedWatch, WatchState};
+use droppedneedle_acquire::requests::ledger::{RequestStatus, WantedWatch, WatchKind, WatchState};
 use droppedneedle_acquire::requests::models::RequestKind;
 use droppedneedle_acquire::search_jobs::store::{COMPLETED, JobPayload, JobStore, NewJob};
 use serde_json::{Value, json};
@@ -1180,7 +1180,7 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
                     artist_mbid: None,
                     year: None,
                     cover_url: None,
-                    kind: "missing".to_owned(),
+                    kind: WatchKind::Missing,
                     state: WatchState::Stopped,
                     created_at: 1_700_000_000,
                     first_release_date: None,

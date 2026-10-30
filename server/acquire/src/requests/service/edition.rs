@@ -29,8 +29,8 @@ use crate::held::store::HeldRows;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{EditionMark, validate_mbid};
 use crate::requests::models::{
-    EditionAcquireResponse, EditionFetchResponse, EditionFetchState, EditionFetchTrack,
-    EditionFetchTrackState, EditionFetchView,
+    EditionAcquireResponse, EditionAcquireStatus, EditionFetchResponse, EditionFetchState,
+    EditionFetchTrack, EditionFetchTrackState, EditionFetchView,
 };
 use crate::requests::sql;
 use droppedneedle_auth::Curator;
@@ -324,7 +324,7 @@ fn fetch_facts(
 /// The answer while another download of the album is still working.
 fn already_in_progress(task_id: String) -> EditionAcquireResponse {
     EditionAcquireResponse {
-        status: "already_in_progress".to_owned(),
+        status: EditionAcquireStatus::AlreadyInProgress,
         message: "This album is already downloading. Wait for that download to finish, \
                   then try again."
             .to_owned(),
@@ -386,7 +386,7 @@ impl RequestsService {
         };
         if let Some(gap) = &gap {
             if gap.missing.is_empty() && gap.upgrades.is_empty() && gap.versions.is_empty() {
-                response.status = "already_complete".to_owned();
+                response.status = EditionAcquireStatus::AlreadyComplete;
                 response.message = if gap.other_versions > 0 {
                     format!(
                         "Every track of this edition is in your library, {} of them in another \
@@ -466,7 +466,7 @@ impl RequestsService {
                         started_at: now,
                     })
                     .await?;
-                response.status = "started".to_owned();
+                response.status = EditionAcquireStatus::Started;
                 response.message = if waiting {
                     "No download source is set up, so this edition waits. It starts by \
                      itself once Soulseek, Usenet or a plugin source is saved."

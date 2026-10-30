@@ -4,7 +4,7 @@ use super::RequestsService;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::ApprovalState;
 use crate::requests::models::{
-    PersonalMixApprovalItem, PersonalMixApprovalsResponse, RefreshResponse,
+    MixRefreshStatus, PersonalMixApprovalItem, PersonalMixApprovalsResponse, RefreshResponse,
 };
 use droppedneedle_auth::{Admin, Principal};
 
@@ -138,12 +138,12 @@ impl RequestsService {
         }
         if !self.mixes.refresh_start(principal.user_id())? {
             return Ok(RefreshResponse {
-                status: "already_running".to_owned(),
+                status: MixRefreshStatus::AlreadyRunning,
             });
         }
         mixer.spawn_refresh(principal.user_id().to_owned());
         Ok(RefreshResponse {
-            status: "started".to_owned(),
+            status: MixRefreshStatus::Started,
         })
     }
 }

@@ -16,23 +16,91 @@ use super::sql;
 use crate::db::{AcquireDb, ms_from_secs_f64 as ms, secs_f64_from_ms as secs};
 use crate::held::store::{EntryOrigin, GroupKey, HeldRows, NewEntry, NewFile};
 use crate::reason::Reason;
+use crate::requests::ledger::sql_text;
+use serde::Serialize;
+use utoipa::ToSchema;
 
-/// Job lifecycle.
-pub mod job_status {
-    pub const PROCESSING: &str = "processing";
-    pub const COMPLETED: &str = "completed";
-    pub const FAILED: &str = "failed";
+/// Job lifecycle. The `drop_import_jobs.status` CHECK lists exactly these
+/// values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DropJobStatus {
+    /// Its items are being sorted and imported.
+    Processing,
+    /// Every item settled.
+    Completed,
+    /// The upload could not be read.
+    Failed,
 }
 
-/// Item lifecycle.
-pub mod item_status {
-    pub const PROCESSING: &str = "processing";
-    pub const IMPORTED: &str = "imported";
-    pub const SKIPPED: &str = "skipped";
-    pub const NEEDS_REVIEW: &str = "needs_review";
-    pub const FAILED: &str = "failed";
-    pub const DISCARDED: &str = "discarded";
+impl DropJobStatus {
+    /// Stored and wire form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Processing => "processing",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+
+    /// Read back a stored status.
+    pub fn parse(value: &str) -> Option<Self> {
+        [Self::Processing, Self::Completed, Self::Failed]
+            .into_iter()
+            .find(|status| status.as_str() == value)
+    }
 }
+
+sql_text!(DropJobStatus);
+
+/// Item lifecycle. The `drop_import_items.status` CHECK lists exactly these
+/// values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DropItemStatus {
+    /// Being matched or imported.
+    Processing,
+    /// Its files are in the library.
+    Imported,
+    /// Nothing in it was imported, and nothing waits.
+    Skipped,
+    /// Its files wait for a person in the held list.
+    NeedsReview,
+    /// The import failed.
+    Failed,
+    /// A person discarded its files.
+    Discarded,
+}
+
+impl DropItemStatus {
+    /// Stored and wire form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Processing => "processing",
+            Self::Imported => "imported",
+            Self::Skipped => "skipped",
+            Self::NeedsReview => "needs_review",
+            Self::Failed => "failed",
+            Self::Discarded => "discarded",
+        }
+    }
+
+    /// Read back a stored status.
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            Self::Processing,
+            Self::Imported,
+            Self::Skipped,
+            Self::NeedsReview,
+            Self::Failed,
+            Self::Discarded,
+        ]
+        .into_iter()
+        .find(|status| status.as_str() == value)
+    }
+}
+
+sql_text!(DropItemStatus);
 
 /// One upload gesture.
 #[derive(Debug, Clone, PartialEq)]
@@ -40,7 +108,7 @@ pub struct JobRecord {
     pub id: String,
     pub user_id: String,
     pub user_name: String,
-    pub status: String,
+    pub status: DropJobStatus,
     pub created_at: f64,
     pub upload_name: String,
     pub staging_dir: String,
@@ -54,7 +122,7 @@ pub struct ItemRecord {
     pub id: i64,
     pub job_id: String,
     pub folder_name: String,
-    pub status: String,
+    pub status: DropItemStatus,
     pub updated_at: f64,
     pub release_group_mbid: Option<String>,
     pub album_title: Option<String>,
@@ -204,7 +272,7 @@ impl DropStore {
     pub async fn set_job_status(
         &self,
         id: &str,
-        status: &'static str,
+        status: DropJobStatus,
         error: Option<String>,
     ) -> Result<(), StoreError> {
         let id = id.to_owned();
@@ -250,7 +318,7 @@ impl DropStore {
     pub async fn save_item(
         &self,
         item: &ItemRecord,
-        expected: &'static str,
+        expected: DropItemStatus,
     ) -> Result<bool, StoreError> {
         let item = item.clone();
         let clock = self.db.clock().clone();
@@ -460,7 +528,7 @@ impl DropStore {
 pub(crate) fn write_item(
     conn: &rusqlite::Connection,
     item: &ItemRecord,
-    expected: &str,
+    expected: DropItemStatus,
     at: f64,
 ) -> rusqlite::Result<bool> {
     let changed = conn.execute(

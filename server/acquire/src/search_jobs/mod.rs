@@ -42,7 +42,7 @@ use super::downloads::sources::DownloadSource;
 use super::downloads::store::{NewTask, TaskDetails, TaskRow};
 use super::edition::library_holds;
 use super::requests::error::RequestsError;
-use super::requests::ledger::{WantedWatch, WatchState};
+use super::requests::ledger::{WantedWatch, WatchKind, WatchState};
 use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::WantedStore;
 use super::target::{SearchTarget, Targets};
@@ -570,7 +570,7 @@ impl SearchJobs {
                         artist_mbid: None,
                         year: row.year,
                         cover_url: None,
-                        kind: "missing".to_owned(),
+                        kind: WatchKind::Missing,
                         state: WatchState::Watching,
                         created_at: now,
                         first_release_date: date.found,

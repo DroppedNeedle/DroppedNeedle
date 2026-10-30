@@ -51,10 +51,7 @@ pub async fn place(
                 return deferred(Reason::LibraryFolderMissing, folder);
             }
             ImportFailure::LibraryOff => {
-                return deferred(
-                    Reason::LibraryFolderMissing,
-                    crate::landing::ports::LIBRARY_OFF_DETAIL.to_owned(),
-                );
+                return deferred(Reason::LibraryOff, "the library is switched off".to_owned());
             }
             ImportFailure::NamingScript(detail) => {
                 return deferred(Reason::NamingScriptFailed, detail);

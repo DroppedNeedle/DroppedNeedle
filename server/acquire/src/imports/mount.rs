@@ -11,7 +11,10 @@ use crate::slskd::MountDiagnosis;
 
 /// Why the mount is or is not usable, and whether moves stay on one
 /// filesystem.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum MountReason {
     /// Usable; a move into a library root is a rename (or no root exists
     /// yet to compare against).
@@ -29,20 +32,6 @@ pub enum MountReason {
     DifferentFilesystem,
     /// Usable, but the filesystem could not be compared.
     StatError,
-}
-
-impl MountReason {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ok => "ok",
-            Self::NotSet => "not_set",
-            Self::Missing => "missing",
-            Self::NotWritable => "not_writable",
-            Self::DifferentMount => "different_mount",
-            Self::DifferentFilesystem => "different_filesystem",
-            Self::StatError => "stat_error",
-        }
-    }
 }
 
 /// The verdict on the downloads folder itself.

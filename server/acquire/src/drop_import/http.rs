@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt as _;
 use utoipa::{IntoParams, ToSchema};
 
-use super::store::{ItemRecord, JobRecord};
+use super::store::{DropItemStatus, DropJobStatus, ItemRecord, JobRecord};
 use super::{DropError, DropImports, MAX_FILES_PER_DROP, Viewer, extract};
 use crate::reason::Reason;
 use crate::requests::error::RequestsError;
@@ -40,9 +40,7 @@ const MAX_UPLOAD_BYTES: usize = 8 * (1 << 30);
 pub struct DropImportItemResponse {
     pub id: i64,
     pub folder_name: String,
-    /// `processing`, `imported`, `skipped`, `needs_review`, `failed` or
-    /// `discarded`.
-    pub status: String,
+    pub status: DropItemStatus,
     pub updated_at: f64,
     pub release_group_mbid: Option<String>,
     pub album_title: Option<String>,
@@ -61,8 +59,7 @@ pub struct DropImportItemResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DropImportJobResponse {
     pub id: String,
-    /// `processing`, `completed` or `failed`.
-    pub status: String,
+    pub status: DropJobStatus,
     pub created_at: f64,
     pub upload_name: String,
     pub user_id: String,

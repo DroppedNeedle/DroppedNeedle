@@ -22,8 +22,8 @@ use super::models::{
     DownloadPolicyView, FrontendCacheTTLs, IndexerSavedResponse, IndexerTestResponse,
     JellyfinUserInfo, JellyfinVerifyResponse, LibraryScanScheduleResponse,
     LibrarySettingsSaveRequest, PlexLibrarySectionInfo, PlexVerifyResponse, PolicySummaryResponse,
-    ProwlarrTestResponse, SabnzbdTestResponse, SourcePriorityOrder, TestConnectionResponse,
-    UsenetSearchBackend, VerifyConnectionResponse,
+    ProwlarrTestResponse, QualityRecipeStatus, SabnzbdTestResponse, SourcePriorityOrder,
+    TestConnectionResponse, UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::quality;
 use super::verify::{VerifyProbes, check_hibp_file, require_service_url};
@@ -427,7 +427,7 @@ impl SettingsService {
             Ok(policy) => Ok(policy_view(policy)),
             Err(ConfigError::SectionDecode { reason, .. }) => Ok(DownloadPolicyView {
                 policy: DownloadPolicy::default(),
-                quality_recipe_status: "invalid".to_owned(),
+                quality_recipe_status: QualityRecipeStatus::Invalid,
                 quality_recipe_error: Some(reason),
                 recycle_bin_warning: None,
             }),

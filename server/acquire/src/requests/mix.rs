@@ -22,6 +22,7 @@ use rusqlite::{OptionalExtension, params_from_iter};
 
 use super::RequestsState;
 use super::error::RequestsError;
+use super::ledger::ApprovalState;
 use super::models::AlbumIntake;
 use super::service::RequestsService;
 
@@ -277,10 +278,12 @@ impl PersonalMixBuilder {
                 None
             }
         };
-        match (toggle_on, state.as_deref()) {
-            (true, Some(state)) => state.to_owned(),
+        match (toggle_on, state) {
+            (true, Some(state)) => state.as_str().to_owned(),
             (true, None) => "none".to_owned(),
-            (false, Some(state @ ("rejected" | "revoked"))) => state.to_owned(),
+            (false, Some(state @ (ApprovalState::Rejected | ApprovalState::Revoked))) => {
+                state.as_str().to_owned()
+            }
             (false, _) => "none".to_owned(),
         }
     }
@@ -699,7 +702,7 @@ impl PersonalMixBuilder {
         if role.is_curator() {
             return Ok(true);
         }
-        Ok(self.requests.mixes.state(user_id).await?.as_deref() == Some("approved"))
+        Ok(self.requests.mixes.state(user_id).await? == Some(ApprovalState::Approved))
     }
 
     /// Request up to [`MAX_AUTO_REQUESTS`] missing albums under the

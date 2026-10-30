@@ -35613,10 +35613,19 @@
             "description": "The sources that are on and answered the last probe: `soulseek`,\n`usenet` or `plugin:<name>`."
           },
           "status": {
-            "type": "string",
-            "description": "Overall verdict: `ok`, `degraded`, or `error`."
+            "$ref": "#/components/schemas/AcquireHealthStatus",
+            "description": "Overall verdict."
           }
         }
+      },
+      "AcquireHealthStatus": {
+        "type": "string",
+        "description": "The acquisition health verdict.",
+        "enum": [
+          "ok",
+          "degraded",
+          "error"
+        ]
       },
       "ActionResponse": {
         "type": "object",
@@ -39293,11 +39302,15 @@
         ],
         "properties": {
           "kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Request kind; defaults to album."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RequestKind",
+                "description": "Request kind; defaults to album."
+              }
+            ]
           },
           "musicbrainz_ids": {
             "type": "array",
@@ -39399,14 +39412,24 @@
             "minimum": 0
           },
           "status": {
-            "type": "string",
-            "description": "Batch decision: `pending`, `awaiting_approval`, `already_requested`,\nor `failed`."
+            "$ref": "#/components/schemas/BatchIntakeStatus",
+            "description": "Batch decision."
           },
           "success": {
             "type": "boolean",
             "description": "Whether the batch recorded anything."
           }
         }
+      },
+      "BatchIntakeStatus": {
+        "type": "string",
+        "description": "What a batch ask did as a whole.",
+        "enum": [
+          "pending",
+          "awaiting_approval",
+          "already_requested",
+          "failed"
+        ]
       },
       "BatchItem": {
         "type": "object",
@@ -42899,8 +42922,8 @@
                 "description": "Recipe verdict detail, when any."
               },
               "quality_recipe_status": {
-                "type": "string",
-                "description": "Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`."
+                "$ref": "#/components/schemas/QualityRecipeStatus",
+                "description": "Read-only recipe verdict."
               },
               "recycle_bin_warning": {
                 "type": [
@@ -43417,8 +43440,7 @@
             "description": "The mount path inside DroppedNeedle's container."
           },
           "reason": {
-            "type": "string",
-            "description": "`ok`, `not_set`, `missing`, `not_writable`, `different_mount`,\n`different_filesystem`, or `stat_error`."
+            "$ref": "#/components/schemas/MountReason"
           }
         }
       },
@@ -43493,8 +43515,7 @@
             ]
           },
           "status": {
-            "type": "string",
-            "description": "`processing`, `imported`, `skipped`, `needs_review`, `failed` or\n`discarded`."
+            "$ref": "#/components/schemas/DropItemStatus"
           },
           "updated_at": {
             "type": "number",
@@ -43536,8 +43557,7 @@
             }
           },
           "status": {
-            "type": "string",
-            "description": "`processing`, `completed` or `failed`."
+            "$ref": "#/components/schemas/DropJobStatus"
           },
           "upload_name": {
             "type": "string"
@@ -43582,6 +43602,27 @@
             "description": "The job that moved."
           }
         }
+      },
+      "DropItemStatus": {
+        "type": "string",
+        "description": "Item lifecycle. The `drop_import_items.status` CHECK lists exactly these\nvalues.",
+        "enum": [
+          "processing",
+          "imported",
+          "skipped",
+          "needs_review",
+          "failed",
+          "discarded"
+        ]
+      },
+      "DropJobStatus": {
+        "type": "string",
+        "description": "Job lifecycle. The `drop_import_jobs.status` CHECK lists exactly these\nvalues.",
+        "enum": [
+          "processing",
+          "completed",
+          "failed"
+        ]
       },
       "DropUploadForm": {
         "type": "object",
@@ -43719,8 +43760,7 @@
             "minimum": 0
           },
           "status": {
-            "type": "string",
-            "description": "`started`, `already_in_progress`, or `already_complete`."
+            "$ref": "#/components/schemas/EditionAcquireStatus"
           },
           "task_id": {
             "type": [
@@ -43757,6 +43797,15 @@
             "minimum": 0
           }
         }
+      },
+      "EditionAcquireStatus": {
+        "type": "string",
+        "description": "What an edition acquire did.",
+        "enum": [
+          "started",
+          "already_in_progress",
+          "already_complete"
+        ]
       },
       "EditionCandidateView": {
         "type": "object",
@@ -45945,6 +45994,16 @@
           }
         }
       },
+      "GateSource": {
+        "type": "string",
+        "description": "The source a release gate is for.",
+        "enum": [
+          "slskd",
+          "sabnzbd",
+          "newznab",
+          "lidarr_import"
+        ]
+      },
       "GenreAlias": {
         "type": "object",
         "description": "One genre alias.",
@@ -47601,7 +47660,7 @@
             "description": "Canonical MBID."
           },
           "status": {
-            "type": "string",
+            "$ref": "#/components/schemas/RequestStatus",
             "description": "Row status after this call."
           },
           "success": {
@@ -52576,6 +52635,14 @@
           }
         }
       },
+      "MixRefreshStatus": {
+        "type": "string",
+        "description": "Whether a personal-mix refresh started.",
+        "enum": [
+          "started",
+          "already_running"
+        ]
+      },
       "MoreByArtistResponse": {
         "type": "object",
         "description": "`GET /albums/{album_id}/more-by-artist`.",
@@ -52596,6 +52663,19 @@
             "description": "The artist's name, empty when MusicBrainz had nothing."
           }
         }
+      },
+      "MountReason": {
+        "type": "string",
+        "description": "Why the mount is or is not usable, and whether moves stay on one\nfilesystem.",
+        "enum": [
+          "ok",
+          "not_set",
+          "missing",
+          "not_writable",
+          "different_mount",
+          "different_filesystem",
+          "stat_error"
+        ]
       },
       "MultiDiscNamingMode": {
         "type": "string",
@@ -57270,8 +57350,8 @@
             "description": "Recipe verdict detail, when any."
           },
           "quality_recipe_status": {
-            "type": "string",
-            "description": "Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`."
+            "$ref": "#/components/schemas/QualityRecipeStatus",
+            "description": "Read-only recipe verdict."
           },
           "summary": {
             "type": "string",
@@ -57795,8 +57875,8 @@
             "description": "Custom FLAC bit depth."
           },
           "format": {
-            "type": "string",
-            "description": "Container: `flac` or `mp3`."
+            "$ref": "#/components/schemas/RecipeFormat",
+            "description": "Container."
           },
           "max_bitrate_kbps": {
             "type": [
@@ -57815,8 +57895,8 @@
             "description": "Custom MP3 lower bound, or canonical standard bound."
           },
           "quality": {
-            "type": "string",
-            "description": "Quality id (per-format closed set, or `custom`)."
+            "$ref": "#/components/schemas/RecipeQuality",
+            "description": "Quality id: one of the format's own, or `custom`."
           },
           "sample_rate_hz": {
             "type": [
@@ -57828,6 +57908,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "QualityRecipeStatus": {
+        "type": "string",
+        "description": "How the stored quality settings read: a v1 tier range, a v2 recipe, a\npolicy with codecs a recipe cannot express, or a recipe that does not\nvalidate.",
+        "enum": [
+          "v1",
+          "v2",
+          "non_convertible",
+          "invalid"
+        ]
       },
       "QuarantineEntry": {
         "type": "object",
@@ -58717,6 +58807,7 @@
           "library_unavailable",
           "naming_script_failed",
           "library_folder_missing",
+          "library_off",
           "local_fault",
           "files_missing",
           "files_unlisted",
@@ -58810,6 +58901,30 @@
             "type": "string"
           }
         }
+      },
+      "RecipeFormat": {
+        "type": "string",
+        "description": "A recipe entry's container.",
+        "enum": [
+          "flac",
+          "mp3"
+        ]
+      },
+      "RecipeQuality": {
+        "type": "string",
+        "description": "A recipe entry's quality: MP3 bitrate bands, FLAC resolutions, or\n`custom` for either.",
+        "enum": [
+          "below_192",
+          "192_255",
+          "256_319",
+          "320_plus",
+          "cd",
+          "24_48",
+          "24_96",
+          "24_192",
+          "hi_res",
+          "custom"
+        ]
       },
       "RecoveryCodeResponse": {
         "type": "object",
@@ -60591,7 +60706,7 @@
             "description": "Bytes still to transfer from the linked task, once known."
           },
           "status": {
-            "type": "string",
+            "$ref": "#/components/schemas/RequestStatus",
             "description": "Row status."
           },
           "status_messages": {
@@ -60691,6 +60806,22 @@
           "opportunistic"
         ]
       },
+      "RequestStatus": {
+        "type": "string",
+        "description": "A request row's status. The `request_history.status` CHECK lists\nexactly these values.",
+        "enum": [
+          "pending",
+          "queued",
+          "downloading",
+          "awaiting_approval",
+          "cancelling",
+          "cancelled",
+          "failed",
+          "imported",
+          "incomplete",
+          "rejected"
+        ]
+      },
       "RequestStatusMessage": {
         "type": "object",
         "description": "One grouped status detail behind the request card's expander. Intake\nhas no producer for these yet, so views answer None until one exists.",
@@ -60742,8 +60873,7 @@
         ],
         "properties": {
           "status": {
-            "type": "string",
-            "description": "`started` or `already_running`."
+            "$ref": "#/components/schemas/MixRefreshStatus"
           }
         }
       },
@@ -64448,8 +64578,7 @@
             "description": "Live probe answered."
           },
           "source": {
-            "type": "string",
-            "description": "`slskd`, `sabnzbd`, `newznab`, or `lidarr_import`."
+            "$ref": "#/components/schemas/GateSource"
           }
         }
       },
@@ -64553,6 +64682,15 @@
           }
         }
       },
+      "SpotifyJobState": {
+        "type": "string",
+        "description": "Where a Spotify import job is.",
+        "enum": [
+          "running",
+          "done",
+          "error"
+        ]
+      },
       "SpotifyJobStatus": {
         "type": "object",
         "description": "Terminal-or-live state of one `spotify:import` job.",
@@ -64573,8 +64711,7 @@
             "description": "Internal playlist id the job populates."
           },
           "state": {
-            "type": "string",
-            "description": "`running`, `done`, or `error`."
+            "$ref": "#/components/schemas/SpotifyJobState"
           },
           "track_count": {
             "type": [
@@ -66029,8 +66166,8 @@
         ],
         "properties": {
           "status": {
-            "type": "string",
-            "description": "`queued`, `awaiting_approval`, or `already_in_library`."
+            "$ref": "#/components/schemas/RequestStatus",
+            "description": "`queued` or `awaiting_approval`."
           },
           "task_id": {
             "type": [
@@ -67121,7 +67258,7 @@
         ],
         "properties": {
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/WatchState",
             "description": "Watch state after this call."
           },
           "success": {
@@ -67179,8 +67316,8 @@
             "minimum": 0
           },
           "kind": {
-            "type": "string",
-            "description": "`missing` (whole album) or `partial` (filling gaps)."
+            "$ref": "#/components/schemas/WatchKind",
+            "description": "The whole album or the gaps of a short one."
           },
           "musicbrainz_id": {
             "type": "string",
@@ -67421,6 +67558,14 @@
             "default": true
           }
         }
+      },
+      "WatchKind": {
+        "type": "string",
+        "description": "What a wanted watch waits for. The `wanted_watches.kind` CHECK lists\nexactly these values.",
+        "enum": [
+          "missing",
+          "partial"
+        ]
       },
       "WatchState": {
         "type": "string",

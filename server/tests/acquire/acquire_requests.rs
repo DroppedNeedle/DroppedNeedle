@@ -40,7 +40,7 @@ use droppedneedle_acquire::downloads::{PlannedAlbum, ReplaceVersion};
 use droppedneedle_acquire::follows::ImportArtist;
 use droppedneedle_acquire::requests::{
     self, RequestsState,
-    ledger::{WantedWatch, WatchState},
+    ledger::{WantedWatch, WatchKind, WatchState},
     models::RequestKind,
     quota::{QuotaLedger, QuotaPolicy},
     service::RequestsService,
@@ -314,7 +314,7 @@ fn watch(key: &str, user: &str) -> WantedWatch {
         artist_mbid: None,
         year: None,
         cover_url: None,
-        kind: "missing".to_owned(),
+        kind: WatchKind::Missing,
         state: WatchState::Watching,
         created_at: 1_700_000_000,
         first_release_date: None,
@@ -2175,8 +2175,8 @@ async fn a_curators_pending_mix_ask_is_neither_listed_nor_kept() {
     assert_eq!(report.mix_asks_cleared, 1);
     assert_eq!(state.mixes.state("u-tris").await.unwrap(), None);
     assert_eq!(
-        state.mixes.state("u-ada").await.unwrap().as_deref(),
-        Some("pending")
+        state.mixes.state("u-ada").await.unwrap(),
+        Some(droppedneedle_acquire::requests::ledger::ApprovalState::Pending)
     );
 }
 

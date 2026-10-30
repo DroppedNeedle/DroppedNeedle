@@ -7996,6 +7996,157 @@ async fn only_mp3_rows_wait_to_say_whether_their_length_was_measured() {
     assert!(sqlx::raw_sql(refused).execute(&pool).await.is_err());
 }
 
+/// Migration 0107 gives the library switched off its own held reason. A
+/// file, upload, decision and task stored as `library_folder_missing` with
+/// the library-off detail move to `library_off`; one whose folder really
+/// was missing keeps its reason. The held files keep every row, the new
+/// spelling is taken and the triggers still move the activity revision.
+#[tokio::test]
+async fn the_library_switched_off_gets_its_own_reason_on_upgrade() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(106)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'U', 'user', 1); \
+         INSERT INTO acquire_held_entries (id, user_id, origin, group_key, state, \
+             created_at, expires_at) \
+         VALUES (1, 'u1', 'upload', 'upload:1', 'held', 1, 2); \
+         INSERT INTO acquire_held_files (id, entry_id, root, path, original_name, \
+             release_track_mbid, evidence_score, source, reason, reason_detail, state, \
+             created_at) \
+         VALUES (7, 1, 'drop', 'a.flac', '01.flac', 'rt', 0.82, 'upload', \
+             'library_folder_missing', 'the library is switched off', 'held', 5), \
+             (8, 1, 'drop', 'b.flac', '02.flac', NULL, NULL, 'upload', \
+             'library_folder_missing', '/music', 'held', 6); \
+         INSERT INTO drop_import_jobs (id, user_id, status, created_at, upload_name, \
+             staging_dir) VALUES ('j1', 'u1', 'completed', 1, 'up.zip', '/s'); \
+         INSERT INTO drop_import_items (id, job_id, folder_name, status, updated_at, \
+             reason_code, detail) \
+         VALUES (1, 'j1', 'A', 'needs_review', 1, 'library_folder_missing', \
+             'The library folder isn''t there, so the files wait where they are. \
+the library is switched off 1 file was left out.'), \
+             (2, 'j1', 'B', 'needs_review', 1, 'library_folder_missing', \
+             'The library folder isn''t there, so the files wait where they are. /music'); \
+         INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name, \
+             album_title, status, created_at, updated_at, outcome_code, error_message) \
+         VALUES ('t1', 'u1', 'rg', 'A', 'B', 'failed', 1, 1, 'library_folder_missing', \
+             'The local library is switched off, so no files can be changed. \
+Turn it on under Settings > Library.'); \
+         INSERT INTO download_import_decisions (task_id, outcome, reason_code, detail, \
+             decided_at) \
+         VALUES ('t1', 'rejected', 'library_folder_missing', 'the library is switched off', 1), \
+             ('t1', 'rejected', 'library_folder_missing', '/music', 2);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    type Held = (
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<f64>,
+        i64,
+    );
+    let held: Vec<Held> = sqlx::query_as(
+        "SELECT id, reason, reason_detail, release_track_mbid, evidence_score, created_at \
+         FROM acquire_held_files ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        held,
+        vec![
+            (
+                7,
+                "library_off".to_owned(),
+                None,
+                Some("rt".to_owned()),
+                Some(0.82),
+                5
+            ),
+            (
+                8,
+                "library_folder_missing".to_owned(),
+                Some("/music".to_owned()),
+                None,
+                None,
+                6
+            ),
+        ]
+    );
+    let items: Vec<(String, String)> =
+        sqlx::query_as("SELECT reason_code, detail FROM drop_import_items ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        items,
+        vec![
+            (
+                "library_off".to_owned(),
+                "The local library is switched off, so the files wait where they are. \
+                 1 file was left out."
+                    .to_owned()
+            ),
+            (
+                "library_folder_missing".to_owned(),
+                "The library folder isn't there, so the files wait where they are. /music"
+                    .to_owned()
+            ),
+        ]
+    );
+    let decisions: Vec<String> =
+        sqlx::query_scalar("SELECT reason_code FROM download_import_decisions ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(decisions, ["library_off", "library_folder_missing"]);
+    let task: (String, String) =
+        sqlx::query_as("SELECT outcome_code, error_message FROM download_tasks WHERE id = 't1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        task,
+        (
+            "library_off".to_owned(),
+            "The local library is switched off, so the files wait where they are.".to_owned()
+        )
+    );
+
+    let revision = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT revision FROM download_activity_global_revision WHERE singleton = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let before = revision().await;
+    sqlx::raw_sql("UPDATE acquire_held_files SET reason = 'library_off' WHERE id = 8")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        revision().await,
+        before + 1,
+        "a reason change moves the revision"
+    );
+    assert!(
+        sqlx::raw_sql("UPDATE acquire_held_files SET reason = 'switched_off' WHERE id = 8")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "a spelling outside the reasons is refused"
+    );
+}
+
 /// The runner's `-- no-transaction` path and the table-rebuild recipe in the
 /// kernel's `schema::boot` module doc, proven on a parent that cascade,
 /// restrict and set-null children point at.

@@ -9,7 +9,8 @@
 use std::time::Duration;
 
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy as SavedPolicy, QualityRecipeEntry, derive_default_order,
+    DownloadPolicy as SavedPolicy, QualityRecipeEntry, RecipeFormat, RecipeQuality,
+    derive_default_order,
 };
 
 use crate::landing::quality::{in_range, tier_for};
@@ -133,7 +134,7 @@ impl DownloadPolicy {
                 .position(|key| key == tier);
         }
         self.quality_recipe.iter().position(|entry| {
-            if entry.format == "mp3" {
+            if entry.format == RecipeFormat::Mp3 {
                 let Some(bitrate) = bitrate_kbps.filter(|_| extension == "mp3") else {
                     return false;
                 };
@@ -142,7 +143,7 @@ impl DownloadPolicy {
                 bitrate >= minimum && entry.max_bitrate_kbps.is_none_or(|max| bitrate <= max)
             } else if extension != "flac" {
                 false
-            } else if entry.quality == "custom" {
+            } else if entry.quality == RecipeQuality::Custom {
                 // An exact resolution needs both axes shown.
                 match (
                     entry.bit_depth,
@@ -158,7 +159,7 @@ impl DownloadPolicy {
             } else {
                 let want_step = LOSSLESS_DETAIL_STEPS
                     .iter()
-                    .position(|step| *step == entry.quality)
+                    .position(|step| *step == entry.quality.as_str())
                     .unwrap_or(0);
                 let have_step = lossless_detail_step(bit_depth, sample_rate_hz);
                 have_step <= want_step || have_step == 5

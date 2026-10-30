@@ -21,6 +21,7 @@ use crate::client_error::{ClientError, Service, retry_after};
 use crate::landing::DownloadsFolder;
 use crate::landing::confine::{Place, place};
 use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
+use droppedneedle_providers::executor::decode_failure;
 
 pub use super::sabnzbd_models::{
     AddResponse, Category, Config, History, HistorySlot, Misc, Queue, QueueSlot,
@@ -759,22 +760,6 @@ impl SabnzbdClient {
 /// A SABnzbd answer that is not the documented JSON.
 fn non_json(detail: String) -> SabnzbdError {
     ClientError::decode(Service::Sabnzbd, detail).into()
-}
-
-/// Where and how an answer failed to decode: the decoder's kind, line and
-/// column. Never its text or the body, which can quote values from the
-/// answer.
-fn decode_failure(error: &serde_json::Error) -> String {
-    let kind = match error.classify() {
-        serde_json::error::Category::Io => "read error",
-        serde_json::error::Category::Syntax => "not JSON",
-        serde_json::error::Category::Data => "unexpected shape",
-        serde_json::error::Category::Eof => "cut short",
-    };
-    if error.line() == 0 {
-        return kind.to_owned();
-    }
-    format!("{kind} at line {}, column {}", error.line(), error.column())
 }
 
 /// A SABnzbd API-level error: a refused key, or SABnzbd's own message.

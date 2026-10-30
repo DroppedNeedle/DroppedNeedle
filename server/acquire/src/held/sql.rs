@@ -121,7 +121,7 @@ droppedneedle_kernel::sql! {
     /// (`Reason::kind` is `Library`).
     pub fragment LIBRARY_REASONS = "('target_occupied', 'upgrade_blocked', 'library_changed', \
              'library_unavailable', 'naming_script_failed', 'library_folder_missing', \
-             'local_fault')";
+             'library_off', 'local_fault')";
     /// Held file `f` is retried by itself: held for a library reason and
     /// paired with a track, as the Retry button needs.
     pub(super) fragment RETRIES = "(f.state = 'held' AND f.reason IN " + LIBRARY_REASONS + " \

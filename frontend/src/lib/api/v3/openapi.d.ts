@@ -9719,9 +9719,14 @@ export interface components {
              *     `usenet` or `plugin:<name>`.
              */
             ready_via: string[];
-            /** @description Overall verdict: `ok`, `degraded`, or `error`. */
-            status: string;
+            /** @description Overall verdict. */
+            status: components["schemas"]["AcquireHealthStatus"];
         };
+        /**
+         * @description The acquisition health verdict.
+         * @enum {string}
+         */
+        AcquireHealthStatus: "ok" | "degraded" | "error";
         /** @description Mutation outcome for approve/reject/cancel/retry/clear. */
         ActionResponse: {
             /** @description Human outcome. */
@@ -11308,8 +11313,7 @@ export interface components {
         };
         /** @description Batch-cancel body. Dedupe is by exact string before lookup. */
         BatchCancelBody: {
-            /** @description Request kind; defaults to album. */
-            kind?: string | null;
+            kind?: null | components["schemas"]["RequestKind"];
             /** @description MBIDs to cancel. */
             musicbrainz_ids: string[];
         };
@@ -11358,14 +11362,16 @@ export interface components {
              * @description Rows skipped (duplicates, in-progress, unresolvable).
              */
             skipped: number;
-            /**
-             * @description Batch decision: `pending`, `awaiting_approval`, `already_requested`,
-             *     or `failed`.
-             */
-            status: string;
+            /** @description Batch decision. */
+            status: components["schemas"]["BatchIntakeStatus"];
             /** @description Whether the batch recorded anything. */
             success: boolean;
         };
+        /**
+         * @description What a batch ask did as a whole.
+         * @enum {string}
+         */
+        BatchIntakeStatus: "pending" | "awaiting_approval" | "already_requested" | "failed";
         /** @description One batch row. */
         BatchItem: {
             /** @description Album title. */
@@ -12968,8 +12974,8 @@ export interface components {
         DownloadPolicyView: components["schemas"]["DownloadPolicy"] & {
             /** @description Recipe verdict detail, when any. */
             quality_recipe_error?: string | null;
-            /** @description Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`. */
-            quality_recipe_status: string;
+            /** @description Read-only recipe verdict. */
+            quality_recipe_status: components["schemas"]["QualityRecipeStatus"];
             /**
              * @description Why the recycle bin path is not used, when it is not: each library
              *     folder's `.recycle` takes its place. Read-only.
@@ -13194,11 +13200,7 @@ export interface components {
             ok: boolean;
             /** @description The mount path inside DroppedNeedle's container. */
             path: string;
-            /**
-             * @description `ok`, `not_set`, `missing`, `not_writable`, `different_mount`,
-             *     `different_filesystem`, or `stat_error`.
-             */
-            reason: string;
+            reason: components["schemas"]["MountReason"];
         };
         /**
          * @description One album-shaped folder of an upload. Staged paths never leave the
@@ -13220,11 +13222,7 @@ export interface components {
             reason_action?: string | null;
             reason_code?: null | components["schemas"]["Reason"];
             release_group_mbid?: string | null;
-            /**
-             * @description `processing`, `imported`, `skipped`, `needs_review`, `failed` or
-             *     `discarded`.
-             */
-            status: string;
+            status: components["schemas"]["DropItemStatus"];
             /** Format: double */
             updated_at: number;
         };
@@ -13236,8 +13234,7 @@ export interface components {
             error?: string | null;
             id: string;
             items: components["schemas"]["DropImportItemResponse"][];
-            /** @description `processing`, `completed` or `failed`. */
-            status: string;
+            status: components["schemas"]["DropJobStatus"];
             upload_name: string;
             user_id: string;
             user_name: string;
@@ -13253,6 +13250,18 @@ export interface components {
             /** @description The job that moved. */
             job_id: string;
         };
+        /**
+         * @description Item lifecycle. The `drop_import_items.status` CHECK lists exactly these
+         *     values.
+         * @enum {string}
+         */
+        DropItemStatus: "processing" | "imported" | "skipped" | "needs_review" | "failed" | "discarded";
+        /**
+         * @description Job lifecycle. The `drop_import_jobs.status` CHECK lists exactly these
+         *     values.
+         * @enum {string}
+         */
+        DropJobStatus: "processing" | "completed" | "failed";
         /** @description The upload form: one or more `files` parts (audio or `.zip`). */
         DropUploadForm: {
             files: string[];
@@ -13303,8 +13312,7 @@ export interface components {
              *     is another version of.
              */
             requested?: number | null;
-            /** @description `started`, `already_in_progress`, or `already_complete`. */
-            status: string;
+            status: components["schemas"]["EditionAcquireStatus"];
             /** @description Linked download task, when dispatched. */
             task_id?: string | null;
             /**
@@ -13327,6 +13335,11 @@ export interface components {
              */
             versions?: number | null;
         };
+        /**
+         * @description What an edition acquire did.
+         * @enum {string}
+         */
+        EditionAcquireStatus: "started" | "already_in_progress" | "already_complete";
         /** @description One candidate the matcher scored, as the edition picker shows it. */
         EditionCandidateView: {
             album_artist_name: string;
@@ -14291,6 +14304,11 @@ export interface components {
              */
             discover_queue_auto_generate: boolean;
         };
+        /**
+         * @description The source a release gate is for.
+         * @enum {string}
+         */
+        GateSource: "slskd" | "sabnzbd" | "newznab" | "lidarr_import";
         /** @description One genre alias. */
         GenreAlias: {
             /**
@@ -14998,7 +15016,7 @@ export interface components {
             /** @description Canonical MBID. */
             musicbrainz_id: string;
             /** @description Row status after this call. */
-            status: string;
+            status: components["schemas"]["RequestStatus"];
             /** @description Whether the ask was recorded. */
             success: boolean;
             /** @description Linked download task, when dispatched. */
@@ -17257,6 +17275,11 @@ export interface components {
              */
             tagging_script_ids: string[];
         };
+        /**
+         * @description Whether a personal-mix refresh started.
+         * @enum {string}
+         */
+        MixRefreshStatus: "started" | "already_running";
         /** @description `GET /albums/{album_id}/more-by-artist`. */
         MoreByArtistResponse: {
             /** @description Other release groups by the artist, in MusicBrainz browse order. */
@@ -17264,6 +17287,12 @@ export interface components {
             /** @description The artist's name, empty when MusicBrainz had nothing. */
             artist_name: string;
         };
+        /**
+         * @description Why the mount is or is not usable, and whether moves stay on one
+         *     filesystem.
+         * @enum {string}
+         */
+        MountReason: "ok" | "not_set" | "missing" | "not_writable" | "different_mount" | "different_filesystem" | "stat_error";
         /**
          * @description Multi-disc naming mode for a root override.
          * @enum {string}
@@ -19311,8 +19340,8 @@ export interface components {
             legacy_rollback_compatible: boolean;
             /** @description Recipe verdict detail, when any. */
             quality_recipe_error?: string | null;
-            /** @description Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`. */
-            quality_recipe_status: string;
+            /** @description Read-only recipe verdict. */
+            quality_recipe_status: components["schemas"]["QualityRecipeStatus"];
             /** @description Backend-composed contract sentence. */
             summary: string;
         };
@@ -19586,8 +19615,8 @@ export interface components {
              * @description Custom FLAC bit depth.
              */
             bit_depth?: number | null;
-            /** @description Container: `flac` or `mp3`. */
-            format: string;
+            /** @description Container. */
+            format: components["schemas"]["RecipeFormat"];
             /**
              * Format: int64
              * @description Custom MP3 upper bound (`None` when open-ended), or canonical.
@@ -19598,14 +19627,21 @@ export interface components {
              * @description Custom MP3 lower bound, or canonical standard bound.
              */
             min_bitrate_kbps?: number | null;
-            /** @description Quality id (per-format closed set, or `custom`). */
-            quality: string;
+            /** @description Quality id: one of the format's own, or `custom`. */
+            quality: components["schemas"]["RecipeQuality"];
             /**
              * Format: int64
              * @description Custom FLAC sample rate.
              */
             sample_rate_hz?: number | null;
         };
+        /**
+         * @description How the stored quality settings read: a v1 tier range, a v2 recipe, a
+         *     policy with codecs a recipe cannot express, or a recipe that does not
+         *     validate.
+         * @enum {string}
+         */
+        QualityRecipeStatus: "v1" | "v2" | "non_convertible" | "invalid";
         /** @description One blocklisted release. */
         QuarantineEntry: {
             /** @description The client label: `slskd`, `sabnzbd`, or the source for plugins. */
@@ -19977,7 +20013,7 @@ export interface components {
          * @description One reason, stored and sent by its snake_case spelling.
          * @enum {string}
          */
-        Reason: "weak_match" | "no_artist_evidence" | "mostly_unmatched" | "tag_mismatch" | "fingerprint_mismatch" | "fingerprint_unconfirmed" | "album_version_only" | "no_release" | "no_tracks" | "version_lower_quality" | "no_better_than_yours" | "owned_elsewhere" | "owned_on_album" | "no_album_match" | "album_not_found" | "tags_disagree" | "not_chosen_edition" | "samples" | "too_many_files" | "interrupted" | "import_failed" | "held_by_earlier_version" | "target_occupied" | "upgrade_blocked" | "library_changed" | "library_unavailable" | "naming_script_failed" | "library_folder_missing" | "local_fault" | "files_missing" | "files_unlisted" | "outside_downloads_folder" | "size_mismatch" | "corrupt" | "no_audio" | "sample" | "wrong_edition" | "not_pinned_edition" | "wrong_album" | "quality_rejected" | "not_an_upgrade" | "wrong_track" | "stalled" | "queue_timeout" | "queue_gave_way" | "never_started" | "deadline" | "source_failed" | "no_source" | "download_failed" | "album_lookup_unavailable" | "recording_unknown" | "no_album_for_recording" | "no_album_folder" | "no_album_release" | "album_releases_exhausted" | "track_not_found" | "no_download_source" | "settings_unreadable" | "journal_unreadable" | "musicbrainz_unavailable" | "held_for_review" | "tracks_missing" | "already_owned" | "cancelled" | "moved_on";
+        Reason: "weak_match" | "no_artist_evidence" | "mostly_unmatched" | "tag_mismatch" | "fingerprint_mismatch" | "fingerprint_unconfirmed" | "album_version_only" | "no_release" | "no_tracks" | "version_lower_quality" | "no_better_than_yours" | "owned_elsewhere" | "owned_on_album" | "no_album_match" | "album_not_found" | "tags_disagree" | "not_chosen_edition" | "samples" | "too_many_files" | "interrupted" | "import_failed" | "held_by_earlier_version" | "target_occupied" | "upgrade_blocked" | "library_changed" | "library_unavailable" | "naming_script_failed" | "library_folder_missing" | "library_off" | "local_fault" | "files_missing" | "files_unlisted" | "outside_downloads_folder" | "size_mismatch" | "corrupt" | "no_audio" | "sample" | "wrong_edition" | "not_pinned_edition" | "wrong_album" | "quality_rejected" | "not_an_upgrade" | "wrong_track" | "stalled" | "queue_timeout" | "queue_gave_way" | "never_started" | "deadline" | "source_failed" | "no_source" | "download_failed" | "album_lookup_unavailable" | "recording_unknown" | "no_album_for_recording" | "no_album_folder" | "no_album_release" | "album_releases_exhausted" | "track_not_found" | "no_download_source" | "settings_unreadable" | "journal_unreadable" | "musicbrainz_unavailable" | "held_for_review" | "tracks_missing" | "already_owned" | "cancelled" | "moved_on";
         /** @description How many reviews one reason holds. */
         ReasonCount: {
             /** Format: int64 */
@@ -20000,6 +20036,17 @@ export interface components {
             code: string;
             message: string;
         };
+        /**
+         * @description A recipe entry's container.
+         * @enum {string}
+         */
+        RecipeFormat: "flac" | "mp3";
+        /**
+         * @description A recipe entry's quality: MP3 bitrate bands, FLAC resolutions, or
+         *     `custom` for either.
+         * @enum {string}
+         */
+        RecipeQuality: "below_192" | "192_255" | "256_319" | "320_plus" | "cd" | "24_48" | "24_96" | "24_192" | "hi_res" | "custom";
         /** @description A minted recovery code. The code appears here once, never again. */
         RecoveryCodeResponse: {
             /**
@@ -20785,7 +20832,7 @@ export interface components {
              */
             size_remaining?: number | null;
             /** @description Row status. */
-            status: string;
+            status: components["schemas"]["RequestStatus"];
             /**
              * @description Task status detail groups behind the card's expander. None until a
              *     producer exists.
@@ -20824,6 +20871,12 @@ export interface components {
          */
         RequestPriority: "user_initiated" | "image_fetch" | "prefetch_visible" | "background_sync" | "opportunistic";
         /**
+         * @description A request row's status. The `request_history.status` CHECK lists
+         *     exactly these values.
+         * @enum {string}
+         */
+        RequestStatus: "pending" | "queued" | "downloading" | "awaiting_approval" | "cancelling" | "cancelled" | "failed" | "imported" | "incomplete" | "rejected";
+        /**
          * @description One grouped status detail behind the request card's expander. Intake
          *     has no producer for these yet, so views answer None until one exists.
          */
@@ -20849,8 +20902,7 @@ export interface components {
          *     unrelated `RefreshResponse` in the shared document.
          */
         RequestsRefreshResponse: {
-            /** @description `started` or `already_running`. */
-            status: string;
+            status: components["schemas"]["MixRefreshStatus"];
         };
         /** @description Source-resolution answer: each track id maps to its known sources. */
         ResolveSourcesResponse: {
@@ -22432,8 +22484,7 @@ export interface components {
             open: boolean;
             /** @description Live probe answered. */
             reachable: boolean;
-            /** @description `slskd`, `sabnzbd`, `newznab`, or `lidarr_import`. */
-            source: string;
+            source: components["schemas"]["GateSource"];
         };
         /**
          * @description Which remote source a view or id belongs to.
@@ -22484,14 +22535,18 @@ export interface components {
             /** @description Internal playlist id. */
             playlist_id: string;
         };
+        /**
+         * @description Where a Spotify import job is.
+         * @enum {string}
+         */
+        SpotifyJobState: "running" | "done" | "error";
         /** @description Terminal-or-live state of one `spotify:import` job. */
         SpotifyJobStatus: {
             /** @description User-safe failure summary, else null. */
             message?: string | null;
             /** @description Internal playlist id the job populates. */
             playlist_id: string;
-            /** @description `running`, `done`, or `error`. */
-            state: string;
+            state: components["schemas"]["SpotifyJobState"];
             /**
              * Format: int64
              * @description Tracks written on success.
@@ -23058,8 +23113,8 @@ export interface components {
         };
         /** @description Exact-track intake response. */
         TrackIntakeResponse: {
-            /** @description `queued`, `awaiting_approval`, or `already_in_library`. */
-            status: string;
+            /** @description `queued` or `awaiting_approval`. */
+            status: components["schemas"]["RequestStatus"];
             /** @description Linked download task, when dispatched. */
             task_id?: string | null;
         };
@@ -23498,7 +23553,7 @@ export interface components {
         /** @description Wanted mutation outcome. */
         WantedActionResponse: {
             /** @description Watch state after this call. */
-            state: string;
+            state: components["schemas"]["WatchState"];
             /** @description Whether the action applied. */
             success: boolean;
         };
@@ -23525,8 +23580,8 @@ export interface components {
              * @description Epoch seconds when created.
              */
             created_at: number;
-            /** @description `missing` (whole album) or `partial` (filling gaps). */
-            kind: string;
+            /** @description The whole album or the gaps of a short one. */
+            kind: components["schemas"]["WatchKind"];
             /** @description Release-group MBID. */
             musicbrainz_id: string;
             /**
@@ -23650,6 +23705,12 @@ export interface components {
              */
             watch_partial_albums: boolean;
         };
+        /**
+         * @description What a wanted watch waits for. The `wanted_watches.kind` CHECK lists
+         *     exactly these values.
+         * @enum {string}
+         */
+        WatchKind: "missing" | "partial";
         /**
          * @description A wanted watch's state. The `wanted_watches.state` CHECK lists exactly
          *     these values.

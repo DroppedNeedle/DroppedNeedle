@@ -33,10 +33,12 @@ macro_rules! sql_text {
         }
     };
 }
+pub(crate) use sql_text;
 
 /// A request row's status. The `request_history.status` CHECK lists
 /// exactly these values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum RequestStatus {
     /// Live, dispatched or about to be.
     Pending,
@@ -208,6 +210,36 @@ impl WatchState {
 }
 
 sql_text!(WatchState);
+
+/// What a wanted watch waits for. The `wanted_watches.kind` CHECK lists
+/// exactly these values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchKind {
+    /// The whole album.
+    Missing,
+    /// The tracks a short download left out.
+    Partial,
+}
+
+impl WatchKind {
+    /// Stored and wire form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Partial => "partial",
+        }
+    }
+
+    /// Read back a stored kind.
+    pub fn parse(value: &str) -> Option<Self> {
+        [Self::Missing, Self::Partial]
+            .into_iter()
+            .find(|kind| kind.as_str() == value)
+    }
+}
+
+sql_text!(WatchKind);
 
 /// Whether a watch may move `from -> to`. A stopped watch resumes; a
 /// fulfilled one watches again when its album leaves the library.
@@ -438,8 +470,8 @@ pub struct WantedWatch {
     pub year: Option<i32>,
     /// Custom artwork URL override.
     pub cover_url: Option<String>,
-    /// `missing` (whole album) or `partial` (filling gaps).
-    pub kind: String,
+    /// The whole album or the gaps of a short one.
+    pub kind: WatchKind,
     /// Watch state.
     pub state: WatchState,
     /// Epoch seconds when created (or last resumed).
@@ -497,8 +529,8 @@ pub struct MixApproval {
     pub user_id: String,
     /// Requesting display name.
     pub user_name: String,
-    /// `pending`, `approved`, `rejected`, or `revoked`.
-    pub state: String,
+    /// Approval state.
+    pub state: ApprovalState,
     /// Epoch seconds when asked.
     pub requested_at: u64,
 }

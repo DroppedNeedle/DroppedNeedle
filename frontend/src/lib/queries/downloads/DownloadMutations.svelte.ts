@@ -200,13 +200,11 @@ export function requestTrack() {
 		onSuccess: (data: TrackIntakeResponse) => {
 			toastStore.show({
 				message:
-					data.status === 'already_in_library'
-						? 'That track is already in your library'
-						: data.status === 'awaiting_approval'
-							? 'Track request submitted for admin approval'
-							: noSourceReady()
-								? WAITING_FOR_SOURCE_COPY
-								: 'Track requested - searching for downloads',
+					data.status === 'awaiting_approval'
+						? 'Track request submitted for admin approval'
+						: noSourceReady()
+							? WAITING_FOR_SOURCE_COPY
+							: 'Track requested - searching for downloads',
 				type: 'success'
 			});
 		},

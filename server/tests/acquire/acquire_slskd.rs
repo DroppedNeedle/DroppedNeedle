@@ -31,7 +31,7 @@ use droppedneedle_acquire::wiring::ClientLives;
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::runtime_config::secret_sections::SlskdConnection;
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy as KernelPolicy, QualityRecipeEntry,
+    DownloadPolicy as KernelPolicy, QualityRecipeEntry, RecipeFormat, RecipeQuality,
 };
 
 use crate::common::bundles::quiet_ticks;
@@ -1000,16 +1000,16 @@ fn album_peer(username: &str, extension: &str) -> serde_json::Value {
 }
 
 /// A saved policy keeping one tier, with a one-entry recipe.
-fn one_tier_policy(tier: &str, format: &str, quality: &str) -> KernelPolicy {
+fn one_tier_policy(tier: &str, format: RecipeFormat, quality: RecipeQuality) -> KernelPolicy {
     KernelPolicy {
         quality_min: tier.to_owned(),
         quality_max: tier.to_owned(),
         quality_cutoff: tier.to_owned(),
         flac_mp3_only: true,
         quality_recipe: vec![QualityRecipeEntry {
-            format: format.to_owned(),
-            quality: quality.to_owned(),
-            min_bitrate_kbps: (format == "mp3").then_some(320),
+            format,
+            quality,
+            min_bitrate_kbps: (format == RecipeFormat::Mp3).then_some(320),
             max_bitrate_kbps: None,
             bit_depth: None,
             sample_rate_hz: None,
@@ -1074,7 +1074,11 @@ async fn soulseek_picks_follow_the_saved_quality_policy() {
         })
         .expect("slskd connection saves");
     settings
-        .save_blocking(one_tier_policy("mp3_320", "mp3", "320_plus"))
+        .save_blocking(one_tier_policy(
+            "mp3_320",
+            RecipeFormat::Mp3,
+            RecipeQuality::Kbps320Plus,
+        ))
         .expect("an MP3-only policy saves");
 
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
@@ -1129,7 +1133,11 @@ async fn soulseek_picks_follow_the_saved_quality_policy() {
     );
 
     settings
-        .save_blocking(one_tier_policy("lossless", "flac", "cd"))
+        .save_blocking(one_tier_policy(
+            "lossless",
+            RecipeFormat::Flac,
+            RecipeQuality::Cd,
+        ))
         .expect("a FLAC-only policy saves");
     seed_album_task(&journal, "task-flac-only").await;
     worker.run_once(2).await;

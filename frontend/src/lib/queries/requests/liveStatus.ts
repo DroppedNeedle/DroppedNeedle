@@ -1,10 +1,14 @@
 import type { RequestItem } from './types';
 
+export type LiveRequestStatus = RequestItem['status'] | 'awaiting_review' | 'importing';
+
 // The request row reads any download still in the queue as "downloading",
 // searching and awaiting review included, so an active card takes its state
 // from the linked download's own state, which the server sends on the row
 // whoever started that download.
-export function liveRequestStatus(item: Pick<RequestItem, 'status' | 'task_state'>): string {
+export function liveRequestStatus(
+	item: Pick<RequestItem, 'status' | 'task_state'>
+): LiveRequestStatus {
 	switch (item.task_state) {
 		case 'searching':
 			return 'pending';

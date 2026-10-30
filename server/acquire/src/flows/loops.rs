@@ -29,7 +29,7 @@ use crate::downloads::state::TaskStatus;
 use crate::follows::Follows;
 use crate::follows::cursors::{FeedRelease, FollowCursor, Follower, PendingRelease};
 use crate::requests::error::RequestsError;
-use crate::requests::ledger::{RequestStatus, WantedWatch, WatchState};
+use crate::requests::ledger::{RequestStatus, WantedWatch, WatchKind, WatchState};
 use crate::requests::models::RequestKind;
 use crate::requests::service::{FollowIntake, FollowRelease, RequestsService};
 use crate::requests::settle::announce_fulfilled;
@@ -452,9 +452,9 @@ fn notify_wanted(
 /// stopped watch, skips rows with no requester, and skips rows whose
 /// linked task is still active.
 async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -> usize {
-    let mut statuses = vec![(RequestStatus::Failed, "missing")];
+    let mut statuses = vec![(RequestStatus::Failed, WatchKind::Missing)];
     if settings.watch_partial_albums {
-        statuses.push((RequestStatus::Incomplete, "partial"));
+        statuses.push((RequestStatus::Incomplete, WatchKind::Partial));
     }
     let mut enrolled = 0;
     for (status, kind) in statuses {
@@ -503,7 +503,7 @@ async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -
                 artist_mbid: row.artist_mbid.clone(),
                 year: row.year,
                 cover_url: None,
-                kind: kind.to_owned(),
+                kind,
                 state: WatchState::Watching,
                 created_at: epoch(now),
                 first_release_date: date.found,

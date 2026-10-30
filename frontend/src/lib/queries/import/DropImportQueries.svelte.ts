@@ -18,12 +18,7 @@ export const getDropImportJobsQuery = (
 ) =>
 	createQuery(() => ({
 		queryKey: DropImportQueryKeyFactory.jobs(authStore.user?.id, getAll()),
-		// The server sends job and item status as plain strings; the screens
-		// narrow them to the values it uses.
-		queryFn: async ({ signal }) =>
-			(await api.v3.GET(DROP_IMPORT_ENDPOINTS.jobs(getAll()), {
-				signal
-			})) as DropImportJobList,
+		queryFn: ({ signal }) => api.v3.GET(DROP_IMPORT_ENDPOINTS.jobs(getAll()), { signal }),
 		enabled: getEnabled(),
 		refetchInterval: (query: { state: { data?: DropImportJobList } }) =>
 			query.state.data?.jobs.some((job) => job.status === 'processing') ? 2000 : false

@@ -138,23 +138,6 @@ pub enum ImportFailure {
     LibraryOff,
 }
 
-/// The detail a deferred import carries while the library is switched off.
-/// It rides with `library_folder_missing`, the stored code for "the files
-/// wait for the library".
-pub const LIBRARY_OFF_DETAIL: &str = "the library is switched off";
-
-impl ImportFailure {
-    pub fn detail(&self) -> &str {
-        match self {
-            ImportFailure::LocalFault(detail)
-            | ImportFailure::Occupied(detail)
-            | ImportFailure::NamingScript(detail)
-            | ImportFailure::FolderMissing(detail) => detail,
-            ImportFailure::LibraryOff => LIBRARY_OFF_DETAIL,
-        }
-    }
-}
-
 /// The library as the landing sees it. MusicBrainz is asked at the
 /// caller's `priority`: user priority when a person waits on the answer,
 /// background for the landing and other work nobody watches.

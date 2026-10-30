@@ -49,11 +49,11 @@ impl PersonalMixStore {
     }
 
     /// One user's approval state, if a row exists.
-    pub async fn state(&self, user_id: &str) -> Result<Option<String>, RequestsError> {
+    pub async fn state(&self, user_id: &str) -> Result<Option<ApprovalState>, RequestsError> {
         let user_id = user_id.to_owned();
         read(&self.db, "mix.state", move |conn| {
             conn.query_row(sql::MIX_APPROVAL_STATE.text(), params![user_id], |row| {
-                Ok(approval_state(row, 0)?.as_str().to_owned())
+                approval_state(row, 0)
             })
             .optional()
         })
@@ -70,7 +70,7 @@ impl PersonalMixStore {
                 Ok(MixApproval {
                     user_name: user_name.unwrap_or_else(|| user_id.clone()),
                     user_id,
-                    state: approval_state(row, 2)?.as_str().to_owned(),
+                    state: approval_state(row, 2)?,
                     requested_at: secs_from_ms(row.get(3)?),
                 })
             })?;

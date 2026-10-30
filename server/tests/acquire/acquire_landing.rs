@@ -5431,7 +5431,10 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
         .await
         .expect("history");
     assert_eq!(history.items.len(), 1);
-    assert_eq!(history.items[0].status, "failed");
+    assert_eq!(
+        history.items[0].status,
+        droppedneedle_acquire::requests::ledger::RequestStatus::Failed
+    );
     assert_eq!(history.items[0].album_version_only, Some(true));
 
     // "Get it from the album": the same track, now imported as the song.

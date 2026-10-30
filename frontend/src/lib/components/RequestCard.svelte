@@ -26,7 +26,6 @@
 		CircleX,
 		TriangleAlert,
 		Ban,
-		Pause,
 		Music,
 		Radar,
 		Upload,
@@ -159,14 +158,6 @@
 				};
 			case 'importing':
 				return { badgeClass: 'badge-info', label: 'Importing', icon: Upload };
-			case 'paused':
-				return { badgeClass: 'badge-warning', label: 'Paused', icon: Pause };
-			case 'downloadClientUnavailable':
-				return { badgeClass: 'badge-error', label: 'Client Unavailable', icon: TriangleAlert };
-			case 'importFailed':
-				return { badgeClass: 'badge-error', label: 'Import Failed', icon: CircleX };
-			case 'importBlocked':
-				return { badgeClass: 'badge-warning', label: 'Import Blocked', icon: TriangleAlert };
 			case 'cancelling':
 				return { badgeClass: 'badge-ghost', label: 'Cancelling', icon: Loader };
 			case 'incomplete':
@@ -189,12 +180,7 @@
 	});
 
 	let showStatusDetails = $state(false);
-	const isFailedState = $derived(
-		item.status === 'importFailed' ||
-			item.status === 'importBlocked' ||
-			item.status === 'failed' ||
-			item.status === 'downloadClientUnavailable'
-	);
+	const isFailedState = $derived(item.status === 'failed');
 	const requestKind = $derived<RequestKind>(item.request_kind === 'track' ? 'track' : 'album');
 	const isTrackRequest = $derived(requestKind === 'track');
 	const trackTitle = $derived(
@@ -252,9 +238,7 @@
 
 	const isActive = $derived(mode === 'active');
 	const hasProgress = $derived(
-		isActive &&
-			!waiting &&
-			(status === 'downloading' || status === 'importing' || status === 'paused')
+		isActive && !waiting && (status === 'downloading' || status === 'importing')
 	);
 	const hasStatusMessages = $derived(
 		isActive && item.status_messages && item.status_messages.length > 0
@@ -387,11 +371,7 @@
 				>
 					<div class="flex items-center gap-2 w-full">
 						<div class="progress-track flex-1">
-							<div
-								class="progress-fill"
-								class:progress-fill-paused={status === 'paused'}
-								style="width: {item.progress ?? 0}%"
-							></div>
+							<div class="progress-fill" style="width: {item.progress ?? 0}%"></div>
 						</div>
 						<span
 							class="text-xs text-base-content/70 min-w-[3ch] text-right tabular-nums font-medium"
@@ -586,12 +566,6 @@
 			transparent 100%
 		);
 		animation: shimmer 2s ease-in-out infinite;
-	}
-	.progress-fill-paused {
-		background: oklch(from var(--color-warning) l c h / 0.6);
-	}
-	.progress-fill-paused::after {
-		animation: none;
 	}
 
 	@keyframes shimmer {
