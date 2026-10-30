@@ -10,6 +10,7 @@ use super::builders::{self};
 use super::models::{PlaybackProgressInfo, PlaybackStartInfo, PlaybackStopInfo, UserItemDataDto};
 use super::router::*;
 use super::views::{ItemView, ReadFailed, TICKS_PER_SECOND, WriteRefusal, should_scrobble};
+use crate::playback::Reporter;
 
 // ===== Favorites + played (both route forms, 200 UserItemDataDto) =====
 
@@ -245,6 +246,7 @@ pub(super) async fn playing(
     }
     if let Some(file_id) = report_file_id(&state, item_id).await? {
         state.sessions.now_playing(
+            Reporter::Jellyfin,
             &file_id,
             &authed.principal.id,
             authed.client.as_deref(),
@@ -276,6 +278,7 @@ pub(super) async fn playing_progress(
         // Presence only: the start told the scrobble services, and the stop
         // report alone checks the play threshold.
         state.sessions.progress(
+            Reporter::Jellyfin,
             &file_id,
             &authed.principal.id,
             authed.client.as_deref(),
