@@ -42,7 +42,7 @@ use crate::identity::reads::release_input_hash;
 use crate::identity::sql::{PERSONS, REVISABLE};
 use crate::matching::model::{ArtistNames, CreditedArtist, Release, VARIOUS_ARTISTS_MBID};
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
-use droppedneedle_kernel::db::fold_text;
+use droppedneedle_kernel::db::{fold_text, savepoint};
 
 /// How many albums, and how many linked rows, one sweep looks at.
 pub const SWEEP_BATCH: usize = 50;
@@ -1120,17 +1120,18 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
         .collect();
     let mut taken: BTreeSet<String> = BTreeSet::new();
     for candidate in candidates {
-        // A person's or v2's link first: it never gives way.
-        let owner: Option<String> = conn
-            .prepare_cached(&format!(
+        // Any other row keeping a link to the id, in whatever spelling,
+        // owns it: a second link to it would clash.
+        let holders: Vec<String> = conn
+            .prepare_cached(
                 "SELECT local_artist_id FROM local_artist_external_identities \
-                 WHERE provider = 'musicbrainz' AND lower(provider_artist_id) = ?1 \
-                 ORDER BY decision_source IN {PERSONS} DESC, local_artist_id LIMIT 1"
-            ))?
-            .query_row(params![candidate.mbid], |row| row.get(0))
-            .optional()?;
-        let owned =
-            owner.is_some_and(|owner| !unlinks.contains(&owner) && !moving.contains(&owner));
+                 WHERE provider = 'musicbrainz' AND lower(provider_artist_id) = ?1",
+            )?
+            .query_map(params![candidate.mbid], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let owned = holders.iter().any(|holder| {
+            *holder != candidate.artist && !unlinks.contains(holder) && !moving.contains(holder)
+        });
         if owned || !taken.insert(candidate.mbid.clone()) {
             if candidate.linked {
                 changes.push(LinkChange::Unlink {
@@ -1164,6 +1165,48 @@ pub(crate) fn touch_artist(tx: &Transaction<'_>, artist: &str, now: f64) -> rusq
         "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1",
     )?
     .execute(params![artist, now])?;
+    Ok(())
+}
+
+/// Settle every row with an app link that holds one of `ids` through its
+/// link, a credit's file id or a current proof, so a row whose files are
+/// one artist but whose link is another is settled before that artist's
+/// group is judged. A failure is rolled back and logged; the caller goes
+/// on, and a later pass tries again.
+pub(crate) fn settle_holders(
+    tx: &Transaction<'_>,
+    ids: &[String],
+    now_ms: i64,
+) -> rusqlite::Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let settled = savepoint(tx, "artist_links", || {
+        let mut rows: BTreeSet<String> = BTreeSet::new();
+        for id in ids {
+            let held = tx
+                .prepare_cached(&format!(
+                    "SELECT local_artist_id FROM local_artist_external_identities \
+                     WHERE provider = 'musicbrainz' AND decision_source IN {REVISABLE} \
+                     AND local_artist_id IN ( \
+                     SELECT local_artist_id FROM local_artist_external_identities \
+                      WHERE provider = 'musicbrainz' AND lower(provider_artist_id) = ?1 \
+                     UNION SELECT local_artist_id FROM local_track_artists WHERE artist_mbid = ?1 \
+                     UNION SELECT local_artist_id FROM local_album_artists WHERE artist_mbid = ?1 \
+                     UNION SELECT p.source_local_artist_id FROM library_artist_credit_proofs p \
+                      WHERE p.artist_mbid = ?1 AND p.source_local_artist_id IS NOT NULL \
+                      AND ({CURRENT_PROOF}))"
+                ))?
+                .query_map(params![id], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows.extend(held);
+        }
+        let rows: Vec<String> = rows.into_iter().collect();
+        settle(tx, &rows, now_ms)
+    })?;
+    if let Err(error) = settled {
+        tracing::warn!(%error, "the app's artist links could not be settled; a later pass tries again");
+    }
     Ok(())
 }
 

@@ -1826,6 +1826,65 @@ fn a_row_its_matched_album_proves_merges_into_the_linked_row() {
     assert_eq!(links.merges(), 1, "nothing new to merge");
 }
 
+/// In one settle, a row takes x while the row the app linked to x moves to
+/// y: the old link is gone before the new one is written, so both land.
+#[test]
+fn a_row_takes_the_id_another_row_moves_off_in_one_settle() {
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.artist("ar-b", "Beta", 2.0);
+    links.link("ar-a", LINK_X, "automatic");
+    links.album(
+        "al",
+        &[("ar-a", "Alpha", None), ("ar-b", "Beta", None)],
+        &[],
+        "automatic",
+    );
+    links.release(&[(LINK_Y, "Alpha"), (LINK_X, "Beta")], 0, &[]);
+    links.store.link_album_artists("al").unwrap();
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_Y));
+    assert_eq!(links.link_of("ar-b"), automatic(LINK_X));
+}
+
+/// A row whose files all hold x but which the app linked to y is settled
+/// when a pass judges x's group, so it merges into the row linked to x in
+/// that same pass.
+#[test]
+fn a_row_holding_an_id_by_its_files_is_settled_before_the_group_merges() {
+    let links = Links::new();
+    links.artist("ar-s", "Alpha", 1.0);
+    links.artist("ar-a", "ALPHA", 2.0);
+    links.link("ar-s", LINK_X, "automatic");
+    links.link("ar-a", LINK_Y, "automatic");
+    links.album("al", &[("ar-s", "Alpha", None)], &[], "automatic");
+    links.release(&[(LINK_X, "Alpha")], 0, &[]);
+    links.unmatched_album("an", &[("ar-a", "Alpha", Some(LINK_X))]);
+
+    links.store.link_and_merge_album_artists("al").unwrap();
+    assert_eq!(links.retired_into("ar-a").as_deref(), Some("ar-s"));
+    assert_eq!(links.link_of("ar-s"), automatic(LINK_X));
+    assert_eq!(links.merges(), 1);
+}
+
+/// The app's link to x gives way to a person's link to x on another row,
+/// whatever its spelling, also when the row is settled on its own.
+#[test]
+fn an_automatic_link_gives_way_to_a_persons_in_another_spelling() {
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.artist("ar-b", "Alpha B", 2.0);
+    links.link("ar-a", LINK_X, "automatic");
+    links.link("ar-b", &LINK_X.to_uppercase(), "manual");
+    links.unmatched_album("an", &[("ar-a", "Alpha", Some(LINK_X))]);
+
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(links.link_of("ar-a"), None);
+    assert_eq!(
+        links.link_of("ar-b"),
+        Some((LINK_X.to_uppercase(), "manual".to_owned()))
+    );
+}
+
 /// No merge while the row has a credit no proof covers, while the two
 /// rows are marked as different people, or while the row the app linked
 /// has a credit of its own no proof covers.

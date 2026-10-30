@@ -14,6 +14,7 @@
 //! database, run on the calling (blocking) thread. Every call answers a
 //! `Result`: a read that fails is an error, never an absent row.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -152,6 +153,16 @@ pub struct SqliteIdentifyStore {
     /// Writes through this store that changed a row. A match changed
     /// through this store wakes the album sweep at once.
     writes: AtomicU64,
+    /// The sweep's albums and links that failed last time, with the
+    /// error's text, so a repeat of the same failure is not warned again.
+    failing: Mutex<HashMap<Failing, String>>,
+}
+
+/// An album or an artist's link the sweep failed to work out.
+#[derive(PartialEq, Eq, Hash)]
+enum Failing {
+    Album(String),
+    Link(String),
 }
 
 /// The last drain of continued tracks.
@@ -199,6 +210,7 @@ impl SqliteIdentifyStore {
             swept: Mutex::new(None),
             drained: Mutex::new(None),
             writes: AtomicU64::new(0),
+            failing: Mutex::new(HashMap::new()),
         }
     }
 
@@ -687,8 +699,9 @@ impl SqliteIdentifyStore {
 }
 
 /// Work out what album `album`'s match proves about its artists and settle
-/// their links; with `converge`, also merge what the links prove to be one
-/// artist. Either way, a row the pass left empty follows its credits.
+/// their links; with `converge`, also settle every other row holding those
+/// ids and merge what the links prove to be one artist. Either way, a row
+/// the pass left empty follows its credits.
 fn artist_pass(
     tx: &Transaction<'_>,
     clock: &dyn Clock,
@@ -699,6 +712,7 @@ fn artist_pass(
     let linked = artist_links::link_album(tx, album, now)?;
     let now_secs = now as f64 / 1000.0;
     if converge && !linked.ids.is_empty() {
+        artist_links::settle_holders(tx, &linked.ids, now)?;
         converge_ids(tx, &linked.ids, now_secs)?;
     }
     follow_moved(tx, &linked.moved, now_secs)?;
@@ -779,13 +793,19 @@ impl SqliteIdentifyStore {
                 Ok::<_, StoreError>(artist_links::stale_albums(conn, artist_links::SWEEP_BATCH)?)
             })?;
             for album in &stale {
+                let key = Failing::Album(album.clone());
                 match self.link_and_merge_album_artists(album) {
-                    Ok(()) => {}
+                    Ok(()) => self.recovered(&key),
                     Err(error @ (StoreError::Busy(_) | StoreError::Closed)) => return Err(error),
-                    Err(error) => tracing::warn!(
+                    Err(error) if self.newly_failing(key, &error) => tracing::warn!(
                         %error,
                         album_id = album,
                         "the album's artist links could not be worked out; a later sweep tries again"
+                    ),
+                    Err(error) => tracing::debug!(
+                        %error,
+                        album_id = album,
+                        "the album's artist links still cannot be worked out"
                     ),
                 }
             }
@@ -846,17 +866,23 @@ impl SqliteIdentifyStore {
                         })
                     })
                     .map(|written| self.landed(written));
+                let key = Failing::Link(artist.clone());
                 match outcome {
-                    Ok(()) => {}
+                    Ok(()) => self.recovered(&key),
                     Err(error @ (StoreError::Busy(_) | StoreError::Closed)) => {
                         // The rest of this batch goes first next time.
                         *self.cursor_guard() = settled;
                         return Err(error);
                     }
-                    Err(error) => tracing::warn!(
+                    Err(error) if self.newly_failing(key, &error) => tracing::warn!(
                         %error,
                         artist_id = artist,
                         "an artist link could not be settled; a later sweep tries again"
+                    ),
+                    Err(error) => tracing::debug!(
+                        %error,
+                        artist_id = artist,
+                        "an artist link still cannot be settled"
                     ),
                 }
             }
@@ -952,6 +978,25 @@ impl SqliteIdentifyStore {
         self.swept
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Record that the sweep failed on `key` with `error`; true when it did
+    /// not fail on it last time, or failed another way.
+    fn newly_failing(&self, key: Failing, error: &StoreError) -> bool {
+        let text = error.to_string();
+        let mut failing = self
+            .failing
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        failing.insert(key, text.clone()).as_ref() != Some(&text)
+    }
+
+    /// Forget a failure the sweep has now got past.
+    fn recovered(&self, key: &Failing) {
+        self.failing
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(key);
     }
 
     fn cursor_guard(&self) -> MutexGuard<'_, String> {

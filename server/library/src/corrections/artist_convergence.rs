@@ -49,8 +49,7 @@ use super::artists::{CREDITS_MOVED, retire_artist};
 pub(crate) use super::artists::{MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID};
 use super::merge_basis::{Follow, MergeBasis};
 use crate::catalog_revision::bump_catalog;
-use crate::identify::artist_links::{MovedProof, placeholder, settle};
-use crate::identity::sql::REVISABLE;
+use crate::identify::artist_links::{MovedProof, placeholder, settle_holders};
 use crate::operations::decisions::{ArtistAction, record_artist_action};
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
 use droppedneedle_kernel::db::savepoint;
@@ -76,28 +75,11 @@ pub(crate) fn converge_artists(tx: &Transaction<'_>, now: f64) -> rusqlite::Resu
     follow_renamed(tx, now)
 }
 
-/// Settle the app's links to any of `ids` before their groups are judged.
-/// A failure is rolled back and logged; the groups are judged anyway.
+/// Settle the app's links of every row holding any of `ids`
+/// ([`settle_holders`]) before their groups are judged. A failure is
+/// rolled back and logged; the groups are judged anyway.
 fn settle_automatic(tx: &Transaction<'_>, ids: &[String], now: f64) -> rusqlite::Result<()> {
-    if ids.is_empty() {
-        return Ok(());
-    }
-    let wanted = serde_json::to_string(ids).unwrap_or_default();
-    let settled = savepoint(tx, "artist_links", || {
-        let rows: Vec<String> = tx
-            .prepare_cached(&format!(
-                "SELECT local_artist_id FROM local_artist_external_identities \
-                 WHERE provider = 'musicbrainz' AND decision_source IN {REVISABLE} \
-                 AND lower(provider_artist_id) IN (SELECT value FROM json_each(?1))"
-            ))?
-            .query_map(params![wanted], |row| row.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        settle(tx, &rows, (now * 1000.0) as i64)
-    })?;
-    if let Err(error) = settled {
-        tracing::warn!(%error, "the app's artist links could not be settled; next scan tries again");
-    }
-    Ok(())
+    settle_holders(tx, ids, (now * 1000.0) as i64)
 }
 
 /// Merge the groups of live rows proven to be each of `ids`
