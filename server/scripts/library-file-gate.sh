@@ -30,6 +30,9 @@ allowed=(
   # The placement unit test removes its own scratch settings folder in
   # the system temp folder, never a library file.
   "management/placement.rs|std::fs::remove_dir_all(&dir).expect(\"scratch dir removed\");"
+  # The lyrics signature unit test removes its own scratch folder in the
+  # system temp folder, never a library file.
+  "scan/sqlite_store/lyrics.rs|std::fs::remove_dir_all(&dir).unwrap();"
 )
 
 names='rename|copy|hard_link|symlink|soft_link|remove_file|remove_dir|remove_dir_all'
