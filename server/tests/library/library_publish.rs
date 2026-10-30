@@ -978,9 +978,16 @@ fn a_write_counts_as_stuck_after_24_hours() {
 
 /// A set-aside original whose journal rows are gone is reported once it
 /// is more than a day old, and stays where it is. A file a row names, or
-/// one young enough to belong to a publish in flight, is not reported.
+/// one young enough to belong to a publish in flight, is not reported. A
+/// row names its file by root and path, so a library folder set to a new
+/// path, or a folder whose name changed only in case, keeps it named. The
+/// report is kept across a restart, and a file someone removed leaves it.
 #[test]
 fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
+    use droppedneedle_library::manage::LeftoverFiles;
+    use droppedneedle_library::scan::models::EffectivePolicy;
+    use droppedneedle_library::scan::roots::{LibraryRoot, RootRegistry};
+
     let fix = fixture("leftover-pass");
     let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
     let (sealed, live) = seal(&bundle);
@@ -999,15 +1006,30 @@ fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
 
     let conn = open_db(&fix);
     let db = restart(&fix);
-    let roots = [Root::library("music", fix.dir.join("music"))];
+    let roots = [Root::library("music", music.clone())];
     let now = std::time::SystemTime::now();
     let later = now + std::time::Duration::from_secs(2 * 86_400);
-    let pass = |at| {
-        publish::recovery::find_leftovers(&db, &roots, at, &|| false)
-            .unwrap()
-            .expect("not cancelled")
+    let pass_over = |roots: &[Root], at| {
+        let mut found =
+            publish::recovery::find_leftovers(&db, roots, &Default::default(), at, &|| false)
+                .unwrap()
+                .expect("not cancelled");
+        assert_eq!(found.len(), 1, "one root looked through");
+        found.remove(0)
     };
+    let pass = |at| pass_over(&roots, at);
     assert_eq!(pass(later).count, 0, "the journal names every hidden file");
+
+    let moved = fix.dir.join("Music");
+    std::fs::rename(&music, &moved).unwrap();
+    std::fs::rename(moved.join("staging"), moved.join("Staging")).unwrap();
+    assert_eq!(
+        pass_over(&[Root::library("music", moved.clone())], later).count,
+        0,
+        "a root at a new path, its folder renamed in case, keeps its files named"
+    );
+    std::fs::rename(moved.join("Staging"), moved.join("staging")).unwrap();
+    std::fs::rename(&moved, &music).unwrap();
 
     conn.execute("DELETE FROM library_publish_journal", [])
         .unwrap();
@@ -1017,7 +1039,7 @@ fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
     let mut reported: Vec<PathBuf> = report
         .files
         .iter()
-        .map(|file| roots[0].dir.join(&file.rel_path))
+        .map(|rel| roots[0].dir.join(rel))
         .collect();
     reported.sort();
     let mut expected = hidden.clone();
@@ -1026,6 +1048,55 @@ fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
     assert!(
         hidden.iter().all(|path| path.exists()),
         "nothing is removed"
+    );
+
+    let registry = RootRegistry::new(
+        vec![LibraryRoot::new(
+            "music",
+            music.clone(),
+            EffectivePolicy::Automatic,
+        )],
+        true,
+        "rev-1",
+    );
+    let at = later
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let clock = std::sync::Arc::new(ManualClock::at(at));
+    let checked = LeftoverFiles::new(db.clone(), clock.clone())
+        .check(&registry, &|| false)
+        .unwrap();
+    assert_eq!(checked, Some(hidden.len()));
+    drop(db);
+    let kept = LeftoverFiles::new(restart(&fix), clock.clone());
+    let report = kept.report(&registry).unwrap();
+    assert_eq!(report.count, hidden.len(), "the report outlives a restart");
+    assert_eq!(report.files.len(), hidden.len());
+
+    // A share that dropped out leaves its mount point empty: the list stays.
+    let aside = fix.dir.join("music-aside");
+    std::fs::rename(&music, &aside).unwrap();
+    std::fs::create_dir(&music).unwrap();
+    clock.advance(7 * 60 * 60 * 1000);
+    kept.check(&registry, &|| false).unwrap();
+    assert_eq!(
+        kept.report(&registry).unwrap().count,
+        hidden.len(),
+        "an empty library folder keeps its list"
+    );
+    std::fs::remove_dir(&music).unwrap();
+    std::fs::rename(&aside, &music).unwrap();
+
+    std::fs::remove_file(&expected[0]).unwrap();
+    kept.check(&registry, &|| false).unwrap();
+    let report = kept.report(&registry).unwrap();
+    assert_eq!(report.count, hidden.len() - 1, "a removed file leaves it");
+    assert!(
+        report
+            .files
+            .iter()
+            .all(|file| music.join(&file.rel_path) != expected[0])
     );
 }
 

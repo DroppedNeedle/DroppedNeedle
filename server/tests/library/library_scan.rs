@@ -4156,6 +4156,15 @@ async fn dismissed_pair_ends_when_its_tracks_come_back() {
     rig.tag(&files[..3], &before);
     rig.scan().await;
     assert_eq!(rig.album_of("a/t000.flac"), old, "the tracks are back");
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_catalog_actions WHERE local_album_id = '{old}' \
+             AND action_kind = 'retag_dismissal_ended' \
+             AND json_extract(before_json, '$.from_album_id') = '{new}'"
+        )),
+        1,
+        "the old album's history says the answer was dropped"
+    );
 
     let last = "scan-across-dismissed-then-back last";
     rig.tag(&files[..3], last);

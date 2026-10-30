@@ -182,6 +182,7 @@ library_identify_artist_id_checks
 library_identify_jobs
 library_identify_reviews
 library_identity_repair_findings
+library_leftover_checks
 library_management_automatic_queue
 library_management_baseline_purges
 library_management_baselines

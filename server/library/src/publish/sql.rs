@@ -265,8 +265,24 @@ droppedneedle_kernel::sql! {
     pub(crate) ANY_ACTIVE = "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
              WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention')) \
              OR EXISTS (SELECT 1 FROM library_publish_created_folders)";
-    /// Every hidden name the journal records.
-    pub(super) JOURNAL_NAMES = "SELECT staged, backup FROM library_publish_journal";
+    /// Every hidden name the journal records, with the root and path of
+    /// the destination it sits beside.
+    pub(super) JOURNAL_NAMES = "SELECT dest_root, dest_rel, staged, backup \
+             FROM library_publish_journal";
+    /// Every root's last leftover check.
+    pub(crate) LEFTOVER_CHECKS = "SELECT root_id, checked_at, file_count, files_json \
+             FROM library_leftover_checks";
+    /// Keep one root's check (`?1` root, `?2` when, `?3` count, `?4` JSON
+    /// array of paths).
+    pub(crate) LEFTOVER_KEEP = "INSERT INTO library_leftover_checks \
+             (root_id, checked_at, file_count, files_json) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT (root_id) DO UPDATE SET checked_at = excluded.checked_at, \
+             file_count = excluded.file_count, files_json = excluded.files_json";
+    /// The folders the scan found to be drives or shares of their own.
+    pub(crate) SCAN_MOUNTS = "SELECT root_id, relative_path FROM library_scan_mounts";
+    /// Drop the checks of roots not in the JSON array `?1`.
+    pub(crate) LEFTOVER_FORGET = "DELETE FROM library_leftover_checks \
+             WHERE root_id NOT IN (SELECT value FROM json_each(?1))";
     /// The catalog rows a publish is checked against, for the track ids in
     /// the JSON array `?1`: each track's place, availability, stat
     /// revision and album, with its album's and its own MusicBrainz

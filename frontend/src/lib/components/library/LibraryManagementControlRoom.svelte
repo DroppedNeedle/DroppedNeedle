@@ -706,8 +706,8 @@
 						cut short. Look in the same folder for the file with the normal name. If it is there and plays,
 						the hidden file is spare: delete it. If it is missing, copy the hidden file to the normal
 						name and check the copy plays before you delete the hidden one. If the normal file is there
-						but broken, keep both until one of them plays. This list is from the last server start and
-						is checked again at the next one.</span
+						but broken, keep both until one of them plays. Each folder is checked every few hours, and
+						a file you delete leaves this list within minutes.</span
 					>
 					<ul class="flex w-full flex-col gap-1">
 						{#each leftoverFiles as file (`${file.root_id}/${file.rel_path}`)}<li

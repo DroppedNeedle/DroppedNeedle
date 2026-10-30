@@ -48,6 +48,9 @@ pub enum AlbumHistoryKindView {
     RetagJoined,
     /// Left unmanaged like the album whose files were retagged as this one.
     RetagHalfLeftAlone,
+    /// The tracks came back from the album a person kept apart from this
+    /// one, so that answer was dropped and a later retag is joined again.
+    RetagDismissalEnded,
     /// A leftover album of an earlier version was folded into this one.
     LeftoverJoined,
     /// Other music took the paths of tracks, which came in as new tracks;
@@ -119,6 +122,7 @@ impl From<HistoryEntry> for AlbumHistoryEntryView {
                 HistoryKind::TracksReplaced => AlbumHistoryKindView::TracksReplaced,
                 HistoryKind::RetagJoined => AlbumHistoryKindView::RetagJoined,
                 HistoryKind::RetagHalfLeftAlone => AlbumHistoryKindView::RetagHalfLeftAlone,
+                HistoryKind::RetagDismissalEnded => AlbumHistoryKindView::RetagDismissalEnded,
                 HistoryKind::LeftoverJoined => AlbumHistoryKindView::LeftoverJoined,
                 HistoryKind::TracksOtherMusic => AlbumHistoryKindView::TracksOtherMusic,
                 HistoryKind::TracksNewCopy => AlbumHistoryKindView::TracksNewCopy,

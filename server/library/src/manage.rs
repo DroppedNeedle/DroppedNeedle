@@ -20,7 +20,7 @@ use super::publish::planner::{
     ReleaseIdentity, STAGED_HEADROOM_BYTES, SealRecheck, SealedPreview,
 };
 use super::publish::publisher::{PublishOutcome, Publisher, locate};
-use super::publish::recovery::LeftoverReport;
+use super::publish::recovery::{LEFTOVER_LIST_MAX, Leftover, LeftoverReport};
 use super::publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
 use super::publish::tags_seam::{TagDocument, TagUpdates};
 use super::publish::{PlacementMode, PublishError, Sandbox};
@@ -30,7 +30,7 @@ use super::service::ServiceError;
 use super::tags::AudioFormat;
 use super::wiring::RootDirs;
 use droppedneedle_kernel::clock::Clock;
-use droppedneedle_kernel::db::{CancelFlag, Db, DbError};
+use droppedneedle_kernel::db::{CancelFlag, Db, DbError, Lane};
 use droppedneedle_kernel::jobs::queue::JobQueue;
 
 /// Preview seals live until the next unix day.
@@ -245,53 +245,188 @@ impl HeldBundles {
     }
 }
 
+/// How long a root's leftover check stands before the root is looked
+/// through again. A hidden file counts only once it is a day old.
+const LEFTOVER_RECHECK_MS: i64 = 6 * 60 * 60 * 1000;
+
 /// Hidden files under the library roots that no journal row names, as the
-/// last pass found them. Nothing here removes or adopts one.
+/// last look through each root found them, kept in the database. Nothing
+/// here removes or adopts one.
 #[derive(Clone)]
 pub struct LeftoverFiles {
     db: Db,
     clock: Arc<dyn Clock>,
-    report: std::sync::Arc<std::sync::Mutex<Option<LeftoverReport>>>,
+}
+
+/// One root's kept check.
+struct KeptCheck {
+    checked_at: i64,
+    count: usize,
+    files: Vec<String>,
 }
 
 impl LeftoverFiles {
-    pub(crate) fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
-        Self {
-            db,
-            clock,
-            report: Default::default(),
-        }
+    pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
+        Self { db, clock }
     }
 
-    /// Walk the usable roots once and keep what was found. `None`, with
-    /// the earlier report kept, when `cancelled` turned true. Blocking.
-    pub fn refresh(
+    /// Bring the kept checks up to date: look through each root never
+    /// checked, or not for [`LEFTOVER_RECHECK_MS`], and drop from the
+    /// others' lists each file that is gone from a folder still there. A
+    /// root the look holds back (its folder, or a mount in it, cannot be
+    /// listed or lists nothing) is treated as not due and looked through on
+    /// a later call. A root no longer set is forgotten, unless no root is
+    /// set: the settings may not have been readable.
+    /// Returns how many leftovers the roots looked through hold; `None`,
+    /// with nothing written, when `cancelled` turned true. Blocking.
+    pub fn check(
         &self,
         registry: &RootRegistry,
         cancelled: &dyn Fn() -> bool,
-    ) -> Result<Option<LeftoverReport>, PublishError> {
-        let found = super::publish::recovery::find_leftovers(
+    ) -> Result<Option<usize>, PublishError> {
+        let roots = PublishCell::root_dirs(registry);
+        let now = self.clock.now_ms();
+        let kept = self.kept()?;
+        let mounts = self.mounts()?;
+        let due: Vec<Root> = roots
+            .iter()
+            .filter(|root| {
+                kept.get(&root.id)
+                    .is_none_or(|check| now - check.checked_at >= LEFTOVER_RECHECK_MS)
+            })
+            .cloned()
+            .collect();
+        let Some(found) = super::publish::recovery::find_leftovers(
             &self.db,
-            &PublishCell::root_dirs(registry),
+            &due,
+            &mounts,
             self.clock.now_system(),
             cancelled,
-        )?;
-        if let Some(report) = &found {
-            *self
-                .report
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(report.clone());
+        )?
+        else {
+            return Ok(None);
+        };
+        let total = found.iter().map(|root| root.count).sum();
+        let looked: BTreeSet<String> = found.iter().map(|root| root.root_id.clone()).collect();
+        let mut writes: Vec<(String, i64, usize, Vec<String>)> = found
+            .into_iter()
+            .map(|root| (root.root_id, now, root.count, root.files))
+            .collect();
+        for root in roots.iter().filter(|root| !looked.contains(&root.id)) {
+            let Some(check) = kept.get(&root.id) else {
+                continue;
+            };
+            let files: Vec<String> = check
+                .files
+                .iter()
+                .filter(|rel| !cleared(&root.dir.join(rel)))
+                .cloned()
+                .collect();
+            let cleared = check.files.len() - files.len();
+            if cleared > 0 {
+                let count = check.count.saturating_sub(cleared);
+                writes.push((root.id.clone(), check.checked_at, count, files));
+            }
         }
-        Ok(found)
+        let set: BTreeSet<&str> = roots.iter().map(|root| root.id.as_str()).collect();
+        let forget = !set.is_empty() && kept.keys().any(|id| !set.contains(id.as_str()));
+        if writes.is_empty() && !forget {
+            return Ok(Some(total));
+        }
+        let set = serde_json::to_string(&set)
+            .map_err(|error| PublishError::Journal(error.to_string().into()))?;
+        self.db
+            .write_blocking(Lane::Background, "publish.leftover_keep", |tx| {
+                for (root_id, checked_at, count, files) in &writes {
+                    let files = serde_json::to_string(files)
+                        .map_err(|error| PublishError::Journal(error.to_string().into()))?;
+                    tx.prepare_cached(super::publish::sql::LEFTOVER_KEEP.text())?
+                        .execute(rusqlite::params![
+                            root_id,
+                            checked_at,
+                            i64::try_from(*count).unwrap_or(i64::MAX),
+                            files
+                        ])?;
+                }
+                if forget {
+                    tx.prepare_cached(super::publish::sql::LEFTOVER_FORGET.text())?
+                        .execute(rusqlite::params![set])?;
+                }
+                Ok::<_, PublishError>(())
+            })?;
+        Ok(Some(total))
     }
 
-    /// What the last finished pass found. `None` before the first one.
-    pub fn latest(&self) -> Option<LeftoverReport> {
-        self.report
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+    /// The kept checks of the roots set now, with each root's folder as
+    /// the settings name it. Blocking.
+    pub fn report(&self, registry: &RootRegistry) -> Result<LeftoverReport, DbError> {
+        let kept = self.kept()?;
+        let mut report = LeftoverReport::default();
+        for root in PublishCell::root_dirs(registry) {
+            let Some(check) = kept.get(&root.id) else {
+                continue;
+            };
+            report.count += check.count;
+            report.files.extend(check.files.iter().map(|rel| Leftover {
+                root_id: root.id.clone(),
+                root_path: root.dir.to_string_lossy().into_owned(),
+                rel_path: rel.clone(),
+            }));
+        }
+        report.files.truncate(LEFTOVER_LIST_MAX);
+        Ok(report)
     }
+
+    /// The folders the scan found to be drives or shares of their own, as
+    /// paths under their root, by root id.
+    fn mounts(&self) -> Result<BTreeMap<String, BTreeSet<String>>, DbError> {
+        self.db.read_blocking("publish.leftover_mounts", |conn| {
+            let mut mounts: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+            let mut statement = conn.prepare_cached(super::publish::sql::SCAN_MOUNTS.text())?;
+            let mut rows = statement.query([])?;
+            while let Some(row) = rows.next()? {
+                mounts.entry(row.get(0)?).or_default().insert(row.get(1)?);
+            }
+            Ok::<_, DbError>(mounts)
+        })
+    }
+
+    /// Every root's kept check, by root id.
+    fn kept(&self) -> Result<BTreeMap<String, KeptCheck>, DbError> {
+        self.db.read_blocking("publish.leftover_checks", |conn| {
+            let mut checks = BTreeMap::new();
+            let mut statement =
+                conn.prepare_cached(super::publish::sql::LEFTOVER_CHECKS.text())?;
+            let mut rows = statement.query([])?;
+            while let Some(row) = rows.next()? {
+                let root_id: String = row.get(0)?;
+                let mut checked_at: i64 = row.get(1)?;
+                let files: String = row.get(3)?;
+                let files = serde_json::from_str(&files).unwrap_or_else(|error| {
+                    tracing::warn!(root = root_id, %error, "a kept leftover list does not read; it is checked again");
+                    checked_at = 0;
+                    Vec::new()
+                });
+                checks.insert(
+                    root_id,
+                    KeptCheck {
+                        checked_at,
+                        count: usize::try_from(row.get::<_, i64>(2)?).unwrap_or(0),
+                        files,
+                    },
+                );
+            }
+            Ok::<_, DbError>(checks)
+        })
+    }
+}
+
+/// Whether a listed leftover was cleared: the file is gone from a folder
+/// that is still there. A folder that is gone too may be a library on a
+/// disk not mounted now, so its files stay listed.
+fn cleared(path: &std::path::Path) -> bool {
+    let gone = |path: &std::path::Path| matches!(std::fs::symlink_metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound);
+    gone(path) && path.parent().is_some_and(|folder| folder.is_dir())
 }
 
 /// Every saved root with the real folder it resolves to now. Blocking: it

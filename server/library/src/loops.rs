@@ -12,7 +12,6 @@ use droppedneedle_kernel::jobs::{
 use tokio::runtime::Handle;
 
 use super::clock::LibraryClock as _;
-use super::manage::LeftoverFiles;
 use super::manage::Publishing;
 use super::publish::PublishError;
 use super::publish::expiry::{self, ExpiryPass, ExpiryReport};
@@ -28,7 +27,7 @@ use super::scan::supervisor::{
 use super::scan::watcher::{Asked, WatcherAction, WatcherSettings, WatcherState, ask_for_changes};
 use super::scans::Scans;
 use super::service::Identification;
-use super::wiring::{LibraryCore, LibraryServices};
+use super::wiring::LibraryServices;
 
 /// The library's always-on loops on the supervisor.
 pub const SCAN_JOB: &str = "library-scan";
@@ -38,7 +37,7 @@ pub const WATCHER_JOB: &str = "library-watcher";
 pub const IDENTIFY_JOB: &str = "library-identify";
 /// Publish maintenance.
 pub const PUBLISH_JOB: &str = "library-publish";
-/// The one look for leftover hidden files after startup recovery.
+/// The check for leftover hidden files no journal row names.
 pub const LEFTOVERS_JOB: &str = "library-leftovers";
 /// The move of undo copies out of the database, once at start.
 pub const UNDO_MOVE_JOB: &str = "library-undo-move";
@@ -60,6 +59,7 @@ pub const LOOPS: &[&str] = &[
     super::repairs::JOB_NAME,
     PUBLISH_JOB,
     RECYCLE_EXPIRY_JOB,
+    LEFTOVERS_JOB,
 ];
 
 /// Scan idle ceiling: how often the scan loop looks for scheduled work
@@ -120,6 +120,13 @@ const RECYCLE_EXPIRY_JITTER: Duration = Duration::from_secs(300);
 const RECYCLE_EXPIRY_PAGE: usize = 200;
 /// Row code of an expiry pass that failed.
 const RECYCLE_EXPIRY_FAILED: &str = "RECYCLE_EXPIRY_FAILED";
+
+/// How often the leftover check looks for roots due a look and for listed
+/// files that were cleared, and the spread added to each.
+const LEFTOVERS_EVERY: Duration = Duration::from_secs(600);
+const LEFTOVERS_JITTER: Duration = Duration::from_secs(60);
+/// Row code of a leftover check that failed.
+const LEFTOVERS_FAILED: &str = "LEFTOVER_CHECK_FAILED";
 
 impl Scans {
     /// Supervisor inputs, rebuilt per call so settings-swap rebuilds
@@ -674,9 +681,8 @@ impl Publishing {
 // Background loops on the supervisor, over the tick methods above.
 // ---------------------------------------------------------------------------
 
-/// Start the library's loops on `supervisor`: the always-on [`LOOPS`] and
-/// the one [`LEFTOVERS_JOB`] look. Called from inside the runtime, after
-/// startup recovery.
+/// Start the library's loops on `supervisor`, the always-on [`LOOPS`].
+/// Called from inside the runtime, after startup recovery.
 pub(crate) fn start_loops(
     services: &LibraryServices,
     supervisor: &Supervisor,
@@ -716,9 +722,30 @@ pub(crate) fn start_loops(
     super::management::start(services.management.clone(), supervisor)?;
     super::repairs::start(services.repair_worker(), supervisor)?;
     let (core, leftovers) = (setup.core.clone(), setup.leftover_files.clone());
-    supervisor.one_shot(LEFTOVERS_JOB, move |ctx| {
-        leftover_pass(core, leftovers, ctx)
-    })?;
+    supervisor.periodic_blocking(
+        LEFTOVERS_JOB,
+        Schedule::new(LEFTOVERS_EVERY)
+            .with_jitter(LEFTOVERS_JITTER)
+            .with_backoff(Duration::from_secs(60), LEFTOVERS_EVERY),
+        move |ctx| {
+            let stop = ctx.token();
+            let checked = caught("leftover check", || {
+                leftovers.check(&core.live_registry(), &|| {
+                    ctx.heartbeat();
+                    stop.is_cancelled()
+                })
+            })?;
+            match checked {
+                Ok(Some(count)) if count > 0 => tracing::warn!(
+                    count,
+                    "hidden files no publish journal row names were found; nothing was removed"
+                ),
+                Ok(_) => {}
+                Err(error) => return Err(TickError::new(LEFTOVERS_FAILED, error)),
+            }
+            Ok(Next::Continue)
+        },
+    )?;
     let (db, blobs) = (setup.db.clone(), setup.core.blobs.clone());
     supervisor.one_shot(UNDO_MOVE_JOB, move |ctx| undo_move(db, blobs, ctx))?;
     let publish = services.publishing.clone();
@@ -935,28 +962,4 @@ async fn undo_move(db: Db, blobs: BlobStore, ctx: TickCtx) -> Result<(), TickErr
         }
         return Ok(());
     }
-}
-
-/// Look once for hidden files no journal row names. The walk runs off the
-/// async runtime and gives up between two folders once the stop comes.
-async fn leftover_pass(
-    core: LibraryCore,
-    leftovers: LeftoverFiles,
-    ctx: TickCtx,
-) -> Result<(), TickError> {
-    let stop = ctx.token().clone();
-    let walk = tokio::task::spawn_blocking(move || {
-        let registry = core.live_registry();
-        leftovers.refresh(&registry, &|| stop.is_cancelled())
-    });
-    match walk.await {
-        Ok(Ok(Some(report))) if report.count > 0 => tracing::warn!(
-            count = report.count,
-            "hidden files no publish journal row names were found; nothing was removed"
-        ),
-        Ok(Ok(_)) => {}
-        Ok(Err(error)) => tracing::warn!(%error, "leftover pass failed"),
-        Err(error) => tracing::warn!(%error, "leftover pass panicked"),
-    }
-    Ok(())
 }

@@ -36,6 +36,9 @@ pub enum HistoryKind {
     RetagJoined,
     /// Left unmanaged like the album whose files were retagged as this one.
     RetagHalfLeftAlone,
+    /// The tracks came back from the album a person kept apart from this
+    /// one, so that answer was dropped.
+    RetagDismissalEnded,
     /// A leftover album of an earlier version was folded into this one.
     LeftoverJoined,
     /// Other music took the paths of tracks, which stayed behind as missing.
@@ -144,6 +147,7 @@ const ROWS: &str = "SELECT a.id, a.actor_user_id, a.action_kind, a.reason_code, 
         'AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR')) \
       OR (a.action_kind = 'retag_first_half' \
         AND a.reason_code = 'RETAG_FIRST_HALF_LEFT_AS_IT_WAS') \
+      OR a.action_kind = 'retag_dismissal_ended' \
       OR (a.action_kind = 'album_artist' AND a.local_album_id = ?1 \
         AND a.reason_code = 'PLACEHOLDER_ARTIST_FROM_TRACKS') \
       OR a.action_kind IN ('automatic_exact_edition', 'undo_automatic_edition', \
@@ -310,6 +314,7 @@ pub fn album_history(
             ("retag_first_half", Some("RETAG_FIRST_HALF_LEFT_AS_IT_WAS")) => {
                 HistoryKind::RetagHalfLeftAlone
             }
+            ("retag_dismissal_ended", _) => HistoryKind::RetagDismissalEnded,
             (
                 "merge_album",
                 Some(

@@ -36306,6 +36306,7 @@
           "tracks_replaced",
           "retag_joined",
           "retag_half_left_alone",
+          "retag_dismissal_ended",
           "leftover_joined",
           "tracks_other_music",
           "tracks_new_copy",
@@ -51303,7 +51304,7 @@
           "leftover_file_count": {
             "type": "integer",
             "format": "int64",
-            "description": "Hidden temporary files under the library folders that no write\naccounts for, as the check after startup found them. Nothing\nremoves them."
+            "description": "Hidden temporary files under the library folders that no write\naccounts for, as the last check of each folder found them. Nothing\nremoves them."
           },
           "leftover_files": {
             "type": "array",

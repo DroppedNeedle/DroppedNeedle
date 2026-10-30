@@ -46,7 +46,7 @@
 //!   catalog still names the journaled destination with matching
 //!   bytes, then retries the pinned cleanup policy.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -103,58 +103,99 @@ pub struct Leftover {
     pub rel_path: String,
 }
 
-/// What one leftover pass found.
+/// The leftover files on record.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LeftoverReport {
+    /// Every leftover found, up to [`LEFTOVER_SCAN_MAX`] a root.
+    pub count: usize,
+    /// The first [`LEFTOVER_LIST_MAX`] of them, by root and path.
+    pub files: Vec<Leftover>,
+}
+
+/// What one look through one root found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RootLeftovers {
+    pub root_id: String,
     /// Every leftover found, up to [`LEFTOVER_SCAN_MAX`].
     pub count: usize,
-    /// The first [`LEFTOVER_LIST_MAX`] of them, by path.
-    pub files: Vec<Leftover>,
+    /// The first [`LEFTOVER_LIST_MAX`] of them, as paths under the root.
+    pub files: Vec<String>,
 }
 
 /// A hidden name written, renamed or linked more recently than this may
 /// belong to a publish in flight.
 const LEFTOVER_MIN_AGE: Duration = Duration::from_secs(86_400);
 
-/// Hidden names one pass holds while it checks them against the journal.
-/// A pass that finds more stops walking and reports these.
+/// Hidden names one root's look holds while it checks them against the
+/// journal. A look that finds more stops walking that root and reports
+/// these.
 pub const LEFTOVER_SCAN_MAX: usize = 10_000;
 
 /// Leftovers a report lists.
 pub const LEFTOVER_LIST_MAX: usize = 100;
 
-/// Find hidden files under `roots` that no journal row names, as of
-/// `now`. Reads folder listings and the metadata of hidden names only:
-/// it opens no file, follows no symlink, and changes nothing. The import
-/// folder and the placement probe folder belong to their own cleanups and
-/// are skipped. `None` when `cancelled` turned true.
+/// A path under a root as the leftover look compares it: the publisher's
+/// collision key, normalized and case-folded. A case-folding disk lets a
+/// folder's name change case under a journal row, and every hidden name
+/// carries its own journal's id, so a folded match cannot take one write's
+/// file for another's.
+fn folded(root_id: &str, rel: &Path) -> paths::CollisionKey {
+    paths::collision_key(root_id, &rel.to_string_lossy())
+}
+
+/// Find hidden files under each of `roots` that no journal row names, as
+/// of `now`. A journal row names its staged copy and its backup by the
+/// root and folder of its destination, so a root set to another path
+/// keeps its files named. Reads folder listings and the metadata of hidden
+/// names only: it opens no file, follows no symlink, and changes nothing.
+/// The import folder and the placement probe folder belong to their own
+/// cleanups and are skipped. A root is left out of the answer when its
+/// folder cannot be listed, or when it or a folder `mounts` names for it (a
+/// drive or share of its own) lists nothing: a share that dropped out
+/// leaves its mount point empty. `None` when `cancelled` turned true.
 /// Blocking.
 pub fn find_leftovers(
     db: &Db,
     roots: &[paths::Root],
+    mounts: &BTreeMap<String, BTreeSet<String>>,
     now: SystemTime,
     cancelled: &dyn Fn() -> bool,
-) -> Result<Option<LeftoverReport>, PublishError> {
+) -> Result<Option<Vec<RootLeftovers>>, PublishError> {
     use std::os::unix::fs::MetadataExt as _;
     let now_secs = now
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs() as i64);
     let import_dir = format!("{}import", super::HIDDEN_PREFIX);
-    // Keyed by the absolute path as the journal writes it.
-    let mut found: BTreeMap<String, Leftover> = BTreeMap::new();
+    // Per root id, keyed by the folded path under the root.
+    let mut walked: BTreeMap<String, BTreeMap<paths::CollisionKey, String>> = BTreeMap::new();
+    let no_mounts = BTreeSet::new();
     'roots: for root in roots {
+        let mounts = mounts.get(&root.id).unwrap_or(&no_mounts);
+        let mut found: BTreeMap<paths::CollisionKey, String> = BTreeMap::new();
         let mut folders: Vec<PathBuf> = vec![root.dir.clone()];
-        while let Some(folder) = folders.pop() {
+        'walk: while let Some(folder) = folders.pop() {
             if cancelled() {
                 return Ok(None);
             }
             let entries = match std::fs::read_dir(&folder) {
-                Ok(entries) => entries,
+                Ok(entries) => entries.peekable(),
+                Err(error) if folder == root.dir => {
+                    tracing::debug!(root = root.id, %error, "leftover pass cannot list a library folder; it waits");
+                    continue 'roots;
+                }
                 Err(error) => {
                     tracing::warn!(folder = %folder.display(), %error, "leftover pass could not list a folder");
                     continue;
                 }
             };
+            let mut entries = entries;
+            if entries.peek().is_none() {
+                let rel = folder.strip_prefix(&root.dir).unwrap_or(&folder);
+                if folder == root.dir || mounts.contains(rel.to_string_lossy().as_ref()) {
+                    tracing::debug!(root = root.id, folder = %rel.display(), "leftover pass found a library folder or mount empty; it waits");
+                    continue 'roots;
+                }
+            }
             for entry in entries {
                 let entry = match entry {
                     Ok(entry) => entry,
@@ -194,33 +235,24 @@ pub fn find_leftovers(
                 let touched = meta.mtime().max(meta.ctime());
                 if now_secs.saturating_sub(touched) > LEFTOVER_MIN_AGE.as_secs() as i64 {
                     let path = entry.path();
-                    let rel_path = path
-                        .strip_prefix(&root.dir)
-                        .unwrap_or(&path)
-                        .to_string_lossy()
-                        .into_owned();
-                    found.insert(
-                        path.to_string_lossy().into_owned(),
-                        Leftover {
-                            root_id: root.id.clone(),
-                            root_path: root.dir.to_string_lossy().into_owned(),
-                            rel_path,
-                        },
-                    );
+                    let rel = path.strip_prefix(&root.dir).unwrap_or(&path);
+                    found.insert(folded(&root.id, rel), rel.to_string_lossy().into_owned());
                     if found.len() >= LEFTOVER_SCAN_MAX {
                         tracing::warn!(
+                            root = root.id,
                             limit = LEFTOVER_SCAN_MAX,
                             "leftover pass stopped early: too many hidden files to hold"
                         );
-                        break 'roots;
+                        break 'walk;
                     }
                 }
             }
         }
+        walked.insert(root.id.clone(), found);
     }
     // The journal is read after the walk, so a row written while the walk
     // ran still clears its file, and no read is open while it walks.
-    if !found.is_empty() {
+    if walked.values().any(|found| !found.is_empty()) {
         db.read_long(
             "publish.leftover_names",
             &CancelFlag::never(),
@@ -228,19 +260,34 @@ pub fn find_leftovers(
                 let mut named = conn.prepare_cached(super::sql::JOURNAL_NAMES.text())?;
                 let mut rows = named.query([])?;
                 while let Some(row) = rows.next()? {
-                    found.remove(&row.get::<_, String>(0)?);
-                    if let Some(backup) = row.get::<_, Option<String>>(1)? {
-                        found.remove(&backup);
+                    let root: String = row.get(0)?;
+                    let Some(found) = walked.get_mut(&root) else {
+                        continue;
+                    };
+                    let dest_rel: String = row.get(1)?;
+                    let folder = Path::new(&dest_rel).parent().unwrap_or(Path::new(""));
+                    let staged: String = row.get(2)?;
+                    let backup: Option<String> = row.get(3)?;
+                    for hidden in std::iter::once(staged).chain(backup) {
+                        if let Some(name) = Path::new(&hidden).file_name() {
+                            found.remove(&folded(&root, &folder.join(name)));
+                        }
                     }
                 }
                 Ok(())
             },
         )?;
     }
-    Ok(Some(LeftoverReport {
-        count: found.len(),
-        files: found.into_values().take(LEFTOVER_LIST_MAX).collect(),
-    }))
+    Ok(Some(
+        walked
+            .into_iter()
+            .map(|(root_id, found)| RootLeftovers {
+                root_id,
+                count: found.len(),
+                files: found.into_values().take(LEFTOVER_LIST_MAX).collect(),
+            })
+            .collect(),
+    ))
 }
 
 /// Refuse mutable runtime when more than `STARTUP_RECOVERY_LIMIT`

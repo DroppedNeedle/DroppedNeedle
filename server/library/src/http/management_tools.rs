@@ -450,7 +450,7 @@ pub struct ManagementRecoveryView {
     /// retrying.
     pub retrying_bundles: Vec<ManagementAttentionBundleView>,
     /// Hidden temporary files under the library folders that no write
-    /// accounts for, as the check after startup found them. Nothing
+    /// accounts for, as the last check of each folder found them. Nothing
     /// removes them.
     pub leftover_file_count: i64,
     /// The first hundred of them.

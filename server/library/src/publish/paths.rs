@@ -1217,7 +1217,7 @@ fn sync_made(made: &[PathBuf]) -> Result<(), PublishError> {
 /// Unicode/case-fold collision key: NFC normalization plus full
 /// casefold, so names that differ only by case or by canonically
 /// equivalent sequences can never publish side by side.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CollisionKey(String);
 
 /// Build the collision key for one root-relative destination.

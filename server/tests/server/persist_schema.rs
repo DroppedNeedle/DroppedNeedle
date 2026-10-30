@@ -70,7 +70,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 173);
+    assert_eq!(table_names(&pool).await.len(), 174);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -7911,6 +7911,40 @@ async fn a_binned_copy_gets_a_recorded_identity() {
     let refused = "UPDATE library_publish_replacements SET binned_stat_json = 'not json' \
                    WHERE journal_id = 'j1'";
     assert!(sqlx::raw_sql(refused).execute(&pool).await.is_err());
+}
+
+/// Migration 0105 adds the kept leftover-file checks, empty, so the first
+/// check after the upgrade looks through every root. One row per root, and
+/// its list is a JSON array.
+#[tokio::test]
+async fn the_leftover_check_gets_a_table() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(104)).await.unwrap();
+    apply_migrations(&pool).await.unwrap();
+
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_leftover_checks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    sqlx::raw_sql(
+        "INSERT INTO library_leftover_checks (root_id, checked_at, file_count, files_json) \
+         VALUES ('r', 1, 0, '[]'), ('s', 1, 2, '[\"a/.x.bak\"]')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for refused in [
+        "INSERT INTO library_leftover_checks VALUES ('r', 2, 0, '[]')",
+        "INSERT INTO library_leftover_checks VALUES ('t', 2, -1, '[]')",
+        "INSERT INTO library_leftover_checks VALUES ('t', 2, 0, '{}')",
+        "INSERT INTO library_leftover_checks VALUES ('t', 2, 0, 'nope')",
+    ] {
+        assert!(
+            sqlx::raw_sql(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
 }
 
 /// The runner's `-- no-transaction` path and the table-rebuild recipe in the

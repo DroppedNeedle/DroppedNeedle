@@ -99,6 +99,8 @@
 				return `${old} was joined into this album after its files were retagged outside DroppedNeedle.`;
 			case 'retag_half_left_alone':
 				return `Left unmanaged like ${old}, whose files were being retagged as this album.`;
+			case 'retag_dismissal_ended':
+				return `The tracks came back from ${old}, so "Keep them apart" no longer applies.`;
 			case 'leftover_joined':
 				return `${old}, left over from an earlier version as a separate album, was folded into this album.`;
 			case 'artist_from_tracks':

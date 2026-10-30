@@ -42,8 +42,8 @@ pub struct Diagnostics {
     /// Writes recovery has been retrying for more than a day. It keeps
     /// retrying them.
     pub retrying_bundles: Vec<AttentionBundle>,
-    /// Hidden files no journal row names, as the pass after startup found
-    /// them. Zero until that pass has finished.
+    /// Hidden files no journal row names, as the last check of each root
+    /// found them. Zero until a root has been checked.
     pub leftover_file_count: i64,
     pub leftover_files: Vec<Leftover>,
 }
@@ -186,12 +186,14 @@ impl Management {
             diagnostics.retrying_bundles = retrying_bundles(conn, self.parts.clock.now_ms())?;
             Ok(diagnostics)
         })
-        .map(|mut diagnostics| {
-            if let Some(report) = self.parts.leftover_files.latest() {
-                diagnostics.leftover_file_count = report.count as i64;
-                diagnostics.leftover_files = report.files;
-            }
-            diagnostics
+        .and_then(|mut diagnostics| {
+            let report = self
+                .parts
+                .leftover_files
+                .report(&self.parts.core.live_registry())?;
+            diagnostics.leftover_file_count = i64::try_from(report.count).unwrap_or(i64::MAX);
+            diagnostics.leftover_files = report.files;
+            Ok(diagnostics)
         })
     }
 
