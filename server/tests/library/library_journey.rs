@@ -4973,6 +4973,133 @@ async fn emptying_the_bin_deletes_unchanged_copies_and_keeps_the_rest() {
     assert!(!left_bin(&conn, &d_row));
 }
 
+/// The hourly expiry and an Empty run by the jobs module at once: between
+/// them every copy is deleted or found gone exactly once and every row is
+/// marked, and the Empty's record says what it took. An Empty that gave up
+/// shows as stopped until the hourly expiry empties the bin.
+#[tokio::test]
+async fn expiry_and_an_empty_at_once_mark_every_copy() {
+    use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, start_runners};
+    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::recycle_bin::{self, EmptyingState};
+
+    let (scratch, library, music) = bare_library("lib-empty-and-expiry").await;
+    for folder in ["A", "B", "C", "D"] {
+        plant(&music, &format!("{folder}/01.flac"), "flac_no_tags.flac");
+    }
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let mutations = Mutations::new(&library);
+    let remove = |folder: &str| -> String {
+        let track = library
+            .scan_store
+            .track_at("music", &format!("{folder}/01.flac"))
+            .unwrap()
+            .expect("track indexed");
+        let album: String = conn
+            .query_row(
+                "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                [&track],
+                |row| row.get(0),
+            )
+            .expect("album");
+        mutations
+            .remove_album(&album, true, true, "admin")
+            .expect("album removed");
+        track
+    };
+    let age = |track: &str| {
+        conn.execute(
+            "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400 \
+             WHERE replaced_track_id = ?1",
+            [track],
+        )
+        .expect("copy ages past the retention");
+    };
+    let copies: Vec<(PathBuf, String)> = ["A", "B", "C"]
+        .map(|folder| copy_of(&conn, &remove(folder)))
+        .into_iter()
+        .collect();
+    conn.execute(
+        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400",
+        [],
+    )
+    .expect("copies age past the retention");
+    std::fs::remove_file(&copies[1].0).expect("one copy is deleted by hand");
+    let publishing = &library.publishing;
+    recycle_bin::request_empty(publishing, library.clock.now_ms(), "admin").expect("queued");
+    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
+        library.db.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        droppedneedle_kernel::jobs::CancellationToken::new(),
+    )
+    .await
+    .expect("supervisor starts");
+    start_runners(
+        &JobQueue::new(library.db.clone(), library.clock.clone()),
+        &supervisor,
+        Handlers::default().with(recycle_bin::SPEC, recycle_bin::handler(publishing)),
+    )
+    .expect("runner starts");
+    let hourly = publishing.clone();
+    let report = tokio::task::spawn_blocking(move || hourly.recycle_expiry_tick(&|| true))
+        .await
+        .expect("expiry thread")
+        .expect("expiry runs");
+    // The runner's work runs on blocking threads: the bound is wall time.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while recycle_bin::state(publishing).await.expect("state") != EmptyingState::Idle {
+        assert!(std::time::Instant::now() < deadline, "the empty finishes");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    for (copy, row) in &copies {
+        assert!(!copy.exists());
+        assert!(left_bin(&conn, row), "{row} is marked");
+    }
+    let emptied = recycle_bin::last_emptied(publishing)
+        .expect("read")
+        .expect("the empty recorded what it did");
+    assert_eq!(emptied.by.as_deref(), Some("Admin"));
+    assert_eq!(
+        emptied.deleted as usize + report.deleted + report.gone,
+        copies.len(),
+        "each copy is counted once"
+    );
+
+    supervisor.token().cancel();
+    let runner = droppedneedle_kernel::jobs::queue::runner::runner_name(recycle_bin::EMPTY);
+    while supervisor.is_running(&runner) {
+        assert!(std::time::Instant::now() < deadline, "the runner stops");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let d = remove("D");
+    recycle_bin::request_empty(publishing, library.clock.now_ms(), "admin").expect("queued");
+    conn.execute(
+        "UPDATE durable_jobs SET state = 'failed', finished_at = 1, lease_owner = NULL, \
+         lease_expires_at = NULL WHERE kind = 'library.recycle_bin_empty' AND state <> 'done'",
+        [],
+    )
+    .expect("the empty gives up");
+    assert_eq!(
+        recycle_bin::state(publishing).await.expect("state"),
+        EmptyingState::Stopped
+    );
+    age(&d);
+    let hourly = publishing.clone();
+    tokio::task::spawn_blocking(move || hourly.recycle_expiry_tick(&|| true))
+        .await
+        .expect("expiry thread")
+        .expect("expiry runs");
+    assert!(left_bin(&conn, &copy_of(&conn, &d).1));
+    assert_eq!(
+        recycle_bin::state(publishing).await.expect("state"),
+        EmptyingState::Idle,
+        "a stopped empty clears once the bin is empty"
+    );
+}
+
 /// The bin page lists a removal with its files and their size, offers
 /// Put back, and lists it no more once its files are back.
 #[tokio::test]

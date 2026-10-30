@@ -7874,6 +7874,45 @@ async fn the_folder_watcher_gets_a_digest_table() {
     }
 }
 
+/// Migration 0104 gives each recycled copy a place for its identity in the
+/// bin. A copy binned before the upgrade keeps its row with none, and only
+/// valid JSON is taken.
+#[tokio::test]
+async fn a_binned_copy_gets_a_recorded_identity() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(103)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+         staged, staged_sha256, state) VALUES ('j1', 'b1', 'remove', 'music', 'a.flac', \
+         '.dn-a', 'x', 'cleaned'); \
+         INSERT INTO library_publish_replacements (journal_id, replaced_rel, \
+         replaced_sha256, recycle_to, recycled_at) VALUES ('j1', 'a.flac', 'x', \
+         '/bin/e/a.flac', 1.5);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    apply_migrations(&pool).await.unwrap();
+
+    let before: Option<String> = sqlx::query_scalar(
+        "SELECT binned_stat_json FROM library_publish_replacements WHERE journal_id = 'j1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(before, None);
+    sqlx::raw_sql(
+        "UPDATE library_publish_replacements SET binned_stat_json = \
+         '{\"dev\":1,\"ino\":2,\"size\":3,\"mtime_ns\":4,\"ctime_ns\":5}' WHERE journal_id = 'j1'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let refused = "UPDATE library_publish_replacements SET binned_stat_json = 'not json' \
+                   WHERE journal_id = 'j1'";
+    assert!(sqlx::raw_sql(refused).execute(&pool).await.is_err());
+}
+
 /// The runner's `-- no-transaction` path and the table-rebuild recipe in the
 /// kernel's `schema::boot` module doc, proven on a parent that cascade,
 /// restrict and set-null children point at.

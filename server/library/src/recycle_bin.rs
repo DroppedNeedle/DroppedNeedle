@@ -107,16 +107,29 @@ pub fn request_empty(
     Ok(enqueued)
 }
 
-/// Whether a run waits, runs, or the last one gave up.
+/// Whether a run waits, runs, or the last one gave up. A run that gave up
+/// stops counting once the bin is empty: the hourly expiry finished it.
 pub async fn state(publishing: &Publishing) -> Result<EmptyingState, DbError> {
     Ok(match publishing.jobs.latest(EMPTY, EMPTY_KEY).await? {
         Some(status) => match status.state {
             State::Queued | State::Running => EmptyingState::Emptying,
-            State::Failed => EmptyingState::Stopped,
-            State::Done => EmptyingState::Idle,
+            State::Failed if bin_holds_files(publishing).await? => EmptyingState::Stopped,
+            State::Failed | State::Done => EmptyingState::Idle,
         },
         None => EmptyingState::Idle,
     })
+}
+
+async fn bin_holds_files(publishing: &Publishing) -> Result<bool, DbError> {
+    publishing
+        .db
+        .read("recycle_bin.holds_files", |conn| {
+            let count: i64 = conn
+                .prepare_cached(sql::BIN_COUNT.text())?
+                .query_row([], |row| row.get(0))?;
+            Ok::<_, DbError>(count > 0)
+        })
+        .await
 }
 
 /// What the last finished run did, if one has.

@@ -4686,6 +4686,159 @@ fn emptying_the_bin_marks_a_gone_copy_beside_the_one_it_deletes() {
     assert_eq!(expired_at(&fix, "track-b"), Some(EXPIRY_NOW_MS));
 }
 
+/// A removed file edited in place before it reached the bin, keeping its
+/// size and modified time, is binned as it is now. Once due, that copy
+/// goes: what the bin holds is compared with the bytes it received.
+#[test]
+fn a_file_edited_before_it_was_binned_expires_when_due() {
+    let fix = fixture("expiry-edited-before-bin");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let bundle = removal_bundle(
+        &fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac")],
+    );
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterCatalogCommit));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &BTreeMap::new()),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+    let hidden = hidden_leftovers(&fix.dir.join("music"));
+    assert_eq!(hidden.len(), 1);
+    edit_keeping_size_and_mtime(&hidden[0]);
+    reconcile(&restart(&fix), &fix.sandbox).unwrap();
+    let binned = files_under(&fix.dir.join("bin"));
+    assert_eq!(binned.len(), 1, "the edited file is in the bin");
+    recycled_at(&fix, "track-a", RECYCLED_OLD);
+
+    let report = run_expiry(&fix, &fix.sandbox, 200);
+
+    assert_eq!((report.deleted, report.changed), (1, 0));
+    assert!(!binned[0].exists());
+    assert_eq!(expired_at(&fix, "track-a"), Some(EXPIRY_NOW_MS));
+}
+
+/// A copy is stamped when it lands in the bin, not when its removal
+/// began: an Empty confirmed while a removal was still running, before it
+/// had written any row, keeps that removal's files.
+#[test]
+fn an_empty_keeps_files_that_landed_after_its_confirm() {
+    let fix = fixture("empty-in-flight");
+    write_source(&fix, "music", "staging/a.flac", b"removed while confirming");
+    let bundle = removal_bundle(
+        &fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac")],
+    );
+    let (sealed, live) = seal(&bundle);
+    let clock = ManualClock::at(DAY_50_MS);
+    let mut publisher = Publisher::new(
+        fix.sandbox.clone(),
+        restart(&fix),
+        FixedSpace(u64::MAX),
+        jobs(&restart(&fix)),
+        std::sync::Arc::new(clock.clone()),
+        blobs(&fix),
+    );
+    let confirmed = DAY_50_MS + 1_000;
+    let landing = clock.clone();
+    publisher.set_before_set_aside(Some(Box::new(move |_| landing.set(DAY_50_MS + 2_000))));
+    let outcome = publisher.publish(&sealed, &live, &BTreeMap::new());
+    assert_eq!(outcome.unwrap(), PublishOutcome::Committed);
+    let binned = files_under(&fix.dir.join("bin"));
+    assert_eq!(binned.len(), 1);
+
+    let report = publish::expiry::expire(
+        &restart(&fix),
+        &publish::expiry::ExpiryPass {
+            retention_days: 0,
+            now_ms: DAY_50_MS + 3_000,
+            page: 200,
+            due_before_ms: Some(confirmed),
+        },
+        &publish::expiry::ExpiryMemory::default(),
+        &|| Some(fix.sandbox.clone()),
+        || (),
+        &|| true,
+    )
+    .unwrap();
+
+    assert_eq!(report.deleted, 0);
+    assert!(binned[0].is_file());
+    assert_eq!(expired_at(&fix, "track-a"), None);
+}
+
+/// A pass that deletes copies and stops before their marks are written (a
+/// crash, a failed write) leaves their entry folders: the next pass finds
+/// the copies gone there and marks their rows.
+#[test]
+fn copies_deleted_before_a_crash_are_marked_by_the_next_pass() {
+    let fix = fixture("expiry-crash-before-mark");
+    let copies = recycle_two(&fix);
+    recycled_at(&fix, "track-a", RECYCLED_OLD);
+    recycled_at(&fix, "track-b", RECYCLED_OLD);
+    // The mark fails the way a crash before it would: nothing is written.
+    open_db(&fix)
+        .execute_batch(
+            "CREATE TRIGGER no_marks BEFORE UPDATE OF expired_at \
+             ON library_publish_replacements BEGIN SELECT RAISE(ABORT, 'no marks'); END;",
+        )
+        .unwrap();
+    let memory = publish::expiry::ExpiryMemory::default();
+    let pass = publish::expiry::ExpiryPass {
+        retention_days: RETENTION_DAYS,
+        now_ms: EXPIRY_NOW_MS,
+        page: 200,
+        due_before_ms: None,
+    };
+    let first = publish::expiry::expire(
+        &restart(&fix),
+        &pass,
+        &memory,
+        &|| Some(fix.sandbox.clone()),
+        || (),
+        &|| true,
+    );
+    assert!(first.is_err(), "the marks were not written");
+    assert!(copies.values().all(|copy| !copy.exists()));
+    assert_eq!(expired_at(&fix, "track-a"), None);
+    open_db(&fix)
+        .execute_batch("DROP TRIGGER no_marks")
+        .unwrap();
+
+    // A restart: nothing is remembered.
+    let report = run_expiry(&fix, &fix.sandbox, 200);
+
+    assert_eq!(report.gone, 2);
+    assert_eq!(expired_at(&fix, "track-a"), Some(EXPIRY_NOW_MS));
+    assert_eq!(expired_at(&fix, "track-b"), Some(EXPIRY_NOW_MS));
+    assert!(copies.values().all(|copy| !copy.parent().unwrap().exists()));
+}
+
+/// A copy edited in the bin after it landed, keeping its size and
+/// modified time, is kept: the change time it got no longer matches the
+/// identity recorded when it landed, and its bytes are not the ones read.
+#[test]
+fn a_copy_edited_in_the_bin_after_it_landed_is_kept() {
+    let fix = fixture("expiry-edited-in-bin");
+    let copies = recycle_two(&fix);
+    recycled_at(&fix, "track-a", RECYCLED_OLD);
+    edit_keeping_size_and_mtime(&copies["track-a"]);
+    let edited = std::fs::read(&copies["track-a"]).unwrap();
+
+    let report = run_expiry(&fix, &fix.sandbox, 200);
+
+    assert_eq!(report.changed, 1);
+    assert_eq!(std::fs::read(&copies["track-a"]).unwrap(), edited);
+    assert_eq!(expired_at(&fix, "track-a"), None);
+    assert!(!copies["track-b"].exists(), "the unchanged copy goes");
+}
+
 /// A copy whose bytes in the bin are no longer the ones recycled is not
 /// deleted, however old, and its row stays unmarked.
 #[test]
@@ -4843,6 +4996,50 @@ fn expiry_never_prunes_a_bin_over_downloads_or_a_library() {
     let kept: Vec<&str> = kept.iter().map(|bin| bin.id.as_str()).collect();
     assert_eq!(kept, ["inside-downloads", "beside"]);
     assert_eq!(dropped.len(), 5);
+}
+
+/// slskd's downloads and incomplete folders are download folders: a
+/// configured bin inside either is not used.
+#[test]
+fn a_bin_inside_slskds_folders_is_refused() {
+    use droppedneedle_kernel::runtime_config::secret_sections::SlskdConnection;
+    use publish::bin::BinRefusal;
+
+    let scratch = ScratchDir::new("bin-slskd");
+    let dir = scratch.to_path_buf();
+    let (music, downloads, incomplete) = (
+        dir.join("music"),
+        dir.join("slskd/downloads"),
+        dir.join("slskd/incomplete"),
+    );
+    for folder in [&music, &downloads, &incomplete] {
+        std::fs::create_dir_all(folder).unwrap();
+    }
+    let store = crate::common::config_store(&dir);
+    store
+        .save_secret_blocking(SlskdConnection {
+            url: "http://slskd.invalid:5030".to_owned(),
+            slskd_incomplete_mount: incomplete.to_string_lossy().into_owned(),
+            ..SlskdConnection::default()
+        })
+        .unwrap();
+    let guard = droppedneedle_acquire::wiring::recycle_guard(
+        &store,
+        dir.join("imports"),
+        downloads.clone(),
+    );
+    let trees = guard().expect("the download settings read");
+    let library = [Root::library("music", music)];
+
+    for bin in [incomplete.join("bin"), downloads.join("bin")] {
+        let choice = publish::bin::choose(&bin.to_string_lossy(), &library, &trees);
+        assert_eq!(
+            choice.refused,
+            Some(BinRefusal::OverlapsDownloads),
+            "{}",
+            bin.display()
+        );
+    }
 }
 
 // --- A file a plugin adds, and its undo. ---

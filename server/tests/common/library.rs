@@ -278,6 +278,7 @@ pub fn library_core(
         droppedneedle_acquire::wiring::recycle_guard(
             &platform.settings,
             platform.config.imports_dir(),
+            platform.config.slskd_downloads_path.clone(),
         ),
     )
     .expect("library write side builds")

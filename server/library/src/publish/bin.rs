@@ -15,6 +15,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
@@ -251,7 +252,7 @@ impl BinSource {
                     .is_ok_and(|meta| meta.file_type().is_symlink())
             });
         let downloads = if reaches_out {
-            (self.downloads)().ok_or("the SABnzbd settings cannot be read")?
+            (self.downloads)().ok_or("the slskd or SABnzbd settings cannot be read")?
         } else {
             Vec::new()
         };
@@ -267,7 +268,7 @@ impl BinSource {
         registry: &RootRegistry,
     ) -> Result<(Vec<Root>, Vec<String>), BinsUnknown> {
         let choice = self.read(registry)?;
-        let downloads = (self.downloads)().ok_or("the SABnzbd settings cannot be read")?;
+        let downloads = (self.downloads)().ok_or("the slskd or SABnzbd settings cannot be read")?;
         let resolved: Vec<paths::ResolvedRoot> = registry
             .roots()
             .iter()
@@ -495,7 +496,7 @@ pub(super) fn recycle_replaced(
     replaced: &JournalReplacement,
     backup: &Path,
     seams: Seams,
-    now: SystemTime,
+    clock: &dyn Clock,
     known: Option<FileStat>,
 ) -> Result<bool, PublishError> {
     sandbox.bins()?;
@@ -527,7 +528,7 @@ pub(super) fn recycle_replaced(
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
-        let fresh = fresh_entry(&bin.dir, name, now).ok_or_else(|| {
+        let fresh = fresh_entry(&bin.dir, name, clock.now_system()).ok_or_else(|| {
             PublishError::Cleanup("the replaced file has no name to recycle under".into())
         })?;
         let text = fresh.to_string_lossy().into_owned();
@@ -550,8 +551,14 @@ pub(super) fn recycle_replaced(
     let mode = sandbox.probe_bin_placement(bin);
     let moved = paths::recycle_backup(mode, seams, backup, &recycle_to, &replaced.sha256, known)?;
     if moved {
+        // What the copy is once it landed: expiry deletes it while it is
+        // still exactly this, whatever bytes it was given.
+        let binned = FileStat::read(&recycle_to).ok();
         durable(db, "publish.journal_recycled", |tx| {
-            JournalWriter::new(tx).set_recycled(&journal.id, unix_secs(now))
+            // Stamped when it landed, not when its publish began: an empty
+            // confirmed in between never counted it, so must not delete it.
+            let landed = clock.now_ms() as f64 / 1000.0;
+            JournalWriter::new(tx).set_recycled(&journal.id, landed, binned.as_ref())
         })?;
     }
     if let Some(parent) = backup.parent()
@@ -560,10 +567,4 @@ pub(super) fn recycle_replaced(
         tracing::warn!(dir = %parent.display(), %error, "directory sync failed");
     }
     Ok(moved)
-}
-
-fn unix_secs(now: SystemTime) -> f64 {
-    now.duration_since(UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
 }

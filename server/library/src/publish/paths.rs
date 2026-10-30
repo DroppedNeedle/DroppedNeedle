@@ -1025,8 +1025,13 @@ pub fn recycle_backup(
     };
     let backup_meta = match std::fs::symlink_metadata(backup) {
         Ok(meta) => meta,
+        // An earlier attempt moved it in: the file set aside, by identity
+        // (an edit before the move keeps it so), or the bytes read.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(hash_of(recycle_to).as_deref() == Some(sha256));
+            let moved_in = known.is_some_and(|known| {
+                FileStat::read(recycle_to).is_ok_and(|now| known.same_moved(&now))
+            });
+            return Ok(moved_in || hash_of(recycle_to).as_deref() == Some(sha256));
         }
         Err(error) => return Err(PublishError::Io(error.to_string().into())),
     };

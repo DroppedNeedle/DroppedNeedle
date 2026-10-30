@@ -540,19 +540,20 @@ impl Publishing {
 
     /// One recycle-bin expiry pass, on the retention the download settings
     /// give now. Skipped while those or the library settings cannot be
-    /// read, and while the library is switched off. The deletes wait for the publish lock, so no put-back or
+    /// read, while the library is switched off, or while an empty of the
+    /// bin runs. The deletes wait for the publish lock, so no put-back or
     /// removal is reading a copy while it goes. `go_on` is asked between
     /// rows. Blocking.
     pub fn recycle_expiry_tick(
         &self,
         go_on: &dyn Fn() -> bool,
     ) -> Result<ExpiryReport, PublishError> {
+        let Some(_one) = self.expiry.try_one_pass() else {
+            return Ok(ExpiryReport::default());
+        };
         let Some(policy) = self.settings.download_policy.read() else {
             return Ok(ExpiryReport::default());
         };
-        if self.core.switched_off() {
-            return Ok(ExpiryReport::default());
-        }
         let pass = ExpiryPass {
             retention_days: policy.recycle_retention_days,
             now_ms: self.core.clock.now_ms(),
@@ -566,12 +567,14 @@ impl Publishing {
     /// the copies that reached the bin before `before_ms` (unix ms, never
     /// later than now) and the old entries stamped before it. Every rule
     /// of the expiry holds; `finished` is false when it stopped early or
-    /// the bins could not be told. Blocking.
+    /// the bins could not be told. Waits for an hourly pass that is
+    /// running to end first. Blocking.
     pub fn empty_recycle_bin(
         &self,
         before_ms: i64,
         go_on: &dyn Fn() -> bool,
     ) -> Result<ExpiryReport, PublishError> {
+        let _one = self.expiry.one_pass();
         let now_ms = self.core.clock.now_ms();
         let pass = ExpiryPass {
             retention_days: 0,
@@ -591,7 +594,14 @@ impl Publishing {
             &self.db,
             pass,
             &self.expiry,
-            &|| self.expiry_sandbox(),
+            // Asked again under each hold of the publish lock: a library
+            // switched off meanwhile stops the pass there.
+            &|| {
+                if self.core.switched_off() {
+                    return None;
+                }
+                self.expiry_sandbox()
+            },
             || {
                 self.core
                     .publish
@@ -642,7 +652,21 @@ impl Publishing {
             })
             .collect();
         roots.extend(bins);
-        Sandbox::new(roots).ok()
+        match Sandbox::new(roots) {
+            Ok(sandbox) => {
+                self.expiry.note("sandbox", None);
+                Some(sandbox)
+            }
+            Err(error) => {
+                self.expiry.note(
+                    "sandbox",
+                    Some(format!(
+                        "recycle bin expiry waits: its folders do not fit together: {error}"
+                    )),
+                );
+                None
+            }
+        }
     }
 }
 

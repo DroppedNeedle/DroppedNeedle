@@ -38,18 +38,20 @@ droppedneedle_kernel::sql! {
     /// Record a row's (`?2`) backup path (`?1`), unless it names another.
     pub(super) JOURNAL_SET_BACKUP = "UPDATE library_publish_journal SET backup = ?1 \
              WHERE id = ?2 AND (backup IS NULL OR backup = ?1)";
-    /// When a replaced file reached the recycle bin.
-    pub(super) JOURNAL_SET_RECYCLED = "UPDATE library_publish_replacements SET recycled_at = ?2 \
-             WHERE journal_id = ?1";
+    /// When a replaced file reached the recycle bin (`?2`), with its
+    /// copy's identity there (`?3`, JSON, or NULL when it could not be read).
+    pub(super) JOURNAL_SET_RECYCLED = "UPDATE library_publish_replacements SET recycled_at = ?2, \
+             binned_stat_json = ?3 WHERE journal_id = ?1";
     /// A fresh bin entry (`?2`) for a replaced file not yet recycled.
     pub(super) JOURNAL_SET_RECYCLE_TO = "UPDATE library_publish_replacements \
              SET recycle_to = ?2 WHERE journal_id = ?1 AND recycled_at IS NULL";
     /// One page of recycled copies due to expire: copies that reached the
     /// bin before `?1` (unix seconds), are not expired yet and whose row
     /// is done, after the cursor (`?2` recycled at, `?3` journal id), at
-    /// most `?4`, each with its track.
+    /// most `?4`, each with its track and its copy's identity on landing.
     pub(super) EXPIRY_DUE = "SELECT r.journal_id, r.recycle_to, r.replaced_sha256, \
-             r.recycled_at, r.replaced_track_id FROM library_publish_replacements r \
+             r.recycled_at, r.replaced_track_id, r.binned_stat_json \
+             FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id \
              WHERE r.expired_at IS NULL AND r.recycled_at IS NOT NULL AND r.recycled_at < ?1 \
              AND j.state = 'cleaned' \
@@ -196,7 +198,7 @@ droppedneedle_kernel::sql! {
              EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
              FROM chain JOIN local_albums a ON a.id = chain.id WHERE chain.next IS NULL";
     /// How many files the bin holds.
-    pub(super) BIN_COUNT = "SELECT COUNT(*) FROM library_publish_replacements r \
+    pub(crate) BIN_COUNT = "SELECT COUNT(*) FROM library_publish_replacements r \
              JOIN library_publish_journal j ON j.id = r.journal_id WHERE " + IN_BIN;
     /// The copies an empty at `?1` (unix seconds) would try: the expiry's
     /// due rows with no retention, each with its track.

@@ -231,7 +231,11 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let library_core = droppedneedle_library::wiring::LibraryCore::build(
         p,
         queues.queue().clone(),
-        droppedneedle_acquire::wiring::recycle_guard(&p.settings, p.config.imports_dir()),
+        droppedneedle_acquire::wiring::recycle_guard(
+            &p.settings,
+            p.config.imports_dir(),
+            p.config.slskd_downloads_path.clone(),
+        ),
     )
     .map_err(stage("library setup"))?;
     // The plugin host exists early so playback, acquisition and streaming

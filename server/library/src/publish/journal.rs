@@ -11,6 +11,7 @@ use std::path::Path;
 use droppedneedle_kernel::db::Durable;
 use rusqlite::{Connection, OptionalExtension};
 
+use super::paths::FileStat;
 use super::{PublishError, sql};
 
 /// Monotonic journal states. Terminal states are `Cleaned`,
@@ -362,11 +363,18 @@ impl<'a> JournalWriter<'a> {
         Ok(())
     }
 
-    /// Record that a replaced file reached the recycle bin.
-    pub fn set_recycled(&self, id: &str, at: f64) -> Result<(), PublishError> {
+    /// Record that a replaced file reached the recycle bin, with its
+    /// copy's identity there when it could be read.
+    pub fn set_recycled(
+        &self,
+        id: &str,
+        at: f64,
+        binned: Option<&FileStat>,
+    ) -> Result<(), PublishError> {
+        let binned = binned.map(serde_json::to_string).transpose()?;
         self.tx
             .prepare_cached(sql::JOURNAL_SET_RECYCLED.text())?
-            .execute(rusqlite::params![id, at])?;
+            .execute(rusqlite::params![id, at, binned])?;
         Ok(())
     }
 

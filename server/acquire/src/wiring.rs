@@ -434,24 +434,56 @@ pub(crate) fn usenet_indexers(
     indexers
 }
 
-/// The download folders no recycle bin may overlap: the staging folder
-/// and SABnzbd's completed-downloads folder. An empty folder setting names
-/// no folder, so it guards nothing.
-fn download_trees(staging_root: &Path, sab_mount: Option<PathBuf>) -> Vec<PathBuf> {
+/// The download folders no recycle bin may overlap: the staging folder,
+/// slskd's downloads and incomplete folders while slskd is set up, and
+/// SABnzbd's completed-downloads folder. An empty folder setting names no
+/// folder, so it guards nothing.
+fn download_trees(
+    staging_root: &Path,
+    slskd: Option<(PathBuf, PathBuf)>,
+    sab_mount: Option<PathBuf>,
+) -> Vec<PathBuf> {
     std::iter::once(staging_root.to_owned())
+        .chain(
+            slskd
+                .into_iter()
+                .flat_map(|(downloads, incomplete)| [downloads, incomplete]),
+        )
         .chain(sab_mount)
         .filter(|tree| !tree.as_os_str().is_empty())
         .collect()
 }
 
+/// slskd's downloads mount (`slskd_downloads`, the whole of it, whatever
+/// subfolder slskd saves to) and incomplete folder, while slskd is set up.
+fn slskd_trees(section: &SlskdConnection, slskd_downloads: &Path) -> Option<(PathBuf, PathBuf)> {
+    (!section.url.is_empty()).then(|| {
+        (
+            slskd_downloads.to_owned(),
+            PathBuf::from(section.slskd_incomplete_mount.trim()),
+        )
+    })
+}
+
 /// The download folders a configured recycle bin must stay clear of, read
-/// live from the SABnzbd settings, for the library's builder. `None` while
-/// those settings cannot be read.
-pub fn recycle_guard(store: &ConfigStore, staging_root: PathBuf) -> DownloadTrees {
+/// live from the slskd and SABnzbd settings, for the library's builder.
+/// `None` while those settings cannot be read.
+pub fn recycle_guard(
+    store: &ConfigStore,
+    staging_root: PathBuf,
+    slskd_downloads: PathBuf,
+) -> DownloadTrees {
+    let slskd: Live<SlskdConnection> = store.live();
     let sabnzbd: Live<DownloadClients> = store.live();
     Arc::new(move || {
+        let slskd_section = slskd.read()?;
+        let slskd_folders = slskd_trees(&slskd_section, &slskd_downloads);
         let section = sabnzbd.read()?;
-        Some(download_trees(&staging_root, sabnzbd_mount(&section)))
+        Some(download_trees(
+            &staging_root,
+            slskd_folders,
+            sabnzbd_mount(&section),
+        ))
     })
 }
 

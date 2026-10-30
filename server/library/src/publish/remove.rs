@@ -284,8 +284,10 @@ pub(crate) fn file_of<'a>(removal: &'a Removal, journal: &FileJournal) -> Option
 }
 
 /// Whether the file a `remove` row moves is a hard link to the file of an
-/// earlier item of the same removal: one inode under two names. Setting
-/// the earlier one aside moves the inode's change time.
+/// item whose row is set aside first: one inode under two names. Rows run
+/// in journal id order, which past 1000 items is not the plan's (`-1000`
+/// sorts before `-101`). Setting the earlier one aside moves the inode's
+/// change time.
 pub(super) fn linked_to_earlier(removal: &Removal, journal: &FileJournal) -> bool {
     let Some(track) = journal
         .replaces
@@ -300,10 +302,13 @@ pub(super) fn linked_to_earlier(removal: &Removal, journal: &FileJournal) -> boo
     let Some(file) = removal.items[index].file.as_ref() else {
         return false;
     };
-    removal.items[..index]
-        .iter()
-        .filter_map(|item| item.file.as_ref())
-        .any(|earlier| earlier.stat.dev == file.stat.dev && earlier.stat.ino == file.stat.ino)
+    let mine = journal_id(&journal.bundle_id, index);
+    removal.items.iter().enumerate().any(|(other, item)| {
+        item.file.as_ref().is_some_and(|earlier| {
+            earlier.stat.dev == file.stat.dev && earlier.stat.ino == file.stat.ino
+        }) && other != index
+            && journal_id(&journal.bundle_id, other) < mine
+    })
 }
 
 /// Whether the set-aside file at `path` holds `sha256`: by identity when
