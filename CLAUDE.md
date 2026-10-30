@@ -396,6 +396,9 @@ Run from the repo root. `make help` lists every target.
   no such call still works and shows a warning.
 - A managed write keeps the file's permission bits, and its journal row is on
   disk before the file moves.
+- A recycle bin copy is deleted only when the identity recorded when it
+  landed in the bin (device, inode, size, mtime, ctime) still matches, or its
+  bytes match the plan hash. Anything else is kept.
 - A scan judges a track gone (walked past) in one place, `walked_past!`
   in `library/src/scan/sqlite_store/`, and never while a publish journal
   row naming it is open or was written after its scope's walk began. A
