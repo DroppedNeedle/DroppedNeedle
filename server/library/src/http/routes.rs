@@ -25,4 +25,5 @@ pub fn library_routes() -> Routes<LibraryServices> {
         .merge(super::edition::routes())
         .merge(super::history::routes())
         .merge(super::contrib::routes())
+        .merge(super::artist_link::routes())
 }

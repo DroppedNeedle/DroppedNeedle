@@ -1885,6 +1885,238 @@ fn an_automatic_link_gives_way_to_a_persons_in_another_spelling() {
     );
 }
 
+/// The owner check reads every row holding the id: a row moving off `X`
+/// in this settle does not hide another row, outside it, holding `x`. The
+/// candidate proven `x` stays unlinked and nothing clashes.
+#[test]
+fn a_moving_row_does_not_hide_another_holder_of_the_id() {
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.artist("ar-c", "Gamma", 2.0);
+    links.artist("ar-o", "Other", 3.0);
+    links.link("ar-a", &LINK_X.to_uppercase(), "automatic");
+    links.link("ar-o", LINK_X, "automatic");
+    links.album(
+        "al",
+        &[("ar-a", "Alpha", None), ("ar-c", "Gamma", None)],
+        &[],
+        "automatic",
+    );
+    links.release(&[(LINK_Y, "Alpha"), (LINK_X, "Gamma")], 0, &[]);
+    links.store.link_album_artists("al").unwrap();
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_Y));
+    assert_eq!(links.link_of("ar-c"), None);
+    assert_eq!(links.link_of("ar-o"), automatic(LINK_X));
+}
+
+/// A curator's link outranks the app's and survives its settling; a
+/// cleared link brings the app's link back in the same change, with no
+/// further write. Special-purpose ids are refused in any case, an id
+/// MusicBrainz merged is stored as the one it went into, and a link that
+/// would group the row with another record is refused and merges nothing.
+#[test]
+fn a_curators_link_outranks_the_apps_until_cleared() {
+    use droppedneedle_library::identify::artist_links::{ArtistLinkError, LinkRefusal};
+
+    const MERGED: &str = "aaaaaaaa-0000-4000-8000-0000000000f1";
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.artist("ar-b", "Beta", 2.0);
+    links.album("al", &[("ar-a", "Alpha", Some(LINK_X))], &[], "automatic");
+    links.release(&[(LINK_X, "Alpha")], 0, &[]);
+    links.unmatched_album("an", &[("ar-b", "Beta", Some(LINK_Y))]);
+    links
+        .db
+        .execute(
+            "INSERT INTO library_identify_artist_id_checks (artist_mbid, state, \
+             canonical_mbid, nominated_at, checked_at) VALUES (?1, 'merged', ?2, 1, 1)",
+            params![MERGED, LINK_Z],
+        )
+        .expect("merge seeds");
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+    let revision = |links: &Links| {
+        links
+            .store
+            .artist_link("ar-a")
+            .unwrap()
+            .expect("artist")
+            .artist_revision
+    };
+
+    let special = links.store.set_artist_link(
+        "ar-a",
+        "89AD4AC3-39F7-470E-963A-56509C546377",
+        revision(&links),
+        "admin",
+    );
+    assert!(matches!(
+        special,
+        Err(ArtistLinkError::Refused(LinkRefusal::SpecialPurpose))
+    ));
+    let shared = links
+        .store
+        .set_artist_link("ar-a", LINK_Y, revision(&links), "admin");
+    assert!(
+        matches!(&shared, Err(ArtistLinkError::Refused(LinkRefusal::Shared(others)))
+            if *others == [("ar-b".to_owned(), "Beta".to_owned())]),
+        "{shared:?}"
+    );
+    assert_eq!(links.retired_into("ar-b"), None);
+    assert_eq!(links.link_of("ar-b"), None);
+
+    let set = links
+        .store
+        .set_artist_link(
+            "ar-a",
+            &format!(" {} ", MERGED.to_uppercase()),
+            revision(&links),
+            "admin",
+        )
+        .unwrap();
+    assert_eq!(set.link.expect("linked").mbid, LINK_Z);
+    let manual = Some((LINK_Z.to_owned(), "manual".to_owned()));
+    links.store.link_and_merge_album_artists("al").unwrap();
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(links.link_of("ar-a"), manual);
+
+    links
+        .store
+        .clear_artist_link("ar-a", revision(&links), "admin")
+        .unwrap();
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+    assert_eq!(
+        links.count(
+            "SELECT COUNT(*) FROM library_catalog_actions WHERE local_artist_id = 'ar-a' \
+             AND actor_user_id = 'admin' AND reason_code IN \
+             ('ARTIST_LINK_SET_BY_PERSON', 'ARTIST_LINK_CLEARED_BY_PERSON')"
+        ),
+        2
+    );
+}
+
+/// A recorded move of a row's credits waits to merge it while the row
+/// holds a link: a clear that would free that merge is refused, and so is
+/// a link that would let a row waiting to follow its credits merge in.
+#[test]
+fn a_link_change_that_frees_a_waiting_merge_is_refused() {
+    use droppedneedle_library::identify::artist_links::{ArtistLinkError, LinkRefusal};
+
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.artist("ar-b", "ALPHA", 2.0);
+    links.artist("ar-c", "Gamma", 3.0);
+    links.link("ar-a", LINK_X, "legacy_import");
+    links.unmatched_album("an", &[("ar-b", "Alpha", None)]);
+    links
+        .db
+        .execute_batch(&format!(
+            "INSERT INTO local_artist_merge_candidates (id, left_artist_id, right_artist_id, \
+             reason_code, created_at, updated_at) VALUES \
+             ('moved-by-name:ar-a:ar-b', 'ar-a', 'ar-b', 'CREDITS_MOVED_BY_NAME', 1, 1), \
+             ('credits-moved:ar-c:{LINK_Y}', 'ar-c', 'ar-a', 'CREDITS_MOVED_TO_PROVEN_ROW', 1, 1);"
+        ))
+        .expect("moves seed");
+    let revision = links
+        .store
+        .artist_link("ar-a")
+        .unwrap()
+        .expect("artist")
+        .artist_revision;
+
+    let cleared = links.store.clear_artist_link("ar-a", revision, "admin");
+    assert!(
+        matches!(&cleared, Err(ArtistLinkError::Refused(LinkRefusal::Shared(others)))
+            if *others == [("ar-b".to_owned(), "ALPHA".to_owned()), ("ar-c".to_owned(), "Gamma".to_owned())]),
+        "{cleared:?}"
+    );
+    let set = links
+        .store
+        .set_artist_link("ar-a", LINK_Y, revision, "admin");
+    assert!(
+        matches!(&set, Err(ArtistLinkError::Refused(LinkRefusal::Shared(others)))
+            if *others == [("ar-c".to_owned(), "Gamma".to_owned())]),
+        "{set:?}"
+    );
+    assert_eq!(
+        links.link_of("ar-a"),
+        Some((LINK_X.to_owned(), "legacy_import".to_owned()))
+    );
+    assert_eq!(links.retired_into("ar-a"), None);
+
+    // With its own move settled, a row whose files name the id another
+    // row waits to follow into it still keeps its link.
+    links
+        .db
+        .execute(
+            "UPDATE local_artist_merge_candidates SET state = 'dismissed' \
+             WHERE id = 'moved-by-name:ar-a:ar-b'",
+            [],
+        )
+        .expect("move settled");
+    links.unmatched_album("ay", &[("ar-a", "Alpha", Some(LINK_Y))]);
+    let cleared = links.store.clear_artist_link("ar-a", revision, "admin");
+    assert!(
+        matches!(&cleared, Err(ArtistLinkError::Refused(LinkRefusal::Shared(others)))
+            if *others == [("ar-c".to_owned(), "Gamma".to_owned())]),
+        "{cleared:?}"
+    );
+    assert_eq!(
+        links.link_of("ar-a"),
+        Some((LINK_X.to_owned(), "legacy_import".to_owned()))
+    );
+}
+
+/// Every link the app sets, moves or removes writes one audit row with
+/// the ids before and after and no person as actor; a sweep with nothing
+/// new writes none.
+#[test]
+fn every_automatic_link_change_is_audited_once() {
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.artist("ar-b", "Beta", 2.0);
+    links.link("ar-a", LINK_X, "automatic");
+    links.album(
+        "al",
+        &[("ar-a", "Alpha", None), ("ar-b", "Beta", None)],
+        &[],
+        "automatic",
+    );
+    links.release(&[(LINK_Y, "Alpha"), (LINK_X, "Beta")], 0, &[]);
+    links.store.sweep_artist_links().unwrap();
+    let audit = |links: &Links| -> Vec<String> {
+        links
+            .db
+            .prepare(
+                "SELECT local_artist_id || ' ' || action_kind || ' ' \
+                 || (actor_user_id IS NULL) || ' ' || before_json || ' ' || after_json \
+                 || ' ' || reason_code FROM library_catalog_actions \
+                 WHERE action_kind LIKE 'artist_link_%' ORDER BY local_artist_id, created_at",
+            )
+            .expect("audit prepares")
+            .query_map([], |row| row.get(0))
+            .expect("audit reads")
+            .collect::<rusqlite::Result<_>>()
+            .expect("audit rows")
+    };
+    let expected = vec![
+        format!(
+            "ar-a artist_link_moved 1 {{\"provider_artist_id\":\"{LINK_X}\"}} \
+             {{\"provider_artist_id\":\"{LINK_Y}\"}} ARTIST_LINK_PROVEN"
+        ),
+        format!(
+            "ar-b artist_link_set 1 {{\"provider_artist_id\":null}} \
+             {{\"provider_artist_id\":\"{LINK_X}\"}} ARTIST_LINK_PROVEN"
+        ),
+    ];
+    assert_eq!(audit(&links), expected);
+
+    links.store.sweep_artist_links().unwrap();
+    links.store.link_and_merge_album_artists("al").unwrap();
+    assert_eq!(audit(&links), expected, "nothing new, nothing audited");
+}
+
 /// No merge while the row has a credit no proof covers, while the two
 /// rows are marked as different people, or while the row the app linked
 /// has a credit of its own no proof covers.

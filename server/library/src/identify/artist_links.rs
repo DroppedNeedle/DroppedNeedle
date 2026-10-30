@@ -22,6 +22,12 @@
 //! release id MusicBrainz merged counts as the id it was merged into, and
 //! the ids that disagree on a row are recorded to be asked about.
 //!
+//! Every change to a link, the app's or a person's, writes one audit row.
+//! A person may link a row by hand or clear the link they set
+//! ([`set_by_person`], [`clear_by_person`]); a change that would group the
+//! row with another record is refused, so a hand-set link never starts a
+//! merge.
+//!
 //! An album whose release document is not on file yet (an upgrade carries
 //! matches but no documents) changes nothing: its proofs stay, and the
 //! app's link of a row nothing proves stays while such an album credits
@@ -35,14 +41,17 @@ use sha2::{Digest as _, Sha256};
 
 use super::merged_ids;
 use super::sqlite::stored_release;
+use super::stores::StoreError;
 use crate::catalog_revision::bump_catalog;
+use crate::corrections::artist_convergence::{CREDITS_MOVED, MOVED_BY_NAME, MOVED_WITH_ID};
 use crate::corrections::continuation::accepted_release;
 use crate::identity::DecisionSource;
 use crate::identity::reads::release_input_hash;
 use crate::identity::sql::{PERSONS, REVISABLE};
 use crate::matching::model::{ArtistNames, CreditedArtist, Release, VARIOUS_ARTISTS_MBID};
+use crate::operations::decisions::{ArtistAction, record_artist_action};
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
-use droppedneedle_kernel::db::{fold_text, savepoint};
+use droppedneedle_kernel::db::{DbError, fold_text, savepoint};
 
 /// How many albums, and how many linked rows, one sweep looks at.
 pub const SWEEP_BATCH: usize = 50;
@@ -995,8 +1004,43 @@ pub enum LinkChange {
     /// The row is linked to this id, replacing the app's link it had.
     Link { artist: String, mbid: String },
     /// The app's link of the row goes.
-    Unlink { artist: String },
+    Unlink {
+        artist: String,
+        reason: UnlinkReason,
+    },
 }
+
+/// Why the app's link of a row goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnlinkReason {
+    /// Nothing proves the row is the id it is linked to any more.
+    NotProven,
+    /// Another row holds the id by a person's or v2's link.
+    GaveWay,
+}
+
+impl UnlinkReason {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::NotProven => LINK_NOT_PROVEN,
+            Self::GaveWay => LINK_GAVE_WAY,
+        }
+    }
+}
+
+/// The audit's action kinds for a change to an artist's link: one set
+/// where there was none, one moved to another id, one removed.
+pub const LINK_SET: &str = "artist_link_set";
+pub const LINK_MOVED: &str = "artist_link_moved";
+pub const LINK_REMOVED: &str = "artist_link_removed";
+/// The audit's reasons: the app linked a row its proofs and files name,
+/// the app's link went because nothing proves it any more or gave way to
+/// a person's link on another row, or a person set or cleared the link.
+pub const LINK_PROVEN: &str = "ARTIST_LINK_PROVEN";
+pub const LINK_NOT_PROVEN: &str = "ARTIST_LINK_NOT_PROVEN";
+pub const LINK_GAVE_WAY: &str = "ARTIST_LINK_GAVE_WAY";
+pub const LINK_SET_BY_PERSON: &str = "ARTIST_LINK_SET_BY_PERSON";
+pub const LINK_CLEARED_BY_PERSON: &str = "ARTIST_LINK_CLEARED_BY_PERSON";
 
 /// The ids row `artist` is proven to be, when it is a row that can be:
 /// live, not a sentinel and not a Various Artists row.
@@ -1032,7 +1076,7 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
         linked: bool,
     }
     let rows: BTreeSet<&String> = rows.iter().collect();
-    let mut unlinks: BTreeSet<String> = BTreeSet::new();
+    let mut unlinks: BTreeMap<String, UnlinkReason> = BTreeMap::new();
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut conflicts: BTreeSet<String> = BTreeSet::new();
     for artist in rows {
@@ -1085,7 +1129,7 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
             // same id on another row.
             Some(mbid) if link.as_ref().is_some_and(|(linked, _)| *linked == mbid) => {
                 if person_holds(conn, &mbid, artist)? {
-                    unlinks.insert(artist.clone());
+                    unlinks.insert(artist.clone(), UnlinkReason::GaveWay);
                 }
             }
             Some(mbid) => candidates.push(Candidate {
@@ -1095,7 +1139,7 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
                 linked: link.is_some(),
             }),
             None if link.is_some() && !(unproven && waits_for_document(conn, artist)?) => {
-                unlinks.insert(artist.clone());
+                unlinks.insert(artist.clone(), UnlinkReason::NotProven);
             }
             None => {}
         }
@@ -1108,8 +1152,9 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
     });
     let mut changes: Vec<LinkChange> = unlinks
         .iter()
-        .map(|artist| LinkChange::Unlink {
+        .map(|(artist, reason)| LinkChange::Unlink {
             artist: artist.clone(),
+            reason: *reason,
         })
         .collect();
     // Every candidate's own link changes either way, so none of them
@@ -1130,12 +1175,13 @@ fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
             .query_map(params![candidate.mbid], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         let owned = holders.iter().any(|holder| {
-            *holder != candidate.artist && !unlinks.contains(holder) && !moving.contains(holder)
+            *holder != candidate.artist && !unlinks.contains_key(holder) && !moving.contains(holder)
         });
         if owned || !taken.insert(candidate.mbid.clone()) {
             if candidate.linked {
                 changes.push(LinkChange::Unlink {
                     artist: candidate.artist,
+                    reason: UnlinkReason::NotProven,
                 });
             }
         } else {
@@ -1222,26 +1268,20 @@ pub fn settle(tx: &Transaction<'_>, rows: &[String], now_ms: i64) -> rusqlite::R
     merged_ids::nominate(tx, &conflicts, now_ms)?;
     let now = now_ms as f64 / 1000.0;
     let mut linked = Vec::new();
-    let touch = |artist: &str| touch_artist(tx, artist, now);
     for change in &changes {
-        if let LinkChange::Unlink { artist } = change {
-            let removed = tx
-                .prepare_cached(&format!(
-                    "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1 \
-                     AND provider = 'musicbrainz' AND decision_source IN {REVISABLE}"
-                ))?
-                .execute(params![artist])?;
-            if removed > 0 {
-                touch(artist)?;
-                changed = true;
-            }
+        if let LinkChange::Unlink { artist, reason } = change
+            && drop_app_link(tx, artist, reason.code(), now)?
+        {
+            changed = true;
         }
     }
     // A row taking an id another row of this settle is moving off can
     // only be linked once that row's old link is gone: remove every
     // moving row's old link before linking any.
+    let mut before: BTreeMap<&str, Option<String>> = BTreeMap::new();
     for change in &changes {
         if let LinkChange::Link { artist, mbid } = change {
+            before.insert(artist, app_link(tx, artist)?);
             tx.prepare_cached(&format!(
                 "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1 \
                  AND provider = 'musicbrainz' AND decision_source IN {REVISABLE} \
@@ -1267,7 +1307,17 @@ pub fn settle(tx: &Transaction<'_>, rows: &[String], now_ms: i64) -> rusqlite::R
                 ))?
                 .execute(params![artist, mbid, now])?;
             if written > 0 {
-                touch(artist)?;
+                touch_artist(tx, artist, now)?;
+                let old = before.get(artist.as_str()).cloned().flatten();
+                audit_link(
+                    tx,
+                    "system",
+                    artist,
+                    old.as_deref(),
+                    Some(mbid),
+                    LINK_PROVEN,
+                    now,
+                )?;
                 changed = true;
                 linked.push(mbid.clone());
             }
@@ -1277,4 +1327,418 @@ pub fn settle(tx: &Transaction<'_>, rows: &[String], now_ms: i64) -> rusqlite::R
         bump_catalog(tx)?;
     }
     Ok(linked)
+}
+
+/// The id of row `artist`'s link when it is the app's own.
+fn app_link(conn: &Connection, artist: &str) -> rusqlite::Result<Option<String>> {
+    conn.prepare_cached(&format!(
+        "SELECT provider_artist_id FROM local_artist_external_identities \
+         WHERE local_artist_id = ?1 AND provider = 'musicbrainz' \
+         AND decision_source IN {REVISABLE}"
+    ))?
+    .query_row(params![artist], |row| row.get(0))
+    .optional()
+}
+
+/// Write the audit row of a change to row `artist`'s link from `before`
+/// to `after` (`None` for no link), by `actor` (`system` for the app).
+pub(crate) fn audit_link(
+    tx: &Transaction<'_>,
+    actor: &str,
+    artist: &str,
+    before: Option<&str>,
+    after: Option<&str>,
+    reason: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let kind = match (before, after) {
+        (None, _) => LINK_SET,
+        (Some(old), Some(new)) if old == new => LINK_SET,
+        (Some(_), Some(_)) => LINK_MOVED,
+        (Some(_), None) => LINK_REMOVED,
+    };
+    record_artist_action(
+        tx,
+        ArtistAction {
+            actor,
+            kind,
+            artist_id: artist,
+            before: serde_json::json!({ "provider_artist_id": before }),
+            after: serde_json::json!({ "provider_artist_id": after }),
+            reason,
+        },
+        now,
+    )?;
+    Ok(())
+}
+
+/// Remove the app's link of row `artist`, if it has one: the row's
+/// revision moves and the audit records why (`reason`). The one way the
+/// app's link of a row goes. Returns whether a link went.
+pub(crate) fn drop_app_link(
+    tx: &Transaction<'_>,
+    artist: &str,
+    reason: &str,
+    now: f64,
+) -> rusqlite::Result<bool> {
+    let removed: Option<String> = tx
+        .prepare_cached(&format!(
+            "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1 \
+             AND provider = 'musicbrainz' AND decision_source IN {REVISABLE} \
+             RETURNING provider_artist_id"
+        ))?
+        .query_row(params![artist], |row| row.get(0))
+        .optional()?;
+    let Some(removed) = removed else {
+        return Ok(false);
+    };
+    touch_artist(tx, artist, now)?;
+    audit_link(tx, "system", artist, Some(&removed), None, reason, now)?;
+    Ok(true)
+}
+
+/// Who decided an artist's link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkSource {
+    /// The app, from the album matches and the files.
+    App,
+    /// A person.
+    Person,
+    /// A person's choice carried over from v2.
+    V2,
+}
+
+impl From<DecisionSource> for LinkSource {
+    fn from(source: DecisionSource) -> Self {
+        match source {
+            DecisionSource::Manual => Self::Person,
+            DecisionSource::LegacyImport => Self::V2,
+            DecisionSource::Automatic | DecisionSource::Embedded => Self::App,
+        }
+    }
+}
+
+/// An artist's MusicBrainz link, as stored.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredLink {
+    pub mbid: String,
+    pub source: LinkSource,
+    /// The person who set it, while their account exists.
+    pub selected_by: Option<String>,
+    /// Unix milliseconds.
+    pub selected_at_ms: i64,
+}
+
+/// An artist record's link and the revision a change must name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtistLink {
+    pub artist_revision: i64,
+    pub link: Option<StoredLink>,
+}
+
+/// Why a person's change to an artist's link was refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkRefusal {
+    /// No artist record with that id.
+    NotFound,
+    /// Not a MusicBrainz artist id.
+    InvalidId,
+    /// One of MusicBrainz's special-purpose artists.
+    SpecialPurpose,
+    /// A sentinel, a Various Artists record or one merged into another.
+    NotLinkable,
+    /// The record changed since it was read.
+    Stale,
+    /// The change would put the record in a group with these others (id,
+    /// name): another record holds the id, or would be proven it. Records
+    /// are merged by an admin, never by a person's link.
+    Shared(Vec<(String, String)>),
+    /// Only a person's or v2's link can be cleared.
+    NotPersons,
+}
+
+/// A person's change to an artist's link that did not land.
+#[derive(Debug)]
+pub enum ArtistLinkError {
+    Refused(LinkRefusal),
+    Store(StoreError),
+}
+
+impl std::fmt::Display for ArtistLinkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Refused(refusal) => write!(f, "artist link refused: {refusal:?}"),
+            Self::Store(error) => error.fmt(f),
+        }
+    }
+}
+
+impl From<DbError> for ArtistLinkError {
+    fn from(error: DbError) -> Self {
+        Self::Store(error.into())
+    }
+}
+
+impl From<rusqlite::Error> for ArtistLinkError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Store(error.into())
+    }
+}
+
+impl From<StoreError> for ArtistLinkError {
+    fn from(error: StoreError) -> Self {
+        Self::Store(error)
+    }
+}
+
+/// Row `artist`'s link and revision; `None` when there is no such row.
+pub fn artist_link(conn: &Connection, artist: &str) -> rusqlite::Result<Option<ArtistLink>> {
+    let revision: Option<i64> = conn
+        .prepare_cached("SELECT row_revision FROM local_artists WHERE id = ?1")?
+        .query_row(params![artist], |row| row.get(0))
+        .optional()?;
+    let Some(artist_revision) = revision else {
+        return Ok(None);
+    };
+    let link = conn
+        .prepare_cached(
+            "SELECT lower(i.provider_artist_id), i.decision_source, u.id, i.selected_at \
+             FROM local_artist_external_identities i \
+             LEFT JOIN auth_users u ON u.id = i.selected_by_user_id \
+             WHERE i.local_artist_id = ?1 AND i.provider = 'musicbrainz'",
+        )?
+        .query_row(params![artist], |row| {
+            Ok(StoredLink {
+                mbid: row.get(0)?,
+                source: LinkSource::from(row.get::<_, DecisionSource>(1)?),
+                selected_by: row.get(2)?,
+                selected_at_ms: (row.get::<_, f64>(3)? * 1000.0) as i64,
+            })
+        })
+        .optional()?;
+    Ok(Some(ArtistLink {
+        artist_revision,
+        link,
+    }))
+}
+
+/// Row `artist` as a person's change finds it: its link, or a refusal
+/// when it is not there or changed since `expected_revision`.
+fn person_target(
+    tx: &Transaction<'_>,
+    artist: &str,
+    expected_revision: i64,
+) -> Result<(ArtistLink, bool), ArtistLinkError> {
+    let provable: Option<bool> = tx
+        .prepare_cached(
+            "SELECT retired_into_artist_id IS NULL AND kind <> 'various_artists' \
+             AND id NOT IN (?2, ?3) FROM local_artists WHERE id = ?1",
+        )?
+        .query_row(
+            params![artist, SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let (Some(provable), Some(current)) = (provable, artist_link(tx, artist)?) else {
+        return Err(ArtistLinkError::Refused(LinkRefusal::NotFound));
+    };
+    if current.artist_revision != expected_revision {
+        return Err(ArtistLinkError::Refused(LinkRefusal::Stale));
+    }
+    Ok((current, provable))
+}
+
+/// The live records other than `artist` that a link of `artist` to
+/// `mbid` would group it with, as (id, name), at most ten: any record
+/// holding `mbid` by a link, and any record its credits' files or a
+/// current proof name as `mbid`, unless a person or v2 linked that record
+/// to another id.
+fn sharing(conn: &Connection, artist: &str, mbid: &str) -> rusqlite::Result<Vec<(String, String)>> {
+    conn.prepare_cached(&format!(
+        "SELECT a.id, a.display_name FROM local_artists a WHERE a.id <> ?2 AND ( \
+         a.id IN (SELECT local_artist_id FROM local_artist_external_identities \
+          WHERE provider = 'musicbrainz' AND lower(provider_artist_id) = ?1) \
+         OR (a.retired_into_artist_id IS NULL AND a.kind <> 'various_artists' \
+          AND a.id NOT IN (?3, ?4) \
+          AND a.id IN (SELECT local_artist_id FROM local_track_artists WHERE artist_mbid = ?1 \
+           UNION SELECT local_artist_id FROM local_album_artists WHERE artist_mbid = ?1 \
+           UNION SELECT p.source_local_artist_id FROM library_artist_credit_proofs p \
+            WHERE p.artist_mbid = ?1 AND p.source_local_artist_id IS NOT NULL \
+            AND ({CURRENT_PROOF})) \
+          AND NOT EXISTS (SELECT 1 FROM local_artist_external_identities l \
+           WHERE l.local_artist_id = a.id AND l.provider = 'musicbrainz' \
+           AND l.decision_source IN {PERSONS} AND lower(l.provider_artist_id) <> ?1))) \
+         ORDER BY a.display_name, a.id LIMIT 10"
+    ))?
+    .query_map(
+        params![mbid, artist, SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?
+    .collect()
+}
+
+/// The live rows an open recorded move of `artist`'s credits points at,
+/// as (id, name), at most ten. While `artist` holds a link, the merge that
+/// follows such a move is held back; clearing the link would let it run.
+fn follows_out(conn: &Connection, artist: &str) -> rusqlite::Result<Vec<(String, String)>> {
+    conn.prepare_cached(
+        "SELECT DISTINCT a.id, a.display_name FROM local_artist_merge_candidates m \
+         JOIN local_artists a ON a.id = m.right_artist_id \
+         WHERE m.left_artist_id = ?1 AND m.state = 'open' AND m.reason_code IN (?2, ?3, ?4) \
+         AND a.retired_into_artist_id IS NULL ORDER BY a.display_name, a.id LIMIT 10",
+    )?
+    .query_map(
+        params![artist, MOVED_BY_NAME, MOVED_WITH_ID, CREDITS_MOVED],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?
+    .collect()
+}
+
+/// The live rows waiting to follow their credits into `artist`, those
+/// proven to be `mbid` when one is given, as (id, name), at most ten. A
+/// link of `artist` to that id, or clearing its link, could let such a
+/// merge run.
+fn follows_in(
+    conn: &Connection,
+    artist: &str,
+    mbid: Option<&str>,
+) -> rusqlite::Result<Vec<(String, String)>> {
+    conn.prepare_cached(
+        "SELECT a.id, a.display_name FROM local_artist_merge_candidates m \
+         JOIN local_artists a ON a.id = m.left_artist_id \
+         WHERE m.right_artist_id = ?1 AND m.state = 'open' AND m.reason_code = ?2 \
+         AND (?3 IS NULL OR m.id = 'credits-moved:' || m.left_artist_id || ':' || ?3) \
+         AND a.retired_into_artist_id IS NULL ORDER BY a.display_name, a.id LIMIT 10",
+    )?
+    .query_map(params![artist, CREDITS_MOVED, mbid], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })?
+    .collect()
+}
+
+/// The records a person's link of `artist` to `mbid` would group it with
+/// ([`sharing`]) or let a waiting merge fold into it ([`follows_in`]), as
+/// (id, name), at most ten. A link by hand is never written while any is
+/// left: merging records is an admin's.
+pub(crate) fn would_group(
+    conn: &Connection,
+    artist: &str,
+    mbid: &str,
+) -> rusqlite::Result<Vec<(String, String)>> {
+    let mut others: BTreeSet<(String, String)> = sharing(conn, artist, mbid)?.into_iter().collect();
+    others.extend(follows_in(conn, artist, Some(mbid))?);
+    Ok(others.into_iter().take(10).collect())
+}
+
+/// A person links row `artist` to MusicBrainz artist `raw_mbid`. The id
+/// is read lowercased, an id MusicBrainz merged as the one it was merged
+/// into, and stored as the person's (`manual`), which the app's settling
+/// never moves. A link that would group the row with another record
+/// ([`would_group`]) is refused: merging records is an admin's. Returns the row's link after.
+pub fn set_by_person(
+    tx: &Transaction<'_>,
+    artist: &str,
+    raw_mbid: &str,
+    expected_revision: i64,
+    user_id: &str,
+    now_ms: i64,
+) -> Result<ArtistLink, ArtistLinkError> {
+    let refused = |refusal| Err(ArtistLinkError::Refused(refusal));
+    let mbid = raw_mbid.trim().to_ascii_lowercase();
+    if mbid.len() != 36 || uuid::Uuid::parse_str(&mbid).is_err() {
+        return refused(LinkRefusal::InvalidId);
+    }
+    let mbid = merged_ids::current_id(tx, &mbid)?;
+    if placeholder(&mbid) {
+        return refused(LinkRefusal::SpecialPurpose);
+    }
+    let (current, provable) = person_target(tx, artist, expected_revision)?;
+    if !provable {
+        return refused(LinkRefusal::NotLinkable);
+    }
+    let before = current.link.as_ref();
+    if before.is_some_and(|link| link.mbid == mbid && link.source != LinkSource::App) {
+        return Ok(current);
+    }
+    let others = would_group(tx, artist, &mbid)?;
+    if !others.is_empty() {
+        return refused(LinkRefusal::Shared(others));
+    }
+    let now = now_ms as f64 / 1000.0;
+    tx.prepare_cached(
+        "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+         provider_artist_id, decision_source, selected_by_user_id, selected_at) \
+         VALUES (?1, 'musicbrainz', ?2, 'manual', (SELECT id FROM auth_users WHERE id = ?3), ?4) \
+         ON CONFLICT (local_artist_id, provider) DO UPDATE SET \
+         provider_artist_id = excluded.provider_artist_id, decision_source = 'manual', \
+         attempt_id = NULL, selected_by_user_id = excluded.selected_by_user_id, \
+         selected_at = excluded.selected_at, \
+         row_revision = local_artist_external_identities.row_revision + 1",
+    )?
+    .execute(params![artist, mbid, user_id, now])?;
+    touch_artist(tx, artist, now)?;
+    audit_link(
+        tx,
+        user_id,
+        artist,
+        before.map(|link| link.mbid.as_str()),
+        Some(&mbid),
+        LINK_SET_BY_PERSON,
+        now,
+    )?;
+    bump_catalog(tx)?;
+    artist_link(tx, artist)?.ok_or(ArtistLinkError::Refused(LinkRefusal::NotFound))
+}
+
+/// A person clears row `artist`'s link, set by a person or carried from
+/// v2, and the row is settled again at once, so the app's own link comes
+/// back where the album matches and files prove one. A clear after which
+/// the row would be proven an id another record holds, or that its files
+/// or proofs name, or that would free a recorded move of credits to merge
+/// it into another record or another record into it, is refused: merging
+/// records is an admin's. Returns the row's link after.
+pub fn clear_by_person(
+    tx: &Transaction<'_>,
+    artist: &str,
+    expected_revision: i64,
+    user_id: &str,
+    now_ms: i64,
+) -> Result<ArtistLink, ArtistLinkError> {
+    let (current, provable) = person_target(tx, artist, expected_revision)?;
+    let Some(link) = current.link.filter(|link| link.source != LinkSource::App) else {
+        return Err(ArtistLinkError::Refused(LinkRefusal::NotPersons));
+    };
+    let mut others: BTreeSet<(String, String)> = follows_out(tx, artist)?.into_iter().collect();
+    others.extend(follows_in(tx, artist, None)?);
+    if provable {
+        for id in row_ids(tx, artist)? {
+            if !placeholder(&id) {
+                others.extend(sharing(tx, artist, &id)?);
+            }
+        }
+    }
+    if !others.is_empty() {
+        return Err(ArtistLinkError::Refused(LinkRefusal::Shared(
+            others.into_iter().take(10).collect(),
+        )));
+    }
+    let now = now_ms as f64 / 1000.0;
+    tx.prepare_cached(
+        "DELETE FROM local_artist_external_identities \
+         WHERE local_artist_id = ?1 AND provider = 'musicbrainz'",
+    )?
+    .execute(params![artist])?;
+    touch_artist(tx, artist, now)?;
+    audit_link(
+        tx,
+        user_id,
+        artist,
+        Some(&link.mbid),
+        None,
+        LINK_CLEARED_BY_PERSON,
+        now,
+    )?;
+    bump_catalog(tx)?;
+    settle(tx, &[artist.to_owned()], now_ms)?;
+    artist_link(tx, artist)?.ok_or(ArtistLinkError::Refused(LinkRefusal::NotFound))
 }

@@ -435,6 +435,8 @@ Run from the repo root. `make help` lists every target.
 - Every artist merge goes through `retire_artist` with a `MergeBasis`
   built in `corrections/merge_basis.rs` from rows read in the same
   transaction; the merge history shows each basis.
+- Setting or clearing an artist's link by hand never starts a merge; when
+  it would, it is refused and the records are merged by an admin.
 - MusicBrainz's special-purpose artist ids (Various Artists, unknown and
   the like) are never proof and never key an artist row.
 - A release group that every file's tags name, or that a revisable match

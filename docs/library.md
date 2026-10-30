@@ -9,6 +9,7 @@ How DroppedNeedle scans your music, works out which album and edition each folde
 - [How an album is identified](#how-an-album-is-identified)
 - [Unconfirmed matches](#unconfirmed-matches)
 - [Album organization](#album-organization)
+- [Artist links](#artist-links)
 - [Duplicate artists](#duplicate-artists)
 - [Removing albums and tracks](#removing-albums-and-tracks)
 - [Albums with no files](#albums-with-no-files)
@@ -77,6 +78,12 @@ After an upgrade from v2, a one-time cleanup tidies album rows the old version l
 v2 matched some albums to a release group without choosing an edition in it. Tagging and organizing need an exact edition, so the album page shows "Edition not chosen yet" for these. After the upgrade, each one v2 matched by itself is identified once more, in the background and only once: it gets the edition its files fit, or a best guess marked unconfirmed, and the automatic choice can be undone from the album page like any other. If nothing fits, it keeps its release group and still reads "Edition not chosen yet". An album whose release group a person chose, in v3 or in v2, keeps it as it is, and albums in folders that keep their own tags are skipped.
 
 Matching now reads the release group your files' tags name. After the upgrade, an album the app matched by itself before that, on a release outside the one group all its files name, is identified once more, in the background and only once. It usually comes back as a best guess marked unconfirmed: "Fits best, but the files' tags or earlier match name another album." Albums a person matched or detached, or whose suggestions they turned down, custom editions, and albums in folders that keep their own tags are left alone.
+
+## Artist links
+
+Each artist record can be linked to one MusicBrainz artist. DroppedNeedle links a record by itself when a matched album's release credits it and the record's files don't name another artist, and it moves or removes that link as the matches and files change. Every change to a link, by the app or by a person, is recorded.
+
+The artist page shows the link, who set it and when. A curator can set it by hand with Change, pasting the artist's MusicBrainz ID or page address; an ID MusicBrainz has merged into another is saved as the one it went into. A link set by hand, or carried over from v2, is never changed by the app, except to follow MusicBrainz when it merges that artist into another. Clear removes such a link, and the app links the record again from its albums and files straight away where it can; a link the app set can't be cleared, only replaced. Setting or clearing a link never merges artists: when another record already has that MusicBrainz artist, or its files or matched albums say it is that artist, or when a retag moved the record's songs to another record that would then take it over, the change is refused and names the other records, and an admin merges them under Duplicate artists. The artist link a MusicBrainz contribution sets follows the same rule: when it would join records, the contribution is saved without it. MusicBrainz's special-purpose artists, such as Various Artists, can't be linked.
 
 ## Duplicate artists
 

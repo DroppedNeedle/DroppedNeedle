@@ -14,6 +14,7 @@ use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use droppedneedle_providers::RequestPriority;
 use tokio::time::Instant;
 
+use super::artist_links::{ArtistLink, ArtistLinkError};
 use super::evidence::{candidate_evidence, edition_ids, local_album, named_group};
 use super::models::{
     AlbumIdentity, AutomaticSeal, CandidateEvidence, DecisionSource, EvidenceClass,
@@ -962,6 +963,37 @@ impl IdentifyService {
     /// A curator rejects a review: the album keeps its tags, nothing seals.
     pub fn reject_candidates(&self, review_id: &str, by_user_id: &str) -> Result<bool, StoreError> {
         reject_review(self.deps.store.as_ref(), review_id, by_user_id)
+    }
+
+    /// An artist record's MusicBrainz link and revision; `None` when there
+    /// is no such record.
+    pub fn artist_link(&self, artist: &str) -> Result<Option<ArtistLink>, StoreError> {
+        self.deps.store.artist_link(artist)
+    }
+
+    /// A curator links an artist record to a MusicBrainz artist by hand.
+    pub fn set_artist_link(
+        &self,
+        artist: &str,
+        mbid: &str,
+        expected_revision: i64,
+        by_user_id: &str,
+    ) -> Result<ArtistLink, ArtistLinkError> {
+        self.deps
+            .store
+            .set_artist_link(artist, mbid, expected_revision, by_user_id)
+    }
+
+    /// A curator clears an artist record's hand-set link.
+    pub fn clear_artist_link(
+        &self,
+        artist: &str,
+        expected_revision: i64,
+        by_user_id: &str,
+    ) -> Result<ArtistLink, ArtistLinkError> {
+        self.deps
+            .store
+            .clear_artist_link(artist, expected_revision, by_user_id)
     }
 
     /// One card with the whole case for an album.

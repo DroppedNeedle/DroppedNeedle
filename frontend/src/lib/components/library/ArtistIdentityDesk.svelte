@@ -47,6 +47,7 @@
 		{ value: 'ambiguous_credit_structure', label: 'Ambiguous credit structure' },
 		{ value: 'same_name_only', label: 'Same name only' },
 		{ value: 'credits_moved', label: 'Songs moved' },
+		{ value: 'shared_provider_identity', label: 'Same MusicBrainz artist' },
 		{ value: 'resolved_automatically', label: 'Resolved automatically' }
 	];
 

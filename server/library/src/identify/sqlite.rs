@@ -14,7 +14,7 @@
 //! database, run on the calling (blocking) thread. Every call answers a
 //! `Result`: a read that fails is an error, never an absent row.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -24,7 +24,7 @@ use droppedneedle_kernel::db::{Db, DbError, Lane};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use sha2::{Digest as _, Sha256};
 
-use super::artist_links;
+use super::artist_links::{self, ArtistLink, ArtistLinkError};
 use super::merged_ids;
 use super::models::{
     AlbumIdentity, Alias, AliasKind, AutomaticSeal, CandidateEvidence, IdentifyJob, IdentifyKind,
@@ -153,9 +153,10 @@ pub struct SqliteIdentifyStore {
     /// Writes through this store that changed a row. A match changed
     /// through this store wakes the album sweep at once.
     writes: AtomicU64,
-    /// The sweep's albums and links that failed last time, with the
-    /// error's text, so a repeat of the same failure is not warned again.
-    failing: Mutex<HashMap<Failing, String>>,
+    /// The sweep's albums and links that failed last time, so a repeat of
+    /// the same failure is not warned again and an album that keeps
+    /// failing waits before its next try.
+    failing: Mutex<HashMap<Failing, Failure>>,
 }
 
 /// An album or an artist's link the sweep failed to work out.
@@ -164,6 +165,23 @@ enum Failing {
     Album(String),
     Link(String),
 }
+
+/// The last failure of one album or link.
+struct Failure {
+    /// The error's text.
+    text: String,
+    /// When it failed last, unix milliseconds.
+    at_ms: i64,
+    /// How long after that an album is not tried again.
+    wait_ms: i64,
+}
+
+/// The wait after an album's first failure; it doubles with each further
+/// failure, up to [`FAILURE_WAIT_CAP_MS`].
+const FAILURE_WAIT_MS: i64 = 2_000;
+const FAILURE_WAIT_CAP_MS: i64 = 10 * 60 * 1000;
+/// A failure not seen again for this long is forgotten.
+const FAILURE_FORGET_MS: i64 = 60 * 60 * 1000;
 
 /// The last drain of continued tracks.
 #[derive(Clone, Copy)]
@@ -826,9 +844,21 @@ impl SqliteIdentifyStore {
             .swept_guard()
             .is_some_and(|last| last.writes == writes && last.at.elapsed() < SWEEP_FLOOR);
         if !quiet {
-            let stale = self.db.read_blocking("identify.stale_albums", |conn| {
-                Ok::<_, StoreError>(artist_links::stale_albums(conn, artist_links::SWEEP_BATCH)?)
-            })?;
+            // Albums waiting after a failure are read past, so they never
+            // fill the batch ahead of the rest.
+            let waiting = self.albums_waiting();
+            let stale: Vec<String> = self
+                .db
+                .read_blocking("identify.stale_albums", |conn| {
+                    Ok::<_, StoreError>(artist_links::stale_albums(
+                        conn,
+                        artist_links::SWEEP_BATCH + waiting.len(),
+                    )?)
+                })?
+                .into_iter()
+                .filter(|album| !waiting.contains(album))
+                .take(artist_links::SWEEP_BATCH)
+                .collect();
             for album in &stale {
                 let key = Failing::Album(album.clone());
                 match self.link_and_merge_album_artists(album) {
@@ -1011,6 +1041,57 @@ impl SqliteIdentifyStore {
             .map(|written| self.landed(written))
     }
 
+    /// Artist record `artist`'s MusicBrainz link and revision; `None` when
+    /// there is no such record.
+    pub fn artist_link(&self, artist: &str) -> Result<Option<ArtistLink>, StoreError> {
+        self.db.read_blocking("identify.artist_link", |conn| {
+            Ok(artist_links::artist_link(conn, artist)?)
+        })
+    }
+
+    /// A person links artist record `artist` to `mbid`
+    /// ([`artist_links::set_by_person`]), in one transaction.
+    pub fn set_artist_link(
+        &self,
+        artist: &str,
+        mbid: &str,
+        expected_revision: i64,
+        user_id: &str,
+    ) -> Result<ArtistLink, ArtistLinkError> {
+        self.db
+            .write_blocking(Lane::Foreground, "identify.set_artist_link", |tx| {
+                artist_links::set_by_person(
+                    tx,
+                    artist,
+                    mbid,
+                    expected_revision,
+                    user_id,
+                    self.clock.now_ms(),
+                )
+            })
+    }
+
+    /// A person clears artist record `artist`'s link and the record is
+    /// settled again ([`artist_links::clear_by_person`]), in one
+    /// transaction.
+    pub fn clear_artist_link(
+        &self,
+        artist: &str,
+        expected_revision: i64,
+        user_id: &str,
+    ) -> Result<ArtistLink, ArtistLinkError> {
+        self.db
+            .write_blocking(Lane::Foreground, "identify.clear_artist_link", |tx| {
+                artist_links::clear_by_person(
+                    tx,
+                    artist,
+                    expected_revision,
+                    user_id,
+                    self.clock.now_ms(),
+                )
+            })
+    }
+
     fn swept_guard(&self) -> MutexGuard<'_, Option<Swept>> {
         self.swept
             .lock()
@@ -1021,11 +1102,53 @@ impl SqliteIdentifyStore {
     /// not fail on it last time, or failed another way.
     fn newly_failing(&self, key: Failing, error: &StoreError) -> bool {
         let text = error.to_string();
+        let now = self.clock.now_ms();
+        let mut failing = self.failing_guard(now);
+        match failing.get_mut(&key) {
+            Some(failure) => {
+                let repeat = failure.text == text;
+                failure.text = text;
+                failure.at_ms = now;
+                failure.wait_ms = (failure.wait_ms * 2).min(FAILURE_WAIT_CAP_MS);
+                !repeat
+            }
+            None => {
+                failing.insert(
+                    key,
+                    Failure {
+                        text,
+                        at_ms: now,
+                        wait_ms: FAILURE_WAIT_MS,
+                    },
+                );
+                true
+            }
+        }
+    }
+
+    /// The albums that failed and wait before their next try.
+    fn albums_waiting(&self) -> HashSet<String> {
+        let now = self.clock.now_ms();
+        self.failing_guard(now)
+            .iter()
+            .filter_map(|(key, failure)| match key {
+                Failing::Album(album) if failure.at_ms + failure.wait_ms > now => {
+                    Some(album.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The failures, once those not seen for [`FAILURE_FORGET_MS`] are
+    /// forgotten.
+    fn failing_guard(&self, now_ms: i64) -> MutexGuard<'_, HashMap<Failing, Failure>> {
         let mut failing = self
             .failing
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        failing.insert(key, text.clone()).as_ref() != Some(&text)
+        failing.retain(|_, failure| now_ms - failure.at_ms < FAILURE_FORGET_MS);
+        failing
     }
 
     /// Forget a failure the sweep has now got past.

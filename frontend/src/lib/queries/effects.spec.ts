@@ -159,6 +159,13 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	albumCopiesChanged: [key(U, 'album-match', 'job')],
 	albumCopiesStale: [{ key: [U, 'album-match', 'job'], mark: true }],
 	artistChanged: [key('shared', 'artist', 'u')],
+	artistLinkChanged: [
+		key(U, 'library', 'artist-link', 'job'),
+		key(U, 'library', 'catalog', 'artist-detail', 'job'),
+		key(U, 'library', 'catalog', 'artist-detail', 'x'),
+		key('shared', 'artist', 'x'),
+		every('library', 'artist-reconciliation')
+	],
 	playlistSourcesDropped: [
 		{ key: [U, 'playlists', 'sources', 'job'], exact: true, dropSaved: true }
 	],

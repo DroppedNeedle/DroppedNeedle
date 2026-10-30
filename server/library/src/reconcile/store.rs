@@ -79,6 +79,7 @@ fn placeholders(n: usize) -> String {
 pub fn inputs(conn: &Connection) -> Result<GroupInputs, ReconcileError> {
     let candidates = candidates(conn)?;
     let moved = moved_groups(conn)?;
+    let shared = shared_groups(conn)?;
     let dismissals = conn
         .prepare(
             "SELECT left_artist_id, right_artist_id, left_artist_revision, \
@@ -111,6 +112,7 @@ pub fn inputs(conn: &Connection) -> Result<GroupInputs, ReconcileError> {
     Ok(GroupInputs {
         candidates,
         moved,
+        shared,
         dismissals,
         ambiguous_artist_ids,
         merges,
@@ -247,6 +249,45 @@ fn moved_groups(conn: &Connection) -> Result<Vec<Vec<Candidate>>, ReconcileError
         for id in std::iter::once(&from).chain(&dests) {
             rows.push(member.query_row(params![id], candidate_row)?);
         }
+        with_proofs(conn, &mut rows)?;
+        groups.push(rows);
+    }
+    Ok(groups)
+}
+
+/// Each open offer of two live records as one artist, recorded when a
+/// person's link named a MusicBrainz artist the other holds, as its two
+/// records, the older first.
+fn shared_groups(conn: &Connection) -> Result<Vec<Vec<Candidate>>, ReconcileError> {
+    let pairs: Vec<(String, String)> = conn
+        .prepare(
+            "SELECT pair.left_artist_id, pair.right_artist_id \
+             FROM local_artist_merge_candidates pair \
+             JOIN local_artists left_artist ON left_artist.id = pair.left_artist_id \
+              AND left_artist.retired_into_artist_id IS NULL \
+             JOIN local_artists right_artist ON right_artist.id = pair.right_artist_id \
+              AND right_artist.retired_into_artist_id IS NULL \
+             WHERE pair.reason_code = ?1 AND pair.state = 'open' ORDER BY pair.id",
+        )?
+        .query_map(params![reasons::SHARED_PROVIDER_IDENTITY.code], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut member = conn.prepare(&format!(
+        "SELECT {} FROM local_artists artist {IDENTITY_JOIN} WHERE artist.id = ?1",
+        candidate_columns()
+    ))?;
+    let mut groups = Vec::with_capacity(pairs.len());
+    for (left, right) in pairs {
+        let mut rows = vec![
+            member.query_row(params![left], candidate_row)?,
+            member.query_row(params![right], candidate_row)?,
+        ];
+        rows.sort_by(|a, b| {
+            a.created_at
+                .total_cmp(&b.created_at)
+                .then_with(|| a.member.id.cmp(&b.member.id))
+        });
         with_proofs(conn, &mut rows)?;
         groups.push(rows);
     }

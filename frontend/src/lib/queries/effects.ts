@@ -10,6 +10,7 @@ import {
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { everyScope, key, userScope } from '$lib/queries/keys';
 import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
+import { ArtistLinkQueryKeyFactory } from '$lib/queries/artist-link/ArtistLinkQueryKeyFactory';
 import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { FollowQueryKeyFactory } from '$lib/queries/following/FollowQueryKeyFactory';
@@ -141,6 +142,20 @@ export const EFFECTS = {
 	],
 	/** The admin's artist duplicate groups. */
 	artistDuplicatesChanged: (): Sweep[] => [{ everyScope: ['library', 'artist-reconciliation'] }],
+	/**
+	 * One artist's MusicBrainz link: the link, the library artist under its id
+	 * and each MusicBrainz id it had or has, those artist pages, and the
+	 * admin's duplicate groups.
+	 */
+	artistLinkChanged: (userId: UserId, artistId: string, ...mbids: string[]): Sweep[] => [
+		{ key: ArtistLinkQueryKeyFactory.link(userId, artistId) },
+		{ key: LibraryQueryKeyFactory.catalog.artistDetail(userId, artistId) },
+		...mbids.flatMap((mbid): Sweep[] => [
+			{ key: LibraryQueryKeyFactory.catalog.artistDetail(userId, mbid) },
+			{ key: ArtistQueryKeyFactory.basic(mbid) }
+		]),
+		{ everyScope: ['library', 'artist-reconciliation'] }
+	],
 	/** The admin's list of accounts. */
 	usersChanged: (userId: UserId): Sweep[] => [{ key: AuthQueryKeyFactory.adminUsers(userId) }],
 	/** Accounts a media server offers for import. */
@@ -533,6 +548,7 @@ export const integrationStatusChanged = fact('integrationStatusChanged');
 export const albumCopiesChanged = fact('albumCopiesChanged');
 export const albumCopiesStale = fact('albumCopiesStale');
 export const artistChanged = fact('artistChanged');
+export const artistLinkChanged = fact('artistLinkChanged');
 export const playlistSourcesDropped = fact('playlistSourcesDropped');
 export const discoverRadioChanged = fact('discoverRadioChanged');
 

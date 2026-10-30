@@ -30,8 +30,11 @@ use super::transition::{
     ContributionUpdate, Effect, Finish, Invalidation, Update, transition, verification_outcome,
 };
 use super::worker::{Completion, VERIFY};
+use crate::identify::artist_links::{LINK_SET_BY_PERSON, audit_link, placeholder, would_group};
+use crate::identify::merged_ids;
 use crate::identity;
 use crate::identity::sql::PERSONS;
+use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
 
 const PROVIDER: &str = "musicbrainz";
 /// Attempt trigger v2 stamped on contribution verification attempts.
@@ -470,18 +473,22 @@ fn chosen_artist_identity(conn: &Connection, artist_id: &str) -> rusqlite::Resul
     .optional()
 }
 
-/// The row linked to `artist_mbid`, and whether the app made the link.
-fn artist_owner(conn: &Connection, artist_mbid: &str) -> rusqlite::Result<Option<(String, bool)>> {
-    conn.prepare_cached(&format!(
-        "SELECT local_artist_id, decision_source NOT IN {PERSONS} \
-         FROM local_artist_external_identities \
-         WHERE provider = ?1 AND lower(provider_artist_id) = lower(?2) \
-         ORDER BY local_artist_id LIMIT 1"
-    ))?
-    .query_row(params![PROVIDER, artist_mbid], |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    })
-    .optional()
+/// Offer records `a` and `b` as one artist in an open merge candidate,
+/// for an admin to merge or tell apart.
+fn offer_merge(conn: &Connection, a: &str, b: &str, now: f64) -> rusqlite::Result<()> {
+    let (left, right) = if a < b { (a, b) } else { (b, a) };
+    conn.prepare_cached(
+        "INSERT OR IGNORE INTO local_artist_merge_candidates (id, left_artist_id, \
+         right_artist_id, reason_code, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 'SHARED_PROVIDER_IDENTITY', ?4, ?4)",
+    )?
+    .execute(params![
+        format!("provider:{left}:{right}"),
+        left,
+        right,
+        now
+    ])?;
+    Ok(())
 }
 
 /// Record the attempt behind a contribution decision (v2
@@ -533,6 +540,9 @@ struct LinkIdentity<'a> {
     artist_mbid: Option<&'a str>,
     attempt: &'a ContributionVerificationAttempt,
     selected_by: Option<&'a str>,
+    /// The contribution's user, who the artist link is recorded as set by:
+    /// the one who asked for this verification, else its creator.
+    owner: Option<&'a str>,
     tracks: &'a [TrackEvidence],
 }
 
@@ -560,73 +570,88 @@ fn commit_link(
                 ContribError::stale("The album changed before the release could be linked.")
             })?;
     }
+    // A person's link never groups records: when the id is another
+    // record's, or would let a waiting merge run, the link is not written
+    // and the records are offered for an admin to merge. A person's or
+    // v2's link of the row stays.
     if let Some(wanted) = link.artist_mbid {
-        let owner = artist_owner(conn, wanted)?;
-        // The app's own link of the id on another row gives way to the
-        // person's, with no merge to suggest.
-        if let Some((other, true)) = &owner
-            && other != link.artist_id
+        let mbid = merged_ids::current_id(conn, wanted)?;
+        // MusicBrainz's special-purpose ids never key an artist row, and a
+        // sentinel or Various Artists row takes no link.
+        let linkable = !placeholder(&mbid)
+            && uuid::Uuid::parse_str(&mbid).is_ok()
+            && conn
+                .prepare_cached(
+                    "SELECT kind <> 'various_artists' AND id NOT IN (?2, ?3) \
+                     AND retired_into_artist_id IS NULL FROM local_artists WHERE id = ?1",
+                )?
+                .query_row(
+                    params![
+                        link.artist_id,
+                        SENTINEL_ARTIST_IDS[0],
+                        SENTINEL_ARTIST_IDS[1]
+                    ],
+                    |row| row.get::<_, bool>(0),
+                )
+                .optional()?
+                .unwrap_or(false);
+        // The link is the contribution's user's, so it is written only
+        // while that account exists to be named in the audit.
+        let actor: Option<String> = match link.owner {
+            Some(user) => conn
+                .prepare_cached("SELECT id FROM auth_users WHERE id = ?1")?
+                .query_row(params![user], |row| row.get(0))
+                .optional()?,
+            None => None,
+        };
+        let others = if linkable {
+            would_group(conn, link.artist_id, &mbid)?
+        } else {
+            Vec::new()
+        };
+        if !others.is_empty() {
+            for (other, _) in &others {
+                offer_merge(conn, link.artist_id, other, now)?;
+            }
+        } else if linkable
+            && let Some(actor) = actor
+            && chosen_artist_identity(conn, link.artist_id)?.is_none()
         {
-            conn.prepare_cached(&format!(
-                "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1 \
-                 AND provider = ?2 AND decision_source NOT IN {PERSONS}"
-            ))?
-            .execute(params![other, PROVIDER])?;
+            let before = artist_identity(conn, link.artist_id)?;
             conn.prepare_cached(
                 "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 \
                  WHERE id = ?1",
             )?
-            .execute(params![other, now])?;
-        }
-        match owner {
-            Some((owner, false)) if owner != link.artist_id => {
-                let (left, right) = if link.artist_id < owner.as_str() {
-                    (link.artist_id.to_owned(), owner)
-                } else {
-                    (owner, link.artist_id.to_owned())
-                };
-                conn.prepare_cached(
-                    "INSERT OR IGNORE INTO local_artist_merge_candidates (id, left_artist_id, \
-                     right_artist_id, reason_code, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, 'SHARED_PROVIDER_IDENTITY', ?4, ?4)",
-                )?
-                .execute(params![
-                    format!("provider:{left}:{right}"),
-                    left,
-                    right,
-                    now
-                ])?;
-            }
-            // A person's or v2's link of the row stays; the app's own link,
-            // to this id or another, is replaced by the person's.
-            _ if chosen_artist_identity(conn, link.artist_id)?.is_none() => {
-                conn.prepare_cached(
-                    "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 \
-                     WHERE id = ?1",
-                )?
-                .execute(params![link.artist_id, now])?;
-                conn.prepare_cached(
-                    "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
-                     provider_artist_id, decision_source, attempt_id, selected_by_user_id, \
-                     selected_at) VALUES (?1, ?2, ?3, 'manual', ?4, ?5, ?6) \
-                     ON CONFLICT (local_artist_id, provider) DO UPDATE SET \
-                     provider_artist_id = excluded.provider_artist_id, \
-                     decision_source = excluded.decision_source, \
-                     attempt_id = excluded.attempt_id, \
-                     selected_by_user_id = excluded.selected_by_user_id, \
-                     selected_at = excluded.selected_at, \
-                     row_revision = local_artist_external_identities.row_revision + 1",
-                )?
-                .execute(params![
-                    link.artist_id,
-                    PROVIDER,
-                    wanted,
-                    link.attempt.id,
-                    link.selected_by,
-                    now
-                ])?;
-            }
-            _ => {}
+            .execute(params![link.artist_id, now])?;
+            conn.prepare_cached(
+                "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+                 provider_artist_id, decision_source, attempt_id, selected_by_user_id, \
+                 selected_at) VALUES (?1, ?2, ?3, 'manual', ?4, ?5, ?6) \
+                 ON CONFLICT (local_artist_id, provider) DO UPDATE SET \
+                 provider_artist_id = excluded.provider_artist_id, \
+                 decision_source = excluded.decision_source, \
+                 attempt_id = excluded.attempt_id, \
+                 selected_by_user_id = excluded.selected_by_user_id, \
+                 selected_at = excluded.selected_at, \
+                 row_revision = local_artist_external_identities.row_revision + 1",
+            )?
+            .execute(params![
+                link.artist_id,
+                PROVIDER,
+                mbid,
+                link.attempt.id,
+                actor,
+                now
+            ])?;
+            audit_link(
+                conn,
+                &actor,
+                link.artist_id,
+                before.as_deref(),
+                Some(&mbid),
+                LINK_SET_BY_PERSON,
+                now,
+            )?;
         }
     }
     // The album's match when it had none, and each paired file's track
@@ -759,6 +784,9 @@ fn apply(
                         artist_mbid: artist_mbid.as_deref(),
                         attempt: &attempt,
                         selected_by: selected_by.as_deref(),
+                        owner: selected_by
+                            .as_deref()
+                            .or(next.created_by_user_id.as_deref()),
                         tracks: &tracks,
                     },
                     now,

@@ -3882,6 +3882,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/artists/{id}/musicbrainz-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An artist's MusicBrainz link: the id, who set it and when. */
+        get: operations["get_artist_link"];
+        /**
+         * Link an artist to a MusicBrainz artist by hand. The app's own linking
+         *     never changes it. Refused when another artist in the library is that
+         *     MusicBrainz artist: an admin merges them instead.
+         */
+        put: operations["set_artist_link"];
+        post?: never;
+        /**
+         * Clear an artist's hand-set link. The app then links the artist again
+         *     where its albums and files prove one. Refused when that would make it
+         *     the same MusicBrainz artist as another in the library.
+         */
+        delete: operations["clear_artist_link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/contributions/musicbrainz/callback": {
         parameters: {
             query?: never;
@@ -10667,7 +10694,7 @@ export interface components {
          * @description What kind of duplicate group this is.
          * @enum {string}
          */
-        ArtistGroupState: "waiting_for_identity" | "provider_conflict" | "ambiguous_credit_structure" | "same_name_only" | "credits_moved" | "resolved_automatically";
+        ArtistGroupState: "waiting_for_identity" | "provider_conflict" | "ambiguous_credit_structure" | "same_name_only" | "credits_moved" | "shared_provider_identity" | "resolved_automatically";
         /** @description The credit an artist's picture asks for. */
         ArtistImageCredit: {
             credit: null | components["schemas"]["PhotoCredit"];
@@ -10762,6 +10789,34 @@ export interface components {
             tags: string[];
             /** @description Artist type (`Person`, `Group`, ...). */
             type?: string | null;
+        };
+        /**
+         * @description Who set an artist's link, as the caller may know it.
+         * @enum {string}
+         */
+        ArtistLinkByView: "you" | "person" | "app" | "v2";
+        /**
+         * @description Who decided an artist's link.
+         * @enum {string}
+         */
+        ArtistLinkSourceView: "app" | "person" | "v2";
+        /** @description An artist's MusicBrainz link. */
+        ArtistLinkView: {
+            artist_id: string;
+            /**
+             * Format: int64
+             * @description The revision a change must name.
+             */
+            artist_revision: number;
+            /** @description The linked MusicBrainz artist id; null when there is none. */
+            musicbrainz_artist_id?: string | null;
+            /**
+             * Format: int64
+             * @description When it was set, unix milliseconds; null when there is no link.
+             */
+            selected_at?: number | null;
+            set_by?: null | components["schemas"]["ArtistLinkByView"];
+            source?: null | components["schemas"]["ArtistLinkSourceView"];
         };
         /** @description A previewed artist merge to apply. */
         ArtistMergeApplyBody: {
@@ -22212,6 +22267,16 @@ export interface components {
             /** @description Owning source. */
             source: components["schemas"]["SourceName"];
         };
+        /** @description Link an artist to a MusicBrainz artist. */
+        SetArtistLinkBody: {
+            /**
+             * Format: int64
+             * @description The `artist_revision` as last read.
+             */
+            expected_revision: number;
+            /** @description The MusicBrainz artist id. */
+            musicbrainz_artist_id: string;
+        };
         /** @description Set-favorite body. */
         SetFavoriteBody: {
             /** @description True favorites the item; false unfavorites it. */
@@ -33296,6 +33361,190 @@ export interface operations {
             };
             /** @description None of the artist's albums has art */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_artist_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local artist id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The artist's link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistLinkView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown artist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    set_artist_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local artist id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetArtistLinkBody"];
+            };
+        };
+        responses: {
+            /** @description The artist's link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistLinkView"];
+                };
+            };
+            /** @description Not a MusicBrainz artist id, or a special-purpose one (ARTIST_MBID_INVALID, ARTIST_MBID_SPECIAL) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown artist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The artist changed since it was read (STALE_REVISION), cannot be linked (ARTIST_NOT_LINKABLE), or other artists are that MusicBrainz artist (ARTIST_LINK_SHARED, listed in details.artists) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    clear_artist_link: {
+        parameters: {
+            query: {
+                /** @description The `artist_revision` as last read. */
+                expected_revision: number;
+            };
+            header?: never;
+            path: {
+                /** @description Local artist id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The artist's link after the clear */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistLinkView"];
+                };
+            };
+            /** @description No revision given */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown artist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The artist changed since it was read (STALE_REVISION), has no hand-set link (ARTIST_LINK_NOT_CHOSEN), or would be the same MusicBrainz artist as others (ARTIST_LINK_SHARED, listed in details.artists) */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

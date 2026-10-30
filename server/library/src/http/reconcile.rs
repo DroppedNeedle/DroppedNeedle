@@ -67,6 +67,8 @@ pub enum ArtistGroupState {
     SameNameOnly,
     /// A tag edit moved a record's songs to records of another name.
     CreditsMoved,
+    /// A link set by hand names the MusicBrainz artist another record is.
+    SharedProviderIdentity,
     /// Merged automatically already.
     ResolvedAutomatically,
 }
@@ -79,6 +81,7 @@ impl From<GroupState> for ArtistGroupState {
             GroupState::AmbiguousCreditStructure => Self::AmbiguousCreditStructure,
             GroupState::SameNameOnly => Self::SameNameOnly,
             GroupState::CreditsMoved => Self::CreditsMoved,
+            GroupState::SharedProviderIdentity => Self::SharedProviderIdentity,
             GroupState::ResolvedAutomatically => Self::ResolvedAutomatically,
         }
     }
@@ -92,6 +95,7 @@ impl From<ArtistGroupState> for GroupState {
             ArtistGroupState::AmbiguousCreditStructure => Self::AmbiguousCreditStructure,
             ArtistGroupState::SameNameOnly => Self::SameNameOnly,
             ArtistGroupState::CreditsMoved => Self::CreditsMoved,
+            ArtistGroupState::SharedProviderIdentity => Self::SharedProviderIdentity,
             ArtistGroupState::ResolvedAutomatically => Self::ResolvedAutomatically,
         }
     }

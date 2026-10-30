@@ -650,6 +650,16 @@ const EXACT_EXEMPTIONS: &[(&str, &str, &str)] = &[
     ),
     (
         "PUT",
+        "/api/v3/library/artists/{id}/musicbrainz-link",
+        "a shared library artist's MusicBrainz link, set by curators",
+    ),
+    (
+        "DELETE",
+        "/api/v3/library/artists/{id}/musicbrainz-link",
+        "a shared library artist's MusicBrainz link, set by curators",
+    ),
+    (
+        "PUT",
         "/api/v3/library/albums/{album_id}/edition",
         SHARED_ALBUM,
     ),

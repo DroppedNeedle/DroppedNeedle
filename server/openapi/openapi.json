@@ -13432,6 +13432,259 @@
         ]
       }
     },
+    "/api/v3/library/artists/{id}/musicbrainz-link": {
+      "get": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "An artist's MusicBrainz link: the id, who set it and when.",
+        "operationId": "get_artist_link",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local artist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artist's link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistLinkView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown artist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Link an artist to a MusicBrainz artist by hand. The app's own linking\nnever changes it. Refused when another artist in the library is that\nMusicBrainz artist: an admin merges them instead.",
+        "operationId": "set_artist_link",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local artist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetArtistLinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The artist's link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistLinkView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz artist id, or a special-purpose one (ARTIST_MBID_INVALID, ARTIST_MBID_SPECIAL)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown artist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The artist changed since it was read (STALE_REVISION), cannot be linked (ARTIST_NOT_LINKABLE), or other artists are that MusicBrainz artist (ARTIST_LINK_SHARED, listed in details.artists)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Clear an artist's hand-set link. The app then links the artist again\nwhere its albums and files prove one. Refused when that would make it\nthe same MusicBrainz artist as another in the library.",
+        "operationId": "clear_artist_link",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local artist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "The `artist_revision` as last read.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artist's link after the clear",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistLinkView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No revision given",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown artist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The artist changed since it was read (STALE_REVISION), has no hand-set link (ARTIST_LINK_NOT_CHOSEN), or would be the same MusicBrainz artist as others (ARTIST_LINK_SHARED, listed in details.artists)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/contributions/musicbrainz/callback": {
       "get": {
         "tags": [
@@ -37626,6 +37879,7 @@
           "ambiguous_credit_structure",
           "same_name_only",
           "credits_moved",
+          "shared_provider_identity",
           "resolved_automatically"
         ]
       },
@@ -37904,6 +38158,80 @@
               "null"
             ],
             "description": "Artist type (`Person`, `Group`, ...)."
+          }
+        }
+      },
+      "ArtistLinkByView": {
+        "type": "string",
+        "description": "Who set an artist's link, as the caller may know it.",
+        "enum": [
+          "you",
+          "person",
+          "app",
+          "v2"
+        ]
+      },
+      "ArtistLinkSourceView": {
+        "type": "string",
+        "description": "Who decided an artist's link.",
+        "enum": [
+          "app",
+          "person",
+          "v2"
+        ]
+      },
+      "ArtistLinkView": {
+        "type": "object",
+        "description": "An artist's MusicBrainz link.",
+        "required": [
+          "artist_id",
+          "artist_revision"
+        ],
+        "properties": {
+          "artist_id": {
+            "type": "string"
+          },
+          "artist_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The revision a change must name."
+          },
+          "musicbrainz_artist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The linked MusicBrainz artist id; null when there is none."
+          },
+          "selected_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When it was set, unix milliseconds; null when there is no link."
+          },
+          "set_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ArtistLinkByView",
+                "description": "Null when there is no link."
+              }
+            ]
+          },
+          "source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ArtistLinkSourceView",
+                "description": "Null when there is no link."
+              }
+            ]
           }
         }
       },
@@ -63768,6 +64096,25 @@
           "source": {
             "$ref": "#/components/schemas/SourceName",
             "description": "Owning source."
+          }
+        }
+      },
+      "SetArtistLinkBody": {
+        "type": "object",
+        "description": "Link an artist to a MusicBrainz artist.",
+        "required": [
+          "musicbrainz_artist_id",
+          "expected_revision"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `artist_revision` as last read."
+          },
+          "musicbrainz_artist_id": {
+            "type": "string",
+            "description": "The MusicBrainz artist id."
           }
         }
       },

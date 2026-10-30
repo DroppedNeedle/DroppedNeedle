@@ -16,7 +16,9 @@ use std::collections::BTreeSet;
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::artist_links::{mark_stale, placeholder, settle, touch_artist};
+use super::artist_links::{
+    LINK_GAVE_WAY, drop_app_link, mark_stale, placeholder, settle, touch_artist,
+};
 use super::sources::ArtistAnswer;
 use crate::identity::sql::{PERSONS, REVISABLE};
 use crate::operations::decisions::{ArtistAction, record_artist_action};
@@ -376,12 +378,7 @@ pub(crate) fn follow_person_links(
             .query_map(params![current, artist], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         for other in &giving_way {
-            tx.prepare_cached(
-                "DELETE FROM local_artist_external_identities \
-                 WHERE local_artist_id = ?1 AND provider = 'musicbrainz'",
-            )?
-            .execute(params![other])?;
-            touch_artist(tx, other, now)?;
+            drop_app_link(tx, other, LINK_GAVE_WAY, now)?;
         }
         tx.prepare_cached(
             "UPDATE local_artist_external_identities SET provider_artist_id = ?2, \

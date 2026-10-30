@@ -242,6 +242,38 @@ pub const ARTIST_REPAIR_STALE: Reason = reason(
     "Reload the album.",
 );
 
+// An artist's MusicBrainz link, set or cleared by hand.
+pub const ARTIST_MBID_INVALID: Reason = reason(
+    "ARTIST_MBID_INVALID",
+    "That is not a valid MusicBrainz artist ID.",
+    "Copy the ID from the artist's MusicBrainz page and try again.",
+);
+pub const ARTIST_MBID_SPECIAL: Reason = reason(
+    "ARTIST_MBID_SPECIAL",
+    "That MusicBrainz entry stands for no one artist, like Various Artists.",
+    "Use the artist's own MusicBrainz page.",
+);
+pub const ARTIST_NOT_LINKABLE: Reason = reason(
+    "ARTIST_NOT_LINKABLE",
+    "This artist can't be linked to MusicBrainz.",
+    "Open the artist it was merged into, or a named artist.",
+);
+pub const ARTIST_LINK_STALE: Reason = reason(
+    STALE,
+    "The artist changed since you opened it.",
+    "Reload the artist and try again.",
+);
+pub const ARTIST_LINK_SHARED: Reason = reason(
+    "ARTIST_LINK_SHARED",
+    "Other artists in the library are this MusicBrainz artist too.",
+    "An admin can merge them in Duplicate artists.",
+);
+pub const ARTIST_LINK_NOT_CHOSEN: Reason = reason(
+    "ARTIST_LINK_NOT_CHOSEN",
+    "Only a link someone set by hand can be cleared.",
+    "Set another link to replace the app's.",
+);
+
 // Notes on one planned file.
 pub const TRACK_ID_CORRECTED: Reason = reason(
     "TRACK_ID_CORRECTED",

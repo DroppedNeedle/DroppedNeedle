@@ -241,7 +241,7 @@ fn reference_counts(
 
 /// The reason of an open merge candidate that records a row waiting to
 /// follow its proven credits to another row (`artist_convergence`).
-pub(super) const CREDITS_MOVED: &str = "CREDITS_MOVED_TO_PROVEN_ROW";
+pub(crate) const CREDITS_MOVED: &str = "CREDITS_MOVED_TO_PROVEN_ROW";
 
 /// The reason of an open merge candidate recording that a scan moved a
 /// credit from its left row to its right one by name alone: no id in the

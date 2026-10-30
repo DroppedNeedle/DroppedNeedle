@@ -5,6 +5,7 @@
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
 	import ArtistAppearancesSection from '$lib/components/library/ArtistAppearancesSection.svelte';
 	import ArtistMergeDialog from '$lib/components/library/ArtistMergeDialog.svelte';
+	import ArtistMusicBrainzLink from '$lib/components/library/ArtistMusicBrainzLink.svelte';
 	import LocalIdentityBadge from '$lib/components/library/LocalIdentityBadge.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import type { ContributionState, LibraryAlbumSummary } from '$lib/types';
@@ -107,6 +108,7 @@
 					showDescription
 					className="mt-3"
 				/>
+				<ArtistMusicBrainzLink artistId={artist.id} className="mt-2" />
 				<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-base-content/55">
 					{#if artist.album_count > 0}
 						<span>

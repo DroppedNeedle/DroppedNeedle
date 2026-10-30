@@ -997,40 +997,89 @@ async fn brief_attach_replaces_the_apps_link_of_the_artist() {
     );
 }
 
-/// A curator's link takes the MusicBrainz artist from another record the
-/// app linked to it, with no merge suggested.
-#[tokio::test]
-async fn brief_attach_takes_the_id_from_the_apps_link_elsewhere() {
-    let rig = Rig::new();
+/// Open merge offers between two records, as `left right reason`.
+fn merge_offers(rig: &Rig) -> Vec<String> {
     rig.db
-        .execute_batch(&format!(
-            "DELETE FROM local_artist_external_identities; \
-             INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
-             updated_at) VALUES ('artist-2', 'Test Artist', 'test artist', 'person', 1, 1); \
-             INSERT INTO local_artist_external_identities (local_artist_id, provider, \
-             provider_artist_id, decision_source, selected_at) \
-             VALUES ('artist-2', 'musicbrainz', '{MBID_ARTIST}', 'automatic', 1);"
-        ))
-        .unwrap();
-    let linked = attach_release(&rig).await.expect("not refused");
-    assert_eq!(linked.state, ContributionState::Linked);
-    assert_eq!(
-        artist_links(&rig),
-        vec![(
-            ARTIST.to_owned(),
-            MBID_ARTIST.to_owned(),
-            "manual".to_owned()
-        )]
-    );
-    let candidates: i64 = rig
-        .db
-        .query_row(
-            "SELECT COUNT(*) FROM local_artist_merge_candidates",
-            [],
-            |row| row.get(0),
+        .prepare(
+            "SELECT left_artist_id || ' ' || right_artist_id || ' ' || reason_code \
+             FROM local_artist_merge_candidates WHERE state = 'open' ORDER BY id",
         )
-        .unwrap();
-    assert_eq!(candidates, 0);
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+/// A curator's link never groups records: when another record holds the
+/// MusicBrainz artist, by the app's link or by its files, the contribution
+/// is saved but the artist link is not written, and the two records are
+/// listed together in Duplicate artists for an admin to merge.
+#[tokio::test]
+async fn brief_attach_leaves_an_id_another_record_holds_and_offers_a_merge() {
+    use droppedneedle_library::reconcile::groups::build;
+    use droppedneedle_library::reconcile::store::inputs;
+
+    for held_by in ["link", "files"] {
+        let rig = Rig::new();
+        rig.seed_album("album-2", "artist-2", 1, ["t3", "t4"]);
+        rig.db
+            .execute(
+                "UPDATE local_artists SET display_name = 'Other Name', \
+                 folded_name = 'other name' WHERE id = 'artist-2'",
+                [],
+            )
+            .unwrap();
+        rig.db
+            .execute("DELETE FROM local_artist_external_identities", [])
+            .unwrap();
+        let hold = match held_by {
+            "link" => format!(
+                "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+                 provider_artist_id, decision_source, selected_at) \
+                 VALUES ('artist-2', 'musicbrainz', '{MBID_ARTIST}', 'automatic', 1)"
+            ),
+            _ => format!(
+                "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, \
+                 role, credited_name, join_phrase, artist_mbid) \
+                 VALUES ('album-2', 0, 'artist-2', 'main', 'Test Artist', '', '{MBID_ARTIST}')"
+            ),
+        };
+        rig.db.execute(&hold, []).unwrap();
+        let linked = attach_release(&rig).await.expect("not refused");
+        assert_eq!(linked.state, ContributionState::Linked, "{held_by}");
+        let expected: Vec<(String, String, String)> = match held_by {
+            "link" => vec![(
+                "artist-2".to_owned(),
+                MBID_ARTIST.to_owned(),
+                "automatic".to_owned(),
+            )],
+            _ => Vec::new(),
+        };
+        assert_eq!(artist_links(&rig), expected, "{held_by}");
+        assert_eq!(
+            merge_offers(&rig),
+            vec![format!("{ARTIST} artist-2 SHARED_PROVIDER_IDENTITY")],
+            "{held_by}"
+        );
+        let listed: Vec<(&str, Vec<String>)> = build(&inputs(&rig.db).expect("groups read"))
+            .into_iter()
+            .filter(|group| group.state.needs_review())
+            .map(|group| {
+                let mut ids: Vec<String> = group.members.into_iter().map(|m| m.id).collect();
+                ids.sort_unstable();
+                (group.state.as_str(), ids)
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            vec![(
+                "shared_provider_identity",
+                vec![ARTIST.to_owned(), "artist-2".to_owned()]
+            )],
+            "{held_by}: Duplicate artists lists the pair"
+        );
+    }
 }
 
 /// The recording and release-track ids MusicBrainz gives the release's

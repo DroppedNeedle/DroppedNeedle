@@ -2,6 +2,7 @@
 
 use droppedneedle_kernel::error::ApiError;
 
+pub mod artist_link;
 pub mod contrib;
 pub mod corrections;
 pub mod edition;

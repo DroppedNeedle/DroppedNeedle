@@ -14,6 +14,7 @@
 	import LastFmEnrichment from '$lib/components/LastFmEnrichment.svelte';
 	import LibraryAlbumsCarousel from '$lib/components/LibraryAlbumsCarousel.svelte';
 	import ArtistAppearancesSection from '$lib/components/library/ArtistAppearancesSection.svelte';
+	import ArtistMusicBrainzLink from '$lib/components/library/ArtistMusicBrainzLink.svelte';
 	import LocalArtistPage from './LocalArtistPage.svelte';
 	import type { LibraryArtistSummary } from '$lib/types';
 	import PageSectionToc from '$lib/components/PageSectionToc.svelte';
@@ -424,6 +425,13 @@
 								>
 							{/each}
 						</div>
+					{/if}
+
+					{#if localArtist}
+						<ArtistMusicBrainzLink
+							artistId={localArtist.id}
+							className="justify-center sm:justify-start"
+						/>
 					{/if}
 
 					<ArtistWhereToBuy artistMbid={data.artistId} artistName={artist.name} />

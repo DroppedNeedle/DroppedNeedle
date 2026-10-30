@@ -64,6 +64,14 @@ describe('local artist page', () => {
 				total: 1,
 				next: null
 			},
+			'GET /api/v3/library/artists/{id}/musicbrainz-link': {
+				artist_id: artist.id,
+				artist_revision: 1,
+				musicbrainz_artist_id: null,
+				source: null,
+				set_by: null,
+				selected_at: null
+			},
 			'GET /api/v3/library/tracks': { items: [], total: 0, next: null },
 			'POST /api/v3/ratings/lookup': { albums: {}, artists: {}, tracks: {} }
 		});
