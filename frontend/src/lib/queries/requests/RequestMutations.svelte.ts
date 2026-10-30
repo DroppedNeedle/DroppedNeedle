@@ -1,4 +1,5 @@
 import { api } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 import type { RequestKind } from './types';
@@ -8,6 +9,7 @@ import {
 	albumStatusChanged,
 	anyDownloadChanged,
 	anyRequestChanged,
+	applyEffects,
 	createAppMutation,
 	type Effect,
 	pendingApprovalsChanged
@@ -46,6 +48,12 @@ function sameUser(contextUserId: string | undefined): boolean {
 	return !!contextUserId && authStore.user?.id === contextUserId;
 }
 
+// A 404 means the request is gone from the caller's list: refresh it so the
+// stale row goes too.
+function refreshIfGone(err: unknown): void {
+	if (err instanceof ApiError && err.status === 404) void applyEffects(anyRequestChanged());
+}
+
 export const createCancelRequestMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: RequestActionVars) =>
@@ -61,11 +69,13 @@ export const createCancelRequestMutation = () =>
 			if (!sameUser(context.userId)) return;
 			toastStore.show({ message: data.message || 'Request cancelled', type: 'info' });
 		},
-		onError: (err) =>
+		onError: (err) => {
+			refreshIfGone(err);
 			toastStore.show({
 				message: errorMessage(err, 'Could not cancel that request'),
 				type: 'error'
-			})
+			});
+		}
 	}));
 
 export const createRetryRequestMutation = () =>
@@ -81,8 +91,13 @@ export const createRetryRequestMutation = () =>
 			if (!sameUser(context.userId)) return;
 			toastStore.show({ message: data.message || 'Request retried', type: 'success' });
 		},
-		onError: (err) =>
-			toastStore.show({ message: errorMessage(err, 'Could not retry that request'), type: 'error' })
+		onError: (err) => {
+			refreshIfGone(err);
+			toastStore.show({
+				message: errorMessage(err, 'Could not retry that request'),
+				type: 'error'
+			});
+		}
 	}));
 
 // A single found only on its album: fetch it again and take the album's

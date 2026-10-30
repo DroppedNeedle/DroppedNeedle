@@ -7963,14 +7963,7 @@
             }
           },
           "416": {
-            "description": "The range lies outside the file",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "The range lies outside the file"
           }
         },
         "security": [
@@ -28027,6 +28020,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "No such request on the caller's list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -28738,6 +28741,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "No such request on the caller's list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -28979,6 +28992,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "No such request on the caller's list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -29057,18 +29080,8 @@
               }
             }
           },
-          "403": {
-            "description": "Another user's request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
           "404": {
-            "description": "No track request for this recording",
+            "description": "No such track request on the caller's list",
             "content": {
               "application/json": {
                 "schema": {
@@ -34230,64 +34243,22 @@
             "description": "Stream headers, no body"
           },
           "400": {
-            "description": "Unknown source or unsupported format",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Unknown source or unsupported format"
           },
           "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Not authenticated"
           },
           "403": {
-            "description": "Playback refused",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Playback refused"
           },
           "404": {
-            "description": "Unknown audio id",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Unknown audio id"
           },
           "429": {
-            "description": "Stream capacity exhausted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Stream capacity exhausted"
           },
           "502": {
-            "description": "Remote source failed the read",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Remote source failed the read"
           }
         },
         "security": [

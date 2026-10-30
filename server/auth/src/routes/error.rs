@@ -109,6 +109,7 @@ impl From<UsersError> for AuthRouteError {
                 Self::Unavailable { cause }
             }
             UsersError::Busy => Self::busy(&"users store busy"),
+            UsersError::HashingBusy => Self::busy(&"password hashing slots busy"),
             UsersError::Internal { cause } => Self::Internal { cause },
         }
     }

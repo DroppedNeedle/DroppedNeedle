@@ -66,6 +66,30 @@ describe('settings section', () => {
 		await expect.element(saveButton()).toBeDisabled();
 	});
 
+	it('shows the reason for a refused field beside it, until the next save', async () => {
+		const api = fakeApi({
+			[ROUTE]: stored,
+			[SAVE]: apiError(400, 'INVALID_INPUT', 'Jellyfin URL: must start with http', {
+				field: 'jellyfin_url',
+				reason: 'must start with http'
+			})
+		});
+		await renderWithQuery(SettingsSectionTestHarness, {});
+
+		await urlField().fill('jellyfin.lan');
+		await saveButton().click();
+
+		await expect.element(page.getByText('Jellyfin URL: must start with http')).toBeVisible();
+		await expect.element(page.getByText('must start with http', { exact: true })).toBeVisible();
+		await expect.element(urlField()).toHaveAttribute('aria-invalid', 'true');
+
+		api.use({ [SAVE]: ({ body }) => body as JellyfinSettings });
+		await urlField().fill('http://jellyfin.lan');
+		await saveButton().click();
+		await expect.element(page.getByText('Saved.', { exact: true })).toBeVisible();
+		await expect.element(urlField()).toHaveAttribute('aria-invalid', 'false');
+	});
+
 	it("shows a refused save's message and keeps the edit", async () => {
 		fakeApi({
 			[ROUTE]: stored,

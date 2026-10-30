@@ -21,7 +21,11 @@
 
 <QueryBoundary query={section} what="the harness settings">
 	{#snippet children(draft)}
-		<TextField label="Server URL" bind:value={draft.jellyfin_url} />
+		<TextField
+			label="Server URL"
+			error={section.fieldError('jellyfin_url')}
+			bind:value={draft.jellyfin_url}
+		/>
 		<SecretField label="API key" mask={SECRET_MASK} bind:value={draft.api_key} />
 		<SaveBar {...section.bar} />
 	{/snippet}

@@ -462,19 +462,10 @@ impl RequestsService {
     ) -> Result<Decided, RequestsError> {
         let mbid = validate_mbid(mbid)?;
         let kind = RequestKind::Track;
+        self.require_member(principal, kind, &mbid).await?;
         let Some(record) = self.store.get(kind, &mbid).await? else {
             return Err(RequestsError::NotFound);
         };
-        if !principal.is_admin()
-            && !self
-                .store
-                .is_requester(kind, &mbid, principal.user_id())
-                .await?
-        {
-            return Err(RequestsError::Forbidden {
-                message: "Cannot change another user's request".to_owned(),
-            });
-        }
         let offered = match record.task_id.as_deref() {
             Some(task_id) if record.status == RequestStatus::Failed => self
                 .dispatch
@@ -589,8 +580,8 @@ impl RequestsService {
         }
     }
 
-    /// Clear one history row. Ownership reads before clearability so a
-    /// non-owner gets 403 rather than a misleading miss; admins
+    /// Clear one history row. Membership is checked first, so another
+    /// user's request answers the same 404 as an unknown id; admins
     /// delete the row while users dismiss it from their own view.
     pub async fn clear_history_item(
         &self,
@@ -599,19 +590,10 @@ impl RequestsService {
         kind: RequestKind,
     ) -> Result<ClearHistoryResponse, RequestsError> {
         let mbid = validate_mbid(mbid)?;
+        self.require_member(principal, kind, &mbid).await?;
         let Some(record) = self.store.get(kind, &mbid).await? else {
-            return Ok(ClearHistoryResponse { success: false });
+            return Err(RequestsError::NotFound);
         };
-        if !principal.is_admin()
-            && !self
-                .store
-                .is_requester(kind, &mbid, principal.user_id())
-                .await?
-        {
-            return Err(RequestsError::Forbidden {
-                message: "Cannot clear another user's request".to_owned(),
-            });
-        }
         if !record.status.is_clearable() {
             return Ok(ClearHistoryResponse { success: false });
         }

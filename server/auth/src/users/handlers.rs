@@ -48,6 +48,9 @@ impl From<UsersError> for ApiError {
             }
             UsersError::Upstream { cause } => ApiError::fault(StatusCode::BAD_GATEWAY, cause),
             UsersError::Busy => ApiError::unavailable(Unavailable::ServerBusy, "users store busy"),
+            UsersError::HashingBusy => {
+                ApiError::unavailable(Unavailable::ServerBusy, "password hashing slots busy")
+            }
             UsersError::Internal { cause } => ApiError::internal(cause),
         }
     }

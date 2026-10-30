@@ -7,13 +7,17 @@
 //! Config failures map by kind: [`ConfigError::Validation`] and
 //! [`ConfigError::SectionDecode`] are caller faults (400), a database too
 //! busy to take the write is the busy 503, and other storage failures are
-//! server faults (500).
+//! server faults (500). A refused field is the one shape every settings
+//! form reads: the message names the field in words, never the section
+//! key, and `details` carries `field` and `reason` so the form can show
+//! the reason beside it.
 //!
 //! [`ConfigError::Validation`]: crate::runtime_config::ConfigError::Validation
 //! [`ConfigError::SectionDecode`]: crate::runtime_config::ConfigError::SectionDecode
 
 use crate::error::{ApiError, RATE_LIMITED, Unavailable};
 use axum::http::StatusCode;
+use serde_json::json;
 
 /// Expected revision does not match the stored one; refresh and retry.
 pub const STALE_REVISION: &str = "STALE_REVISION";
@@ -27,6 +31,13 @@ pub enum SettingsError {
     InvalidInput {
         /// What was wrong.
         message: String,
+    },
+    /// One field's value was refused. The message names the field in words.
+    InvalidField {
+        /// The field's key in the section, as the form sends it.
+        field: String,
+        /// Why it was refused, shown beside the field.
+        reason: String,
     },
     /// Valid input against the wrong state.
     Conflict {
@@ -93,12 +104,9 @@ impl SettingsError {
     pub fn from_config(error: crate::runtime_config::ConfigError) -> Self {
         use crate::runtime_config::ConfigError as Source;
         match error {
-            Source::Validation {
-                section,
-                field,
+            Source::Validation { field, reason, .. } => Self::InvalidField {
+                field: field.to_owned(),
                 reason,
-            } => Self::InvalidInput {
-                message: format!("Invalid {section}.{field}: {reason}"),
             },
             Source::SectionDecode { section, reason } => Self::InvalidInput {
                 message: format!("Stored {section} has the wrong shape: {reason}"),
@@ -117,6 +125,9 @@ impl std::fmt::Display for SettingsError {
             | Self::StaleRevision { message }
             | Self::Dropped { message }
             | Self::RateLimited { message } => f.write_str(message),
+            Self::InvalidField { field, reason } => {
+                write!(f, "{}: {reason}", field_in_words(field))
+            }
             Self::Upstream { cause }
             | Self::ProviderUnavailable { cause, .. }
             | Self::Unavailable { cause }
@@ -130,6 +141,10 @@ impl From<SettingsError> for ApiError {
     fn from(error: SettingsError) -> Self {
         match error {
             SettingsError::InvalidInput { message } => ApiError::invalid_input(message),
+            SettingsError::InvalidField { field, reason } => {
+                ApiError::invalid_input(format!("{}: {reason}", field_in_words(&field)))
+                    .with_details(json!({ "field": field, "reason": reason }))
+            }
             SettingsError::Conflict { message } => ApiError::conflict(message),
             SettingsError::StaleRevision { message } => {
                 ApiError::new(StatusCode::CONFLICT, STALE_REVISION, message)
@@ -159,4 +174,26 @@ impl From<SettingsError> for ApiError {
             SettingsError::Internal { cause } => ApiError::internal(cause),
         }
     }
+}
+
+/// A field key in words: `transcode_default_format` reads "Transcode
+/// default format", `jellyfin_url` reads "Jellyfin URL".
+fn field_in_words(field: &str) -> String {
+    let words: Vec<String> = field
+        .split(['_', '.'])
+        .filter(|word| !word.is_empty())
+        .enumerate()
+        .map(|(index, word)| match word {
+            "url" | "api" | "hsts" | "id" => word.to_ascii_uppercase(),
+            _ if index == 0 => {
+                let mut chars = word.chars();
+                chars
+                    .next()
+                    .map(|first| first.to_ascii_uppercase().to_string() + chars.as_str())
+                    .unwrap_or_default()
+            }
+            _ => word.to_owned(),
+        })
+        .collect();
+    words.join(" ")
 }

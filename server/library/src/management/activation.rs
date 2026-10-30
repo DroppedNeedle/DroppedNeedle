@@ -52,6 +52,9 @@ pub struct ActivationConfirm {
 fn settings_error(error: SettingsError) -> ManagementError {
     match error {
         SettingsError::InvalidInput { message } => ManagementError::Invalid(message),
+        refused @ SettingsError::InvalidField { .. } => {
+            ManagementError::Invalid(refused.to_string())
+        }
         SettingsError::StaleRevision { message } => ManagementError::Conflict(message),
         other => ManagementError::Store(format!("{other:?}")),
     }

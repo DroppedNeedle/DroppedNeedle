@@ -81,7 +81,8 @@ pub enum SlotError {
     Failed,
 }
 
-/// One held hashing slot; dropping it frees the slot.
+/// One held hashing slot; dropping it frees the slot. Test-facing: the
+/// request paths take slots only inside the bounded forms.
 #[derive(Debug)]
 pub struct HashSlot {
     _permit: OwnedSemaphorePermit,
@@ -135,7 +136,9 @@ impl std::fmt::Debug for Passwords {
 impl Passwords {
     /// Build with the pinned OWASP parameters and one slot per core, at
     /// most [`MAX_SLOTS`]: the work is CPU-bound, so more at once than
-    /// there are cores adds memory and no throughput.
+    /// there are cores adds memory and no throughput. There is no
+    /// `Default`: each build is a separate bound, made once, in the setup.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
         Self::bounded(cores.clamp(1, MAX_SLOTS), SLOT_WAIT)
@@ -161,7 +164,8 @@ impl Passwords {
         }
     }
 
-    /// Wait up to the slot wait for a hashing slot.
+    /// Wait up to the slot wait for a hashing slot. Test-facing, so a test
+    /// can hold the slots; request paths use the bounded forms.
     pub async fn slot(&self) -> Result<HashSlot, SlotError> {
         match tokio::time::timeout(self.slot_wait, Arc::clone(&self.slots).acquire_owned()).await {
             Ok(Ok(permit)) => Ok(HashSlot { _permit: permit }),
@@ -309,12 +313,6 @@ impl Passwords {
 
     #[cfg(not(test))]
     fn count_verify(&self) {}
-}
-
-impl Default for Passwords {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// True when an Argon2 hash is weaker than the pin: another algorithm, a

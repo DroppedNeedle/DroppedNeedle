@@ -138,12 +138,20 @@ pub enum NzbFetchError {
 ///   (`...nzb&i=1&r=KEY`), anchored so `error=` and the like pass;
 /// - `link`: the other value in Prowlarr's download URL, an opaque
 ///   per-download token. What it encodes is not verified, so it is
-///   scrubbed with the key. Anchored like `r`.
+///   scrubbed with the key. Anchored like `r`;
+/// - `nzbkey` and `nzb_key`: SABnzbd's add-only key;
+/// - `password` and `pass`: a login carried in a query or a JSON answer.
+///   `pass` is anchored so `bypass=` passes.
 ///
-/// `i=` (DrunkenSlug's user id) stays visible.
-const SECRET_QUERY_KEYS: [(&str, bool); 4] = [
+/// `i=` (DrunkenSlug's user id) stays visible. An unanchored key also
+/// matches as the end of a longer JSON member name (`"sabnzbd_apikey"`).
+const SECRET_QUERY_KEYS: [(&str, bool); 8] = [
     ("api_key", false),
     ("apikey", false),
+    ("nzb_key", false),
+    ("nzbkey", false),
+    ("password", false),
+    ("pass", true),
     ("link", true),
     ("r", true),
 ];
@@ -157,10 +165,14 @@ const PATH_KEY_MIN_LEN: usize = 20;
 /// Newznab enclosure URL carries the indexer's key and either may echo it.
 /// A [`SECRET_QUERY_KEYS`] value is scrubbed as `key=value`, percent-encoded
 /// as `key%3Dvalue` (a URL nested in another's query) and as a JSON member
-/// `"key": "value"`. In an `http(s)` URL, a path segment that looks like a
-/// key (long, letters and digits) is scrubbed too, as an indexer may put
-/// its key in the path (`/fetch/<id>/<key>`). Matched without a regex
-/// dependency.
+/// `"key": "value"`, also with its quotes escaped (`\"key\": \"value\"`,
+/// JSON inside a JSON string). In an `http(s)` URL (slashes escaped as
+/// `\/` or not), a password in the authority (`user:password@host`) is
+/// scrubbed, and so is a path segment that looks like a key (long, letters
+/// and digits), as an indexer may put its key in the path
+/// (`/fetch/<id>/<key>`). Matched without a regex dependency. A body is
+/// scrubbed whole before it is cut short, so a cut cannot leave half a key
+/// unmatched.
 pub fn redact_query_secrets(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
@@ -175,6 +187,11 @@ pub fn redact_query_secrets(text: &str) -> String {
         } else if let Some(scheme_end) = url_scheme_end(bytes, index) {
             out.push_str(&text[index..scheme_end]);
             index = scheme_end;
+            if let Some((password, at)) = userinfo_password(bytes, index) {
+                out.push_str(&text[index..password]);
+                out.push_str("***");
+                index = at;
+            }
             in_url_path = true;
         } else if let Some(end) = path_key_end(bytes, index).filter(|_| in_url_path) {
             out.push_str("***");
@@ -219,33 +236,41 @@ fn secret_value_at(bytes: &[u8], index: usize) -> Option<(usize, usize)> {
         if starts_with_ignore_case(&bytes[after..], b"%3D") {
             return Some((key.len() + 3, query_value_end(bytes, after + 3)));
         }
-        // A JSON member: `"key"`, a colon, then the value.
-        if index == 0 || bytes[index - 1] != b'"' || bytes[after] != b'"' {
+        // A JSON member: `"key"` (or `\"key\"`), a colon, then the value.
+        if !json_name_opens_before(bytes, index, *anchored) {
             return None;
         }
-        let colon = skip_space(bytes, after + 1);
+        let closing = quote_len(bytes, after)?;
+        let colon = skip_space(bytes, after + closing);
         if bytes.get(colon) != Some(&b':') {
             return None;
         }
         let start = skip_space(bytes, colon + 1);
-        if bytes.get(start) == Some(&b'"') {
-            return Some((start + 1 - index, json_string_end(bytes, start + 1)));
+        if let Some(quote) = quote_len(bytes, start) {
+            let value = start + quote;
+            let end = if quote == 2 {
+                escaped_string_end(bytes, value)
+            } else {
+                json_string_end(bytes, value)
+            };
+            return Some((value - index, end));
         }
         let end = start
             + bytes[start..]
                 .iter()
                 .take_while(|byte| {
-                    !matches!(byte, b',' | b'}' | b']') && !byte.is_ascii_whitespace()
+                    !matches!(byte, b',' | b'}' | b']' | b'\\') && !byte.is_ascii_whitespace()
                 })
                 .count();
         Some((start - index, end))
     })
 }
 
-/// End of a query value: `&` (plain or as `%26`), a quote or whitespace.
+/// End of a query value: `&` (plain or as `%26`), a quote, a backslash
+/// (an escaped quote) or whitespace.
 fn query_value_end(bytes: &[u8], mut index: usize) -> usize {
     while index < bytes.len()
-        && !matches!(bytes[index], b'&' | b'\'' | b'"')
+        && !matches!(bytes[index], b'&' | b'\'' | b'"' | b'\\')
         && !bytes[index].is_ascii_whitespace()
         && !starts_with_ignore_case(&bytes[index..], b"%26")
     {
@@ -262,6 +287,41 @@ fn json_string_end(bytes: &[u8], mut index: usize) -> usize {
     index.min(bytes.len())
 }
 
+/// Where an escaped JSON string (`\"...\"`) whose text starts at `index`
+/// ends: at the next `\"`, or at a bare `"` should the escaping stop.
+fn escaped_string_end(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len() && bytes[index] != b'"' {
+        if bytes[index] == b'\\' && bytes.get(index + 1) == Some(&b'"') {
+            return index;
+        }
+        index += 1;
+    }
+    index
+}
+
+/// The length of a JSON quote at `index`: 1 for `"`, 2 for an escaped `\"`.
+fn quote_len(bytes: &[u8], index: usize) -> Option<usize> {
+    match bytes.get(index..) {
+        Some([b'"', ..]) => Some(1),
+        Some([b'\\', b'"', ..]) => Some(2),
+        _ => None,
+    }
+}
+
+/// True when a JSON member name opens right before `index` or, for an
+/// unanchored key, before a run of name characters that ends there.
+fn json_name_opens_before(bytes: &[u8], index: usize, anchored: bool) -> bool {
+    let mut start = index;
+    if !anchored {
+        while start > 0
+            && matches!(bytes[start - 1], b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-')
+        {
+            start -= 1;
+        }
+    }
+    start > 0 && bytes[start - 1] == b'"'
+}
+
 fn skip_space(bytes: &[u8], index: usize) -> usize {
     index
         + bytes
@@ -276,13 +336,37 @@ fn starts_with_ignore_case(bytes: &[u8], prefix: &[u8]) -> bool {
     bytes.len() >= prefix.len() && bytes[..prefix.len()].eq_ignore_ascii_case(prefix)
 }
 
-/// When an `http://` or `https://` scheme starts at `index`, where it ends.
+/// When an `http://` or `https://` scheme starts at `index` (its slashes
+/// escaped as `\/` or not), where it ends.
 fn url_scheme_end(bytes: &[u8], index: usize) -> Option<usize> {
     let rest = &bytes[index..];
-    [b"https://".as_slice(), b"http://".as_slice()]
-        .into_iter()
-        .find(|scheme| starts_with_ignore_case(rest, scheme))
-        .map(|scheme| index + scheme.len())
+    [
+        b"https://".as_slice(),
+        b"http://".as_slice(),
+        br"https:\/\/".as_slice(),
+        br"http:\/\/".as_slice(),
+    ]
+    .into_iter()
+    .find(|scheme| starts_with_ignore_case(rest, scheme))
+    .map(|scheme| index + scheme.len())
+}
+
+/// When the URL authority starting at `index` holds `user:password@`,
+/// where the password starts and where its `@` is.
+fn userinfo_password(bytes: &[u8], index: usize) -> Option<(usize, usize)> {
+    let authority = &bytes[index..];
+    let len = authority
+        .iter()
+        .position(|byte| {
+            matches!(
+                byte,
+                b'/' | b'\\' | b'?' | b'#' | b'"' | b'\'' | b'<' | b'>'
+            ) || byte.is_ascii_whitespace()
+        })
+        .unwrap_or(authority.len());
+    let at = authority[..len].iter().rposition(|byte| *byte == b'@')?;
+    let colon = authority[..at].iter().position(|byte| *byte == b':')?;
+    Some((index + colon + 1, index + at))
 }
 
 /// When a URL path segment that looks like a key starts at `index`, where
@@ -563,7 +647,7 @@ impl SabnzbdClient {
             })?;
         let head: Vec<u8> = bytes.iter().take(512).copied().collect();
         if !looks_like_nzb(&head) {
-            let snippet = String::from_utf8_lossy(&bytes).chars().take(200).collect();
+            let snippet = snippet_of(&bytes);
             return Err(NzbFetchError::ContentRejection {
                 status,
                 content_type,
@@ -646,7 +730,7 @@ impl SabnzbdClient {
         let status = response.status().as_u16();
         if status >= 400 {
             let wait = retry_after(response.headers());
-            let snippet = redact_query_secrets(&response_snippet(response).await);
+            let snippet = response_snippet(response).await;
             return Err(ClientError::for_status(
                 Service::Sabnzbd,
                 status,
@@ -776,11 +860,19 @@ fn is_auth_error(message: &str) -> bool {
     low.contains("api key incorrect") || low.contains("api key required")
 }
 
-/// The start of an error body. One longer than a few kilobytes reads as
-/// empty.
+/// The start of an error body, credentials scrubbed. One longer than a
+/// few kilobytes reads as empty.
 async fn response_snippet(response: reqwest::Response) -> String {
     let bytes = read_capped(response, 8 * 1024).await.unwrap_or_default();
-    String::from_utf8_lossy(&bytes).chars().take(200).collect()
+    snippet_of(&bytes)
+}
+
+/// The first 200 characters of a body, scrubbed whole before the cut.
+fn snippet_of(bytes: &[u8]) -> String {
+    redact_query_secrets(&String::from_utf8_lossy(bytes))
+        .chars()
+        .take(200)
+        .collect()
 }
 
 /// The NZB head check: `<?xml` or `<nzb` up front, or
@@ -1126,8 +1218,7 @@ impl SabnzbdQueue {
             Err(NzbFetchError::ContentRejection { snippet, .. }) => {
                 // An error page can echo the URL it was asked for.
                 return Err(SabnzbdError::Api(format!(
-                    "indexer returned a non-NZB body (likely an error/limit page): {}",
-                    redact_query_secrets(&snippet)
+                    "indexer returned a non-NZB body (likely an error/limit page): {snippet}"
                 )));
             }
         };
@@ -1733,5 +1824,13 @@ mod tests {
             posix_parts("/complete/../../etc/./job\\..\\x"),
             ["complete", "etc", "job", "x"]
         );
+    }
+
+    #[test]
+    fn a_body_is_scrubbed_before_it_is_cut() {
+        let key = "0123456789abcdef0123456789abcdef";
+        let body = format!("{}https://x/fetch/{key}", "-".repeat(180));
+        let snippet = snippet_of(body.as_bytes());
+        assert!(!snippet.contains("0123"), "{snippet}");
     }
 }

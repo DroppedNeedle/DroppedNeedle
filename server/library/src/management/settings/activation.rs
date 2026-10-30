@@ -343,6 +343,7 @@ pub fn activation_health(settings: &LibraryManagement, library: &TypedLibrary) -
                 health.blocked_root_ids = blocked;
                 health.blocked_reason = Some(match error {
                     SettingsError::InvalidInput { message } => message,
+                    refused @ SettingsError::InvalidField { .. } => refused.to_string(),
                     other => format!("{other:?}"),
                 });
             }

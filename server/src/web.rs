@@ -59,8 +59,8 @@ const TEXT_SUFFIXES: &[&str] = &[
     "webmanifest",
 ];
 
-/// Precompressed siblings, as (content coding, file suffix).
-const ENCODINGS: &[(&str, &str)] = &[("br", "br"), ("gzip", "gz")];
+/// File suffixes of precompressed siblings (brotli, gzip).
+const PRECOMPRESSED_SUFFIXES: &[&str] = &["br", "gz"];
 
 const STAGE_PREFIX: &str = ".static-stage-";
 const PREVIOUS_PREFIX: &str = ".static-previous-";
@@ -185,8 +185,9 @@ impl WebUi {
     }
 
     /// Answer a GET or HEAD for `path` (already stripped of the base path).
-    /// `None` means "not mine": a non-GET method, an API path, or a missing
-    /// file under an asset directory. The caller then answers with its 404.
+    /// `None` means "not mine": a non-GET method, an API path, a missing
+    /// file under an asset directory, or an `index.html` that cannot be
+    /// read. The caller then answers with its JSON 404.
     pub async fn respond(
         &self,
         method: &Method,
@@ -244,8 +245,11 @@ impl WebUi {
         }
         let mut response = match self.assets.clone().try_call(request).await {
             Ok(response) => response,
+            // `ServeDir` answers a missing or forbidden file itself, so
+            // this is an odd path (a part too long for the filesystem) that
+            // anyone can send without signing in: no warning per request.
             Err(error) => {
-                tracing::warn!(path = %relative, %error, "cannot read web UI file");
+                tracing::debug!(path = %relative, %error, "cannot read web UI file");
                 return None;
             }
         };
@@ -481,7 +485,7 @@ fn stamp(stage: &Path, base_path: &str) -> Result<usize, WebError> {
     let mut replaced = 0;
     for path in files_under(stage)? {
         let extension = extension_of(&path);
-        if ENCODINGS.iter().any(|(_, suffix)| *suffix == extension) {
+        if PRECOMPRESSED_SUFFIXES.contains(&extension.as_str()) {
             continue;
         }
         let bytes = std::fs::read(&path).map_err(io_error(&path))?;
@@ -498,7 +502,7 @@ fn stamp(stage: &Path, base_path: &str) -> Result<usize, WebError> {
             return Err(WebError::PlaceholderSurvived(path));
         }
         std::fs::write(&path, stamped).map_err(io_error(&path))?;
-        for (_, suffix) in ENCODINGS {
+        for suffix in PRECOMPRESSED_SUFFIXES {
             let mut sibling = path.as_os_str().to_owned();
             sibling.push(format!(".{suffix}"));
             match std::fs::remove_file(&sibling) {

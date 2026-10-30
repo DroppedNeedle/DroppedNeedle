@@ -130,7 +130,10 @@ pub async fn cancel_batch_handler(
     tag = "requests",
     path = "/api/v3/requests/active/{musicbrainz_id}",
     params(("musicbrainz_id" = String, Path, description = "Album or recording MBID"), KindQuery),
-    responses((status = 200, body = ActionResponse))
+    responses(
+        (status = 200, body = ActionResponse),
+        (status = 404, description = "No such request on the caller's list"),
+    )
 )]
 pub async fn cancel_one_handler(
     State(state): State<RequestsState>,
@@ -153,7 +156,10 @@ pub async fn cancel_one_handler(
     tag = "requests",
     path = "/api/v3/requests/retry/{musicbrainz_id}",
     params(("musicbrainz_id" = String, Path, description = "Album or recording MBID"), KindQuery),
-    responses((status = 200, body = ActionResponse))
+    responses(
+        (status = 200, body = ActionResponse),
+        (status = 404, description = "No such request on the caller's list"),
+    )
 )]
 pub async fn retry_one_handler(
     State(state): State<RequestsState>,
@@ -180,8 +186,7 @@ pub async fn retry_one_handler(
     params(("musicbrainz_id" = String, Path, description = "Recording MBID")),
     responses(
         (status = 200, body = ActionResponse),
-        (status = 403, description = "Another user's request"),
-        (status = 404, description = "No track request for this recording"),
+        (status = 404, description = "No such track request on the caller's list"),
         (status = 409, description = "No album version to take, or the request needs approval"),
     )
 )]
@@ -203,7 +208,10 @@ pub async fn from_album_handler(
     tag = "requests",
     path = "/api/v3/requests/history/{musicbrainz_id}",
     params(("musicbrainz_id" = String, Path, description = "Album or recording MBID"), KindQuery),
-    responses((status = 200, body = ClearHistoryResponse))
+    responses(
+        (status = 200, body = ClearHistoryResponse),
+        (status = 404, description = "No such request on the caller's list"),
+    )
 )]
 pub async fn clear_history_handler(
     State(state): State<RequestsState>,

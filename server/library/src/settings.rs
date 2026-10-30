@@ -291,6 +291,9 @@ fn with_root(mut settings: TypedLibrary, root: &LibraryRoot) -> Result<TypedLibr
         SettingsError::InvalidInput { message } | SettingsError::Conflict { message } => {
             ServiceError::Conflict { message }
         }
+        refused @ SettingsError::InvalidField { .. } => ServiceError::Conflict {
+            message: refused.to_string(),
+        },
         other => ServiceError::internal(&format!("{other:?}")),
     })
 }

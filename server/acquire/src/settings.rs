@@ -64,6 +64,9 @@ fn open<S: Listed>(live: &Live<S>) -> Result<Arc<Plain<S>>, ConfigError> {
 pub(crate) fn settings_failed(error: ConfigError) -> ImportsError {
     match SettingsError::from_config(error) {
         SettingsError::InvalidInput { message } => ImportsError::InvalidInput { message },
+        refused @ SettingsError::InvalidField { .. } => ImportsError::InvalidInput {
+            message: refused.to_string(),
+        },
         SettingsError::Busy { cause } => ImportsError::Busy { cause },
         other => ImportsError::internal(&other),
     }

@@ -199,7 +199,7 @@ async fn check_password(
 /// No hashing slot in time is busy; a failed hashing task is a fault.
 fn slot_error(error: SlotError) -> UsersError {
     match error {
-        SlotError::Busy => UsersError::Busy,
+        SlotError::Busy => UsersError::HashingBusy,
         SlotError::Failed => UsersError::internal(&error),
     }
 }

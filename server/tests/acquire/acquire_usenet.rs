@@ -767,8 +767,9 @@ async fn sab_addurl_redaction() {
 }
 
 /// A key echoed in a URL path, percent-encoded inside another URL's query,
-/// or as a JSON member is scrubbed like a plain `apikey=`, and a key
-/// written into a URL's last segment (DrunkenSlug's enclosure) still is.
+/// as a JSON member (escaped or under a longer name) or as a URL's
+/// password is scrubbed like a plain `apikey=`, and a key written into a
+/// URL's last segment (DrunkenSlug's enclosure) still is.
 #[test]
 fn redaction_covers_path_encoded_and_json_keys() {
     let cases = [
@@ -791,6 +792,31 @@ fn redaction_covers_path_encoded_and_json_keys() {
         ("https://x/api;apikey=SECRET", "https://x/api;apikey=***"),
         ("x%3Fi%3D1%26r%3DPERUSERKEY%26y", "x%3Fi%3D1%26r%3D***%26y"),
         ("x%26link%3DTOKEN", "x%26link%3D***"),
+        (
+            "https://x/api?nzbkey=K1&nzb_key=K2",
+            "https://x/api?nzbkey=***&nzb_key=***",
+        ),
+        (
+            "login?user=a&password=P1&pass=P2",
+            "login?user=a&password=***&pass=***",
+        ),
+        ("bypass=kept", "bypass=kept"),
+        (
+            r#"{"error": "{\"apikey\": \"SECRET\", \"x\": 1}"}"#,
+            r#"{"error": "{\"apikey\": \"***\", \"x\": 1}"}"#,
+        ),
+        (
+            r#"{"url": "https:\/\/x\/fetch\/0123456789abcdef0123456789abcdef\/a"}"#,
+            r#"{"url": "https:\/\/x\/fetch\/***\/a"}"#,
+        ),
+        (
+            r#"{"sabnzbd_apikey": "SECRET", "error": "x"}"#,
+            r#"{"sabnzbd_apikey": "***", "error": "x"}"#,
+        ),
+        (
+            "fetch failed for https://user:SECRET@x/getnzb",
+            "fetch failed for https://user:***@x/getnzb",
+        ),
     ];
     let leaks: Vec<String> = cases
         .iter()

@@ -1151,7 +1151,7 @@ async fn history_pages_and_clears() {
         call(&state, Method::DELETE, &clear, Some(ADA), None)
             .await
             .0,
-        StatusCode::FORBIDDEN
+        StatusCode::NOT_FOUND
     );
     assert_eq!(
         call(&state, Method::DELETE, &clear, Some(BOB), None)

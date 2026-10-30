@@ -44,6 +44,8 @@ pub enum UsersError {
     },
     /// The database was too busy to answer in time.
     Busy,
+    /// Every password hashing slot stayed taken.
+    HashingBusy,
     /// Server fault.
     Internal {
         /// What went wrong, for the log only.

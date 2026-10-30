@@ -959,10 +959,8 @@ async fn the_page_policy_follows_the_saved_mode_and_framing_list() {
         .await;
         assert_eq!(code, 400, "{bad}: {body}");
         let message = body["error"]["message"].as_str().unwrap();
-        assert!(
-            message.contains("security_settings.frame_ancestors"),
-            "{bad}: {message}"
-        );
+        assert!(message.starts_with("Frame ancestors: "), "{bad}: {message}");
+        assert_eq!(body["error"]["details"]["field"], "frame_ancestors");
     }
     let (code, _) = save(serde_json::json!({
         "hibp_check": false,
@@ -1175,8 +1173,9 @@ async fn a_stated_public_address_is_the_only_thing_that_widens_the_origin_check(
     );
     assert_eq!(status(STRANGER, PAGE, forged).await, 200);
 
-    // A bad entry is refused by name and the list stays as it was. The
-    // unrelated saves above did not clear it either.
+    // A bad entry is refused by name, under the field's name in words and
+    // never the section key, and the list stays as it was. The unrelated
+    // saves above did not clear it either.
     let (code, body) = save(
         PROXY,
         PAGE,
@@ -1190,6 +1189,11 @@ async fn a_stated_public_address_is_the_only_thing_that_widens_the_origin_check(
         message.contains("\"https://music.test/music\"") && message.contains("base path"),
         "{body}"
     );
+    assert!(
+        message.starts_with("Origins: ") && !message.contains("public_address"),
+        "{body}"
+    );
+    assert_eq!(body["error"]["details"]["field"], "origins", "{body}");
     assert_eq!(status(PROXY, OTHER_APP, &[]).await, 403);
     assert_eq!(status(PROXY, PAGE, &[]).await, 200);
 

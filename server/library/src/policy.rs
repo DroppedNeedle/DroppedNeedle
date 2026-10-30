@@ -430,6 +430,7 @@ pub fn resolve_stored(settings: &TypedLibrary) -> ResolvedLibraryPolicy {
         Err(error) => {
             let message = match error {
                 SettingsError::InvalidInput { message } => message,
+                refused @ SettingsError::InvalidField { .. } => refused.to_string(),
                 other => format!("{other:?}"),
             };
             ResolvedLibraryPolicy {

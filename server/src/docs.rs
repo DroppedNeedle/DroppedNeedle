@@ -90,28 +90,35 @@ impl Modify for SecuritySchemes {
 }
 
 /// Every 4xx and 5xx answer is the shared error envelope, so the document
-/// names its schema once here instead of on each route.
+/// names its schema once here instead of on each route. A HEAD answer has
+/// no body, and neither do the errors in [`BODILESS_ERRORS`].
 struct ErrorBodies;
+
+/// Error answers sent with no body, as (path, status). The held file's
+/// audio answers a range outside the file with a bare 416, as a player
+/// expects.
+const BODILESS_ERRORS: &[(&str, &str)] = &[("/api/v3/held/files/{file_id}/audio", "416")];
 
 impl Modify for ErrorBodies {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         let envelope = Ref::from_schema_name(ErrorEnvelope::name());
-        for item in openapi.paths.paths.values_mut() {
+        for (path, item) in &mut openapi.paths.paths {
             let operations = [
                 &mut item.get,
                 &mut item.put,
                 &mut item.post,
                 &mut item.delete,
                 &mut item.options,
-                &mut item.head,
                 &mut item.patch,
                 &mut item.trace,
             ];
             for operation in operations.into_iter().flatten() {
                 for (status, response) in &mut operation.responses.responses {
+                    let bodiless = BODILESS_ERRORS.contains(&(path.as_str(), status.as_str()));
                     if let RefOr::T(Response { content, .. }) = response
                         && (status.starts_with('4') || status.starts_with('5'))
                         && content.is_empty()
+                        && !bodiless
                     {
                         content.insert(
                             "application/json".to_owned(),

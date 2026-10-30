@@ -348,9 +348,9 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         403,
         ADMITTED,
     ),
-    // Requests (A's has failed): a requester or an admin. Retry and
-    // cancel answer another user as for an unknown id whatever the status,
-    // so they are tried on a failed and on a waiting request.
+    // Requests (A's has failed): a requester or an admin. Each answers
+    // another user as for an unknown id; retry and cancel whatever the
+    // status, so they are tried on a failed and on a waiting request.
     (
         Owned::Request,
         "POST",
@@ -369,14 +369,14 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         Owned::Request,
         "DELETE",
         "/api/v3/requests/history/{musicbrainz_id}",
-        403,
+        404,
         ADMITTED,
     ),
     (
         Owned::TrackRequest,
         "POST",
         "/api/v3/requests/tracks/{musicbrainz_id}/from-album",
-        403,
+        404,
         ADMITTED,
     ),
     (

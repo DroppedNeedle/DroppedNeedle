@@ -14,7 +14,10 @@
 	A refetch refills the draft only while it has no unsaved edits. A secret
 	field keeps the server's mask in the draft, so an untouched secret is sent
 	back as the mask and the server keeps the stored value. A 4xx answer shows
-	the server's message; anything else a fixed line. While a section has
+	the server's message; anything else a fixed line. When the server refused
+	one field, `fieldError(key)` gives its reason, for the field's `error`:
+	<TextField label="Name" error={section.fieldError('name')} ... />
+	While a section has
 	unsaved edits, `confirmLeave` and `UnsavedChangesGuard` ask before the tab
 	or page is left.
 */
@@ -122,6 +125,20 @@ function same(a: unknown, b: unknown): boolean {
 	);
 }
 
+interface RefusedField {
+	field: string;
+	reason: string;
+}
+
+/** The field a 400 refused, from the settings routes' `details`. */
+function refusedField(error: unknown): RefusedField | null {
+	if (!(error instanceof ApiError) || error.status !== 400) return null;
+	const details = error.details;
+	if (typeof details !== 'object' || details === null) return null;
+	const { field, reason } = details as Record<string, unknown>;
+	return typeof field === 'string' && typeof reason === 'string' ? { field, reason } : null;
+}
+
 function failureMessage(
 	error: unknown,
 	fallback: string,
@@ -145,6 +162,7 @@ export function createSettingsSection<T extends object>(
 	let saved = $state.raw<T | undefined>(undefined);
 	let draft = $state<T | undefined>(undefined);
 	let status = $state<SettingsStatus | null>(null);
+	let refused = $state<RefusedField | null>(null);
 	let testing = $state(false);
 	let testPassed = $state(false);
 	let clearTimer: ReturnType<typeof setTimeout> | undefined;
@@ -158,6 +176,7 @@ export function createSettingsSection<T extends object>(
 	function setStatus(next: SettingsStatus | null, clears = false) {
 		clearTimeout(clearTimer);
 		status = next;
+		refused = null;
 		if (clears) clearTimer = setTimeout(() => (status = null), SAVED_CLEARS_AFTER_MS);
 	}
 
@@ -209,6 +228,7 @@ export function createSettingsSection<T extends object>(
 				tone: 'error',
 				message: failureMessage(error, 'Could not save. Try again.', options.explain)
 			});
+			refused = refusedField(error);
 		}
 	}
 
@@ -252,6 +272,10 @@ export function createSettingsSection<T extends object>(
 		},
 		get status() {
 			return status;
+		},
+		/** Why the last save refused this field, or null. */
+		fieldError(field: string): string | null {
+			return refused?.field === field ? refused.reason : null;
 		},
 		// The query's shape, so the section can be handed to QueryBoundary.
 		get data() {
