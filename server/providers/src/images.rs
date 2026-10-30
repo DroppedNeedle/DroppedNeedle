@@ -93,7 +93,11 @@ pub fn check_image_url(raw: &str, deezer: Option<&Url>) -> Option<Url> {
         return None;
     }
     let host = url.domain()?.to_ascii_lowercase();
-    let allowed = is_audiodb(&host)
+    // theaudiodb.com and its www host also serve the API: only their image
+    // folder is an image, so an API address never goes out at the image
+    // rate.
+    let api_host = host == "theaudiodb.com" || host == "www.theaudiodb.com";
+    let allowed = (is_audiodb(&host) && (!api_host || url.path().starts_with("/images/")))
         || host == "upload.wikimedia.org"
         || host == "commons.wikimedia.org"
         // Scaled Commons portraits come from this host. Checked 2026-10-19:
@@ -275,6 +279,16 @@ mod tests {
     fn allows_listed_hosts_over_https_without_credentials() {
         let cases = [
             ("https://r2.theaudiodb.com/images/radiohead.jpg", true),
+            (
+                "https://www.theaudiodb.com/images/media/radiohead.jpg",
+                true,
+            ),
+            (
+                "https://www.theaudiodb.com/api/v1/json/123/search.php",
+                false,
+            ),
+            ("https://theaudiodb.com/images/media/radiohead.jpg", true),
+            ("https://theaudiodb.com/api/v1/json/123/search.php", false),
             ("https://upload.wikimedia.org/commons/Radiohead.jpg", true),
             (
                 "https://commons.wikimedia.org/wiki/File:Radiohead.jpg",

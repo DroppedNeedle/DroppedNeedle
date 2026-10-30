@@ -989,6 +989,7 @@ impl Management {
         // AcoustID ids the same way: an album whose ids cannot be looked
         // up now waits, rather than being written without them and never
         // planned again. No key, or a key AcoustID refuses, goes ahead.
+        // The answer is kept a while, so the plan reuses it.
         if let Some(sandbox) = sandbox.as_ref() {
             let saved = files
                 .iter()
@@ -1014,6 +1015,7 @@ impl Management {
                 &pinned.profile,
                 &subjects,
                 std::time::Instant::now() + planner::RUN_ANALYSIS_BUDGET,
+                true,
                 true,
                 &mut super::enrich::AlbumExtras::default(),
             );

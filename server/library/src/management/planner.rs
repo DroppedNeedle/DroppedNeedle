@@ -1309,12 +1309,23 @@ pub(crate) struct AcoustIdSubject<'a> {
     pub overrides: &'a Overrides,
 }
 
+/// An automatic run's file whose AcoustID id could not be looked up: it
+/// is written once AcoustID answers.
+fn acoustid_unavailable() -> ItemReason {
+    ItemReason {
+        code: "METADATA_UNAVAILABLE".to_owned(),
+        message: "AcoustID could not be asked for this file's ID, so it was not written."
+            .to_owned(),
+        action: "Automatic management looks again by itself.".to_owned(),
+    }
+}
+
 /// How an album's AcoustID lookup went.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AcoustIdLookup {
     /// No file needed one, or no outside sources are attached.
     NotAsked,
-    /// No key, or AcoustID refused it.
+    /// No key, or AcoustID refused it: the work goes ahead without ids.
     NoKey,
     Answered,
     /// AcoustID could not be reached for at least one request.
@@ -1383,8 +1394,11 @@ fn acoustid_id_for(
 /// the run's analysis budget (`until`). Ids come from one AcoustID lookup
 /// per album, in requests of at most twenty prints; a print of zero
 /// seconds is never looked up (AcoustID answers it with nothing, which
-/// would read as "no match"). With `ids_only` only the files that would
-/// get an id are looked at, and no print is put in `extras`.
+/// would read as "no match"). A print taken from the audio is kept before
+/// it is looked up, so a lookup that waits does not decode it again. With
+/// `ids_only` only the files that would get an id are looked at, and no
+/// print is put in `extras`. `background` looks up at background priority.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn acoustid_values(
     parts: &ManagementParts,
     sandbox: &Sandbox,
@@ -1392,10 +1406,11 @@ pub(crate) fn acoustid_values(
     subjects: &[AcoustIdSubject<'_>],
     until: std::time::Instant,
     ids_only: bool,
+    background: bool,
     extras: &mut super::enrich::AlbumExtras,
 ) -> AcoustIdLookup {
     use super::enrich::{AcoustIdAnswer, AcoustIdPrint};
-    use droppedneedle_providers::acoustid::MAX_BATCH;
+    use droppedneedle_providers::acoustid::{MAX_BATCH, Unanswered};
 
     let port = parts.enrichment.as_deref();
     // Without a key no id is looked up, so a file that wants only an id
@@ -1408,6 +1423,19 @@ pub(crate) fn acoustid_values(
     // (track, stat revision, print, recording)
     let mut lookups: Vec<(&str, String, AcoustIdPrint, String)> = Vec::new();
     for subject in subjects {
+        // A file the profile writes neither field into is not read.
+        let may_print = !ids_only
+            && acoustid_wanted(
+                profile,
+                subject.overrides,
+                TagField::AcoustIdFingerprint,
+                false,
+            );
+        let may_id = port.is_some()
+            && acoustid_wanted(profile, subject.overrides, TagField::AcoustIdId, false);
+        if !may_print && !may_id {
+            continue;
+        }
         let Ok(path) = sandbox.resolve_no_symlink(subject.root_id, subject.relative_path) else {
             continue;
         };
@@ -1455,7 +1483,7 @@ pub(crate) fn acoustid_values(
             let has_key = *keyed.get_or_insert_with(|| {
                 port.is_some_and(|port| {
                     super::enrich::wait(Box::pin(async {
-                        Ok::<_, String>(port.acoustid_lookup(&[]).await)
+                        Ok::<_, String>(port.acoustid_lookup(&[], background).await)
                     })) != Some(AcoustIdAnswer::NoKey)
                 })
             });
@@ -1493,10 +1521,20 @@ pub(crate) fn acoustid_values(
                 continue;
             }
             None => match tags::generate_fingerprint(&path) {
-                Ok(found) if !found.fingerprint.is_empty() => AcoustIdPrint {
-                    print: found.fingerprint,
-                    duration_seconds: found.duration_seconds,
-                },
+                Ok(found) if !found.fingerprint.is_empty() => {
+                    if let Err(error) = parts.identify_store.keep_fingerprint(
+                        subject.track_id,
+                        &revision,
+                        &found.fingerprint,
+                        found.duration_seconds,
+                    ) {
+                        tracing::warn!(%error, track = subject.track_id, "fingerprint not kept");
+                    }
+                    AcoustIdPrint {
+                        print: found.fingerprint,
+                        duration_seconds: found.duration_seconds,
+                    }
+                }
                 Ok(_) => continue,
                 Err(error) => {
                     tracing::info!(%error, track = subject.track_id, "AcoustID print failed");
@@ -1526,22 +1564,37 @@ pub(crate) fn acoustid_values(
                 .to_owned(),
         ));
     }
+    let mut unanswered: Option<Unanswered> = None;
+    let mut refused = false;
     if let Some(port) = port {
-        for chunk in lookups.chunks(MAX_BATCH) {
+        for (index, chunk) in lookups.chunks(MAX_BATCH).enumerate() {
             let prints: Vec<AcoustIdPrint> =
                 chunk.iter().map(|(_, _, print, _)| print.clone()).collect();
             let answer = super::enrich::wait(Box::pin(async {
-                Ok::<_, String>(port.acoustid_lookup(&prints).await)
+                Ok::<_, String>(port.acoustid_lookup(&prints, background).await)
             }))
-            .unwrap_or(AcoustIdAnswer::Unavailable);
+            .unwrap_or(AcoustIdAnswer::Unavailable(Unanswered::Failed));
             let results = match answer {
                 AcoustIdAnswer::Answered(results) => results,
                 AcoustIdAnswer::NoKey => {
                     outcome = AcoustIdLookup::NoKey;
                     break;
                 }
-                AcoustIdAnswer::Unavailable => {
+                AcoustIdAnswer::KeyRefused => {
+                    refused = true;
+                    outcome = AcoustIdLookup::NoKey;
+                    break;
+                }
+                AcoustIdAnswer::Unavailable(why) => {
+                    unanswered = Some(why);
                     outcome = AcoustIdLookup::Unavailable;
+                    // The files whose ids wait, this chunk's and every
+                    // later one's.
+                    extras.acoustid_waiting.extend(
+                        lookups[index * MAX_BATCH..]
+                            .iter()
+                            .map(|(track, ..)| (*track).to_owned()),
+                    );
                     break;
                 }
             };
@@ -1570,19 +1623,28 @@ pub(crate) fn acoustid_values(
             }
         }
     }
-    let note = match outcome {
-        AcoustIdLookup::NoKey => {
-            Some("AcoustID IDs need an AcoustID key in Settings > Library; the files keep theirs.")
+    let note = match (outcome, unanswered) {
+        (AcoustIdLookup::NoKey, _) if refused => Some(
+            "AcoustID refused the key in Settings > Library; the files keep their AcoustID IDs."
+                .to_owned(),
+        ),
+        (AcoustIdLookup::NoKey, _) => Some(
+            "AcoustID IDs need an AcoustID key in Settings > Library; the files keep theirs."
+                .to_owned(),
+        ),
+        (AcoustIdLookup::Unavailable, Some(Unanswered::Paused)) => {
+            Some("AcoustID asked for a pause; the files keep their AcoustID IDs.".to_owned())
         }
-        AcoustIdLookup::Unavailable => {
-            Some("AcoustID could not be reached; the files keep their AcoustID IDs.")
+        (AcoustIdLookup::Unavailable, Some(Unanswered::Code(code))) => Some(format!(
+            "AcoustID answered with error {code}; the files keep their AcoustID IDs."
+        )),
+        (AcoustIdLookup::Unavailable, _) => {
+            Some("AcoustID could not be reached; the files keep their AcoustID IDs.".to_owned())
         }
         _ => None,
     };
     if let (Some(note), Some(track)) = (note, first_wanting_id) {
-        extras
-            .acoustid_notes
-            .push((track.to_owned(), note.to_owned()));
+        extras.acoustid_notes.push((track.to_owned(), note));
     }
     outcome
 }
@@ -1974,9 +2036,16 @@ pub fn plan_album(
         &subjects,
         ctx.analysis_until,
         false,
+        !person,
         &mut extras,
     );
     for ((item, track), overrides) in items.iter_mut().zip(tracks).zip(&saved) {
+        // An automatic run never writes a file without the AcoustID id it
+        // would have had: it waits for AcoustID.
+        if extras.automatic && extras.acoustid_waiting.contains(&track.id) {
+            item.block(acoustid_unavailable());
+            continue;
+        }
         if let Err(reason) = plan_file(
             ctx,
             item,
@@ -2091,6 +2160,9 @@ pub fn plan_one(
                     overrides: &overrides,
                 }],
                 ctx.analysis_until,
+                false,
+                // Duplicate resolution is a person's: their priority, as
+                // the gather above.
                 false,
                 &mut extras,
             );

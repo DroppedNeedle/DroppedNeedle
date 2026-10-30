@@ -86,8 +86,13 @@ pub trait EnrichmentPort: Send + Sync {
     ) -> BoxFuture<'a, Result<ReleaseExtras, String>>;
     /// Look up to [`MAX_BATCH`](droppedneedle_providers::acoustid::MAX_BATCH)
     /// AcoustID prints in one request. An empty list asks only whether a
-    /// key is set: `NoKey`, or an empty answer.
-    fn acoustid_lookup<'a>(&'a self, prints: &'a [AcoustIdPrint]) -> BoxFuture<'a, AcoustIdAnswer>;
+    /// key is set: `NoKey`, or an empty answer. `background` asks at
+    /// background priority (automatic runs).
+    fn acoustid_lookup<'a>(
+        &'a self,
+        prints: &'a [AcoustIdPrint],
+        background: bool,
+    ) -> BoxFuture<'a, AcoustIdAnswer>;
 }
 
 /// An AcoustID print of a file's audio, with its length.
@@ -100,10 +105,12 @@ pub struct AcoustIdPrint {
 /// What AcoustID said about a list of prints.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AcoustIdAnswer {
-    /// No key in Settings, or AcoustID refused the one there.
+    /// No key in Settings.
     NoKey,
-    /// AcoustID could not be reached, or its answer was unreadable.
-    Unavailable,
+    /// AcoustID refused the key in Settings.
+    KeyRefused,
+    /// No usable answer now, and why: the work waits.
+    Unavailable(droppedneedle_providers::acoustid::Unanswered),
     /// The results for each print, in the order asked.
     Answered(Vec<Vec<droppedneedle_providers::acoustid::BatchResult>>),
 }
@@ -403,6 +410,9 @@ pub struct AlbumExtras {
     /// Why AcoustID values were left out, by the library track whose
     /// plan says so (one of each per album).
     pub acoustid_notes: Vec<(String, String)>,
+    /// Library tracks whose AcoustID id could not be looked up now. An
+    /// automatic run does not write them.
+    pub acoustid_waiting: Vec<String>,
 }
 
 /// What planning gathered for one file.
@@ -636,7 +646,12 @@ pub struct ScriptedEnrichment {
 pub enum ScriptedAcoustId {
     /// These results for every print.
     Answers(Vec<droppedneedle_providers::acoustid::BatchResult>),
+    /// AcoustID cannot be reached.
     Unavailable,
+    /// AcoustID refuses the key.
+    KeyRefused,
+    /// AcoustID answers with this error code.
+    Code(i64),
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -705,7 +720,12 @@ impl EnrichmentPort for ScriptedEnrichment {
         Box::pin(async move { answer })
     }
 
-    fn acoustid_lookup<'a>(&'a self, prints: &'a [AcoustIdPrint]) -> BoxFuture<'a, AcoustIdAnswer> {
+    fn acoustid_lookup<'a>(
+        &'a self,
+        prints: &'a [AcoustIdPrint],
+        _background: bool,
+    ) -> BoxFuture<'a, AcoustIdAnswer> {
+        use droppedneedle_providers::acoustid::Unanswered;
         let script = self.acoustid.lock().ok().and_then(|script| script.clone());
         if !prints.is_empty()
             && let Ok(mut calls) = self.acoustid_calls.lock()
@@ -714,10 +734,13 @@ impl EnrichmentPort for ScriptedEnrichment {
         }
         let answer = match script {
             None => AcoustIdAnswer::NoKey,
-            Some(ScriptedAcoustId::Unavailable) if !prints.is_empty() => {
-                AcoustIdAnswer::Unavailable
+            // A key is set: only a request learns what AcoustID says.
+            Some(_) if prints.is_empty() => AcoustIdAnswer::Answered(Vec::new()),
+            Some(ScriptedAcoustId::Unavailable) => AcoustIdAnswer::Unavailable(Unanswered::Failed),
+            Some(ScriptedAcoustId::KeyRefused) => AcoustIdAnswer::KeyRefused,
+            Some(ScriptedAcoustId::Code(code)) => {
+                AcoustIdAnswer::Unavailable(Unanswered::Code(code))
             }
-            Some(ScriptedAcoustId::Unavailable) => AcoustIdAnswer::Answered(Vec::new()),
             Some(ScriptedAcoustId::Answers(results)) => {
                 AcoustIdAnswer::Answered(vec![results; prints.len()])
             }

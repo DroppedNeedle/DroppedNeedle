@@ -21390,6 +21390,26 @@ async fn acoustid_ids_come_from_a_lookup_naming_the_files_recording() {
         item.facts
     );
 
+    // Only a refused key (AcoustID's code 4) says so; another error code
+    // is named and is never "needs a key".
+    script(Some(ScriptedAcoustId::KeyRefused));
+    let (_, item) = plan().await;
+    assert_eq!(planned_acoustid(&item, "acoustid_id"), None);
+    assert!(
+        warned(&item, "AcoustID refused the key in Settings > Library"),
+        "{:?}",
+        item.facts
+    );
+    script(Some(ScriptedAcoustId::Code(3)));
+    let (_, item) = plan().await;
+    assert_eq!(planned_acoustid(&item, "acoustid_id"), None);
+    assert!(
+        warned(&item, "AcoustID answered with error 3"),
+        "{:?}",
+        item.facts
+    );
+    assert!(!warned(&item, "AcoustID IDs need"), "{:?}", item.facts);
+
     script(Some(ScriptedAcoustId::Answers(vec![acoustid_result(
         ID_A,
         0.9,
@@ -21533,6 +21553,161 @@ async fn automatic_acoustid_without_a_key_goes_ahead() {
         .optional()
         .expect("queue read");
     assert_eq!(waiting, None);
+}
+
+/// The production AcoustID lookup beside the scripted other sources.
+struct LiveAcoustId {
+    live: droppedneedle_catalog::reads::enrichment::library::LiveEnrichment,
+    scripted: Arc<droppedneedle_library::management::enrich::ScriptedEnrichment>,
+}
+
+impl droppedneedle_library::management::enrich::EnrichmentPort for LiveAcoustId {
+    fn listenbrainz_genres<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Vec<droppedneedle_library::management::genre::Candidate>, String>,
+    > {
+        self.scripted
+            .listenbrainz_genres(release_group_mbid, background)
+    }
+
+    fn lastfm_genres<'a>(
+        &'a self,
+        artist: &'a str,
+        album: &'a str,
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Vec<droppedneedle_library::management::genre::Candidate>, String>,
+    > {
+        self.scripted.lastfm_genres(artist, album, background)
+    }
+
+    fn lyrics<'a>(
+        &'a self,
+        query: &'a droppedneedle_library::management::enrich::LyricsQuery,
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<droppedneedle_library::management::enrich::LyricsFound>, String>,
+    > {
+        self.scripted.lyrics(query, background)
+    }
+
+    fn front_cover<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        release_group_mbid: &'a str,
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<droppedneedle_library::management::enrich::Cover>, String>,
+    > {
+        self.scripted
+            .front_cover(release_mbid, release_group_mbid, background)
+    }
+
+    fn release_extras<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        wants: droppedneedle_library::management::enrich::ExtrasWanted,
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<droppedneedle_library::matching::model::ReleaseExtras, String>,
+    > {
+        self.scripted
+            .release_extras(release_mbid, wants, background)
+    }
+
+    fn acoustid_lookup<'a>(
+        &'a self,
+        prints: &'a [droppedneedle_library::management::enrich::AcoustIdPrint],
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        droppedneedle_library::management::enrich::AcoustIdAnswer,
+    > {
+        self.live.acoustid_lookup(prints, background)
+    }
+}
+
+/// Library settings that do not read are never "no key": an automatic
+/// look waits for them and writes nothing, and AcoustID is not called.
+#[tokio::test]
+async fn automatic_acoustid_waits_while_library_settings_do_not_read() {
+    use droppedneedle_catalog::reads::catalog::upstream::{LiveCatalogSettings, Upstream};
+    use droppedneedle_catalog::reads::enrichment::library::LiveEnrichment;
+    use droppedneedle_catalog::reads::lyrics::OnlineLyrics;
+    use droppedneedle_library::management::enrich::ScriptedEnrichment;
+    use droppedneedle_providers::Providers;
+    use droppedneedle_providers::executor::ScriptedWire;
+
+    let rig = crate::common::auth::AuthRig::new("acoustid-unreadable").await;
+    let dir = ScratchDir::new("acoustid-unreadable-settings");
+    std::fs::write(
+        dir.join("config.json"),
+        json!({"library_settings": {"library_roots": "not a list"}}).to_string(),
+    )
+    .expect("config.json");
+    let settings = ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("crypto"))
+        .expect("settings open");
+    let wire = Arc::new(ScriptedWire::new());
+    let providers = Arc::new(Providers::unpaced(wire.clone()));
+    let live = LiveEnrichment::new(
+        Upstream::new(
+            providers.clone(),
+            Arc::new(LiveCatalogSettings::new(&settings)),
+            rig.deps.clone(),
+        ),
+        None,
+        OnlineLyrics::new(&providers, settings.live()),
+        providers.acoustid.clone(),
+        settings.live(),
+    );
+    assert!(
+        settings
+            .live::<droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary>()
+            .get()
+            .is_err(),
+        "the library settings do not read"
+    );
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    let port = Arc::new(LiveAcoustId {
+        live,
+        scripted: scripted.clone(),
+    });
+    let port: Arc<dyn droppedneedle_library::management::enrich::EnrichmentPort> = port;
+    let managed = ManagedLibrary::start_with("lib-acoustid-unreadable", |_| {}, Some(port)).await;
+    let (album, tracks) = managed
+        .add_album_from("unreadable", &["management_full.flac"], |_| {})
+        .await;
+    managed.strip_acoustid(&tracks).await;
+    managed.seed_print(&tracks[0], None);
+    *scripted.relations.lock().expect("script") =
+        Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
+    managed.activate().await;
+    let file = managed.path(&tracks[0]);
+    let before = file_sha256(&file);
+
+    managed.look(&album).await;
+
+    assert!(file.exists(), "the file was not moved");
+    assert_eq!(file_sha256(&file), before, "nothing written");
+    let waiting: String = managed
+        .db()
+        .query_row(
+            "SELECT last_reason_code FROM library_management_automatic_queue \
+             WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("the album waits");
+    assert_eq!(waiting, "ACOUSTID_UNAVAILABLE");
+    assert!(wire.sent().is_empty(), "AcoustID is not called");
 }
 
 /// Fill missing leaves a file that holds both AcoustID values alone, and

@@ -999,8 +999,9 @@ async fn audiodb_rows_follow_the_saved_key() {
     );
 }
 
-/// The AcoustID rules: a 4xx naming error code 4 is a refused key, any
-/// other 4xx a rejection, and a 200 whose status is not "ok" an outage.
+/// The AcoustID rules: a 4xx naming error code 4 is a refused key, a 4xx
+/// naming another code waits on that code, and a 200 whose status is not
+/// "ok" an outage.
 #[tokio::test(start_paused = true)]
 async fn acoustid_hooks() {
     let lookup = format!("{}/v2/lookup", acoustid::DEFAULT_BASE_URL);
@@ -1013,7 +1014,7 @@ async fn acoustid_hooks() {
                 &[],
                 r#"{"status": "error", "error": {"code": 4, "message": "invalid API key"}}"#,
             ),
-            |outcome| matches!(outcome, acoustid::BatchOutcome::Rejected { message } if message.contains("401")),
+            |outcome| *outcome == acoustid::BatchOutcome::KeyRefused,
         ),
         (
             "another 400",
@@ -1022,7 +1023,9 @@ async fn acoustid_hooks() {
                 &[],
                 r#"{"status": "error", "error": {"code": 2, "message": "missing parameter"}}"#,
             ),
-            |outcome| matches!(outcome, acoustid::BatchOutcome::Rejected { message } if message.contains("400")),
+            |outcome| {
+                *outcome == acoustid::BatchOutcome::Unavailable(acoustid::Unanswered::Code(2))
+            },
         ),
         (
             "a 200 that did not succeed",
@@ -1047,6 +1050,42 @@ async fn acoustid_hooks() {
             .await;
         assert!(check(&outcome), "{name}: got {outcome:?}");
     }
+
+    // AcoustID's "too many requests" code rests the client as a 429 does.
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        Method::Post,
+        &lookup,
+        answer(
+            400,
+            &[],
+            r#"{"status": "error", "error": {"code": 14, "message": "too many requests"}}"#,
+        ),
+    );
+    let providers = providers_over(&wire);
+    let outcome = providers
+        .acoustid
+        .lookup_batch_request(
+            "key",
+            &[acoustid::BatchQuery {
+                fingerprint: "print",
+                duration_secs: 200,
+            }],
+            RequestPriority::UserInitiated,
+        )
+        .await;
+    assert_eq!(
+        outcome,
+        acoustid::BatchOutcome::Unavailable(acoustid::Unanswered::Paused)
+    );
+    assert!(
+        !providers
+            .limiter("acoustid")
+            .expect("the AcoustID limiter")
+            .cooling_for()
+            .is_zero(),
+        "code 14 rests AcoustID"
+    );
 }
 
 /// GitHub: a 403 that says the allowance is spent rests until

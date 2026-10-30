@@ -655,6 +655,42 @@ impl SqliteIdentifyStore {
         duration_seconds: u32,
         matched: bool,
     ) -> Result<(), StoreError> {
+        let state = if matched { "matched" } else { "no_match" };
+        self.put_fingerprint(
+            local_track_id,
+            stat_revision,
+            fingerprint,
+            duration_seconds,
+            state,
+        )
+    }
+
+    /// Keep a print AcoustID has not been asked about yet, so a lookup
+    /// that waits does not decode the audio again.
+    pub fn keep_fingerprint(
+        &self,
+        local_track_id: &str,
+        stat_revision: &str,
+        fingerprint: &str,
+        duration_seconds: u32,
+    ) -> Result<(), StoreError> {
+        self.put_fingerprint(
+            local_track_id,
+            stat_revision,
+            fingerprint,
+            duration_seconds,
+            "deferred",
+        )
+    }
+
+    fn put_fingerprint(
+        &self,
+        local_track_id: &str,
+        stat_revision: &str,
+        fingerprint: &str,
+        duration_seconds: u32,
+        state: &'static str,
+    ) -> Result<(), StoreError> {
         let now = self.clock.now_secs();
         self.db
             .write_blocking(Lane::Background, "identify.save_fingerprint", |tx| {
@@ -686,7 +722,7 @@ impl SqliteIdentifyStore {
                             local_track_id,
                             stat_revision,
                             FINGERPRINTER_VERSION,
-                            if matched { "matched" } else { "no_match" },
+                            state,
                             fingerprint,
                             f64::from(duration_seconds),
                             now,

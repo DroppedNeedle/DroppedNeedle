@@ -599,17 +599,17 @@ fn library_ports(
     lyrics: OnlineLyrics,
     core: droppedneedle_library::wiring::LibraryCore,
 ) -> droppedneedle_library::wiring::LibraryPorts {
-    let enrichment = LiveEnrichment {
-        acoustid: providers.acoustid.clone(),
-        library: p.settings.live(),
-        upstream: Upstream::new(
+    let enrichment = LiveEnrichment::new(
+        Upstream::new(
             providers.clone(),
             Arc::new(LiveCatalogSettings::new(&p.settings)),
             auth.users.clone(),
         ),
-        artwork: Some(artwork.clone()),
+        Some(artwork.clone()),
         lyrics,
-    };
+        providers.acoustid.clone(),
+        p.settings.live(),
+    );
     let scans = scans.clone();
     droppedneedle_library::wiring::LibraryPorts {
         enrichment: Some(Arc::new(enrichment)),

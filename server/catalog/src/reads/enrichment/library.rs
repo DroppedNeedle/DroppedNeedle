@@ -2,9 +2,14 @@
 //! catalog's ListenBrainz and Last.fm clients, the online lyrics, the shared
 //! artwork cache and AcoustID, behind the library's [`EnrichmentPort`]. A person's
 //! own preview asks at user priority, an automatic run at background
-//! priority; AcoustID lookups are fingerprinting and always background.
+//! priority.
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use futures_util::future::BoxFuture;
+use tokio::time::Instant;
 
 use crate::reads::catalog::upstream::Upstream;
 use crate::reads::lyrics::{LyricsError, OnlineLyrics};
@@ -16,6 +21,7 @@ use droppedneedle_library::management::enrich::{
 use droppedneedle_library::management::genre::Candidate;
 use droppedneedle_library::matching::model::ReleaseExtras;
 use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::acoustid::BatchResult;
 
 /// The priority a call asks at: background for automatic runs, user for a
 /// person's own preview.
@@ -27,30 +33,96 @@ fn priority(background: bool) -> RequestPriority {
     }
 }
 
+/// How long an AcoustID answer is reused: long enough for an automatic
+/// look's answer to serve the plan that follows it.
+const ACOUSTID_ANSWER_LIFE: Duration = Duration::from_secs(10 * 60);
+/// Most AcoustID answers kept; the oldest goes first.
+const ACOUSTID_ANSWERS_KEPT: usize = 1_000;
+
+/// One print as asked: the print and its length in seconds. The metadata
+/// asked for is fixed, so it is not part of the key.
+type PrintKey = (String, u32);
+
 /// The production port: the catalog's ListenBrainz and Last.fm clients,
 /// the online lyrics the player shares, the shared artwork cache, and
 /// AcoustID on identification's rate limit.
 pub struct LiveEnrichment {
-    pub upstream: Upstream,
-    pub artwork: Option<ArtworkService>,
-    pub lyrics: OnlineLyrics,
-    pub acoustid: droppedneedle_providers::acoustid::AcoustIdClient,
+    upstream: Upstream,
+    artwork: Option<ArtworkService>,
+    lyrics: OnlineLyrics,
+    acoustid: droppedneedle_providers::acoustid::AcoustIdClient,
     /// The library settings the AcoustID key is read from, per lookup.
-    pub library: droppedneedle_kernel::runtime_config::Live<
+    library: droppedneedle_kernel::runtime_config::Live<
         droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary,
     >,
+    /// Recent AcoustID answers by print, with when each came.
+    answers: Mutex<HashMap<PrintKey, (Instant, Vec<BatchResult>)>>,
 }
 
 impl LiveEnrichment {
-    /// The AcoustID key from the settings; blank when none is set.
-    fn acoustid_key(&self) -> String {
-        match self.library.get() {
-            Ok(settings) => settings.acoustid_api_key.expose().trim().to_owned(),
-            Err(error) => {
-                tracing::warn!(%error, "cannot read the AcoustID key; AcoustID IDs wait");
-                String::new()
-            }
+    /// The port over these sources, with no AcoustID answers kept yet.
+    #[must_use]
+    pub fn new(
+        upstream: Upstream,
+        artwork: Option<ArtworkService>,
+        lyrics: OnlineLyrics,
+        acoustid: droppedneedle_providers::acoustid::AcoustIdClient,
+        library: droppedneedle_kernel::runtime_config::Live<
+            droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary,
+        >,
+    ) -> Self {
+        Self {
+            upstream,
+            artwork,
+            lyrics,
+            acoustid,
+            library,
+            answers: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The kept answer for a print, while it is fresh.
+    fn kept_answer(&self, key: &PrintKey) -> Option<Vec<BatchResult>> {
+        let answers = self
+            .answers
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        answers
+            .get(key)
+            .filter(|(at, _)| at.elapsed() < ACOUSTID_ANSWER_LIFE)
+            .map(|(_, results)| results.clone())
+    }
+
+    /// Keep the answers AcoustID gave, dropping stale ones and then the
+    /// oldest past the limit.
+    fn keep_answers(&self, fresh: Vec<(PrintKey, Vec<BatchResult>)>) {
+        let mut answers = self
+            .answers
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let now = Instant::now();
+        answers.retain(|_, (at, _)| now.duration_since(*at) < ACOUSTID_ANSWER_LIFE);
+        for (key, results) in fresh {
+            answers.insert(key, (now, results));
+        }
+        while answers.len() > ACOUSTID_ANSWERS_KEPT {
+            let Some(oldest) = answers
+                .iter()
+                .min_by_key(|(_, (at, _))| *at)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            answers.remove(&oldest);
+        }
+    }
+
+    /// The AcoustID key from the settings, blank when none is set; `None`
+    /// when the settings do not read, which is never "no key".
+    fn acoustid_key(&self) -> Option<String> {
+        self.library
+            .read()
+            .map(|settings| settings.acoustid_api_key.expose().trim().to_owned())
     }
 }
 
@@ -220,45 +292,75 @@ impl EnrichmentPort for LiveEnrichment {
         })
     }
 
-    fn acoustid_lookup<'a>(&'a self, prints: &'a [AcoustIdPrint]) -> BoxFuture<'a, AcoustIdAnswer> {
-        use droppedneedle_providers::acoustid::{BatchOutcome, BatchQuery};
+    fn acoustid_lookup<'a>(
+        &'a self,
+        prints: &'a [AcoustIdPrint],
+        background: bool,
+    ) -> BoxFuture<'a, AcoustIdAnswer> {
+        use droppedneedle_providers::acoustid::{BatchOutcome, BatchQuery, Unanswered};
         Box::pin(async move {
-            let key = self.acoustid_key();
+            // Settings that do not read make the work wait.
+            let Some(key) = self.acoustid_key() else {
+                return AcoustIdAnswer::Unavailable(Unanswered::Failed);
+            };
             if key.is_empty() {
                 return AcoustIdAnswer::NoKey;
             }
-            if prints.is_empty() {
-                return AcoustIdAnswer::Answered(Vec::new());
+            let mut out: Vec<Vec<BatchResult>> = vec![Vec::new(); prints.len()];
+            // (slot in `out`, the print's key) for prints not answered lately.
+            let mut asking: Vec<(usize, PrintKey)> = Vec::new();
+            for (slot, print) in prints.iter().enumerate() {
+                let print_key = (print.print.clone(), print.duration_seconds);
+                match self.kept_answer(&print_key) {
+                    Some(results) => out[slot] = results,
+                    None => asking.push((slot, print_key)),
+                }
             }
-            let queries: Vec<BatchQuery<'_>> = prints
+            if asking.is_empty() {
+                return AcoustIdAnswer::Answered(out);
+            }
+            let queries: Vec<BatchQuery<'_>> = asking
                 .iter()
-                .map(|print| BatchQuery {
-                    fingerprint: &print.print,
-                    duration_secs: u64::from(print.duration_seconds),
+                .map(|(_, (print, seconds))| BatchQuery {
+                    fingerprint: print,
+                    duration_secs: u64::from(*seconds),
                 })
                 .collect();
             match self
                 .acoustid
-                .lookup_batch_request(&key, &queries, RequestPriority::BackgroundSync)
+                .lookup_batch_request(&key, &queries, priority(background))
                 .await
             {
                 BatchOutcome::Answered(entries) => {
-                    let mut out = vec![Vec::new(); prints.len()];
+                    let mut fresh = Vec::with_capacity(entries.len());
                     for (index, results) in entries {
-                        if let Some(slot) = out.get_mut(index) {
-                            *slot = results;
+                        if let Some((slot, print_key)) = asking.get(index) {
+                            out[*slot].clone_from(&results);
+                            fresh.push((print_key.clone(), results));
                         }
+                    }
+                    // A print AcoustID left out of its answer is not a
+                    // "no match": the listed ones are kept, and the
+                    // lookup waits.
+                    let listed = fresh.len();
+                    self.keep_answers(fresh);
+                    if listed < asking.len() {
+                        tracing::info!(
+                            provider = "acoustid",
+                            asked = asking.len(),
+                            listed,
+                            "AcoustID left prints out of its answer"
+                        );
+                        return AcoustIdAnswer::Unavailable(Unanswered::Failed);
                     }
                     AcoustIdAnswer::Answered(out)
                 }
-                BatchOutcome::Rejected { message } => {
-                    tracing::warn!(message, "AcoustID refused the lookup; AcoustID IDs wait");
-                    AcoustIdAnswer::NoKey
+                BatchOutcome::NoKey => AcoustIdAnswer::NoKey,
+                BatchOutcome::KeyRefused => {
+                    tracing::warn!("AcoustID refused the key; AcoustID IDs are left out");
+                    AcoustIdAnswer::KeyRefused
                 }
-                BatchOutcome::Unavailable { message, .. } => {
-                    tracing::info!(message, "AcoustID lookup deferred");
-                    AcoustIdAnswer::Unavailable
-                }
+                BatchOutcome::Unavailable(why) => AcoustIdAnswer::Unavailable(why),
             }
         })
     }
