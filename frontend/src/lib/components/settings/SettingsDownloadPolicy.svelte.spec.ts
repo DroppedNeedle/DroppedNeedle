@@ -315,3 +315,31 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 		expect(saved.quality_cutoff).toBe('mp3_320');
 	});
 });
+
+describe('SettingsDownloadPolicy retention', () => {
+	beforeEach(() => {
+		h.policy = structuredClone(basePolicy);
+		h.pending = false;
+		h.isError = false;
+		h.error = null;
+		h.mutateAsync = vi.fn(async (policy: DownloadPolicySettings) => structuredClone(policy));
+	});
+
+	it('takes the recycle bin and Usenet retention days with the server bounds and saves the edited value', async () => {
+		await render(SettingsDownloadPolicy);
+		const recycle = page.getByRole('spinbutton', { name: 'Recycle Bin Retention (days)' });
+		await expect.element(recycle).toHaveValue(30);
+		await expect.element(recycle).toHaveAttribute('min', '1');
+		await expect.element(recycle).toHaveAttribute('max', '3650');
+		const usenet = page.getByRole('spinbutton', { name: 'Usenet Retention (days)' });
+		await expect.element(usenet).toHaveValue(0);
+		await expect.element(usenet).toHaveAttribute('max', '100000');
+
+		await recycle.fill('45');
+		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
+		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
+		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+		expect(saved.recycle_retention_days).toBe(45);
+		expect(saved.usenet_retention_days).toBe(0);
+	});
+});

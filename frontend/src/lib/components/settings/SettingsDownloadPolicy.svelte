@@ -7,6 +7,7 @@
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import type { DownloadPolicySettings as DownloadPolicyView } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import NumberField from '$lib/ui/NumberField.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
@@ -205,6 +206,27 @@
 					bind:autoRetryEnabled={draft.auto_retry_enabled}
 					bind:autoRetryMax={draft.auto_retry_max_attempts}
 				/>
+				<div>
+					<h3 class="font-medium">Retention</h3>
+					<div class="mt-3 grid gap-4 sm:grid-cols-2">
+						<NumberField
+							label="Recycle Bin Retention (days)"
+							help="Recycle bin files are deleted after this many days (default: 30)"
+							bind:value={draft.recycle_retention_days}
+							min={1}
+							max={3650}
+							error={section.fieldError('recycle_retention_days')}
+						/>
+						<NumberField
+							label="Usenet Retention (days)"
+							help="Skip Usenet releases older than this; 0 turns the check off (default: 0)"
+							bind:value={draft.usenet_retention_days}
+							min={0}
+							max={100000}
+							error={section.fieldError('usenet_retention_days')}
+						/>
+					</div>
+				</div>
 				<!-- The recipe editor above has its own Discard, so the bar shows none. -->
 				<div class="border-t border-base-300 pt-4">
 					<SaveBar

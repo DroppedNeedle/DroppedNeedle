@@ -340,6 +340,8 @@ Where things live in the UI:
 | Wrapped API | Settings > Wrapped API |
 | Outbound provider calls, rate limits and background jobs | Settings > Diagnostics |
 | Discover queue and top picks tuning | Settings > Advanced |
+| Request history, ignored albums and clean-up interval | Settings > Advanced |
+| Recycle bin and Usenet retention days | Settings > Download Client |
 
 ---
 
