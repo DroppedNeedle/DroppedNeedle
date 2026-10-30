@@ -12,6 +12,8 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::users::roles::Role;
 use platform::{
     covers::{CoverBytes, CoversState, FakeCoverArt},
     wrapped::{
@@ -20,6 +22,8 @@ use platform::{
     },
 };
 use tower::ServiceExt as _;
+
+use crate::common::auth::{test_principal, with_test_principal};
 
 /// 1x1 PNG standing in for fetched art.
 const PNG_BYTES: &[u8] = &[
@@ -33,9 +37,12 @@ const PNG_BYTES: &[u8] = &[
 const WRAPPED_KEY: &str = "test-secret-key";
 
 fn covers_app(fake: FakeCoverArt) -> Router {
-    platform::covers::routes()
-        .with_state(CoversState::new(Arc::new(fake)))
-        .into_router()
+    with_test_principal(
+        platform::covers::routes()
+            .with_state(CoversState::new(Arc::new(fake)))
+            .into_router(),
+        test_principal("u-1", Role::User, "s-1", SessionKind::Standard),
+    )
 }
 
 fn covers_fixture() -> FakeCoverArt {

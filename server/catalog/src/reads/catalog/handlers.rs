@@ -76,6 +76,7 @@ pub async fn artist(
 )]
 pub async fn artist_extended(
     State(deps): State<CatalogDeps>,
+    _user: User,
     Path(mbid): Path<String>,
 ) -> Answer<ArtistExtendedInfo> {
     answer(deps.catalog.artist_extended(&mbid).await)
@@ -96,6 +97,7 @@ pub async fn artist_extended(
 )]
 pub async fn artist_releases(
     State(deps): State<CatalogDeps>,
+    _user: User,
     Path(mbid): Path<String>,
     ValidQuery(query): ValidQuery<ReleasesQuery>,
 ) -> Answer<ArtistReleases> {
@@ -243,6 +245,7 @@ pub async fn artist_lastfm(
 )]
 pub async fn artist_purchase_options(
     State(deps): State<CatalogDeps>,
+    _user: User,
     Path(mbid): Path<String>,
     ValidQuery(query): ValidQuery<ArtistPurchaseQuery>,
 ) -> Answer<ArtistPurchaseOptionsResponse> {
@@ -267,7 +270,11 @@ pub async fn artist_purchase_options(
         (status = 503, description = "MusicBrainz down and the album is not in the library"),
     )
 )]
-pub async fn album(State(deps): State<CatalogDeps>, Path(id): Path<String>) -> Answer<AlbumInfo> {
+pub async fn album(
+    State(deps): State<CatalogDeps>,
+    _user: User,
+    Path(id): Path<String>,
+) -> Answer<AlbumInfo> {
     answer(deps.catalog.album(&id).await)
 }
 
@@ -287,6 +294,7 @@ pub async fn album(State(deps): State<CatalogDeps>, Path(id): Path<String>) -> A
 )]
 pub async fn album_basic(
     State(deps): State<CatalogDeps>,
+    _user: User,
     Path(id): Path<String>,
 ) -> Answer<AlbumBasicInfo> {
     answer(deps.catalog.album_basic(&id).await)
@@ -308,6 +316,7 @@ pub async fn album_basic(
 )]
 pub async fn album_tracks(
     State(deps): State<CatalogDeps>,
+    _user: User,
     Path(id): Path<String>,
 ) -> Answer<AlbumTracksInfo> {
     answer(deps.catalog.album_tracks(&id).await)
@@ -329,6 +338,7 @@ pub async fn album_tracks(
 )]
 pub async fn album_editions(
     State(deps): State<CatalogDeps>,
+    _user: User,
     Path(id): Path<String>,
 ) -> Answer<AlbumEditionsResponse> {
     answer(deps.catalog.album_editions(&id).await)
@@ -354,6 +364,7 @@ pub async fn album_editions(
 )]
 pub async fn edition_tracks(
     State(deps): State<CatalogDeps>,
+    _user: User,
     Path((_album, release)): Path<(String, String)>,
 ) -> Answer<AlbumTracksInfo> {
     answer(deps.catalog.edition_tracks(&release).await)
@@ -375,6 +386,7 @@ pub async fn edition_tracks(
 )]
 pub async fn album_refresh(
     State(deps): State<CatalogDeps>,
+    _user: User,
     Path(id): Path<String>,
 ) -> Answer<AlbumBasicInfo> {
     answer(deps.catalog.album_refresh(&id).await)
@@ -421,6 +433,7 @@ pub async fn similar_albums(
 )]
 pub async fn more_by_artist(
     State(deps): State<CatalogDeps>,
+    _user: User,
     Path(id): Path<String>,
     ValidQuery(query): ValidQuery<AlbumArtistQuery>,
 ) -> Answer<MoreByArtistResponse> {
@@ -474,6 +487,7 @@ pub async fn album_lastfm(
 )]
 pub async fn album_plugin_details(
     State(deps): State<CatalogDeps>,
+    _user: User,
     Path(id): Path<String>,
 ) -> Answer<PluginDetails> {
     answer(deps.catalog.album_plugin_details(&id).await)
@@ -494,6 +508,7 @@ pub async fn album_plugin_details(
 )]
 pub async fn album_purchase_options(
     State(deps): State<CatalogDeps>,
+    _user: User,
     Path(id): Path<String>,
 ) -> Answer<PurchaseOptionsResponse> {
     answer(deps.catalog.album_purchase_options(&id).await)

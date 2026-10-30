@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use axum::{Json, extract::State};
+use droppedneedle_auth::User;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_providers::RequestPriority;
 use futures_util::future::BoxFuture;
@@ -303,7 +304,7 @@ fn build_update_response(
         (status = 401, description = "Not authenticated"),
     )
 )]
-pub async fn get_version(State(state): State<VersionState>) -> Json<VersionInfo> {
+pub async fn get_version(State(state): State<VersionState>, _user: User) -> Json<VersionInfo> {
     Json(state.releases.current_version())
 }
 
@@ -317,7 +318,10 @@ pub async fn get_version(State(state): State<VersionState>) -> Json<VersionInfo>
         (status = 401, description = "Not authenticated"),
     )
 )]
-pub async fn check_update(State(state): State<VersionState>) -> Json<UpdateCheckResponse> {
+pub async fn check_update(
+    State(state): State<VersionState>,
+    _user: User,
+) -> Json<UpdateCheckResponse> {
     let current = state.releases.current_version();
     let latest = state.releases.latest_release().await;
     Json(build_update_response(&current, latest.as_ref()))
@@ -333,7 +337,10 @@ pub async fn check_update(State(state): State<VersionState>) -> Json<UpdateCheck
         (status = 401, description = "Not authenticated"),
     )
 )]
-pub async fn get_releases(State(state): State<VersionState>) -> Json<Vec<GitHubRelease>> {
+pub async fn get_releases(
+    State(state): State<VersionState>,
+    _user: User,
+) -> Json<Vec<GitHubRelease>> {
     Json(state.releases.release_history().await)
 }
 

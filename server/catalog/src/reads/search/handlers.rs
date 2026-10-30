@@ -10,6 +10,7 @@ use axum::{
     Json,
     extract::{Path, State},
 };
+use droppedneedle_auth::User;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
@@ -39,6 +40,7 @@ fn service_response<T: serde::Serialize>(
 )]
 pub async fn search(
     State(deps): State<super::SearchDeps>,
+    _user: User,
     ValidQuery(query): ValidQuery<SearchQuery>,
 ) -> Result<Json<super::models::SearchResponse>, ApiError> {
     if query.q.trim().is_empty() {
@@ -75,6 +77,7 @@ pub async fn search(
 )]
 pub async fn search_bucket(
     State(deps): State<super::SearchDeps>,
+    _user: User,
     Path(bucket): Path<String>,
     ValidQuery(query): ValidQuery<BucketQuery>,
 ) -> Result<Json<super::models::SearchBucketResponse>, ApiError> {
@@ -109,6 +112,7 @@ pub async fn search_bucket(
 )]
 pub async fn suggest(
     State(deps): State<super::SearchDeps>,
+    _user: User,
     ValidQuery(query): ValidQuery<SuggestQuery>,
 ) -> Result<Json<super::models::SuggestResponse>, ApiError> {
     let limit = check_suggest_limit(query.limit)?;
@@ -137,6 +141,7 @@ pub async fn suggest(
 )]
 pub async fn enrich_batch(
     State(deps): State<super::SearchDeps>,
+    _user: User,
     ValidJson(body): ValidJson<EnrichmentBatchRequest>,
 ) -> Json<super::models::EnrichmentResponse> {
     Json(super::enrichment::enrich_with_degradation(deps.enrichment.as_ref(), body).await)

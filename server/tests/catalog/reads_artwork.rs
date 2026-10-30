@@ -9,6 +9,8 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::users::roles::Role;
 use droppedneedle_catalog::reads::platform::artwork::{
     ArtworkService, MISS_TTL_SECS, UNUSABLE_TTL_SECS,
     cache::{ArtworkCache, KeyEntry},
@@ -25,6 +27,7 @@ use droppedneedle_providers::{ProviderEndpoints, Providers};
 use tower::ServiceExt as _;
 
 use crate::common::ScratchDir;
+use crate::common::auth::{test_principal, with_test_principal};
 
 const RG: &str = "0a1b2c3d-0000-4000-8000-000000000001";
 
@@ -138,9 +141,12 @@ impl Rig {
     }
 
     fn router(service: Arc<ArtworkService>) -> Router {
-        covers::routes()
-            .with_state(CoversState::new(service))
-            .into_router()
+        with_test_principal(
+            covers::routes()
+                .with_state(CoversState::new(service))
+                .into_router(),
+            test_principal("u-1", Role::User, "s-1", SessionKind::Standard),
+        )
     }
 
     fn service(&self, prefer_local: bool) -> Arc<ArtworkService> {

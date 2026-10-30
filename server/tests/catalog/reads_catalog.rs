@@ -12,6 +12,7 @@ use axum::{
     middleware,
 };
 use droppedneedle_auth::session::middleware::require_session;
+use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::models::LastFmConnection;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_catalog::reads::catalog::{
@@ -30,7 +31,7 @@ use sqlx::SqlitePool;
 use tower::ServiceExt as _;
 
 use crate::common::TestApp;
-use crate::common::auth::AuthRig;
+use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 
 const TOKEN: &str = "dn-catalog-test-token-000000000001";
 /// The test user: the rig's id for `ada`.
@@ -1282,9 +1283,12 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
     )
     .with_images(Arc::new(providers.images.clone()))
     .with_artist_source(Arc::new(CatalogArtistImages(catalog)));
-    let app = covers::routes()
-        .with_state(CoversState::new(Arc::new(artwork)))
-        .into_router();
+    let app = with_test_principal(
+        covers::routes()
+            .with_state(CoversState::new(Arc::new(artwork)))
+            .into_router(),
+        test_principal("u-1", Role::User, "s-1", SessionKind::Standard),
+    );
     let get = |uri: String| {
         let app = app.clone();
         async move {
