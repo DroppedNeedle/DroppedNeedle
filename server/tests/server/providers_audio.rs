@@ -614,7 +614,7 @@ async fn lastfm_recorded_errors_read_as_typed_outcomes() {
         .artist_info(&lastfm_creds(), "Radiohead", None, PRIORITY)
         .await;
     assert!(
-        matches!(refused, Err(ProviderError::Unauthorized { .. })),
+        matches!(refused, Err(ProviderError::Rejected { code: 10, .. })),
         "{refused:?}"
     );
 }

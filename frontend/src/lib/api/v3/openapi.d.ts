@@ -8365,6 +8365,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/lastfm/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test the submitted Last.fm key pair (a masked value tests the stored one). */
+        post: operations["verify_lastfm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/library": {
         parameters: {
             query?: never;
@@ -45379,6 +45396,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LastFmSettings"];
+                };
+            };
+        };
+    };
+    verify_lastfm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LastFmSettings"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyConnectionResponse"];
                 };
             };
         };

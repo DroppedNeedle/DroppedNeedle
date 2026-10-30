@@ -9,8 +9,8 @@
 //!
 //! Probes reuse the production clients (media adapters, slskd and
 //! Usenet clients, the provider clients for MusicBrainz, ListenBrainz,
-//! YouTube, Ticketmaster and Skiddle), so a passing verify means the same
-//! code path the app uses can reach the upstream. The
+//! Last.fm, YouTube, Ticketmaster and Skiddle), so a passing verify means
+//! the same code path the app uses can reach the upstream. The
 //! [`VerifyProbes`] port keeps tests hermetic: HTTP tests run against
 //! scripted fakes while the live probes prove themselves against
 //! loopback stubs with explicit base URLs.
@@ -25,6 +25,7 @@ use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_media::remotes::adapter::RemoteHandle;
 use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolvedConnection};
 use droppedneedle_media::remotes::models::SourceName;
+use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzClient};
 use droppedneedle_providers::skiddle::SkiddleClient;
@@ -213,6 +214,9 @@ pub trait VerifyProbes: Send + Sync {
         username: &'a str,
         token: &'a str,
     ) -> BoxFuture<'a, ListenBrainzVerdict>;
+    /// Last.fm app key check, then the shared secret through a signed
+    /// `auth.getToken`.
+    fn lastfm<'a>(&'a self, key: &'a str, secret: &'a str) -> BoxFuture<'a, ProbeVerdict>;
     /// YouTube Data API key check.
     fn youtube<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ProbeVerdict>;
     /// Ticketmaster Discovery key check.
@@ -250,6 +254,8 @@ pub struct LiveProbes {
     pub musicbrainz: MusicBrainzClient,
     /// The one ListenBrainz client, which checks ListenBrainz credentials.
     pub listenbrainz: ListenBrainzClient,
+    /// The Last.fm client.
+    pub lastfm: LastFmClient,
     /// The YouTube Data API client.
     pub youtube: YouTubeApi,
     /// The Ticketmaster client.
@@ -270,6 +276,7 @@ impl LiveProbes {
             http,
             musicbrainz: providers.musicbrainz.clone(),
             listenbrainz: providers.listenbrainz.clone(),
+            lastfm: providers.lastfm.clone(),
             youtube: providers.youtube.clone(),
             ticketmaster: providers.ticketmaster.clone(),
             newznab: providers.newznab.clone(),
@@ -329,7 +336,7 @@ pub fn require_service_url(url: &str, label: &str) -> Result<String, SettingsErr
 /// The HTTP status behind a failed provider call, when it had one.
 fn status_of(error: &ProviderError) -> Option<u16> {
     match error {
-        ProviderError::Unauthorized { .. } => Some(401),
+        ProviderError::Unauthorized { .. } | ProviderError::Rejected { .. } => Some(401),
         ProviderError::Forbidden { .. } => Some(403),
         ProviderError::NotFound { .. } => Some(404),
         ProviderError::RateLimited { .. } => Some(429),
@@ -389,6 +396,30 @@ fn youtube_failure(error: &ProviderError) -> String {
             Some(status) => format!("Unexpected response: {status}."),
             None => "Connection error: request failed.".to_owned(),
         },
+    }
+}
+
+/// The Last.fm verdict for a failed check, by Last.fm's error code where
+/// it sent one. Nothing Last.fm wrote is echoed.
+fn lastfm_failure(error: &ProviderError) -> String {
+    if let Some(wait) = asked_to_wait("Last.fm", error) {
+        return wait;
+    }
+    match error {
+        ProviderError::Rejected { code, .. } => match *code {
+            lastfm::ERROR_INVALID_KEY => "Last.fm says the API key is invalid.",
+            lastfm::ERROR_INVALID_SIGNATURE => "The shared secret does not match the key.",
+            lastfm::ERROR_SUSPENDED_KEY => "Last.fm has suspended this API key.",
+            _ => "Last.fm refused the key.",
+        }
+        .to_owned(),
+        ProviderError::Unauthorized { .. } | ProviderError::Forbidden { .. } => {
+            "Last.fm refused the key.".to_owned()
+        }
+        ProviderError::Transport { .. }
+        | ProviderError::Unavailable { .. }
+        | ProviderError::Server { .. } => "Could not reach Last.fm.".to_owned(),
+        _ => "Last.fm answered in a way the check did not expect.".to_owned(),
     }
 }
 
@@ -549,6 +580,33 @@ impl VerifyProbes for LiveProbes {
                 valid: outcome.valid,
                 message: outcome.message,
                 rate_limited: outcome.rate_limited,
+            }
+        })
+    }
+
+    fn lastfm<'a>(&'a self, key: &'a str, secret: &'a str) -> BoxFuture<'a, ProbeVerdict> {
+        Box::pin(async move {
+            let creds = LastFmCredentials {
+                api_key: key.trim().to_owned(),
+                shared_secret: secret.trim().to_owned(),
+                ..LastFmCredentials::default()
+            };
+            if creds.api_key.is_empty() {
+                return ProbeVerdict::failed("An API key is required.");
+            }
+            // An admin waits on the Test button. The unsigned chart read
+            // checks the key alone; the signed token request, the call
+            // Connect starts with, checks the secret against it.
+            let priority = RequestPriority::UserInitiated;
+            if let Err(error) = self.lastfm.chart_top_artists(&creds, 1, priority).await {
+                return ProbeVerdict::provider_failed(lastfm_failure(&error), error);
+            }
+            if creds.shared_secret.is_empty() {
+                return ProbeVerdict::failed("The API key works. Add the shared secret.");
+            }
+            match self.lastfm.request_token(&creds, priority).await {
+                Ok(_) => ProbeVerdict::ok("Connected to Last.fm."),
+                Err(error) => ProbeVerdict::provider_failed(lastfm_failure(&error), error),
             }
         })
     }

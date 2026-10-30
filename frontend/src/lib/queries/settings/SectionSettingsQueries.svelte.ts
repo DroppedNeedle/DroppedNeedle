@@ -212,6 +212,13 @@ export const createVerifyPlexMutation = () =>
 		mutationFn: (body: PlexSettings) => api.v3.POST(PLEX_ENDPOINTS.verify(), body)
 	}));
 
+/** Checks the entered Last.fm key and shared secret without saving them. */
+export const createVerifyLastFmMutation = () =>
+	createAppMutation(() => ({
+		effects: () => [],
+		mutationFn: (body: LastFmSettings) => api.v3.POST(SETTINGS_ENDPOINTS.lastfmVerify(), body)
+	}));
+
 /** Checks the entered API key without saving it. */
 export const createVerifyYouTubeMutation = () =>
 	createAppMutation(() => ({

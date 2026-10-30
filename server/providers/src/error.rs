@@ -65,6 +65,17 @@ pub enum ProviderError {
         /// Lowercase provider key.
         provider: &'static str,
     },
+    /// Credentials refused with the provider's own error code, for a
+    /// provider whose codes tell a bad key from a bad secret (Last.fm).
+    /// Handled exactly as [`Self::Unauthorized`]: never retried and never
+    /// an outage; only a credential check reads the code.
+    #[error("{provider} rejected the credentials (error {code})")]
+    Rejected {
+        /// Lowercase provider key.
+        provider: &'static str,
+        /// The provider's error code.
+        code: i64,
+    },
     /// Authenticated but refused (HTTP 403). Never retried.
     #[error("{provider} refused the request (403)")]
     Forbidden {
@@ -182,6 +193,9 @@ impl ProviderError {
     pub const fn source(&self) -> &'static str {
         match self {
             Self::Unauthorized { provider: source }
+            | Self::Rejected {
+                provider: source, ..
+            }
             | Self::Forbidden { provider: source }
             | Self::NotFound { provider: source }
             | Self::BadRequest {
@@ -321,12 +335,12 @@ impl From<ProviderError> for ApiError {
                 provider,
                 format!("{} is not set up.", display_name(provider)),
             ),
-            ProviderError::Unauthorized { .. } | ProviderError::Forbidden { .. } => {
-                ApiError::provider_not_configured(
-                    provider,
-                    format!("{} refused the saved key.", display_name(provider)),
-                )
-            }
+            ProviderError::Unauthorized { .. }
+            | ProviderError::Rejected { .. }
+            | ProviderError::Forbidden { .. } => ApiError::provider_not_configured(
+                provider,
+                format!("{} refused the saved key.", display_name(provider)),
+            ),
             ProviderError::NotFound { .. } => ApiError::not_found(),
             ProviderError::BadRequest { .. }
             | ProviderError::Redirect { .. }

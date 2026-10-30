@@ -645,6 +645,19 @@ impl SettingsService {
         Ok(verdict_response(verdict.valid, verdict.message))
     }
 
+    /// Test the submitted Last.fm key pair.
+    pub async fn verify_lastfm(
+        &self,
+        incoming: Masked<droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings>,
+    ) -> Result<VerifyConnectionResponse, SettingsError> {
+        let resolved = self.unmask(incoming)?;
+        let verdict = self
+            .probes
+            .lastfm(resolved.api_key.expose(), resolved.shared_secret.expose())
+            .await;
+        Ok(verdict_response(verdict.valid, verdict.message))
+    }
+
     /// Test the submitted Ticketmaster key.
     pub async fn verify_ticketmaster(
         &self,

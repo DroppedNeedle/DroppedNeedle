@@ -31274,6 +31274,44 @@
         ]
       }
     },
+    "/api/v3/settings/lastfm/verify": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Test the submitted Last.fm key pair (a masked value tests the stored one).",
+        "operationId": "verify_lastfm",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LastFmSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Verify verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyConnectionResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/settings/library": {
       "get": {
         "tags": [

@@ -49,6 +49,7 @@ fn link_error(error: &ProviderError, exchanging: bool) -> LastFmError {
     match error {
         ProviderError::Forbidden { .. } if exchanging => LastFmError::TokenNotAuthorized,
         ProviderError::Unauthorized { .. }
+        | ProviderError::Rejected { .. }
         | ProviderError::Forbidden { .. }
         | ProviderError::NotFound { .. }
         | ProviderError::NotConfigured { .. } => LastFmError::Configuration,

@@ -560,6 +560,27 @@ pub async fn verify_listenbrainz(
         .map_err(ApiError::from)
 }
 
+/// Test the submitted Last.fm key pair (a masked value tests the stored one).
+#[utoipa::path(
+    post,
+    tag = "settings",
+    path = "/api/v3/settings/lastfm/verify",
+    request_body = LastFmSettings,
+    responses((status = 200, description = "Verify verdict", body = VerifyConnectionResponse))
+)]
+pub async fn verify_lastfm(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+    ValidJson(body): ValidJson<Masked<LastFmSettings>>,
+) -> JsonResult<VerifyConnectionResponse> {
+    settings
+        .service()
+        .verify_lastfm(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
 /// Test the submitted YouTube key (a masked key tests the stored one).
 #[utoipa::path(
     post,

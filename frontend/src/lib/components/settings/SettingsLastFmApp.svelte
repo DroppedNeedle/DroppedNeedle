@@ -2,6 +2,7 @@
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import {
 		createSaveLastFmSettingsMutation,
+		createVerifyLastFmMutation,
 		getLastFmSettingsQuery
 	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -18,10 +19,19 @@
 	// their own account and pick scrobble toggles in the profile's "Scrobbling
 	// & Discovery" card. A user's own key pair, when saved, wins over this one
 	// for that user. The secrets come back masked; saving the mask keeps the
-	// stored value.
+	// stored value, and testing the mask tests the stored value.
+	const verify = createVerifyLastFmMutation();
+
 	const section = createSettingsSection(
 		getLastFmSettingsQuery(),
-		createSaveLastFmSettingsMutation()
+		createSaveLastFmSettingsMutation(),
+		{
+			test: async (draft) => {
+				if (!draft.api_key) return { passed: false, message: 'Add an API key first.' };
+				const result = await verify.mutateAsync(draft);
+				return { passed: result.valid, message: result.message };
+			}
+		}
 	);
 </script>
 
@@ -77,7 +87,7 @@
 						<ExternalLink class="h-3 w-3" /> Register an app to get a key and secret
 					</a>
 
-					<SaveBar {...section.bar} />
+					<SaveBar {...section.bar} testLabel="Test connection" />
 				</div>
 			{/snippet}
 		</QueryBoundary>

@@ -410,7 +410,9 @@ impl Courier {
             // Users without their own key pair scrobble on the admin's. A
             // key or signature refusal is then the admin's to fix: the play
             // waits for it rather than failing.
-            Err(ProviderError::Unauthorized { .. }) if on_instance_key => {
+            Err(ProviderError::Unauthorized { .. } | ProviderError::Rejected { .. })
+                if on_instance_key =>
+            {
                 retry(INSTANCE_KEY_REFUSED, None)
             }
             Err(error) => self.answer(Service::LastFm, &error, attempt),
@@ -426,6 +428,7 @@ impl Courier {
                 retry(SERVICE_UNAVAILABLE, self.retry_at(error, attempt))
             }
             ProviderError::Unauthorized { .. }
+            | ProviderError::Rejected { .. }
             | ProviderError::Forbidden { .. }
             | ProviderError::NotConfigured { .. } => fail(CREDENTIAL_REFUSED),
             _ => fail(LISTEN_REFUSED),

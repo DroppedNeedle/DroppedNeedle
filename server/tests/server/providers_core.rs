@@ -909,7 +909,7 @@ async fn lastfm_hooks() {
         (
             "error 10 in a 403",
             answer(403, &[], &envelope(10)),
-            |result| matches!(result, Err(ProviderError::Unauthorized { .. })),
+            |result| matches!(result, Err(ProviderError::Rejected { code: 10, .. })),
             1,
             Duration::ZERO,
         ),

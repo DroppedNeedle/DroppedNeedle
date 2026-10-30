@@ -181,6 +181,13 @@ impl VerifyProbes for FakeProbes {
         })
     }
 
+    fn lastfm<'a>(&'a self, key: &'a str, secret: &'a str) -> BoxFuture<'a, ProbeVerdict> {
+        Box::pin(async move {
+            self.recorded("lastfm", &[key, secret]);
+            self.verdict("lastfm")
+        })
+    }
+
     fn youtube<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
             self.recorded("youtube", &[key]);
@@ -634,6 +641,34 @@ async fn verify_resolves_masks_and_maps_verdicts() {
             .iter()
             .any(|call| call == "newznab(http://stub:8080/api,indexer-live)"),
         "probe saw the stored indexer key: {:?}",
+        rig.probes.calls()
+    );
+
+    // The Last.fm pair resolves its masks to the stored values too.
+    let (status, saved) = call(
+        rig.admin_app(),
+        "PUT",
+        "/api/v3/settings/lastfm",
+        Some(json!({"enabled": true, "api_key": "lfm-live", "shared_secret": "lfm-secret"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["api_key"], SECRET_MASK);
+    let (status, verdict) = call(
+        rig.admin_app(),
+        "POST",
+        "/api/v3/settings/lastfm/verify",
+        Some(saved),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(verdict["valid"], true);
+    assert!(
+        rig.probes
+            .calls()
+            .iter()
+            .any(|call| call == "lastfm(lfm-live,lfm-secret)"),
+        "probe saw the stored Last.fm pair: {:?}",
         rig.probes.calls()
     );
 
@@ -1205,6 +1240,113 @@ async fn live_probes_hit_stubs() {
     assert!(oidc.valid);
     assert!(!probes.oidc(&format!("{base}/noidc")).await.valid);
     assert!(!probes.oidc("  ").await.valid);
+}
+
+/// A Last.fm stand-in that knows one key pair and counts its requests.
+/// Error bodies follow Last.fm's envelope as recorded live on 2026-10-26
+/// (tests/fixtures/lastfm/invalid_key.json: a 403 with error 10). Codes
+/// 13 (invalid method signature) and 26 (suspended key) are taken from
+/// https://www.last.fm/api/errorcodes and were not provoked live; they are
+/// assumed to come in the same envelope and status.
+fn lastfm_stub(hits: Arc<std::sync::atomic::AtomicUsize>) -> Router {
+    use axum::Json;
+    use axum::extract::Query;
+    use axum::response::IntoResponse;
+
+    let api = move |Query(query): Query<HashMap<String, String>>| {
+        let hits = Arc::clone(&hits);
+        async move {
+            hits.fetch_add(1, Ordering::SeqCst);
+            let refuse = |code: i64, message: &str| {
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({"error": code, "message": message})),
+                )
+                    .into_response()
+            };
+            match query.get("api_key").map(String::as_str) {
+                Some("lfm-key") => {}
+                Some("lfm-suspended") => return refuse(26, "Suspended API key"),
+                _ => return refuse(10, "Invalid API key - You must be granted a valid key"),
+            }
+            match query.get("method").map(String::as_str) {
+                Some("chart.getTopArtists") => {
+                    Json(json!({"artists": {"artist": []}})).into_response()
+                }
+                Some("auth.getToken") => {
+                    let unsigned: Vec<(String, String)> = query
+                        .iter()
+                        .filter(|(key, _)| *key != "api_sig")
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect();
+                    let expected =
+                        droppedneedle_providers::lastfm::api_sig(&unsigned, "lfm-secret");
+                    if query.get("api_sig") == Some(&expected) {
+                        Json(json!({"token": "lfm-token"})).into_response()
+                    } else {
+                        refuse(13, "Invalid method signature supplied")
+                    }
+                }
+                _ => refuse(3, "Invalid Method"),
+            }
+        }
+    };
+    Router::new().route("/2.0/", axum::routing::get(api))
+}
+
+/// The Last.fm test tells a bad key from a wrong secret by Last.fm's own
+/// error code, and sends nothing for a blank key.
+#[tokio::test]
+async fn lastfm_probe_names_the_wrong_credential() {
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("stub binds");
+    let base = format!("http://{}/2.0/", listener.local_addr().expect("addr reads"));
+    let app = lastfm_stub(Arc::clone(&hits));
+    tokio::spawn(async move { axum::serve(listener, app).await.expect("stub serves") });
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
+    let probes = LiveProbes::new(
+        reqwest::Client::new(),
+        &droppedneedle_providers::Providers::unpaced_at(
+            Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
+            droppedneedle_providers::ProviderEndpoints {
+                lastfm: base,
+                ..droppedneedle_providers::ProviderEndpoints::closed()
+            },
+        ),
+    );
+
+    let blank = probes.lastfm("  ", "lfm-secret").await;
+    assert!(!blank.valid);
+    assert_eq!(blank.message, "An API key is required.");
+    assert_eq!(hits.load(Ordering::SeqCst), 0, "a blank key sends nothing");
+
+    let good = probes.lastfm("lfm-key", "lfm-secret").await;
+    assert!(good.valid, "{}", good.message);
+    assert_eq!(good.message, "Connected to Last.fm.");
+
+    for (key, secret, message) in [
+        (
+            "wrong",
+            "lfm-secret",
+            "Last.fm says the API key is invalid.",
+        ),
+        (
+            "lfm-key",
+            "wrong",
+            "The shared secret does not match the key.",
+        ),
+        (
+            "lfm-suspended",
+            "lfm-secret",
+            "Last.fm has suspended this API key.",
+        ),
+    ] {
+        let verdict = probes.lastfm(key, secret).await;
+        assert!(!verdict.valid, "{key}/{secret}");
+        assert_eq!(verdict.message, message, "{key}/{secret}");
+    }
 }
 
 /// Live fan-out kicks the events sweep only for the Events section.

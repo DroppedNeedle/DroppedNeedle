@@ -308,6 +308,7 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::verify_plex))
         .admin(routes!(h::get_plex_libraries))
         .admin(routes!(h::verify_listenbrainz))
+        .admin(routes!(h::verify_lastfm))
         .admin(routes!(h::verify_youtube))
         .admin(routes!(h::test_ticketmaster))
         .admin(routes!(h::test_skiddle))

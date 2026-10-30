@@ -39,6 +39,15 @@ pub const DEFAULT_BASE_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 /// purpose; it is decoded from the documented envelope and covered by a
 /// scripted fake instead.
 pub const ERROR_RATE_LIMITED: i64 = 29;
+/// Invalid API key. Seen live: a 403 with this code, recorded 2026-10-26
+/// (tests/fixtures/lastfm/invalid_key.json).
+pub const ERROR_INVALID_KEY: i64 = 10;
+/// Invalid method signature: the shared secret does not match the key.
+/// Taken from the listing at https://www.last.fm/api/errorcodes, not
+/// provoked live; the envelope is assumed to match error 10's.
+pub const ERROR_INVALID_SIGNATURE: i64 = 13;
+/// Suspended API key. From the same listing, not provoked live.
+pub const ERROR_SUSPENDED_KEY: i64 = 26;
 /// The rest after error 29.
 pub const RATE_LIMIT_WAIT: Duration = Duration::from_secs(1);
 /// The provider name errors carry, and the Last.fm rate row.
@@ -66,7 +75,10 @@ pub static SPEC: Spec = Spec {
 /// - 6, unknown entity: absence ([`ProviderError::NotFound`]);
 /// - 29, rate limit: [`ProviderError::RateLimited`] for one second;
 /// - 11 and 16, offline or temporary: [`ProviderError::Unavailable`];
-/// - 4, 10, 13, 15 and 26 (key, signature, expired token, suspended key):
+/// - 10, 13 and 26 (invalid key, invalid signature, suspended key):
+///   [`ProviderError::Rejected`] with the code, so a key check can say
+///   which credential is wrong;
+/// - 4 and 15 (authentication failed, expired token):
 ///   [`ProviderError::Unauthorized`];
 /// - 9, 14 and 17 (session, unapproved token, login required):
 ///   [`ProviderError::Forbidden`];
@@ -91,7 +103,10 @@ pub fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
             provider,
             retry_after: None,
         },
-        Some(4 | 10 | 13 | 15 | 26) => ProviderError::Unauthorized { provider },
+        Some(code @ (ERROR_INVALID_KEY | ERROR_INVALID_SIGNATURE | ERROR_SUSPENDED_KEY)) => {
+            ProviderError::Rejected { provider, code }
+        }
+        Some(4 | 15) => ProviderError::Unauthorized { provider },
         Some(9 | 14 | 17) => ProviderError::Forbidden { provider },
         Some(_) => ProviderError::BadRequest { provider, status },
         None => ProviderError::Server { provider, status },
