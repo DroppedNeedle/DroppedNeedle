@@ -383,6 +383,7 @@ fn core(
         upgrade_policy: Some(settings.live()),
         readiness: ports.readiness,
         albums: ports.albums,
+        events: Some(events.clone()),
         ..RequestsState::new(db, quota, dispatch.clone())
     };
     let mixer = ports.mix.map(|mix| {
@@ -715,11 +716,12 @@ impl AcquireSetup {
                 RequestsError::Busy { operation } => RecoveryError::Busy { operation },
                 other => RecoveryError::Failed(format!("request recovery failed: {other:?}")),
             })?;
-        if requests.cancelled > 0 || requests.relinked > 0 || requests.redispatched > 0 {
+        if requests != crate::requests::service::RequestRecovery::default() {
             tracing::info!(
                 cancelled = requests.cancelled,
                 relinked = requests.relinked,
                 redispatched = requests.redispatched,
+                mix_asks_cleared = requests.mix_asks_cleared,
                 "requests recovered"
             );
         }

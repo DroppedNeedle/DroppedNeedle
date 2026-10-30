@@ -41,6 +41,22 @@ droppedneedle_kernel::sql! {
          WHERE state = 'watching' AND release_group_mbid_lower IN ( \
            SELECT musicbrainz_id_lower FROM request_history \
            WHERE download_task_id = ?1 AND request_kind = 'album' AND status = 'cancelled')";
+    /// The release date the stopped wanted watch of album `?1` holds; no
+    /// row when the album has no stopped watch.
+    pub(crate) STOPPED_WATCH_DATE = "SELECT first_release_date FROM wanted_watches \
+         WHERE release_group_mbid_lower = ?1 AND state = 'stopped'";
+    /// Arm the stopped wanted watch of album `?1` (lowercased) again for
+    /// owner `?4` (the old one when NULL), armed at `?2`, due at `?3`, with
+    /// fresh counters.
+    pub(crate) REARM_STOPPED_WATCH = "UPDATE wanted_watches SET state = 'watching', \
+         user_id = COALESCE(?4, user_id), created_at = ?2, check_count = 0, quiet_streak = 0, \
+         last_checked_at = NULL, next_check_at = ?3, last_outcome = NULL, \
+         new_candidate_count = 0 \
+         WHERE release_group_mbid_lower = ?1 AND state = 'stopped'";
+    /// Make album row `?1` user `?2`'s own ask when it is their followed
+    /// artist's release: they asked for it by hand.
+    pub(crate) OWN_FOLLOW_ROW = "UPDATE request_history SET origin = 'user' \
+         WHERE musicbrainz_id_lower = ?1 AND user_id = ?2 AND origin = 'follow'";
     /// Stop the wanted watch of album `?1` (lowercased).
     pub(crate) STOP_ROW_WATCH = "UPDATE wanted_watches SET state = 'stopped' \
          WHERE release_group_mbid_lower = ?1 AND state = 'watching'";
@@ -188,9 +204,17 @@ droppedneedle_kernel::sql! {
     pub(crate) REQUEUE_WAITING = "UPDATE request_history SET status = 'queued', \
          generation = generation + 1 WHERE musicbrainz_id_lower = ?1 \
          AND status = 'pending' AND download_task_id IS NULL AND generation = ?2";
-    /// Rows waiting for quota room, oldest first.
+    /// Rows waiting to start, oldest first: waiting for quota room, or
+    /// put back by a busy database.
     pub(crate) WAITING_FOR_QUOTA = RECORD_SELECT
         + " WHERE rh.status = 'queued' AND rh.download_task_id IS NULL \
+         ORDER BY rh.requested_at ASC, rh.musicbrainz_id_lower";
+    /// Authorized pending rows with no task, asked or approved before `?1`,
+    /// oldest first.
+    pub(crate) STALLED_STARTS = RECORD_SELECT
+        + " WHERE rh.status = 'pending' AND rh.download_task_id IS NULL \
+           AND rh.dispatch_authorized = 1 \
+           AND MAX(COALESCE(rh.reviewed_at, 0), rh.requested_at) < ?1 \
          ORDER BY rh.requested_at ASC, rh.musicbrainz_id_lower";
     /// One account's role.
     pub(crate) ROLE_OF = "SELECT role FROM auth_users WHERE id = ?1";
@@ -353,14 +377,21 @@ droppedneedle_kernel::sql! {
     /// One user's approval state.
     pub(crate) MIX_APPROVAL_STATE = "SELECT state FROM personal_mix_approvals \
          WHERE user_id = ?1";
-    /// Pending approvals, oldest first.
+    /// Pending approvals of plain users, oldest first: an admin's or a
+    /// trusted user's grant never waits for review.
     pub(crate) PENDING_MIX_APPROVALS = "SELECT m.user_id, u.display_name, m.state, \
          m.requested_at FROM personal_mix_approvals m LEFT JOIN auth_users u ON u.id = m.user_id \
-         WHERE m.state = 'pending' ORDER BY m.requested_at ASC, m.user_id";
-    /// Move user `?1`'s approval from `?6` to `?2`.
+         WHERE m.state = 'pending' AND COALESCE(u.role, 'user') NOT IN ('admin', 'trusted') \
+         ORDER BY m.requested_at ASC, m.user_id";
+    /// Move plain user `?1`'s approval from `?6` to `?2`.
     pub(crate) MIX_APPROVAL_TRANSITION = "UPDATE personal_mix_approvals SET state = ?2, \
          reviewed_by_id = ?3, reviewed_by_name = ?4, reviewed_at = ?5 \
-         WHERE user_id = ?1 AND state = ?6";
+         WHERE user_id = ?1 AND state = ?6 AND NOT EXISTS (SELECT 1 FROM auth_users u \
+           WHERE u.id = ?1 AND u.role IN ('admin', 'trusted'))";
+    /// Drop the pending approvals of admins and trusted users.
+    pub(crate) CLEAR_CURATOR_MIX_PENDING = "DELETE FROM personal_mix_approvals \
+         WHERE state = 'pending' AND user_id IN (SELECT id FROM auth_users \
+           WHERE role IN ('admin', 'trusted'))";
 
     // What requests read from the library and the accounts.
 

@@ -35,7 +35,7 @@ use droppedneedle_acquire::follows::Follows;
 use droppedneedle_acquire::plugin_events::FlowTicks;
 use droppedneedle_acquire::requests::{
     ledger::{BeginOutcome, RequestRecord, RequestStatus, WatchState},
-    models::{RequestKind, WaitingReason},
+    models::{AlbumIntake, RequestKind, RequestOrigin, WaitingReason},
     quota::QuotaLedger,
     service::RequestsService,
     sqlite::{RequestStore, WantedStore},
@@ -564,7 +564,7 @@ async fn follow_poll_baselines_then_emits() {
         .unwrap();
     assert_eq!(active.items.len(), 1, "the Requests page lists it");
     assert_eq!(active.items[0].musicbrainz_id, "rg-new");
-    assert_eq!(active.items[0].origin, DispatchOrigin::Follow);
+    assert_eq!(active.items[0].origin, RequestOrigin::Follow);
     let cursor = follows.cursor("artist-1").await.unwrap().unwrap();
     assert_eq!(cursor.pending.len(), 1);
     assert_eq!(cursor.pending[0].rg_mbid, "rg-future");
@@ -1004,7 +1004,7 @@ async fn follow_download_waits_while_the_follower_is_over_quota() {
     let record = RequestRecord {
         key: "rg-asked".to_owned(),
         kind: RequestKind::Album,
-        status: RequestStatus::Pending,
+        status: RequestStatus::Imported,
         artist_name: "The Band".to_owned(),
         album_title: "Asked".to_owned(),
         artist_mbid: None,
@@ -1044,7 +1044,7 @@ async fn follow_download_waits_while_the_follower_is_over_quota() {
         .iter()
         .find(|item| item.musicbrainz_id == "rg-new")
         .expect("the follow download is on the Requests page");
-    assert_eq!(waiting.origin, DispatchOrigin::Follow);
+    assert_eq!(waiting.origin, RequestOrigin::Follow);
     assert_eq!(
         waiting.waiting_reason,
         Some(WaitingReason::RequestQuotaFull)
@@ -1238,4 +1238,60 @@ async fn cancelling_a_wanted_download_stops_its_watch() {
     let watch = rig.deps.watches.get(RG_WANTED).await.unwrap().unwrap();
     assert_eq!(watch.state, WatchState::Stopped);
     assert_eq!(tasks(&db).await.len(), 1, "no second download");
+}
+
+// A re-ask an admin rejects stops its album's watch the way a cancel does:
+// with auto-download on, the watcher downloads nothing for it. Asking for
+// the album again, whoever asks, arms the watch again for them.
+#[tokio::test]
+async fn a_rejected_re_ask_stops_its_watch() {
+    let db = AcquireDb::scratch().unwrap();
+    let rig = wanted(&db).await;
+    seed_request(&rig.deps.ledger, RG_WANTED, "failed", None).await;
+    wanted_tick(NOW, &rig.deps).await;
+
+    let requests = RequestsService::new(&RequestsState::new(
+        &db,
+        Arc::new(QuotaLedger::unlimited(db.clone())),
+        rig.deps.downloads.clone(),
+    ));
+    let owner = Principal::acting_for("user-1", Role::User, None);
+    let ask = AlbumIntake {
+        musicbrainz_id: RG_WANTED.to_owned(),
+        artist: Some("Massive Attack".to_owned()),
+        album: Some("Blue Lines".to_owned()),
+        year: None,
+        artist_mbid: None,
+        release_mbid: None,
+        monitor_artist: false,
+        auto_download_artist: false,
+    };
+    requests.request_album(&owner, &ask).await.unwrap();
+    requests
+        .reject_request(
+            &crate::common::auth::test_admin("root"),
+            RG_WANTED,
+            RequestKind::Album,
+        )
+        .await
+        .unwrap();
+    assert_eq!(status_of(&rig.deps.ledger, RG_WANTED).await, "rejected");
+
+    let watch = rig.deps.watches.get(RG_WANTED).await.unwrap().unwrap();
+    let checked = wanted_tick(watch.next_check_at as i64, &rig.deps).await;
+    assert_eq!(checked.dispatched, 0);
+    assert!(tasks(&db).await.is_empty(), "nothing downloads");
+    let watch = rig.deps.watches.get(RG_WANTED).await.unwrap().unwrap();
+    assert_eq!(watch.state, WatchState::Stopped);
+
+    db.add_user("user-2", "Other", "user").await.unwrap();
+    let other = Principal::acting_for("user-2", Role::User, None);
+    requests.request_album(&other, &ask).await.unwrap();
+    let watch = rig.deps.watches.get(RG_WANTED).await.unwrap().unwrap();
+    assert_eq!(watch.state, WatchState::Watching, "a new ask watches again");
+    assert_eq!(watch.user_id, "user-2", "for the person who asked");
+    assert!(
+        watch.next_check_at > watch.created_at,
+        "not while the new ask's own download starts"
+    );
 }

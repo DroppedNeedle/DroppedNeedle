@@ -207,6 +207,15 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
     if existing.is_some() {
         tx.execute(sql::DELETE_ROW.text(), params![stored])?;
     }
+    // A cancel or a rejection stopped the album's watch; a new ask is a new
+    // intent, so the watch arms again.
+    if record.kind == RequestKind::Album
+        && existing.as_ref().is_some_and(|(status, _)| {
+            matches!(status, RequestStatus::Cancelled | RequestStatus::Rejected)
+        })
+    {
+        rearm_stopped_watch(tx, &stored, &record)?;
+    }
     tx.execute(
         sql::INSERT_ROW.text(),
         params![
@@ -248,6 +257,37 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
         )?;
     }
     Ok(BeginOutcome::Won(record))
+}
+
+/// Arm album `stored`'s stopped watch again for `record`'s ask: it
+/// watches for the new owner, first checked one recheck interval out, as
+/// a new watch is, so it does not search while the ask's own download
+/// starts.
+fn rearm_stopped_watch(
+    tx: &Transaction,
+    stored: &str,
+    record: &RequestRecord,
+) -> rusqlite::Result<()> {
+    let date: Option<Option<String>> = tx
+        .query_row(sql::STOPPED_WATCH_DATE.text(), params![stored], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    let Some(date) = date else {
+        return Ok(());
+    };
+    let now = record.requested_at;
+    let interval = crate::flows::loops::interval_seconds(
+        date.as_deref(),
+        0,
+        i64::try_from(now).unwrap_or(i64::MAX),
+    );
+    let due = now.saturating_add(u64::try_from(interval).unwrap_or(0));
+    tx.execute(
+        sql::REARM_STOPPED_WATCH.text(),
+        params![stored, ms_from_secs(now), ms_from_secs(due), record.user_id],
+    )?;
+    Ok(())
 }
 
 /// Attach a listener to a live row. Terminal
@@ -469,6 +509,7 @@ impl RequestStore {
                         BeginOutcome::Existing(winner) => {
                             let stored = row_key(RequestKind::Album, &winner.key);
                             if attach_tx(tx, &stored, &user_id, Some(&name), now)? {
+                                tx.execute(sql::OWN_FOLLOW_ROW.text(), params![stored, user_id])?;
                                 filed.insert(winner.key);
                             }
                         }
@@ -477,6 +518,7 @@ impl RequestStore {
                 for key in joins {
                     let stored = row_key(RequestKind::Album, &key);
                     if attach_tx(tx, &stored, &user_id, Some(&name), now)? {
+                        tx.execute(sql::OWN_FOLLOW_ROW.text(), params![stored, user_id])?;
                         filed.insert(key);
                     }
                 }
@@ -572,8 +614,10 @@ impl RequestStore {
             .map_err(|error| lane_error("requests.requeue_waiting", error))
     }
 
-    /// Rows waiting for quota room, oldest first, with their owner's role.
-    /// The role is `None` for a row whose owner no longer exists.
+    /// Rows waiting to start, oldest first, with their owner's role: rows
+    /// waiting for quota room or put back by a busy database. The role is
+    /// `None` for a row whose owner no longer exists; each owner's role is
+    /// read once.
     pub async fn waiting_for_quota(
         &self,
     ) -> Result<Vec<(RequestRecord, Option<Role>)>, RequestsError> {
@@ -581,15 +625,37 @@ impl RequestStore {
             read_records(conn, sql::WAITING_FOR_QUOTA.text(), [])
         })
         .await?;
+        let mut roles: HashMap<String, Option<Role>> = HashMap::new();
         let mut out = Vec::with_capacity(records.len());
         for record in records {
             let role = match record.user_id.as_deref() {
-                Some(owner) => self.role_of(owner).await?,
+                Some(owner) => match roles.get(owner) {
+                    Some(role) => *role,
+                    None => {
+                        let role = self.role_of(owner).await?;
+                        roles.insert(owner.to_owned(), role);
+                        role
+                    }
+                },
                 None => None,
             };
             out.push((record, role));
         }
         Ok(out)
+    }
+
+    /// Authorized `pending` rows with no task, asked or approved before
+    /// `before`: a busy database kept them from going back to waiting
+    /// after their download could not be queued.
+    pub async fn stalled_starts(&self, before: u64) -> Result<Vec<RequestRecord>, RequestsError> {
+        read(&self.db, "requests.stalled_starts", move |conn| {
+            read_records(
+                conn,
+                sql::STALLED_STARTS.text(),
+                params![ms_from_secs(before)],
+            )
+        })
+        .await
     }
 
     /// One account's role, or `None` when the account does not exist.
@@ -643,6 +709,7 @@ impl RequestStore {
                 if !attach_tx(tx, &stored, &user_id, name.as_deref(), now)? {
                     return Ok(false);
                 }
+                tx.execute(sql::OWN_FOLLOW_ROW.text(), params![stored, user_id])?;
                 if let Some(follow) = follow {
                     tx.execute(
                         sql::WIDEN_MONITORING.text(),
@@ -845,7 +912,8 @@ impl RequestStore {
             .map_err(|error| lane_error("requests.claim_approval", error))
     }
 
-    /// Claim a rejection: `awaiting_approval` becomes `rejected`.
+    /// Claim a rejection: `awaiting_approval` becomes `rejected`, and an
+    /// album's wanted watch stops in the same write.
     pub async fn claim_rejection(
         &self,
         kind: RequestKind,
@@ -868,6 +936,10 @@ impl RequestStore {
                         to_i64(expected_generation)
                     ],
                 )?;
+                // A rejected album is not downloaded again by its watch.
+                if changed > 0 && kind == RequestKind::Album {
+                    tx.execute(sql::STOP_ROW_WATCH.text(), params![stored])?;
+                }
                 Ok(changed > 0)
             })
             .await

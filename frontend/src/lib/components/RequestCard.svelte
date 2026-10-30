@@ -125,6 +125,8 @@
 				return 'Waiting: request quota full';
 			case 'storage_full':
 				return 'Waiting: storage full';
+			case 'waiting_to_start':
+				return 'Waiting to start';
 			default:
 				return null;
 		}

@@ -1,6 +1,8 @@
 //! Reads: the active list, history, the approval queue and wanted
 //! watches, each row with its linked task's progress.
 
+use std::collections::HashMap;
+
 use super::RequestsService;
 use crate::downloads::state::TaskStatus;
 use crate::requests::error::RequestsError;
@@ -62,7 +64,7 @@ impl From<&RequestRecord> for RequestItem {
             can_reimport: None,
             album_version_only: None,
             request_kind: record.kind,
-            origin: record.origin,
+            origin: record.origin.into(),
             track_title: record.track_title.clone(),
             duration_seconds: record.duration_seconds,
             track_release_group_mbid: record.track_release_group_mbid.clone(),
@@ -321,40 +323,65 @@ impl RequestsService {
         watch_action(change)
     }
 
-    /// Rows plus their linked tasks' progress, in order.
+    /// Rows plus their linked tasks' progress, in order. Each owner's
+    /// quota is read once for the page.
     async fn to_items(&self, records: &[RequestRecord]) -> Vec<RequestItem> {
+        let mut reasons = HashMap::new();
         let mut items = Vec::with_capacity(records.len());
         for record in records {
-            items.push(self.to_item(record).await);
+            items.push(self.to_item(record, &mut reasons).await);
         }
         items
     }
 
-    /// Why a row waiting for quota room still waits, read from its
-    /// owner's quota now. A read failure only loses the reason.
-    async fn waiting_reason(&self, record: &RequestRecord) -> Option<WaitingReason> {
+    /// Why a row with no task still waits to start, read from its owner's
+    /// quota now; `reasons` keeps each owner's answer for the page. A row
+    /// nothing holds back waits on the next pass of waiting requests. A
+    /// read failure only loses the reason.
+    async fn waiting_reason(
+        &self,
+        record: &RequestRecord,
+        reasons: &mut HashMap<String, Option<WaitingReason>>,
+    ) -> Option<WaitingReason> {
         let owner = record.user_id.as_deref()?;
+        if let Some(reason) = reasons.get(owner) {
+            return *reason;
+        }
         let reason = match self.store.role_of(owner).await {
             Ok(Some(role)) => {
                 let principal = Principal::acting_for(owner, role, None);
-                self.waiting_reason_for(&principal, self.now_epoch()).await
+                self.waiting_reason_for(&principal, self.now_epoch())
+                    .await
+                    .map(|reason| reason.or(Some(WaitingReason::WaitingToStart)))
             }
             Ok(None) => Ok(None),
             Err(error) => Err(error),
         };
-        reason.unwrap_or_else(|error| {
+        let reason = reason.unwrap_or_else(|error| {
             tracing::warn!(key = %record.key, ?error, "waiting reason unreadable");
             None
-        })
+        });
+        reasons.insert(owner.to_owned(), reason);
+        reason
     }
 
     /// One row plus its linked task's progress snapshot. Rows without a
     /// task (waiting for approval) read exactly as the record maps; a task
     /// read failure leaves the progress fields empty and logs why.
-    async fn to_item(&self, record: &RequestRecord) -> RequestItem {
+    async fn to_item(
+        &self,
+        record: &RequestRecord,
+        reasons: &mut HashMap<String, Option<WaitingReason>>,
+    ) -> RequestItem {
         let mut item = RequestItem::from(record);
         if record.waits_for_quota() {
-            item.waiting_reason = self.waiting_reason(record).await;
+            item.waiting_reason = self.waiting_reason(record, reasons).await;
+        } else if record.status == RequestStatus::Pending
+            && record.task_id.is_none()
+            && record.dispatch_authorized
+        {
+            // Its download is being queued, or a busy database stopped it.
+            item.waiting_reason = Some(WaitingReason::WaitingToStart);
         }
         let Some(task_id) = record.task_id.as_deref() else {
             return item;

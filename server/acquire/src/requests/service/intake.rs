@@ -1,6 +1,7 @@
 //! Intake: album, track, batch and follow asks. Winners record and
 //! maybe dispatch; duplicate asks attach to the live row.
 
+use super::recovery::Revived;
 use super::{Dispatched, RequestsService, dispatch_fault, fresh_record, stored_dispatch};
 use crate::dispatch::{DispatchError, DispatchOrigin};
 use crate::follows::FollowAsk;
@@ -19,9 +20,14 @@ use crate::requests::models::{
 };
 use crate::requests::quota::QuotaLedger;
 use droppedneedle_auth::Principal;
+use droppedneedle_kernel::events::{AutoDownloadEnqueued, UserNotice};
 
 /// Batch row cap.
 const BATCH_MAX_ITEMS: usize = 500;
+
+/// How long a pending row may go without a task before the waiting pass
+/// takes it for one that lost its dispatch.
+const STALLED_START_SECS: u64 = 300;
 
 /// The follow an album ask names: its artist, when the ask says to follow
 /// and names one, and auto-download the way the Following page asks for
@@ -168,7 +174,7 @@ impl RequestsService {
             )
         };
         match self.store.begin_or_wait(record, owner, gate, hold).await? {
-            BeginOutcome::Existing(_) => Ok(FollowIntake::Joined),
+            BeginOutcome::Existing(existing) => self.join_follow(&existing, &principal, now).await,
             BeginOutcome::Won(won) => {
                 self.announce_created(&won);
                 if won.waits_for_quota() {
@@ -216,7 +222,7 @@ impl RequestsService {
         if !existing.waits_for_quota() || existing.user_id.as_deref() == Some(principal.user_id()) {
             return Ok(FollowIntake::Joined);
         }
-        Ok(match self.start_one(existing, principal, now).await? {
+        Ok(match self.start_joined(existing, principal, now).await? {
             Some(task_id) => FollowIntake::Started { task_id },
             None => FollowIntake::Held,
         })
@@ -232,6 +238,25 @@ impl RequestsService {
         now: u64,
     ) -> Result<Vec<(RequestRecord, String)>, RequestsError> {
         let mut started = Vec::new();
+        // A busy database can leave a row pending with no task. Once it is
+        // older than any dispatch would take, it gets the task it lost.
+        let stalled = self
+            .store
+            .stalled_starts(now.saturating_sub(STALLED_START_SECS))
+            .await?;
+        for record in stalled {
+            match self.revive(&record).await {
+                Ok(Some(Revived::Relinked(task_id) | Revived::Redispatched(task_id)))
+                    if record.origin == DispatchOrigin::Follow =>
+                {
+                    started.push((record, task_id));
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(key = %record.key, ?error, "stalled request could not start");
+                }
+            }
+        }
         for (record, role) in self.store.waiting_for_quota().await? {
             let (Some(owner), Some(role)) = (record.user_id.clone(), role) else {
                 tracing::info!(key = %record.key, "waiting request has no owner; cancelling it");
@@ -300,10 +325,77 @@ impl RequestsService {
                 admitted.key
             ))),
             Dispatched::Failed(cause) => {
-                self.store
-                    .requeue_waiting(admitted.kind, &admitted.key, admitted.generation)
-                    .await?;
+                self.wait_to_start(&admitted).await?;
                 Err(dispatch_fault(cause))
+            }
+        }
+    }
+
+    /// Put a row whose download could not be queued back to waiting. When
+    /// the database is too busy for that too, the row stays pending with
+    /// no task: the waiting pass and startup recovery both start it.
+    async fn wait_to_start(&self, record: &RequestRecord) -> Result<(), RequestsError> {
+        match self
+            .store
+            .requeue_waiting(record.kind, &record.key, record.generation)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(RequestsError::Busy { operation }) => {
+                tracing::info!(key = %record.key, %operation, "database busy; the request stays pending");
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Start a waiting row `principal` joined, as [`Self::start_one`]. A
+    /// followed artist's release started by someone else's ask tells its
+    /// follower, as the follow poll would.
+    async fn start_joined(
+        &self,
+        record: &RequestRecord,
+        principal: &Principal,
+        now: u64,
+    ) -> Result<Option<String>, RequestsError> {
+        let started = self.start_one(record, principal, now).await?;
+        if let (Some(task_id), Some(owner), Some(events)) =
+            (&started, record.user_id.as_deref(), &self.events)
+            && record.origin == DispatchOrigin::Follow
+            && owner != principal.user_id()
+        {
+            events.notify(
+                owner,
+                UserNotice::AutoDownloadEnqueued(AutoDownloadEnqueued {
+                    artist_mbid: record.artist_mbid.clone().unwrap_or_default(),
+                    artist_name: record.artist_name.clone(),
+                    release_group_mbid: record.key.clone(),
+                    title: record.album_title.clone(),
+                    task_id: task_id.clone(),
+                }),
+            );
+        }
+        Ok(started)
+    }
+
+    /// Start the waiting album rows of `keys` a batch ask by `principal`
+    /// joined, when `principal` needs no approval. One row's failure is
+    /// logged and leaves the others to run.
+    async fn start_joined_keys(&self, principal: &Principal, keys: &[String]) {
+        if !auto_approves(principal.role()) {
+            return;
+        }
+        let now = self.now_epoch();
+        for key in keys {
+            let started = match self.store.get(RequestKind::Album, key).await {
+                Ok(Some(row)) if row.waits_for_quota() => {
+                    self.start_joined(&row, principal, now).await
+                }
+                Ok(_) => Ok(None),
+                Err(error) => Err(error),
+            };
+            if let Err(error) = started {
+                tracing::warn!(%key, ?error, "joined waiting request could not start");
             }
         }
     }
@@ -376,6 +468,11 @@ impl RequestsService {
         {
             return Err(RequestsError::InvalidInput {
                 message: "Invalid artist MBID format".to_owned(),
+            });
+        }
+        if body.monitor_artist && body.artist_mbid.is_none() {
+            return Err(RequestsError::InvalidInput {
+                message: "Following the artist needs its artist MBID".to_owned(),
             });
         }
         let follow = follow_ask(
@@ -649,6 +746,11 @@ impl RequestsService {
                     .attach_following(mbid, user_id, Some(name.clone()), now, follow_for(mbid))
                     .await?;
             }
+            let joined: Vec<String> = existing_items
+                .iter()
+                .map(|(mbid, _)| mbid.clone())
+                .collect();
+            self.start_joined_keys(principal, &joined).await;
             return Ok(BatchIntakeResponse {
                 success: true,
                 message: "All albums already requested".to_owned(),
@@ -750,6 +852,12 @@ impl RequestsService {
                 .attach_following(mbid, user_id, Some(name.clone()), now, follow_for(mbid))
                 .await?;
         }
+        let joined: Vec<String> = raced
+            .iter()
+            .cloned()
+            .chain(existing_items.iter().map(|(mbid, _)| mbid.clone()))
+            .collect();
+        self.start_joined_keys(principal, &joined).await;
 
         if created.is_empty() {
             if skipped > 0 {
@@ -870,6 +978,7 @@ impl RequestsService {
             });
         }
         let asker = (user_id.to_owned(), principal.username_display().to_owned());
+        let joined = joins.clone();
         match self
             .store
             .file_batch(records, joins, asker, gate, batch)
@@ -887,6 +996,7 @@ impl RequestsService {
                 if !needs_approval {
                     self.dispatch_created(&won, user_id).await;
                 }
+                self.start_joined_keys(principal, &joined).await;
                 Ok(BatchFiling::Filed)
             }
         }
@@ -953,7 +1063,7 @@ impl RequestsService {
         if existing.waits_for_quota()
             && auto_approves(principal.role())
             && let Some(task_id) = self
-                .start_one(existing, principal, self.now_epoch())
+                .start_joined(existing, principal, self.now_epoch())
                 .await?
         {
             return Ok(accepted(&existing.key, Some(task_id)));
@@ -964,6 +1074,8 @@ impl RequestsService {
             "Request is awaiting admin approval"
         } else if existing.status == RequestStatus::Cancelling {
             "Request is being cancelled"
+        } else if existing.waits_for_quota() {
+            "Request is waiting to start"
         } else {
             "Request already in progress"
         };
@@ -1028,9 +1140,7 @@ impl RequestsService {
             ))),
             Dispatched::Failed(DispatchError::Busy { operation }) => {
                 tracing::info!(key = %won.key, %operation, "database busy; the request waits to start");
-                self.store
-                    .requeue_waiting(won.kind, &won.key, won.generation)
-                    .await?;
+                self.wait_to_start(won).await?;
                 Ok(None)
             }
             Dispatched::Failed(cause) => {

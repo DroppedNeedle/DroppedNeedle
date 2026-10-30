@@ -329,7 +329,7 @@ async fn check_watch(
                         .link_task(RequestKind::Album, &watch.key, &task_id, generation)
                         .await?;
                     if !linked && outcome.started() && cancelled_meanwhile(deps, watch).await? {
-                        // The request was cancelled after the check above:
+                        // The request was cancelled or rejected after the check above:
                         // the download it never asked for stops too.
                         if let Err(cause) = deps.downloads.cancel(&task_id).await {
                             tracing::warn!(%task_id, %cause, "wanted dispatch cancel failed");
@@ -387,7 +387,7 @@ async fn check_watch(
     Ok(())
 }
 
-/// Whether the watch's request reads cancelled or mid-cancel now.
+/// Whether the watch's request reads cancelled, mid-cancel or rejected now.
 async fn cancelled_meanwhile(
     deps: &WantedDeps,
     watch: &WantedWatch,
@@ -399,7 +399,7 @@ async fn cancelled_meanwhile(
         .is_some_and(|row| {
             matches!(
                 row.status,
-                RequestStatus::Cancelled | RequestStatus::Cancelling
+                RequestStatus::Cancelled | RequestStatus::Cancelling | RequestStatus::Rejected
             )
         }))
 }
@@ -665,8 +665,9 @@ pub struct FollowDeps {
 pub async fn follow_tick(now: i64, deps: &FollowDeps) -> FollowSummary {
     let mut summary = FollowSummary::default();
     let today = (deps.today)();
-    // Unreadable release-type preferences skip the pass: cursors stay due
-    // and no release is recorded or marked known.
+    // Unreadable release-type preferences skip the pass: cursors stay due,
+    // no release is recorded or marked known, and waiting rows keep
+    // waiting until the preferences read again.
     let Some(preferences) = deps.preferences.read() else {
         return summary;
     };

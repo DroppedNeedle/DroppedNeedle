@@ -340,8 +340,10 @@ impl RequestRecord {
             || self.requesters.iter().any(|r| r.user_id == user_id)
     }
 
-    /// Whether the row waits for room in its owner's quota: queued with no
-    /// download yet. Only such a row is queued without a task.
+    /// Whether the row waits to start: queued with no download yet. It
+    /// waits for room in its owner's quota, or a busy database put it back
+    /// after its download could not be queued. Only such a row is queued
+    /// without a task.
     pub fn waits_for_quota(&self) -> bool {
         self.status == RequestStatus::Queued && self.task_id.is_none()
     }

@@ -2077,7 +2077,8 @@ fn ask_to_follow(album: &str, artist: &str, auto_download: bool) -> Value {
 }
 
 // A request that asks to follow its artist follows it in the request's own
-// write: a plain user's auto-download waits for an admin, a repeat ask on a
+// write: one that names no artist is refused, a plain user's auto-download
+// waits for an admin, a repeat ask on a
 // live row follows too, a batch follows each artist, and a request the
 // quota refuses leaves no follow behind.
 #[tokio::test]
@@ -2089,6 +2090,11 @@ async fn a_request_that_asks_to_follow_follows_the_artist() {
     };
     let state = rebuilt(&db, limited, &dispatch);
     let albums = "/api/v3/requests/albums";
+    let no_artist = json!({
+        "musicbrainz_id": MBID_C, "artist": "Artist", "album": "Album", "monitor_artist": true,
+    });
+    let (status, _) = call(&state, Method::POST, albums, Some(ADA), Some(no_artist)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a follow needs its artist");
     let body = ask_to_follow(MBID_A, ARTIST, true);
     let (status, _) = call(&state, Method::POST, albums, Some(ADA), Some(body)).await;
     assert_eq!(status, StatusCode::ACCEPTED);
@@ -2136,4 +2142,69 @@ async fn a_request_that_asks_to_follow_follows_the_artist() {
         follow.followed && follow.auto_download,
         "a trusted ask arms itself"
     );
+}
+
+// An admin's or a trusted user's Weekly Mix grant never waits for review: a
+// pending ask of theirs (filed before their role changed, or brought over
+// from v2) is not in the admin's list, and startup removes it.
+#[tokio::test]
+async fn a_curators_pending_mix_ask_is_neither_listed_nor_kept() {
+    let (state, _db, _) = setup().await;
+    state
+        .mixes
+        .file_pending("u-tris", 1_700_000_000)
+        .await
+        .unwrap();
+    state
+        .mixes
+        .file_pending("u-ada", 1_700_000_001)
+        .await
+        .unwrap();
+
+    let uri = "/api/v3/requests/personal-mix-approvals";
+    let (_, listed) = call(&state, Method::GET, uri, Some(ADMIN), None).await;
+    let users: Vec<&str> = listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["user_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(users, ["u-ada"]);
+
+    let report = RequestsService::new(&state).recover().await.unwrap();
+    assert_eq!(report.mix_asks_cleared, 1);
+    assert_eq!(state.mixes.state("u-tris").await.unwrap(), None);
+    assert_eq!(
+        state.mixes.state("u-ada").await.unwrap().as_deref(),
+        Some("pending")
+    );
+}
+
+// A dispatch whose link loses the row's generation to another linker of the
+// same task (a waiting pass, a recovery) keeps that task: the ask answers as
+// started, the row follows the task, and nothing is cancelled.
+#[tokio::test]
+async fn a_link_won_by_another_linker_of_the_same_task_stands() {
+    let (state, db, dispatch) = setup().await;
+    db.write("test.steal_link", |tx| {
+        tx.execute_batch(
+            "CREATE TRIGGER steal_link AFTER INSERT ON download_tasks BEGIN \
+             UPDATE request_history SET download_task_id = NEW.id, status = 'downloading', \
+             generation = generation + 1 \
+             WHERE musicbrainz_id_lower = lower(NEW.release_group_mbid); END;",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let (status, body) = ask(&state, TRUSTED, MBID_A).await;
+    assert!(status.is_success(), "{status} {body}");
+    let task = dispatch.task(1).await;
+    assert!(
+        dispatch.take_cancels().await.is_empty(),
+        "nothing is cancelled"
+    );
+    let row = state.store.get(RequestKind::Album, MBID_A).await.unwrap();
+    assert_eq!(row.unwrap().task_id.as_deref(), Some(task.as_str()));
 }

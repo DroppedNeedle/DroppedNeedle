@@ -60,7 +60,7 @@ impl PersonalMixStore {
         .await
     }
 
-    /// Pending approvals, oldest first.
+    /// Pending approvals of plain users, oldest first.
     pub async fn pending(&self) -> Result<Vec<MixApproval>, RequestsError> {
         read(&self.db, "mix.pending", |conn| {
             let mut statement = conn.prepare_cached(sql::PENDING_MIX_APPROVALS.text())?;
@@ -77,6 +77,19 @@ impl PersonalMixStore {
             rows.collect()
         })
         .await
+    }
+
+    /// Drop the pending approvals of admins and trusted users, filed
+    /// before their role approved itself or brought over from v2. Answers
+    /// how many went.
+    pub async fn clear_curator_pending(&self) -> Result<u64, RequestsError> {
+        self.db
+            .write("mix.clear_curator_pending", |tx| {
+                let cleared = tx.execute(sql::CLEAR_CURATOR_MIX_PENDING.text(), [])?;
+                Ok(u64::try_from(cleared).unwrap_or(u64::MAX))
+            })
+            .await
+            .map_err(|error| lane_error("mix.clear_curator_pending", error))
     }
 
     /// Pending approval count for the badge.

@@ -42199,19 +42199,6 @@
           }
         }
       },
-      "DispatchOrigin": {
-        "type": "string",
-        "description": "What started a download. Stored as the task's `origin`; origins decide\nquota exemptions and how a landing treats the files, never routing.\nA request row stores it too, and the Requests page shows it.",
-        "enum": [
-          "user",
-          "approval",
-          "retry",
-          "wanted",
-          "upgrade",
-          "edition",
-          "follow"
-        ]
-      },
       "DisplayNameUpdate": {
         "type": "object",
         "description": "Change display name.",
@@ -60186,8 +60173,8 @@
             "description": "Album or recording MBID."
           },
           "origin": {
-            "$ref": "#/components/schemas/DispatchOrigin",
-            "description": "What made the request: a person's ask (`user`) or a followed\nartist's new release (`follow`)."
+            "$ref": "#/components/schemas/RequestOrigin",
+            "description": "What made the request: a person's ask or a followed artist's new\nrelease."
           },
           "progress": {
             "type": [
@@ -60353,6 +60340,14 @@
         "enum": [
           "album",
           "track"
+        ]
+      },
+      "RequestOrigin": {
+        "type": "string",
+        "description": "What made a request row.",
+        "enum": [
+          "user",
+          "follow"
         ]
       },
       "RequestPriority": {
@@ -66762,7 +66757,8 @@
         "enum": [
           "no_download_source",
           "request_quota_full",
-          "storage_full"
+          "storage_full",
+          "waiting_to_start"
         ]
       },
       "WantedActionResponse": {

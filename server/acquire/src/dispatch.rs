@@ -25,9 +25,8 @@ use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 
 /// What started a download. Stored as the task's `origin`; origins decide
 /// quota exemptions and how a landing treats the files, never routing.
-/// A request row stores it too, and the Requests page shows it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
+/// A request row stores it too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DispatchOrigin {
     /// A fresh ask from intake.
     User,

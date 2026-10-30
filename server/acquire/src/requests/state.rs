@@ -51,6 +51,10 @@ pub struct RequestsState {
     /// The library's album removal: an admin removing a discovery batch
     /// recycles the albums it brought in. `None` leaves them in place.
     pub albums: Option<droppedneedle_library::mutations::Mutations>,
+    /// Users' notices: a follower hears when someone else's ask starts
+    /// their followed artist's release. `None` in tests that run the
+    /// routes alone.
+    pub events: Option<droppedneedle_kernel::events::EventHub>,
 }
 
 /// What "get missing tracks" checks before it asks for anything: a
@@ -84,6 +88,7 @@ impl RequestsState {
             upgrade_policy: None,
             readiness: None,
             albums: None,
+            events: None,
         }
     }
 }

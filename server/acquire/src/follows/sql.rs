@@ -24,6 +24,19 @@ droppedneedle_kernel::sql! {
          VALUES (?1, ?2, ?3, COALESCE(?4, ?5), 0, ?6, ?6) \
          ON CONFLICT (user_id, artist_mbid_lower) DO UPDATE SET \
          artist_name = COALESCE(?4, artist_name), updated_at = ?6";
+    /// End user `?1`'s follow rows for artist `?2` that have not started
+    /// (waiting, or left pending with no task by a busy database), as
+    /// cancelled at `?3`. A row someone else joined keeps waiting for them;
+    /// one the owner asked for by hand is a person's ask and stays.
+    pub(crate) END_WAITING_FOLLOWS = "UPDATE request_history SET status = 'cancelled', \
+         completed_at = ?3, dispatch_authorized = 0, generation = generation + 1 \
+         WHERE user_id = ?1 AND lower(artist_mbid) = ?2 AND origin = 'follow' \
+           AND request_kind = 'album' AND status IN ('queued', 'pending') \
+           AND download_task_id IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM request_history_requesters r \
+             WHERE r.musicbrainz_id_lower = request_history.musicbrainz_id_lower \
+               AND r.user_id <> ?1) \
+         RETURNING musicbrainz_id_lower";
     /// Set the auto-download intent `?1` on one followed row.
     pub(crate) SET_INTENT = "UPDATE user_followed_artists SET auto_download = ?1, \
          updated_at = ?2 WHERE user_id = ?3 AND artist_mbid_lower = ?4";
@@ -105,8 +118,10 @@ droppedneedle_kernel::sql! {
     pub(crate) KNOWN_RELEASES = "SELECT rg_mbid_lower FROM artist_known_releases \
          WHERE artist_mbid_lower = ?1";
     /// Followers of artist `?1` with auto-download on:
-    /// `(user id, role, verdict, name)`.
-    pub(crate) AUTO_FOLLOWERS = "SELECT f.user_id, u.role, a.state, u.display_name \
+    /// `(user id, role, verdict, name)`. The name is the login a person's
+    /// own asks show.
+    pub(crate) AUTO_FOLLOWERS = "SELECT f.user_id, u.role, a.state, \
+         COALESCE(u.username_display, u.username) \
          FROM user_followed_artists f \
          JOIN auth_users u ON u.id = f.user_id \
          LEFT JOIN auto_download_approvals a \

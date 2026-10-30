@@ -310,9 +310,9 @@ pub struct RequestItem {
     pub album_version_only: Option<bool>,
     /// Whole album or one track.
     pub request_kind: RequestKind,
-    /// What made the request: a person's ask (`user`) or a followed
-    /// artist's new release (`follow`).
-    pub origin: crate::dispatch::DispatchOrigin,
+    /// What made the request: a person's ask or a followed artist's new
+    /// release.
+    pub origin: RequestOrigin,
     /// Track title for exact-track rows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track_title: Option<String>,
@@ -378,6 +378,34 @@ pub enum WaitingReason {
     RequestQuotaFull,
     /// The owner's storage budget or the library's size cap is reached.
     StorageFull,
+    /// Nothing holds it back now: a busy database kept its download from
+    /// being queued, and the next pass of waiting requests starts it.
+    WaitingToStart,
+}
+
+/// What made a request row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestOrigin {
+    /// A person's ask.
+    User,
+    /// A followed artist's new release.
+    Follow,
+}
+
+impl From<crate::dispatch::DispatchOrigin> for RequestOrigin {
+    fn from(origin: crate::dispatch::DispatchOrigin) -> Self {
+        use crate::dispatch::DispatchOrigin;
+        match origin {
+            DispatchOrigin::Follow => Self::Follow,
+            DispatchOrigin::User
+            | DispatchOrigin::Approval
+            | DispatchOrigin::Retry
+            | DispatchOrigin::Wanted
+            | DispatchOrigin::Upgrade
+            | DispatchOrigin::Edition => Self::User,
+        }
+    }
 }
 
 /// Active-requests list.

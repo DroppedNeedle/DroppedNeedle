@@ -72,6 +72,8 @@ pub struct RequestsService {
     >,
     /// Source and disk checks, when wired.
     readiness: Option<super::state::AcquireReadiness>,
+    /// Users' notices, when wired.
+    events: Option<droppedneedle_kernel::events::EventHub>,
 }
 
 /// A dispatch read failure as a server fault (the cause goes to the log).
@@ -231,6 +233,7 @@ impl RequestsService {
             edition_plans: state.edition_plans.clone(),
             upgrade_policy: state.upgrade_policy.clone(),
             readiness: state.readiness.clone(),
+            events: state.events.clone(),
         }
     }
 
@@ -297,10 +300,27 @@ impl RequestsService {
             .store
             .link_task(kind, key, outcome.task_id(), Some(generation))
             .await?
+            && !self.follows_task(kind, key, outcome.task_id()).await?
         {
             cancel_started(&self.dispatch, &outcome).await;
             return Ok(Dispatched::Stale);
         }
         Ok(Dispatched::Linked(outcome.task_id().to_owned()))
+    }
+
+    /// Whether row `key` follows `task_id` now: a link that lost its
+    /// generation to another linker of the same task still stands, and
+    /// that task is never cancelled.
+    async fn follows_task(
+        &self,
+        kind: RequestKind,
+        key: &str,
+        task_id: &str,
+    ) -> Result<bool, RequestsError> {
+        Ok(self
+            .store
+            .get(kind, key)
+            .await?
+            .is_some_and(|row| row.task_id.as_deref() == Some(task_id)))
     }
 }

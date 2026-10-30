@@ -43,6 +43,7 @@
 			count: activeListQuery.data?.count ?? activeItems.length,
 			downloading: activeItems.filter((i) => liveStatusOf(i) === 'downloading').length,
 			searching: activeItems.filter((i) => {
+				if (i.waiting_reason) return false;
 				const status = liveStatusOf(i);
 				return status === 'pending' || status === 'queued';
 			}).length,
