@@ -22,8 +22,8 @@
 
 <Modal bind:open title="Remove File" dismissible={!removing} {onclose}>
 	<p class="text-base-content/70">
-		Remove <span class="font-semibold text-base-content">{trackTitle}</span> from your library? This deletes
-		the file from disk - this can't be undone.
+		Remove <span class="font-semibold text-base-content">{trackTitle}</span> from your library? Its file
+		goes to the recycle bin. Put it back from the album page.
 	</p>
 	{#if error}
 		<p class="pt-3 text-sm text-error" role="alert">{error}</p>
