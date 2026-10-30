@@ -250,3 +250,55 @@ async fn removed_root_with_every_row_missing_is_offered_while_its_folder_exists(
     assert_eq!(offered.restorable_roots.len(), 1);
     assert_eq!(offered.restorable_roots[0].root_id, "r-back");
 }
+
+/// Path rules match folder names without regard to letter case or
+/// Unicode form, so two rules of one library folder that fold together
+/// would cover the same folders: the save is a 400.
+#[tokio::test]
+async fn rules_that_fold_together_are_refused() {
+    let scratch = ScratchDir::new("settings-library-policy-fold");
+    let music = scratch.join("music");
+    std::fs::create_dir_all(&music).expect("music dir builds");
+    let settings = SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(FIXED_ID)))
+        .expect("settings bundle builds");
+    let policy = settings.library_policy();
+    let revision = settings
+        .service()
+        .get_library()
+        .await
+        .expect("reads")
+        .policy_revision;
+    let save = |first: &str, second: &str| -> LibrarySettingsSaveRequest {
+        serde_json::from_value(json!({
+            "settings": {"library_roots": [{
+                "id": "music",
+                "label": "Music",
+                "path": music.to_string_lossy(),
+                "policy": "automatic",
+                "rules": [
+                    {"id": "r1", "relative_path": first, "policy": "excluded"},
+                    {"id": "r2", "relative_path": second, "policy": "local_metadata"},
+                ],
+            }]},
+            "expected_policy_revision": revision,
+        }))
+        .expect("request decodes")
+    };
+    for (first, second) in [("Live", "live"), ("Caf\u{e9}/Disc", "cafe\u{301}/DISC")] {
+        let refused = policy
+            .save(save(first, second))
+            .await
+            .expect_err("rules that fold together are refused");
+        let SettingsError::InvalidInput { message } = refused else {
+            panic!("not a 400: {refused:?}");
+        };
+        assert!(
+            message.contains(first) && message.contains(second),
+            "{message}"
+        );
+    }
+    policy
+        .save(save("Live", "Lively"))
+        .await
+        .expect("rules for different folders save");
+}

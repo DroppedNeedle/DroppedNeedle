@@ -13852,6 +13852,297 @@ async fn import_and_management_name_a_file_alike() {
     }
 }
 
+/// Add an Excluded path rule at `relative` to the `music` library folder.
+fn exclude_path(library: &LibrarySetup, relative: &str) {
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        IdentificationPolicy, LibraryPathRule, TypedLibrary,
+    };
+    let relative = relative.to_owned();
+    library
+        .settings
+        .store()
+        .update_secret_blocking::<TypedLibrary, String, _>(move |stored| {
+            let mut settings = stored.into_inner();
+            let music = settings
+                .library_roots
+                .iter_mut()
+                .find(|root| root.id == "music")
+                .ok_or_else(|| "no music folder".to_owned())?;
+            music.rules.push(LibraryPathRule {
+                id: "excluded".to_owned(),
+                relative_path: relative,
+                policy: IdentificationPolicy::Excluded,
+            });
+            Ok(settings)
+        })
+        .expect("rule saved");
+}
+
+/// An import never places a file where a path rule leaves files out, the
+/// rule matching whatever the letter case: with one library folder it
+/// fails as a naming script fault and places nothing; with another
+/// folder it lands there.
+#[tokio::test]
+async fn an_import_never_lands_under_an_excluded_path() {
+    use droppedneedle_library::import::{DownloadImport, ImportError, ImportOrigin, ImportSource};
+    use droppedneedle_library::matching::model::ReleaseMedium;
+
+    let (scratch, library, music) = bare_library("lib-import-excluded-path").await;
+    std::fs::create_dir_all(&music).expect("music folder");
+    add_music_root(&library, &music).await;
+    // The import script files the release under `Live/`.
+    exclude_path(&library, "LIVE");
+    let release = Release {
+        id: "70000000-0000-4000-8000-00000000000d".to_owned(),
+        release_group_id: "70000000-0000-4000-8000-00000000000e".to_owned(),
+        title: "Golden".to_owned(),
+        artists: vec![CreditedArtist {
+            id: "70000000-0000-4000-8000-00000000000a".to_owned(),
+            name: "Live".to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        date: Some("2001-02-03".to_owned()),
+        media: vec![ReleaseMedium {
+            position: 1,
+            format: Some("CD".to_owned()),
+            track_count: 1,
+            ..ReleaseMedium::default()
+        }],
+        tracks: vec![ReleaseTrack {
+            id: "70000000-0000-4000-8000-00000000000b".to_owned(),
+            recording_id: "70000000-0000-4000-8000-00000000000c".to_owned(),
+            title: "Song".to_owned(),
+            disc: 1,
+            position: 1,
+            absolute_position: 1,
+            ..ReleaseTrack::default()
+        }],
+        ..Release::default()
+    };
+    let import = |task: &str| {
+        let source = scratch
+            .to_path_buf()
+            .join(format!("incoming/{task}/01.flac"));
+        std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+        std::fs::copy(fixtures_dir().join("flac_full_02.flac"), &source).expect("download planted");
+        library.imports.import_download(&DownloadImport {
+            task_id: task.to_owned(),
+            origin: ImportOrigin::Download,
+            staging: None,
+            release: release.clone(),
+            files: vec![ImportSource {
+                path: source,
+                track: 0,
+                replaces: Vec::new(),
+            }],
+            extras: Vec::new(),
+            actor: None,
+        })
+    };
+
+    let refused = import("task-1").expect_err("no folder takes the file");
+    let ImportError::NamingScript(detail) = &refused else {
+        panic!("not a naming script fault: {refused:?}");
+    };
+    assert!(detail.starts_with("Live/"), "{detail}");
+    assert!(snapshot_tree(&music).is_empty(), "nothing placed");
+
+    // A second folder that keeps its own tags: the file goes there, as it
+    // came, though the first folder's own policy is automatic tags.
+    let second = scratch.join("second");
+    std::fs::create_dir_all(&second).expect("second folder");
+    library
+        .scans
+        .add_root(
+            Some("second".to_owned()),
+            second.to_string_lossy().into_owned(),
+            droppedneedle_library::scan::EffectivePolicy::LocalMetadata,
+        )
+        .expect("second root adds");
+    let imported = import("task-2").expect("imported");
+    assert!(
+        imported.paths[0].starts_with(second.join("Live")),
+        "{:?}",
+        imported.paths
+    );
+    assert_eq!(imported.tags_kept, 1);
+    assert!(snapshot_tree(&music).is_empty(), "nothing under the rule");
+}
+
+/// A management preview never moves a file under a path rule that leaves
+/// files out, the rule matching whatever the letter case.
+#[tokio::test]
+async fn a_preview_never_moves_a_file_under_an_excluded_path() {
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
+
+    let managed = ManagedLibrary::start("lib-preview-excluded-path", |_| {}).await;
+    let (album, _) = managed.add_album("first", 1).await;
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "before")
+        .await;
+    assert!(items[0].eligibility.writes(), "{:?}", items[0].facts);
+    let dest = items[0].dest_rel.clone().expect("a destination");
+    let top = dest.split('/').next().expect("a folder");
+    assert_ne!(top, "first", "the file moves to another folder");
+
+    exclude_path(&managed.library, &top.to_uppercase());
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "after")
+        .await;
+    assert_eq!(items[0].eligibility, Eligibility::Blocked);
+    assert_eq!(items[0].reason().expect("a reason").code, "ROOT_READ_ONLY");
+}
+
+/// "Get missing tracks" for the second track of `album`: a download of it
+/// joined to the album's edition.
+fn join_second_track(
+    managed: &ManagedLibrary,
+    album: &str,
+) -> Result<droppedneedle_library::import::ImportedAlbum, droppedneedle_library::import::ImportError>
+{
+    use droppedneedle_library::import::{DownloadImport, ImportJoin, ImportOrigin, ImportSource};
+    let release_mbid: String = managed
+        .db()
+        .query_row(
+            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
+            [album],
+            |row| row.get(0),
+        )
+        .expect("edition");
+    let release = managed
+        .library
+        .identify_store
+        .release(&release_mbid, None)
+        .unwrap()
+        .expect("release stored");
+    let source = managed.scratch.to_path_buf().join("incoming/02.flac");
+    std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+    std::fs::copy(fixtures_dir().join("management_full.flac"), &source).expect("download planted");
+    managed.library.imports.import_download_joined(
+        &DownloadImport {
+            task_id: "task-1".to_owned(),
+            origin: ImportOrigin::Download,
+            staging: None,
+            release,
+            files: vec![ImportSource {
+                path: source,
+                track: 1,
+                replaces: Vec::new(),
+            }],
+            extras: Vec::new(),
+            actor: None,
+        },
+        Some(ImportJoin {
+            album_id: album.to_owned(),
+            release_mbid,
+            replaced: Vec::new(),
+        }),
+    )
+}
+
+/// "Get missing tracks" with one library folder, where an Excluded rule
+/// covers the path the naming script gives but not the album's own
+/// folder, places the file beside the album's files.
+#[tokio::test]
+async fn a_join_is_judged_by_the_folder_beside_its_copy() {
+    let managed = ManagedLibrary::start("lib-import-join-excluded-render", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 2).await;
+    std::fs::remove_file(managed.path(&tracks[1])).expect("file removed");
+    rescan(&managed.library).await;
+    // The import script files the album under its release artist's
+    // folder.
+    let release_mbid: String = managed
+        .db()
+        .query_row(
+            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("edition");
+    let artist = managed
+        .library
+        .identify_store
+        .release(&release_mbid, None)
+        .unwrap()
+        .expect("release stored")
+        .artists[0]
+        .name
+        .clone();
+    exclude_path(&managed.library, &artist);
+
+    let imported = join_second_track(&managed, &album).expect("imported");
+    assert_eq!(
+        imported.paths[0].parent(),
+        Some(managed.music.join("first").as_path()),
+        "{:?}",
+        imported.paths
+    );
+    assert!(
+        !managed.music.join(&artist).exists(),
+        "nothing under the rule"
+    );
+}
+
+/// "Get missing tracks" for an album whose copy sits in a later library
+/// folder places the file beside the copy, in that folder and staged
+/// there, though a download goes to the first folder.
+#[tokio::test]
+async fn a_join_lands_beside_its_copy_in_another_library_folder() {
+    use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+
+    let managed = ManagedLibrary::start("lib-import-join-other-folder", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 2).await;
+    std::fs::remove_file(managed.path(&tracks[1])).expect("file removed");
+    rescan(&managed.library).await;
+    let front = managed.scratch.to_path_buf().join("front");
+    std::fs::create_dir_all(&front).expect("front folder");
+    managed
+        .library
+        .scans
+        .add_root(
+            Some("front".to_owned()),
+            front.to_string_lossy().into_owned(),
+            droppedneedle_library::scan::EffectivePolicy::Automatic,
+        )
+        .expect("front root adds");
+    managed
+        .library
+        .settings
+        .store()
+        .update_secret_blocking::<TypedLibrary, String, _>(|stored| {
+            let mut settings = stored.into_inner();
+            settings.library_roots.rotate_right(1);
+            Ok(settings)
+        })
+        .expect("front folder first");
+    assert_eq!(managed.library.core.live_registry().roots()[0].id, "front");
+
+    let imported = join_second_track(&managed, &album).expect("imported");
+    assert_eq!(
+        imported.paths[0].parent(),
+        Some(managed.music.join("first").as_path()),
+        "{:?}",
+        imported.paths
+    );
+    let roots: Vec<(String, String)> = managed
+        .db()
+        .prepare(
+            "SELECT DISTINCT source_root, dest_root FROM library_publish_journal \
+             WHERE bundle_id = ?1",
+        )
+        .expect("prepare")
+        .query_map([&imported.bundle_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("query")
+        .collect::<rusqlite::Result<_>>()
+        .expect("rows");
+    assert_eq!(roots, vec![("music".to_owned(), "music".to_owned())]);
+    assert!(
+        snapshot_tree(&front).is_empty(),
+        "nothing in the first folder"
+    );
+}
+
 /// A file v2 tagged, changed by hand since, then renamed in the app: the
 /// rename keeps v2's record, so the worker still leaves the album to the
 /// user.

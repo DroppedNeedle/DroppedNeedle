@@ -53,18 +53,81 @@ impl LibraryRoot {
     }
 
     /// Policy for a path under this root: the deepest covering rule
-    /// wins, else the root policy.
+    /// wins, else the root policy. Rules match as [`rule_covers`] says.
     pub fn policy_for(&self, path: &Path) -> EffectivePolicy {
         let Ok(relative) = path.strip_prefix(&self.path) else {
             return self.policy;
         };
-        self.rules
-            .iter()
-            .filter(|rule| relative.starts_with(Path::new(&rule.relative_path)))
-            .max_by_key(|rule| Path::new(&rule.relative_path).components().count())
-            .map(|rule| rule.policy)
-            .unwrap_or(self.policy)
+        let parts: Vec<String> = relative
+            .components()
+            .filter_map(|component| match component {
+                Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect();
+        deepest_rule(
+            self.rules
+                .iter()
+                .map(|rule| (rule.relative_path.as_str(), rule.policy)),
+            &parts,
+        )
+        .unwrap_or(self.policy)
     }
+}
+
+/// Whether a rule at `rule_path` (`/`-separated, relative to its root)
+/// covers a path whose components below the root are `parts`: each of
+/// the rule's components names the path's component at that depth,
+/// exactly or once both are folded as collision keys fold them (Unicode
+/// form and letter case), so a rule `Live` covers `live/a.flac` but not
+/// `Lively/a.flac`. `Some(true)` when every component matched exactly.
+pub fn rule_covers(rule_path: &str, parts: &[String]) -> Option<bool> {
+    let rule: Vec<&str> = rule_path
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    if rule.is_empty() || rule.len() > parts.len() {
+        return None;
+    }
+    let mut exact = true;
+    for (wanted, part) in rule.iter().zip(parts) {
+        if *wanted == part.as_str() {
+            continue;
+        }
+        if fold(wanted) != fold(part) {
+            return None;
+        }
+        exact = false;
+    }
+    Some(exact)
+}
+
+/// The value of the deepest rule among `rules` that covers `parts`; at
+/// one depth a rule that matches exactly beats one that matches only once
+/// folded.
+pub fn deepest_rule<'a, T>(
+    rules: impl IntoIterator<Item = (&'a str, T)>,
+    parts: &[String],
+) -> Option<T> {
+    let mut best: Option<((usize, bool), T)> = None;
+    for (path, value) in rules {
+        let Some(exact) = rule_covers(path, parts) else {
+            continue;
+        };
+        let rank = (
+            path.split('/').filter(|part| !part.is_empty()).count(),
+            exact,
+        );
+        if best.as_ref().is_none_or(|(kept, _)| rank > *kept) {
+            best = Some((rank, value));
+        }
+    }
+    best.map(|(_, value)| value)
+}
+
+/// A name folded the way the publisher's collision keys fold it.
+fn fold(name: &str) -> crate::publish::paths::CollisionKey {
+    crate::publish::paths::collision_key("", name)
 }
 
 /// Registry of library roots plus the enabled flag. The fingerprint is an
@@ -404,6 +467,33 @@ mod tests {
             seam.resolve_key("nope", "a.flac"),
             Err(RootSeamError::UnknownRoot { .. })
         ));
+    }
+
+    /// A rule covers whole path components, ignoring letter case and
+    /// Unicode form; at one depth the rule that matches exactly wins.
+    #[test]
+    fn rules_match_whole_components_folded() {
+        let rule = |id: &str, path: &str, policy| PolicyRule {
+            id: id.to_owned(),
+            relative_path: path.to_owned(),
+            policy,
+        };
+        let root = LibraryRoot::new("a", PathBuf::from("/music/a"), EffectivePolicy::Automatic)
+            .with_rules(vec![
+                rule("live", "Live", EffectivePolicy::Excluded),
+                rule("cafe", "Cafe\u{301}/Disc", EffectivePolicy::LocalMetadata),
+                rule("folded", "MIXED", EffectivePolicy::Excluded),
+                rule("exact", "Mixed", EffectivePolicy::LocalMetadata),
+            ]);
+        let at = |relative: &str| root.policy_for(&Path::new("/music/a").join(relative));
+        assert_eq!(at("Live/x.flac"), EffectivePolicy::Excluded);
+        assert_eq!(at("live/x.flac"), EffectivePolicy::Excluded);
+        assert_eq!(at("LIVE/deeper/x.flac"), EffectivePolicy::Excluded);
+        assert_eq!(at("Lively/x.flac"), EffectivePolicy::Automatic);
+        assert_eq!(at("x/live/x.flac"), EffectivePolicy::Automatic);
+        assert_eq!(at("caf\u{e9}/disc/x.flac"), EffectivePolicy::LocalMetadata);
+        assert_eq!(at("Mixed/x.flac"), EffectivePolicy::LocalMetadata);
+        assert_eq!(at("MIXED/x.flac"), EffectivePolicy::Excluded);
     }
 
     #[test]

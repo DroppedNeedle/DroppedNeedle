@@ -267,7 +267,7 @@ pub fn normalize(settings: &TypedLibrary) -> Result<TypedLibrary, SettingsError>
         canonical_paths.push((root_id.clone(), canonical.clone()));
 
         let mut rule_ids = BTreeSet::new();
-        let mut rule_paths = BTreeSet::new();
+        let mut rule_paths = BTreeMap::new();
         let mut rules: Vec<LibraryPathRule> = Vec::new();
         for rule in &root.rules {
             let rule_id = rule.id.trim().to_owned();
@@ -282,9 +282,21 @@ pub fn normalize(settings: &TypedLibrary) -> Result<TypedLibrary, SettingsError>
                 });
             }
             let relative = normalise_rule_path(&rule.relative_path)?;
-            if !rule_paths.insert(relative.clone()) {
+            // Rules match folded names, so two that fold together would
+            // both cover the same folders.
+            if let Some(other) = rule_paths.insert(
+                crate::publish::collision_key("", &relative),
+                relative.clone(),
+            ) {
                 return Err(SettingsError::InvalidInput {
-                    message: format!("Library root {label} has more than one rule for {relative}."),
+                    message: if other == relative {
+                        format!("Library root {label} has more than one rule for {relative}.")
+                    } else {
+                        format!(
+                            "Library root {label} has rules for {other} and {relative}, \
+                             which cover the same folders."
+                        )
+                    },
                 });
             }
             rules.push(LibraryPathRule {
@@ -512,18 +524,12 @@ pub fn resolve_path(
             _ => None,
         })
         .collect();
-    let mut selected: Option<&LibraryPathRule> = None;
-    for rule in &root.rules {
-        let parts: Vec<&str> = rule.relative_path.split('/').collect();
-        if relative_parts.len() >= parts.len()
-            && relative_parts[..parts.len()]
-                .iter()
-                .zip(parts.iter())
-                .all(|(a, b)| a == b)
-        {
-            selected = Some(rule);
-        }
-    }
+    let selected = crate::scan::roots::deepest_rule(
+        root.rules
+            .iter()
+            .map(|rule| (rule.relative_path.as_str(), rule)),
+        &relative_parts,
+    );
     let relative_path = if relative_parts.is_empty() {
         ".".to_owned()
     } else {

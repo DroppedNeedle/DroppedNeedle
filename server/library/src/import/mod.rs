@@ -11,9 +11,11 @@
 //!    The scan skips the hidden prefix, and the publisher's rename then
 //!    never crosses a filesystem, whatever disk the download client used.
 //!    A plain download goes to the first root whose policy at every
-//!    file's destination is Automatic, else to the first root that is not
-//!    Excluded; joins, upgrades, drop imports and downloads for an album
-//!    the library already holds always go to the latter.
+//!    file's destination is Automatic, else to the first root where no
+//!    file's destination is Excluded (by the root or a path rule); joins,
+//!    upgrades, drop imports and downloads for an album the library
+//!    already holds always go to the latter. When no root takes them, the
+//!    import fails as a naming script fault and nothing is placed.
 //! 2. One bundle moves every copy to the path the import naming script gives
 //!    and writes the release's full tag set on the way. A file whose
 //!    destination is in a folder that keeps its own tags (the Local
@@ -45,8 +47,10 @@
 //! files join it while it names the release they were fetched for
 //! (placed on its edition) or another release of the same album (not
 //! placed). Otherwise they are filed by their tags. A joined file goes into
-//! the copy's own folder when its files sit in one, and is locked to the
-//! album as the album tools lock a moved track. A row at its destination
+//! the copy's own folder when its files sit in one, in whichever root
+//! holds it (staged in that root too) when that root takes managed writes
+//! and leaves none of the files excluded, and is locked to the album as
+//! the album tools lock a moved track. A row at its destination
 //! keeps its id for the new file only when it is on that album, not
 //! excluded and not a track the file replaces as another version; any
 //! other row there gives up its path and keeps its id and history. The
@@ -312,38 +316,50 @@ impl Imports {
                     .map_err(|error| fault(format!("unsupported file: {error}")))?,
             );
         }
+        let name = |root: &LibraryRoot,
+                    track: &super::matching::ReleaseTrack,
+                    format: AudioFormat|
+         -> Result<String, ImportError> {
+            let named = super::matching::ReleaseTrack {
+                disc: track.disc.max(1),
+                ..track.clone()
+            };
+            naming::render(
+                &script,
+                &naming::variables(&import.release, &named, format.as_str()),
+                &root.path.to_string_lossy(),
+            )
+            .map_err(|error| ImportError::NamingScript(error.to_string()))
+        };
         let render = |root: &LibraryRoot| -> Result<Vec<String>, ImportError> {
-            let root_path = root.path.to_string_lossy();
             sources
                 .iter()
                 .zip(&formats)
-                .map(|((_, track, _), format)| {
-                    let named = super::matching::ReleaseTrack {
-                        disc: track.disc.max(1),
-                        ..track.clone()
-                    };
-                    naming::render(
-                        &script,
-                        &naming::variables(&import.release, &named, format.as_str()),
-                        &root_path,
-                    )
-                    .map_err(|error| ImportError::NamingScript(error.to_string()))
-                })
+                .map(|((_, track, _), format)| name(root, track, *format))
                 .collect()
         };
         // Joins, upgrades, drop imports and downloads for an album the
-        // library already holds take the first folder that is not
-        // excluded. A plain download takes the first folder whose policy
-        // is automatic tags at every file's destination, else that same
-        // first folder, where it keeps the tags it came with.
+        // library already holds take the first folder where no file's
+        // destination is excluded. A plain download takes the first folder
+        // whose policy is automatic tags at every file's destination, else
+        // that same folder, where it keeps the tags it came with.
         let usable: Vec<&LibraryRoot> = registry
             .roots()
             .iter()
             .filter(|root| root.policy != EffectivePolicy::Excluded)
             .collect();
-        let first = *usable
-            .first()
-            .ok_or_else(|| fault("no library root takes imports".to_owned()))?;
+        if usable.is_empty() {
+            return Err(fault("no library root takes imports".to_owned()));
+        }
+        // A folder reached through a link into another takes no managed
+        // writes.
+        let left_out = left_out(
+            &registry
+                .roots()
+                .iter()
+                .map(|root| ResolvedRoot::of(&root.id, &root.path))
+                .collect::<Vec<_>>(),
+        );
         let plain = join.is_none()
             && import.origin == ImportOrigin::Download
             && import.files.iter().all(|file| file.replaces.is_empty())
@@ -355,14 +371,6 @@ impl Imports {
                 .map_err(|error| fault(error.to_string()))?;
         let tagged = plain
             .then(|| {
-                // A folder reached through a link into another takes no
-                // managed writes.
-                let resolved: Vec<ResolvedRoot> = registry
-                    .roots()
-                    .iter()
-                    .map(|root| ResolvedRoot::of(&root.id, &root.path))
-                    .collect();
-                let left_out = left_out(&resolved);
                 usable
                     .iter()
                     .filter(|root| !left_out.contains(&root.id))
@@ -385,11 +393,79 @@ impl Imports {
                     })
             })
             .flatten();
+        let replaced = join
+            .as_ref()
+            .map(|join| join.replaced.clone())
+            .unwrap_or_default();
+        let join = join.map(|join| AlbumJoin {
+            album_id: join.album_id,
+            release_mbid: join.release_mbid,
+            release_group_mbid: import.release.release_group_id.clone(),
+        });
+        // A joined file goes beside its copy's files, named as the script
+        // names it.
+        let beside = |root: &LibraryRoot, dest: &str, folder: &Option<(String, String)>| {
+            let (copy_root, folder) = folder.as_ref()?;
+            let file = Path::new(dest).file_name()?;
+            (*copy_root == root.id).then(|| format!("{folder}/{}", file.to_string_lossy()))
+        };
+        // Where a file the script names `dest` lands in `root`: beside its
+        // copy when that is there and not excluded, else at `dest`.
+        let landing = |root: &LibraryRoot, dest: &str, folder: &Option<(String, String)>| {
+            beside(root, dest, folder)
+                .filter(|at| root.policy_for(&root.path.join(at)) != EffectivePolicy::Excluded)
+                .unwrap_or_else(|| dest.to_owned())
+        };
+        // A join's folders are judged by where its files land, beside
+        // their copy; the publish lock reads the copy again.
+        let early_folders: Vec<Option<(String, String)>> = match &join {
+            Some(join) => self
+                .db
+                .read_blocking("import.join_folders", |conn| {
+                    let joined = joined_album(conn, join)?;
+                    let mut folders = Vec::with_capacity(sources.len());
+                    for (_, track, _) in &sources {
+                        folders.push(match &joined {
+                            Some(joined) => copy_folder(conn, &joined.album_id, track.disc)?,
+                            None => None,
+                        });
+                    }
+                    Ok::<_, PublishError>(folders)
+                })
+                .map_err(|error| fault(error.to_string()))?,
+            None => vec![None; sources.len()],
+        };
         let (root, dests) = match tagged {
             Some(chosen) => chosen,
-            None => (first, render(first)?),
+            None => {
+                // The first refusal says why when no folder takes the
+                // files: the script's own fault, or an excluded path.
+                let mut refused = None;
+                let chosen = usable.iter().find_map(|root| {
+                    let dests = render(root)
+                        .inspect_err(|error| {
+                            refused.get_or_insert_with(|| error.clone());
+                        })
+                        .ok()?;
+                    let landed: Vec<String> = dests
+                        .iter()
+                        .zip(&early_folders)
+                        .map(|(dest, folder)| landing(root, dest, folder))
+                        .collect();
+                    match excluded_dest(root, &landed) {
+                        Some(dest) => {
+                            refused.get_or_insert_with(|| excluded_refusal(root, dest));
+                            None
+                        }
+                        None => Some((*root, dests)),
+                    }
+                });
+                chosen.ok_or_else(|| {
+                    refused.unwrap_or_else(|| fault("no library root takes imports".to_owned()))
+                })?
+            }
         };
-        let root = root.clone();
+        let mut root = root.clone();
         let mut placements = Vec::with_capacity(sources.len());
         for (ordinal, ((((path, track, _), replaces), format), dest_rel)) in sources
             .into_iter()
@@ -444,30 +520,8 @@ impl Imports {
         cell.refresh(&registry, &self.core.root_dirs)
             .map_err(|error| fault(error.to_string()))?;
         let open = cell.open().map_err(|error| fault(error.to_string()))?;
-        let staged_dir = open
-            .sandbox
-            .resolve_no_symlink(&root.id, &task_dir)
-            .map_err(|error| {
-                if matches!(error, PublishError::FolderMissing) {
-                    tracing::warn!(
-                        root = root.id,
-                        "a landing stopped: the library folder is not there"
-                    );
-                    return ImportError::FolderMissing(root.path.display().to_string());
-                }
-                fault(error.to_string())
-            })?;
-        let replaced = join
-            .as_ref()
-            .map(|join| join.replaced.clone())
-            .unwrap_or_default();
-        let join = join.map(|join| AlbumJoin {
-            album_id: join.album_id,
-            release_mbid: join.release_mbid,
-            release_group_mbid: import.release.release_group_id.clone(),
-        });
         // Whether an earlier landing still waits, the album the files
-        // join, and the folder each joined file goes to, in one read.
+        // join, and the folder of each joined file's copy, in one read.
         let (settled, joined, folders) = self
             .db
             .read_blocking("import.join_state", |conn| {
@@ -477,15 +531,11 @@ impl Imports {
                     None => None,
                 };
                 let mut folders = Vec::with_capacity(placements.len());
-                if let Some(joined) = &joined {
-                    for placement in &placements {
-                        folders.push(copy_folder(
-                            conn,
-                            &joined.album_id,
-                            &root.id,
-                            placement.track.disc,
-                        )?);
-                    }
+                for placement in &placements {
+                    folders.push(match &joined {
+                        Some(joined) => copy_folder(conn, &joined.album_id, placement.track.disc)?,
+                        None => None,
+                    });
                 }
                 Ok::<_, PublishError>((settled, joined, folders))
             })
@@ -497,18 +547,71 @@ impl Imports {
                 "an earlier import of this download is waiting for recovery".to_owned(),
             ));
         }
-        // A joined file goes beside the copy's own files.
-        for (placement, folder) in placements.iter_mut().zip(folders) {
-            if let (Some(folder), Some(name)) = (folder, Path::new(&placement.dest_rel).file_name())
-            {
-                placement.dest_rel = format!("{folder}/{}", name.to_string_lossy());
+        // When the copy sits in another library folder, the files go
+        // there, staged there too, if that folder is there, takes managed
+        // writes and leaves none of them excluded; else they stay in the
+        // folder chosen above.
+        let copy_roots: std::collections::BTreeSet<&str> = folders
+            .iter()
+            .flatten()
+            .map(|(copy_root, _)| copy_root.as_str())
+            .collect();
+        let moved = match copy_roots.into_iter().collect::<Vec<_>>()[..] {
+            [copy_root] if copy_root != root.id => registry
+                .resolve(copy_root)
+                .filter(|other| !left_out.contains(&other.id))
+                .and_then(|other| {
+                    let dests = placements
+                        .iter()
+                        .zip(&folders)
+                        .map(|(placement, folder)| {
+                            let rendered = name(other, &placement.track, placement.format).ok()?;
+                            Some(beside(other, &rendered, folder).unwrap_or(rendered))
+                        })
+                        .collect::<Option<Vec<String>>>()?;
+                    if excluded_dest(other, &dests).is_some() {
+                        return None;
+                    }
+                    let staged = open.sandbox.resolve_no_symlink(&other.id, &task_dir).ok()?;
+                    Some((other.clone(), dests, staged))
+                }),
+            _ => None,
+        };
+        let staged_dir = match moved {
+            Some((other, dests, staged)) => {
+                root = other;
+                for (placement, dest) in placements.iter_mut().zip(dests) {
+                    placement.dest_rel = dest;
+                }
+                staged
             }
-        }
+            None => {
+                for (placement, folder) in placements.iter_mut().zip(&folders) {
+                    placement.dest_rel = landing(&root, &placement.dest_rel, folder);
+                }
+                open.sandbox
+                    .resolve_no_symlink(&root.id, &task_dir)
+                    .map_err(|error| {
+                        if matches!(error, PublishError::FolderMissing) {
+                            tracing::warn!(
+                                root = root.id,
+                                "a landing stopped: the library folder is not there"
+                            );
+                            return ImportError::FolderMissing(root.path.display().to_string());
+                        }
+                        fault(error.to_string())
+                    })?
+            }
+        };
         // A folder that keeps its own tags takes the file as it came. The
         // policy is read here, at the final destination and under the lock,
-        // so the bytes and the row's policy agree.
+        // so the bytes and the row's policy agree. The copy a join was
+        // judged by may have moved since: nothing lands excluded.
         for placement in &mut placements {
             placement.policy = root.policy_for(&root.path.join(&placement.dest_rel));
+            if placement.policy == EffectivePolicy::Excluded {
+                return Err(excluded_refusal(&root, &placement.dest_rel));
+            }
             if placement.policy == EffectivePolicy::LocalMetadata {
                 placement.tags = TagUpdates::new();
             }
@@ -955,13 +1058,15 @@ impl Imports {
     }
 }
 
-/// Whether something other than the files in `leaving` sits at `dest`, or
-/// beside it under a name that folds to the same one (case or Unicode), as
-/// the publisher's collision gate judges it. A path that cannot be read
-/// counts as taken.
+/// Whether something other than the files in `leaving` sits at `dest`, or,
+/// when nothing has that exact name, beside it under a name that folds to
+/// the same one (case or Unicode), as the publisher's collision gate
+/// judges it. An old copy at the exact name leaves for the new file, so a
+/// twin beside it is not looked at. A path that cannot be read counts as
+/// taken.
 fn taken(root_id: &str, dest: &Path, leaving: &[&Path]) -> bool {
-    if std::fs::symlink_metadata(dest).is_ok() && !leaving.contains(&dest) {
-        return true;
+    if std::fs::symlink_metadata(dest).is_ok() {
+        return !leaving.contains(&dest);
     }
     let (Some(parent), Some(wanted)) = (dest.parent(), dest.file_name().and_then(|n| n.to_str()))
     else {
@@ -982,6 +1087,25 @@ fn taken(root_id: &str, dest: &Path, leaving: &[&Path]) -> bool {
             && super::publish::collision_key(root_id, text) == wanted_key
             && !leaving.contains(&parent.join(text).as_path())
     })
+}
+
+/// The first of `dests`, relative to `root`, that the folder or a path
+/// rule in it leaves out.
+fn excluded_dest<'a>(root: &LibraryRoot, dests: &'a [String]) -> Option<&'a str> {
+    dests
+        .iter()
+        .find(|dest| root.policy_for(&root.path.join(dest)) == EffectivePolicy::Excluded)
+        .map(String::as_str)
+}
+
+/// Why an import does not go to `root`: the naming script puts `dest`
+/// where the library leaves files out. It waits like a script fault, for
+/// the script or the rules to change.
+fn excluded_refusal(root: &LibraryRoot, dest: &str) -> ImportError {
+    ImportError::NamingScript(format!(
+        "{dest} is in an excluded folder of {}",
+        root.path.display()
+    ))
 }
 
 /// The tracks among `ids` the catalog lists as indexed.
@@ -1183,16 +1307,15 @@ fn group_held(conn: &rusqlite::Connection, group: &str) -> rusqlite::Result<bool
     )
 }
 
-/// The one folder of `root_id` that holds the album's indexed files on
-/// `disc` (all of its indexed files when none is on that disc). `None`
-/// when they sit in several folders, in another library folder, or at
-/// the top of the root.
+/// The library folder and the one folder in it that hold the album's
+/// indexed files on `disc` (all of its indexed files when none is on that
+/// disc). `None` when they sit in several folders or at the top of a
+/// library folder.
 fn copy_folder(
     conn: &rusqlite::Connection,
     album_id: &str,
-    root_id: &str,
     disc: u32,
-) -> rusqlite::Result<Option<String>> {
+) -> rusqlite::Result<Option<(String, String)>> {
     let rows: Vec<(String, String, i64)> = conn
         .prepare(
             "SELECT root_id, relative_path, disc_number FROM local_tracks \
@@ -1221,5 +1344,5 @@ fn copy_folder(
         return Ok(None);
     };
     let one = folders.all(|folder| folder == first);
-    Ok((one && first.0 == root_id && !first.1.is_empty()).then_some(first.1))
+    Ok((one && !first.1.is_empty()).then(|| (first.0.to_owned(), first.1)))
 }

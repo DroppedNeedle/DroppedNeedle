@@ -1891,8 +1891,8 @@ fn folded_sibling_exists(path: &Path) -> bool {
     })
 }
 
-/// Block files whose destination is taken: by another file of this run
-/// or by a file on disk that is not the file itself.
+/// Block files whose destination is taken (by another file of this run
+/// or by a file on disk that is not the file itself) or excluded.
 fn check_collisions(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
     let mut seen = HashSet::new();
     for item in items.iter_mut() {
@@ -1907,6 +1907,14 @@ fn check_collisions(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
             continue;
         }
         if plan.kind == PlanKind::SamePath {
+            continue;
+        }
+        // Nothing is placed where a folder or path rule leaves files out.
+        let excluded = ctx.registry.resolve(&plan.dest_root).is_none_or(|root| {
+            root.policy_for(&root.path.join(&plan.dest_rel)) == EffectivePolicy::Excluded
+        });
+        if excluded {
+            item.block(reasons::root_read_only());
             continue;
         }
         let single = PlanBundle {
