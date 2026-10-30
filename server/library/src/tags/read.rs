@@ -99,12 +99,14 @@ pub struct EditionTags {
     pub total_discs: Option<u32>,
     /// `YYYY[-MM[-DD]]`, read as [`release_date`] describes.
     pub release_date: Option<String>,
+    /// The track total of the file's disc, as [`track_total`] reads it.
+    pub total_tracks: Option<u32>,
 }
 
-/// Written by hand so an absent release date prints nothing. A file's
-/// `tag_revision` hashes `AudioTag`'s `Debug` text with these hints empty,
-/// and that text stays what it was before the release date was read, so
-/// an unchanged file keeps its revision.
+/// Written by hand so an absent release date or track total prints
+/// nothing. A file's `tag_revision` hashes `AudioTag`'s `Debug` text with
+/// these hints empty, and that text stays what it was before either was
+/// read, so an unchanged file keeps its revision.
 impl std::fmt::Debug for EditionTags {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut out = f.debug_struct("EditionTags");
@@ -115,6 +117,9 @@ impl std::fmt::Debug for EditionTags {
             .field("total_discs", &self.total_discs);
         if let Some(release_date) = &self.release_date {
             out.field("release_date", release_date);
+        }
+        if let Some(total_tracks) = &self.total_tracks {
+            out.field("total_tracks", total_tracks);
         }
         out.finish()
     }
@@ -532,6 +537,7 @@ fn audio_tag_from_values(
             release_country: first(ItemKey::ReleaseCountry),
             total_discs: total_of(&values_of(ItemKey::DiscTotal)),
             release_date: release_date(tag_type, &values_of),
+            total_tracks: track_total(tag_type, &values_of),
         },
     }
 }
@@ -544,6 +550,18 @@ fn total_of(values: &[String]) -> Option<u32> {
         None => value.as_str(),
     };
     total.trim().parse().ok().filter(|total| *total > 0)
+}
+
+/// A track total as [`total_of`] reads it. APE has one `Track` item for
+/// both the number and the total (see `ape_tag_from_items`), so there
+/// only the part after the slash of "3/12" is a total; a plain "3" is the
+/// track's number.
+fn track_total(tag_type: TagType, values_of: &impl Fn(ItemKey) -> Vec<String>) -> Option<u32> {
+    let values = values_of(ItemKey::TrackTotal);
+    if tag_type == TagType::Ape && !values.first().is_some_and(|value| value.contains('/')) {
+        return None;
+    }
+    total_of(&values)
 }
 
 fn join_all(values: &[String]) -> Option<String> {
@@ -761,7 +779,11 @@ fn parse_ape_items(
 
 #[cfg(test)]
 mod tests {
-    use super::{FileType, Probe, id3v23_tag_bytes, is_read_failure};
+    use super::{
+        FileType, Probe, ape_tag_from_items, audio_tag_from_values, id3v23_tag_bytes,
+        is_read_failure,
+    };
+    use lofty::tag::{ItemKey, TagType};
 
     /// A file whose reads fail with EIO after `limit` bytes, as on a mount
     /// whose backend went down while stat and open still answer.
@@ -830,6 +852,51 @@ mod tests {
                 .unwrap_or_else(|| panic!("{file_type:?} read past the failure"));
             assert!(is_read_failure(&error), "{file_type:?}: {error}");
         }
+    }
+
+    /// The tag `pairs` make for a `tag_type` file.
+    fn tag_of(tag_type: TagType, pairs: &'static [(ItemKey, &'static str)]) -> super::AudioTag {
+        audio_tag_from_values(tag_type, |key| {
+            pairs
+                .iter()
+                .filter(|(item, _)| *item == key)
+                .map(|(_, value)| (*value).to_owned())
+                .collect()
+        })
+    }
+
+    /// A track total is kept as an edition hint, read from its own key or
+    /// from the "n/m" pair, and never from a track number alone.
+    #[test]
+    fn the_track_total_is_read_from_its_key_or_the_pair() {
+        let vorbis = tag_of(
+            TagType::VorbisComments,
+            &[(ItemKey::TrackNumber, "3"), (ItemKey::TrackTotal, "12")],
+        );
+        assert_eq!(vorbis.edition.total_tracks, Some(12));
+        let none = tag_of(TagType::VorbisComments, &[(ItemKey::TrackNumber, "3")]);
+        assert_eq!(none.edition.total_tracks, None);
+        let zero = tag_of(TagType::VorbisComments, &[(ItemKey::TrackTotal, "0")]);
+        assert_eq!(zero.edition.total_tracks, None);
+
+        let ape = |value: &str| ape_tag_from_items(&[("Track".to_owned(), vec![value.to_owned()])]);
+        assert_eq!(ape("3/12").edition.total_tracks, Some(12));
+        assert_eq!(ape("3/12").track_number, 3);
+        assert_eq!(ape("3").edition.total_tracks, None);
+        assert_eq!(ape("3").track_number, 3);
+    }
+
+    /// A file's tag revision hashes its tag's `Debug` text with the edition
+    /// hints empty: reading the track total must not change that text, or
+    /// every unchanged file would read as changed on the next scan.
+    #[test]
+    fn an_unknown_track_total_leaves_the_debug_text_as_it_was() {
+        let empty = format!("{:?}", super::EditionTags::default());
+        assert_eq!(
+            empty,
+            "EditionTags { media: None, barcode: None, catalog_number: None, \
+             release_country: None, total_discs: None }"
+        );
     }
 
     /// Serves an ID3v2.3 header whose tag size is one byte over 16 MiB,

@@ -721,6 +721,25 @@ impl ProviderCacheStore {
             .is_some_and(|row| row.kind == CacheKind::Found || row.fresh_until > now)
     }
 
+    /// [`Self::peek`] for each of `keys`, in order, in one read.
+    pub async fn peek_many<T: DeserializeOwned>(
+        &self,
+        keys: &[CacheKey],
+    ) -> Vec<Option<Option<T>>> {
+        let now = self.clock.now_ms();
+        let names: Vec<&str> = keys.iter().map(CacheKey::as_str).collect();
+        self.db
+            .get_many(&names)
+            .await
+            .into_iter()
+            .map(|row| {
+                row.filter(|row| row.keep_until > now)
+                    .as_ref()
+                    .and_then(decode)
+            })
+            .collect()
+    }
+
     /// The bytes of a fresh found row.
     pub async fn get_bytes(&self, key: &CacheKey) -> Option<Vec<u8>> {
         let now = self.clock.now_ms();

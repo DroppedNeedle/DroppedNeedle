@@ -146,8 +146,8 @@ droppedneedle_kernel::sql! {
     /// Store the edition hints of track `?1` read at stat revision `?2`, unless
     /// the row moved on since or already holds them.
     pub(super) FILL_EDITION_TAGS = "INSERT INTO local_track_edition_tags (local_track_id, media, \
-             barcode, catalog_number, release_country, total_discs, release_date) \
-             SELECT id, ?3, ?4, ?5, ?6, ?7, ?8 FROM local_tracks \
+             barcode, catalog_number, release_country, total_discs, release_date, total_tracks) \
+             SELECT id, ?3, ?4, ?5, ?6, ?7, ?8, ?9 FROM local_tracks \
              WHERE id = ?1 AND stat_revision = ?2 \
              ON CONFLICT (local_track_id) DO NOTHING";
     /// The album of track `?1` when its MusicBrainz match is not settled:
@@ -384,11 +384,11 @@ droppedneedle_kernel::sql! {
            THEN COALESCE(local_tracks.excluded_at, excluded.tags_read_at) END";
     pub(super) TRACK_AND_ALBUM_AT_PATH = "SELECT id, local_album_id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2";
     pub(super) WRITE_EDITION_TAGS = "INSERT INTO local_track_edition_tags (local_track_id, media, barcode, catalog_number, \
-         release_country, total_discs, release_date) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+         release_country, total_discs, release_date, total_tracks) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
          ON CONFLICT (local_track_id) DO UPDATE SET media = excluded.media, \
          barcode = excluded.barcode, catalog_number = excluded.catalog_number, \
          release_country = excluded.release_country, total_discs = excluded.total_discs, \
-         release_date = excluded.release_date";
+         release_date = excluded.release_date, total_tracks = excluded.total_tracks";
     pub(super) DROP_TRACK_CREDITS = "DELETE FROM local_track_artists WHERE local_track_id = ?1";
     pub(super) WRITE_TRACK_CREDIT = "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role, \
          credited_name, join_phrase, artist_mbid) VALUES (?1, ?2, ?3, 'main', ?4, ?5, ?6)";

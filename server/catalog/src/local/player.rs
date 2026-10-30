@@ -274,6 +274,38 @@ pub struct AlbumIds {
     pub release_group_mbid: Option<String>,
 }
 
+/// What one disc's indexed tracks carry in their tags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiscTotals {
+    /// The disc number.
+    pub disc: u32,
+    /// The largest track total its tracks carry.
+    pub total_tracks: Option<u32>,
+    /// The largest disc total its tracks carry.
+    pub total_discs: Option<u32>,
+}
+
+/// The songs an album's release has by its files' tags: each disc's track
+/// total, summed over discs 1 to N, where N is the largest disc total or
+/// disc number the tags carry. `None` when a disc in that range has no
+/// known track total, which is also the case for a disc none of the
+/// album's files is on.
+#[must_use]
+pub fn tagged_song_count(discs: &[DiscTotals]) -> Option<u32> {
+    let last = discs
+        .iter()
+        .map(|disc| disc.disc.max(1).max(disc.total_discs.unwrap_or(0)))
+        .max()?;
+    (1..=last).try_fold(0u32, |sum, number| {
+        let total = discs
+            .iter()
+            .filter(|disc| disc.disc.max(1) == number)
+            .filter_map(|disc| disc.total_tracks)
+            .max()?;
+        sum.checked_add(total)
+    })
+}
+
 /// MusicBrainz ids for player answers, by local id. An album or artist
 /// with no id is absent.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1781,6 +1813,52 @@ impl LocalCatalog {
         Ok(out)
     }
 
+    /// The songs each of `album_ids` should have by its files' tags, as
+    /// [`tagged_song_count`] counts them; an album it cannot count is
+    /// absent.
+    pub async fn tagged_song_counts(
+        &self,
+        album_ids: &[String],
+    ) -> Result<HashMap<String, u32>, StoreError> {
+        let mut discs: HashMap<String, Vec<DiscTotals>> = HashMap::new();
+        for chunk in album_ids.chunks(500) {
+            let values = id_values(chunk);
+            let found: Vec<(String, DiscTotals)> = self
+                .read("player.tagged_song_counts", move |conn| {
+                    rows(
+                        conn,
+                        &sql::player_album_disc_totals(ListLen::new(values.len())),
+                        &values,
+                        |row| {
+                            let count = |index| {
+                                row.get::<_, Option<i64>>(index).map(|value| {
+                                    value
+                                        .and_then(|value| u32::try_from(value).ok())
+                                        .filter(|value| *value > 0)
+                                })
+                            };
+                            Ok((
+                                row.get(0)?,
+                                DiscTotals {
+                                    disc: u32::try_from(row.get::<_, i64>(1)?).unwrap_or(0),
+                                    total_tracks: count(2)?,
+                                    total_discs: count(3)?,
+                                },
+                            ))
+                        },
+                    )
+                })
+                .await?;
+            for (id, totals) in found {
+                discs.entry(id).or_default().push(totals);
+            }
+        }
+        Ok(discs
+            .into_iter()
+            .filter_map(|(id, discs)| Some((id, tagged_song_count(&discs)?)))
+            .collect())
+    }
+
     /// The id an album, artist or track (`kind`) has now: `id` itself while
     /// it is live, else the live one a merge or an alias of any kind points
     /// it at. `None` for an album or artist nothing live holds; a track
@@ -1914,5 +1992,55 @@ mod shuffle_seed_tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .len();
         assert_eq!(held, ShuffleSeeds::CAP);
+    }
+}
+
+#[cfg(test)]
+mod tagged_song_count_tests {
+    use super::{DiscTotals, tagged_song_count};
+
+    fn disc(disc: u32, total_tracks: Option<u32>, total_discs: Option<u32>) -> DiscTotals {
+        DiscTotals {
+            disc,
+            total_tracks,
+            total_discs,
+        }
+    }
+
+    #[test]
+    fn one_disc_counts_its_total() {
+        assert_eq!(tagged_song_count(&[disc(1, Some(12), None)]), Some(12));
+        assert_eq!(tagged_song_count(&[disc(1, Some(12), Some(1))]), Some(12));
+    }
+
+    #[test]
+    fn the_discs_totals_add_up() {
+        let both = [disc(1, Some(12), Some(2)), disc(2, Some(9), Some(2))];
+        assert_eq!(tagged_song_count(&both), Some(21));
+        let untold = [disc(1, Some(12), None), disc(2, Some(9), None)];
+        assert_eq!(tagged_song_count(&untold), Some(21));
+    }
+
+    #[test]
+    fn a_disc_without_files_leaves_the_count_unknown() {
+        assert_eq!(tagged_song_count(&[disc(1, Some(12), Some(2))]), None);
+        assert_eq!(tagged_song_count(&[disc(2, Some(9), Some(2))]), None);
+        let gap = [disc(1, Some(12), None), disc(3, Some(10), None)];
+        assert_eq!(tagged_song_count(&gap), None);
+    }
+
+    #[test]
+    fn a_disc_without_a_total_leaves_the_count_unknown() {
+        let untold = [disc(1, Some(12), Some(2)), disc(2, None, Some(2))];
+        assert_eq!(tagged_song_count(&untold), None);
+        assert_eq!(tagged_song_count(&[disc(1, None, None)]), None);
+        assert_eq!(tagged_song_count(&[]), None);
+    }
+
+    #[test]
+    fn a_disc_numbered_zero_is_the_first() {
+        assert_eq!(tagged_song_count(&[disc(0, Some(7), None)]), Some(7));
+        let split = [disc(0, None, None), disc(1, Some(7), None)];
+        assert_eq!(tagged_song_count(&split), Some(7));
     }
 }

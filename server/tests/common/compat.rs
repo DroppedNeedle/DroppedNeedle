@@ -144,7 +144,13 @@ impl CompatApp {
     /// The app with both protocols on and no library folder: the test
     /// writes the catalog rows it reads.
     pub async fn unscanned(tag: &str) -> Self {
-        let app = TestApp::start(tag).await;
+        Self::unscanned_with(tag, super::closed_outbound()).await
+    }
+
+    /// As [`CompatApp::unscanned`], reaching the outside world as
+    /// `outbound` says.
+    pub async fn unscanned_with(tag: &str, outbound: droppedneedle::bootstrap::Outbound) -> Self {
+        let app = TestApp::start_with(tag, outbound).await;
         let music = app.config.root_app_dir.join("music");
         Self::signed_in(app, music, json!({ "tracks": [] })).await
     }
