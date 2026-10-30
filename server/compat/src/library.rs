@@ -29,10 +29,19 @@ use droppedneedle_catalog::local::store::LocalCatalog;
 use droppedneedle_catalog::local::stores::{
     ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LyricDoc, LyricsPort, StoreError,
 };
+use droppedneedle_catalog::metadata::Catalog;
 use droppedneedle_kernel::db::{Db, DbError};
 
 use crate::sql;
 use crate::user_settings::UserSettings;
+
+/// An album's `releaseSongCount`: the track count of the MusicBrainz
+/// release it is matched to, else the count its files' tags give, else
+/// none. Never zero.
+#[must_use]
+pub fn release_song_count(release: Option<u32>, tagged: Option<u32>) -> Option<i64> {
+    release.or(tagged).filter(|count| *count > 0).map(i64::from)
+}
 
 /// A compat read or write failed. Client faults keep their kind so each
 /// protocol answers its own code (Subsonic 70/50/10/0, Jellyfin
@@ -183,6 +192,8 @@ pub struct CompatLibrary {
     pub covers: Arc<dyn CoverArt>,
     /// The service behind `covers`, read for the local-art setting.
     pub artwork: Option<ArtworkService>,
+    /// The album pages' MusicBrainz reads, for the releases they hold.
+    pub releases: Option<Catalog>,
     /// Per-caller seeds for paged random lists, shared by both protocols.
     pub shuffles: Arc<ShuffleSeeds>,
     /// Each person's choices for their apps.
@@ -276,6 +287,10 @@ impl CompatLibrary {
             lyrics: catalog_setup.local.lyrics.clone(),
             covers: catalog_setup.covers.covers.clone(),
             artwork: catalog_setup.artwork.clone(),
+            releases: catalog_setup
+                .metadata
+                .as_ref()
+                .map(|deps| deps.catalog.clone()),
             shuffles: Arc::new(ShuffleSeeds::default()),
             user_settings: UserSettings::new(db),
         }
@@ -530,6 +545,48 @@ impl CompatLibrary {
         played: bool,
     ) -> Result<(), CompatError> {
         Ok(self.service().mark_played(user_id, scope, played).await?)
+    }
+
+    /// The songs each of `album_ids` should have (`releaseSongCount`), as
+    /// [`release_song_count`] picks it. `ids` are the albums' player ids.
+    /// Never asks MusicBrainz: a release counts only while its detail is
+    /// held. An album with no count is absent.
+    pub async fn release_song_counts(
+        &self,
+        album_ids: &[String],
+        ids: &PlayerIds,
+    ) -> Result<HashMap<String, i64>, CompatError> {
+        let releases: HashMap<&str, &str> = album_ids
+            .iter()
+            .filter_map(|id| {
+                let album = ids.albums.get(id).filter(|album| album.matched)?;
+                Some((id.as_str(), album.release_mbid.as_deref()?))
+            })
+            .collect();
+        let held = match &self.releases {
+            Some(catalog) if !releases.is_empty() => {
+                let mut mbids: Vec<String> =
+                    releases.values().map(|mbid| (*mbid).to_owned()).collect();
+                mbids.sort_unstable();
+                mbids.dedup();
+                catalog.held_release_track_counts(&mbids).await
+            }
+            _ => HashMap::new(),
+        };
+        let held_of = |id: &str| releases.get(id).and_then(|mbid| held.get(*mbid)).copied();
+        let untold: Vec<String> = album_ids
+            .iter()
+            .filter(|id| held_of(id).is_none())
+            .cloned()
+            .collect();
+        let tagged = self.catalog.tagged_song_counts(&untold).await?;
+        Ok(album_ids
+            .iter()
+            .filter_map(|id| {
+                let count = release_song_count(held_of(id), tagged.get(id).copied())?;
+                Some((id.clone(), count))
+            })
+            .collect())
     }
 
     /// The MusicBrainz ids players are sent for some albums and artists.
@@ -894,5 +951,21 @@ impl CompatLibrary {
             })
             .await?;
         Ok(found)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_song_count;
+
+    /// The matched release's count wins over the tags', the tags' stands
+    /// in when no release is held, and with neither the field is left out.
+    #[test]
+    fn the_release_count_comes_from_musicbrainz_then_the_tags() {
+        assert_eq!(release_song_count(Some(12), Some(10)), Some(12));
+        assert_eq!(release_song_count(None, Some(10)), Some(10));
+        assert_eq!(release_song_count(Some(12), None), Some(12));
+        assert_eq!(release_song_count(None, None), None);
+        assert_eq!(release_song_count(Some(0), None), None);
     }
 }

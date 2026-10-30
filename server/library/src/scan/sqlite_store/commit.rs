@@ -1300,6 +1300,7 @@ fn write_item(
             blank(&edition.release_country),
             edition.total_discs,
             edition.release_date,
+            edition.total_tracks,
         ])?;
     let rows_before = credit_rows(tx, CreditSide::Track, &track_id)?;
     tx.prepare_cached(crate::scan::sql::DROP_TRACK_CREDITS.text())?
@@ -2880,6 +2881,7 @@ fn fill_edition_tags(
                 release_country,
                 edition.total_discs,
                 edition.release_date,
+                edition.total_tracks,
             ])?;
         filled += stored;
         // Only what edition matching reads counts: it takes no release

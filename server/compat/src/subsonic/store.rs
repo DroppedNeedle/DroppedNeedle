@@ -155,6 +155,7 @@ fn view_album(album: PlayerAlbum, ids: &PlayerIds, local_first: bool) -> ViewAlb
         artist_name: Some(record.artist_name),
         artist_mbid: Some(record.artist_id),
         track_count: Some(record.track_count as i64),
+        release_song_count: None,
         total_duration_seconds: Some(record.total_duration_seconds),
         play_count: None,
         date_added: whole(record.date_added),
@@ -305,10 +306,17 @@ impl SubsonicStore {
             .map(|album| album.record.id.clone())
             .collect::<Vec<_>>();
         let player_ids = self.library.player_ids(&ids, &[]).await?;
+        let counts = self.library.release_song_counts(&ids, &player_ids).await?;
         let local_first = self.library.local_art_first();
         let mut views = albums
             .into_iter()
-            .map(|album| view_album(album, &player_ids, local_first))
+            .map(|album| {
+                let count = counts.get(&album.record.id).copied();
+                ViewAlbum {
+                    release_song_count: count,
+                    ..view_album(album, &player_ids, local_first)
+                }
+            })
             .collect::<Vec<_>>();
         if let Some(user_id) = &self.caller {
             let starred = self.library.starred(user_id, "album", &ids).await?;

@@ -170,6 +170,8 @@ pub struct ViewAlbum {
     pub artist_mbid: Option<String>,
     /// Track count.
     pub track_count: Option<i64>,
+    /// Songs the album's release has (`releaseSongCount`), when known.
+    pub release_song_count: Option<i64>,
     /// Total duration seconds.
     pub total_duration_seconds: Option<f64>,
     /// Play count.
@@ -414,6 +416,7 @@ pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
             .map(|mbid| encode(IdKind::Artist, mbid)),
         coverArt: Some(cover_id(&view.rg_mbid, view.cover_version.as_deref())),
         songCount: view.track_count,
+        releaseSongCount: view.release_song_count,
         duration: view.total_duration_seconds.map(|d| d.round() as i64),
         playCount: view.play_count,
         created: iso(view.date_added),
@@ -545,6 +548,7 @@ pub fn to_child(view: &ViewTrack, transcode_hint: Option<(&str, &str)>) -> SChil
         }),
         name: None,
         songCount: None,
+        releaseSongCount: None,
         unreadTags: Some(UnreadTags::default()),
     }
 }
@@ -591,6 +595,7 @@ pub fn to_album_child(view: &ViewAlbum) -> SChild {
         replayGain: Some(SReplayGain::default()),
         name: Some(view.title.clone()),
         songCount: view.track_count,
+        releaseSongCount: view.release_song_count,
         unreadTags: Some(UnreadTags::default()),
         ..SChild::default()
     }

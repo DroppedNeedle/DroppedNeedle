@@ -138,6 +138,10 @@ pub struct SAlbumID3 {
     /// Track count.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub songCount: Option<i64>,
+    /// Songs the album's release has, all discs together; absent when
+    /// unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub releaseSongCount: Option<i64>,
     /// Total duration seconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<i64>,
@@ -386,6 +390,10 @@ pub struct SChild {
     /// Track count, on an album's folder entry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub songCount: Option<i64>,
+    /// Songs the album's release has, on an album's folder entry; absent
+    /// when unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub releaseSongCount: Option<i64>,
     /// Set on songs and albums: the keys for tags the app does not read.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub unreadTags: Option<UnreadTags>,

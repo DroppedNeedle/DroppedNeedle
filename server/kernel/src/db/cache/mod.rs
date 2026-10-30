@@ -471,6 +471,66 @@ impl CacheDb {
         })
     }
 
+    /// The rows under `keys`, in order, as [`Self::get`] reads each, in one
+    /// read: a list asks once, not once per item.
+    pub async fn get_many(&self, keys: &[&str]) -> Vec<Option<StoredRow>> {
+        if !self.is_on() {
+            return vec![None; keys.len()];
+        }
+        let mut found: Vec<Option<StoredRow>> = {
+            let queued = lock(&self.inner.shared.queued);
+            keys.iter()
+                .map(|key| {
+                    queued.get(*key).map(|(_, row)| StoredRow {
+                        kind: row.kind,
+                        fetched_at: row.fetched_at,
+                        fresh_until: row.fresh_until,
+                        keep_until: row.keep_until,
+                        value: row.value.clone(),
+                    })
+                })
+                .collect()
+        };
+        let wanted: Vec<(usize, String)> = keys
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| found[*index].is_none())
+            .map(|(index, key)| (index, (*key).to_owned()))
+            .collect();
+        if wanted.is_empty() {
+            return found;
+        }
+        let read = self
+            .read(move |connection| {
+                let mut statement = connection.prepare_cached(sql::GET.text())?;
+                let mut rows = Vec::with_capacity(wanted.len());
+                for (index, key) in wanted {
+                    let row = statement
+                        .query_row([&key], |row| {
+                            let kind: String = row.get(0)?;
+                            Ok((kind, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+                        })
+                        .optional()?;
+                    rows.push((index, row));
+                }
+                Ok(rows)
+            })
+            .await
+            .unwrap_or_default();
+        for (index, row) in read {
+            found[index] = row.and_then(|(kind, fetched_at, fresh_until, keep_until, value)| {
+                Some(StoredRow {
+                    kind: CacheKind::parse(&kind)?,
+                    fetched_at,
+                    fresh_until,
+                    keep_until,
+                    value,
+                })
+            });
+        }
+        found
+    }
+
     /// Rows and bytes per source; empty when the cache is off.
     pub async fn stats(&self) -> Vec<SourceUsage> {
         self.read(|connection| {

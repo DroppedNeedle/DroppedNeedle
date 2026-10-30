@@ -146,6 +146,210 @@ async fn subsonic_and_jellyfin_read_the_scanned_library() {
     rig.stop().await;
 }
 
+/// The MusicBrainz release the seeded Portishead album is matched to:
+/// one CD of two tracks.
+const RELEASE_CD: &str = "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65";
+
+/// Beside [`LIBRARY`]: the Portishead album matched to [`RELEASE_CD`],
+/// its one file tagged as one of ten; a two-disc album whose files are
+/// tagged three and four tracks per disc; and an album whose files carry
+/// no total.
+const RELEASE_COUNTS: &str = "INSERT INTO local_album_external_identities \
+    (local_album_id, provider, release_group_mbid, release_mbid, decision_source, selected_at) \
+    VALUES ('alb-1', 'musicbrainz', '0d5b0aa2-4e5d-4a54-8a3d-8a7a8f0e0e01', \
+    '6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65', 'manual', 1); \
+    INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, album_artist_name, \
+    album_artist_name_folded, album_artist_id, year, grouping_source, created_at, updated_at) \
+    VALUES ('alb-2', 'root', 'k2', 'Third', 'third', 'Portishead', 'portishead', 'art-1', 2008, \
+    'automatic', 2, 2), \
+    ('alb-3', 'root', 'k3', 'Roseland', 'roseland', 'Portishead', 'portishead', 'art-1', 1998, \
+    'automatic', 3, 3); \
+    INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, path_hash, \
+    file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, artist_name, \
+    artist_name_folded, album_title, album_title_folded, album_artist_name, \
+    album_artist_name_folded, disc_number, track_number, genre, genre_folded, duration_seconds, \
+    file_format, ingest_source, imported_at, membership_source) VALUES \
+    ('trk-2', 'alb-2', 'root', '/music/third/1-01.flac', 'third/1-01.flac', 'h2', 1000, 1, \
+    'r2', 'Silence', 'silence', 'Portishead', 'portishead', 'Third', 'third', 'Portishead', \
+    'portishead', 1, 1, 'Trip Hop', 'trip hop', 299.0, 'flac', 'scan', 1, 'automatic'), \
+    ('trk-3', 'alb-2', 'root', '/music/third/2-01.flac', 'third/2-01.flac', 'h3', 1000, 1, \
+    'r3', 'Machine Gun', 'machine gun', 'Portishead', 'portishead', 'Third', 'third', \
+    'Portishead', 'portishead', 2, 1, 'Trip Hop', 'trip hop', 286.0, 'flac', 'scan', 1, \
+    'automatic'), \
+    ('trk-4', 'alb-3', 'root', '/music/roseland/01.flac', 'roseland/01.flac', 'h4', 1000, 1, \
+    'r4', 'Humming', 'humming', 'Portishead', 'portishead', 'Roseland', 'roseland', \
+    'Portishead', 'portishead', 1, 1, 'Trip Hop', 'trip hop', 380.0, 'flac', 'scan', 1, \
+    'automatic'); \
+    INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+    VALUES ('trk-2', 0, 'art-1', 'main'), ('trk-3', 0, 'art-1', 'main'), \
+    ('trk-4', 0, 'art-1', 'main'); \
+    INSERT INTO local_track_edition_tags (local_track_id, total_discs, total_tracks) VALUES \
+    ('trk-1', NULL, 10), ('trk-2', 2, 3), ('trk-3', 2, 4), ('trk-4', NULL, NULL);";
+
+/// A MusicBrainz stand-in serving [`RELEASE_CD`] and counting the
+/// requests it gets.
+async fn musicbrainz_stand_in() -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
+    let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = asked.clone();
+    let release = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/catalog/mb_release_cd.json"
+    ))
+    .expect("release fixture reads");
+    let answer = axum::routing::get(move || {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let release = release.clone();
+        async move { ([("content-type", "application/json")], release) }
+    });
+    // Either source the settings may name: MusicBrainz itself or its mirror.
+    let app = axum::Router::new()
+        .route(
+            &format!("/musicbrainz/release/{RELEASE_CD}"),
+            answer.clone(),
+        )
+        .route(&format!("/brainzmash/release/{RELEASE_CD}"), answer);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("stand-in binds");
+    let base = format!("http://{}", listener.local_addr().expect("address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("stand-in serves");
+    });
+    (base, server, asked)
+}
+
+/// The XML `getAlbum` answer for album `id`.
+async fn album_xml(rig: &CompatApp, id: &str) -> String {
+    let uri = rest(
+        &format!("getAlbum?id={id}"),
+        &rig.subsonic_auth("catalog").replace("f=json", "f=xml"),
+    );
+    let (status, _, body) =
+        crate::common::through_busy(|| rig.app.raw("GET", &uri, &[], None)).await;
+    assert_eq!(status, StatusCode::OK, "{id}");
+    String::from_utf8(body).expect("utf-8 answer")
+}
+
+/// Each album's `releaseSongCount` in a Subsonic JSON album list, by name;
+/// `None` where the field is left out.
+fn release_song_counts(list: &Value) -> Vec<(String, Option<i64>)> {
+    let mut counts: Vec<(String, Option<i64>)> = list
+        .as_array()
+        .expect("albums")
+        .iter()
+        .map(|album| {
+            assert!(
+                album.get("releaseSongCount").is_none_or(Value::is_i64),
+                "{album}"
+            );
+            (
+                album["name"].as_str().expect("name").to_owned(),
+                album["releaseSongCount"].as_i64(),
+            )
+        })
+        .collect();
+    counts.sort();
+    counts
+}
+
+/// Player apps learn how many songs an album should have, so they can
+/// show "1 of 2" for an incomplete one. The count is the matched
+/// MusicBrainz release's while the server holds its tracklist, else what
+/// the files' tags say summed over every disc, and left out when neither
+/// tells. Every album answer carries it, in JSON and XML, and reading it
+/// never asks MusicBrainz.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn albums_tell_how_many_songs_their_release_has() {
+    let (musicbrainz, server, asked) = musicbrainz_stand_in().await;
+    let rig = CompatApp::unscanned_with(
+        "compat-catalog-release-songs",
+        crate::common::outbound_at(&musicbrainz),
+    )
+    .await;
+    rig.app.seed(LIBRARY).await;
+    rig.app.seed(RELEASE_COUNTS).await;
+    let list = || async {
+        let body = subsonic(&rig, "getAlbumList2", &[("type", "alphabeticalByName")]).await;
+        let parsed: Value = serde_json::from_str(&body).expect("json answer");
+        release_song_counts(&parsed["subsonic-response"]["albumList2"]["album"])
+    };
+    let named = |name: &str, count: Option<i64>| (name.to_owned(), count);
+
+    // Nothing of the release is held yet: the tags count.
+    assert_eq!(
+        list().await,
+        [
+            named("Dummy", Some(10)),
+            named("Roseland", None),
+            named("Third", Some(7)),
+        ]
+    );
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // An album page reads the release once; from then on it counts.
+    let admin = rig.app.login_admin().await;
+    let (status, tracks) = rig
+        .app
+        .call_through_busy(
+            "GET",
+            &format!("/api/v3/albums/alb-1/editions/{RELEASE_CD}/tracks"),
+            &[("authorization", admin.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{tracks}");
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        list().await,
+        [
+            named("Dummy", Some(2)),
+            named("Roseland", None),
+            named("Third", Some(7)),
+        ]
+    );
+    let album = subsonic_json(&rig, "getAlbum", "al-alb-1", "album").await;
+    assert_eq!(
+        (&album["songCount"], &album["releaseSongCount"]),
+        (&json!(1), &json!(2)),
+        "{album}"
+    );
+    let found = subsonic(&rig, "search3", &[("query", "dummy")]).await;
+    let found: Value = serde_json::from_str(&found).expect("json answer");
+    assert_eq!(
+        found["subsonic-response"]["searchResult3"]["album"][0]["releaseSongCount"],
+        json!(2),
+        "{found}"
+    );
+    let artist = subsonic_json(&rig, "getArtist", "ar-art-1", "artist").await;
+    assert_eq!(
+        release_song_counts(&artist["album"]),
+        [
+            named("Dummy", Some(2)),
+            named("Roseland", None),
+            named("Third", Some(7)),
+        ]
+    );
+    let matched = album_xml(&rig, "al-alb-1").await;
+    assert!(matched.contains("releaseSongCount=\"2\""), "{matched}");
+    let untold = album_xml(&rig, "al-alb-3").await;
+    assert!(
+        untold.contains("<album ") && !untold.contains("releaseSongCount"),
+        "{untold}"
+    );
+
+    assert_eq!(
+        asked.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the Subsonic reads asked MusicBrainz nothing"
+    );
+    rig.stop().await;
+    server.abort();
+}
+
 /// The seeded album's folder picture: a square PNG of one colour.
 fn paint_cover(path: &std::path::Path, side: u32, colour: [u8; 3]) {
     image::RgbImage::from_pixel(side, side, image::Rgb(colour))

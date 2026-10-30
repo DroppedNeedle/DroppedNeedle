@@ -4331,6 +4331,14 @@ fn scan_and_editor_agree_on_writable_fields() {
                 number(TagField::DiscTotal).filter(|total| *total > 0)
             ),
         );
+        agree(
+            "track_total",
+            format!("{:?}", scan.edition.total_tracks),
+            format!(
+                "{:?}",
+                number(TagField::TrackTotal).filter(|total| *total > 0)
+            ),
+        );
         let date = first(TagField::Date);
         agree(
             "year",

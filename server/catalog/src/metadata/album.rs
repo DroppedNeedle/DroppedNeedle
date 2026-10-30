@@ -1,6 +1,8 @@
 //! Album pages: header, tracklist, editions, artwork, Last.fm and store
 //! links.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use droppedneedle_providers::degradation::scoped;
@@ -337,6 +339,33 @@ impl Catalog {
             .peek(&self.release_key(mbid))
             .await
             .flatten()
+    }
+
+    /// The track count of each of `release_mbids` whose detail is held,
+    /// fresh or stale, over all its media; never dials out. A release not
+    /// held, or held with no tracks, is absent. Only the tracklist's
+    /// length is decoded, so a page of player albums stays cheap.
+    pub async fn held_release_track_counts(
+        &self,
+        release_mbids: &[String],
+    ) -> HashMap<String, u32> {
+        #[derive(Deserialize)]
+        struct Tracklist {
+            tracks: Vec<serde::de::IgnoredAny>,
+        }
+        let keys: Vec<CacheKey> = release_mbids
+            .iter()
+            .map(|mbid| self.release_key(&mbid.to_ascii_lowercase()))
+            .collect();
+        let held: Vec<Option<Option<Tracklist>>> = self.upstream().cache().peek_many(&keys).await;
+        release_mbids
+            .iter()
+            .zip(held)
+            .filter_map(|(mbid, held)| {
+                let count = u32::try_from(held.flatten()?.tracks.len()).ok()?;
+                (count > 0).then(|| (mbid.clone(), count))
+            })
+            .collect()
     }
 
     /// The release-group MBID a route's album id names. A library album

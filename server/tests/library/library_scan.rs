@@ -111,11 +111,16 @@ async fn bundle(scratch: &Path) -> LibrarySetup {
 
 /// Request a scan of every root and drive it to the end.
 async fn scan(library: &LibrarySetup) -> ScanRun {
+    scan_as(library, ScanKind::Incremental).await
+}
+
+/// One scan of `kind` over every library folder, run to its end.
+async fn scan_as(library: &LibrarySetup, kind: ScanKind) -> ScanRun {
     let registry = library.core.live_registry();
     let result = library
         .coordinator
         .request_run(&ScanRequest {
-            kind: ScanKind::Incremental,
+            kind,
             trigger: ScanTrigger::Manual,
             scopes: registry.scheduled_root_scopes(),
             requested_by_user_id: None,
@@ -315,8 +320,8 @@ async fn carried_file(name: &str, fixture_name: &str) -> (ScratchDir, LibrarySet
     (scratch, library)
 }
 
-/// Tags that carry a release date and a disc total of one, and no other
-/// edition hint.
+/// Tags that carry a release date, a disc total of one and a track total,
+/// and no other edition hint.
 struct DateOnlyReader;
 
 impl TagReader for DateOnlyReader {
@@ -329,12 +334,14 @@ impl TagReader for DateOnlyReader {
         read.tag.track_number = 1;
         read.tag.edition.release_date = Some("1997-03-01".to_owned());
         read.tag.edition.total_discs = Some(1);
+        read.tag.edition.total_tracks = Some(12);
         Ok(read)
     }
 }
 
-/// A release date or a single-disc total is stored, but edition matching
-/// reads neither, so the album is not identified again for it.
+/// A release date, a single-disc total or a track total is stored, but
+/// edition matching reads none of them, so the album is not identified
+/// again for it.
 #[tokio::test]
 async fn hints_matching_cannot_use_do_not_look_an_album_up_again() {
     let scratch = ScratchDir::new("scan-edition-date");
@@ -361,7 +368,7 @@ async fn hints_matching_cannot_use_do_not_look_an_album_up_again() {
     assert_eq!(
         count(
             "SELECT COUNT(*) FROM local_track_edition_tags \
-             WHERE release_date = '1997-03-01' AND total_discs = 1"
+             WHERE release_date = '1997-03-01' AND total_discs = 1 AND total_tracks = 12"
         ),
         1,
         "the row is filled"
@@ -395,7 +402,7 @@ async fn a_carried_file_gets_its_edition_hints_from_its_tags() {
             &library,
             "SELECT COUNT(*) FROM local_track_edition_tags WHERE barcode = '1234567890123' \
              AND catalog_number = 'CAT-42' AND media = 'Digital Media' \
-             AND release_country = 'GB'",
+             AND release_country = 'GB' AND total_tracks = 9",
         ),
         1,
         "the edition hints come from the file's tags"
@@ -474,6 +481,41 @@ async fn a_scan_records_whether_each_length_was_measured() {
         "the flag alone does not offer the album again"
     );
     assert_eq!(snapshot(&music), before, "scans never write music files");
+}
+
+/// A file read before track totals were kept has an edition row without
+/// one. An incremental scan does not read the unchanged file again, so the
+/// total stays unknown; a "rescan files" reads it, stores the total and
+/// moves the catalog revision, which tells player apps to read the
+/// library again.
+#[tokio::test]
+async fn rescanning_files_stores_the_track_total_an_older_read_skipped() {
+    let scratch = ScratchDir::new("scan-track-total");
+    plant(
+        &scratch.join("music"),
+        "Album/01.flac",
+        "management_full.flac",
+    );
+    let library = bundle(&scratch).await;
+    scan(&library).await;
+    let total = "SELECT COUNT(*) FROM local_track_edition_tags WHERE total_tracks = 9";
+    assert_eq!(query(&library, total), 1, "a new file's total is read");
+    let revision = "SELECT value FROM library_catalog_revision WHERE singleton = 1";
+    library
+        .scan_store
+        .db()
+        .run_sql("UPDATE local_track_edition_tags SET total_tracks = NULL")
+        .expect("an older read");
+
+    let run = scan(&library).await;
+    assert_eq!(count(&run, Counter::Unchanged), 1);
+    assert_eq!(query(&library, total), 0, "an unchanged file is not read");
+    let before = query(&library, revision);
+
+    let run = scan_as(&library, ScanKind::RescanFiles).await;
+    assert_eq!(run.state.scan_state(), ScanState::Completed);
+    assert_eq!(query(&library, total), 1, "a rescan reads it");
+    assert!(query(&library, revision) > before, "the revision moves");
 }
 
 /// A vanished file is marked missing, never deleted. A scope that loses
