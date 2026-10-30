@@ -6,9 +6,14 @@
 //! names the removal on the album's page and here. Every path comes from
 //! the removal's own rows: home is the row's `(root, rel)`, resolved
 //! through the sandbox, and the copy is the row's bin entry, or its hidden
-//! name beside home while its move into the bin is still pending. Each
-//! copy is hashed before the publish lock is taken; under it only its
-//! identity on disk is compared. The row's hidden temp beside home is a
+//! name beside home while its move into the bin is still pending. A copy
+//! comes back when it holds the removed bytes, or, in its bin entry, when
+//! it is still exactly the file that landed there (its recorded identity,
+//! change time included), whatever bytes it was given before it left: a
+//! file edited just before its removal comes back as it was. The row
+//! then carries the bytes the copy holds, so every later check reads
+//! those. Each copy is hashed before the publish lock is taken; under it
+//! only its identity on disk is compared. The row's hidden temp beside home is a
 //! hard link of the copy when both are on one filesystem, checked to be
 //! that file, else a verified copy of it. The temp is placed by a call
 //! that refuses a taken name. The commit re-indexes each track from its
@@ -16,7 +21,7 @@
 //! then the copy's name is untouched, so an unwind, which only removes the
 //! temp and what it placed, loses nothing. Only after the commit is the
 //! copy deleted, and only while it and the file at home both still hold
-//! the removed bytes. A copy in a bin that is no longer set is never
+//! the bytes put back. A copy in a bin that is no longer set is never
 //! deleted, and never linked.
 
 use std::path::{Component, Path, PathBuf};
@@ -28,7 +33,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use super::journal::{FileJournal, JournalKind, JournalState, JournalStore};
 use super::paths::{self, FileStat, Sandbox};
 use super::place::{self, PlaceError, Seams};
-use super::planner::{CopyIn, PlanBundle, PutBack, PutBackItem, RemoveFile};
+use super::planner::{CopyIn, FileFingerprint, PlanBundle, PutBack, PutBackItem, RemoveFile};
 use super::snapshots::sha256_hex;
 use super::{HIDDEN_PREFIX, PublishError, sql};
 use crate::scan::models::EffectivePolicy;
@@ -64,6 +69,9 @@ pub enum Refusal {
     TrackElsewhere,
     /// The removal's own write needs an administrator's look first.
     RemovalNeedsAttention,
+    /// The removal of a file was undone part way, so it has no copy to
+    /// bring back.
+    RemovalUndone,
     /// A copy that is there could not be read.
     CopyUnreadable,
     /// The publish refused or failed.
@@ -95,6 +103,16 @@ const PUT_BACK_KIND: &str = "files_put_back";
 pub(super) fn spent(conn: &Connection, removal_id: &str) -> rusqlite::Result<bool> {
     conn.prepare_cached(sql::PUT_BACK_EXISTS.text())?
         .query_row(params![removal_id], |row| row.get(0))
+}
+
+/// Whether the removal `removal_id` was put back, so a file of it gone
+/// from its hidden name was taken home, not lost. A read that fails
+/// answers no.
+pub(super) fn taken_back(db: &Db, removal_id: &str) -> bool {
+    db.read_blocking("publish.put_back_spent", |conn| {
+        Ok::<_, PublishError>(spent(conn, removal_id)?)
+    })
+    .unwrap_or(false)
 }
 
 /// What kind of removal an undo record undoes, read from its reason code.
@@ -184,6 +202,9 @@ struct Found {
     file: Option<RemoveFile>,
     /// The track's (root, relative path, availability) now.
     track: Option<(String, String, String)>,
+    /// The copy's identity when it landed in its bin entry, when recorded
+    /// and readable.
+    binned: Option<FileStat>,
 }
 
 /// The removal `removal_id` on album `album_id` (or an album merged into
@@ -234,14 +255,31 @@ fn read_removal(
             None => None,
         };
         let file = super::remove::file_of(&removal, &row).cloned();
-        found.push(Found { row, file, track });
+        let binned: Option<String> = conn
+            .prepare_cached(sql::REPLACEMENT_BINNED.text())?
+            .query_row(params![row.id], |r| r.get(0))
+            .optional()?
+            .flatten();
+        let binned = binned.and_then(|json| match serde_json::from_str(&json) {
+            Ok(stat) => Some(stat),
+            Err(error) => {
+                tracing::warn!(journal_id = %row.id, %error, "a recycled copy's recorded identity does not read; its bytes are checked");
+                None
+            }
+        });
+        found.push(Found {
+            row,
+            file,
+            track,
+            binned,
+        });
     }
     Ok(Ok((bundle_id, found)))
 }
 
-/// Copies hashed before the publish lock: each path that held the removed
-/// bytes, with its identity on disk while it was read.
-pub type Prehashed = std::collections::BTreeMap<PathBuf, FileStat>;
+/// Copies hashed before the publish lock: each path that may come back,
+/// with its identity on disk while it was read and its bytes' hash.
+pub type Prehashed = std::collections::BTreeMap<PathBuf, (FileStat, String)>;
 
 /// What a put-back reads before the publish lock: the library folders the
 /// removal `removal_id` took files from, so the caller can hold them, and
@@ -267,13 +305,13 @@ pub fn prepare(
         let Some(file) = &found.file else {
             continue;
         };
-        let mut candidates = vec![PathBuf::from(&found.row.staged)];
+        let mut candidates = vec![(PathBuf::from(&found.row.staged), None)];
         if let Some(replaced) = &found.row.replaces {
-            candidates.push(PathBuf::from(&replaced.recycle_to));
+            candidates.push((PathBuf::from(&replaced.recycle_to), found.binned));
         }
-        for path in candidates {
-            if let Some(stat) = hash_copy(&path, file) {
-                hashed.insert(path, stat);
+        for (path, binned) in candidates {
+            if let Some(read) = hash_copy(&path, file, binned) {
+                hashed.insert(path, read);
             }
         }
     }
@@ -282,15 +320,22 @@ pub fn prepare(
     Ok((roots, hashed))
 }
 
-/// The identity of the regular file at `path` when it holds `file`'s
-/// bytes and did not change while it was read.
-fn hash_copy(path: &Path, file: &RemoveFile) -> Option<FileStat> {
+/// The identity and hash of the regular file at `path` when it may come
+/// back (it holds `file`'s bytes, or is still the file `binned` recorded)
+/// and did not change while it was read.
+fn hash_copy(
+    path: &Path,
+    file: &RemoveFile,
+    binned: Option<FileStat>,
+) -> Option<(FileStat, String)> {
     let before = FileStat::read(path).ok()?;
-    if before.size != file.fingerprint.size {
+    let as_binned = binned == Some(before);
+    if !as_binned && before.size != file.fingerprint.size {
         return None;
     }
     let hashed = paths::hash_regular_file(path).ok()?;
-    (hashed.stat == before && hashed.sha256 == file.fingerprint.sha256).then_some(hashed.stat)
+    (hashed.stat == before && (as_binned || hashed.sha256 == file.fingerprint.sha256))
+        .then_some((hashed.stat, hashed.sha256))
 }
 
 /// Plan putting back what the removal `removal_id` took from album
@@ -298,10 +343,11 @@ fn hash_copy(path: &Path, file: &RemoveFile) -> Option<FileStat> {
 /// `held` may be written. A copy in `prehashed` whose identity is
 /// unchanged is not read again. Per file: a copy that is gone, or holds
 /// other bytes, is named missing and the rest still come back; a file
-/// already at home with the removed bytes is left as it is. Another file
-/// at home while the copy is still there refuses the whole put-back, and
-/// so does a track that is not missing at its old path (or the hidden
-/// name it gave that path up for).
+/// already at home with the removed bytes (or the copy's) is left as it
+/// is, and its track listed again when it is the one at that path.
+/// Another file at home while the copy is still there refuses the whole
+/// put-back, and so does a track that is not missing at its old path (or
+/// the hidden name it gave that path up for).
 #[allow(clippy::too_many_arguments)]
 pub fn plan(
     db: &Db,
@@ -386,7 +432,7 @@ pub fn plan(
             }
             JournalState::Compensated => {
                 tracing::warn!(journal_id = %row.id, "a removal row was unwound; nothing is put back");
-                return Err(Refusal::Changed);
+                return Err(Refusal::RemovalUndone);
             }
         };
         let home = sandbox
@@ -398,49 +444,78 @@ pub fn plan(
                     Refusal::OutsideRoot
                 }
             })?;
-        let copy_stat = check_copy(sandbox, &copy, copy_in, file, prehashed.get(&copy))?;
+        // Only a bin entry has an identity recorded on landing.
+        let binned = found.binned.filter(|_| copy_in != CopyIn::Aside);
+        let copy_read = check_copy(sandbox, &copy, copy_in, file, binned, prehashed.get(&copy))?;
+        let copy_print = copy_read.as_ref().map(|(stat, sha256)| FileFingerprint {
+            size: stat.size,
+            sha256: sha256.clone(),
+        });
         let gone = format!("{HIDDEN_PREFIX}gone/{track_id}/{rel}");
-        let track_rel = match &found.track {
-            Some((root, track_rel, availability))
-                if *root == row.dest_root
-                    && (track_rel == rel || *track_rel == gone)
-                    && ready(availability, track_rel, rel) =>
+        let track = match &found.track {
+            Some((root, at, availability))
+                if *root == row.dest_root && (at == rel || *at == gone) =>
             {
-                Some(track_rel.clone())
+                if ready(availability, at, rel) {
+                    TrackAt::Ready(at.clone())
+                } else if availability == "excluded" {
+                    TrackAt::Stuck(Refusal::Excluded)
+                } else {
+                    TrackAt::Stuck(Refusal::Changed)
+                }
             }
-            _ => None,
+            Some(_) | None => TrackAt::Elsewhere,
         };
         let mut home_already = false;
+        // A copy holding other bytes than the removal read is there only
+        // by its identity, which a hard link changes: it is copied, never
+        // linked, so an unwind leaves it as it landed.
+        let own_bytes = copy_print.as_ref() == Some(&file.fingerprint);
+        let mut fingerprint = copy_print
+            .clone()
+            .unwrap_or_else(|| file.fingerprint.clone());
         if std::fs::symlink_metadata(&home).is_ok() {
-            let same_size =
-                FileStat::read(&home).is_ok_and(|stat| stat.size == file.fingerprint.size);
-            if !(same_size && super::remove::holds(&home, &file.fingerprint.sha256, None)) {
-                if copy_stat.is_some() {
+            let wanted: Vec<FileFingerprint> = std::iter::once(file.fingerprint.clone())
+                .chain(copy_print)
+                .collect();
+            let Some(held) = home_holds(&home, &wanted) else {
+                if copy_read.is_some() {
                     tracing::info!(file = rel, "another file sits where a removed file was");
                     return Err(Refusal::Occupied);
                 }
                 missing.push(rel.to_owned());
                 continue;
-            }
+            };
             // Someone put it back by hand: its track is listed again with
-            // the rest, when it is still the one at this path.
+            // the rest, unless another track is listed there now.
             tracing::info!(file = rel, "a removed file is already back");
-            if track_rel.is_none() {
+            let TrackAt::Ready(at) = &track else {
+                continue;
+            };
+            if at != rel && listed_at(db, &row.dest_root, rel)? {
                 continue;
             }
             home_already = true;
+            fingerprint = held;
         }
-        let copy_stat = match (home_already, copy_stat) {
-            (_, Some(stat)) => stat,
+        let copy_stat = match (home_already, copy_read) {
+            (_, Some((stat, _))) => stat,
             (true, None) => FileStat::read(&home).map_err(PublishError::from)?,
             (false, None) => {
                 missing.push(rel.to_owned());
                 continue;
             }
         };
-        let Some(track_rel) = track_rel else {
-            tracing::info!(track_id, "a removed file's track is listed elsewhere now");
-            return Err(Refusal::TrackElsewhere);
+        let track_rel = match track {
+            TrackAt::Ready(at) => at,
+            TrackAt::Elsewhere => {
+                tracing::info!(track_id, "a removed file's track is listed elsewhere now");
+                return Err(Refusal::TrackElsewhere);
+            }
+            TrackAt::Stuck(refusal) => {
+                tracing::info!(track_id, "a removed file's track can't take its file back");
+                return Err(refusal);
+            }
         };
         let root = registry
             .resolve(&row.dest_root)
@@ -456,12 +531,13 @@ pub fn plan(
             track_rel,
             copy: copy.to_string_lossy().into_owned(),
             copy_in,
-            fingerprint: file.fingerprint.clone(),
+            fingerprint,
             copy_stat,
             policy,
             policy_revision: registry.fingerprint().to_owned(),
             home_already,
             linkable: copy_in != CopyIn::OldBin
+                && own_bytes
                 && home_device(&home).is_some_and(|dev| dev == copy_stat.dev),
             removal_row: row.id.clone(),
         });
@@ -480,6 +556,41 @@ pub fn plan(
         items,
         missing,
     })
+}
+
+/// Where a removed file's track is, for its put-back.
+enum TrackAt {
+    /// At its old path or the hidden name it gave the path up for, and
+    /// free to take its file back there.
+    Ready(String),
+    /// Listed somewhere else.
+    Elsewhere,
+    /// At its place but unable to take the file back, and why.
+    Stuck(Refusal),
+}
+
+/// Whether a track is listed (indexed) at `root:rel`.
+fn listed_at(db: &Db, root: &str, rel: &str) -> Result<bool, PublishError> {
+    db.read_blocking("publish.put_back_listed_at", |conn| {
+        let availability: Option<String> = conn
+            .prepare_cached(sql::TRACK_AT.text())?
+            .query_row(params![root, rel], |row| row.get(1))
+            .optional()?;
+        Ok::<_, PublishError>(availability.as_deref() == Some("indexed"))
+    })
+}
+
+/// Which of `wanted` the regular file at `home` holds, read once.
+fn home_holds(home: &Path, wanted: &[FileFingerprint]) -> Option<FileFingerprint> {
+    let stat = FileStat::read(home).ok()?;
+    if !wanted.iter().any(|print| print.size == stat.size) {
+        return None;
+    }
+    let hashed = paths::hash_regular_file(home).ok()?;
+    wanted
+        .iter()
+        .find(|print| print.size == hashed.stat.size && print.sha256 == hashed.sha256)
+        .cloned()
 }
 
 /// The device of home's folder, or of its nearest folder that is there.
@@ -501,8 +612,8 @@ pub(super) fn ready(availability: &str, track_rel: &str, rel: &str) -> bool {
 
 /// Where a copy may be read from: under its bin (no link below the bin's
 /// folder), beside home under its root, or, for a bin no longer set, an
-/// entry folder of ours that is no link. A path that fails counts as
-/// gone.
+/// entry folder of ours that is no link. A path refused for what it is
+/// counts as gone; one that could not be looked at is an `Io` error.
 fn copy_place(sandbox: &Sandbox, copy: &Path, copy_in: CopyIn) -> Result<(), PublishError> {
     match copy_in {
         CopyIn::Bin => sandbox.ensure_under_bin(copy).map(|_| ()),
@@ -534,45 +645,58 @@ fn old_entry(copy: &Path) -> Result<(), PublishError> {
     }
     match std::fs::symlink_metadata(entry) {
         Ok(meta) if meta.file_type().is_dir() => Ok(()),
-        _ => Err(refused()),
+        Ok(_) => Err(refused()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(refused()),
+        Err(error) => Err(PublishError::from(error)),
     }
 }
 
-/// The copy's identity when it may be read from where it is and holds
-/// the removed bytes, checked by its size and then its bytes, or by its
-/// whole identity when it is still the file `hashed` saw holding them.
-/// `None` when it is gone, is not a plain file, or holds other bytes; a
-/// copy that is there but cannot be read refuses, so the undo is not
-/// spent on it.
+/// The copy's identity and hash when it may be read from where it is and
+/// may come back: it holds the removed bytes (checked by its size and
+/// then its bytes), or it is still exactly the file `binned` recorded
+/// when it landed in the bin, whatever it holds. A copy still the file
+/// `hashed` read is not read again. `None` when it is gone, is not a
+/// plain file, or holds other bytes; a copy that is there but cannot be
+/// looked at or read refuses, so the undo is not spent on it.
 fn check_copy(
     sandbox: &Sandbox,
     copy: &Path,
     copy_in: CopyIn,
     file: &RemoveFile,
-    hashed: Option<&FileStat>,
-) -> Result<Option<FileStat>, Refusal> {
-    if let Err(error) = copy_place(sandbox, copy, copy_in) {
-        tracing::info!(%error, "a removed file's copy can't be read safely; it counts as gone");
-        return Ok(None);
-    }
+    binned: Option<FileStat>,
+    hashed: Option<&(FileStat, String)>,
+) -> Result<Option<(FileStat, String)>, Refusal> {
     let unreadable = |error: &dyn std::fmt::Display| {
         tracing::warn!(%error, "a removed file's copy can't be read");
         Refusal::CopyUnreadable
     };
+    match copy_place(sandbox, copy, copy_in) {
+        Ok(()) => {}
+        Err(PublishError::Io(error)) => return Err(unreadable(&error)),
+        Err(error) => {
+            tracing::info!(%error, "a removed file's copy can't be read safely; it counts as gone");
+            return Ok(None);
+        }
+    }
     let meta = match std::fs::symlink_metadata(copy) {
         Ok(meta) => meta,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(unreadable(&error)),
     };
-    if !meta.file_type().is_file() || meta.len() != file.fingerprint.size {
+    let stat = FileStat::of(&meta);
+    let as_binned = binned == Some(stat);
+    if !meta.file_type().is_file() || !(as_binned || meta.len() == file.fingerprint.size) {
         return Ok(None);
     }
-    let stat = FileStat::of(&meta);
-    if hashed == Some(&stat) {
-        return Ok(Some(stat));
+    if let Some((seen, sha256)) = hashed
+        && *seen == stat
+    {
+        return Ok(Some((stat, sha256.clone())));
     }
     match paths::hash_regular_file(copy) {
-        Ok(hashed) => Ok((hashed.sha256 == file.fingerprint.sha256).then_some(stat)),
+        Ok(read) => Ok(((as_binned && read.stat == stat)
+            || read.sha256 == file.fingerprint.sha256)
+            .then_some((stat, read.sha256))),
         Err(PublishError::Io(error)) => Err(unreadable(&error)),
         Err(_) => Ok(None),
     }
@@ -601,8 +725,8 @@ pub(super) fn item_of<'a>(put_back: &'a PutBack, journal: &FileJournal) -> Optio
 }
 
 /// Copy the item's copy, checked where it is, into `temp` with permission
-/// bits `bits`, in one read that checks it holds the removed bytes. A
-/// copy that does not is refused, and its temp goes.
+/// bits `bits`, in one read that checks it holds the bytes the plan
+/// found in it. A copy that does not is refused, and its temp goes.
 pub(super) fn copy_into(
     sandbox: &Sandbox,
     item: &PutBackItem,
@@ -628,8 +752,8 @@ pub(super) fn copy_into(
 
 /// Make `temp` a hard link of the item's copy, checked to be that file as
 /// the plan found it. The copy's name and bytes are left alone. False,
-/// with nothing left behind, when it can't be linked (another
-/// filesystem, a bin no longer set, a copy whose identity moved since the
+/// with nothing left behind, when it can't be linked (the plan did not
+/// mark it linkable, another filesystem, a bin no longer set, a copy whose identity moved since the
 /// plan, or a link that does not read back as the copy): the caller then
 /// copies and verifies its bytes.
 pub(super) fn link_temp(
@@ -638,7 +762,8 @@ pub(super) fn link_temp(
     temp: &Path,
     seams: Seams,
 ) -> Result<bool, PublishError> {
-    if item.copy_in == CopyIn::OldBin || seams.cross_device || seams.copy_put_back {
+    if !item.linkable || item.copy_in == CopyIn::OldBin || seams.cross_device || seams.copy_put_back
+    {
         return Ok(false);
     }
     let copy = Path::new(&item.copy);
@@ -717,7 +842,7 @@ pub(super) fn place(
 
 /// After the commit: delete the copy a `put_back` row came from, when it
 /// is in a bin that is still set (or is the removal's hidden name), it
-/// still holds the removed bytes, and the file at home holds them too.
+/// still holds the bytes put back, and the file at home holds them too.
 /// Anything else keeps the copy and logs why once; the row is done all
 /// the same. Only a failed delete of a matching copy is an error, which
 /// leaves the row pending. `home_known` is the placed file's identity,

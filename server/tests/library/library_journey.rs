@@ -5530,6 +5530,18 @@ async fn put_back_names_a_copy_changed_in_the_bin() {
         .expect("copy edited in place");
     file.set_modified(modified).expect("modified time kept");
     drop(file);
+    // The edit came a clock tick after the copy landed: the kernel's
+    // change time is coarse, and this test is quicker than one tick.
+    let stamped = conn
+        .execute(
+            "UPDATE library_publish_replacements SET binned_stat_json = \
+             json_set(binned_stat_json, '$.ctime_ns', \
+             json_extract(binned_stat_json, '$.ctime_ns') - 1) \
+             WHERE binned_stat_json IS NOT NULL AND recycle_to = ?1",
+            [copy.to_string_lossy()],
+        )
+        .expect("landing stamped a tick earlier");
+    assert_eq!(stamped, 1);
 
     let missing = Mutations::new(&library)
         .put_back(&album, &action, "admin")
@@ -5686,6 +5698,283 @@ async fn put_back_never_follows_a_link_in_the_library() {
     let answer = Mutations::new(&library).put_back(&album, &action, "admin");
     assert!(answer.is_ok(), "{answer:?}");
     assert!(paths.iter().all(|path| path.exists()));
+}
+
+/// Two removed files of `folder`, with the first one's track moved to
+/// the hidden name it gives its path up for and another track (planted
+/// elsewhere, `availability` there) listed at that path instead. Answers
+/// the album, the removed tracks, their paths, the undo's id and the
+/// other track.
+fn removed_with_path_taken(
+    scratch: &Scratch,
+    library: &LibrarySetup,
+    music: &Path,
+    folder: &str,
+    availability: &str,
+) -> (String, Vec<String>, Vec<PathBuf>, String, String) {
+    let conn = scratch_db(scratch);
+    let (album, tracks, paths, action) = removed_extras(library, music, &conn, folder);
+    let other = library
+        .scan_store
+        .track_at("music", &format!("Other{folder}/09.flac"))
+        .unwrap()
+        .expect("other track indexed");
+    let hidden = format!(
+        ".droppedneedle-management-gone/{}/{folder}/01.flac",
+        tracks[0]
+    );
+    conn.execute(
+        "UPDATE local_tracks SET relative_path = ?2, path_hash = ?2 WHERE id = ?1",
+        rusqlite::params![tracks[0], hidden],
+    )
+    .expect("row gives its path up");
+    conn.execute(
+        "UPDATE local_tracks SET relative_path = ?2, path_hash = ?2, availability = ?3 \
+         WHERE id = ?1",
+        rusqlite::params![other, format!("{folder}/01.flac"), availability],
+    )
+    .expect("another track takes the path");
+    (album, tracks, paths, action, other)
+}
+
+/// A removed file someone put back by hand, while its track gave the path
+/// up to another track that is listed there now, stays as it is: the
+/// other file still comes back, once, and a second press finds nothing
+/// to do rather than refusing on every try.
+#[tokio::test]
+async fn a_file_back_by_hand_under_another_track_is_put_back_once() {
+    use droppedneedle_library::mutations::{MutationError, Mutations};
+
+    let (scratch, library, music) = bare_library("lib-put-back-home-other").await;
+    plant(&music, "Twin/01.flac", "flac_no_tags.flac");
+    plant(&music, "Twin/02.flac", "flac_no_tags.flac");
+    plant(&music, "OtherTwin/09.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let (album, tracks, paths, action, other) =
+        removed_with_path_taken(&scratch, &library, &music, "Twin", "indexed");
+    let copy = walk_files(&music.join(".recycle"))
+        .into_iter()
+        .find(|copy| copy.ends_with("01.flac"))
+        .expect("01's copy");
+    std::fs::rename(&copy, &paths[0]).expect("moved home by hand");
+
+    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
+    assert!(answer.is_ok(), "{answer:?}");
+    let conn = scratch_db(&scratch);
+    assert_eq!(availability_of(&conn, &tracks[1]), "indexed");
+    assert_eq!(availability_of(&conn, &tracks[0]), "missing");
+    assert_eq!(
+        library
+            .scan_store
+            .track_at("music", "Twin/01.flac")
+            .unwrap()
+            .as_deref(),
+        Some(other.as_str()),
+        "the other track keeps the path"
+    );
+    assert_eq!(restored_actions(&conn, &album), 1);
+    let again = Mutations::new(&library).put_back(&album, &action, "admin");
+    assert!(
+        matches!(&again, Err(MutationError::NotFound(reason)) if reason.code == "NOTHING_TO_RESTORE"),
+        "{again:?}"
+    );
+}
+
+/// A removed track that gave its path up to another track now missing
+/// there takes it back: the other track gives the path up in turn.
+#[tokio::test]
+async fn put_back_moves_a_missing_track_off_the_path() {
+    use droppedneedle_library::mutations::Mutations;
+
+    let (scratch, library, music) = bare_library("lib-put-back-occupant").await;
+    plant(&music, "Held/01.flac", "flac_no_tags.flac");
+    plant(&music, "Held/02.flac", "flac_no_tags.flac");
+    plant(&music, "OtherHeld/09.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let (album, tracks, paths, action, other) =
+        removed_with_path_taken(&scratch, &library, &music, "Held", "missing");
+
+    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
+    assert!(answer.is_ok(), "{answer:?}");
+    assert!(paths.iter().all(|path| path.exists()));
+    for (name, track) in ["Held/01.flac", "Held/02.flac"].iter().zip(&tracks) {
+        assert_eq!(
+            library
+                .scan_store
+                .track_at("music", name)
+                .unwrap()
+                .as_deref(),
+            Some(track.as_str()),
+            "{name} is listed under its own id"
+        );
+    }
+    let conn = scratch_db(&scratch);
+    let (rel, availability): (String, String) = conn
+        .query_row(
+            "SELECT relative_path, availability FROM local_tracks WHERE id = ?1",
+            [&other],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("other track");
+    assert!(
+        rel.starts_with(".droppedneedle-management-gone/"),
+        "the other track gave the path up: {rel}"
+    );
+    assert_eq!(availability, "missing");
+}
+
+/// Two files of `folder` removed while the bin could not take them, each
+/// edited (size and modified time kept) while it waited under its hidden
+/// name, then moved into the bin. Answers what [`removed_extras`] does
+/// and the edited bytes.
+fn removed_after_an_edit(
+    library: &LibrarySetup,
+    music: &Path,
+    conn: &rusqlite::Connection,
+    folder: &str,
+) -> (String, Vec<String>, Vec<PathBuf>, String, Vec<Vec<u8>>) {
+    let blocker = music.join(".recycle");
+    let planted = blocker.clone();
+    library.publishing.set_publish_hooks(
+        None,
+        Some(Box::new(move |_| {
+            if !planted.exists() {
+                std::fs::write(&planted, b"in the way").expect("bin blocked");
+            }
+        })),
+    );
+    let (album, tracks, paths, action) = removed_extras(library, music, conn, folder);
+    library.publishing.set_publish_hooks(None, None);
+    let mut edited = Vec::new();
+    for hidden in walk_files(&music.join(folder)) {
+        let modified = std::fs::metadata(&hidden)
+            .and_then(|meta| meta.modified())
+            .expect("modified time");
+        let mut bytes = std::fs::read(&hidden).expect("hidden file reads");
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xff;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&hidden)
+            .expect("hidden file opens");
+        std::os::unix::fs::FileExt::write_all_at(&file, &bytes[last..], last as u64)
+            .expect("edited in place");
+        file.set_modified(modified).expect("modified time kept");
+        edited.push(bytes);
+    }
+    assert_eq!(edited.len(), 2, "both files wait hidden");
+    std::fs::remove_file(&blocker).expect("bin unblocked");
+    library.publishing.publish_tick().expect("recovery runs");
+    assert_eq!(
+        walk_files(&music.join(".recycle")).len(),
+        2,
+        "both in the bin"
+    );
+    (album, tracks, paths, action, edited)
+}
+
+/// A file edited just before it reached the recycle bin is put back as it
+/// was edited, since its copy is still exactly the file that landed there.
+#[tokio::test]
+async fn put_back_returns_a_file_edited_before_it_was_binned() {
+    use droppedneedle_library::mutations::Mutations;
+
+    let (scratch, library, music) = bare_library("lib-put-back-edited-early").await;
+    plant(&music, "Early/01.flac", "flac_no_tags.flac");
+    plant(&music, "Early/02.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let (album, tracks, paths, action, edited) =
+        removed_after_an_edit(&library, &music, &conn, "Early");
+
+    let missing = Mutations::new(&library)
+        .put_back(&album, &action, "admin")
+        .expect("put back");
+    assert!(missing.is_empty(), "{missing:?}");
+    for (path, track) in paths.iter().zip(&tracks) {
+        let bytes = std::fs::read(path).expect("home");
+        assert!(
+            edited.contains(&bytes),
+            "{} came back edited",
+            path.display()
+        );
+        assert_eq!(availability_of(&conn, track), "indexed");
+    }
+    assert!(
+        walk_files(&music.join(".recycle")).is_empty(),
+        "the copies left the bin"
+    );
+}
+
+/// A put-back of copies edited before they reached the bin that is undone
+/// leaves them as they landed: emptying the bin still deletes them.
+#[tokio::test]
+async fn an_undone_put_back_leaves_edited_copies_to_expire() {
+    use droppedneedle_library::mutations::{MutationError, Mutations};
+
+    let (scratch, library, music) = bare_library("lib-put-back-edited-undone").await;
+    plant(&music, "Undone/01.flac", "flac_no_tags.flac");
+    plant(&music, "Undone/02.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let (album, _, _, action, _) = removed_after_an_edit(&library, &music, &conn, "Undone");
+    library.publishing.set_publish_hooks(
+        Some(Box::new(|dest| {
+            std::fs::write(dest, b"someone else's file").expect("planted");
+        })),
+        None,
+    );
+    let answer = Mutations::new(&library).put_back(&album, &action, "admin");
+    library.publishing.set_publish_hooks(None, None);
+    assert!(
+        matches!(
+            &answer,
+            Err(MutationError::Conflict(reason)) if reason.code == "RESTORE_PATH_OCCUPIED"
+        ),
+        "{answer:?}"
+    );
+    assert_eq!(walk_files(&music.join(".recycle")).len(), 2);
+
+    conn.execute(
+        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 10",
+        [],
+    )
+    .expect("the copies reached the bin a little earlier");
+    let before = library.clock.now_ms();
+    let report = library
+        .publishing
+        .empty_recycle_bin(before, &|| true)
+        .expect("the bin empties");
+    assert_eq!(report.deleted, 2, "{report:?}");
+    assert!(walk_files(&music.join(".recycle")).is_empty());
+}
+
+/// An admin closes a tag write that needs attention and never placed a
+/// file: its row has no staged bytes to check.
+#[tokio::test]
+async fn an_admin_closes_a_write_that_placed_nothing() {
+    use droppedneedle_library::management::service::Management;
+
+    let (scratch, library, music) = bare_library("lib-resolve-unstaged").await;
+    plant(&music, "Stuck/01.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    scratch_db(&scratch)
+        .execute_batch(
+            "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+             staged, staged_sha256, state) VALUES ('stuck-000', 'stuck', 'audio', 'music', \
+             'Stuck/01.flac', '.droppedneedle-management-stuck', '', 'needs_attention')",
+        )
+        .expect("journal row");
+
+    let resolved = Management::new(&library)
+        .resolve_bundle("stuck", "admin")
+        .expect("closed");
+    assert_eq!(resolved.verified_files, 1);
 }
 
 /// A library folder configured through a symlinked parent takes managed

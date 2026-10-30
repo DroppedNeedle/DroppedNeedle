@@ -1507,7 +1507,8 @@ impl Run<'_> {
                     self.clock,
                     removal_stat(plan, journal),
                 )?;
-                if !moved {
+                // A put-back from the hidden name took the file home.
+                if !moved && !super::put_back::taken_back(self.db, &journal.bundle_id) {
                     tracing::warn!(journal_id = %journal.id, "the file to recycle is gone; nothing was moved");
                 }
                 return Ok(());

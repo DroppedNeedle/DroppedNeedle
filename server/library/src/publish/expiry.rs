@@ -480,16 +480,20 @@ fn examine(
     let shaped = entry
         .and_then(|entry| entry.file_name())
         .is_some_and(|entry| super::bin::entry_name(&entry.to_string_lossy()));
+    // Logged once per folder and reason, and forgotten once the folder is
+    // fine again: a bin no longer set holds many copies.
+    let folder = entry
+        .and_then(Path::parent)
+        .map_or_else(String::new, |dir| dir.display().to_string());
+    let outside = format!("outside:{folder}");
     let bin = match sandbox.ensure_under_bin(&row.recycle_to) {
-        Ok(bin) => bin,
+        Ok(bin) => {
+            memory.note(&outside, None);
+            bin
+        }
         Err(error) => {
-            // Logged once per folder and reason: a bin no longer set
-            // holds many copies.
-            let folder = entry
-                .and_then(Path::parent)
-                .map_or_else(String::new, |dir| dir.display().to_string());
             memory.note(
-                &format!("outside:{folder}:{error}"),
+                &outside,
                 Some(format!(
                     "recycle bin expiry keeps the copies in {folder}: {error}"
                 )),
@@ -660,6 +664,7 @@ pub(super) fn drop_entry(copy: &Path) {
 /// the retention loses its plain files, then itself. A folder holding
 /// anything else is kept and logged; a name not like ours is never
 /// touched (a `.recycle` may be a Samba share's). Answers how many went.
+/// An empty entry folder whose rows are all marked goes too.
 ///
 /// Every entry made since removals went through the publisher has a row,
 /// recorded before the file moves, and rows are never purged, so this
@@ -674,8 +679,10 @@ fn legacy(
     cutoff: f64,
     memory: &ExpiryMemory,
 ) -> Result<usize, PublishError> {
+    let names = entry_names(db)?;
+    drop_spent_entries(sandbox, &names)?;
     let mut deleted = 0;
-    for path in legacy_entries(db, sandbox, cutoff)? {
+    for path in legacy_from(sandbox, cutoff, &names)? {
         let name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -701,7 +708,27 @@ pub(crate) fn legacy_entries(
     sandbox: &Sandbox,
     cutoff: f64,
 ) -> Result<Vec<PathBuf>, PublishError> {
-    let named = entry_names(db)?;
+    legacy_from(sandbox, cutoff, &entry_names(db)?)
+}
+
+fn legacy_from(
+    sandbox: &Sandbox,
+    cutoff: f64,
+    names: &HashMap<String, bool>,
+) -> Result<Vec<PathBuf>, PublishError> {
+    Ok(entry_folders(sandbox)?
+        .into_iter()
+        .filter(|(name, _)| {
+            !names.contains_key(name)
+                && super::bin::entry_stamp(name).is_some_and(|stamp| (stamp as f64) < cutoff)
+        })
+        .map(|(_, path)| path)
+        .collect())
+}
+
+/// The folders at the top of every bin of `sandbox` with an entry's
+/// name (`<stamp>-<hex>`), with that name. Only names are read.
+fn entry_folders(sandbox: &Sandbox) -> Result<Vec<(String, PathBuf)>, PublishError> {
     let mut found = Vec::new();
     for bin in sandbox.bins()? {
         if sandbox.ensure_bin_dir(bin).is_err() {
@@ -712,13 +739,44 @@ pub(crate) fn legacy_entries(
         };
         for child in children.flatten() {
             let name = child.file_name().to_string_lossy().into_owned();
-            let old = super::bin::entry_stamp(&name).is_some_and(|stamp| (stamp as f64) < cutoff);
-            if old && !named.contains(&name) && child.file_type().is_ok_and(|kind| kind.is_dir()) {
-                found.push(child.path());
+            if super::bin::entry_stamp(&name).is_some()
+                && child.file_type().is_ok_and(|kind| kind.is_dir())
+            {
+                found.push((name, child.path()));
             }
         }
     }
     Ok(found)
+}
+
+/// Remove each entry folder whose rows are all marked as having left the
+/// bin, while it is empty: a stop between a mark and the folder's removal
+/// leaves one behind.
+fn drop_spent_entries(
+    sandbox: &Sandbox,
+    names: &HashMap<String, bool>,
+) -> Result<(), PublishError> {
+    let mut touched = HashSet::new();
+    for (name, path) in entry_folders(sandbox)? {
+        if names.get(&name) != Some(&true) {
+            continue;
+        }
+        match std::fs::remove_dir(&path) {
+            Ok(()) => {
+                if let Some(bin) = path.parent() {
+                    touched.insert(bin.to_path_buf());
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) => {}
+            Err(error) => tracing::debug!(%error, "a spent recycle bin entry folder was kept"),
+        }
+    }
+    sync_dirs(&touched);
+    Ok(())
 }
 
 /// Delete the plain files in `entry`, then `entry`, when it holds nothing
@@ -756,21 +814,26 @@ fn empty_of_plain_files(entry: &Path, memory: &ExpiryMemory) -> Result<bool, Pub
     Ok(true)
 }
 
-/// The entry folder name of every bin entry a row names, expired or not.
-fn entry_names(db: &Db) -> Result<HashSet<String>, PublishError> {
+/// The entry folder name of every bin entry a row names, each true when
+/// every row naming it is marked as having left the bin.
+fn entry_names(db: &Db) -> Result<HashMap<String, bool>, PublishError> {
     db.read_long("publish.expiry_entries", &CancelFlag::never(), |conn| {
         let mut statement = conn.prepare_cached(sql::EXPIRY_ENTRIES.text())?;
-        let paths = statement
-            .query_map([], |row| row.get::<_, String>(0))?
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+            })?
             .collect::<Result<Vec<_>, _>>()?;
-        Ok::<_, PublishError>(
-            paths
-                .iter()
-                .filter_map(|path| {
-                    let entry = Path::new(path).parent()?.file_name()?;
-                    Some(entry.to_string_lossy().into_owned())
-                })
-                .collect(),
-        )
+        let mut names: HashMap<String, bool> = HashMap::new();
+        for (path, left) in rows {
+            let Some(entry) = Path::new(&path).parent().and_then(Path::file_name) else {
+                continue;
+            };
+            let spent = names
+                .entry(entry.to_string_lossy().into_owned())
+                .or_insert(true);
+            *spent &= left;
+        }
+        Ok::<_, PublishError>(names)
     })
 }

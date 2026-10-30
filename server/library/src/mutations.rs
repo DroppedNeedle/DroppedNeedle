@@ -195,6 +195,11 @@ pub const RESTORE_NEEDS_ATTENTION: Reason = reason(
     "The removal of these files needs an admin's look first, so nothing was put back.",
     "Settle it under \"Some file writes need you\" on the Library Management page, then try again.",
 );
+pub const RESTORE_REMOVAL_UNDONE: Reason = reason(
+    "RESTORE_REMOVAL_UNDONE",
+    "A file's removal was undone part way, so it has no copy to put back.",
+    "Rescan the album. If a file is still missing, move it back from the recycle bin by hand.",
+);
 pub const RECYCLED_COPY_UNREADABLE: Reason = reason(
     "RECYCLED_COPY_UNREADABLE",
     "A removed file's copy in the recycle bin can't be read, so nothing was put back.",
@@ -1074,6 +1079,7 @@ fn put_back_refusal(refused: PutBackRefusal) -> MutationError {
         PutBackRefusal::AllGone => MutationError::Conflict(RECYCLED_FILES_GONE),
         PutBackRefusal::TrackElsewhere => MutationError::Conflict(RESTORE_TRACK_ELSEWHERE),
         PutBackRefusal::RemovalNeedsAttention => MutationError::Conflict(RESTORE_NEEDS_ATTENTION),
+        PutBackRefusal::RemovalUndone => MutationError::Conflict(RESTORE_REMOVAL_UNDONE),
         PutBackRefusal::CopyUnreadable => MutationError::Files(RECYCLED_COPY_UNREADABLE),
         PutBackRefusal::Publish(error) => match error {
             PublishError::Interrupted(cause) => MutationError::Busy(cause),

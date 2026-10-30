@@ -260,12 +260,19 @@ impl Management {
         })?;
         let mut problems = Vec::new();
         for (_, kind, root, rel, staged) in &pending {
-            // A delete's staged copy is a safety backup, never a live file.
-            if kind == "delete" {
+            // A delete's staged copy is a safety backup, never a live file,
+            // and a row with no staged bytes never placed anything.
+            if kind == "delete" || staged.is_empty() {
                 continue;
             }
-            let found = sandbox
-                .resolve_no_symlink(root, rel)
+            // A removal's and a put-back's files may sit under a folder
+            // that only takes removals.
+            let resolved = if kind == "remove" || kind == "put_back" {
+                sandbox.resolve_removal(root, rel)
+            } else {
+                sandbox.resolve_no_symlink(root, rel)
+            };
+            let found = resolved
                 .map_err(|_| "could not be checked")
                 .and_then(|path| {
                     crate::publish::paths::hash_regular_file(&path).map_err(|_| "is missing")

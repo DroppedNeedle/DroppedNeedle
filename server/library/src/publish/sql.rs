@@ -42,6 +42,10 @@ droppedneedle_kernel::sql! {
     /// copy's identity there (`?3`, JSON, or NULL when it could not be read).
     pub(super) JOURNAL_SET_RECYCLED = "UPDATE library_publish_replacements SET recycled_at = ?2, \
              binned_stat_json = ?3 WHERE journal_id = ?1";
+    /// A replaced or removed file's copy identity on landing in its bin
+    /// (`?1` journal id), JSON or NULL.
+    pub(super) REPLACEMENT_BINNED = "SELECT binned_stat_json FROM library_publish_replacements \
+             WHERE journal_id = ?1";
     /// A fresh bin entry (`?2`) for a replaced file not yet recycled.
     pub(super) JOURNAL_SET_RECYCLE_TO = "UPDATE library_publish_replacements \
              SET recycle_to = ?2 WHERE journal_id = ?1 AND recycled_at IS NULL";
@@ -66,8 +70,10 @@ droppedneedle_kernel::sql! {
     /// milliseconds): expired, found gone, or put back.
     pub(super) EXPIRY_MARK = "UPDATE library_publish_replacements SET expired_at = ?2 \
              WHERE journal_id = ?1 AND expired_at IS NULL";
-    /// Every bin entry a row names, expired or not.
-    pub(super) EXPIRY_ENTRIES = "SELECT recycle_to FROM library_publish_replacements";
+    /// Every bin entry a row names, with whether that row's copy has left
+    /// the bin.
+    pub(super) EXPIRY_ENTRIES = "SELECT recycle_to, expired_at IS NOT NULL \
+             FROM library_publish_replacements";
     /// Another bundle (not `?2`) still unsettled for a track (`?1`): one
     /// writing the track's file, or one that set the file aside to replace
     /// or remove it and has not committed yet. A committed row waiting for

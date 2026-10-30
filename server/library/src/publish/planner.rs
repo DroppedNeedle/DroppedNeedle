@@ -375,8 +375,8 @@ pub struct PutBackItem {
     /// copied or deleted, and the commit only lists its track again.
     #[serde(default)]
     pub home_already: bool,
-    /// The copy is on the disk of home's folder and can be linked home,
-    /// so it needs no free space there.
+    /// The copy is on the disk of home's folder and holds the removed
+    /// bytes, so it is linked home and needs no free space there.
     #[serde(default)]
     pub linkable: bool,
     /// The removal's journal row for this file, marked once its copy has

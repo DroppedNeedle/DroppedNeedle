@@ -3,7 +3,8 @@
 //! reached the bin before the moment the admin read the count. Each
 //! attempt adds what it did to the run's row, and the one that finishes
 //! does so in the write that finishes the job. A run stopped by a shutdown
-//! goes back to the queue without spending an attempt; one that meets bins
+//! goes back to the queue without spending an attempt, as does one that
+//! meets the library switched off, until it is on again; one that meets bins
 //! it can't tell is tried again, and at its attempt limit it fails and the
 //! page says it stopped.
 
@@ -200,6 +201,10 @@ fn run(publishing: &Publishing, job: &JobCtx) -> Outcome {
             code: PAYLOAD_INVALID,
         };
     };
+    // While the library is off the run waits for it, spending no attempt.
+    if publishing.core.switched_off() {
+        return Outcome::Busy;
+    }
     let token = job.token().clone();
     let report = match publishing.empty_recycle_bin(payload.before, &|| !token.is_cancelled()) {
         Ok(report) => report,
@@ -220,7 +225,7 @@ fn run(publishing: &Publishing, job: &JobCtx) -> Outcome {
                 deleted = report.deleted,
                 "emptying the recycle bin stopped part way; it runs again"
             );
-            if token.is_cancelled() {
+            if token.is_cancelled() || publishing.core.switched_off() {
                 Outcome::Busy
             } else {
                 Outcome::Retry {
