@@ -54,6 +54,8 @@ use self::jellyfin_login::JellyfinProfile;
 use self::plex::PlexProfile;
 use crate::users::stores::BoxFuture;
 
+pub use droppedneedle_providers::web_address::web_address;
+
 /// Failure of a federated login or import step. HTTP mapping lives in the
 /// handler layer: `Authentication` is 401 on login routes (403 on the Plex
 /// poll, v2 parity), `NotConfigured` and `ProviderUnavailable` are 503,
@@ -126,17 +128,6 @@ impl MediaLinks {
     ) -> Result<(), String> {
         self.0.link_jellyfin(user_id, profile).await
     }
-}
-
-/// `raw` as a web address: http or https, with a host and no credentials.
-/// Anything else is `None`.
-pub fn web_address(raw: &str) -> Option<Url> {
-    let url = Url::parse(raw.trim()).ok()?;
-    let usable = matches!(url.scheme(), "http" | "https")
-        && url.host_str().is_some_and(|host| !host.is_empty())
-        && url.username().is_empty()
-        && url.password().is_none();
-    usable.then_some(url)
 }
 
 /// The non-empty `segments` appended to the path of `base`, each

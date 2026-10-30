@@ -9,6 +9,8 @@
 
 use serde::Deserialize;
 
+use crate::web_address::{self, WebAddress};
+
 /// The releases of one repository, newest first.
 ///
 /// Verified against api.github.com/repos/DroppedNeedle/DroppedNeedle/releases on 2026-10-20: tests/fixtures/github/releases_list.json.
@@ -26,8 +28,10 @@ pub struct Release {
     pub body: Option<String>,
     /// The publish time, RFC 3339.
     pub published_at: Option<String>,
-    /// The release page.
-    pub html_url: Option<String>,
+    /// The release page; anything but an http or https address reads as
+    /// none.
+    #[serde(default, deserialize_with = "web_address::or_none")]
+    pub html_url: Option<WebAddress>,
     /// Whether this is a prerelease. Absent reads as a prerelease.
     pub prerelease: Option<bool>,
     /// Whether this is still a draft. Absent reads as a draft.

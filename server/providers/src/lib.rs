@@ -27,6 +27,8 @@
 //! - [`singleflight`]: one fetch for many identical callers.
 //! - [`calls`]: the outbound calls each row has sent since start, by
 //!   priority and outcome, for the admin view.
+//! - [`web_address`]: the http-or-https rule for every link address an
+//!   answer carries.
 //!
 //! Each client is reached by its module path
 //! (`providers::musicbrainz::MusicBrainzClient`). The names are not
@@ -61,6 +63,7 @@ pub mod rates;
 pub mod singleflight;
 pub mod skiddle;
 pub mod ticketmaster;
+pub mod web_address;
 pub mod wikidata;
 pub mod youtube;
 
@@ -77,6 +80,7 @@ pub use error::{MAX_RETRY_AFTER, PayloadKind, ProviderError, TransportKind};
 pub use executor::{Executor, ReqwestWire, Wire};
 pub use limiter::{LimiterSet, OverCapacity, RateLimiter, RatePolicy, RequestPriority};
 pub use singleflight::Singleflight;
+pub use web_address::WebAddress;
 
 /// Where the providers on the executor live. Filled from the server's one
 /// list of outside addresses; tests point it at loopback or scripted

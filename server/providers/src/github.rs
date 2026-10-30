@@ -42,6 +42,7 @@ use crate::executor::{
     Answer, Backoff, Executor, RedirectRule, Redirects, Reply, Request, Spec, USER_COOLDOWN_WAIT,
     Url, never_foreign, standard_classify,
 };
+use crate::web_address;
 
 mod models;
 
@@ -252,7 +253,7 @@ fn from_wire(entry: Release) -> GitHubRelease {
         name: entry.name.unwrap_or_else(|| entry.tag_name.clone()),
         body: entry.body.unwrap_or_default(),
         published_at: entry.published_at.unwrap_or_default(),
-        html_url: entry.html_url.unwrap_or_default(),
+        html_url: web_address::or_empty(entry.html_url),
         prerelease: entry.prerelease.unwrap_or(true),
         tag_name: entry.tag_name,
     }

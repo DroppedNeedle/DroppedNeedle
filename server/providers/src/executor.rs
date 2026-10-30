@@ -400,9 +400,25 @@ impl Reply {
         serde_json::from_slice(&self.body).map_err(|error| ProviderError::Payload {
             provider: self.provider,
             kind: PayloadKind::Decode,
-            message: short(&error.to_string()),
+            message: decode_failure(&error),
         })
     }
+}
+
+/// Where and how an answer failed to decode: the decoder's kind, line and
+/// column. Never its text, which can quote values from the answer.
+#[must_use]
+pub fn decode_failure(error: &serde_json::Error) -> String {
+    let kind = match error.classify() {
+        serde_json::error::Category::Io => "read error",
+        serde_json::error::Category::Syntax => "not JSON",
+        serde_json::error::Category::Data => "unexpected shape",
+        serde_json::error::Category::Eof => "cut short",
+    };
+    if error.line() == 0 {
+        return kind.to_owned();
+    }
+    format!("{kind} at line {}, column {}", error.line(), error.column())
 }
 
 /// `text` cut to a log-safe length.

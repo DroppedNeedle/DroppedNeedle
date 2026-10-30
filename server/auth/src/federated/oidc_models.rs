@@ -5,29 +5,8 @@
 //! without `kty`, a JWT header without `alg`. The address browsers are
 //! sent to fails decoding unless it is http or https.
 
-use serde::{Deserialize, Deserializer, de};
-
-use super::web_address;
-
-/// An http or https address with a host and no credentials. Anything else
-/// (`javascript:`, `data:`, a bare path) fails decoding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WebAddress(String);
-
-impl<'de> Deserialize<'de> for WebAddress {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let raw = String::deserialize(deserializer)?;
-        web_address(&raw)
-            .map(|url| Self(url.into()))
-            .ok_or_else(|| de::Error::custom("not an http or https address"))
-    }
-}
-
-impl From<WebAddress> for String {
-    fn from(address: WebAddress) -> Self {
-        address.0
-    }
-}
+use droppedneedle_providers::WebAddress;
+use serde::Deserialize;
 
 /// `/.well-known/openid-configuration`, the fields we use.
 #[derive(Debug, Clone, Deserialize)]

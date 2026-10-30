@@ -15,6 +15,7 @@
 import { SvelteSet } from 'svelte/reactivity';
 import { audioFocus } from '$lib/stores/audioFocus.svelte';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
+import { outsideLink } from '$lib/components/outsideLink';
 import type { PreviewTrackItem } from '$lib/queries/discover/types';
 import { fetchAlbumPreview, fetchTrackPreview } from '$lib/queries/discover/DiscoverQueueQueries';
 
@@ -447,13 +448,14 @@ function createDeckSampler() {
 		if (entry.kind === 'track') {
 			const data = await fetchTrackPreview(entry.artist, entry.title);
 			const provider = data.provider ?? null;
-			if (!data.preview_url) return { tracks: [], provider };
+			const previewUrl = outsideLink(data.preview_url);
+			if (!previewUrl) return { tracks: [], provider };
 			return {
 				tracks: [
 					{
 						title: data.title ?? entry.title,
 						artist_name: entry.artist,
-						preview_url: data.preview_url,
+						preview_url: previewUrl,
 						duration_s: data.duration_s ?? 30,
 						position: 1
 					}
@@ -462,19 +464,20 @@ function createDeckSampler() {
 			};
 		}
 		const data = await fetchAlbumPreview(entry.artist, entry.title);
-		const tracks: PreviewTrackItem[] = (data.tracks ?? []).flatMap((track) =>
-			track.preview_url
+		const tracks: PreviewTrackItem[] = (data.tracks ?? []).flatMap((track) => {
+			const previewUrl = outsideLink(track.preview_url);
+			return previewUrl
 				? [
 						{
 							title: track.title,
 							artist_name: track.artist_name ?? entry.artist,
-							preview_url: track.preview_url,
+							preview_url: previewUrl,
 							duration_s: track.duration_s ?? null,
 							position: track.position ?? null
 						}
 					]
-				: []
-		);
+				: [];
+		});
 		const limit = station.length > 1 ? STATION_CLIPS_PER_ALBUM : tracks.length;
 		return { tracks: tracks.slice(0, limit), provider: data.provider ?? null };
 	}

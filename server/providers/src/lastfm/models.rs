@@ -10,10 +10,13 @@
 //! The read recordings are in `tests/fixtures/lastfm/`, described in its
 //! README. A list may arrive as a single object where it holds one item
 //! (the bio's `links.link` does so in the artist recording); every list
-//! here accepts both forms.
+//! here accepts both forms. A page link that is not an http or https
+//! address reads as no link.
 
 use serde::Deserialize;
 use serde::de::IgnoredAny;
+
+use crate::web_address::{self, WebAddress};
 
 /// Last.fm's error envelope, `{"error": n, "message": ...}`, sent in a 200
 /// as often as not. Verified against ws.audioscrobbler.com/2.0/ on
@@ -84,9 +87,9 @@ pub(crate) struct WireArtistInfo {
     /// MusicBrainz artist id; blank when Last.fm has none.
     #[serde(default)]
     pub mbid: Option<String>,
-    /// Last.fm page.
-    #[serde(default)]
-    pub url: Option<String>,
+    /// Last.fm page; anything but an http or https address reads as none.
+    #[serde(default, deserialize_with = "web_address::or_none")]
+    pub url: Option<WebAddress>,
     /// Listener and play counts.
     #[serde(default)]
     pub stats: Option<Section<WireStats>>,
@@ -137,9 +140,9 @@ pub(crate) struct WireTag {
     /// Tag name.
     #[serde(default)]
     pub name: Option<String>,
-    /// Tag page.
-    #[serde(default)]
-    pub url: Option<String>,
+    /// Tag page; anything but an http or https address reads as none.
+    #[serde(default, deserialize_with = "web_address::or_none")]
+    pub url: Option<WebAddress>,
 }
 
 /// `artist.getSimilar`. Verified against ws.audioscrobbler.com/2.0/?method=artist.getSimilar
@@ -169,9 +172,9 @@ pub(crate) struct WireSimilarArtist {
     /// Similarity, sent as text.
     #[serde(default, rename = "match")]
     pub score: Option<Lenient>,
-    /// Last.fm page.
-    #[serde(default)]
-    pub url: Option<String>,
+    /// Last.fm page; anything but an http or https address reads as none.
+    #[serde(default, deserialize_with = "web_address::or_none")]
+    pub url: Option<WebAddress>,
 }
 
 /// `album.getInfo`. Verified against ws.audioscrobbler.com/2.0/?method=album.getInfo
@@ -199,9 +202,9 @@ pub(crate) struct WireAlbumInfo {
     /// Play count.
     #[serde(default)]
     pub playcount: Option<Lenient>,
-    /// Last.fm page.
-    #[serde(default)]
-    pub url: Option<String>,
+    /// Last.fm page; anything but an http or https address reads as none.
+    #[serde(default, deserialize_with = "web_address::or_none")]
+    pub url: Option<WebAddress>,
     /// Artwork in several sizes.
     #[serde(default)]
     pub image: Option<OneOrMany<WireImage>>,
@@ -236,9 +239,9 @@ pub(crate) struct WireAlbumTrack {
     /// Position on the album.
     #[serde(default, rename = "@attr")]
     pub attr: Option<WireRank>,
-    /// Last.fm page.
-    #[serde(default)]
-    pub url: Option<String>,
+    /// Last.fm page; anything but an http or https address reads as none.
+    #[serde(default, deserialize_with = "web_address::or_none")]
+    pub url: Option<WebAddress>,
 }
 
 /// A row's `@attr`.

@@ -13,6 +13,7 @@
 //!
 //! When both sources list the same gig, the Ticketmaster row wins.
 
+use droppedneedle_providers::WebAddress;
 use droppedneedle_providers::skiddle::{SkiddleArtist, SkiddleEvent};
 use droppedneedle_providers::ticketmaster::{TmAttraction, TmEvent};
 
@@ -115,7 +116,7 @@ pub struct EventRow {
     pub longitude: Option<f64>,
     /// ISO start time.
     pub starts_at: Option<String>,
-    /// Ticket or listing link.
+    /// Ticket or listing link, only ever an http or https address.
     pub ticket_url: Option<String>,
 }
 
@@ -259,7 +260,11 @@ pub fn map_tm_event(
         latitude: parse_coord(location.and_then(|loc| loc.latitude.as_deref())),
         longitude: parse_coord(location.and_then(|loc| loc.longitude.as_deref())),
         starts_at: start.and_then(|start| start.date_time.clone()),
-        ticket_url: event.url.clone(),
+        ticket_url: event
+            .url
+            .as_deref()
+            .and_then(WebAddress::parse)
+            .map(String::from),
     })
 }
 
@@ -278,10 +283,9 @@ pub fn map_skiddle_event(event: &SkiddleEvent, artist: &SweepArtist) -> Option<E
     let ticket_url = event
         .ticket_url
         .as_deref()
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-        .map(str::to_owned)
-        .or_else(|| event.link.clone());
+        .and_then(WebAddress::parse)
+        .or_else(|| event.link.as_deref().and_then(WebAddress::parse))
+        .map(String::from);
     Some(EventRow {
         source: EventSource::Skiddle,
         source_event_id: event.id.clone(),

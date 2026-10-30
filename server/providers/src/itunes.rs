@@ -167,14 +167,17 @@ pub fn select_album(
         if hit.wrapper_type != "collection" {
             continue;
         }
-        if hit.collection_view_url.is_empty() || hit.artist_name.is_empty() {
+        let Some(url) = hit.collection_view_url.as_ref() else {
+            continue;
+        };
+        if hit.artist_name.is_empty() {
             continue;
         }
         if token_set_ratio(artist_name, &hit.artist_name) < ARTIST_MATCH_THRESHOLD {
             continue;
         }
         return Some(AlbumResult {
-            url: hit.collection_view_url.clone(),
+            url: url.to_string(),
             collection_name: if hit.collection_name.is_empty() {
                 album_title.to_owned()
             } else {

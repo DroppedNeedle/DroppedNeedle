@@ -29,7 +29,7 @@ use droppedneedle_providers::listenbrainz::stats::{ArtistStat, ReleaseGroupStat}
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
 use droppedneedle_providers::musicbrainz::models::{ArtistCreditName, Relation};
 use droppedneedle_providers::musicbrainz::{Criticality, is_valid_mbid};
-use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
+use droppedneedle_providers::{ProviderError, Providers, RequestPriority, WebAddress};
 
 /// The algorithm ListenBrainz names its weekly exploration playlist after.
 const WEEKLY_EXPLORATION_PATCH: &str = "weekly-exploration";
@@ -493,7 +493,9 @@ impl ListeningNetwork for LiveNetwork {
             Ok(Some(WeeklyPlaylist {
                 title: page.title,
                 date: page.date,
-                source_url: newest.identifier.clone(),
+                source_url: WebAddress::parse(&newest.identifier)
+                    .map(String::from)
+                    .unwrap_or_default(),
                 tracks: page
                     .tracks
                     .into_iter()

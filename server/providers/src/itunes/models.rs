@@ -10,6 +10,8 @@
 
 use serde::Deserialize;
 
+use crate::web_address::{self, WebAddress};
+
 /// An album search, `GET /search?entity=album`.
 ///
 /// Verified against itunes.apple.com/search on 2026-10-20: tests/fixtures/itunes/search_album.json.
@@ -36,9 +38,14 @@ pub struct AlbumHit {
     /// Album artist.
     #[serde(default, rename = "artistName")]
     pub artist_name: String,
-    /// Store page for the album.
-    #[serde(default, rename = "collectionViewUrl")]
-    pub collection_view_url: String,
+    /// Store page for the album; anything but an http or https address
+    /// reads as none.
+    #[serde(
+        default,
+        rename = "collectionViewUrl",
+        deserialize_with = "web_address::or_none"
+    )]
+    pub collection_view_url: Option<WebAddress>,
 }
 
 /// A song search, `GET /search?entity=song`, for a track preview or an album's

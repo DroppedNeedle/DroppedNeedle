@@ -30,6 +30,7 @@ use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{
     Answer, Backoff, Executor, Reply, Request, Spec, Url, short, standard_classify,
 };
+use crate::web_address;
 
 /// Default API host.
 pub const DEFAULT_BASE_URL: &str = "https://ws.audioscrobbler.com/2.0/";
@@ -114,8 +115,9 @@ fn envelope_code(body: &[u8]) -> Option<Option<i64>> {
 /// decrypted projection of the `LastFmConnection` store record
 /// (`api_key`, `shared_secret`, `username`, `session_key`); the store keeps
 /// ciphertext at rest and only the service layer decrypts. Methods borrow
-/// this per call so credentials can never leak across users.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// this per call so credentials can never leak across users. Its `Debug`
+/// shows the username only; the key, secret and session key never print.
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct LastFmCredentials {
     /// The user's own Last.fm API key.
     pub api_key: String,
@@ -125,6 +127,24 @@ pub struct LastFmCredentials {
     pub username: Option<String>,
     /// Session key from `auth.getSession`, when linked.
     pub session_key: Option<String>,
+}
+
+impl std::fmt::Debug for LastFmCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let shown = |value: &str| {
+            if value.is_empty() {
+                "<empty>"
+            } else {
+                "<redacted>"
+            }
+        };
+        f.debug_struct("LastFmCredentials")
+            .field("api_key", &shown(&self.api_key))
+            .field("shared_secret", &shown(&self.shared_secret))
+            .field("username", &self.username)
+            .field("session_key", &self.session_key.as_deref().map(shown))
+            .finish()
+    }
 }
 
 /// An approved-token reply from `auth.getToken`. The token is required: v2
@@ -1072,7 +1092,7 @@ fn tags(wire: Option<&models::Section<models::WireTagList>>) -> Vec<Tag> {
         .flat_map(|tags| tags.iter())
         .map(|tag| Tag {
             name: tag.name.clone().unwrap_or_default(),
-            url: tag.url.clone().unwrap_or_default(),
+            url: web_address::or_empty(tag.url.clone()),
         })
         .collect()
 }
@@ -1088,7 +1108,7 @@ fn artist_info(artist: models::WireArtistInfo) -> Option<ArtistInfo> {
         mbid: mbid_or_none(artist.mbid.as_deref()),
         listeners: count(stats.and_then(|stats| stats.listeners.as_ref())),
         playcount: count(stats.and_then(|stats| stats.playcount.as_ref())),
-        url: artist.url.unwrap_or_default(),
+        url: web_address::or_empty(artist.url),
         bio_summary: bio.and_then(|bio| bio.summary.clone()).unwrap_or_default(),
         bio_content: bio.and_then(|bio| bio.content.clone()).unwrap_or_default(),
         tags: tags(artist.tags.as_ref()),
@@ -1118,7 +1138,7 @@ fn album_info(album: models::WireAlbumInfo) -> Option<AlbumInfo> {
             name: track.name.clone().unwrap_or_default(),
             duration_secs: count(track.duration.as_ref()),
             rank: count(track.attr.as_ref().and_then(|attr| attr.rank.as_ref())),
-            url: track.url.clone().unwrap_or_default(),
+            url: web_address::or_empty(track.url.clone()),
         })
         .collect();
     Some(AlbumInfo {
@@ -1140,7 +1160,7 @@ fn album_info(album: models::WireAlbumInfo) -> Option<AlbumInfo> {
             .unwrap_or_default(),
         tags: tags(album.tags.as_ref()),
         tracks,
-        url: album.url.unwrap_or_default(),
+        url: web_address::or_empty(album.url),
         name: album.name,
     })
 }
@@ -1200,7 +1220,7 @@ fn similar_artists(list: &models::WireSimilarList) -> Vec<SimilarArtist> {
                 .as_ref()
                 .and_then(models::Lenient::fraction)
                 .unwrap_or(0.0),
-            url: artist.url.clone().unwrap_or_default(),
+            url: web_address::or_empty(artist.url.clone()),
         })
         .collect()
 }

@@ -10,7 +10,7 @@ use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_providers::coverart::{DownloadSize, EntityKind};
 use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
-use droppedneedle_providers::lastfm::LastFmCredentials;
+use droppedneedle_providers::lastfm::{ArtistInfo, LastFmCredentials};
 use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource};
 use droppedneedle_providers::youtube::{YouTubeClient, YouTubeSettings, YoutubeError};
 use droppedneedle_providers::{
@@ -1502,4 +1502,71 @@ async fn youtube_refusals_map_to_their_variants() {
         .await,
         Err(ProviderError::Disabled { .. })
     ));
+}
+
+/// Serves `body` as Last.fm's answer to `artist.getInfo` and reads it.
+async fn lastfm_artist_info(body: &str) -> Result<Option<ArtistInfo>, ProviderError> {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer("http://fake/lastfm/", 200, &[], body.as_bytes().to_vec());
+    let providers = Providers::unpaced_at(
+        wire,
+        ProviderEndpoints {
+            lastfm: "http://fake/lastfm/".to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    );
+    let creds = LastFmCredentials {
+        api_key: "key".to_owned(),
+        ..LastFmCredentials::default()
+    };
+    providers
+        .lastfm
+        .artist_info(&creds, "Radiohead", None, PRIORITY)
+        .await
+}
+
+/// A page link the web UI would bind as an href is http or https or
+/// nothing: a recorded answer whose links are scripts keeps the artist and
+/// drops those links.
+#[tokio::test]
+async fn a_lastfm_link_that_is_not_a_web_address_reads_as_none() {
+    let mut answer: serde_json::Value =
+        serde_json::from_str(include_str!("../fixtures/lastfm/artist_getinfo.json"))
+            .expect("recorded body parses");
+    for pointer in [
+        "/artist/url",
+        "/artist/tags/tag/0/url",
+        "/artist/similar/artist/0/url",
+    ] {
+        *answer.pointer_mut(pointer).expect(pointer) = "javascript:alert(1)".into();
+    }
+    let artist = lastfm_artist_info(&answer.to_string())
+        .await
+        .expect("the answer still decodes")
+        .expect("the artist is kept");
+    assert_eq!(artist.url, "");
+    assert_eq!(artist.tags[0].url, "");
+    assert_eq!(artist.similar[0].url, "");
+    assert_eq!(artist.tags[1].url, "https://www.last.fm/tag/alternative");
+}
+
+/// A decode failure says where and how the answer broke, never what it
+/// held: a value from the answer can be a key or a token.
+#[tokio::test]
+async fn a_decode_failure_never_quotes_the_answer() {
+    let secret = "sk-0123456789abcdef";
+    let error = lastfm_artist_info(&format!(r#"{{"artist": "{secret}"}}"#))
+        .await
+        .expect_err("a string is not an artist");
+    assert!(
+        matches!(
+            &error,
+            ProviderError::Payload {
+                kind: PayloadKind::Decode,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert!(!format!("{error} {error:?}").contains(secret), "{error:?}");
 }

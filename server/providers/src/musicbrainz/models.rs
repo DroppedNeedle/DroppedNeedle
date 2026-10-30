@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use crate::error::{PayloadKind, ProviderError};
-use crate::executor::short;
+use crate::executor::decode_failure;
 
 /// One artist-credit entry: credited name, join phrase, and artist.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -760,12 +760,15 @@ where
         serde_json::from_slice(body).map_err(|error| ProviderError::Payload {
             provider: super::SOURCE,
             kind: PayloadKind::Decode,
-            message: short(&format!("unparseable search payload: {error}")),
+            message: format!("unparseable search payload: {}", decode_failure(&error)),
         })?;
     let missing_id = |error: serde_json::Error| ProviderError::Payload {
         provider: super::SOURCE,
         kind: PayloadKind::Contract,
-        message: short(&format!("search hit breaks the identity contract: {error}")),
+        message: format!(
+            "search hit breaks the identity contract: {}",
+            decode_failure(&error)
+        ),
     };
     let items = match envelope.get(array_key) {
         None => Vec::new(),
