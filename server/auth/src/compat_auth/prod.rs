@@ -22,6 +22,19 @@ use droppedneedle_kernel::runtime_config::Crypto;
 /// Minimum gap between `last_used_at` writes for one secret.
 const TOUCH_THROTTLE: Duration = Duration::from_secs(5 * 60);
 
+/// What a presented app password is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecretMatch {
+    /// A live app password, as the user it proves.
+    Live(JellyfinUser),
+    /// An app password that was revoked, by its row id. It proves nothing,
+    /// but whoever sends it once held a working secret, so it is not a
+    /// guess.
+    Revoked(String),
+    /// No app password has this secret.
+    Unknown,
+}
+
 /// Compat-contract store over the real users tables.
 #[derive(Clone)]
 pub struct ProdCompatPasswords {
@@ -142,60 +155,48 @@ impl ProdCompatPasswords {
             .map(|row| row.user_id))
     }
 
-    /// User for a presented token (SHA-256 lookup inside).
-    pub async fn user_for_token(
-        &self,
-        token: &str,
-    ) -> Result<Option<JellyfinUser>, JellyfinStoreError> {
+    /// What a presented secret is, from one read by its SHA-256: a live
+    /// app password and its user, a revoked one, or none. A live row whose
+    /// user is gone answers [`SecretMatch::Unknown`].
+    pub async fn match_secret(&self, secret: &str) -> Result<SecretMatch, JellyfinStoreError> {
         let row = self
             .users
             .app_passwords
-            .get_active_by_sha256(&tokens::hash_token(token))
+            .get_by_sha256(&tokens::hash_token(secret))
             .await
             .map_err(|_| JellyfinStoreError)?;
-        let Some(secret) = row else {
-            return Ok(None);
+        let row = match row {
+            None => return Ok(SecretMatch::Unknown),
+            Some((row, true)) => return Ok(SecretMatch::Revoked(row.id)),
+            Some((row, false)) => row,
         };
         let user = self
             .users
             .users
-            .get_by_id(&secret.user_id)
+            .get_by_id(&row.user_id)
             .await
             .map_err(|_| JellyfinStoreError)?;
-        Ok(user
-            .as_ref()
-            .map(|user| Self::jellyfin_user(user, secret.last_used_at)))
+        Ok(user.map_or(SecretMatch::Unknown, |user| {
+            SecretMatch::Live(Self::jellyfin_user(&user, row.last_used_at))
+        }))
     }
 
-    /// User for a username plus app password. The username rule is v2
+    /// What a username plus app password is. The username rule is v2
     /// verbatim: the stored lowercased username must equal the input
-    /// stripped and lowercased (display names never match).
-    pub(crate) async fn user_for_credentials(
+    /// stripped and lowercased (display names never match). A live secret
+    /// under another username is [`SecretMatch::Unknown`]; a revoked one is
+    /// [`SecretMatch::Revoked`] whatever the username.
+    pub(crate) async fn match_credentials(
         &self,
         username: &str,
         password: &str,
-    ) -> Result<Option<JellyfinUser>, JellyfinStoreError> {
+    ) -> Result<SecretMatch, JellyfinStoreError> {
         let wanted = username.trim().to_lowercase();
-        let row = self
-            .users
-            .app_passwords
-            .get_active_by_sha256(&tokens::hash_token(password))
-            .await
-            .map_err(|_| JellyfinStoreError)?;
-        let Some(secret) = row else {
-            return Ok(None);
-        };
-        let user = self
-            .users
-            .users
-            .get_by_id(&secret.user_id)
-            .await
-            .map_err(|_| JellyfinStoreError)?;
-        // v2 rule verbatim: the stored lowercased username must equal
-        // the input stripped and lowercased; display names never match.
-        Ok(user
-            .filter(|row| row.username.as_deref() == Some(wanted.as_str()))
-            .as_ref()
-            .map(|user| Self::jellyfin_user(user, secret.last_used_at)))
+        Ok(match self.match_secret(password).await? {
+            SecretMatch::Live(user) if user.username.as_deref() != Some(wanted.as_str()) => {
+                SecretMatch::Unknown
+            }
+            found => found,
+        })
     }
 }

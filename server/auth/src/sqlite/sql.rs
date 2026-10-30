@@ -118,6 +118,10 @@ droppedneedle_kernel::sql! {
     /// The live app password with one secret hash.
     pub(super) ACTIVE_APP_PASSWORD_BY_SHA256 = "SELECT " + APP_PASSWORD_COLUMNS
         + " FROM auth_app_passwords WHERE secret_sha256 = ?1 AND revoked = 0";
+    /// The app password with one secret hash, live or revoked, and whether
+    /// it is revoked.
+    pub(super) APP_PASSWORD_BY_SHA256 = "SELECT " + APP_PASSWORD_COLUMNS
+        + ", revoked FROM auth_app_passwords WHERE secret_sha256 = ?1";
     /// Live app passwords of one account: oldest first, id tiebreak.
     pub(super) ACTIVE_APP_PASSWORDS_OF_USER = "SELECT " + APP_PASSWORD_COLUMNS
         + " FROM auth_app_passwords WHERE user_id = ?1 AND revoked = 0 \

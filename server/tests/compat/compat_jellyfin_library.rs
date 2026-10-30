@@ -1835,7 +1835,37 @@ async fn every_route_is_public_or_signed_in_by_the_table() {
         let reply = raw(&rig, verb, &path, headers, None, None).await;
         assert_eq!(reply.bare(), (404, 0), "{verb} {path} with the API off");
     }
+    for (unserved, path) in unserved_methods() {
+        let from = walker_address();
+        let headers = vec![("x-forwarded-for", from.as_str())];
+        let reply = raw(&rig, unserved, &path, headers, None, None).await;
+        let what = format!("{unserved} {path} with the API off");
+        assert_eq!(reply.bare(), (404, 0), "{what}");
+        assert_eq!(reply.header("access-control-allow-origin"), "*", "{what}");
+    }
     rig.stop().await;
+}
+
+/// One method each template of the route table does not serve, with its
+/// path parameters filled as [`walk`] fills them.
+fn unserved_methods() -> Vec<(&'static str, String)> {
+    let mut out: Vec<(&'static str, String)> = Vec::new();
+    for (_, path, _, template) in walk() {
+        if out.iter().any(|(_, seen)| *seen == path) {
+            continue;
+        }
+        let served = |method: &str| {
+            ROUTES
+                .iter()
+                .any(|row| row.template == template && row.verb.as_str() == method)
+        };
+        let unserved = ["PATCH", "PUT", "DELETE", "POST"]
+            .into_iter()
+            .find(|method| !served(method))
+            .expect("a method the template does not serve");
+        out.push((unserved, path));
+    }
+    out
 }
 
 /// Wrong app passwords at sign-in still lock the address out; asking who
@@ -1867,6 +1897,71 @@ async fn failed_sign_ins_lock_out_and_public_routes_do_not() {
         .await;
         assert_eq!(reply.status, StatusCode::OK);
     }
+    rig.stop().await;
+}
+
+/// A device still sending a revoked app password is refused every time
+/// without locking out its address: another app behind the same address
+/// signs in and reads as normal.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_revoked_app_password_does_not_lock_out_its_address() {
+    let rig = CompatApp::start("jf-revoked-lockout").await;
+    let dave = rig.app.login_user("dave").await;
+    let dave = [("authorization", dave.authorization.as_str())];
+    let (status, created) = rig
+        .app
+        .call_through_busy(
+            "POST",
+            "/api/v3/me/app-passwords",
+            &dave,
+            Some(json!({"name": "Old phone"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().expect("id");
+    let revoked = created["secret"].as_str().expect("secret");
+    let uri = format!("/api/v3/me/app-passwords/{id}");
+    let revoke = crate::common::through_busy(|| rig.app.raw("DELETE", &uri, &dave, None)).await;
+    assert_eq!(revoke.0, StatusCode::NO_CONTENT);
+
+    let household = vec![("x-forwarded-for", "10.78.1.1")];
+    let old_phone = finamp(revoked);
+    for _ in 0..50 {
+        let reply = raw(
+            &rig,
+            "GET",
+            "/jellyfin/Users/Me",
+            household.clone(),
+            Some(&old_phone),
+            None,
+        )
+        .await;
+        assert_eq!(reply.bare(), (401, 0));
+    }
+    let login = "/jellyfin/Users/AuthenticateByName";
+    for _ in 0..5 {
+        let body = json!({"Username": "dave", "Pw": revoked});
+        let reply = raw(&rig, "POST", login, household.clone(), None, Some(body)).await;
+        assert_eq!(reply.bare(), (401, 0));
+    }
+
+    let body = json!({"Username": PLAYER, "Pw": rig.secret});
+    let signed_in = raw(&rig, "POST", login, household.clone(), None, Some(body)).await;
+    assert_eq!(signed_in.status, StatusCode::OK);
+    let token = signed_in.json()["AccessToken"]
+        .as_str()
+        .expect("access token")
+        .to_owned();
+    let me = raw(
+        &rig,
+        "GET",
+        "/jellyfin/Users/Me",
+        household,
+        Some(&finamp(&token)),
+        None,
+    )
+    .await;
+    assert_eq!(me.status, StatusCode::OK);
     rig.stop().await;
 }
 

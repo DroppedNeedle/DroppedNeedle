@@ -54,6 +54,18 @@ pub fn principal_label(authed_user_id: Option<&str>, client_key: &str) -> String
     }
 }
 
+/// Rate-limit label for a revoked app password: its own bucket, keyed by
+/// the row, never its owner's or the address's.
+pub fn revoked_label(app_password_id: &str) -> String {
+    format!("revoked:{app_password_id}")
+}
+
+/// Response marker on a 401 that refused a revoked app password. The limits
+/// layer leaves such a denial out of the address's lockout; a 401 without
+/// it counts.
+#[derive(Debug, Clone, Copy)]
+pub struct RevokedCredential;
+
 /// Pre-auth gate: is this IP currently locked out from failures?
 pub fn auth_locked_out(limits: &mut CompatRateLimits, ip: &str, now: f64) -> Option<u64> {
     limits.auth_failure_retry_after(ip, now)

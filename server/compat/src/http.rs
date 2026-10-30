@@ -38,7 +38,7 @@ use crate::subsonic::value::{
 };
 use crate::subsonic::{Ctx, Settings, classify, endpoint, failure, normalize_endpoint};
 use droppedneedle_auth::compat_auth::jellyfin::extract_token;
-use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_auth::compat_auth::prod::{ProdCompatPasswords, SecretMatch};
 use droppedneedle_auth::session::client_ip::ClientIp;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::TrustedProxies;
@@ -109,8 +109,7 @@ pub struct CompatLimits {
     pub limits: Arc<Mutex<ratelimit::CompatRateLimits>>,
     /// Clock origin for bucket timestamps.
     pub started: Arc<Instant>,
-    /// App passwords, to find the user behind a Jellyfin token for its
-    /// principal bucket.
+    /// App passwords, to find the bucket a Jellyfin token takes.
     pub passwords: ProdCompatPasswords,
     /// Server name/version for Subsonic limit envelopes, read per request.
     pub settings: LiveSettings,
@@ -142,15 +141,15 @@ impl CompatLimits {
         self.started.elapsed().as_secs_f64()
     }
 
-    /// The user behind a Jellyfin token, or `None` when it is unknown or
-    /// the store fails (the request then signs in or fails on its own).
-    async fn user_for_token(&self, token: &str) -> Option<String> {
-        self.passwords
-            .user_for_token(token)
-            .await
-            .ok()
-            .flatten()
-            .map(|user| user.id)
+    /// The bucket a Jellyfin token takes: its user's, or its own for a
+    /// revoked app password. `None` when the token is unknown or the store
+    /// fails (the request then signs in or fails on its own).
+    async fn token_principal(&self, token: &str, ip: &str) -> Option<String> {
+        match self.passwords.match_secret(token).await.ok()? {
+            SecretMatch::Live(user) => Some(auth::principal_label(Some(&user.id), ip)),
+            SecretMatch::Revoked(app_password_id) => Some(auth::revoked_label(&app_password_id)),
+            SecretMatch::Unknown => None,
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ratelimit::CompatRateLimits> {
@@ -270,9 +269,12 @@ pub fn server_error_response(
 /// bucket applies only to unauthenticated routes: the Subsonic public
 /// endpoint and the public rows of the Jellyfin route table. Signed-in
 /// Jellyfin callers take their principal bucket here (labeled by a token
-/// lookup with no use stamp); Subsonic principal buckets run post-verify in
-/// the adapter. Jellyfin 401s feed backoff on the way out (every Jellyfin
-/// 401 is an auth denial); Subsonic denials record in the adapter.
+/// lookup with no use stamp), and a revoked app password takes a bucket of
+/// its own; Subsonic principal buckets run post-verify in the adapter.
+/// Jellyfin 401s feed backoff on the way out, except one marked
+/// [`auth::RevokedCredential`]: a device still sending a revoked app
+/// password is not guessing, and must not lock out others on its address.
+/// Subsonic denials record in the adapter.
 pub async fn limits_layer(
     State(state): State<CompatLimits>,
     mut request: Request,
@@ -318,9 +320,8 @@ pub async fn limits_layer(
             }
         } else if is_jellyfin
             && let Some(token) = label_token(&request)
-            && let Some(user_id) = state.user_for_token(&token).await
+            && let Some(principal) = state.token_principal(&token, &ip).await
         {
-            let principal = auth::principal_label(Some(&user_id), &ip);
             let mutation = ratelimit::is_mutation_request(&method, &path);
             if let Some(retry_after) = state
                 .lock()
@@ -331,7 +332,13 @@ pub async fn limits_layer(
         }
     }
     let response = next.run(request).await;
-    if is_jellyfin && response.status() == StatusCode::UNAUTHORIZED {
+    if is_jellyfin
+        && response.status() == StatusCode::UNAUTHORIZED
+        && response
+            .extensions()
+            .get::<auth::RevokedCredential>()
+            .is_none()
+    {
         let _ = auth::record_auth_denial(&mut state.lock(), &ip, now);
     }
     response

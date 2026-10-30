@@ -11,7 +11,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::prod::ProdCompatPasswords;
+use super::prod::{ProdCompatPasswords, SecretMatch};
 
 /// Stable server id: `sha256("droppedneedle-jellyfin-server")` hex,
 /// first 32 chars (v2 `models.py` parity, restart-stable).
@@ -149,10 +149,13 @@ pub fn extract_version(request: &JellyfinRequest) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JellyfinStoreError;
 
-/// Auth denial: always 401 with an empty body.
+/// Auth denial: always 401 with an empty body. A revoked app password
+/// answers the same on the wire; only [`JellyfinDenied::is_revoked`] tells
+/// it apart, so the caller can keep it out of the address's lockout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JellyfinDenied {
     status: u16,
+    revoked: bool,
 }
 
 impl JellyfinDenied {
@@ -160,18 +163,36 @@ impl JellyfinDenied {
     pub fn unauthorized() -> Self {
         Self {
             status: UNAUTHORIZED,
+            revoked: false,
+        }
+    }
+
+    /// The 401 denial of an app password that was revoked.
+    pub fn revoked() -> Self {
+        Self {
+            status: UNAUTHORIZED,
+            revoked: true,
         }
     }
 
     /// The credential store failed: 500, never a 401 that would count
     /// toward the caller's lockout.
     pub fn unavailable() -> Self {
-        Self { status: 500 }
+        Self {
+            status: 500,
+            revoked: false,
+        }
     }
 
     /// The wire status (401, or 500 for a store failure).
     pub fn status(&self) -> u16 {
         self.status
+    }
+
+    /// Whether the credential was a revoked app password rather than a
+    /// guess.
+    pub fn is_revoked(&self) -> bool {
+        self.revoked
     }
 
     /// The wire body (always empty).
@@ -194,21 +215,17 @@ pub async fn authenticate_by_name(
     {
         return Err(JellyfinDenied::unauthorized());
     }
-    let user = store
-        .user_for_credentials(username, password)
+    let found = store
+        .match_credentials(username, password)
         .await
         .map_err(|_| JellyfinDenied::unavailable())?;
-    match user {
-        Some(user) => {
-            store.note_use(password, client).await;
-            Ok(user)
-        }
-        None => Err(JellyfinDenied::unauthorized()),
-    }
+    let user = live_or_denied(found)?;
+    store.note_use(password, client).await;
+    Ok(user)
 }
 
-/// Resolve a request token to its user. `None`, empty, overlong, and
-/// unknown tokens all deny identically.
+/// Resolve a request token to its user. `None`, empty, overlong, unknown
+/// and revoked tokens all deny identically on the wire.
 pub async fn resolve_token(
     store: &ProdCompatPasswords,
     token: Option<&str>,
@@ -219,16 +236,20 @@ pub async fn resolve_token(
     if token.is_empty() || token.len() > MAX_AUTH_VALUE_LENGTH {
         return Err(JellyfinDenied::unauthorized());
     }
-    let user = store
-        .user_for_token(token)
+    let found = store
+        .match_secret(token)
         .await
         .map_err(|_| JellyfinDenied::unavailable())?;
-    match user {
-        Some(user) => {
-            store.note_use(token, None).await;
-            Ok(user)
-        }
-        None => Err(JellyfinDenied::unauthorized()),
+    let user = live_or_denied(found)?;
+    store.note_use(token, None).await;
+    Ok(user)
+}
+
+fn live_or_denied(found: SecretMatch) -> Result<JellyfinUser, JellyfinDenied> {
+    match found {
+        SecretMatch::Live(user) => Ok(user),
+        SecretMatch::Revoked(_) => Err(JellyfinDenied::revoked()),
+        SecretMatch::Unknown => Err(JellyfinDenied::unauthorized()),
     }
 }
 

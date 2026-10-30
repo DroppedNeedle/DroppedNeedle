@@ -516,16 +516,19 @@ async fn jellyfin_login_accepts_app_passwords_and_rejects_everything_else_identi
 
 #[tokio::test]
 async fn jellyfin_token_resolution_never_distinguishes_misses() {
-    let (_rig, store) = passwords("compat-jf-token").await;
+    let (rig, store) = passwords("compat-jf-token").await;
     let user = resolve_token(&store, Some("bob-secret")).await.unwrap();
     assert_eq!(user.id, "user-bob");
+    let alice = rig.app_password("alice-secret").await;
+    assert!(rig.auth.app_passwords.revoke(&alice.id).await.unwrap());
 
     let missing = resolve_token(&store, None).await;
     let empty = resolve_token(&store, Some("")).await;
     let unknown = resolve_token(&store, Some("nope")).await;
     let account = resolve_token(&store, Some(PASSWORD)).await;
     let overlong = resolve_token(&store, Some(&"x".repeat(2048))).await;
-    for denied in [&missing, &empty, &unknown, &account, &overlong] {
+    let revoked = resolve_token(&store, Some("alice-secret")).await;
+    for denied in [&missing, &empty, &unknown, &account, &overlong, &revoked] {
         let denied = denied.as_ref().unwrap_err();
         assert_eq!(denied.status(), 401);
         assert_eq!(denied.body(), b"".as_slice());

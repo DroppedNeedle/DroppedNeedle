@@ -136,6 +136,23 @@ impl AppPasswords {
         .await
     }
 
+    /// The row for a secret hash, live or revoked, with whether it is
+    /// revoked: one read that tells a live secret, a revoked one and an
+    /// unknown one apart.
+    pub async fn get_by_sha256(
+        &self,
+        secret_sha256: &str,
+    ) -> Result<Option<(AppPasswordRecord, bool)>, StoreError> {
+        let value = secret_sha256.to_owned();
+        self.db
+            .read("auth.app_passwords.get", move |conn| {
+                conn.prepare_cached(sql::APP_PASSWORD_BY_SHA256.text())?
+                    .query_row([value], |row| Ok((map_app_password(row)?, row.get(8)?)))
+                    .optional()
+            })
+            .await
+    }
+
     /// Live rows for one user: oldest first, id tiebreak.
     pub async fn list_active_by_user(
         &self,

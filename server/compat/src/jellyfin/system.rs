@@ -171,11 +171,7 @@ pub(super) async fn authenticate(
     .await
     {
         Ok(user) => user,
-        Err(denied) => {
-            return error(
-                StatusCode::from_u16(denied.status()).unwrap_or(StatusCode::UNAUTHORIZED),
-            );
-        }
+        Err(denied) => return denied_response(denied),
     };
     let facts = SessionFacts {
         id: Uuid::new_v4().simple().to_string(),

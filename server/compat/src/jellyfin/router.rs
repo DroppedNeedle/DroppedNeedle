@@ -17,7 +17,7 @@ use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::{MethodFilter, MethodRouter, on};
 use droppedneedle_auth::compat_auth::jellyfin::{
-    JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
+    JellyfinDenied, JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
 };
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
@@ -31,6 +31,7 @@ use crate::body::AudioBody;
 use crate::settings::LiveSettings;
 use crate::setup::CompatAudio;
 use crate::shared::address::{ListenerConfig, base_address};
+use crate::shared::auth::RevokedCredential;
 use crate::shared::percent::{self, Malformed, Plus};
 
 use super::audio::*;
@@ -290,7 +291,20 @@ pub fn routes(state: JellyfinState) -> CompatRoutes {
         .fold(CompatRoutes::new(), |routes, (template, methods)| {
             routes.at(template, methods.layer(gate.clone()))
         })
+        .method_not_allowed_fallback(method_not_allowed)
         .with_state(state)
+}
+
+/// A route called with a method it does not serve. With the API off it is
+/// the gate's empty 404; with it on, the app's 405. Set after the routes,
+/// so it replaces each route's default and the app-wide 405 never reaches
+/// these paths.
+async fn method_not_allowed(State(state): State<JellyfinState>) -> Response {
+    if state.settings.jellyfin().enabled {
+        ApiError::method_not_allowed().into_response()
+    } else {
+        error(StatusCode::NOT_FOUND)
+    }
 }
 
 // ===== Response helpers =====
@@ -492,6 +506,7 @@ impl QueryTokens {
 /// headers, then `ApiKey` and `api_key` in the query) and hands the caller
 /// to the handler as [`Authed`]. No token, a malformed one or an unknown
 /// one is an empty 401, which the limits layer counts toward the lockout.
+/// A revoked app password gets the same 401, marked so it does not count.
 /// A credential-store failure keeps its own status, never a 401.
 pub(super) async fn sign_in(
     State(passwords): State<ProdCompatPasswords>,
@@ -513,10 +528,19 @@ pub(super) async fn sign_in(
             });
             next.run(request).await
         }
-        Err(denied) => {
-            error(StatusCode::from_u16(denied.status()).unwrap_or(StatusCode::UNAUTHORIZED))
-        }
+        Err(denied) => denied_response(denied),
     }
+}
+
+/// The empty answer to a refused credential. A revoked app password's 401
+/// carries [`RevokedCredential`], which never reaches the wire.
+pub(super) fn denied_response(denied: JellyfinDenied) -> Response {
+    let mut response =
+        error(StatusCode::from_u16(denied.status()).unwrap_or(StatusCode::UNAUTHORIZED));
+    if denied.is_revoked() {
+        response.extensions_mut().insert(RevokedCredential);
+    }
+    response
 }
 
 /// The gate in front of every route, outside sign-in. With the API off it
