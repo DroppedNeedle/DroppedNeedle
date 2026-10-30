@@ -3,16 +3,24 @@
 Real albums from a test library, replayed through recall, scoring and the
 decision by `tests/library/library_matching_corpus.rs`. The test runs
 offline and prints one row per album and copy, then a summary per copy
-(an example, from when the corpus was recorded):
+(an example, from 2026-10-30):
 
 ```
-tagged: exact 38, group only 7, review 1, unmatched 6, wrong 0
+tagged: exact 41, group at truth 11, group short of truth 1, review 0, unmatched 1, wrong 0
 ```
+
+A group row is at the truth when the truth names no edition, and short of
+it otherwise; the two are counted apart.
 
 The facts were read from a test library's catalog, and the answers
 fetched read-only on 2026-10-22 from the BrainzMash mirror
 (`https://api.brainzmash.cc/ws/2`, the same ws/2 shapes as
 musicbrainz.org).
+
+`awesome-mix-vol-1` is a Various Artists compilation, which the test
+library has none of. Its facts were built on 2026-10-30 from its recorded
+release (the US CD, `e02022fc`): the release's titles, track credits, ids,
+edition tags and track lengths, as a tagger writes them.
 
 ## Files
 
@@ -30,6 +38,8 @@ musicbrainz.org).
     row has a `verdict`, the `release`
     sealed or guessed, and a `known_miss` saying why it falls short of the
     truth.
+  - `heard`: for an album in `acoustid.json`, the result for the stripped
+    copy hearing AcoustID's recorded answers.
 - Four albums carry the edition tags their files hold (media, barcode,
   catalog number, country, disc total): `fallen-20th`, `the-wall`,
   `from-me-to-u` and `violence-against-nature`. Stripped copies keep
@@ -40,6 +50,13 @@ musicbrainz.org).
   what matching reads. MusicBrainz data is CC0. Release search pages
   recorded before 2026-10-22 carry no hit titles; only the loose word
   search reads them, and its answers were recorded after that.
+- `acoustid.json`: per album, the app's own Chromaprint of each file
+  (`generate_fingerprint`, track id, seconds) and AcoustID's answer to the
+  batch lookup of them (`POST https://api.acoustid.org/v2/lookup`,
+  `batch=1`, `meta=recordingids releaseids`), replayed through the
+  shipping client. `tales-topographic-oceans`, recorded 2026-10-30: the
+  one album whose stripped copy reaches fingerprinting. AcoustID matched
+  two of its four files. The answer is kept as sent; it holds no key.
 - `record.py`: records missing answers.
 
 ## Verdicts
@@ -56,7 +73,7 @@ It also fails on a request with no recorded answer.
 
 ## Fingerprints
 
-The corpus holds no AcoustID answers. `fingerprints_confirm_and_never_veto`
+Beside the recorded answers, `fingerprints_confirm_and_never_veto`
 replays it with AcoustID made to hear, in every file, a recording no
 candidate carries (the one in `fixtures/acoustid/batch_lookup.json`),
 and in each stripped file the recording it pairs with on its release, or

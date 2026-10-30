@@ -8,7 +8,9 @@
 //! stripped copy with every MusicBrainz id removed, which measures the
 //! untagged path. `musicbrainz.jsonl` holds every MusicBrainz answer
 //! recall asks for, keyed by request URL, replayed through the shipping
-//! client at the HTTP seam. No network.
+//! client at the HTTP seam. `acoustid.json` holds, for some albums, the
+//! prints of their files and AcoustID's recorded answer to looking them
+//! up, which a third copy, stripped, hears. No network.
 //!
 //! A row that comes out worse fails. A row that comes out better fails
 //! too until it is recorded, so every fix shows the rows it flips. A row
@@ -16,19 +18,21 @@
 //! fixtures says how to record answers for new requests.
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use droppedneedle_library::identify::evidence::named_group;
-use droppedneedle_library::identify::models::LocalAlbumFacts;
+use droppedneedle_library::identify::models::{LocalAlbumFacts, LocalTrackFacts};
 use droppedneedle_library::identify::providers::{IdentifyProviders, LiveProviders};
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService, Ranking};
-use droppedneedle_library::identify::sources::NoFingerprints;
+use droppedneedle_library::identify::sources::{AudioMatches, FingerprintSource, NoFingerprints};
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_library::matching::decide::COMPLETE_TRACK;
 use droppedneedle_library::matching::score::LENGTH_GRACE_SECS;
 use droppedneedle_library::matching::strings::{basic_dist, undecorated};
 use droppedneedle_library::matching::{LocalTrack, Release, ReleaseTrack};
+use droppedneedle_providers::acoustid::{AcoustIdClient, BatchQuery};
 use droppedneedle_providers::executor::{Prepared, Wire, WireAnswer, WireError};
 use droppedneedle_providers::musicbrainz::{self, MbSource, MusicBrainzView};
 use droppedneedle_providers::{Providers, RequestPriority};
@@ -58,6 +62,10 @@ struct Album {
     facts: LocalAlbumFacts,
     tagged: Row,
     stripped: Row,
+    /// The stripped copy hearing AcoustID's recorded answers, for an
+    /// album with an entry in `acoustid.json`.
+    #[serde(default)]
+    heard: Option<Row>,
 }
 
 /// What the album truly is. `release` is `None` when the files cannot
@@ -255,27 +263,186 @@ fn short(release: Option<&str>) -> &str {
     release.map_or("-", |id| id.get(..8).unwrap_or(id))
 }
 
+/// Whether a row with `verdict` falls short of `truth`. A group row is at
+/// the truth when the truth names no edition.
+fn short_of_truth(verdict: Verdict, truth: &Truth) -> bool {
+    match verdict {
+        Verdict::Exact => false,
+        Verdict::Group => truth.release.is_some(),
+        _ => true,
+    }
+}
+
+/// Rows per verdict, with group rows at the truth counted apart from
+/// those short of it.
 #[derive(Default)]
-struct Tally([usize; 5]);
+struct Tally {
+    exact: usize,
+    group_at_truth: usize,
+    group_short: usize,
+    review: usize,
+    unmatched: usize,
+    wrong: usize,
+}
 
 impl Tally {
-    fn add(&mut self, verdict: Verdict) {
-        self.0[verdict as usize] += 1;
+    fn add(&mut self, verdict: Verdict, truth: &Truth) {
+        let count = match verdict {
+            Verdict::Exact => &mut self.exact,
+            Verdict::Group if short_of_truth(verdict, truth) => &mut self.group_short,
+            Verdict::Group => &mut self.group_at_truth,
+            Verdict::Review => &mut self.review,
+            Verdict::Unmatched => &mut self.unmatched,
+            Verdict::Wrong => &mut self.wrong,
+        };
+        *count += 1;
     }
 
     fn line(&self, copy: &str) -> String {
-        let [exact, group, review, unmatched, wrong] = self.0;
         format!(
-            "{copy}: exact {exact}, group only {group}, review {review}, \
-             unmatched {unmatched}, wrong {wrong}"
+            "{copy}: exact {}, group at truth {}, group short of truth {}, review {}, \
+             unmatched {}, wrong {}",
+            self.exact,
+            self.group_at_truth,
+            self.group_short,
+            self.review,
+            self.unmatched,
+            self.wrong
         )
     }
 }
 
-type Live = LiveProviders<MusicBrainzView, NoFingerprints>;
+/// Prints AcoustID heard for one album: what the app made of its files and
+/// AcoustID's answer to looking them up, recorded.
+#[derive(Deserialize)]
+struct RecordedLookup {
+    album: String,
+    /// In the order the app sends them: the album's file order.
+    prints: Vec<Print>,
+    /// AcoustID's answer, as sent.
+    answer: serde_json::Value,
+}
 
-/// The live recall over the replayed answers, on a fresh store.
-fn live_providers(replay: &Arc<Replay>) -> (ScratchDir, Arc<SqliteIdentifyStore>, Arc<Live>) {
+#[derive(Deserialize)]
+struct Print {
+    track: String,
+    duration_secs: u64,
+    fingerprint: String,
+}
+
+fn load_lookups() -> Vec<RecordedLookup> {
+    serde_json::from_str(
+        &std::fs::read_to_string(corpus_path("acoustid.json")).expect("AcoustID answers read"),
+    )
+    .expect("AcoustID answers parse")
+}
+
+/// The AcoustID side of one album: its recorded prints, looked up through
+/// the shipping client, whose wire answers with the recorded answer. The
+/// prints sent are the recorded ones, so the request is the one recorded.
+struct RecordedPrints {
+    client: AcoustIdClient,
+    prints: Vec<Print>,
+    lookups: Arc<AtomicUsize>,
+}
+
+/// The wire under [`RecordedPrints`]: the recorded answer to every lookup.
+struct AcoustIdReplay {
+    answer: Vec<u8>,
+    lookups: Arc<AtomicUsize>,
+}
+
+impl Wire for AcoustIdReplay {
+    fn send<'a>(&'a self, prepared: Prepared<'a>) -> BoxFuture<'a, Result<WireAnswer, WireError>> {
+        Box::pin(async move {
+            assert!(
+                prepared.url.path().ends_with("/v2/lookup"),
+                "AcoustID asked something other than a lookup"
+            );
+            self.lookups.fetch_add(1, Ordering::SeqCst);
+            Ok(WireAnswer {
+                status: 200,
+                headers: Vec::new(),
+                body: self.answer.clone(),
+            })
+        })
+    }
+}
+
+impl RecordedPrints {
+    fn new(lookup: RecordedLookup) -> Self {
+        let lookups = Arc::new(AtomicUsize::new(0));
+        let wire = Arc::new(AcoustIdReplay {
+            answer: serde_json::to_vec(&lookup.answer).expect("answer serializes"),
+            lookups: lookups.clone(),
+        });
+        Self {
+            client: Providers::unpaced(wire).acoustid,
+            prints: lookup.prints,
+            lookups,
+        }
+    }
+}
+
+impl FingerprintSource for RecordedPrints {
+    /// What the app does with the answer for these tracks: each track's
+    /// recordings and releases, when it heard any.
+    fn identify<'a>(&'a self, tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches> {
+        Box::pin(async move {
+            let sent: Vec<&Print> = tracks
+                .iter()
+                .filter_map(|track| {
+                    self.prints
+                        .iter()
+                        .find(|print| print.track == track.local_track_id)
+                })
+                .collect();
+            let queries: Vec<BatchQuery<'_>> = sent
+                .iter()
+                .map(|print| BatchQuery {
+                    fingerprint: &print.fingerprint,
+                    duration_secs: print.duration_secs,
+                })
+                .collect();
+            let found = self
+                .client
+                .lookup_batch(
+                    "recorded-answers",
+                    &queries,
+                    RequestPriority::BackgroundSync,
+                )
+                .await;
+            let mut matches = AudioMatches::default();
+            for (index, heard) in found {
+                let Some(print) = sent.get(index) else {
+                    continue;
+                };
+                if !heard.recording_ids.is_empty() {
+                    matches
+                        .recordings
+                        .insert(print.track.clone(), heard.recording_ids);
+                }
+                if !heard.release_ids.is_empty() {
+                    matches
+                        .releases
+                        .insert(print.track.clone(), heard.release_ids);
+                }
+            }
+            matches
+        })
+    }
+}
+
+/// The live recall over the replayed answers, on a fresh store, hearing
+/// what `audio` hears.
+fn live_providers<F: FingerprintSource + 'static>(
+    replay: &Arc<Replay>,
+    audio: F,
+) -> (
+    ScratchDir,
+    Arc<SqliteIdentifyStore>,
+    Arc<LiveProviders<MusicBrainzView, F>>,
+) {
     let musicbrainz = Providers::unpaced(replay.clone()).musicbrainz.fixed(
         MbSource::BrainzMash {
             base_url: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
@@ -296,7 +463,7 @@ fn live_providers(replay: &Arc<Replay>) -> (ScratchDir, Arc<SqliteIdentifyStore>
             musicbrainz,
         ),
         store.clone(),
-        NoFingerprints,
+        audio,
         droppedneedle_library::scan::BlockingPool::new(2),
     ));
     (dir, store, providers)
@@ -322,7 +489,7 @@ async fn recall_groups(
     let mut facts = stripped(&album.facts);
     change(&mut facts);
     let replay = Arc::new(Replay::load());
-    let (_dir, _store, providers) = live_providers(&replay);
+    let (_dir, _store, providers) = live_providers(&replay, NoFingerprints);
     let named = named_group(&facts, None);
     let recall = providers
         .recall_candidates(&facts, named.as_deref(), RequestPriority::BackgroundSync)
@@ -362,6 +529,30 @@ async fn a_placeholder_album_artist_searches_as_its_tracks_artist() {
     );
 }
 
+/// A Various Artists compilation whose row names "Unknown Artist" and
+/// carries no compilation flag, where no artist leads over half its
+/// tracks, searches as Various Artists, never as its first track's artist.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_placeholder_row_of_many_artists_searches_as_various_artists() {
+    let (groups, asked) = recall_groups("awesome-mix-vol-1", |facts| {
+        facts.album_artist_name = "Unknown Artist".to_owned();
+        facts.is_compilation = false;
+    })
+    .await;
+    assert!(
+        groups
+            .iter()
+            .any(|group| group == "950092d6-45f6-4269-87da-99a9ff2fcc52"),
+        "recall found {groups:?}"
+    );
+    assert!(
+        !asked
+            .iter()
+            .any(|url| url.contains("Unknown+Artist") || url.contains("Blue+Swede")),
+        "searched for the placeholder or the first track's artist: {asked:?}"
+    );
+}
+
 /// An album with no title is found through its first track's recording.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_untitled_album_is_found_by_its_first_track() {
@@ -383,26 +574,65 @@ async fn recorded_albums_match_as_recorded() {
     let started = Instant::now();
     let albums = load_albums();
     let replay = Arc::new(Replay::load());
-    let (_dir, store, providers) = live_providers(&replay);
+    let (_dir, store, providers) = live_providers(&replay, NoFingerprints);
     let service = IdentifyService::new(IdentifyDeps {
         store,
         providers: providers.clone(),
     });
+    let mut lookups: HashMap<String, RecordedLookup> = load_lookups()
+        .into_iter()
+        .map(|lookup| (lookup.album.clone(), lookup))
+        .collect();
 
     let mut failures = Vec::new();
     let mut table = Vec::new();
-    let mut tallies = [Tally::default(), Tally::default()];
+    let mut tallies = [Tally::default(), Tally::default(), Tally::default()];
+    let mut heard_dirs = Vec::new();
     for album in &albums {
         assert!(
             !album.why.is_empty(),
             "{}: say why the album is here",
             album.key
         );
-        let copies = [
-            ("tagged", album.facts.clone(), &album.tagged),
-            ("stripped", stripped(&album.facts), &album.stripped),
+        let plain: Arc<dyn IdentifyProviders> = providers.clone();
+        let mut copies = vec![
+            (
+                "tagged",
+                album.facts.clone(),
+                &album.tagged,
+                plain.clone(),
+                None,
+            ),
+            (
+                "stripped",
+                stripped(&album.facts),
+                &album.stripped,
+                plain,
+                None,
+            ),
         ];
-        for (slot, (copy, facts, expected)) in copies.into_iter().enumerate() {
+        match (lookups.remove(&album.key), &album.heard) {
+            (Some(lookup), Some(expected)) => {
+                let audio = RecordedPrints::new(lookup);
+                let asked = audio.lookups.clone();
+                let (dir, _store, heard) = live_providers(&replay, audio);
+                heard_dirs.push(dir);
+                let heard: Arc<dyn IdentifyProviders> = heard;
+                copies.push((
+                    "heard",
+                    stripped(&album.facts),
+                    expected,
+                    heard,
+                    Some(asked),
+                ));
+            }
+            (None, None) => {}
+            _ => failures.push(format!(
+                "{}: a heard row and recorded AcoustID answers come together",
+                album.key
+            )),
+        }
+        for (slot, (copy, facts, expected, providers, asked)) in copies.into_iter().enumerate() {
             let named = named_group(&facts, None);
             let recall = providers
                 .recall_candidates(&facts, named.as_deref(), RequestPriority::BackgroundSync)
@@ -412,9 +642,15 @@ async fn recorded_albums_match_as_recorded() {
                 failures.push(format!("{} ({copy}): recall deferred", album.key));
                 continue;
             }
+            if asked.is_some_and(|asked| asked.load(Ordering::SeqCst) == 0) {
+                failures.push(format!(
+                    "{} ({copy}): recall never looked the prints up",
+                    album.key
+                ));
+            }
             let ranking = service.rank(&facts, &recall).expect("default preferences");
             let (got, reason) = outcome(&ranking, &album.truth);
-            tallies[slot].add(got.verdict);
+            tallies[slot].add(got.verdict, &album.truth);
             table.push(format!(
                 "{:<28} {copy:<8} expected {:<10} {:<8}  got {:<10} {:<8} {reason}",
                 album.key,
@@ -423,18 +659,14 @@ async fn recorded_albums_match_as_recorded() {
                 got.verdict.label(),
                 short(got.release.as_deref()),
             ));
-            let short_of_truth = match expected.verdict {
-                Verdict::Exact => false,
-                Verdict::Group => album.truth.release.is_some(),
-                _ => true,
-            };
-            if short_of_truth && expected.known_miss.is_none() {
+            let falls_short = short_of_truth(expected.verdict, &album.truth);
+            if falls_short && expected.known_miss.is_none() {
                 failures.push(format!(
                     "{} ({copy}): a row short of the truth needs a known_miss",
                     album.key
                 ));
             }
-            if !short_of_truth && expected.known_miss.is_some() {
+            if !falls_short && expected.known_miss.is_some() {
                 failures.push(format!(
                     "{} ({copy}): a row at the truth drops its known_miss",
                     album.key
@@ -465,7 +697,11 @@ async fn recorded_albums_match_as_recorded() {
     println!("{}", table.join("\n"));
     println!("{}", tallies[0].line("tagged"));
     println!("{}", tallies[1].line("stripped"));
+    println!("{}", tallies[2].line("heard"));
     println!("{} albums in {elapsed:?}", albums.len());
+    for album in lookups.keys() {
+        failures.push(format!("{album}: recorded AcoustID answers for no album"));
+    }
 
     let unrecorded = replay.unrecorded.lock().expect("unrecorded list").clone();
     for url in &unrecorded {
@@ -620,7 +856,7 @@ fn heard(
 async fn fingerprints_confirm_and_never_veto() {
     let albums = load_albums();
     let replay = Arc::new(Replay::load());
-    let (_dir, store, providers) = live_providers(&replay);
+    let (_dir, store, providers) = live_providers(&replay, NoFingerprints);
     let service = IdentifyService::new(IdentifyDeps {
         store,
         providers: providers.clone(),
@@ -665,10 +901,10 @@ async fn fingerprints_confirm_and_never_veto() {
                     .map_or(0, |lead| ranking.matches[*lead].overruled.len());
                 let label = format!("{copy} heard {scenario:?}");
                 match tallies.iter_mut().find(|(name, _)| *name == label) {
-                    Some((_, tally)) => tally.add(got.verdict),
+                    Some((_, tally)) => tally.add(got.verdict, &album.truth),
                     None => {
                         let mut tally = Tally::default();
-                        tally.add(got.verdict);
+                        tally.add(got.verdict, &album.truth);
                         tallies.push((label.clone(), tally));
                     }
                 }

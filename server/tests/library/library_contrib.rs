@@ -920,6 +920,14 @@ async fn brief_attach_rejects_ambiguous_and_unknown() {
 /// Attach the album to `MBID_RELEASE`, whose artist is `MBID_ARTIST`, the
 /// way a curator does from the duplicate check.
 async fn attach_release(rig: &Rig) -> Result<ContributionRecord, ContribError> {
+    attach_verified(rig, verified_release(MBID_RELEASE, MBID_GROUP)).await
+}
+
+/// [`attach_release`] with MusicBrainz verifying the release as `verified`.
+async fn attach_verified(
+    rig: &Rig,
+    verified: MusicBrainzVerifiedRelease,
+) -> Result<ContributionRecord, ContribError> {
     rig.discogs.insert_release(discogs_release());
     let release = discogs_release();
     rig.musicbrainz.insert_resolution(
@@ -931,10 +939,8 @@ async fn attach_release(rig: &Rig) -> Result<ContributionRecord, ContribError> {
             release_group_mbids: Vec::new(),
         },
     );
-    rig.musicbrainz.insert_verification(
-        MBID_RELEASE,
-        Ok(Some(verified_release(MBID_RELEASE, MBID_GROUP))),
-    );
+    rig.musicbrainz
+        .insert_verification(MBID_RELEASE, Ok(Some(verified)));
     let ready = to_ready(rig).await;
     let selected = rig
         .service
@@ -1025,6 +1031,175 @@ async fn brief_attach_takes_the_id_from_the_apps_link_elsewhere() {
         )
         .unwrap();
     assert_eq!(candidates, 0);
+}
+
+/// The recording and release-track ids MusicBrainz gives the release's
+/// two tracks in [`recorded_release`].
+const RECORDINGS: [(&str, &str); 2] = [
+    (
+        "55555555-5555-4555-8555-555555555551",
+        "66666666-6666-4666-8666-666666666661",
+    ),
+    (
+        "55555555-5555-4555-8555-555555555552",
+        "66666666-6666-4666-8666-666666666662",
+    ),
+];
+
+/// [`verified_release`] with recording and release-track ids on its tracks.
+fn recorded_release() -> MusicBrainzVerifiedRelease {
+    let mut release = verified_release(MBID_RELEASE, MBID_GROUP);
+    for (track, (recording, release_track)) in release.tracks.iter_mut().zip(RECORDINGS) {
+        track.recording_mbid = Some(recording.to_owned());
+        track.release_track_mbid = Some(release_track.to_owned());
+    }
+    release
+}
+
+/// A file's MusicBrainz track identity: recording, release, release
+/// track, medium, position, decision source and attempt.
+type TrackIdentity = (String, String, String, i64, i64, String, String);
+
+fn track_identities(rig: &Rig) -> Vec<(String, TrackIdentity)> {
+    rig.db
+        .prepare(
+            "SELECT local_track_id, recording_mbid, release_mbid, release_track_mbid, \
+             medium_position, release_track_position, decision_source, attempt_id \
+             FROM local_track_external_identities ORDER BY local_track_id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                (
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ),
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+/// The one contribution attempt's id.
+fn attempt_id(rig: &Rig) -> String {
+    rig.db
+        .query_row(
+            "SELECT id FROM library_identification_attempts \
+             WHERE trigger = 'contribution_submission'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+/// A curator's link of a release with recording ids writes each file's
+/// track on it as the curator's decision, and the album artist's
+/// MusicBrainz link as the curator's, both under the link's attempt.
+#[tokio::test]
+async fn brief_attach_writes_each_files_track_and_the_artist_link() {
+    let rig = Rig::new();
+    let linked = attach_verified(&rig, recorded_release())
+        .await
+        .expect("not refused");
+    assert_eq!(linked.state, ContributionState::Linked);
+    let attempt = attempt_id(&rig);
+    let expected: Vec<(String, TrackIdentity)> = ["t1", "t2"]
+        .into_iter()
+        .zip(RECORDINGS)
+        .zip(1..)
+        .map(|((file, (recording, release_track)), position)| {
+            (
+                file.to_owned(),
+                (
+                    recording.to_owned(),
+                    MBID_RELEASE.to_owned(),
+                    release_track.to_owned(),
+                    1,
+                    position,
+                    "manual".to_owned(),
+                    attempt.clone(),
+                ),
+            )
+        })
+        .collect();
+    assert_eq!(track_identities(&rig), expected);
+    let artist: (String, String, Option<String>, Option<String>) = rig
+        .db
+        .query_row(
+            "SELECT provider_artist_id, decision_source, attempt_id, selected_by_user_id \
+             FROM local_artist_external_identities WHERE local_artist_id = ?1",
+            params![ARTIST],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        artist,
+        (
+            MBID_ARTIST.to_owned(),
+            "manual".to_owned(),
+            Some(attempt),
+            Some(ACTOR.to_owned())
+        )
+    );
+}
+
+/// When a person already linked the MusicBrainz artist to another record,
+/// the curator's link leaves that record's link as it is, gives the album
+/// artist none, and suggests merging the two.
+#[tokio::test]
+async fn brief_attach_suggests_a_merge_with_a_persons_link_elsewhere() {
+    let rig = Rig::new();
+    rig.db
+        .execute_batch(&format!(
+            "DELETE FROM local_artist_external_identities; \
+             INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('artist-2', 'Test Artist', 'test artist', 'person', 1, 1); \
+             INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+             provider_artist_id, decision_source, selected_at) \
+             VALUES ('artist-2', 'musicbrainz', '{MBID_ARTIST}', 'manual', 1);"
+        ))
+        .unwrap();
+    let linked = attach_verified(&rig, recorded_release())
+        .await
+        .expect("not refused");
+    assert_eq!(linked.state, ContributionState::Linked);
+    assert_eq!(
+        artist_links(&rig),
+        vec![(
+            "artist-2".to_owned(),
+            MBID_ARTIST.to_owned(),
+            "manual".to_owned()
+        )]
+    );
+    let candidates: Vec<(String, String, String, String)> = rig
+        .db
+        .prepare(
+            "SELECT id, left_artist_id, right_artist_id, reason_code \
+             FROM local_artist_merge_candidates",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        candidates,
+        vec![(
+            format!("provider:{ARTIST}:artist-2"),
+            ARTIST.to_owned(),
+            "artist-2".to_owned(),
+            "SHARED_PROVIDER_IDENTITY".to_owned()
+        )]
+    );
 }
 
 // ---------------------------------------------------------------------------
