@@ -59,7 +59,7 @@ struct Material<'a> {
     title: Option<&'a str>,
     album_artist_name: Option<&'a str>,
     identity_choice: IdentityChoice,
-    albums: Vec<(String, i64, i64)>,
+    albums: Vec<(String, i64, String)>,
     tracks: Vec<(String, String, i64)>,
     groups: Vec<(String, Vec<String>)>,
     retired: Vec<(String, Option<String>)>,
@@ -78,7 +78,7 @@ type EditionMaterial = (
 
 pub(super) fn material(
     request: &MembershipRequest,
-    albums: &[(String, i64, i64)],
+    albums: &[(String, i64, String)],
     tracks: &[TrackRow],
     outcome: &MembershipOutcome,
 ) -> String {
@@ -266,24 +266,25 @@ pub(super) fn check_expected(
     Ok(())
 }
 
-/// Albums with their revision and their edition's revision (0 for none).
+/// Albums with their revision and their edition's identity token.
 pub(super) fn album_state(
     tx: &Transaction<'_>,
     albums: &[&AlbumRow],
-) -> Result<Vec<(String, i64, i64)>, CorrectionError> {
+) -> Result<Vec<(String, i64, String)>, CorrectionError> {
     let mut state = Vec::with_capacity(albums.len());
     for album in albums {
-        let identity = edition::identity(tx, &album.id)?.map_or(0, |found| found.row_revision);
-        state.push((album.id.clone(), album.row_revision, identity));
+        let identity = edition::identity(tx, &album.id)?;
+        let token = edition::identity_token(identity.as_ref());
+        state.push((album.id.clone(), album.row_revision, token));
     }
     Ok(state)
 }
 
-/// Albums by id with their revision and their edition's revision.
+/// Albums by id with their revision and their edition's identity token.
 pub(super) fn identity_state(
     tx: &Transaction<'_>,
     albums: &[String],
-) -> Result<Vec<(String, i64, i64)>, CorrectionError> {
+) -> Result<Vec<(String, i64, String)>, CorrectionError> {
     let mut state = Vec::with_capacity(albums.len());
     for album in albums {
         let revision: i64 = tx
@@ -294,8 +295,9 @@ pub(super) fn identity_state(
             )
             .optional()?
             .unwrap_or(0);
-        let identity = edition::identity(tx, album)?.map_or(0, |found| found.row_revision);
-        state.push((album.clone(), revision, identity));
+        let identity = edition::identity(tx, album)?;
+        let token = edition::identity_token(identity.as_ref());
+        state.push((album.clone(), revision, token));
     }
     Ok(state)
 }

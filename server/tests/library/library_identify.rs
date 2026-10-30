@@ -3491,6 +3491,89 @@ fn a_moved_edition_drops_the_targets_undo_rows() {
     );
 }
 
+/// A merge previewed while the album it joins held an automatic edition is
+/// refused once that edition is dropped and the same release is chosen by
+/// hand: the edition is back at revision 1 on the same release, so only its
+/// source tells the two apart.
+#[test]
+fn a_rechosen_edition_makes_a_merge_preview_stale() {
+    use droppedneedle_library::corrections::Corrections;
+    use droppedneedle_library::corrections::models::{
+        ApplyMeta, CorrectionError, MembershipKind, MembershipRequest,
+    };
+    use droppedneedle_library::operations::choice;
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.seed_album(&album_facts("album-2", &[("t2", Some(RECORDING_2))]));
+    // The merged file already sits on the release. Otherwise a person's
+    // edition queues a placement for it, which changes the outcome for a
+    // reason that has nothing to do with the token.
+    rig.run(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('album-2', 'musicbrainz', '{GROUP_A}', '{RELEASE_A1}', 'automatic', 0, 1); \
+         INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+         VALUES ('t1', 'musicbrainz', '{RECORDING_1}', '{RELEASE_A1}', 'rt-t1', 'automatic', 0);"
+    ));
+    let corrections = Corrections::new(
+        droppedneedle_kernel::db::Db::open_for_tests(&rig.path()).expect("db opens"),
+        droppedneedle_library::settings::LibrarySettings::new(
+            &crate::common::config_store(&rig._dir.join("settings")),
+            None,
+        ),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    let request = MembershipRequest {
+        kind: MembershipKind::Merge,
+        album_id: None,
+        track_ids: vec!["t1".to_owned()],
+        expected_album_revisions: Default::default(),
+        target_album_id: Some("album-2".to_owned()),
+        title: None,
+        album_artist_name: None,
+        identity_choice: Default::default(),
+    };
+    let preview = corrections
+        .preview_membership(&request, "admin")
+        .expect("previewed");
+
+    let dropped = rig.change(|tx| {
+        choice::detach(tx, "album-2", "IDENTIFY_FAILED_RECHECK", None, None, 1.0).map(|_| ())
+    });
+    assert_eq!(dropped, Ok(()));
+    let chosen = rig.change(|tx| {
+        choice::choose(
+            tx,
+            "album-2",
+            &offering(RELEASE_A1, &["t2"], &[]),
+            Some("curator-1"),
+            1.0,
+        )
+        .map(|_| ())
+    });
+    assert_eq!(chosen, Ok(()));
+    assert!(
+        rig.identity_tables("album-2")
+            .contains(&format!("album {GROUP_A} {RELEASE_A1} manual 1")),
+        "the edition is chosen by hand at revision 1"
+    );
+
+    let refused = corrections.apply_membership(
+        &request,
+        &ApplyMeta {
+            preview_token: preview.token,
+            idempotency_key: None,
+            actor: "admin".to_owned(),
+        },
+    );
+    assert!(
+        matches!(refused, Err(CorrectionError::Conflict(_))),
+        "a preview from before the drop is stale"
+    );
+}
+
 /// The existing-matches repair never rechecks an edition carried over from
 /// v2 for removal, and reports one whose files contradict its release as a
 /// person's identity, never as safe to detach.

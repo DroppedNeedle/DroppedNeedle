@@ -23,7 +23,7 @@
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::edition::{self, Identity, album_title, drop_edition, open_review};
+use super::edition::{self, Identity, album_title, drop_edition, identity_token, open_review};
 use super::membership::load_album;
 use super::models::{
     CorrectionError, DroppedEdition, PairEdition, PairJoinRequest, PairReason, PairSide, RetagPair,
@@ -125,25 +125,6 @@ pub(super) fn list(
         });
     }
     Ok((pairs, total))
-}
-
-/// The edition as a card shows it: its revision with what it names and
-/// how it was chosen. A dropped edition chosen again starts at revision 1, so
-/// the revision alone could match one shown before the drop.
-fn identity_token(identity: Option<&Identity>) -> String {
-    identity.map_or_else(
-        || "0".to_owned(),
-        |found| {
-            format!(
-                "{}:{}:{}:{}:{}",
-                found.row_revision,
-                found.decision_source,
-                found.release_group_mbid,
-                found.release_mbid.as_deref().unwrap_or_default(),
-                u8::from(found.custom)
-            )
-        },
-    )
 }
 
 fn side(conn: &Connection, album_id: &str) -> Result<PairSide, CorrectionError> {

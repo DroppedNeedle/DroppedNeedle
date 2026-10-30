@@ -91,6 +91,26 @@ pub(super) fn identity(conn: &Connection, album_id: &str) -> rusqlite::Result<Op
     .optional()
 }
 
+/// The edition as a card shows it and as a preview token covers it: its
+/// revision with what it names and how it was chosen. A dropped edition
+/// chosen again starts at revision 1, so the revision alone could match one
+/// seen before the drop.
+pub(super) fn identity_token(identity: Option<&Identity>) -> String {
+    identity.map_or_else(
+        || "0".to_owned(),
+        |found| {
+            format!(
+                "{}:{}:{}:{}:{}",
+                found.row_revision,
+                found.decision_source,
+                found.release_group_mbid,
+                found.release_mbid.as_deref().unwrap_or_default(),
+                u8::from(found.custom)
+            )
+        },
+    )
+}
+
 pub(super) fn album_title(conn: &Connection, album_id: &str) -> rusqlite::Result<String> {
     Ok(conn
         .query_row(
