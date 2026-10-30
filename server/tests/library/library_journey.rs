@@ -1766,7 +1766,7 @@ async fn library_roots_survive_a_restart() {
     let headers = [("authorization", auth.as_str())];
     let roots = || async {
         let (status, body) = app
-            .call("GET", "/api/v3/settings/library", &headers, None)
+            .call_through_busy("GET", "/api/v3/settings/library", &headers, None)
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["enabled"], json!(true));
@@ -1779,7 +1779,7 @@ async fn library_roots_survive_a_restart() {
     // The same directory is already a root; one inside it cannot become a
     // second root.
     let add = |path: PathBuf| async move {
-        app.call(
+        app.call_through_busy(
             "POST",
             "/api/v3/settings/library/paths",
             &headers,
@@ -3410,7 +3410,9 @@ async fn library_contribution_seed_callback_verify_links_album() {
         app.until(
             "the verification worker settles the contribution",
             || async {
-                let (status, body) = app.call("GET", &contribution, &headers, None).await;
+                let (status, body) = app
+                    .call_through_busy("GET", &contribution, &headers, None)
+                    .await;
                 assert_eq!(status, StatusCode::OK, "{body}");
                 (body["state"] != json!("verifying")).then_some(())
             },
@@ -8749,7 +8751,7 @@ async fn library_management_preview_apply_undo() {
 /// Run repair turns until the job leaves `queued` and `running`.
 async fn settle_repair(app: &TestApp, headers: &[(&str, &str)], path: &str) -> Value {
     app.until("the repair job settles", || async {
-        let (status, body) = app.call("GET", path, headers, None).await;
+        let (status, body) = app.call_through_busy("GET", path, headers, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         (!matches!(body["state"].as_str(), Some("queued" | "running"))).then_some(body)
     })

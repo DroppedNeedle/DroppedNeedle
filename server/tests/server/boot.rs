@@ -57,6 +57,27 @@ async fn build(
     Ok((built.router, built.background))
 }
 
+/// [`build`] right after a host command. The command lets go of the data
+/// lock before it returns, but a process another test in this binary is
+/// starting at that moment holds a copy of every open file until it runs
+/// its program, the lock file's included, so the lock can still read as
+/// held for a moment. The server's own start is refused while it does.
+async fn build_after_host_command(config: &AppConfig) -> (axum::Router, bootstrap::Background) {
+    use droppedneedle_kernel::db::datalock::DataLockError;
+    let deadline = Instant::now() + crate::common::PATIENCE;
+    loop {
+        match build(config.clone()).await {
+            Ok(built) => return built,
+            Err(bootstrap::BootError::DataLock(DataLockError::Held { .. }))
+                if Instant::now() < deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(error) => panic!("the app builds: {error:?}"),
+        }
+    }
+}
+
 struct Running {
     address: SocketAddr,
     stop: oneshot::Sender<()>,
@@ -78,9 +99,12 @@ async fn start(router: axum::Router, background: bootstrap::Background) -> Runni
 }
 
 impl Running {
+    /// Stop the server and wait for it. Shutdown bounds itself by the
+    /// grace, but on a loaded host the database close after it has taken
+    /// half a minute, so the wait is bounded by the tests' patience.
     async fn shut_down(self) {
         let _ = self.stop.send(());
-        let stopped = tokio::time::timeout(Duration::from_secs(30), self.server)
+        let stopped = tokio::time::timeout(crate::common::PATIENCE, self.server)
             .await
             .expect("shutdown is bounded")
             .unwrap();
@@ -1369,7 +1393,7 @@ async fn a_host_command_before_the_first_start_copies_config_json_in_first() {
         Mode::Off
     );
 
-    let (router, background) = build(config.clone()).await.unwrap();
+    let (router, background) = build_after_host_command(&config).await;
     let running = start(router.clone(), background).await;
     assert_eq!(policies(&router, "/").await, (None, None));
     drop(router);

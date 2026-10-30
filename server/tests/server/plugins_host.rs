@@ -1194,14 +1194,31 @@ async fn a_plugin_write_is_journaled_and_keeps_no_ledger() {
     let rig = rig("library-write").await;
     let music = music_root(&rig).await;
     let runtime = enable_toy(&rig, WRITER_MANIFEST);
+    // A write that outran its budget on a loaded host added nothing and
+    // says so; the plugin asks again, as the answer tells it to.
     let write = |data: &[u8]| {
-        runtime.host_request(
-            methods::HOST_LIBRARY_WRITE,
-            json!({
-                "rel_path": "notes/one.txt",
-                "data_base64": base64::engine::general_purpose::STANDARD.encode(data),
-            }),
-        )
+        let params = json!({
+            "rel_path": "notes/one.txt",
+            "data_base64": base64::engine::general_purpose::STANDARD.encode(data),
+        });
+        let runtime = &runtime;
+        async move {
+            let deadline = std::time::Instant::now() + crate::common::PATIENCE;
+            loop {
+                match runtime
+                    .host_request(methods::HOST_LIBRARY_WRITE, params.clone())
+                    .await
+                {
+                    Err(refused)
+                        if refused.message.contains("stayed busy")
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    answer => return answer,
+                }
+            }
+        }
     };
 
     let answer = write(b"first").await.unwrap();

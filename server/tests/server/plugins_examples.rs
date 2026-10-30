@@ -6,10 +6,11 @@ use crate::common::ScratchDir;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_plugins::capabilities::Gathered;
 use droppedneedle_plugins::capabilities::acquisition::PluginEnqueue;
 use droppedneedle_plugins::capabilities::stream::PluginStream;
 use droppedneedle_plugins::host::PluginHost;
@@ -94,10 +95,13 @@ async fn enable(rig: &Rig, name: &str, settings: &[(&str, &str)]) {
     wait_for(rig, name, RuntimeState::Running).await;
 }
 
-/// The host gives a plugin 15 seconds to answer its handshake, so the wait
-/// runs a little past that: a slow start on a busy machine is not a failure.
+/// Wait for `name` to reach `state`. On a loaded host a Python start can
+/// outrun the host's 15-second handshake; the plugin is then restarted
+/// after its backoff, so the wait is bounded in wall-clock time, not by the
+/// handshake limit: a slow start on a busy machine is not a failure.
 async fn wait_for(rig: &Rig, name: &str, state: RuntimeState) {
-    for _ in 0..800 {
+    let deadline = Instant::now() + crate::common::PATIENCE;
+    loop {
         let status = rig
             .host
             .get(name)
@@ -105,13 +109,29 @@ async fn wait_for(rig: &Rig, name: &str, state: RuntimeState) {
         if status.as_ref().is_some_and(|status| status.state == state) {
             return;
         }
+        assert!(
+            Instant::now() < deadline,
+            "{name} never reached {state:?}: {status:?}"
+        );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    let status = rig
-        .host
-        .get(name)
-        .and_then(|plugin| plugin.runtime_status());
-    panic!("{name} never reached {state:?}: {status:?}");
+}
+
+/// Ask `ask` again until every plugin it reaches answers: a call that
+/// outran its limit on a loaded host gathers nothing from that plugin and
+/// says so, and asking again is safe because these calls only read.
+async fn answered<T, F>(mut ask: impl FnMut() -> F) -> T
+where
+    F: std::future::Future<Output = Gathered<T>>,
+{
+    let deadline = Instant::now() + crate::common::PATIENCE;
+    loop {
+        let gathered = ask().await;
+        if gathered.complete {
+            return gathered.value;
+        }
+        assert!(Instant::now() < deadline, "a plugin never answered");
+    }
 }
 
 #[test]
@@ -219,22 +239,20 @@ async fn scrobbler_posts_each_play_to_its_webhook() {
 async fn metadata_and_purchase_links_fill_only_their_own_artist() {
     let rig = rig("metadata", &["metadata-joke-toy"]).await;
     enable(&rig, "metadata-joke-toy", &[]).await;
-    let found = rig.host.enrich_artist("Test Artist", None).await.value;
+    let found = answered(|| rig.host.enrich_artist("Test Artist", None)).await;
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].tags, ["example", "test-fixture"]);
     assert!(
-        rig.host
-            .enrich_artist("Someone Else", None)
+        answered(|| rig.host.enrich_artist("Someone Else", None))
             .await
-            .value
             .is_empty()
     );
 
-    let links = rig
-        .host
-        .gather_purchase_links("Test Artist", "Fixtures", "")
-        .await
-        .value;
+    let links = answered(|| {
+        rig.host
+            .gather_purchase_links("Test Artist", "Fixtures", "")
+    })
+    .await;
     assert_eq!(links.len(), 1);
     assert_eq!(
         links[0].url,

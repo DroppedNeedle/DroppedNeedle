@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use droppedneedle_kernel::db::statement::{Declared, Schema, StatementFile};
-use droppedneedle_kernel::db::{DbConfig, open_runtime};
+use droppedneedle_kernel::db::{DbConfig, LaneLimits, TEST_PATIENCE, open_runtime};
 use droppedneedle_kernel::schema::{
     MIGRATOR, apply_migrations, assert_migrated, latest_version, run_migrations,
 };
@@ -3892,9 +3892,12 @@ async fn migrations_upgrade_from_baseline() {
             .expect("version reads");
         assert_eq!(version, 1);
     }
-    let runtime = open_runtime(&DbConfig::new(&db_path))
-        .await
-        .expect("runtime opens");
+    // Patient limits: on a loaded host a pooled connection can take longer
+    // than the production checkout limit to open.
+    let config = DbConfig::new(&db_path)
+        .with_lane_limits(LaneLimits::patient())
+        .with_read_wait(TEST_PATIENCE);
+    let runtime = open_runtime(&config).await.expect("runtime opens");
     apply_migrations(runtime.db().sqlx())
         .await
         .expect("later migrations apply on top of 0001");

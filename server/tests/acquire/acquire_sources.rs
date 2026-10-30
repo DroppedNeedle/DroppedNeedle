@@ -598,20 +598,26 @@ async fn plugin_rig(tag: &str) -> PluginRig {
     }
 }
 
-/// The host gives a plugin 15 seconds to answer its handshake, so the wait
-/// runs a little past that.
+/// Wait for `name` to answer its handshake. On a loaded host a Python
+/// start can outrun the host's 15 seconds; the plugin is then restarted
+/// after its backoff, so the wait is bounded in wall-clock time, not by the
+/// handshake limit.
 async fn running(host: &PluginHost, name: &str) {
-    for _ in 0..800 {
-        let state = host
-            .get(name)
-            .and_then(|plugin| plugin.runtime_status())
-            .map(|status| status.state);
-        if state == Some(RuntimeState::Running) {
+    let deadline = std::time::Instant::now() + crate::common::PATIENCE;
+    loop {
+        let status = host.get(name).and_then(|plugin| plugin.runtime_status());
+        if status
+            .as_ref()
+            .is_some_and(|status| status.state == RuntimeState::Running)
+        {
             return;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{name} never started: {status:?}"
+        );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    panic!("{name} never started");
 }
 
 /// The example client as a download source over `journal`.

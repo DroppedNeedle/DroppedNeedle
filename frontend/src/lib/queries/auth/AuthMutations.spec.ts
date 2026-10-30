@@ -17,6 +17,14 @@ vi.mock('$lib/api/client', () => ({
 import { api } from '$lib/api/client';
 import { createQuery } from '@tanstack/svelte-query';
 import { createAppMutation } from '$lib/queries/effects';
+import {
+	createLocalLoginMutation,
+	createOidcExchangeMutation,
+	createPasswordRecoveryCodeMutation,
+	createPasswordRecoveryResetMutation,
+	createSetupMutation
+} from './AuthMutations.svelte';
+import { getAuthProvidersQuery } from './AuthProvidersQuery.svelte';
 
 const mockV3Get = vi.mocked(api.v3.GET) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
@@ -69,7 +77,6 @@ describe('toAuthUser', () => {
 describe('auth mutations', () => {
 	it('local login posts username + password to the login endpoint', async () => {
 		mockV3Post.mockResolvedValue({ user: {} });
-		const { createLocalLoginMutation } = await import('./AuthMutations.svelte');
 		createLocalLoginMutation();
 
 		await lastMutationFn()({ username: 'jane.doe', password: 'pw' });
@@ -82,7 +89,6 @@ describe('auth mutations', () => {
 
 	it('setup posts username and omits email when not provided', async () => {
 		mockV3Post.mockResolvedValue({ user: {} });
-		const { createSetupMutation } = await import('./AuthMutations.svelte');
 		createSetupMutation();
 
 		await lastMutationFn()({ display_name: 'A', username: 'a.admin', password: 'pw' });
@@ -96,7 +102,6 @@ describe('auth mutations', () => {
 
 	it('oidc exchange posts the authorization code', async () => {
 		mockV3Post.mockResolvedValue({ user: {} });
-		const { createOidcExchangeMutation } = await import('./AuthMutations.svelte');
 		createOidcExchangeMutation();
 
 		await lastMutationFn()({ code: 'abc' });
@@ -106,7 +111,6 @@ describe('auth mutations', () => {
 
 	it('password recovery posts the code and new password without a session', async () => {
 		mockV3Post.mockResolvedValue(undefined);
-		const { createPasswordRecoveryResetMutation } = await import('./AuthMutations.svelte');
 		createPasswordRecoveryResetMutation();
 
 		await lastMutationFn()({
@@ -127,7 +131,6 @@ describe('auth mutations', () => {
 			recovery_code: 'AAAA-BBBB-CCCC-DDDD-EEEE',
 			expires_at: 1784288400
 		});
-		const { createPasswordRecoveryCodeMutation } = await import('./AuthMutations.svelte');
 		createPasswordRecoveryCodeMutation();
 
 		await lastMutationFn()('user/1');
@@ -141,7 +144,6 @@ describe('auth mutations', () => {
 describe('AuthProvidersQuery', () => {
 	it('fetches the providers endpoint via the typed v3 client', async () => {
 		mockV3Get.mockResolvedValue({ local: true, plex: false, jellyfin: false, oidc: false });
-		const { getAuthProvidersQuery } = await import('./AuthProvidersQuery.svelte');
 		getAuthProvidersQuery();
 
 		const factory = mockCreateQuery.mock.calls[

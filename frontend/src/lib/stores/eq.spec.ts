@@ -27,6 +27,11 @@ const mockLocalStorage = {
 vi.stubGlobal('localStorage', mockLocalStorage);
 vi.stubGlobal('window', globalThis);
 
+// The first import compiles the store, which on a loaded host can outrun a
+// hook's time limit. Loading it here, while the file is collected, leaves
+// each test's fresh import only the module's own start.
+await import('./eq.svelte');
+
 describe('eqStore', () => {
 	let eqStore: (typeof import('./eq.svelte'))['eqStore'];
 

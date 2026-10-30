@@ -30,11 +30,14 @@ use tracing::instrument::WithSubscriber as _;
 
 use super::{PATIENCE, ScratchDir, busy_open, closed_outbound, migrated_db, through_busy};
 
-/// The app's shutdown grace in tests. On a loaded host the database close
-/// alone has taken half a minute, so the production ten seconds would fail
-/// a shutdown that is slow but finishing. Something that holds the app
-/// still waits out the whole grace, which [`TestApp::stop`] refuses.
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(60);
+/// The app's shutdown grace in tests: the tests' patience, the bound on
+/// every wait for work the app does in its own time. A shutdown that stops
+/// everything in order takes milliseconds, and seconds at a load of 90,
+/// but three ran past a minute in one full run on a busy host. The grace
+/// only bounds the wait: something that holds the app still waits out all
+/// of it, which [`TestApp::stop`] refuses with the warnings the shutdown
+/// logged.
+const SHUTDOWN_GRACE: Duration = PATIENCE;
 
 const ADMIN_NAME: &str = "admin";
 const ADMIN_PASSWORD: &str = "correct horse battery";
