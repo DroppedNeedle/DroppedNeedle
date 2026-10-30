@@ -35062,7 +35062,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Undo blocked for a file, or the library is off */
+            /** @description Undo blocked for a file, a Library Management run's change (undone from History), or the library is off */
             409: {
                 headers: {
                     [name: string]: unknown;

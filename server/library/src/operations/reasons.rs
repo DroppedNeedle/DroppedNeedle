@@ -99,6 +99,12 @@ pub const CONTROL_KEY_REUSED: Reason = reason(
     "Send the request again with a new key.",
 );
 
+pub const UNDO_RUN_FROM_HISTORY: Reason = reason(
+    "UNDO_RUN_FROM_HISTORY",
+    "A Library Management run made this change.",
+    "Undo this run from History.",
+);
+
 // Stale: the album or job moved since the caller read it.
 pub const OPERATION_CHANGED: Reason = reason(
     STALE,

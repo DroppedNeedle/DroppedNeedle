@@ -5,6 +5,7 @@
 //! answers inline.
 
 use crate::manage::Publishing;
+use crate::management::after_apply::UndoBundleError;
 use crate::management::service::Management;
 use crate::scans::Scans;
 use axum::{
@@ -16,6 +17,7 @@ use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::page::{Page, PageRequest};
 
 use super::blocking;
+use super::error::refused;
 use super::models::{
     AggregateScope, ManageUndoBody, ManageUndoResponse, PluginFileState, PluginFileView,
     PluginFilesQuery, RunDetailResponse, ScanFileView, ScanRunView, ScanRunsResponse,
@@ -139,6 +141,18 @@ pub async fn get_run(
 // Managed changes: undo and plugin files.
 // ---------------------------------------------------------------------------
 
+impl From<UndoBundleError> for ApiError {
+    fn from(error: UndoBundleError) -> Self {
+        match error {
+            UndoBundleError::RunBundle => refused(
+                axum::http::StatusCode::CONFLICT,
+                crate::operations::reasons::UNDO_RUN_FROM_HISTORY,
+            ),
+            UndoBundleError::Service(error) => error.into(),
+        }
+    }
+}
+
 /// Undo one published bundle as a new operation.
 #[utoipa::path(
     post,
@@ -151,7 +165,7 @@ pub async fn get_run(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown bundle id, or one a curator did not apply"),
-        (status = 409, description = "Undo blocked for a file, or the library is off"),
+        (status = 409, description = "Undo blocked for a file, a Library Management run's change (undone from History), or the library is off"),
     )
 )]
 pub async fn manage_undo(

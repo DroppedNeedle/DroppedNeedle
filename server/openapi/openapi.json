@@ -15881,7 +15881,7 @@
             }
           },
           "409": {
-            "description": "Undo blocked for a file, or the library is off",
+            "description": "Undo blocked for a file, a Library Management run's change (undone from History), or the library is off",
             "content": {
               "application/json": {
                 "schema": {
