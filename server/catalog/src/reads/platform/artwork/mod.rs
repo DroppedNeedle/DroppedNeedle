@@ -67,7 +67,8 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 
-use crate::reads::platform::covers::{CoverArt, CoverBytes, CoverLookup};
+use crate::reads::library::stores::StoreError;
+use crate::reads::platform::covers::{CoverArt, CoverBytes, CoverLookup, CoverOrigin};
 use droppedneedle_providers::coverart::{ArtworkBytes, DownloadSize, EntityKind};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use droppedneedle_providers::wikidata::CommonsImage;
@@ -76,6 +77,7 @@ use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority, Singl
 use self::cache::{ArtworkCache, CreditSource, ImageCredit, KeyEntry, sha256_hex};
 use self::local::{LocalArt, LocalArtwork, local_art_stamp, read_local_art};
 use self::remote::{ImageFetch, RemoteCovers, RemoteImages};
+use droppedneedle_kernel::db::map_sqlx_busy;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
@@ -476,8 +478,13 @@ impl ArtworkService {
         }
     }
 
-    /// A cached image by key, labelled with `source`.
-    async fn cached_image(&self, key: &str, source: &str) -> Option<CoverBytes> {
+    /// A cached image by key, labelled with `source` and `origin`.
+    async fn cached_image(
+        &self,
+        key: &str,
+        source: &str,
+        origin: CoverOrigin,
+    ) -> Option<CoverBytes> {
         let Some(KeyEntry::Hit { hash, content_type }) = self.cache.key(key).await else {
             return None;
         };
@@ -486,6 +493,7 @@ impl ArtworkService {
             bytes,
             content_type,
             source: source.to_owned(),
+            origin,
             hash,
             version: None,
         })
@@ -504,7 +512,10 @@ impl ArtworkService {
         let key = artist_key(mbid);
         match self.cache.key(&key).await {
             Some(KeyEntry::Hit { .. }) => {
-                if let Some(image) = self.cached_image(&key, ARTIST_SOURCE).await {
+                if let Some(image) = self
+                    .cached_image(&key, ARTIST_SOURCE, CoverOrigin::Remote)
+                    .await
+                {
                     return CoverLookup::Found(image);
                 }
             }
@@ -618,7 +629,11 @@ impl ArtworkService {
         }
         if entity == EntityKind::ReleaseGroup
             && let Some(cover) = self
-                .cached_image(&audiodb_cover_key(&mbid), AUDIODB_SOURCE)
+                .cached_image(
+                    &audiodb_cover_key(&mbid),
+                    AUDIODB_SOURCE,
+                    CoverOrigin::Remote,
+                )
                 .await
         {
             return CoverLookup::Found(self.sized(cover, size).await);
@@ -658,7 +673,9 @@ impl ArtworkService {
             None => None,
         };
         if let Some(key) = &stamp_key
-            && let Some(cover) = self.cached_image(key, &art.source).await
+            && let Some(cover) = self
+                .cached_image(key, &art.source, CoverOrigin::Local)
+                .await
         {
             return Some(CoverBytes {
                 version: Some(art.version),
@@ -671,6 +688,7 @@ impl ArtworkService {
             bytes,
             content_type: content_type.to_owned(),
             source: art.source.clone(),
+            origin: CoverOrigin::Local,
             version: Some(art.version),
         };
         let cover = self.sized(original, size).await;
@@ -708,7 +726,10 @@ impl ArtworkService {
         let arts: Vec<LocalArt> = candidates.into_iter().map(|(art, _)| art).collect();
         match self.cache.key(&key).await {
             Some(KeyEntry::Hit { .. }) => {
-                if let Some(cover) = self.cached_image(&key, MOSAIC_SOURCE).await {
+                if let Some(cover) = self
+                    .cached_image(&key, MOSAIC_SOURCE, CoverOrigin::Local)
+                    .await
+                {
                     return Some(cover);
                 }
             }
@@ -734,6 +755,7 @@ impl ArtworkService {
                 bytes: mosaic.bytes.clone(),
                 content_type: mosaic.content_type.clone(),
                 source: MOSAIC_SOURCE.to_owned(),
+                origin: CoverOrigin::Local,
                 hash: mosaic.hash.clone(),
                 version: None,
             }),
@@ -848,6 +870,7 @@ impl ArtworkService {
                         bytes,
                         content_type,
                         source: CAA_SOURCE.to_owned(),
+                        origin: CoverOrigin::Remote,
                         hash,
                         version: None,
                     });
@@ -1069,6 +1092,7 @@ async fn fetch_and_store(
                 bytes: art.bytes,
                 content_type: art.content_type,
                 source: CAA_SOURCE.to_owned(),
+                origin: CoverOrigin::Remote,
                 hash,
                 version: None,
             })
@@ -1240,6 +1264,7 @@ async fn resolve_artist(
                     bytes: art.bytes,
                     content_type: art.content_type,
                     source: ARTIST_SOURCE.to_owned(),
+                    origin: CoverOrigin::Remote,
                     hash,
                     version: None,
                 });
@@ -1327,14 +1352,16 @@ impl CoverArt for ArtworkService {
         &'a self,
         album_id: &'a str,
         size: Option<&'a str>,
-    ) -> BoxFuture<'a, Option<CoverBytes>> {
+    ) -> BoxFuture<'a, Result<Option<CoverBytes>, StoreError>> {
         Box::pin(async move {
             let context = match self.local.album(album_id).await {
                 Ok(Some(context)) => context,
-                Ok(None) => return None,
+                Ok(None) => return Ok(None),
                 Err(error) => {
-                    tracing::warn!(%error, "album art lookup failed");
-                    return None;
+                    return Err(StoreError::db(
+                        "album art lookup",
+                        map_sqlx_busy("album art lookup", error),
+                    ));
                 }
             };
             let prefer_local = prefers_local(&self.settings);
@@ -1342,7 +1369,7 @@ impl CoverArt for ArtworkService {
                 && let Some(art) = &context.local
                 && let Some(cover) = self.serve_local(art, size).await
             {
-                return Some(cover);
+                return Ok(Some(cover));
             }
             if let Some(group) = &context.release_group_mbid {
                 let group = group.trim().to_ascii_lowercase();
@@ -1357,13 +1384,13 @@ impl CoverArt for ArtworkService {
                         )
                         .await
                 {
-                    return Some(cover);
+                    return Ok(Some(cover));
                 }
             }
-            match &context.local {
+            Ok(match &context.local {
                 Some(art) if !prefer_local => self.serve_local(art, size).await,
                 _ => None,
-            }
+            })
         })
     }
 

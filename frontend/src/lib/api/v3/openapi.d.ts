@@ -10687,7 +10687,10 @@ export interface components {
             description?: string | null;
             /** @description Portrait from Wikidata/Commons. */
             image?: string | null;
-            /** @description Artist images from TheAudioDB, fetched and cached by this call. */
+            /**
+             * @description Artist images from TheAudioDB, as far as they are cached. A miss
+             *     queues a background fetch, so a later call has them.
+             */
             images: components["schemas"]["ArtistImages"];
         };
         /**

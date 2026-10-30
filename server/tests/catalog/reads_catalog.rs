@@ -523,33 +523,53 @@ async fn artist_header_reads_musicbrainz_once_and_flags_the_library() {
     );
 }
 
+/// The artist header's TheAudioDB images and fanart come from the cache
+/// only: TheAudioDB's free key allows one call every two seconds, so a
+/// cold header answers its biography and portrait without asking it, and
+/// shows the images once the background fill has stored them.
 #[tokio::test]
-async fn artist_extended_fetches_biography_and_images_for_the_header() {
+async fn a_cold_artist_header_never_asks_audiodb() {
     let fixtures = Fixtures::start().await;
-    let (app, _auth) = app(&fixtures).await;
+    let (_pool, dir) = crate::common::migrated_pool("reads-catalog-header").await;
+    let rig = AuthRig::new("reads-catalog-header").await;
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
+    let catalog = Catalog::new(
+        Upstream::new(
+            Arc::new(fixtures.providers(&http)),
+            Arc::new(TestSettings {
+                mb_url: format!("{}/mb/ws/2", fixtures.base),
+            }),
+            rig.deps.clone(),
+        ),
+        local_catalog(&dir),
+    );
 
-    let before = get(&app, &format!("/api/v3/artists/{ARTIST}")).await;
+    let cold = catalog.artist_extended(ARTIST).await.unwrap();
+    assert_eq!(
+        cold.description.as_deref(),
+        Some("Radiohead are an English rock band formed in Abingdon, Oxfordshire, in 1985.")
+    );
+    assert_eq!(
+        cold.image.as_deref(),
+        Some("https://upload.wikimedia.org/wikipedia/commons/a/a1/Radiohead_2016.jpg")
+    );
+    assert_eq!(cold.images, Default::default());
+    assert_eq!(
+        fixtures.hits("/audiodb/123/artist-mb.php"),
+        0,
+        "the header never dials out to TheAudioDB"
+    );
+
     assert!(
-        before["images"]["thumb_url"].is_null(),
-        "the header never dials out to AudioDB"
+        catalog.fill_artist_images(ARTIST).await,
+        "the fill stores them"
     );
-
-    let extended = get(&app, &format!("/api/v3/artists/{ARTIST}/extended")).await;
+    let warm = catalog.artist_extended(ARTIST).await.unwrap();
     assert_eq!(
-        extended["description"],
-        "Radiohead are an English rock band formed in Abingdon, Oxfordshire, in 1985."
+        warm.images.thumb_url.as_deref(),
+        Some("https://r2.theaudiodb.com/images/media/artist/thumb/radiohead.jpg")
     );
-    assert_eq!(
-        extended["image"],
-        "https://upload.wikimedia.org/wikipedia/commons/a/a1/Radiohead_2016.jpg"
-    );
-    assert_eq!(
-        extended["images"]["thumb_url"],
-        "https://r2.theaudiodb.com/images/media/artist/thumb/radiohead.jpg"
-    );
-
-    let after = get(&app, &format!("/api/v3/artists/{ARTIST}")).await;
-    assert_eq!(after["images"], extended["images"]);
+    assert_eq!(fixtures.hits("/audiodb/123/artist-mb.php"), 1);
 }
 
 #[tokio::test]
@@ -1610,6 +1630,10 @@ async fn audiodb_art_is_kept_per_api_key() {
         local_catalog(&dir),
     );
 
+    assert!(
+        catalog.fill_artist_images(ARTIST).await,
+        "the free key's fill stores them"
+    );
     let free = catalog.artist_extended(ARTIST).await.unwrap();
     assert_eq!(
         free.images.thumb_url.as_deref(),
@@ -1617,6 +1641,7 @@ async fn audiodb_art_is_kept_per_api_key() {
     );
 
     *settings.audiodb_key.lock().unwrap() = "premium-key".to_owned();
+    catalog.fill_artist_images(ARTIST).await;
     let premium = catalog.artist_extended(ARTIST).await.unwrap();
     assert_eq!(fixtures.hits("/audiodb/premium-key/artist-mb.php"), 1);
     assert_eq!(premium.images.thumb_url, None);

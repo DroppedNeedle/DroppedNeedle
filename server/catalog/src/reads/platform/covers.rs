@@ -12,7 +12,9 @@
 //! carries (no hashing per request), `immutable` is sent only when the
 //! request names the art's current version (`?v=`), and misses are never
 //! cached, so art that turns up later shows at once.
-//! Art keyed by a MusicBrainz id is kept for a day (`PRIVATE_DAY_CACHE`).
+//! Art keyed by a MusicBrainz id is kept for a day (`PRIVATE_DAY_CACHE`),
+//! unless it is the library's own art, which a person can replace at any
+//! time: that keeps the five-minute window below, then revalidates.
 //! Album art requested without a version keeps v2's five-minute window, then
 //! revalidates.
 //!
@@ -33,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::artwork::cache::ImageCredit;
+use crate::reads::library::stores::StoreError;
 
 /// Sizes the release cover routes accept, v2 set kept.
 const ALLOWED_SIZES: &[&str] = &["250", "500", "1200"];
@@ -44,7 +47,7 @@ const DEFAULT_SIZE: &str = "500";
 /// Misses and warming answers are never stored, so a cover that turns up
 /// later shows on the next view.
 const NO_STORE: &str = "no-store";
-/// Art keyed by a MusicBrainz id. A warm grid draws from the browser cache
+/// Remote art keyed by a MusicBrainz id. A warm grid draws from the browser cache
 /// with no revalidation trips. `private` because the routes need a session;
 /// a changed cover shows within a day.
 const PRIVATE_DAY_CACHE: &str = "private, max-age=86400, stale-while-revalidate=604800";
@@ -52,7 +55,8 @@ const PRIVATE_DAY_CACHE: &str = "private, max-age=86400, stale-while-revalidate=
 const REVALIDATE_CACHE: &str = "private, no-cache";
 /// An album's own art at its current version, per user like v2.
 const PRIVATE_IMMUTABLE_CACHE: &str = "private, max-age=31536000, immutable";
-/// An album's own art requested without a version.
+/// An album's own art requested without a version, and library art
+/// answered under a MusicBrainz id.
 const PRIVATE_SHORT_CACHE: &str = "private, max-age=300";
 
 /// Cover bytes with their identity.
@@ -64,21 +68,35 @@ pub struct CoverBytes {
     pub content_type: String,
     /// Where the art came from, echoed in `X-Cover-Source`.
     pub source: String,
+    /// Whether the art is the library's own or fetched from outside.
+    pub origin: CoverOrigin,
     /// Hex SHA-256 of the bytes: the ETag and cache identity.
     pub hash: String,
     /// Local art version, when the art is the album's own.
     pub version: Option<i64>,
 }
 
+/// Where cover bytes came from, which decides how long a browser keeps
+/// them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoverOrigin {
+    /// A file in the library (a folder image, an embedded picture, or a
+    /// mosaic drawn from them), which can change under the same id.
+    Local,
+    /// Fetched from an outside source.
+    Remote,
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl CoverBytes {
-    /// Build one result, hashing the bytes.
+    /// Build one remote result, hashing the bytes.
     pub fn new(bytes: Vec<u8>, content_type: &str, source: &str) -> Self {
         Self {
             hash: super::artwork::cache::sha256_hex(&bytes),
             bytes,
             content_type: content_type.to_owned(),
             source: source.to_owned(),
+            origin: CoverOrigin::Remote,
             version: None,
         }
     }
@@ -118,12 +136,13 @@ pub trait CoverArt: Send + Sync + 'static {
     /// The credit stored with the artist's image, while the image is held.
     fn artist_image_credit<'a>(&'a self, artist_id: &'a str) -> BoxFuture<'a, Option<ImageCredit>>;
     /// Art for a local album by any source, waiting for a network fetch to
-    /// finish (compat clients cannot poll a 202).
+    /// finish (compat clients cannot poll a 202). An error when the album
+    /// could not be read, so a passing failure is not answered as "no art".
     fn album_cover<'a>(
         &'a self,
         album_id: &'a str,
         size: Option<&'a str>,
-    ) -> BoxFuture<'a, Option<CoverBytes>>;
+    ) -> BoxFuture<'a, Result<Option<CoverBytes>, StoreError>>;
     /// The album's own art (folder or embedded) at `size` (`None` is full
     /// size), with its version.
     fn local_album_art<'a>(
@@ -243,9 +262,9 @@ impl CoverArt for FakeCoverArt {
         &'a self,
         album_id: &'a str,
         _size: Option<&'a str>,
-    ) -> BoxFuture<'a, Option<CoverBytes>> {
+    ) -> BoxFuture<'a, Result<Option<CoverBytes>, StoreError>> {
         let found = self.albums.get(album_id).cloned();
-        Box::pin(async move { found })
+        Box::pin(async move { Ok(found) })
     }
 
     fn local_album_art<'a>(
@@ -443,7 +462,13 @@ fn art_response(art: CoverBytes, headers: &HeaderMap, cache: &'static str) -> Re
 
 fn lookup_response(lookup: CoverLookup, headers: &HeaderMap) -> Response {
     match lookup {
-        CoverLookup::Found(art) => art_response(art, headers, PRIVATE_DAY_CACHE),
+        CoverLookup::Found(art) => {
+            let cache = match art.origin {
+                CoverOrigin::Local => PRIVATE_SHORT_CACHE,
+                CoverOrigin::Remote => PRIVATE_DAY_CACHE,
+            };
+            art_response(art, headers, cache)
+        }
         CoverLookup::Warming => warming_response(),
         CoverLookup::Missing => missing_response(),
     }

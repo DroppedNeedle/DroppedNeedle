@@ -815,7 +815,7 @@ impl CompatLibrary {
         Ok(self
             .covers
             .album_cover(album_id, size)
-            .await
+            .await?
             .map(|cover| (cover.bytes, cover.content_type)))
     }
 

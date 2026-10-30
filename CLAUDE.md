@@ -318,7 +318,9 @@ Run from the repo root. `make help` lists every target.
   download client or plugin reports is read only from inside that client's
   folder: a downloaded file is copied or removed only through
   `acquire/src/landing/confine.rs`, which opens it beneath the folder's
-  real path one component at a time and never follows a link.
+  real path one component at a time and never follows a link. That
+  opener is the kernel's one no-follow opener (`kernel/src/beneath.rs`),
+  which local cover art and the scan's folder images also read through.
 - Response security headers are added in one place,
   `server/src/security_headers.rs`: the web UI's content-security policy,
   a "nothing runs here" policy and `nosniff` on every other native

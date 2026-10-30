@@ -362,7 +362,7 @@ async fn a_compat_cover_joins_a_running_fetch() {
     });
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    let cover = service.album_cover("al1", Some("500")).await;
+    let cover = service.album_cover("al1", Some("500")).await.unwrap();
     assert_eq!(
         cover.map(|cover| cover.bytes),
         Some(PNG_BYTES.to_vec()),
@@ -571,6 +571,11 @@ async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, embedded);
     assert_eq!(header(&headers, "x-cover-source"), Some("embedded"));
+    assert_eq!(
+        header(&headers, "cache-control"),
+        Some("private, max-age=300"),
+        "library art under a MusicBrainz id is not kept for a day"
+    );
     assert!(rig.archive.calls().is_empty(), "local art needs no fetch");
 
     let (status, headers, body) =
@@ -588,6 +593,24 @@ async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
         header(&headers, "x-cover-source"),
         Some("cover-art-archive")
     );
+    assert_eq!(
+        header(&headers, "cache-control"),
+        Some("private, max-age=86400, stale-while-revalidate=604800")
+    );
+}
+
+/// An album row that could not be read is a failure, not "no art": a
+/// compat client would otherwise keep the placeholder for a day after
+/// one busy moment.
+#[tokio::test]
+async fn a_failed_album_read_is_not_answered_as_no_art() {
+    use droppedneedle_catalog::reads::platform::covers::CoverArt as _;
+
+    let rig = rig(None).await;
+    let service = rig.service(true);
+    rig.runtime.db().sqlx().close().await;
+
+    assert!(service.album_cover("al1", Some("500")).await.is_err());
 }
 
 /// Stamp a folder's modification time, so the sweep sees a change however

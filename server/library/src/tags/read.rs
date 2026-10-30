@@ -22,9 +22,14 @@
 //! AAC carries an APEv2 tag lofty does not read, so this module parses that
 //! tag itself (reads only; AAC stays read-only for writes).
 
+use std::fs::File;
+use std::io::{BufReader, Seek as _};
 use std::path::Path;
 
-use lofty::file::{AudioFile as _, TaggedFile, TaggedFileExt as _};
+use lofty::config::{ParseOptions, ParsingMode};
+use lofty::error::FileParseError;
+use lofty::file::{AudioFile as _, FileType, TaggedFile, TaggedFileExt as _};
+use lofty::probe::Probe;
 use lofty::tag::{ItemKey, Tag, TagType};
 
 use super::{AudioFormat, TagsError, format_for_path};
@@ -328,16 +333,45 @@ pub fn read_cover_art(path: &Path) -> Result<Option<Vec<u8>>, TagsError> {
     // WMA is unrecognized even here: v2 returned None by falling through,
     // v3 rejects the extension before any reader runs.
     format_for_path(path)?;
-    let tagged = read_lenient(path).map_err(|error| TagsError::TagRead {
+    let file = File::open(path).map_err(|source| TagsError::Io {
         path: path.display().to_string(),
-        reason: error.to_string(),
+        source,
     })?;
-    for tag in tagged.tags() {
-        if let Some(picture) = tag.pictures().first() {
-            return Ok(Some(picture.data().to_vec()));
+    read_cover_art_from(&file, path)
+}
+
+/// [`read_cover_art`] over a file the caller has open (say, one opened
+/// without following a link), read as the container `path`'s extension
+/// names, from its start. The shared file position moves.
+pub fn read_cover_art_from(file: &File, path: &Path) -> Result<Option<Vec<u8>>, TagsError> {
+    format_for_path(path)?;
+    let failed = |reason: String| TagsError::TagRead {
+        path: path.display().to_string(),
+        reason,
+    };
+    let file_type = FileType::from_path(path).ok_or_else(|| failed("unknown container".into()))?;
+    let read = |options: Option<ParseOptions>| -> Result<TaggedFile, FileParseError> {
+        let mut file = file.try_clone()?;
+        file.rewind()?;
+        let probe = Probe::with_file_type(BufReader::new(file), file_type);
+        match options {
+            Some(options) => probe.options(options).read(),
+            None => probe.read(),
         }
+    };
+    // The same two passes as `read_lenient`.
+    let tagged = match read(None) {
+        Err(error) if io_source(&error).is_none() => {
+            read(Some(ParseOptions::new().parsing_mode(ParsingMode::Relaxed)))
+        }
+        read => read,
     }
-    Ok(None)
+    .map_err(|error| failed(error.to_string()))?;
+    Ok(tagged
+        .tags()
+        .iter()
+        .find_map(|tag| tag.pictures().first())
+        .map(|picture| picture.data().to_vec()))
 }
 
 // ---------------------------------------------------------------------------

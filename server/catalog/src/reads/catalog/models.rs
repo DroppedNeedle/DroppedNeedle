@@ -147,7 +147,8 @@ pub struct ArtistExtendedInfo {
     pub description: Option<String>,
     /// Portrait from Wikidata/Commons.
     pub image: Option<String>,
-    /// Artist images from TheAudioDB, fetched and cached by this call.
+    /// Artist images from TheAudioDB, as far as they are cached. A miss
+    /// queues a background fetch, so a later call has them.
     pub images: ArtistImages,
 }
 

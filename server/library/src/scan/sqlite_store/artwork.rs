@@ -33,6 +33,7 @@
 //! already saved, so the next sweep carries on from there.
 
 use std::collections::HashMap;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -41,6 +42,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::{Lane, RunStop, ScanStoreError, SqliteScanStore};
 use crate::clock::LibraryClock as _;
+use droppedneedle_kernel::beneath::{RootLinks, open_file_beneath};
 use droppedneedle_providers::coverart::sniff_image_content_type;
 
 /// Folder image names, most deliberate first, matched case-insensitively
@@ -426,12 +428,7 @@ fn folder_image(dirs: &[PathBuf]) -> Option<(PathBuf, Vec<u8>)> {
                 let Some(path) = by_name.get(&format!("{stem}.{extension}")) else {
                     continue;
                 };
-                let readable = std::fs::metadata(path)
-                    .is_ok_and(|meta| meta.len() > 0 && meta.len() <= COVER_MAX_BYTES);
-                if !readable {
-                    continue;
-                }
-                if let Ok(bytes) = std::fs::read(path)
+                if let Some(bytes) = read_listed_image(dir, path)
                     && sniff_image_content_type(&bytes).is_some()
                 {
                     return Some((path.clone(), bytes));
@@ -440,6 +437,22 @@ fn folder_image(dirs: &[PathBuf]) -> Option<(PathBuf, Vec<u8>)> {
         }
     }
     None
+}
+
+/// The bytes of image `path`, listed in `dir` as a regular file. The open
+/// does not follow a link, so a file swapped for one after the listing is
+/// not read. `None` when it is empty, too large or does not open.
+fn read_listed_image(dir: &Path, path: &Path) -> Option<Vec<u8>> {
+    let file = open_file_beneath(dir, path, RootLinks::Follow).ok()?;
+    let size = file.metadata().ok()?.len();
+    if size == 0 || size > COVER_MAX_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(COVER_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= COVER_MAX_BYTES).then_some(bytes)
 }
 
 /// Hex SHA-256 of image bytes: the art's identity and cache key.

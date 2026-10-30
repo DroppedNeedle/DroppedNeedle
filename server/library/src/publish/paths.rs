@@ -654,8 +654,9 @@ pub(crate) fn below_root<'p>(root: &Path, path: &'p Path) -> Option<&'p Path> {
 /// existing component of `path` below it is a symlink. `root` and what
 /// lies above it are the admin's and are not checked for links. Missing
 /// trailing components are allowed so new destinations can be validated
-/// before they exist. Readers outside the publisher use it too, so a file
-/// is never read through a link below a library folder.
+/// before they exist. A reader opens through
+/// `droppedneedle_kernel::beneath` instead, which refuses a link at the
+/// open itself.
 pub fn ensure_no_symlink_below(root: &Path, path: &Path) -> Result<(), PublishError> {
     ensure_library_dir(root)?;
     no_symlink_below(root, path)

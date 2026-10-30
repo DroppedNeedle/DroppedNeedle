@@ -463,14 +463,6 @@ impl Catalog {
         cached.flatten()
     }
 
-    /// TheAudioDB images, fetched and cached with v2's found/miss
-    /// lifetimes. Off or failing reads as no images.
-    async fn fetch_artist_images(&self, mbid: &str, name: &str) -> Option<ArtistImages> {
-        self.artist_images_lookup(mbid, name, RequestPriority::UserInitiated)
-            .await
-            .flatten()
-    }
-
     /// Whether TheAudioDB's answer for the artist is held, fresh or stale.
     pub(super) async fn artist_images_known(&self, mbid: &str) -> bool {
         self.held(&self.audiodb_artist_key(mbid)).await
@@ -528,8 +520,9 @@ impl Catalog {
     }
 
     /// `GET /artists/{artist_mbid}/extended`: biography and portrait from
-    /// Wikipedia/Wikidata, plus TheAudioDB images. Every failure reads as
-    /// absent fields (v2 answered empty rather than erroring).
+    /// Wikipedia/Wikidata, plus TheAudioDB images from the cache only (a
+    /// miss queues a background fill). Every failure reads as absent
+    /// fields (v2 answered empty rather than erroring).
     pub async fn artist_extended(
         &self,
         raw_mbid: &str,
@@ -548,7 +541,7 @@ impl Catalog {
         };
         let (biography, images, plugins) = tokio::join!(
             self.biography(&detail, RequestPriority::UserInitiated),
-            self.fetch_artist_images(&detail.mbid, &detail.name),
+            self.page_artist_images(&detail.mbid, &mbid),
             self.artist_plugin_details(&detail.name, &detail.mbid)
         );
         // Plugin details sit below Wikipedia and Wikidata: they only fill
