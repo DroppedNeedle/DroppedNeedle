@@ -4,6 +4,8 @@ import { streamPath } from '$lib/api/stream';
 import { v3 } from '$lib/api/v3/endpoint';
 
 export type GatewaySource = 'local' | 'jellyfin' | 'navidrome' | 'plex';
+/** A media server whose plays the server reports on to it. */
+export type RemoteSource = Exclude<GatewaySource, 'local'>;
 export type PlaybackStartRequest = components['schemas']['PlaybackStartRequest'];
 export type PlaybackStartResponse = components['schemas']['PlaybackStartResponse'];
 export type PlaybackProgressRequest = components['schemas']['PlaybackProgressRequest'];

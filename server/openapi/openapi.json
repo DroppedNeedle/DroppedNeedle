@@ -23421,7 +23421,8 @@
         "tags": [
           "playback"
         ],
-        "summary": "Open a playback session for one catalog track.",
+        "summary": "Open a playback session for one track.",
+        "description": "A Jellyfin, Navidrome or Plex track is reported on to that server under\nthe caller's own linked account, and the answer does not wait for it.",
         "operationId": "start_playback",
         "requestBody": {
           "content": {
@@ -23489,7 +23490,7 @@
         "tags": [
           "playback"
         ],
-        "summary": "Close a session, counting the play past threshold.",
+        "summary": "Close a session, counting a library play past threshold.",
         "operationId": "stop_playback",
         "requestBody": {
           "content": {
@@ -55359,6 +55360,14 @@
             "type": "string",
             "description": "Reporting device slug."
           },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Track length in milliseconds, when the player knows it."
+          },
           "is_paused": {
             "type": "boolean",
             "description": "True while paused."
@@ -55372,12 +55381,12 @@
             "description": "Position in milliseconds, when the player knows it."
           },
           "source": {
-            "type": "string",
-            "description": "Playback source."
+            "$ref": "#/components/schemas/PlaybackSource",
+            "description": "Where the track plays from."
           },
           "track_id": {
             "type": "string",
-            "description": "Catalog track id."
+            "description": "The library track id for `local` and `youtube`; for a media server,\nthat server's item id (the Plex rating key)."
           }
         }
       },
@@ -55394,9 +55403,20 @@
           }
         }
       },
+      "PlaybackSource": {
+        "type": "string",
+        "description": "Where a session's track plays from.",
+        "enum": [
+          "local",
+          "youtube",
+          "jellyfin",
+          "navidrome",
+          "plex"
+        ]
+      },
       "PlaybackStartRequest": {
         "type": "object",
-        "description": "Open a playback session for one catalog track.",
+        "description": "Open a playback session for one track.",
         "required": [
           "track_id"
         ],
@@ -55405,13 +55425,29 @@
             "type": "string",
             "description": "Reporting device slug."
           },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Track length in milliseconds, when the player knows it."
+          },
+          "position_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Where playback starts in milliseconds, when not at the beginning (a\nresumed track). Read for media-server plays only."
+          },
           "source": {
-            "type": "string",
-            "description": "Playback source (`local`, `youtube`, `jellyfin`, `navidrome`, `plex`)."
+            "$ref": "#/components/schemas/PlaybackSource",
+            "description": "Where the track plays from."
           },
           "track_id": {
             "type": "string",
-            "description": "Catalog track id."
+            "description": "The library track id for `local` and `youtube`; for a media server,\nthat server's item id (the Plex rating key)."
           }
         }
       },
@@ -55435,7 +55471,7 @@
       },
       "PlaybackStopRequest": {
         "type": "object",
-        "description": "Close a session. A stop past the scrobble threshold counts the play.",
+        "description": "Close a session. A library play past the scrobble threshold counts.",
         "required": [
           "track_id"
         ],
@@ -55444,9 +55480,17 @@
             "type": "string",
             "description": "Reporting device slug."
           },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Track length in milliseconds, when the player knows it."
+          },
           "ignore_scrobble": {
             "type": "boolean",
-            "description": "Skip the scrobble even past threshold (private session)."
+            "description": "Skip the scrobble even past threshold (private session). A media\nserver counts a play by its own rule."
           },
           "position_ms": {
             "type": [
@@ -55457,12 +55501,12 @@
             "description": "Final position in milliseconds, when the player knows it."
           },
           "source": {
-            "type": "string",
-            "description": "Playback source."
+            "$ref": "#/components/schemas/PlaybackSource",
+            "description": "Where the track plays from."
           },
           "track_id": {
             "type": "string",
-            "description": "Catalog track id."
+            "description": "The library track id for `local` and `youtube`; for a media server,\nthat server's item id (the Plex rating key)."
           }
         }
       },
@@ -55480,7 +55524,7 @@
           },
           "scrobbled": {
             "type": "boolean",
-            "description": "True when the play counted (history recorded, forwarding attempted)."
+            "description": "True when the play counted (history recorded, forwarding attempted).\nAlways false for a media-server play: the web player's scrobble\nsubmit records that one."
           }
         }
       },

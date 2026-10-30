@@ -1,10 +1,11 @@
 //! Playback reporting: session lifecycle, native scrobbles, live
 //! presence, and each user's listening settings.
 //!
-//! The native player reports `start`/`progress`/`stop` for each play; the
-//! services resolve the track, keep the bounded session, write presence,
-//! attribute the play to its remote server (Jellyfin/Navidrome/Plex), and
-//! count a scrobble past threshold. Direct submits and now-playing forwards
+//! The native player reports `start`/`progress`/`stop` for each play. For
+//! a library track the services resolve it, keep the bounded session,
+//! write presence and count a scrobble past threshold; a Jellyfin,
+//! Navidrome or Plex track is only reported on to that server
+//! ([`reports`]). Direct submits and now-playing forwards
 //! carry the by-name native path to Last.fm/ListenBrainz. Presence writes
 //! and the live snapshot live here too, backed by the in-memory registry.
 //! A counted play is written with one scrobble job per service it goes
@@ -27,9 +28,8 @@
 //! - Presence (45s TTL, owner-keyed visibility with fail-closed redaction,
 //!   silent idle reconciles, publish-if-removed sweeps):
 //!   v2's now-playing service and poller
-//! - Outbound attribution (per-source session reports, logged and
-//!   swallowed; per-user fail-closed): the three
-//!   v2 per-source playback services
+//! - Media-server session reports (per-source calls, logged and dropped,
+//!   own linked account only): the three v2 per-source playback services
 //!
 //! ## Wiring
 //!
@@ -88,7 +88,7 @@ pub struct PlaybackDeps {
     pub sinks: Arc<dyn ScrobbleSinks>,
     /// The admin's Last.fm switch: plays go to Last.fm only while it is on.
     pub lastfm_switch: LastFmSwitch,
-    /// Outbound remote attribution (Jellyfin / Navidrome / Plex).
+    /// Session reports to the media server a track plays from.
     pub remotes: Arc<dyn RemoteReporters>,
     /// Bounded playback sessions.
     pub sessions: SessionStore,

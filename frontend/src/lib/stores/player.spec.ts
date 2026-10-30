@@ -482,11 +482,19 @@ describe('Jellyfin session lifecycle', () => {
 		});
 	}
 
-	it('calls startSession when a Jellyfin track is loaded', async () => {
+	it('starts the session when a Jellyfin track plays, not when it loads', async () => {
 		playerStore.playQueue([makeJellyfinItem()]);
 		await vi.advanceTimersByTimeAsync(0);
+		expect(startPlaybackSession).not.toHaveBeenCalled();
 
-		expect(startPlaybackSession).toHaveBeenCalledWith({ source: 'jellyfin', track_id: 'jf-1' });
+		capturedStateCallbacks.forEach((cb) => cb('playing'));
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(startPlaybackSession).toHaveBeenCalledWith({
+			source: 'jellyfin',
+			track_id: 'jf-1',
+			position_ms: 0
+		});
 	});
 
 	it('calls reportStop when switching tracks', async () => {
@@ -574,6 +582,7 @@ describe('beforeunload beacon', () => {
 		playerStore.playQueue([makeJellyfinItem()]);
 		await vi.advanceTimersByTimeAsync(0);
 
+		capturedStateCallbacks.forEach((cb) => cb('playing'));
 		capturedProgressCallbacks.forEach((cb) => cb(45, 180));
 
 		const beforeUnloadHandler = addEventListenerSpy.mock.calls.find(
@@ -589,7 +598,12 @@ describe('beforeunload beacon', () => {
 		expect(sentBlob.type).toBe('application/json');
 		const text = await sentBlob.text();
 		const parsed = JSON.parse(text);
-		expect(parsed).toEqual({ source: 'jellyfin', track_id: 'jf-beacon', position_ms: 45000 });
+		expect(parsed).toEqual({
+			source: 'jellyfin',
+			track_id: 'jf-beacon',
+			position_ms: 45000,
+			duration_ms: 180000
+		});
 	});
 });
 

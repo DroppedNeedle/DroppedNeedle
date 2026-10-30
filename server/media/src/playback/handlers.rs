@@ -36,7 +36,10 @@ fn map(error: ServiceError) -> ApiError {
 // Session lifecycle
 // ---------------------------------------------------------------------------
 
-/// Open a playback session for one catalog track.
+/// Open a playback session for one track.
+///
+/// A Jellyfin, Navidrome or Plex track is reported on to that server under
+/// the caller's own linked account, and the answer does not wait for it.
 #[utoipa::path(
     post,
     tag = "playback",
@@ -82,7 +85,7 @@ pub async fn report_progress(
         .map_err(map)
 }
 
-/// Close a session, counting the play past threshold.
+/// Close a session, counting a library play past threshold.
 #[utoipa::path(
     post,
     tag = "playback",

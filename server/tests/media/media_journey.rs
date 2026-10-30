@@ -1,7 +1,7 @@
 //! The media journey through the whole app against the in-repo mock Plex
 //! server: save a Plex connection, browse its albums, stream whole bytes,
-//! seek a range, then start, progress and stop playback and find the play
-//! in history.
+//! seek a range, then start, progress and stop the play of a library track and
+//! find it in history.
 
 use axum::http::StatusCode;
 use droppedneedle_testkit::remotes::{PLEX_TOKEN, canned_stream_bytes};
@@ -100,7 +100,7 @@ async fn media_connect_browse_play_seek_stop() {
             &[("authorization", auth.as_str())],
             Some(json!({
                 "track_id": "journey-track-1",
-                "source": "plex",
+                "source": "local",
                 "device": "web",
             })),
         )
@@ -126,7 +126,7 @@ async fn media_connect_browse_play_seek_stop() {
             &[("authorization", auth.as_str())],
             Some(json!({
                 "track_id": "journey-track-1",
-                "source": "plex",
+                "source": "local",
                 "device": "web",
                 "position_ms": 120_000,
             })),
@@ -140,7 +140,7 @@ async fn media_connect_browse_play_seek_stop() {
             &[("authorization", auth.as_str())],
             Some(json!({
                 "track_id": "journey-track-1",
-                "source": "plex",
+                "source": "local",
                 "device": "web",
                 "position_ms": 240_000,
             })),

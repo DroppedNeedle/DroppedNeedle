@@ -14,9 +14,51 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::remotes::models::SourceName;
+
 /// Default playback source: the local library.
 fn default_source() -> String {
     "local".to_owned()
+}
+
+/// Where a session's track plays from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackSource {
+    /// A library track.
+    #[default]
+    Local,
+    /// A YouTube pick standing in for a library track.
+    Youtube,
+    /// The admin's Jellyfin server.
+    Jellyfin,
+    /// The admin's Navidrome server.
+    Navidrome,
+    /// The admin's Plex server.
+    Plex,
+}
+
+impl PlaybackSource {
+    /// Lowercase wire name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Youtube => "youtube",
+            Self::Jellyfin => "jellyfin",
+            Self::Navidrome => "navidrome",
+            Self::Plex => "plex",
+        }
+    }
+
+    /// The media server a play from this source is reported to, if any.
+    pub fn remote(self) -> Option<SourceName> {
+        match self {
+            Self::Local | Self::Youtube => None,
+            Self::Jellyfin => Some(SourceName::Jellyfin),
+            Self::Navidrome => Some(SourceName::Navidrome),
+            Self::Plex => Some(SourceName::Plex),
+        }
+    }
 }
 
 /// Default reporting device slug.
@@ -28,17 +70,25 @@ fn default_device() -> String {
 // Session lifecycle: start / progress / stop
 // ---------------------------------------------------------------------------
 
-/// Open a playback session for one catalog track.
+/// Open a playback session for one track.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PlaybackStartRequest {
-    /// Catalog track id.
+    /// The library track id for `local` and `youtube`; for a media server,
+    /// that server's item id (the Plex rating key).
     pub track_id: String,
-    /// Playback source (`local`, `youtube`, `jellyfin`, `navidrome`, `plex`).
-    #[serde(default = "default_source")]
-    pub source: String,
+    /// Where the track plays from.
+    #[serde(default)]
+    pub source: PlaybackSource,
     /// Reporting device slug.
     #[serde(default = "default_device")]
     pub device: String,
+    /// Where playback starts in milliseconds, when not at the beginning (a
+    /// resumed track). Read for media-server plays only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_ms: Option<i64>,
+    /// Track length in milliseconds, when the player knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
 }
 
 /// Answer to a session start.
@@ -53,17 +103,21 @@ pub struct PlaybackStartResponse {
 /// Heartbeat for a live session: keeps presence alive and the scrubber live.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PlaybackProgressRequest {
-    /// Catalog track id.
+    /// The library track id for `local` and `youtube`; for a media server,
+    /// that server's item id (the Plex rating key).
     pub track_id: String,
-    /// Playback source.
-    #[serde(default = "default_source")]
-    pub source: String,
+    /// Where the track plays from.
+    #[serde(default)]
+    pub source: PlaybackSource,
     /// Reporting device slug.
     #[serde(default = "default_device")]
     pub device: String,
     /// Position in milliseconds, when the player knows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position_ms: Option<i64>,
+    /// Track length in milliseconds, when the player knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
     /// True while paused.
     #[serde(default)]
     pub is_paused: bool,
@@ -76,21 +130,26 @@ pub struct PlaybackProgressResponse {
     pub accepted: bool,
 }
 
-/// Close a session. A stop past the scrobble threshold counts the play.
+/// Close a session. A library play past the scrobble threshold counts.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PlaybackStopRequest {
-    /// Catalog track id.
+    /// The library track id for `local` and `youtube`; for a media server,
+    /// that server's item id (the Plex rating key).
     pub track_id: String,
-    /// Playback source.
-    #[serde(default = "default_source")]
-    pub source: String,
+    /// Where the track plays from.
+    #[serde(default)]
+    pub source: PlaybackSource,
     /// Reporting device slug.
     #[serde(default = "default_device")]
     pub device: String,
     /// Final position in milliseconds, when the player knows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position_ms: Option<i64>,
-    /// Skip the scrobble even past threshold (private session).
+    /// Track length in milliseconds, when the player knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    /// Skip the scrobble even past threshold (private session). A media
+    /// server counts a play by its own rule.
     #[serde(default)]
     pub ignore_scrobble: bool,
 }
@@ -101,6 +160,8 @@ pub struct PlaybackStopResponse {
     /// Always true: reporting never fails the player.
     pub accepted: bool,
     /// True when the play counted (history recorded, forwarding attempted).
+    /// Always false for a media-server play: the web player's scrobble
+    /// submit records that one.
     pub scrobbled: bool,
 }
 

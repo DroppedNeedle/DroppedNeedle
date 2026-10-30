@@ -56,12 +56,6 @@ pub fn meets_subsonic_threshold(position_ms: i64, duration_ms: i64) -> bool {
     position_ms >= subsonic_scrobble_threshold_ms(duration_ms)
 }
 
-/// True for sources with a remote server to attribute to. Local and YouTube
-/// plays stay home (v2 only ever reports remote plays to their own server).
-pub fn has_remote(source: &str) -> bool {
-    matches!(source, "jellyfin" | "navidrome" | "plex")
-}
-
 /// Presence cover URL for a resolved track: the release group's cover when
 /// the album is matched, else the album's own art from the library (a
 /// folder image or embedded picture), so every play shows a cover where

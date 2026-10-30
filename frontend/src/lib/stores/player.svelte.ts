@@ -155,7 +155,8 @@ function createPlayerStore() {
 	const session = createPlaybackSession({
 		intervalMs: SESSION_REPORT_INTERVAL_MS,
 		maxFailures: MAX_SESSION_REPORT_FAILURES,
-		position: () => ({ seconds: progress, isPaused: playbackState !== 'playing' })
+		position: () => ({ seconds: progress, isPaused: playbackState !== 'playing' }),
+		duration: () => duration
 	});
 
 	function getNextIndex(): number | null {

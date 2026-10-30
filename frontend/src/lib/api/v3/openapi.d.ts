@@ -6089,7 +6089,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Open a playback session for one catalog track. */
+        /**
+         * Open a playback session for one track.
+         * @description A Jellyfin, Navidrome or Plex track is reported on to that server under
+         *     the caller's own linked account, and the answer does not wait for it.
+         */
         post: operations["start_playback"];
         delete?: never;
         options?: never;
@@ -6106,7 +6110,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Close a session, counting the play past threshold. */
+        /** Close a session, counting a library play past threshold. */
         post: operations["stop_playback"];
         delete?: never;
         options?: never;
@@ -18508,6 +18512,11 @@ export interface components {
         PlaybackProgressRequest: {
             /** @description Reporting device slug. */
             device?: string;
+            /**
+             * Format: int64
+             * @description Track length in milliseconds, when the player knows it.
+             */
+            duration_ms?: number | null;
             /** @description True while paused. */
             is_paused?: boolean;
             /**
@@ -18515,9 +18524,12 @@ export interface components {
              * @description Position in milliseconds, when the player knows it.
              */
             position_ms?: number | null;
-            /** @description Playback source. */
-            source?: string;
-            /** @description Catalog track id. */
+            /** @description Where the track plays from. */
+            source?: components["schemas"]["PlaybackSource"];
+            /**
+             * @description The library track id for `local` and `youtube`; for a media server,
+             *     that server's item id (the Plex rating key).
+             */
             track_id: string;
         };
         /** @description Answer to a progress heartbeat. */
@@ -18525,13 +18537,32 @@ export interface components {
             /** @description Always true: reporting never fails the player. */
             accepted: boolean;
         };
-        /** @description Open a playback session for one catalog track. */
+        /**
+         * @description Where a session's track plays from.
+         * @enum {string}
+         */
+        PlaybackSource: "local" | "youtube" | "jellyfin" | "navidrome" | "plex";
+        /** @description Open a playback session for one track. */
         PlaybackStartRequest: {
             /** @description Reporting device slug. */
             device?: string;
-            /** @description Playback source (`local`, `youtube`, `jellyfin`, `navidrome`, `plex`). */
-            source?: string;
-            /** @description Catalog track id. */
+            /**
+             * Format: int64
+             * @description Track length in milliseconds, when the player knows it.
+             */
+            duration_ms?: number | null;
+            /**
+             * Format: int64
+             * @description Where playback starts in milliseconds, when not at the beginning (a
+             *     resumed track). Read for media-server plays only.
+             */
+            position_ms?: number | null;
+            /** @description Where the track plays from. */
+            source?: components["schemas"]["PlaybackSource"];
+            /**
+             * @description The library track id for `local` and `youtube`; for a media server,
+             *     that server's item id (the Plex rating key).
+             */
             track_id: string;
         };
         /** @description Answer to a session start. */
@@ -18541,27 +18572,42 @@ export interface components {
             /** @description Session key (`user_id:device:track_id`), for log correlation. */
             session: string;
         };
-        /** @description Close a session. A stop past the scrobble threshold counts the play. */
+        /** @description Close a session. A library play past the scrobble threshold counts. */
         PlaybackStopRequest: {
             /** @description Reporting device slug. */
             device?: string;
-            /** @description Skip the scrobble even past threshold (private session). */
+            /**
+             * Format: int64
+             * @description Track length in milliseconds, when the player knows it.
+             */
+            duration_ms?: number | null;
+            /**
+             * @description Skip the scrobble even past threshold (private session). A media
+             *     server counts a play by its own rule.
+             */
             ignore_scrobble?: boolean;
             /**
              * Format: int64
              * @description Final position in milliseconds, when the player knows it.
              */
             position_ms?: number | null;
-            /** @description Playback source. */
-            source?: string;
-            /** @description Catalog track id. */
+            /** @description Where the track plays from. */
+            source?: components["schemas"]["PlaybackSource"];
+            /**
+             * @description The library track id for `local` and `youtube`; for a media server,
+             *     that server's item id (the Plex rating key).
+             */
             track_id: string;
         };
         /** @description Answer to a stop report. */
         PlaybackStopResponse: {
             /** @description Always true: reporting never fails the player. */
             accepted: boolean;
-            /** @description True when the play counted (history recorded, forwarding attempted). */
+            /**
+             * @description True when the play counted (history recorded, forwarding attempted).
+             *     Always false for a media-server play: the web player's scrobble
+             *     submit records that one.
+             */
             scrobbled: boolean;
         };
         /** @description Playlist list. */

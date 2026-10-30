@@ -791,31 +791,45 @@ impl PlexAdapter {
             .map_err(super::adapter::transport)
     }
 
-    /// Playback-state report via `/:/timeline` (v2 `now_playing`): `state`
-    /// is `playing`, `paused`, or `stopped`.
-    pub async fn timeline(&self, rating_key: &str, state: &str) -> Result<(), AdapterError> {
+    /// Playback-state report via `/:/timeline`: `state` is `playing`,
+    /// `paused` or `stopped`, at `time_ms` into a track `duration_ms` long.
+    /// The parameters follow python-plexapi's `updateTimeline`; no real
+    /// Plex server was probed and the answer's shape is unrecorded, so it
+    /// is read for its status only.
+    pub async fn timeline(
+        &self,
+        rating_key: &str,
+        state: &str,
+        time_ms: i64,
+        duration_ms: Option<i64>,
+    ) -> Result<(), AdapterError> {
         self.require_configured()?;
+        let rating_key = request_id(rating_key)?;
         let key = format!("/library/metadata/{rating_key}");
-        self.request(
-            "/:/timeline",
-            &params(&[("ratingKey", rating_key), ("state", state), ("key", &key)]),
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Scrobble via `/:/scrobble` (v2 `scrobble`).
-    pub async fn scrobble(&self, rating_key: &str) -> Result<(), AdapterError> {
-        self.require_configured()?;
-        self.request(
-            "/:/scrobble",
-            &params(&[
-                ("key", rating_key),
-                ("identifier", "com.plexapp.plugins.library"),
-            ]),
-        )
-        .await?;
-        Ok(())
+        let time = time_ms.to_string();
+        let mut pairs = vec![
+            ("ratingKey", rating_key),
+            ("key", key.as_str()),
+            ("state", state),
+            ("time", time.as_str()),
+            ("identifier", "com.plexapp.plugins.library"),
+        ];
+        let duration = duration_ms.map(|duration| duration.to_string());
+        if let Some(duration) = &duration {
+            pairs.push(("duration", duration.as_str()));
+        }
+        let endpoint = "/:/timeline";
+        let request = self
+            .http
+            .client()
+            .get(self.url(endpoint)?)
+            .query(&params(&pairs))
+            .headers(self.headers());
+        self.http
+            .send(endpoint, request)
+            .await?
+            .acknowledged()
+            .await
     }
 
     /// Playlist composite bytes: the playlist's own `composite` path when

@@ -80,6 +80,11 @@ pub struct RecordedCalls {
     pub jellyfin_refreshes: usize,
     /// Section keys of the Plex section refreshes the mock took.
     pub plex_refreshes: Vec<String>,
+    /// Jellyfin session reports: the path and its JSON body, in order.
+    pub jellyfin_sessions: Vec<(String, Value)>,
+    /// Plex playback reports (`/:/timeline`, `/:/scrobble`): the path and
+    /// its query pairs, in order.
+    pub plex_playback: Vec<(String, Vec<(String, String)>)>,
 }
 
 /// Cloneable recorder handle shared by a mock app and its test.
@@ -229,6 +234,9 @@ fn jellyfin_router(recorder: MockRecorder) -> axum::Router {
         .route("/Audio/{id}/stream", get(jf_stream))
         .route("/Sessions", get(jf_sessions))
         .route("/Library/Refresh", post(jf_refresh))
+        .route("/Sessions/Playing", post(jf_session_report))
+        .route("/Sessions/Playing/Progress", post(jf_session_report))
+        .route("/Sessions/Playing/Stopped", post(jf_session_report))
         .route("/Items/{id}/Images/Primary", get(jf_image))
         .with_state(recorder)
 }
@@ -262,6 +270,25 @@ async fn jf_refresh(State(recorder): State<MockRecorder>, headers: HeaderMap) ->
         return jf_unauthorized();
     }
     recorder.record(|calls| calls.jellyfin_refreshes += 1);
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// A session report, as Jellyfin 10.10.6 answers it: 204, no body.
+async fn jf_session_report(
+    State(recorder): State<MockRecorder>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+    body: axum::body::Bytes,
+) -> Response {
+    if !jf_authorized(&headers, &recorder) {
+        return jf_unauthorized();
+    }
+    let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    recorder.record(|calls| {
+        calls
+            .jellyfin_sessions
+            .push((uri.path().to_owned(), body.clone()));
+    });
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -1278,7 +1305,32 @@ fn plex_router(recorder: MockRecorder) -> axum::Router {
         .route("/status/sessions", get(px_sessions))
         .route("/status/sessions/history/all", get(px_history))
         .route("/library/parts/{*key}", get(px_part))
+        // `/:/timeline` and `/:/scrobble`: axum reads a leading `:` as a
+        // capture, so the segment is matched here and checked in the handler.
+        .route("/{colon}/{call}", get(px_playback))
         .with_state(recorder)
+}
+
+/// A playback report to `/:/timeline` or `/:/scrobble`: recorded, and
+/// answered with an empty container. Not recorded from a real server.
+async fn px_playback(
+    State(recorder): State<MockRecorder>,
+    headers: HeaderMap,
+    Path((colon, call)): Path<(String, String)>,
+    Query(params): Query<Vec<(String, String)>>,
+) -> Response {
+    if colon != ":" || !matches!(call.as_str(), "timeline" | "scrobble") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if !px_authorized(&headers, &recorder) {
+        return px_unauthorized();
+    }
+    recorder.record(|calls| {
+        calls
+            .plex_playback
+            .push((format!("/:/{call}"), params.clone()))
+    });
+    px_container(json!({"size": 0}))
 }
 
 fn px_authorized(headers: &HeaderMap, recorder: &MockRecorder) -> bool {

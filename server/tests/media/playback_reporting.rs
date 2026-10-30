@@ -25,9 +25,7 @@ use droppedneedle_kernel::clock::{Clock, ManualClock};
 use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_media::remotes::warmup::{self, WarmupStats};
 use playback::PlaybackDeps;
-use playback::ports::{
-    ProviderFailure, RemoteReport, RemoteReporters, ReportTrack, ScrobbleSinks, ScrobbleTargets,
-};
+use playback::ports::{RemoteReport, RemoteReporters, ReportTrack, ScrobbleSinks, ScrobbleTargets};
 use playback::presence::{PresenceRegistry, presence_key};
 use playback::report::{MixedDedup, ScrobbleDedup, submit_session_scrobble};
 use playback::rules::{
@@ -68,19 +66,15 @@ impl ScrobbleSinks for FakeSinks {
     }
 }
 
-/// The user's media servers: records every attribution call.
+/// The user's media servers: records every report.
 #[derive(Default)]
 struct FakeRemotes {
-    calls: Mutex<Vec<(&'static str, String)>>,
+    calls: Mutex<Vec<(&'static str, SourceName)>>,
 }
 
 impl FakeRemotes {
-    fn answer(&self, op: &'static str, source: &str) -> Result<(), ProviderFailure> {
-        self.calls
-            .lock()
-            .expect("lock")
-            .push((op, source.to_owned()));
-        Ok(())
+    fn answer(&self, op: &'static str, source: SourceName) {
+        self.calls.lock().expect("lock").push((op, source));
     }
 
     fn calls(&self) -> usize {
@@ -89,20 +83,16 @@ impl FakeRemotes {
 }
 
 impl RemoteReporters for FakeRemotes {
-    fn report_start(&self, source: &str, _report: &RemoteReport) -> Result<(), ProviderFailure> {
-        self.answer("start", source)
+    fn report_start(&self, source: SourceName, _report: &RemoteReport) {
+        self.answer("start", source);
     }
 
-    fn report_progress(&self, source: &str, _report: &RemoteReport) -> Result<(), ProviderFailure> {
-        self.answer("progress", source)
+    fn report_progress(&self, source: SourceName, _report: &RemoteReport) {
+        self.answer("progress", source);
     }
 
-    fn report_stop(&self, source: &str, _report: &RemoteReport) -> Result<(), ProviderFailure> {
-        self.answer("stop", source)
-    }
-
-    fn scrobble(&self, source: &str, _report: &RemoteReport) -> Result<(), ProviderFailure> {
-        self.answer("scrobble", source)
+    fn report_stop(&self, source: SourceName, _report: &RemoteReport) {
+        self.answer("stop", source);
     }
 }
 
@@ -1303,6 +1293,309 @@ async fn a_last_fm_scrobble_is_a_signed_form_with_the_session_key() {
         form.get("api_sig").copied(),
         Some(format!("{:x}", md5::compute(text.as_bytes())).as_str())
     );
+    app.stop().await;
+}
+
+// ---------------------------------------------------------------------------
+// Reports to the media server a track plays from
+// ---------------------------------------------------------------------------
+
+/// Send one session report for a three-minute-twenty track from `source`.
+async fn remote_report(
+    app: &TestApp,
+    user: &crate::common::Login,
+    leg: &str,
+    source: &str,
+    item: &str,
+    position_ms: i64,
+) -> Value {
+    let (status, answer) = app
+        .call(
+            "POST",
+            &format!("/api/v3/playback/{leg}"),
+            &[("authorization", user.authorization.as_str())],
+            Some(json!({
+                "track_id": item,
+                "source": source,
+                "device": "web",
+                "position_ms": position_ms,
+                "duration_ms": 200_000,
+                "is_paused": false,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{source} {leg}: {answer}");
+    answer
+}
+
+/// Play `item` from `source`: start, one progress at 12 s, stop at
+/// `stop_ms`. The stop's answer.
+async fn play_remote(
+    app: &TestApp,
+    user: &crate::common::Login,
+    source: &str,
+    item: &str,
+    stop_ms: i64,
+) -> Value {
+    remote_report(app, user, "start", source, item, 0).await;
+    remote_report(app, user, "progress", source, item, 12_000).await;
+    remote_report(app, user, "stop", source, item, stop_ms).await
+}
+
+/// The value of `key` in recorded query pairs.
+fn query_value<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    pairs
+        .iter()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.as_str())
+}
+
+/// A web-player play of a Jellyfin, a Navidrome and a Plex track reaches
+/// that server under the listener's own linked account, as its own apps
+/// report: Jellyfin's three session calls, Navidrome's now playing and
+/// then the play once half the track was heard, and Plex's timeline with
+/// no scrobble. The listener's history holds only the one play the web
+/// player submits. A listener with no link of their own reaches no server,
+/// even with the admin's shared account configured.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_media_server_play_is_reported_to_its_server_and_counted_once() {
+    use droppedneedle_media::remotes::connections::UserLink;
+    use droppedneedle_testkit::remotes::{
+        JELLYFIN_KEY, NAVIDROME_USER, PLEX_TOKEN, serve_jellyfin, serve_navidrome,
+    };
+
+    let jellyfin = serve_jellyfin().await.expect("mock Jellyfin starts");
+    let navidrome = serve_navidrome().await.expect("mock Navidrome starts");
+    let app = TestApp::start("playback-remote-reports").await;
+    let admin = app.login_admin().await;
+    for (section, body) in [
+        (
+            "jellyfin",
+            json!({"jellyfin_url": jellyfin.base_url, "api_key": JELLYFIN_KEY,
+                   "user_id": "jf-user-1", "enabled": true}),
+        ),
+        (
+            "navidrome",
+            json!({"navidrome_url": navidrome.base_url, "username": NAVIDROME_USER,
+                   "password": "shared-pass", "enabled": true}),
+        ),
+        (
+            "plex",
+            json!({"plex_url": app.plex.base_url, "plex_token": PLEX_TOKEN, "enabled": true}),
+        ),
+    ] {
+        let (status, saved) = app
+            .call(
+                "PUT",
+                &format!("/api/v3/settings/{section}"),
+                &[("authorization", admin.as_str())],
+                Some(body),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{section}: {saved}");
+    }
+    let user = listener(&app, "listener", "lb-token").await;
+    let unlinked = app.login_user("unlinked").await;
+    let resolver = app.state().media.remotes.service.resolver();
+    for link in [
+        UserLink::Jellyfin {
+            access_token: JELLYFIN_KEY.to_owned(),
+            jellyfin_user_id: "jf-user-1".to_owned(),
+            username: "listener".to_owned(),
+        },
+        UserLink::Navidrome {
+            username: NAVIDROME_USER.to_owned(),
+            password: "own-pass".to_owned(),
+        },
+        UserLink::Plex {
+            auth_token: "plex-account".to_owned(),
+            server_access_token: PLEX_TOKEN.to_owned(),
+            plex_user_id: "plex-user-1".to_owned(),
+            username: "listener".to_owned(),
+        },
+    ] {
+        resolver
+            .save_link(&user.user_id, &link)
+            .await
+            .expect("link saves");
+    }
+
+    for (source, item) in [
+        ("jellyfin", "jf-t-1"),
+        ("navidrome", "nd-t-1"),
+        ("plex", "101"),
+    ] {
+        let stop = play_remote(&app, &user, source, item, 150_000).await;
+        assert_eq!(stop["scrobbled"], false, "{source}: {stop}");
+    }
+    play_remote(&app, &user, "navidrome", "nd-t-2", 99_000).await;
+    // A play resumed at 3:00 of a five-minute track and heard for ten
+    // seconds: past half the track by position, but not by what was heard.
+    for (leg, position_ms) in [("start", 180_000), ("stop", 190_000)] {
+        let (status, answer) = app
+            .call(
+                "POST",
+                &format!("/api/v3/playback/{leg}"),
+                &[("authorization", user.authorization.as_str())],
+                Some(json!({
+                    "track_id": "nd-t-3",
+                    "source": "navidrome",
+                    "position_ms": position_ms,
+                    "duration_ms": 300_000,
+                })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "resumed {leg}: {answer}");
+    }
+    for (source, item) in [
+        ("jellyfin", "jf-t-9"),
+        ("navidrome", "nd-t-9"),
+        ("plex", "909"),
+    ] {
+        play_remote(&app, &unlinked, source, item, 150_000).await;
+    }
+    // The web player's own submit for the Jellyfin play.
+    let (status, submitted) = app
+        .call(
+            "POST",
+            "/api/v3/scrobble/submit",
+            &[("authorization", user.authorization.as_str())],
+            Some(json!({
+                "track_name": "Roads",
+                "artist_name": "Portishead",
+                "timestamp": droppedneedle_kernel::clock::SystemClock.now_unix() - 60,
+                "duration_ms": 200_000,
+                "source": "jellyfin",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{submitted}");
+    // Reports go out one at a time in the order they came, so once this
+    // last one is in, every one before it has been delivered or dropped.
+    remote_report(&app, &user, "start", "jellyfin", "jf-last", 0).await;
+    app.until("the last report reaches Jellyfin", || async {
+        let calls = jellyfin.recorder.snapshot().jellyfin_sessions;
+        calls
+            .iter()
+            .any(|(_, body)| body["ItemId"] == "jf-last")
+            .then_some(())
+    })
+    .await;
+
+    let sessions = jellyfin.recorder.snapshot().jellyfin_sessions;
+    let sent: Vec<(&str, &Value)> = sessions
+        .iter()
+        .filter(|(_, body)| body["ItemId"] == "jf-t-1")
+        .map(|(path, body)| (path.as_str(), body))
+        .collect();
+    let paths: Vec<&str> = sent.iter().map(|(path, _)| *path).collect();
+    assert_eq!(
+        paths,
+        [
+            "/Sessions/Playing",
+            "/Sessions/Playing/Progress",
+            "/Sessions/Playing/Stopped"
+        ]
+    );
+    assert_eq!(sent[1].1["PositionTicks"], 120_000_000);
+    assert_eq!(sent[1].1["IsPaused"], false);
+    assert_eq!(sent[2].1["PositionTicks"], 1_500_000_000);
+
+    let scrobbles: Vec<Vec<(String, String)>> = navidrome
+        .recorder
+        .snapshot()
+        .navidrome_queries
+        .into_iter()
+        .filter(|(endpoint, _)| endpoint.starts_with("scrobble"))
+        .map(|(_, query)| query)
+        .collect();
+    let by_item = |id: &str| -> Vec<Option<String>> {
+        scrobbles
+            .iter()
+            .filter(|query| query_value(query, "id") == Some(id))
+            .map(|query| query_value(query, "submission").map(str::to_owned))
+            .collect()
+    };
+    assert_eq!(
+        by_item("nd-t-1"),
+        [Some("false".to_owned()), None],
+        "now playing, then the play"
+    );
+    assert_eq!(
+        by_item("nd-t-2"),
+        [Some("false".to_owned())],
+        "a stop below half the track is not a play"
+    );
+    assert_eq!(
+        by_item("nd-t-3"),
+        [Some("false".to_owned())],
+        "ten seconds heard after a resume is not a play"
+    );
+    let counted = scrobbles
+        .iter()
+        .find(|query| {
+            query_value(query, "id") == Some("nd-t-1") && query_value(query, "submission").is_none()
+        })
+        .expect("the play was sent");
+    assert!(query_value(counted, "time").is_some(), "{counted:?}");
+
+    let timeline = app.plex.recorder.snapshot().plex_playback;
+    let reports: Vec<(&str, &str, &str, &str)> = timeline
+        .iter()
+        .filter(|(_, query)| query_value(query, "ratingKey") == Some("101"))
+        .map(|(path, query)| {
+            (
+                path.as_str(),
+                query_value(query, "state").unwrap_or(""),
+                query_value(query, "time").unwrap_or(""),
+                query_value(query, "duration").unwrap_or(""),
+            )
+        })
+        .collect();
+    assert_eq!(
+        reports,
+        [
+            ("/:/timeline", "playing", "0", "200000"),
+            ("/:/timeline", "playing", "12000", "200000"),
+            ("/:/timeline", "stopped", "150000", "200000"),
+        ]
+    );
+    assert!(
+        timeline.iter().all(|(path, _)| path == "/:/timeline"),
+        "no scrobble call: {timeline:?}"
+    );
+
+    assert!(
+        !sessions.iter().any(|(_, body)| body["ItemId"] == "jf-t-9"),
+        "an unlinked listener reaches no Jellyfin"
+    );
+    assert!(by_item("nd-t-9").is_empty(), "nor Navidrome");
+    assert!(
+        !timeline
+            .iter()
+            .any(|(_, query)| query_value(query, "ratingKey") == Some("909")),
+        "nor Plex"
+    );
+
+    let db = app.db();
+    let plays: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_play_history WHERE user_id = ?1",
+            [&user.user_id],
+            |row| row.get(0),
+        )
+        .expect("plays count");
+    assert_eq!(plays, 1, "only the web player's submit records a play");
+    let jobs: i64 = db
+        .query_row(
+            "SELECT COUNT(DISTINCT idempotency_key) FROM durable_jobs \
+             WHERE kind LIKE 'scrobble.%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("scrobble jobs count");
+    assert_eq!(jobs, 1, "one scrobble, to the one linked service");
+    drop(db);
     app.stop().await;
 }
 

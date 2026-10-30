@@ -815,6 +815,22 @@ impl ConnectionResolver {
         }
     }
 
+    /// The caller's own link only, never the shared account: work done in
+    /// a person's name on their server (the web player's session reports).
+    /// Not configured when they have no link; stale when it cannot be used.
+    pub async fn resolve_linked(
+        &self,
+        user_id: &str,
+        source: SourceName,
+        priority: RequestPriority,
+    ) -> Result<ResolvedConnection, ResolveError> {
+        let server = self.server(source)?.ok_or(ResolveError::NotConfigured)?;
+        match self.usable_link(user_id, &server, source, priority).await? {
+            Some(link) => Ok(linked(user_id, &server, link)),
+            None => Err(ResolveError::NotConfigured),
+        }
+    }
+
     /// The caller's link, ready to use on `server`: a Plex link without a
     /// server token gets one first, from plex.tv at `priority`. Stale when
     /// it cannot be used.

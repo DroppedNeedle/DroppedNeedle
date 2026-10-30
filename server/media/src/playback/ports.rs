@@ -8,6 +8,7 @@
 //! the log, never on the wire.
 
 use super::forwarding::Service;
+use crate::remotes::models::SourceName;
 
 /// Failure talking to a provider. The string is a log-only cause.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,34 +111,31 @@ pub trait ScrobbleSinks: Send + Sync {
     ) -> ScrobbleTargets;
 }
 
-/// One outbound session report to a remote music server.
+/// One outbound session report to a media server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteReport {
-    /// Owning user id (per-user attribution, fail closed).
+    /// The listener, whose own linked account the report goes under.
     pub user_id: String,
-    /// Remote item id (track id as the remote knows it).
+    /// The server's item id (the Plex rating key), checked as a plain id.
     pub item_id: String,
-    /// Reporting device slug.
-    pub device: String,
     /// Position in milliseconds, when known.
     pub position_ms: Option<i64>,
+    /// Track length in milliseconds, when known.
+    pub duration_ms: Option<i64>,
     /// True while paused (progress only).
     pub is_paused: bool,
 }
 
-/// Outbound session attribution to Jellyfin/Navidrome/Plex. Local and
-/// YouTube plays have no upstream (v2 only ever reports remote plays to
-/// their own server), so production no-ops those sources. A trait because
-/// it stands for the user's media servers, outside the process.
+/// Session reports to the media server a web-player track plays from. A
+/// report is handed off and never waited on. A trait because it stands
+/// for the user's media servers, outside the process.
 pub trait RemoteReporters: Send + Sync {
     /// Report a playback start to `source`.
-    fn report_start(&self, source: &str, report: &RemoteReport) -> Result<(), ProviderFailure>;
+    fn report_start(&self, source: SourceName, report: &RemoteReport);
     /// Report playback progress to `source`.
-    fn report_progress(&self, source: &str, report: &RemoteReport) -> Result<(), ProviderFailure>;
+    fn report_progress(&self, source: SourceName, report: &RemoteReport);
     /// Report a playback stop to `source`.
-    fn report_stop(&self, source: &str, report: &RemoteReport) -> Result<(), ProviderFailure>;
-    /// Count one scrobble on `source`.
-    fn scrobble(&self, source: &str, report: &RemoteReport) -> Result<(), ProviderFailure>;
+    fn report_stop(&self, source: SourceName, report: &RemoteReport);
 }
 
 /// One recorded play: the local source of truth (v2 `play_history` row,
