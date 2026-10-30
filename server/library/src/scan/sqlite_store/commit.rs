@@ -116,13 +116,25 @@ macro_rules! fenced_by {
 }
 pub(super) use fenced_by;
 
+/// Journal row `j` needs attention and no administrator has marked its
+/// write handled. It holds its track back from being judged gone only: a
+/// scan still indexes a file it finds at the track's path.
+macro_rules! awaits_admin {
+    () => {
+        "(j.state = 'needs_attention' \
+          AND j.bundle_id NOT IN (SELECT bundle_id FROM library_publish_resolutions))"
+    };
+}
+pub(super) use awaits_admin;
+
 /// The one rule for "this run walked past the track" (aliased `t`; the
 /// run id is the parameter `$run`): the walk did not see the file, and a
 /// scope of the run covering its path finished its walk with a recorded
-/// walk revision, while no library write naming the track is still open
-/// or moved after that walk began. A write names a track by its journal
-/// row's `track_id`, or, for a removal or a replaced file, by the row's
-/// replacement. The journal probe runs last: it is the rarest to match.
+/// walk revision, while no library write naming the track is still open,
+/// needs attention and is not marked handled, or moved after that walk
+/// began. A write names a track by its journal row's `track_id`, or, for
+/// a removal or a replaced file, by the row's replacement. The journal
+/// probe runs last: it is the rarest to match.
 macro_rules! walked_past {
     ($run:literal) => {
         concat!(
@@ -136,13 +148,17 @@ macro_rules! walked_past {
               AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
                 OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/') \
               AND NOT EXISTS (SELECT 1 FROM library_publish_journal j \
-                WHERE j.track_id = t.id AND ",
+                WHERE j.track_id = t.id AND (",
             $crate::scan::sqlite_store::commit::fenced_by!(),
-            ") AND NOT EXISTS (SELECT 1 FROM library_publish_replacements r \
+            " OR ",
+            $crate::scan::sqlite_store::commit::awaits_admin!(),
+            ")) AND NOT EXISTS (SELECT 1 FROM library_publish_replacements r \
                 JOIN library_publish_journal j ON j.id = r.journal_id \
-                WHERE r.replaced_track_id = t.id AND ",
+                WHERE r.replaced_track_id = t.id AND (",
             $crate::scan::sqlite_store::commit::fenced_by!(),
-            ")))"
+            " OR ",
+            $crate::scan::sqlite_store::commit::awaits_admin!(),
+            "))))"
         )
     };
 }
@@ -2900,14 +2916,72 @@ fn record_new_copies(
     Ok(())
 }
 
+/// The (root, path) pairs a scan of run `?1` writes no row for: where a
+/// track lies that a write fencing it names (`fenced_by!`: still open, or
+/// moved after the walk of the scope covering it began), the path a
+/// fencing write moved a file away from, and where an open write is
+/// placing a file. One read: the open rows by the state
+/// index (the states listed are every state `fenced_by!` does not call
+/// terminal), the rows moved since the run's earliest walk by their
+/// revision.
+const FENCED_PATHS: &str = concat!(
+    "WITH fencing AS ( \
+       SELECT id, state, fence_revision, track_id, source_root, source_rel, dest_root, dest_rel \
+         FROM library_publish_journal \
+         WHERE state IN ('prepared', 'staged', 'published', 'committed', 'cleanup_pending') \
+       UNION \
+       SELECT id, state, fence_revision, track_id, source_root, source_rel, dest_root, dest_rel \
+         FROM library_publish_journal WHERE fence_revision > \
+         (SELECT MIN(walk_revision) FROM library_scan_run_scopes WHERE run_id = ?1)), \
+     named AS ( \
+       SELECT state, fence_revision, track_id FROM fencing WHERE track_id IS NOT NULL \
+       UNION ALL \
+       SELECT f.state, f.fence_revision, r.replaced_track_id FROM fencing f \
+         JOIN library_publish_replacements r ON r.journal_id = f.id \
+         WHERE r.replaced_track_id IS NOT NULL) \
+     SELECT t.root_id, t.relative_path FROM named j JOIN local_tracks t ON t.id = j.track_id \
+      WHERE EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
+        AND s.root_id = t.root_id \
+        AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
+          OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/') \
+        AND ",
+    fenced_by!(),
+    ") \
+     UNION \
+     SELECT source_root, source_rel FROM fencing WHERE source_root IS NOT NULL \
+     UNION \
+     SELECT dest_root, dest_rel FROM fencing \
+      WHERE state IN ('prepared', 'staged', 'published', 'committed', 'cleanup_pending')"
+);
+
+fn fenced_paths(tx: &Connection, run_id: &str) -> rusqlite::Result<HashSet<(String, String)>> {
+    let mut statement = tx.prepare_cached(FENCED_PATHS)?;
+    let rows = statement.query_map(params![run_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
+}
+
 /// Write items, offer albums, and mark the window. With `isolate`, each
 /// item runs in its own savepoint and a failing one is reported instead of
 /// failing the window.
+///
+/// A file at a fenced path (`fenced_paths`) is left as it is: no row is
+/// written for it, its inventory row ends `skipped`, and it counts as
+/// inspected only, neither indexed nor errored. The next scan reads it
+/// again.
 fn write_window(
     tx: &rusqlite::Transaction<'_>,
     window: &IndexWindow,
     isolate: bool,
 ) -> rusqlite::Result<WindowOutcome> {
+    let fenced = if window.items.is_empty()
+        && window.edition_fills.is_empty()
+        && window.length_fills.is_empty()
+    {
+        HashSet::new()
+    } else {
+        fenced_paths(tx, &window.run_id)?
+    };
+    let is_fenced = |root: &str, path: &str| fenced.contains(&(root.to_owned(), path.to_owned()));
     let mut outcome = WindowOutcome::default();
     let mut indexed: Vec<(String, String, String)> = Vec::new();
     let mut failed: Vec<(String, String, &'static str)> = window
@@ -2924,6 +2998,12 @@ fn write_window(
     let mut other_music: BTreeMap<String, Vec<OtherMusic>> = BTreeMap::new();
     let mut new_copies: BTreeMap<String, Vec<NewCopy>> = BTreeMap::new();
     for item in &window.items {
+        if is_fenced(&item.root_id, &item.relative_path) {
+            // The coordinator counted this file as indexed; it was not.
+            adjust.push((Counter::Indexed, -1));
+            adjust.extend(Counter::parse(item.verdict_counter).map(|verdict| (verdict, -1)));
+            continue;
+        }
         let written = if isolate {
             savepoint(tx, "item", || {
                 write_item(tx, Some(&window.run_id), item, None)
@@ -3038,8 +3118,20 @@ fn write_window(
             outcome.enqueued += 1;
         }
     }
-    let (filled, relook) = fill_edition_tags(tx, &window.edition_fills)?;
-    let measured = fill_length_measured(tx, &window.length_fills)?;
+    let edition_fills: Vec<EditionFill> = window
+        .edition_fills
+        .iter()
+        .filter(|fill| !is_fenced(&fill.root_id, &fill.relative_path))
+        .cloned()
+        .collect();
+    let length_fills: Vec<LengthFill> = window
+        .length_fills
+        .iter()
+        .filter(|fill| !is_fenced(&fill.root_id, &fill.relative_path))
+        .cloned()
+        .collect();
+    let (filled, relook) = fill_edition_tags(tx, &edition_fills)?;
+    let measured = fill_length_measured(tx, &length_fills)?;
     for album_id in &relook {
         if !held_back(tx, &window.run_id, album_id)? && offer_again(tx, album_id, now_ms)? {
             outcome.enqueued += 1;

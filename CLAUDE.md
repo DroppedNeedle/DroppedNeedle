@@ -406,7 +406,11 @@ Run from the repo root. `make help` lists every target.
   bytes match the plan hash. Anything else is kept.
 - A scan judges a track gone (walked past) in one place, `walked_past!`
   in `library/src/scan/sqlite_store/`, and never while a publish journal
-  row naming it is open or was written after its scope's walk began. A
+  row naming it is open, needs attention and is not marked handled, or
+  was written after its scope's walk began (marking one handled counts as
+  a write). A scan writes no row for a file whose track such a row names
+  (open or written after the walk began), whose path such a row moved a
+  file away from, or whose path an open row is placing a file at. A
   trigger on the journal stamps that revision, so no write can skip it.
 - A publish records each folder it makes, durably, right after making it and
   before anything is written into it. An unwind, forward or after a crash,

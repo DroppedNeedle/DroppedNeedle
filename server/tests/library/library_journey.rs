@@ -18772,6 +18772,323 @@ async fn a_removal_open_across_a_walk_is_not_judged_gone() {
     assert_eq!(track_aliases(&db), 0);
 }
 
+/// Preview and apply one managed write of `track`, stopped after its files
+/// are placed and before its catalog commit. Returns its bundle id.
+fn publish_stopped(
+    library: &LibrarySetup,
+    db: &rusqlite::Connection,
+    track: &str,
+    kind: droppedneedle_library::publish::planner::PlanKind,
+    album: &str,
+    dest_rel: Option<&str>,
+    updates: &[(&str, &str)],
+) -> String {
+    use droppedneedle_library::manage::PreviewItemInput;
+    use droppedneedle_library::publish::CrashPoint;
+    let rel_path: String = db
+        .query_row(
+            "SELECT relative_path FROM local_tracks WHERE id = ?1",
+            [track],
+            |row| row.get(0),
+        )
+        .expect("track row");
+    let sealed = library
+        .publishing
+        .plan_preview(
+            kind,
+            album,
+            vec![PreviewItemInput {
+                root_id: "music".to_owned(),
+                rel_path,
+                dest_rel: dest_rel.map(str::to_owned),
+                managed_updates: updates
+                    .iter()
+                    .map(|(name, value)| ((*name).to_owned(), vec![(*value).to_owned()]))
+                    .collect(),
+            }],
+        )
+        .expect("preview seals");
+    library
+        .publishing
+        .arm_publish_crash(Some(CrashPoint::BeforeCatalogCommit));
+    let applied = library.publishing.apply_preview(&sealed.token, None);
+    library.publishing.arm_publish_crash(None);
+    assert!(applied.is_err(), "the write stopped before its commit");
+    db.query_row(
+        "SELECT bundle_id FROM library_publish_journal WHERE track_id = ?1",
+        [track],
+        |row| row.get(0),
+    )
+    .expect("the write is journaled")
+}
+
+/// A track row as a scan would write it: path, availability, stat
+/// revision, size and title.
+fn scanned_row(db: &rusqlite::Connection, track: &str) -> (String, String, String, i64, String) {
+    db.query_row(
+        "SELECT relative_path, availability, stat_revision, file_size_bytes, title \
+         FROM local_tracks WHERE id = ?1",
+        [track],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )
+    .expect("track row")
+}
+
+/// A tag write on one of two copies of a release track, left needing
+/// attention with the copy's file under its hidden backup name, holds the
+/// track back from being judged gone: a scan keeps it listed with its
+/// history and hands nothing to the other copy. Once an administrator
+/// marks the write handled, the next scan finds the file gone.
+#[tokio::test]
+async fn a_write_needing_attention_keeps_its_track_until_handled() {
+    use droppedneedle_library::publish::planner::PlanKind;
+
+    let (scratch, library, music, album, original, copy) =
+        album_with_a_copy("lib-fence-attention").await;
+    let db = scratch_db(&scratch);
+    give_history(&db, &album, &original);
+    let bundle = publish_stopped(
+        &library,
+        &db,
+        &original,
+        PlanKind::SamePath,
+        &album,
+        None,
+        &[("title", "Retitled")],
+    );
+    // As an unwind that could not finish leaves it: the written file is
+    // off the name, the original is under its backup name.
+    std::fs::remove_file(music.join("album/02.flac")).expect("written file removed");
+    assert!(
+        !no_hidden_files(&music.join("album")),
+        "the original is set aside"
+    );
+    db.execute(
+        "UPDATE library_publish_journal SET state = 'needs_attention' WHERE bundle_id = ?1",
+        [&bundle],
+    )
+    .expect("the write needs attention");
+
+    rescan(&library).await;
+    assert_eq!(
+        availability_of(&db, &original),
+        "indexed",
+        "the track stays listed"
+    );
+    assert_eq!(
+        holdings(&db, &original)[..3],
+        [1, 1, 1],
+        "its history stays"
+    );
+    assert_eq!(holdings(&db, &copy)[..3], [0, 0, 0]);
+    assert_eq!(track_aliases(&db), 0, "nothing hands it to the copy");
+
+    db.execute(
+        "INSERT INTO library_publish_resolutions (bundle_id, resolved_by_user_id, \
+         verified_files, resolved_at) VALUES (?1, NULL, 1, 1)",
+        [&bundle],
+    )
+    .expect("the write is marked handled");
+    rescan(&library).await;
+    assert_eq!(
+        availability_of(&db, &original),
+        "missing",
+        "once handled, the scan finds the file gone"
+    );
+}
+
+/// A tag write and a move, each stopped after placing its file and before
+/// its commit, keep their track to themselves: a scan run while they are
+/// open leaves the track's row as it was and lists nothing at the move's
+/// new path, so recovery finishes each write.
+#[tokio::test]
+async fn a_scan_leaves_the_rows_of_open_writes_alone() {
+    use droppedneedle_library::publish::planner::PlanKind;
+
+    type Case<'a> = (&'a str, PlanKind, Option<&'a str>, &'a [(&'a str, &'a str)]);
+    let cases: [Case; 2] = [
+        (
+            "lib-fence-open-tags",
+            PlanKind::SamePath,
+            None,
+            &[("title", "Retitled")],
+        ),
+        (
+            "lib-fence-open-move",
+            PlanKind::Move,
+            Some("moved/02.flac"),
+            &[],
+        ),
+    ];
+    for (tag, kind, dest_rel, updates) in cases {
+        let (scratch, library, _, album, original, _) = album_with_a_copy(tag).await;
+        let db = scratch_db(&scratch);
+        let before = scanned_row(&db, &original);
+        let bundle = publish_stopped(&library, &db, &original, kind, &album, dest_rel, updates);
+
+        rescan(&library).await;
+        assert_eq!(
+            scanned_row(&db, &original),
+            before,
+            "{tag}: the scan leaves the row"
+        );
+        if let Some(dest_rel) = dest_rel {
+            let listed: i64 = db
+                .query_row(
+                    "SELECT COUNT(*) FROM local_tracks WHERE root_id = 'music' \
+                     AND relative_path = ?1",
+                    [dest_rel],
+                    |row| row.get(0),
+                )
+                .expect("rows read");
+            assert_eq!(listed, 0, "{tag}: nothing is listed at the new path");
+        }
+
+        library.publishing.publish_tick().expect("recovery runs");
+        let states: Vec<String> = db
+            .prepare("SELECT state FROM library_publish_journal WHERE bundle_id = ?1")
+            .expect("prepared")
+            .query_map([&bundle], |row| row.get(0))
+            .expect("states read")
+            .collect::<Result<_, _>>()
+            .expect("states");
+        assert!(
+            !states.is_empty() && states.iter().all(|state| state == "cleaned"),
+            "{tag}: recovery finished the write: {states:?}"
+        );
+    }
+}
+
+/// Reads tags, and after reading the file whose path ends with `target`
+/// holds that read once until released.
+struct HoldAfterRead {
+    target: &'static str,
+    armed: std::sync::atomic::AtomicBool,
+    reached: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl droppedneedle_library::scan::TagReader for HoldAfterRead {
+    fn read_tags(
+        &self,
+        path: &Path,
+    ) -> Result<droppedneedle_library::scan::ScannedTags, droppedneedle_library::scan::TagReadError>
+    {
+        let tags = droppedneedle_library::scan::TagReader::read_tags(
+            &droppedneedle_library::adapters::LoftyTagReader,
+            path,
+        );
+        if path.ends_with(self.target)
+            && self.armed.swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            if let Ok(reached) = self.reached.lock() {
+                let _ = reached.send(());
+            }
+            if let Ok(release) = self.release.lock() {
+                let _ = release.recv_timeout(std::time::Duration::from_secs(60));
+            }
+        }
+        tags
+    }
+}
+
+/// A scan that read a track's file just before a person's rename moved
+/// it lists no second track at the old path: the rename's old path is
+/// fenced as well as its new one.
+#[tokio::test]
+async fn a_file_read_before_its_rename_is_not_listed_twice() {
+    use droppedneedle_library::publish::planner::PlanKind;
+    use droppedneedle_library::scan::{
+        BlockingPool, LibraryScanCoordinator, ScanKind, ScanRequest, ScanTrigger,
+    };
+
+    let (scratch, library, music, album, original, _) =
+        album_with_a_copy("lib-fence-old-path").await;
+    let db = scratch_db(&scratch);
+    let (reached_tx, reached) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let coordinator = Arc::new(LibraryScanCoordinator::new(
+        library.scan_store.clone(),
+        BlockingPool::new(4),
+        Arc::new(HoldAfterRead {
+            target: "album/02.flac",
+            armed: std::sync::atomic::AtomicBool::new(true),
+            reached: std::sync::Mutex::new(reached_tx),
+            release: std::sync::Mutex::new(release_rx),
+        }),
+        library.registry.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    ));
+    let registry = library.core.live_registry();
+    coordinator
+        .request_run(&ScanRequest {
+            kind: ScanKind::RescanFiles,
+            trigger: ScanTrigger::Manual,
+            scopes: registry.scheduled_root_scopes(),
+            requested_by_user_id: None,
+            policy_revision: registry.fingerprint().to_owned(),
+        })
+        .expect("scan requested");
+    let paths = HashMap::from([("music".to_owned(), music.to_owned())]);
+    let driver = {
+        let coordinator = coordinator.clone();
+        tokio::spawn(async move {
+            while let Some(run) = coordinator.run_once(&paths).await {
+                if run.terminal_at.is_some() {
+                    break;
+                }
+            }
+            coordinator.run_once(&paths).await;
+        })
+    };
+    {
+        let (library, album) = (library.clone(), album.clone());
+        tokio::task::spawn_blocking(move || {
+            reached
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .expect("the scan read the file");
+            publish_one(
+                &library,
+                PlanKind::Move,
+                &album,
+                "album/02.flac",
+                Some("moved/02.flac"),
+                &[],
+            );
+            release.send(()).expect("released");
+        })
+        .await
+        .expect("the rename runs");
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(60), driver)
+        .await
+        .expect("the scan finishes")
+        .expect("the scan task");
+
+    assert_eq!(
+        old_row(&db, &original).1,
+        "moved/02.flac",
+        "the track is at its new path"
+    );
+    let listed: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM local_tracks WHERE root_id = 'music' \
+             AND relative_path = 'album/02.flac'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("rows read");
+    assert_eq!(listed, 0, "nothing is listed at the old path");
+}
+
 /// A download that brings back a track whose file was deleted maps the
 /// new file in the import itself, and the old track's history is on it
 /// without a scan.

@@ -76,7 +76,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(triggers, 68);
+    assert_eq!(triggers, 69);
 
     let catalog: (i64, i64) =
         sqlx::query_as("SELECT singleton, value FROM library_catalog_revision")
@@ -7994,6 +7994,70 @@ async fn only_mp3_rows_wait_to_say_whether_their_length_was_measured() {
     );
     let refused = "UPDATE local_tracks SET duration_measured = 2 WHERE id = 'mp3'";
     assert!(sqlx::raw_sql(refused).execute(&pool).await.is_err());
+}
+
+/// Migration 0108 makes marking a write handled move the scan fence: the
+/// revision moves once and lands on that write's rows that name a track,
+/// and on no other row. Marking it again moves nothing.
+#[tokio::test]
+async fn marking_a_write_handled_moves_the_scan_fence() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(107)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+         staged, staged_sha256, track_id, state) VALUES \
+         ('b-audio', 'b', 'audio', 'music', 'a.flac', 's', 'h', 't1', 'needs_attention'), \
+         ('b-add', 'b', 'add', 'music', 'b.flac', 's', 'h', NULL, 'needs_attention'), \
+         ('c-audio', 'c', 'audio', 'music', 'c.flac', 's', 'h', 't2', 'needs_attention');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    apply_migrations(&pool).await.unwrap();
+
+    let stamps = |pool: SqlitePool| async move {
+        let rows: Vec<(String, Option<i64>)> =
+            sqlx::query_as("SELECT id, fence_revision FROM library_publish_journal ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let counter: i64 = sqlx::query_scalar("SELECT revision FROM library_scan_fences")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        (rows, counter)
+    };
+    let (before, counter) = stamps(pool.clone()).await;
+    let resolve = "INSERT OR IGNORE INTO library_publish_resolutions (bundle_id, \
+                   resolved_by_user_id, verified_files, resolved_at) VALUES ('b', NULL, 1, 1)";
+    sqlx::raw_sql(resolve).execute(&pool).await.unwrap();
+    let after = stamps(pool.clone()).await;
+    let moved: Vec<(String, Option<i64>)> = before
+        .iter()
+        .map(|(id, stamp)| {
+            let stamp = if id == "b-audio" {
+                Some(counter + 1)
+            } else {
+                *stamp
+            };
+            (id.clone(), stamp)
+        })
+        .collect();
+    assert_eq!(after, (moved, counter + 1));
+    sqlx::raw_sql(resolve).execute(&pool).await.unwrap();
+    assert_eq!(stamps(pool.clone()).await, after, "a repeat moves nothing");
+
+    let indexed: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' \
+         AND name = 'idx_library_publish_journal_fence'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        indexed.is_some(),
+        "the journal is indexed by fence revision"
+    );
 }
 
 /// Migration 0107 gives the library switched off its own held reason. A
