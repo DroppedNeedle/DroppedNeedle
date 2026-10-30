@@ -80,11 +80,11 @@ use droppedneedle_kernel::db::cache::CacheDb;
 use droppedneedle_kernel::platform::Platform;
 
 pub use cache::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};
-pub use calls::{CallCount, CallOutcome};
-pub use degradation::{DegradationContext, IntegrationStatus, record_current, scoped};
-pub use error::{MAX_RETRY_AFTER, PayloadKind, ProviderError, TransportKind};
+pub use calls::CallOutcome;
+pub use degradation::{IntegrationStatus, record_current, scoped};
+pub use error::{PayloadKind, ProviderError, TransportKind};
 pub use executor::{Executor, ReqwestWire, Wire};
-pub use limiter::{LimiterSet, OverCapacity, RateLimiter, RatePolicy, RequestPriority};
+pub use limiter::{LimiterSet, RateLimiter, RatePolicy, RequestPriority};
 pub use singleflight::Singleflight;
 pub use web_address::WebAddress;
 

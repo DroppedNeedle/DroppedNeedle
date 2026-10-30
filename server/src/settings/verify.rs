@@ -20,7 +20,6 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 
 use droppedneedle_auth::federated::settings::InstallIds;
-use droppedneedle_kernel::http_client::read_capped;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_media::remotes::adapter::RemoteHandle;
 use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolvedConnection};
@@ -28,15 +27,16 @@ use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzClient};
+use droppedneedle_providers::oidc::OidcClient;
 use droppedneedle_providers::skiddle::SkiddleClient;
 use droppedneedle_providers::ticketmaster::TicketmasterClient;
 use droppedneedle_providers::youtube::YouTubeApi;
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority, TransportKind};
 
-/// Per-probe HTTP budget, matching the v2 repositories.
+/// Per-probe HTTP budget, matching the v2 repositories. A provider whose
+/// own deadline is longer (Ticketmaster's full event pages) is held to it
+/// here too: an admin is waiting on the button.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Largest probe answer read.
-const MAX_PROBE_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// Plain connection-test verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,6 +264,8 @@ pub struct LiveProbes {
     pub newznab: droppedneedle_providers::newznab::NewznabIndexers,
     /// The Skiddle client.
     pub skiddle: SkiddleClient,
+    /// The OIDC client, which reads the issuer's discovery document.
+    pub oidc: OidcClient,
     /// The install ids presented to Plex. Without them the Plex checks
     /// present no client id.
     install: Option<InstallIds>,
@@ -281,6 +283,7 @@ impl LiveProbes {
             ticketmaster: providers.ticketmaster.clone(),
             newznab: providers.newznab.clone(),
             skiddle: providers.skiddle.clone(),
+            oidc: providers.oidc.clone(),
             install: None,
         }
     }
@@ -633,13 +636,16 @@ impl VerifyProbes for LiveProbes {
             if key.trim().is_empty() {
                 return ProbeVerdict::failed("An API key is required.");
             }
-            let checked = self
-                .ticketmaster
-                .check_key(key.trim(), RequestPriority::UserInitiated)
-                .await;
+            let checked = tokio::time::timeout(
+                PROBE_TIMEOUT,
+                self.ticketmaster
+                    .check_key(key.trim(), RequestPriority::UserInitiated),
+            )
+            .await;
             match checked {
-                Ok(()) => ProbeVerdict::ok("Connected to Ticketmaster."),
-                Err(error) => {
+                Ok(Ok(())) => ProbeVerdict::ok("Connected to Ticketmaster."),
+                Err(_) => ProbeVerdict::failed("Ticketmaster did not answer in time."),
+                Ok(Err(error)) => {
                     ProbeVerdict::failed(asked_to_wait("Ticketmaster", &error).unwrap_or_else(
                         || "Ticketmaster rejected the key or is unreachable.".to_owned(),
                     ))
@@ -653,13 +659,16 @@ impl VerifyProbes for LiveProbes {
             if key.trim().is_empty() {
                 return ProbeVerdict::failed("An API key is required.");
             }
-            let checked = self
-                .skiddle
-                .check_key(key.trim(), RequestPriority::UserInitiated)
-                .await;
+            let checked = tokio::time::timeout(
+                PROBE_TIMEOUT,
+                self.skiddle
+                    .check_key(key.trim(), RequestPriority::UserInitiated),
+            )
+            .await;
             match checked {
-                Ok(()) => ProbeVerdict::ok("Connected to Skiddle."),
-                Err(error) => {
+                Ok(Ok(())) => ProbeVerdict::ok("Connected to Skiddle."),
+                Err(_) => ProbeVerdict::failed("Skiddle did not answer in time."),
+                Ok(Err(error)) => {
                     ProbeVerdict::failed(asked_to_wait("Skiddle", &error).unwrap_or_else(|| {
                         "Skiddle rejected the key or is unreachable.".to_owned()
                     }))
@@ -920,26 +929,32 @@ impl VerifyProbes for LiveProbes {
             {
                 return ProbeVerdict::failed(reason);
             }
-            let url = format!(
-                "{}{}",
-                issuer.trim_end_matches('/'),
-                droppedneedle_auth::federated::oidc::DISCOVERY_SUFFIX
-            );
-            let response = self.http.get(&url).timeout(PROBE_TIMEOUT).send().await;
-            match response {
-                Ok(response) if response.status().is_success() => {
-                    let name = decode_body(response)
-                        .await
-                        .and_then(|doc| {
-                            doc.get("issuer")
-                                .and_then(|value| value.as_str())
-                                .map(str::to_owned)
-                        })
-                        .unwrap_or_else(|| issuer.to_owned());
+            let Some(base) =
+                droppedneedle_providers::web_address::web_address(issuer.trim_end_matches('/'))
+            else {
+                return ProbeVerdict::failed("Issuer URL is not a web address.");
+            };
+            let segments: Vec<&str> = droppedneedle_auth::federated::oidc::DISCOVERY_SUFFIX
+                .split('/')
+                .collect();
+            let url = droppedneedle_auth::federated::endpoint(&base, &segments);
+            // An admin waits on the Test button.
+            let fetched = self
+                .oidc
+                .get_json::<serde_json::Value>(url.as_str(), None, RequestPriority::UserInitiated)
+                .await;
+            match fetched {
+                Ok(doc) => {
+                    let name = doc
+                        .get("issuer")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or(issuer);
                     ProbeVerdict::ok(format!("Connected to {name}."))
                 }
-                Ok(_) => ProbeVerdict::failed("Failed to fetch OIDC discovery document."),
-                Err(_) => ProbeVerdict::failed("Failed to fetch OIDC discovery document."),
+                Err(error) => ProbeVerdict::failed(
+                    asked_to_wait("The identity provider", &error)
+                        .unwrap_or_else(|| "Failed to fetch OIDC discovery document.".to_owned()),
+                ),
             }
         })
     }
@@ -996,13 +1011,6 @@ fn prowlarr_failure(error: &droppedneedle_acquire::client_error::ClientError) ->
         message,
         indexer_count: None,
     }
-}
-
-/// Decode a JSON body read under the probe cap; anything unreadable or
-/// too large is `None`.
-async fn decode_body(response: reqwest::Response) -> Option<serde_json::Value> {
-    let bytes = read_capped(response, MAX_PROBE_BODY_BYTES).await.ok()?;
-    serde_json::from_slice(&bytes).ok()
 }
 
 /// A bare site URL (no path) is almost never the Newznab endpoint: the

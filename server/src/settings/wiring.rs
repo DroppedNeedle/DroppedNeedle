@@ -160,9 +160,11 @@ impl SettingsSetup {
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let providers = Providers::closed();
+        let factory = droppedneedle_kernel::http_client::HttpClientFactory::new()
+            .map_err(|error| error.to_string())?;
         Self::for_tests_with_probes(
             ids,
-            Arc::new(LiveProbes::new(reqwest::Client::new(), &providers)),
+            Arc::new(LiveProbes::new(factory.shared().clone(), &providers)),
         )
     }
 

@@ -87,12 +87,6 @@ impl DegradationContext {
     pub fn deterministic_sources(&self) -> HashSet<&'static str> {
         self.deterministic.clone()
     }
-
-    /// Whether any deterministic payload failure was recorded.
-    #[must_use]
-    pub fn has_deterministic_failure(&self) -> bool {
-        !self.deterministic.is_empty()
-    }
 }
 
 tokio::task_local! {
@@ -155,9 +149,8 @@ mod tests {
     #[test]
     fn deterministic_failures_track_separately() {
         let mut context = DegradationContext::new();
-        assert!(!context.has_deterministic_failure());
+        assert!(context.deterministic_sources().is_empty());
         context.record_status("musicbrainz", IntegrationStatus::Error, true);
-        assert!(context.has_deterministic_failure());
         assert!(context.deterministic_sources().contains("musicbrainz"));
     }
 
