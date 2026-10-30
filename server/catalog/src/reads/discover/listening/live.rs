@@ -32,6 +32,10 @@ use droppedneedle_providers::musicbrainz::{Criticality, is_valid_mbid};
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority, WebAddress};
 
 /// The algorithm ListenBrainz names its weekly exploration playlist after.
+/// Discover resolves only Jellyfin, which never asks plex.tv; the
+/// priority a Plex link would spend is the background warm cycle's.
+const JELLYFIN_ONLY: RequestPriority = RequestPriority::BackgroundSync;
+
 const WEEKLY_EXPLORATION_PATCH: &str = "weekly-exploration";
 
 /// The live provider reads.
@@ -65,7 +69,11 @@ impl LiveNetwork {
     /// them. Discover reads it in its background warm cycle as well as for
     /// a page, so its reads are not counted against the user read bound.
     async fn jellyfin_client(&self, user_id: &str) -> ListeningResult<Option<RemoteHandle>> {
-        match self.jellyfin.resolve(user_id, SourceName::Jellyfin).await {
+        match self
+            .jellyfin
+            .resolve(user_id, SourceName::Jellyfin, JELLYFIN_ONLY)
+            .await
+        {
             Ok(resolved) => Ok(Some(self.jellyfin.client(
                 &self.http,
                 resolved,
@@ -235,7 +243,11 @@ impl ListeningNetwork for LiveNetwork {
                 .map(|link| link.username);
             let lastfm_link = user_lastfm(self.upstream.users(), user_id).await;
             let lastfm = self.lastfm(user_id).await.is_some();
-            let jellyfin = match self.jellyfin.resolve(user_id, SourceName::Jellyfin).await {
+            let jellyfin = match self
+                .jellyfin
+                .resolve(user_id, SourceName::Jellyfin, JELLYFIN_ONLY)
+                .await
+            {
                 Ok(_) => true,
                 Err(ResolveError::NotConfigured) => false,
                 Err(error) => {

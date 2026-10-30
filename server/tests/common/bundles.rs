@@ -288,7 +288,7 @@ pub fn media_at(
             ),
         ),
         idle_host(platform, library.core.clone()),
-        droppedneedle_media::MediaSetup::remotes(platform, outbound.plex_tv.clone()),
+        droppedneedle_media::MediaSetup::remotes(platform, providers.plextv.clone()),
         None,
         &providers,
         Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(

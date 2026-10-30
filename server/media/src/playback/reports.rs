@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::jobs::CancellationToken;
+use droppedneedle_providers::RequestPriority;
 
 use crate::remotes::adapter::{AdapterError, RemoteHandle};
 use crate::remotes::connections::{ConnectionResolver, Reads, ResolveError};
@@ -149,7 +150,14 @@ async fn deliver(
     let Some(source) = SourceName::parse(&queued.source) else {
         return;
     };
-    let resolved = match resolver.resolve(&queued.report.user_id, source).await {
+    let resolved = match resolver
+        .resolve(
+            &queued.report.user_id,
+            source,
+            RequestPriority::BackgroundSync,
+        )
+        .await
+    {
         Ok(resolved) => resolved,
         Err(ResolveError::NotConfigured) => {
             tracing::debug!(

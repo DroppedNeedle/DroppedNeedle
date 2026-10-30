@@ -120,13 +120,18 @@ impl MediaWorkers {
 
 impl MediaSetup {
     /// The app's one connection resolver, over `platform`, looking up
-    /// missing Plex server tokens on the plex.tv root `plex_tv`. Every
-    /// remote read shares it, so they share its per-source read bound.
-    pub fn remotes(platform: &Platform, plex_tv: String) -> Arc<ConnectionResolver> {
+    /// missing Plex server tokens through the one plex.tv client
+    /// `plextv`. Every remote read shares it, so they share its per-source
+    /// read bound.
+    pub fn remotes(
+        platform: &Platform,
+        plextv: droppedneedle_providers::plextv::PlexTvClient,
+    ) -> Arc<ConnectionResolver> {
         Arc::new(
-            ConnectionResolver::over(platform).with_plex_tokens(Arc::new(
-                PlexTokenProbe::with_plex_tv(platform.http.shared().clone(), plex_tv),
-            )),
+            ConnectionResolver::over(platform).with_plex_tokens(Arc::new(PlexTokenProbe::new(
+                platform.http.shared().clone(),
+                plextv,
+            ))),
         )
     }
 

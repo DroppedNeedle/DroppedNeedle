@@ -62,6 +62,7 @@ pub(crate) struct E2e {
     pub(crate) store: Arc<ConfigStore>,
     upstreams: Upstreams,
     lastfm: String,
+    plex_tv: String,
     crypto: Arc<Crypto>,
     db_path: std::path::PathBuf,
     _scratch: crate::common::ScratchDir,
@@ -104,10 +105,10 @@ impl E2e {
             // plex.tv, Last.fm or breach check unless it points these at
             // its own mock.
             upstreams: Upstreams {
-                plex_tv: "http://127.0.0.1:9".to_owned(),
                 pwned_passwords: "http://127.0.0.1:9/range/".to_owned(),
             },
             lastfm: "http://127.0.0.1:9/".to_owned(),
+            plex_tv: "http://127.0.0.1:9/plex".to_owned(),
             crypto: Arc::clone(&platform.crypto),
             platform,
             db_path: dir.join("app.db"),
@@ -115,9 +116,9 @@ impl E2e {
         }
     }
 
-    /// Point the plex.tv and breach-check clients at local mocks.
-    pub(crate) fn with_upstreams(mut self, upstreams: Upstreams) -> Self {
-        self.upstreams = upstreams;
+    /// Point the plex.tv client at a local mock.
+    pub(crate) fn with_plex_tv(mut self, plex_tv: String) -> Self {
+        self.plex_tv = plex_tv;
         self
     }
 
@@ -143,6 +144,7 @@ impl E2e {
             Arc::new(droppedneedle_providers::ReqwestWire::new(&p.http)),
             droppedneedle_providers::ProviderEndpoints {
                 lastfm: self.lastfm.clone(),
+                plex_tv: self.plex_tv.clone(),
                 ..droppedneedle_providers::ProviderEndpoints::closed()
             },
         );
@@ -151,6 +153,7 @@ impl E2e {
             self.bundle.clone(),
             &self.upstreams,
             &providers.lastfm,
+            &providers.plextv,
             Arc::new(
                 droppedneedle_media::remotes::plex::ConfiguredPlexServer::new(
                     p.http.shared().clone(),
@@ -212,7 +215,7 @@ impl E2e {
                 ),
             ),
             crate::common::bundles::idle_host(p, library.core.clone()),
-            droppedneedle_media::MediaSetup::remotes(p, crate::common::closed_outbound().plex_tv),
+            droppedneedle_media::MediaSetup::remotes(p, providers.plextv.clone()),
             None,
             &providers,
             Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(

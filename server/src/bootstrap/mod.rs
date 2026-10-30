@@ -244,7 +244,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let plugin_host =
         droppedneedle_plugins::wiring::new_host(p, &plugin_ticks, library_core.clone());
     // Shared provider deps first: auth links Last.fm accounts through the
-    // one Last.fm client, and the reads enrichment pair paces through these
+    // one Last.fm client and signs in with Plex through the one plex.tv
+    // client, and the reads enrichment pair paces through these
     // same limiters, so production holds one limiter set. The answer cache
     // stays shared with the admin stats and clear routes.
     let providers = Arc::new(Providers::build(p, outbound.providers(), cache_db.clone()));
@@ -254,6 +255,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         ProdAuth::new(p),
         &outbound.sign_in(),
         &providers.lastfm,
+        &providers.plextv,
         Arc::new(ConfiguredPlexServer::new(
             http.shared().clone(),
             config_store.live(),
@@ -351,7 +353,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .map_err(stage("acquire setup"))?;
     // The one connection resolver every remote read goes through, so the
     // reads people trigger share one bound per source.
-    let remotes = MediaSetup::remotes(p, outbound.plex_tv.clone());
+    let remotes = MediaSetup::remotes(p, providers.plextv.clone());
     let reads = ReadsSetup::build(
         p,
         auth.users.clone(),

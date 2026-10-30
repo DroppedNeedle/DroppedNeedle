@@ -15,12 +15,12 @@
 //!   expands to a comma-separated `2020..=2029` list.
 //! - Playlist art prefers the playlist's own `composite` path and falls
 //!   back to `/playlists/{id}/composite` when empty.
-//! - Plex.tv account calls (OAuth pins) belong to the login flow and live
-//!   outside this adapter. The one exception is the per-server
-//!   `accessToken` lookup for links saved without one ([`PlexTokenProbe`]),
-//!   per the Plex API 1.2.2 resource contract verified 2026-07-17: an
-//!   account token authorizes `plex.tv/api/v2/resources`, and each server
-//!   resource's `accessToken` is used for requests to that server.
+//! - Plex.tv account calls belong to the providers crate's plex.tv client,
+//!   not this adapter. [`PlexTokenProbe`] reads `/resources` through it for
+//!   links saved without a server token, per the Plex API 1.2.2 resource
+//!   contract verified 2026-07-17: an account token authorizes
+//!   `plex.tv/api/v2/resources`, and each server resource's `accessToken`
+//!   is used for requests to that server.
 //!
 //! Payloads decode into the typed shapes in [`super::plex_models`]; a row
 //! a view needs without its `ratingKey` is an upstream error.
@@ -46,7 +46,8 @@ use droppedneedle_auth::federated::plex::PlexServerIdentity;
 use droppedneedle_auth::federated::settings::InstallIds;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::PlexConnection;
-use droppedneedle_providers::plextv::Resource;
+use droppedneedle_providers::plextv::{self, PlexTvClient};
+use droppedneedle_providers::{ProviderError, RequestPriority};
 
 /// Query pairs, owned.
 type Params = Vec<(String, String)>;
@@ -165,39 +166,6 @@ impl PlexAdapter {
             Err(AdapterError::Api(_)) => Ok(None),
             Err(error) => Err(error),
         }
-    }
-
-    /// The account's token for the server `machine_id`, from plex.tv
-    /// `/resources` under this adapter's token (an account token here).
-    /// `None` when the account has no server device with that id.
-    pub async fn server_access_token(
-        &self,
-        plex_tv: &str,
-        machine_id: &str,
-    ) -> Result<Option<String>, AdapterError> {
-        let request = self
-            .http
-            .client()
-            .get(RemoteHttp::url(
-                plex_tv.trim_end_matches('/'),
-                "/resources",
-            )?)
-            .query(&[("includeHttps", "1"), ("includeRelay", "1")])
-            .headers(self.headers());
-        // Lenient per device: client devices without a token still list.
-        let devices: Vec<serde_json::Value> =
-            self.http.send("/resources", request).await?.json().await?;
-        Ok(devices
-            .into_iter()
-            .filter_map(|device| serde_json::from_value::<Resource>(device).ok())
-            .find(|device| {
-                device.client_identifier.as_deref() == Some(machine_id)
-                    && device
-                        .provides
-                        .as_deref()
-                        .is_some_and(|provides| provides.contains("server"))
-            })
-            .and_then(|device| non_empty(device.access_token.as_deref())))
     }
 
     /// Music library sections (`type == "artist"`).
@@ -1471,13 +1439,25 @@ fn non_empty(value: Option<&str>) -> Option<String> {
 #[derive(Debug, Clone)]
 pub struct PlexTokenProbe {
     http: reqwest::Client,
-    plex_tv: String,
+    plextv: PlexTvClient,
 }
 
 impl PlexTokenProbe {
-    /// A probe against the given plex.tv root.
-    pub fn with_plex_tv(http: reqwest::Client, plex_tv: String) -> Self {
-        Self { http, plex_tv }
+    /// A probe that asks the server over `http` and plex.tv through
+    /// `plextv`.
+    pub fn new(http: reqwest::Client, plextv: PlexTvClient) -> Self {
+        Self { http, plextv }
+    }
+}
+
+/// What a plex.tv failure means for the lookup: a refused account token is
+/// a stale link, everything else a failed lookup.
+fn lookup_failed(error: ProviderError) -> AdapterError {
+    match error {
+        ProviderError::Unauthorized { .. } | ProviderError::Forbidden { .. } => AdapterError::Auth,
+        ProviderError::NotFound { .. } => AdapterError::NotFound,
+        ProviderError::Transport { kind, .. } => AdapterError::Transport(kind.to_string()),
+        other => AdapterError::Api(other.to_string()),
     }
 }
 
@@ -1486,6 +1466,7 @@ impl PlexServerTokens for PlexTokenProbe {
         &'a self,
         server: &'a ServerSettings,
         auth_token: &'a str,
+        priority: RequestPriority,
     ) -> super::adapter::BoxFuture<'a, Result<Option<String>, AdapterError>> {
         Box::pin(async move {
             let handle = ConnectionResolver::unsaved_client(
@@ -1503,7 +1484,12 @@ impl PlexServerTokens for PlexTokenProbe {
             let Some(machine_id) = probe.machine_identifier().await? else {
                 return Ok(None);
             };
-            probe.server_access_token(&self.plex_tv, &machine_id).await
+            let devices = self
+                .plextv
+                .resources(auth_token, &server.client_id, priority)
+                .await
+                .map_err(lookup_failed)?;
+            Ok(plextv::server_access_token(&devices, &machine_id))
         })
     }
 }

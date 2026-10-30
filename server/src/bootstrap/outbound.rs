@@ -187,13 +187,13 @@ impl Outbound {
             spotify_accounts: self.spotify_accounts.clone(),
             spotify_cover_cdn: self.spotify_cover_cdn.clone(),
             deezer_images: self.deezer_images.clone(),
+            plex_tv: self.plex_tv.clone(),
         }
     }
 
     /// The addresses sign-in and account linking use.
     pub fn sign_in(&self) -> Upstreams {
         Upstreams {
-            plex_tv: self.plex_tv.clone(),
             pwned_passwords: self.pwned_passwords.clone(),
         }
     }

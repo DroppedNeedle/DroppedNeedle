@@ -24,7 +24,6 @@ use droppedneedle_auth::federated::users::{
 use droppedneedle_auth::prod::{StoredPassword, Verdict};
 use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::users::roles::Role;
-use droppedneedle_auth::wiring::Upstreams;
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, LastFmSettings, OidcConnection, PlexConnection,
@@ -642,6 +641,10 @@ fn plex_token(headers: &HeaderMap) -> &str {
 /// PIN ids count up from 42 like plex.tv's, so a test can guess them.
 static NEXT_PIN: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(42);
 
+/// `/user` reads of the paced account so far; plex.tv turns the first
+/// two down for pace.
+static PACED_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn plex_router(_base: String) -> Router {
     async fn create_pin(headers: HeaderMap) -> (StatusCode, Json<Value>) {
         assert!(headers.contains_key("x-plex-client-identifier"));
@@ -649,26 +652,34 @@ fn plex_router(_base: String) -> Router {
         (StatusCode::CREATED, Json(json!({"id": id, "code": "ABCD"})))
     }
     async fn poll_pin(Path(id): Path<i64>) -> Json<Value> {
-        // 43 is an outsider, 44 still pending, every other PIN the member.
+        // 43 is an outsider, 44 still pending, 45 an account plex.tv paces,
+        // every other PIN the member.
         Json(match id {
             43 => json!({"id": 43, "authToken": "acct-outsider"}),
             44 => json!({"id": 44, "authToken": null}),
+            45 => json!({"id": 45, "authToken": "acct-paced"}),
             _ => json!({"id": id, "authToken": "acct-member"}),
         })
     }
-    async fn user(headers: HeaderMap) -> Result<Json<Value>, StatusCode> {
+    async fn user(headers: HeaderMap) -> Result<Json<Value>, (StatusCode, HeaderMap)> {
         match plex_token(&headers) {
+            "acct-paced" if PACED_READS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 => {
+                let mut wait = HeaderMap::new();
+                wait.insert("retry-after", "0".parse().unwrap());
+                Err((StatusCode::TOO_MANY_REQUESTS, wait))
+            }
+            "acct-paced" => Ok(Json(json!({"uuid": "plex-uuid-5", "username": "paced"}))),
             "acct-member" => Ok(Json(json!({
                 "uuid": "plex-uuid-1", "email": "jane@example.com",
                 "friendlyName": "Jane P", "thumb": "https://plex.test/jane.png",
             }))),
             "acct-outsider" => Ok(Json(json!({"uuid": "plex-uuid-9", "username": "stranger"}))),
-            _ => Err(StatusCode::UNAUTHORIZED),
+            _ => Err((StatusCode::UNAUTHORIZED, HeaderMap::new())),
         }
     }
     async fn resources(headers: HeaderMap) -> Json<Value> {
         Json(match plex_token(&headers) {
-            "acct-member" => json!([
+            "acct-member" | "acct-paced" => json!([
                 {"clientIdentifier": "phone-1", "provides": "player"},
                 {"clientIdentifier": PLEX_MACHINE, "provides": "server", "accessToken": "srv-token-1"},
             ]),
@@ -713,10 +724,7 @@ fn plex_router(_base: String) -> Router {
 #[tokio::test]
 async fn plex_pins_are_bound_to_their_starter_and_gate_membership() {
     let mock = serve(plex_router).await;
-    let e2e = E2e::open("plex").await.with_upstreams(Upstreams {
-        plex_tv: mock.clone(),
-        ..crate::common::closed_outbound().sign_in()
-    });
+    let e2e = E2e::open("plex").await.with_plex_tv(mock.clone());
     let mut settings = PlexConnection {
         plex_url: mock,
         plex_token: Secret::new(PLEX_ADMIN_TOKEN),
@@ -794,6 +802,45 @@ async fn plex_pins_are_bound_to_their_starter_and_gate_membership() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     let links = linked_accounts(app.clone(), &token).await;
     assert_eq!(links.get("plex").map(String::as_str), Some("Jane P"));
+
+    // plex.tv turns the account read down for pace after the approval: the
+    // poll stays pending and keeps the PIN, and the next one signs in. A
+    // fresh app, so this server's own limit on sign-in calls has room.
+    let paced_app = e2e.router();
+    let (status, body, _) = call(
+        paced_app.clone(),
+        "POST",
+        "/api/v3/auth/plex/start",
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["pin_id"], 45);
+    let claim = json!({"pin_id": 45, "pin_secret": body["pin_secret"], "transport": "bearer"});
+    let (status, body, _) = call(
+        paced_app.clone(),
+        "POST",
+        "/api/v3/auth/plex/poll/login",
+        &[],
+        Some(claim.clone()),
+    )
+    .await;
+    assert_eq!(
+        (status, body["completed"].clone()),
+        (StatusCode::OK, json!(false)),
+        "{body}"
+    );
+    let (status, body, _) = call(
+        paced_app,
+        "POST",
+        "/api/v3/auth/plex/poll/login",
+        &[],
+        Some(claim),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["completed"], true);
 
     // Linking needs a session and stores the account server-side; the
     // answer carries only the name.

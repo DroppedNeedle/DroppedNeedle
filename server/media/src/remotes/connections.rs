@@ -30,6 +30,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 };
 use droppedneedle_kernel::runtime_config::sections::InternalState;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
+use droppedneedle_providers::RequestPriority;
 
 use super::adapter::{AdapterError, BoxFuture, RemoteHandle, RemoteHttp, USER_READS_PER_SOURCE};
 use super::jellyfin::JellyfinAdapter;
@@ -641,10 +642,12 @@ pub struct LinkSummary {
 pub trait PlexServerTokens: Send + Sync {
     /// `Ok(None)` when the server or the account's access to it is not
     /// found; [`AdapterError::Auth`] when the account token is refused.
+    /// plex.tv is asked at `priority`.
     fn server_token<'a>(
         &'a self,
         server: &'a ServerSettings,
         auth_token: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Option<String>, AdapterError>>;
 }
 
@@ -784,14 +787,17 @@ impl ConnectionResolver {
     /// The caller's own link first, then the admin's shared credential.
     /// A stored link that no longer opens or is incomplete falls back to
     /// the shared account, as v2 `PerUserClientFactory` did; it reads as
-    /// stale only when there is no shared account to fall back to.
+    /// stale only when there is no shared account to fall back to. A
+    /// Plex link that needs its server token looked up asks plex.tv at
+    /// `priority`.
     pub async fn resolve(
         &self,
         user_id: &str,
         source: SourceName,
+        priority: RequestPriority,
     ) -> Result<ResolvedConnection, ResolveError> {
         let server = self.server(source)?.ok_or(ResolveError::NotConfigured)?;
-        let stale = match self.usable_link(user_id, &server, source).await {
+        let stale = match self.usable_link(user_id, &server, source, priority).await {
             Ok(Some(link)) => return Ok(linked(user_id, &server, link)),
             Ok(None) => false,
             Err(ResolveError::Stale) => {
@@ -810,15 +816,20 @@ impl ConnectionResolver {
     }
 
     /// The caller's link, ready to use on `server`: a Plex link without a
-    /// server token gets one first. Stale when it cannot be used.
+    /// server token gets one first, from plex.tv at `priority`. Stale when
+    /// it cannot be used.
     pub async fn usable_link(
         &self,
         user_id: &str,
         server: &ServerSettings,
         source: SourceName,
+        priority: RequestPriority,
     ) -> Result<Option<UserLink>, ResolveError> {
         match self.link(user_id, source).await? {
-            Some(link) => self.server_scoped(user_id, server, link).await.map(Some),
+            Some(link) => self
+                .server_scoped(user_id, server, link, priority)
+                .await
+                .map(Some),
             None => Ok(None),
         }
     }
@@ -832,6 +843,7 @@ impl ConnectionResolver {
         user_id: &str,
         server: &ServerSettings,
         link: UserLink,
+        priority: RequestPriority,
     ) -> Result<UserLink, ResolveError> {
         let Some(probe) = &self.plex_tokens else {
             return Ok(link);
@@ -853,7 +865,7 @@ impl ConnectionResolver {
                 username,
             });
         }
-        match probe.server_token(server, &auth_token).await {
+        match probe.server_token(server, &auth_token, priority).await {
             Ok(Some(token)) if !token.is_empty() => {
                 let link = UserLink::Plex {
                     auth_token,

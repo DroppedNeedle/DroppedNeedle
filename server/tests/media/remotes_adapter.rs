@@ -19,6 +19,7 @@ use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, NavidromeConnection, PlexConnection,
 };
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_testkit::remotes::{
     JELLYFIN_KEY, MATCH_MBID, MockAlbum, MockOptions, NAVIDROME_USER, PLEX_TOKEN, serve_jellyfin,
     serve_navidrome, serve_navidrome_with, serve_plex, serve_plex_with,
@@ -666,7 +667,11 @@ async fn own_link_wins_over_the_shared_admin_account() {
         .await;
     let resolver = rig.resolver();
     let shared = resolver
-        .resolve(USER_ID, SourceName::Navidrome)
+        .resolve(
+            USER_ID,
+            SourceName::Navidrome,
+            RequestPriority::UserInitiated,
+        )
         .await
         .expect("shared resolves");
     assert_eq!(shared.account_mode, "shared");
@@ -695,7 +700,11 @@ async fn own_link_wins_over_the_shared_admin_account() {
     assert!(!row.data.contains("s3cret"));
 
     let own = resolver
-        .resolve(USER_ID, SourceName::Navidrome)
+        .resolve(
+            USER_ID,
+            SourceName::Navidrome,
+            RequestPriority::UserInitiated,
+        )
         .await
         .expect("own resolves");
     assert_eq!(own.account_mode, "linked");
@@ -705,7 +714,11 @@ async fn own_link_wins_over_the_shared_admin_account() {
         .await
         .expect("row writes");
     let fallback = resolver
-        .resolve(USER_ID, SourceName::Navidrome)
+        .resolve(
+            USER_ID,
+            SourceName::Navidrome,
+            RequestPriority::UserInitiated,
+        )
         .await
         .expect("stale link falls back");
     assert_eq!(fallback.account_mode, "shared");
@@ -728,7 +741,13 @@ async fn links_need_the_admin_server() {
         .await
         .expect("link saves");
     assert!(matches!(
-        resolver.resolve(USER_ID, SourceName::Navidrome).await,
+        resolver
+            .resolve(
+                USER_ID,
+                SourceName::Navidrome,
+                RequestPriority::UserInitiated
+            )
+            .await,
         Err(ResolveError::NotConfigured)
     ));
 }
@@ -794,7 +813,11 @@ async fn linked_connections_survive_a_restart() {
     };
     let resolved = rig
         .resolver()
-        .resolve(USER_ID, SourceName::Navidrome)
+        .resolve(
+            USER_ID,
+            SourceName::Navidrome,
+            RequestPriority::UserInitiated,
+        )
         .await
         .expect("link resolves after restart");
     assert_eq!(resolved.account_mode, "linked");
@@ -805,12 +828,17 @@ async fn linked_connections_survive_a_restart() {
 
 /// A Plex link saved without a server token (v2 rows from the login flow)
 /// looks the token up once through the server's machine id and plex.tv,
-/// stores it, and browses with it.
+/// stores it, and browses with it. That lookup and the Plex sign-in read
+/// plex.tv `/resources` through the one plex.tv client, so both are paced
+/// and counted on its `plextv` row at user priority.
 #[tokio::test]
 async fn plex_links_without_a_server_token_look_one_up_and_keep_it() {
+    use droppedneedle_auth::federated::plex_http::PlexTv;
+    use droppedneedle_auth::federated::settings::InstallIds;
     use droppedneedle_kernel::runtime_config::sections::InternalState;
-    use droppedneedle_testkit::remotes::PLEX_ACCOUNT_TOKEN;
-    use remotes::plex::PlexTokenProbe;
+    use droppedneedle_providers::{CallOutcome, Providers, plextv};
+    use droppedneedle_testkit::remotes::{PLEX_ACCOUNT_TOKEN, PLEX_MACHINE_ID};
+    use remotes::plex::{ConfiguredPlexServer, PlexTokenProbe};
 
     let mock = serve_plex().await.expect("mock serves");
     let rig = Rig::open("remotes-plex-token").await;
@@ -823,11 +851,19 @@ async fn plex_links_without_a_server_token_look_one_up_and_keep_it() {
         })
         .await
         .expect("client id saves");
+    let providers = Providers::build(
+        &rig.platform,
+        droppedneedle_providers::ProviderEndpoints {
+            plex_tv: format!("{}/api/v2", mock.base_url),
+            ..droppedneedle_providers::ProviderEndpoints::closed()
+        },
+        droppedneedle_kernel::db::cache::CacheDb::scratch(),
+    );
     let resolver = rig
         .resolver()
-        .with_plex_tokens(Arc::new(PlexTokenProbe::with_plex_tv(
+        .with_plex_tokens(Arc::new(PlexTokenProbe::new(
             http_client(),
-            format!("{}/api/v2", mock.base_url),
+            providers.plextv.clone(),
         )));
     resolver
         .save_link(
@@ -843,7 +879,7 @@ async fn plex_links_without_a_server_token_look_one_up_and_keep_it() {
         .expect("link saves");
 
     let resolved = resolver
-        .resolve(USER_ID, SourceName::Plex)
+        .resolve(USER_ID, SourceName::Plex, RequestPriority::UserInitiated)
         .await
         .expect("link resolves");
     assert_eq!(resolved.account_mode, "linked");
@@ -855,6 +891,35 @@ async fn plex_links_without_a_server_token_look_one_up_and_keep_it() {
     assert!(
         matches!(stored, Some(UserLink::Plex { server_access_token, .. }) if server_access_token == PLEX_TOKEN),
         "server token stored"
+    );
+
+    let settings = Arc::clone(&rig.platform.settings);
+    let sign_in = PlexTv::new(
+        providers.plextv.clone(),
+        Arc::clone(&settings),
+        Arc::new(ConfiguredPlexServer::new(
+            http_client(),
+            settings.live(),
+            InstallIds::new(Arc::clone(&settings)),
+        )),
+    );
+    let access = sign_in
+        .server_access(PLEX_ACCOUNT_TOKEN, PLEX_MACHINE_ID)
+        .await
+        .expect("the sign-in reads plex.tv");
+    assert!(access.member);
+    assert_eq!(access.token.as_deref(), Some(PLEX_TOKEN));
+    let calls: Vec<_> = providers
+        .limiter(plextv::SOURCE)
+        .expect("plex.tv has a rate row")
+        .calls()
+        .into_iter()
+        .map(|count| (count.priority, count.outcome, count.calls))
+        .collect();
+    assert_eq!(
+        calls,
+        vec![(RequestPriority::UserInitiated, CallOutcome::Ok, 2)],
+        "both /resources reads went through the plextv row"
     );
 }
 

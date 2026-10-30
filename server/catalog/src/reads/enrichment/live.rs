@@ -81,7 +81,8 @@ mod tests {
                 spotify_api: closed.clone(),
                 spotify_accounts: closed.clone(),
                 spotify_cover_cdn: None,
-                deezer_images: closed,
+                deezer_images: closed.clone(),
+                plex_tv: closed,
             },
         ))
     }

@@ -100,11 +100,13 @@ impl AuthRig {
             })
             .expect("Last.fm settings save");
         let auth = ProdAuth::new(&platform);
+        let providers = droppedneedle_providers::Providers::closed();
         let setup = AuthSetup::build(
             &platform,
             auth.clone(),
             &closed_outbound().sign_in(),
-            &droppedneedle_providers::Providers::closed().lastfm,
+            &providers.lastfm,
+            &providers.plextv,
             Arc::new(
                 droppedneedle_media::remotes::plex::ConfiguredPlexServer::new(
                     platform.http.shared().clone(),

@@ -11,13 +11,14 @@
 //! store's username derivation (`_derive_username`, `_slugify`), and the
 //! auth, connection and Plex auth routes.
 //!
-//! Each provider has one concrete client in a `*_http` module that talks
-//! through the shared outbound client: [`oidc_http::OidcHttp`] at the
-//! issuer and endpoints the OIDC settings and discovery name,
-//! [`jellyfin_http::JellyfinHttp`] at the Jellyfin settings' server, and
-//! [`plex_http::PlexTv`] at the plex.tv root the server's outbound
-//! addresses give. Wire shapes live in the matching `*_models` module. The
-//! integration tests point the same clients at local mock servers.
+//! Each provider has one concrete client in a `*_http` module:
+//! [`oidc_http::OidcHttp`] at the issuer and endpoints the OIDC settings
+//! and discovery name and [`jellyfin_http::JellyfinHttp`] at the Jellyfin
+//! settings' server, both through the shared outbound client, with their
+//! wire shapes in the matching `*_models` module; [`plex_http::PlexTv`]
+//! through the providers crate's plex.tv client, which holds plex.tv's
+//! shapes. The integration tests point the same clients at local mock
+//! servers.
 //!
 //! Contracts with the rest of auth:
 //!
@@ -40,7 +41,6 @@ pub mod oidc_models;
 pub mod password_import;
 pub mod plex;
 pub mod plex_http;
-pub mod plex_models;
 pub mod settings;
 pub mod transport;
 pub mod users;

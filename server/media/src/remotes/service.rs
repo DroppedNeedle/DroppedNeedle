@@ -30,6 +30,11 @@ use super::models::{
 };
 use super::warmup::MbidIndex;
 use droppedneedle_kernel::db::fold::fold_text;
+use droppedneedle_providers::RequestPriority;
+
+/// Every call here answers a person's request, images included, so a
+/// plex.tv token lookup it leads to is asked at user priority.
+const PERSON_WAITING: RequestPriority = RequestPriority::UserInitiated;
 
 /// Every way a remotes call can fail. Detail strings are log-only unless
 /// the variant says otherwise.
@@ -246,7 +251,7 @@ impl RemotesService {
     ) -> RemotesResult<RemoteHandle> {
         let resolved = self
             .resolver
-            .resolve(user_id, source)
+            .resolve(user_id, source, PERSON_WAITING)
             .await
             .map_err(|error| resolve_failure(source, error))?;
         Ok(self.resolver.client(&self.http, resolved, reads))
@@ -1001,12 +1006,14 @@ impl RemotesService {
     ) -> RemotesResult<ConnectionStatus> {
         // Browsing falls back to the shared account past a stale link, but
         // the status still asks the user to relink their own.
-        let mut resolved = self.resolver.resolve(user_id, source).await;
+        let mut resolved = self.resolver.resolve(user_id, source, PERSON_WAITING).await;
         if let Ok(shared) = &resolved
             && shared.account_mode == "shared"
             && let Ok(Some(server)) = self.resolver.server(source)
             && matches!(
-                self.resolver.usable_link(user_id, &server, source).await,
+                self.resolver
+                    .usable_link(user_id, &server, source, PERSON_WAITING)
+                    .await,
                 Err(ResolveError::Stale)
             )
         {

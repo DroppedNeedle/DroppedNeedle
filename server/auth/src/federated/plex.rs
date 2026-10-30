@@ -20,8 +20,11 @@
 //!   sequential and v2 accepted any id on the poll, so a stranger could
 //!   finish someone else's sign-in. Now the start mints a random secret,
 //!   keeps only its hash with the PIN (and the starting user for link and
-//!   connect), and every poll must present it. The first poll that sees
-//!   the approval consumes the record.
+//!   connect), and every poll must present it. The first poll that
+//!   verifies the approval consumes the record. A plex.tv read during
+//!   that check that may answer next time (paced, rate limited,
+//!   unreachable) keeps the record, and the poll reads as pending: plex.tv
+//!   hands an approved PIN's token to every poll until the PIN expires.
 //! - Login starts and completes only while the admin's Plex login switch
 //!   is on (v2 only hid the tab).
 //! - When a Plex server is configured, a login whose membership cannot be
@@ -32,7 +35,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::plex_http::PlexTv;
+use super::plex_http::{PlexTv, PlexTvError};
 use super::users::{FederatedProfile, PROVIDER_PLEX, StoredUser, find_or_create_federated_user};
 use super::{FederatedError, MediaLinks, json_string};
 use crate::session::tokens::{constant_time_eq, hash_token, mint_token};
@@ -327,18 +330,39 @@ impl PlexJourney {
         })
     }
 
-    /// Check the claim, poll plex.tv, and consume the record on approval.
+    /// Check the claim and poll plex.tv. The record stays until the
+    /// caller has used the approval.
     async fn approved_token(
         &self,
         claim: &PinClaim<'_>,
         purpose: PlexPurpose,
     ) -> Result<Option<String>, FederatedError> {
         self.pins.check(claim, purpose)?;
-        let Some(auth_token) = self.client.poll_pin(claim.pin_id).await? else {
-            return Ok(None);
-        };
-        self.pins.consume(claim.pin_id)?;
-        Ok(Some(auth_token))
+        self.client.poll_pin(claim.pin_id).await
+    }
+
+    /// Verify an approved token, then consume the record; only one poller
+    /// wins it. A read that did not settle keeps the record and answers
+    /// `None`, so the next poll tries again. A settled refusal consumes it.
+    async fn verified_once(
+        &self,
+        pin_id: i64,
+        auth_token: &str,
+        require_machine: bool,
+    ) -> Result<Option<PlexProfile>, FederatedError> {
+        match self.verified_profile(auth_token, require_machine).await {
+            Ok(profile) => {
+                self.pins.consume(pin_id)?;
+                Ok(Some(profile))
+            }
+            Err(Verify::Retry) => Ok(None),
+            Err(Verify::Denied(error)) => {
+                // Another poller may have consumed it already; the refusal
+                // stands either way.
+                let _ = self.pins.consume(pin_id);
+                Err(error)
+            }
+        }
     }
 
     /// Login flow: poll, gate membership when a server is configured,
@@ -354,7 +378,9 @@ impl PlexJourney {
         let Some(auth_token) = self.approved_token(claim, PlexPurpose::Login).await? else {
             return Ok(PlexPoll::Pending);
         };
-        let profile = self.verified_profile(&auth_token, false).await?;
+        let Some(profile) = self.verified_once(claim.pin_id, &auth_token, false).await? else {
+            return Ok(PlexPoll::Pending);
+        };
         let email = if profile.email.is_empty() {
             None
         } else {
@@ -394,7 +420,9 @@ impl PlexJourney {
         let Some(auth_token) = self.approved_token(claim, PlexPurpose::Link).await? else {
             return Ok(PlexPoll::Pending);
         };
-        let profile = self.verified_profile(&auth_token, true).await?;
+        let Some(profile) = self.verified_once(claim.pin_id, &auth_token, true).await? else {
+            return Ok(PlexPoll::Pending);
+        };
         self.links
             .link_plex(user_id, &profile)
             .await
@@ -407,12 +435,11 @@ impl PlexJourney {
         &self,
         claim: &PinClaim<'_>,
     ) -> Result<PlexPoll<String>, FederatedError> {
-        Ok(
-            match self.approved_token(claim, PlexPurpose::Connect).await? {
-                Some(token) => PlexPoll::Complete(token),
-                None => PlexPoll::Pending,
-            },
-        )
+        let Some(token) = self.approved_token(claim, PlexPurpose::Connect).await? else {
+            return Ok(PlexPoll::Pending);
+        };
+        self.pins.consume(claim.pin_id)?;
+        Ok(PlexPoll::Complete(token))
     }
 
     /// Fetch the profile and enforce the membership gate. With no server
@@ -423,47 +450,39 @@ impl PlexJourney {
         &self,
         auth_token: &str,
         require_machine: bool,
-    ) -> Result<PlexProfile, FederatedError> {
+    ) -> Result<PlexProfile, Verify> {
+        let denied =
+            |message: &str| Verify::Denied(FederatedError::Authentication(message.to_owned()));
         let account = match self.client.account_profile(auth_token).await {
             Ok(account) => account,
-            Err(_) => {
-                return Err(FederatedError::Authentication(
-                    "Could not verify Plex account".to_owned(),
-                ));
-            }
+            Err(PlexTvError::Retry) => return Err(Verify::Retry),
+            Err(PlexTvError::Failed(_)) => return Err(denied("Could not verify Plex account")),
         };
-        let machine_id = self.client.server_machine_id().await?;
+        let machine_id = self
+            .client
+            .server_machine_id()
+            .await
+            .map_err(Verify::Denied)?;
         if machine_id.is_none() && require_machine {
-            return Err(FederatedError::Authentication(
-                "Could not verify the configured Plex server".to_owned(),
-            ));
+            return Err(denied("Could not verify the configured Plex server"));
         }
         let mut server_access_token = String::new();
         if let Some(machine_id) = machine_id {
-            let server_ids = match self.client.account_server_ids(auth_token).await {
-                Ok(ids) => ids,
-                Err(_) => {
-                    return Err(FederatedError::Authentication(
-                        "Could not verify server access".to_owned(),
-                    ));
+            let access = match self.client.server_access(auth_token, &machine_id).await {
+                Ok(access) => access,
+                Err(PlexTvError::Retry) => return Err(Verify::Retry),
+                Err(PlexTvError::Failed(_)) => {
+                    return Err(denied("Could not verify server access"));
                 }
             };
-            if !server_ids.iter().any(|id| id == &machine_id) {
-                return Err(FederatedError::Authentication(
-                    "Your Plex account does not have access to this server".to_owned(),
+            if !access.member {
+                return Err(denied(
+                    "Your Plex account does not have access to this server",
                 ));
             }
-            server_access_token = match self
-                .client
-                .server_access_token(auth_token, &machine_id)
-                .await
-            {
-                Ok(Some(token)) if !token.is_empty() => token,
-                _ => {
-                    return Err(FederatedError::Authentication(
-                        "Could not verify Plex server access".to_owned(),
-                    ));
-                }
+            server_access_token = match access.token {
+                Some(token) if !token.is_empty() => token,
+                _ => return Err(denied("Could not verify Plex server access")),
             };
         }
         Ok(PlexProfile {
@@ -475,6 +494,14 @@ impl PlexJourney {
             server_access_token,
         })
     }
+}
+
+/// Why an approved token was not verified.
+enum Verify {
+    /// A plex.tv read did not settle; the next poll asks again.
+    Retry,
+    /// A settled refusal or failure.
+    Denied(FederatedError),
 }
 
 fn login_disabled() -> FederatedError {

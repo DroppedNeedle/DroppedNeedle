@@ -237,6 +237,18 @@ pub const RATES: &[RateRow] = &[
         url: "https://developer.spotify.com/documentation/web-api/concepts/rate-limits",
     },
     RateRow {
+        source: "plextv",
+        per_second: Rate::Fixed(1.0),
+        burst: 5,
+        max_in_flight: None,
+        verified_on: "2026-10-30",
+        basis: "No published limit; the only 429 documented is for JWT nonce requests, \
+                which DroppedNeedle does not make. Plex's auth guide asks apps to check a \
+                PIN once per second. Held at 1 per second with a burst of 5, so a \
+                sign-in's reads after its PIN go together.",
+        url: "https://developer.plex.tv/pms/",
+    },
+    RateRow {
         source: "ticketmaster",
         per_second: Rate::Fixed(2.0),
         burst: 1,

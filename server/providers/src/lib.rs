@@ -5,7 +5,7 @@
 //! one client per service (MusicBrainz, the Cover Art Archive,
 //! ListenBrainz, Last.fm, TheAudioDB, AcoustID, Discogs, iTunes, Deezer,
 //! LRCLIB, Wikidata, Ticketmaster, Skiddle, Open-Meteo, YouTube, GitHub,
-//! Spotify and the image hosts), the limiters, the provider answer cache and the
+//! Spotify, plex.tv and the image hosts), the limiters, the provider answer cache and the
 //! service health registry. Each client sends through its own [`Executor`].
 //!
 //! - [`executor`]: sends one request. It waits for a token at the caller's
@@ -139,6 +139,8 @@ pub struct ProviderEndpoints {
     pub spotify_cover_cdn: Option<String>,
     /// The origin Deezer serves artist pictures from.
     pub deezer_images: String,
+    /// plex.tv account API root.
+    pub plex_tv: String,
 }
 
 impl ProviderEndpoints {
@@ -173,6 +175,7 @@ impl ProviderEndpoints {
             spotify_accounts: "http://127.0.0.1:9/spotify-accounts".to_owned(),
             spotify_cover_cdn: None,
             deezer_images: "http://127.0.0.1:9".to_owned(),
+            plex_tv: "http://127.0.0.1:9/plex".to_owned(),
         }
     }
 }
@@ -233,6 +236,9 @@ pub struct Providers {
     pub github_repos: github::GitHubRepos,
     /// Spotify: the token grants and the playlist reads of an import.
     pub spotify: spotify::SpotifyClient,
+    /// plex.tv: the Plex sign-in, the Plex user import and the media
+    /// server adapter's token lookup, on one bucket.
+    pub plextv: plextv::PlexTvClient,
 }
 
 impl Providers {
@@ -394,6 +400,8 @@ impl Providers {
             &endpoints.spotify_api,
             &endpoints.spotify_accounts,
         );
+        let plextv =
+            plextv::PlexTvClient::new(executor(&plextv::SPEC, plextv::SOURCE), &endpoints.plex_tv);
         Self {
             limiters,
             cache,
@@ -417,6 +425,7 @@ impl Providers {
             github,
             github_repos,
             spotify,
+            plextv,
         }
     }
 
