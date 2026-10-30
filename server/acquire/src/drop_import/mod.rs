@@ -60,8 +60,13 @@ const MAX_FILES_PER_UNIT: usize = 60;
 const LIST_LIMIT: i64 = 50;
 /// Where uploads stream before a job exists.
 const INCOMING_DIR: &str = "_incoming";
-/// The longest wait before identification asks a busy database again.
-const BUSY_WAIT_MAX: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How one item's run ended.
+enum Ran {
+    Done,
+    /// The database closed for a shutdown; the job goes no further.
+    Stopped,
+}
 
 /// Who is asking.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -352,7 +357,7 @@ impl DropImports {
         let landing = self.probe(library.as_ref(), paths).await;
         let summary = match identify::assigned(library.as_ref(), &landing, group).await {
             Outcome::Matched(summary) => summary,
-            Outcome::Busy => {
+            Outcome::Busy | Outcome::Closed => {
                 let mut back = item.clone();
                 back.status = DropItemStatus::NeedsReview;
                 self.store
@@ -367,7 +372,7 @@ impl DropImports {
                         Reason::MusicbrainzUnavailable
                     }
                     Outcome::Review { reason, .. } => reason,
-                    Outcome::Matched(_) | Outcome::Busy => Reason::ImportFailed,
+                    Outcome::Matched(_) | Outcome::Busy | Outcome::Closed => Reason::ImportFailed,
                 };
                 let mut back = item.clone();
                 back.status = DropItemStatus::NeedsReview;
@@ -542,13 +547,19 @@ impl DropImports {
         };
         tracing::info!(job_id, "drop import job started");
         let cause = match self.process_job(&job).await {
-            Ok((status, items)) => {
+            Ok(Some((status, items))) => {
                 tracing::info!(
                     job_id,
                     status = status.as_str(),
                     items,
                     "drop import job finished"
                 );
+                return;
+            }
+            // The server is stopping: the job stays processing, and the
+            // sweep at the next start settles it.
+            Ok(None) => {
+                tracing::info!(job_id, "drop import job stopped for a shutdown");
                 return;
             }
             Err(cause) => cause,
@@ -568,8 +579,9 @@ impl DropImports {
         self.publish(&job.user_id, job_id);
     }
 
-    /// Answers the job's final status and how many items it made.
-    async fn process_job(&self, job: &JobRecord) -> Result<(DropJobStatus, usize), String> {
+    /// Answers the job's final status and how many items it made, or
+    /// `None` when a shutdown stopped it.
+    async fn process_job(&self, job: &JobRecord) -> Result<Option<(DropJobStatus, usize)>, String> {
         let dir = PathBuf::from(&job.staging_dir);
         let (units, notes) = tokio::task::spawn_blocking(move || extract::extract_and_group(&dir))
             .await
@@ -585,7 +597,7 @@ impl DropImports {
                 .await
                 .map_err(|error| error.to_string())?;
             self.publish(&job.user_id, &job.id);
-            return Ok((DropJobStatus::Failed, 0));
+            return Ok(Some((DropJobStatus::Failed, 0)));
         }
         let ids = self
             .store
@@ -596,19 +608,26 @@ impl DropImports {
         self.publish(&job.user_id, &job.id);
         let count = items.len();
         for (id, unit) in items {
-            if let Err(cause) = self
+            match self
                 .process_item(job, id, &unit.folder_name, unit.files)
                 .await
             {
-                tracing::error!(item_id = id, %cause, "drop import item failed");
-                if let Ok(Some(item)) = self.store.get_item(id).await {
-                    let failed = settled(item, DropItemStatus::Failed, Reason::ImportFailed, None);
-                    if let Err(error) = self
-                        .store
-                        .save_item(&failed, DropItemStatus::Processing)
-                        .await
-                    {
-                        tracing::warn!(item_id = id, %error, "drop item failure not recorded");
+                Ok(Ran::Done) => {}
+                // Nothing more is written and nothing is tidied: the files
+                // stay staged for the next start's sweep.
+                Ok(Ran::Stopped) => return Ok(None),
+                Err(cause) => {
+                    tracing::error!(item_id = id, %cause, "drop import item failed");
+                    if let Ok(Some(item)) = self.store.get_item(id).await {
+                        let failed =
+                            settled(item, DropItemStatus::Failed, Reason::ImportFailed, None);
+                        if let Err(error) = self
+                            .store
+                            .save_item(&failed, DropItemStatus::Processing)
+                            .await
+                        {
+                            tracing::warn!(item_id = id, %error, "drop item failure not recorded");
+                        }
                     }
                 }
             }
@@ -623,7 +642,7 @@ impl DropImports {
             .map_err(|error| error.to_string())?;
         self.tidy(job).await;
         self.publish(&job.user_id, &job.id);
-        Ok((DropJobStatus::Completed, count))
+        Ok(Some((DropJobStatus::Completed, count)))
     }
 
     async fn process_item(
@@ -632,7 +651,7 @@ impl DropImports {
         item_id: i64,
         folder: &str,
         paths: Vec<PathBuf>,
-    ) -> Result<(), String> {
+    ) -> Result<Ran, String> {
         let item = self
             .store
             .get_item(item_id)
@@ -648,18 +667,15 @@ impl DropImports {
             let mut failed = settled(item, DropItemStatus::Failed, Reason::Corrupt, None);
             failed.staging_paths = Vec::new();
             self.save(&failed).await;
-            return Ok(());
+            return Ok(Ran::Done);
         }
         if landing.audio.len() > MAX_FILES_PER_UNIT {
             let specifics = format!("It has {} audio files.", landing.audio.len());
             self.wait_whole(job, item, Reason::TooManyFiles, Some(specifics))
                 .await;
-            return Ok(());
+            return Ok(Ran::Done);
         }
-        match self
-            .identify_when_free(library.as_ref(), &landing, folder)
-            .await
-        {
+        match identify::identify(library.as_ref(), &landing, folder).await {
             Outcome::Matched(summary) => {
                 let organised = self
                     .organise(job, item, library.as_ref(), &landing, &summary, false)
@@ -675,32 +691,12 @@ impl DropImports {
                 self.wait_whole(job, item, Reason::MusicbrainzUnavailable, None)
                     .await;
             }
-            // `identify_when_free` asks again until the database answers.
+            // Background identification reads a busy edition until it
+            // answers, so busy never reaches here.
             Outcome::Busy => {}
+            Outcome::Closed => return Ok(Ran::Stopped),
         }
-        Ok(())
-    }
-
-    /// Identify a folder, asking again while the database is busy: a busy
-    /// read decides nothing, so it never parks the files for a person or
-    /// fails the item. The waits grow to [`BUSY_WAIT_MAX`].
-    async fn identify_when_free(
-        &self,
-        library: &dyn LandingLibrary,
-        landing: &Landing,
-        folder: &str,
-    ) -> Outcome {
-        let mut wait = std::time::Duration::from_secs(1);
-        loop {
-            match identify::identify(library, landing, folder).await {
-                Outcome::Busy => {
-                    tracing::info!(folder, "drop import waits for a busy database");
-                    tokio::time::sleep(wait).await;
-                    wait = (wait * 2).min(BUSY_WAIT_MAX);
-                }
-                other => return other,
-            }
-        }
+        Ok(Ran::Done)
     }
 
     /// Every staged file of an item waits in the held list for `reason`.

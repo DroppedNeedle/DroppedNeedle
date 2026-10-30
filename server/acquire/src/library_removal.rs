@@ -14,7 +14,9 @@
 //! discards the rows whose copies are gone and gives the entries back: a
 //! copy that could not be deleted keeps its row, still listed. A run that
 //! stops after the claim leaves the entries claimed until the next start
-//! gives them back.
+//! gives them back. While any of the album's entries is in use (a
+//! person's action, or a claim a stopped run left), the job does what it
+//! can and runs again later, so their copies go once they are free.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,6 +39,8 @@ pub const SPEC: KindSpec = KindSpec::new(ALBUM_REMOVED);
 
 /// A clean-up write that did not finish.
 const CLEANUP_FAILED: &str = "CLEANUP_FAILED";
+/// Some of the album's held entries were in use, so their copies wait.
+const ENTRIES_IN_USE: &str = "HELD_ENTRIES_IN_USE";
 
 /// Cleans up download and wanted state for removed albums.
 pub struct AcquireAlbumCleanup {
@@ -62,6 +66,13 @@ struct Cleaned {
     retries_cancelled: usize,
     held_removed: usize,
     wanted_changed: bool,
+}
+
+/// How a clean-up run ended.
+enum Finished {
+    Done,
+    /// Entries in use were left; the job runs again.
+    EntriesInUse,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -102,7 +113,11 @@ impl JobHandler for AcquireAlbumCleanup {
                 };
             };
             match clean_up(&db, clock, &held_dir, job, &removed).await {
-                Ok(()) => Outcome::Done,
+                Ok(Finished::Done) => Outcome::Done,
+                Ok(Finished::EntriesInUse) => Outcome::Retry {
+                    code: ENTRIES_IN_USE,
+                    at: None,
+                },
                 Err(error) if error.is_busy() => Outcome::Busy,
                 Err(error) => {
                     tracing::warn!(%error, "clean-up after an album removal did not finish");
@@ -122,17 +137,18 @@ async fn clean_up(
     held_dir: &std::path::Path,
     job: JobCtx,
     removed: &AlbumRemovedJob,
-) -> Result<(), CleanupError> {
+) -> Result<Finished, CleanupError> {
     let clock_back = clock.clone();
     let group = removed.release_group_mbid.clone();
     let before = crate::db::ms_from_secs_f64(removed.removed_at);
-    let (claimed, held) = db
+    let claim = db
         .write(
             Lane::Background,
             "downloads.removed_album_claim",
             move |tx| Ok::<_, CleanupError>(HeldRows::new(tx).claim_removed_album(&group, before)?),
         )
         .await?;
+    let (claimed, held, in_use) = (claim.claimed, claim.files, claim.in_use);
     let mut gone: Vec<i64> = Vec::with_capacity(held.len());
     for (file, _, path) in &held {
         if super::held::remove_copy(held_dir, path).await {
@@ -158,7 +174,11 @@ async fn clean_up(
             } else {
                 rearm_after_removal(tx, group, removed.removed_at, now)?
             };
-            job.complete(tx)?;
+            // An entry left in use still holds copies: the job stays open
+            // to run again for them.
+            if in_use == 0 {
+                job.complete(tx)?;
+            }
             Ok::<_, CleanupError>(Cleaned {
                 retries_cancelled: purge.retries_cancelled,
                 held_removed: purge.held_removed,
@@ -196,7 +216,12 @@ async fn clean_up(
         retries_cancelled = cleaned.retries_cancelled,
         held_files = cleaned.held_removed,
         wanted_changed = cleaned.wanted_changed,
+        entries_in_use = in_use,
         "download state of a removed album cleaned up"
     );
-    Ok(())
+    Ok(if in_use == 0 {
+        Finished::Done
+    } else {
+        Finished::EntriesInUse
+    })
 }

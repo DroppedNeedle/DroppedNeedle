@@ -249,10 +249,12 @@ impl From<Acted> for HeldActionResponse {
             already_owned: acted.owned,
             discarded: acted.discarded,
             still_held: acted.held.len(),
-            message: acted
-                .held
-                .first()
-                .map(|reason| format!("{} {}", reason.message(), reason.action())),
+            message: acted.message.or_else(|| {
+                acted
+                    .held
+                    .first()
+                    .map(|reason| format!("{} {}", reason.message(), reason.action()))
+            }),
         }
     }
 }

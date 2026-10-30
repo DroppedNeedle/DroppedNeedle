@@ -196,7 +196,9 @@ async fn album_cleanup_leaves_what_came_after_the_removal() {
 /// person's action does: an entry a person is acting on keeps its rows and
 /// copy, nobody can take up an entry while its copies go, and a file held
 /// into a claimed entry after the claim keeps its row and its copy. Only
-/// the rows whose copies are gone are discarded.
+/// the rows whose copies are gone are discarded. The job is not done while
+/// an entry is in use: once it is given back, the run again removes its
+/// copy.
 #[tokio::test]
 async fn album_cleanup_claims_before_it_deletes() {
     let db = AcquireDb::scratch().expect("scratch db");
@@ -304,7 +306,26 @@ async fn album_cleanup_claims_before_it_deletes() {
         assert!(Instant::now() < deadline, "the clean-up was never claimed");
         tokio::time::sleep(Duration::from_millis(1)).await;
     }
-    wait_done(&queue, "removal-1", id).await;
+    // The entry in use still holds a copy, so the job is not done: it
+    // runs again later.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let latest = queue
+            .latest(ALBUM_REMOVED, "removal-1")
+            .await
+            .expect("job reads")
+            .expect("job row");
+        assert_ne!(
+            latest.state,
+            State::Done,
+            "the clean-up finished with an entry in use"
+        );
+        if latest.state == State::Queued && latest.attempts > 0 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the clean-up never ran");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 
     let states: Vec<(i64, bool, String, i64)> = conn
         .prepare(
@@ -352,6 +373,38 @@ async fn album_cleanup_claims_before_it_deletes() {
         )
         .expect("entry reads");
     assert_eq!(first, "held", "the claimed entry is given back");
+
+    // The person's action ends without taking the file; the run again
+    // removes the copy it had to leave.
+    platform
+        .db
+        .write(Lane::Foreground, "test.release", move |tx| {
+            tx.execute(
+                "UPDATE acquire_held_entries SET state = 'held' WHERE id = 2",
+                [],
+            )?;
+            tx.execute(
+                "UPDATE durable_jobs SET not_before_at = 0 WHERE id = ?1",
+                [id],
+            )?;
+            Ok::<_, DbError>(())
+        })
+        .await
+        .expect("entry given back");
+    queue.wake();
+    wait_done(&queue, "removal-1", id).await;
+    assert!(
+        !taken_held.exists(),
+        "the copy left in use went on the run again"
+    );
+    let taken: String = conn
+        .query_row(
+            "SELECT state FROM acquire_held_files WHERE entry_id = 2",
+            [],
+            |row| row.get(0),
+        )
+        .expect("file reads");
+    assert_eq!(taken, "discarded");
 }
 
 /// Old held copies in the read-then-write test.

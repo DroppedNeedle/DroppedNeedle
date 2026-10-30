@@ -68,12 +68,12 @@ Every entry offers the same actions:
 - Files held because something on the library side was in the way (a file already sitting where a track would go, a library folder that isn't there) show **Retry** instead of Import: the library decides again. DroppedNeedle also retries these by itself, a few minutes after they were held and then at longer gaps, up to once a day, until they go in or the entry expires. The entry shows when the next try is, and "Retrying now" while it runs. A retry that comes back with a reason you decide on, such as a file no better than yours, stops retrying. A retry never adds a second copy of a track you already have on another copy of the album, and never replaces a copy that has since turned up on the album itself: that file waits for you instead.
 - **Match** (admins and trusted users) picks the album yourself; DroppedNeedle pairs the files with its tracks. A file that would replace a library copy then needs AcoustID to confirm it: when AcoustID can't answer, the file stays held and your copy stays.
 - **Re-check** runs AcoustID again on files it heard as a different recording or could not confirm, and imports those it now confirms. "Re-check all" does this across the list, 25 files at a time.
-- **Discard** deletes the held files. A file the server can't delete stays listed and the page says so. For a download, the album's automatic retry picks up again once none of its files is held.
+- **Discard** deletes the held files and says how many went. A file the server can't delete stays listed and the page says so. For a download, the album's automatic retry picks up again once none of its files is held.
 - A single found only as its album's track offers **Get it from the album** (see [Single tracks](#single-tracks)).
 
 An imported file goes where the download would have put it: a track fetched for an album you have ("Get the missing tracks") joins that copy, in its folder and on its edition; otherwise it goes into the edition you chose for the album, and if the track isn't on that edition, the page tells you to pick the edition it belongs to first. An upload's file that was never paired with a track has no Import: Match is the way forward. When importing the last held files makes an album whole, its download shows as completed.
 
-Entries are kept for 90 days after they were made, or after their newest file arrived. After that the held copies are removed: only the copies DroppedNeedle keeps for you in its own folders, never a file in your library or in a download client's folder. An entry you are acting on is never removed under you, and a held file whose copy can't be deleted stays listed until it can. If the server stops while an import from the list runs, the files that already went in are marked imported when it starts again, and the rest wait as before.
+Entries are kept for 90 days after they were made, or after their newest file arrived. After that the held copies are removed: only the copies DroppedNeedle keeps for you in its own folders, never a file in your library or in a download client's folder. An entry you are acting on is never removed under you, and a held file whose copy can't be deleted stays listed until it can. Removing an album from the library drops its held downloads too; one you are acting on at that moment goes once you are done with it. If the server stops while an import from the list runs, the files that already went in are marked imported when it starts again, and the rest wait as before.
 
 ## Upgrades
 
@@ -105,7 +105,9 @@ Bought music somewhere else? Drop it in. Admins and trusted users can upload up 
 - Extra files that came with the album but aren't on its tracklist (a bonus track MusicBrainz doesn't list) are kept alongside the album under their own title and number. Files whose tags name a track they don't match wait for review on their own.
 - Anything DroppedNeedle can't place waits in [Held files](#held-files), shown inside its upload on the Import tab too, with a plain reason and what to do. Pick the album yourself with Match, import files already paired with a track, or Discard to delete them. They are kept for 90 days, like every held file.
 
-An archive with a damaged file, or one that unpacks far larger than it says, is skipped whole: nothing from it is imported, even the files unpacked before the bad one, and the upload names the file. Drop in a fresh copy.
+An archive with a damaged file, or one that unpacks far larger than it says, is skipped whole: nothing from it is imported, even the files unpacked before the bad one, and the upload names the file. Drop in a fresh copy. Two files in one archive whose names come out the same keep the first, and the upload notes how many were skipped.
+
+If the server stops while an archive unpacks, it starts that archive again from the beginning, so no half-unpacked album is imported. An archive that had finished unpacking is not unpacked twice.
 
 If the server restarts in the middle of an import, the upload's files wait in Held files as interrupted; pick the album with Match or drop them in again.
 

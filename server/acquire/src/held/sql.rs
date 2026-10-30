@@ -93,12 +93,12 @@ droppedneedle_kernel::sql! {
     /// Open entries of owner `?1` (NULL for everyone).
     pub(super) COUNT_OPEN = "SELECT COUNT(*) FROM acquire_held_entries \
              WHERE state IN " + OPEN + " AND (?1 IS NULL OR user_id = ?1)";
-    /// Download copies of album `?1` held at or before `?2`, in entries
-    /// waiting for a person; an entry being acted on is left alone.
+    /// Download copies of album `?1` held at or before `?2`, in open
+    /// entries; the caller claims each entry and leaves one in use alone.
     pub(super) REMOVED_ALBUM_FILES = "SELECT f.id, f.entry_id, f.path \
              FROM acquire_held_files f JOIN acquire_held_entries e ON e.id = f.entry_id \
              WHERE e.origin = 'download' AND e.release_group_mbid = lower(?1) \
-               AND e.state = 'held' AND f.root = 'held' AND f.state = 'held' \
+               AND e.state IN " + OPEN + " AND f.root = 'held' AND f.state = 'held' \
                AND f.created_at <= ?2";
     /// Owner `?1`'s files held as only the album version by their other
     /// track downloads (not `?3`) of recording `?2`.

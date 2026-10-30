@@ -132,6 +132,9 @@ pub struct Acted {
     pub discarded: usize,
     /// Files still held, with why.
     pub held: Vec<Reason>,
+    /// What went wrong with the files still held, when it was not their
+    /// hold reason (a copy Discard could not delete).
+    pub message: Option<String>,
 }
 
 /// One file of a bulk re-check.
@@ -385,8 +388,7 @@ impl HeldService {
                     .map(|matched| Acted {
                         imported: matched.imported,
                         owned: matched.owned,
-                        discarded: 0,
-                        held: Vec::new(),
+                        ..Acted::default()
                     })
                     .map_err(HeldError::from),
                 EntryOrigin::Download => self.match_download(&entry, files, &group, actor).await,
@@ -537,6 +539,13 @@ impl HeldService {
                     continue;
                 }
             };
+            // Only a length read from the file's frame count may outrank
+            // its fingerprint; an MP3 with none has only an estimate.
+            let measured = probe_held(&path).await.and_then(|read| {
+                read.header
+                    .duration_seconds
+                    .filter(|_| read.header.duration_measured)
+            });
             let heard = library.fingerprints(vec![(String::new(), path)]).await;
             let heard = heard.get("").map(Vec::as_slice).unwrap_or(&[]);
             // No AcoustID answer is no confirmation: the file stays held.
@@ -544,7 +553,7 @@ impl HeldService {
                 && !specs::fingerprint_disagrees(
                     heard,
                     file.pairing.recording_mbid.as_deref().unwrap_or(""),
-                    file.duration_seconds,
+                    measured,
                     file.pairing.expected_duration_seconds,
                 );
             out.push((file, Ok(confirmed)));
@@ -619,12 +628,15 @@ impl HeldService {
         // The entry is claimed, so nothing else acts on it while its copies
         // go. A copy that could not be removed keeps its row, still listed.
         let mut ids: Vec<i64> = Vec::with_capacity(files.len());
+        let mut kept: Vec<Reason> = Vec::new();
         for file in &files {
             if self.remove(file).await {
                 ids.push(file.id);
+            } else {
+                kept.push(file.reason);
             }
         }
-        let kept = files.len() - ids.len();
+        let deleted = ids.len();
         let tasks: Vec<String> = files
             .iter()
             .filter_map(|file| file.source_task_id.clone())
@@ -655,13 +667,25 @@ impl HeldService {
             self.drops.tidy_item(item).await;
         }
         self.worker.wake();
-        if kept > 0 {
-            return Err(HeldError::Refused(
-                "A held file could not be deleted, so it is still listed. Check that the server can write to its folder, then try again.".to_owned(),
-            ));
+        if kept.is_empty() {
+            return Ok(Acted {
+                discarded,
+                ..Acted::default()
+            });
         }
+        let message = if kept.len() == 1 {
+            "A held file could not be deleted, so it is still listed. Check that the server can write to its folder, then try again."
+        } else {
+            "Some held files could not be deleted, so they are still listed. Check that the server can write to its folder, then try again."
+        };
+        if deleted == 0 {
+            return Err(HeldError::Refused(message.to_owned()));
+        }
+        // Some copies went: say what was done, and why the rest stay.
         Ok(Acted {
             discarded,
+            held: kept,
+            message: Some(message.to_owned()),
             ..Acted::default()
         })
     }
@@ -1083,7 +1107,7 @@ impl HeldService {
             let summary = match identify::assigned(library.as_ref(), &landing, group).await {
                 identify::Outcome::Matched(summary) => summary,
                 identify::Outcome::Review { reason, .. } => return Err(refused(reason)),
-                identify::Outcome::Busy => {
+                identify::Outcome::Busy | identify::Outcome::Closed => {
                     return Err(HeldError::Busy("held match edition read".to_owned()));
                 }
                 identify::Outcome::Unavailable(detail) => {

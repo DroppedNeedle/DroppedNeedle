@@ -383,6 +383,17 @@ pub struct HeldRows<'c> {
 /// A held file a removed-album clean-up claimed: file id, entry id and path.
 pub type ClaimedFile = (i64, i64, String);
 
+/// What a removed-album clean-up claimed.
+#[derive(Debug, Default)]
+pub struct RemovedAlbumClaim {
+    /// The entries claimed.
+    pub claimed: Vec<i64>,
+    /// Their held files.
+    pub files: Vec<ClaimedFile>,
+    /// Open entries of the album something else holds, left alone.
+    pub in_use: usize,
+}
+
 impl<'c> HeldRows<'c> {
     pub fn new(conn: &'c Connection) -> Self {
         Self { conn }
@@ -731,12 +742,13 @@ impl<'c> HeldRows<'c> {
     /// `release_group_mbid`, held at or before `before`) that still wait
     /// for a person: `held` to `placing`, so no action runs on them while
     /// their copies go. Answers each claimed entry and its held files
-    /// (`(file, entry, path)`). An entry a person is acting on is skipped.
+    /// (`(file, entry, path)`). An entry a person is acting on, or one a
+    /// stopped run left claimed, is skipped and counted.
     pub fn claim_removed_album(
         &self,
         release_group_mbid: &str,
         before: i64,
-    ) -> rusqlite::Result<(Vec<i64>, Vec<ClaimedFile>)> {
+    ) -> rusqlite::Result<RemovedAlbumClaim> {
         let mut statement = self.conn.prepare_cached(sql::REMOVED_ALBUM_FILES.text())?;
         let files: Vec<ClaimedFile> = statement
             .query_map(params![release_group_mbid, before], |row| {
@@ -745,16 +757,26 @@ impl<'c> HeldRows<'c> {
             .collect::<Result<_, _>>()?;
         drop(statement);
         let mut claimed: Vec<i64> = Vec::new();
+        let mut skipped: Vec<i64> = Vec::new();
         for (_, entry, _) in &files {
-            if !claimed.contains(entry) && self.claim(*entry)? {
+            if claimed.contains(entry) || skipped.contains(entry) {
+                continue;
+            }
+            if self.claim(*entry)? {
                 claimed.push(*entry);
+            } else {
+                skipped.push(*entry);
             }
         }
         let files = files
             .into_iter()
             .filter(|(_, entry, _)| claimed.contains(entry))
             .collect();
-        Ok((claimed, files))
+        Ok(RemovedAlbumClaim {
+            claimed,
+            files,
+            in_use: skipped.len(),
+        })
     }
 
     /// Decide one held file of an entry the caller claimed, leaving the

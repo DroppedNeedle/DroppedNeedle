@@ -17,6 +17,7 @@
 //! another edition.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use super::extract::LOOSE_UNIT_NAME;
 use crate::landing::matching::{
@@ -27,6 +28,7 @@ use crate::landing::probe::Landing;
 use crate::landing::specs::Target;
 use crate::reason::Reason;
 use droppedneedle_kernel::db::DbError;
+use droppedneedle_kernel::jobs::{Schedule, SplitMix64};
 use droppedneedle_library::matching::Release;
 use droppedneedle_library::matching::decide::ACCEPT_ALBUM;
 use droppedneedle_providers::RequestPriority;
@@ -37,6 +39,12 @@ const FETCH: usize = 3;
 /// A person matching a review item by hand waits on the answer; working
 /// out a dropped folder by itself runs in the background.
 const PERSON: RequestPriority = RequestPriority::UserInitiated;
+
+/// How many times a person's Match reads a busy chosen edition before it
+/// answers busy. Background work asks until the database answers.
+const PERSON_TRIES: u32 = 4;
+/// Background work reads a busy chosen edition until it answers.
+const UNTIL_FREE: u32 = u32::MAX;
 
 /// What identification decided.
 #[derive(Debug, Clone)]
@@ -51,9 +59,12 @@ pub enum Outcome {
     },
     /// MusicBrainz could not answer; worth another try later.
     Unavailable(String),
-    /// The database was busy reading the album's chosen edition: nothing
-    /// was decided, and the same work runs again shortly.
+    /// The database stayed busy while a person waited on the album's
+    /// chosen edition: nothing was decided.
     Busy,
+    /// The database is closing for a stop: nothing was decided, and the
+    /// sweep at the next start picks the work up.
+    Closed,
 }
 
 fn review(reason: Reason) -> Outcome {
@@ -63,16 +74,38 @@ fn review(reason: Reason) -> Outcome {
     }
 }
 
-/// The album's chosen edition did not read: never taken as none, so the
-/// files wait and are tried again. A busy database is said apart, so the
-/// caller runs the work again instead of parking it.
-fn edition_unreadable(error: &DbError) -> Outcome {
-    if matches!(error, DbError::Busy { .. } | DbError::LaneClosed) {
-        return Outcome::Busy;
+/// The album's chosen edition. A busy database is asked again, up to
+/// `tries` reads in all, after waits that grow from about a second to 30 s
+/// with jitter: only this read is repeated, never the lookups before it.
+/// Any other failure is never taken as no edition: the files wait and are
+/// tried again.
+async fn read_chosen(
+    library: &dyn LandingLibrary,
+    group: &str,
+    tries: u32,
+) -> Result<Option<String>, Outcome> {
+    let pacing = Schedule::new(Duration::ZERO)
+        .with_jitter(Duration::from_millis(500))
+        .with_backoff(Duration::from_millis(500), Duration::from_secs(30));
+    let mut rng = SplitMix64::new(SplitMix64::seed_from_time());
+    let mut failures: u32 = 0;
+    loop {
+        match library.chosen_edition(group).await {
+            Ok(chosen) => return Ok(chosen),
+            Err(DbError::LaneClosed) => return Err(Outcome::Closed),
+            Err(DbError::Busy { .. }) if failures.saturating_add(1) < tries => {
+                failures = failures.saturating_add(1);
+                tracing::info!(group, "drop import waits for a busy database");
+                tokio::time::sleep(pacing.retry_delay(&mut rng, failures)).await;
+            }
+            Err(DbError::Busy { .. }) => return Err(Outcome::Busy),
+            Err(error) => {
+                return Err(Outcome::Unavailable(format!(
+                    "the album's chosen edition cannot be read: {error}"
+                )));
+            }
+        }
     }
-    Outcome::Unavailable(format!(
-        "the album's chosen edition cannot be read: {error}"
-    ))
 }
 
 /// Close enough to import without asking (Lidarr's `CloseAlbumMatch`).
@@ -153,7 +186,7 @@ pub async fn identify(library: &dyn LandingLibrary, landing: &Landing, folder: &
         return Outcome::Unavailable(detail.clone());
     }
     if summary.best().is_some_and(close) {
-        return chosen_edition(library, landing, summary, &target).await;
+        return chosen_edition(library, landing, summary, &target, UNTIL_FREE).await;
     }
     if tagged.is_some() {
         return Outcome::Review {
@@ -164,7 +197,7 @@ pub async fn identify(library: &dyn LandingLibrary, landing: &Landing, folder: &
         };
     }
     match by_fingerprint(library, landing, &target).await {
-        Ok(Some(summary)) => chosen_edition(library, landing, summary, &target).await,
+        Ok(Some(summary)) => chosen_edition(library, landing, summary, &target, UNTIL_FREE).await,
         Ok(None) => review(Reason::NoAlbumMatch),
         Err(detail) => Outcome::Unavailable(detail),
     }
@@ -181,9 +214,9 @@ pub async fn assigned(
     release_group_mbid: &str,
 ) -> Outcome {
     let group = release_group_mbid.trim().to_ascii_lowercase();
-    let chosen = match library.chosen_edition(&group).await {
+    let chosen = match read_chosen(library, &group, PERSON_TRIES).await {
         Ok(chosen) => chosen,
-        Err(error) => return edition_unreadable(&error),
+        Err(outcome) => return outcome,
     };
     let mut target = Target {
         release_group_mbid: group.clone(),
@@ -291,14 +324,15 @@ async fn chosen_edition(
     landing: &Landing,
     mut summary: MatchSummary,
     target: &Target,
+    tries: u32,
 ) -> Outcome {
     let Some(found) = summary.best() else {
         return review(Reason::NoAlbumMatch);
     };
     let group = found.release.release_group_id.to_ascii_lowercase();
-    let chosen = match library.chosen_edition(&group).await {
+    let chosen = match read_chosen(library, &group, tries).await {
         Ok(chosen) => chosen,
-        Err(error) => return edition_unreadable(&error),
+        Err(outcome) => return outcome,
     };
     if let Some(pin) = chosen
         && !found.release.answers_to(&pin)

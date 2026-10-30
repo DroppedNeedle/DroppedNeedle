@@ -1396,9 +1396,11 @@ impl ImportSpec for NotAlreadyImported {
 
 /// For the ids our lookup returns: AcoustID
 /// confidently heard recordings, none of them the expected one, and the
-/// file's length is not within [`SAME_MASTER_SECS`] of the expected
-/// track's. A length that agrees outranks a conflicting fingerprint, and
-/// no answer never holds anything.
+/// file's measured length is not within [`SAME_MASTER_SECS`] of the
+/// expected track's. A measured length that agrees outranks a conflicting
+/// fingerprint, and no answer never holds anything. Callers pass `None`
+/// for a length the container only estimated (an MP3 with no frame
+/// count), which can be off by far more than the margin.
 ///
 /// That margin is how far a file's length may be off its track and still
 /// vouch for it against a fingerprint that names another recording.
@@ -1409,7 +1411,7 @@ impl ImportSpec for NotAlreadyImported {
 pub fn fingerprint_disagrees(
     heard: &[String],
     expected_recording: &str,
-    file_seconds: Option<f64>,
+    measured_seconds: Option<f64>,
     expected_seconds: Option<f64>,
 ) -> bool {
     if heard.is_empty() || expected_recording.is_empty() {
@@ -1421,7 +1423,7 @@ pub fn fingerprint_disagrees(
     {
         return false;
     }
-    let length_agrees = match (file_seconds, expected_seconds) {
+    let length_agrees = match (measured_seconds, expected_seconds) {
         (Some(file), Some(expected)) if expected > 0.0 => {
             (file - expected).abs() <= SAME_MASTER_SECS
         }

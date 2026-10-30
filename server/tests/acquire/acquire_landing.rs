@@ -6016,6 +6016,8 @@ enum Door {
     Landing,
     DropMatch,
     HeldImport,
+    /// Re-check on a file held because AcoustID heard another recording.
+    HeldRecheck,
 }
 
 /// The scenario every row runs in.
@@ -6217,7 +6219,7 @@ impl IntakeCase {
             Door::Place => self.through_place(row, file).await,
             Door::Landing => self.through_landing(row, file).await,
             Door::DropMatch => self.through_drop(file).await,
-            Door::HeldImport => self.through_held(row, file).await,
+            Door::HeldImport | Door::HeldRecheck => self.through_held(row, file, door).await,
         };
         if let Some(seen) = said {
             return seen;
@@ -6411,7 +6413,7 @@ impl IntakeCase {
         }
     }
 
-    async fn through_held(&self, row: &Row, file: PathBuf) -> Option<Seen> {
+    async fn through_held(&self, row: &Row, file: PathBuf, door: Door) -> Option<Seen> {
         self.ask(row).await;
         let held_dir = self.rig.acquire.held.folders().held.clone();
         std::fs::create_dir_all(&held_dir).expect("held dir");
@@ -6431,6 +6433,12 @@ impl IntakeCase {
         );
         let reason = row.held_for.code();
         let path = name.clone();
+        // The file's length as its header gives it, and the track's, as a
+        // hold records them.
+        let lengths = (
+            length_ms(&copy).map(|ms| ms as f64 / 1000.0),
+            track.length_ms.map(|ms| ms as f64 / 1000.0),
+        );
         let entry: i64 = self
             .rig
             .acquire
@@ -6446,10 +6454,20 @@ impl IntakeCase {
                 tx.execute(
                     "INSERT INTO acquire_held_files (entry_id, root, path, original_name, \
                      release_mbid, release_track_mbid, recording_mbid, track_number, \
-                     disc_number, reason, source, source_task_id, state, created_at) \
+                     disc_number, reason, source, source_task_id, state, created_at, \
+                     duration_seconds, expected_duration_seconds) \
                      VALUES (?1, 'held', ?2, ?2, ?3, ?4, ?5, 1, 1, ?6, 'soulseek', 't-intake', \
-                     'held', 1)",
-                    rusqlite::params![entry, path, release, release_track, recording, reason],
+                     'held', 1, ?7, ?8)",
+                    rusqlite::params![
+                        entry,
+                        path,
+                        release,
+                        release_track,
+                        recording,
+                        reason,
+                        lengths.0,
+                        lengths.1
+                    ],
                 )?;
                 Ok(entry)
             })
@@ -6459,14 +6477,13 @@ impl IntakeCase {
             user_id: "u-ada".to_owned(),
             admin: false,
         };
-        if self
-            .rig
-            .acquire
-            .held
-            .import(&viewer, entry, None, "u-ada")
-            .await
-            .is_ok()
-        {
+        let held = &self.rig.acquire.held;
+        let acted = if door == Door::HeldRecheck {
+            held.recheck(&viewer, entry, None, "u-ada").await
+        } else {
+            held.import(&viewer, entry, None, "u-ada").await
+        };
+        if acted.is_ok_and(|acted| acted.held.is_empty()) {
             assert!(!copy.exists(), "an imported held copy is removed");
             return None;
         }
@@ -6690,6 +6707,31 @@ async fn one_plan_and_gate_give_one_outcome_through_every_door() {
                 assert!(!starred, "{name}, through {door:?}: the star moved");
             }
         }
+    }
+}
+
+// Only a measured length outranks a fingerprint. An MP3 with no frame
+// count has only an estimated length: inside 3 s of the track's, it still
+// does not vouch for a file AcoustID hears as another recording, so the
+// app's own choice holds the file and a re-check keeps it held.
+#[tokio::test]
+async fn an_estimated_length_never_outranks_a_fingerprint() {
+    let row = Row {
+        have: Have::Nothing,
+        file: "mp3_vbr_no_xing.mp3",
+        upgrade: false,
+        heard: Some(false),
+        length_agrees: true,
+        taken: false,
+        changes: 0,
+        gate: Gate::Automatic,
+        held_for: Reason::FingerprintMismatch,
+        expect: Seen::Held(Reason::FingerprintMismatch),
+    };
+    for door in [Door::Place, Door::HeldRecheck] {
+        let case = IntakeCase::new(&row).await;
+        let seen = case.run(&row, door).await;
+        assert_eq!(seen, row.expect, "through {door:?}");
     }
 }
 

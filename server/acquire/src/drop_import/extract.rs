@@ -76,10 +76,69 @@ fn display_stem(path: &Path) -> String {
     }
 }
 
+/// Marks a working folder; see [`working_folder`].
+const WORKING_SUFFIX: &str = ".unpacking";
+
+/// The working folder an archive unpacks into before it takes its own
+/// name: `.003_Album.zip.unpacking` for `003_Album.zip`. Grouping skips
+/// dot folders, so a half-unpacked archive is never imported.
+fn working_folder(archive: &Path) -> Option<PathBuf> {
+    let name = archive.file_name()?.to_string_lossy();
+    Some(archive.with_file_name(format!(".{name}{WORKING_SUFFIX}")))
+}
+
+/// The archive a working folder belongs to.
+fn archive_of(working: &Path) -> Option<PathBuf> {
+    let name = working.file_name()?.to_str()?;
+    let archive = name.strip_prefix('.')?.strip_suffix(WORKING_SUFFIX)?;
+    (!archive.is_empty()).then(|| working.with_file_name(archive))
+}
+
+/// Give an unpacked archive's folder the user's own name for it, or the
+/// staged name when another archive took that one.
+fn move_into_place(staging_dir: &Path, archive: &Path, working: &Path) -> std::io::Result<()> {
+    let display = safe_component(&display_stem(archive));
+    let raw = safe_component(&display_stem_raw(archive));
+    let mut names = vec![display, raw.clone()];
+    names.extend((2..100).map(|n| format!("{raw} ({n})")));
+    let target = names
+        .into_iter()
+        .map(|name| staging_dir.join(name))
+        .find(|path| std::fs::symlink_metadata(path).is_err())
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::AlreadyExists))?;
+    std::fs::rename(working, target)
+}
+
+/// Settle the working folders a stopped run left. One whose archive is
+/// still there was cut off mid-unpack and goes; the archive unpacks again.
+/// One whose archive is gone was finished, and takes its name.
+fn settle_working_folders(staging_dir: &Path) -> std::io::Result<()> {
+    for child in sorted_children(staging_dir)? {
+        let Some(archive) = archive_of(&child) else {
+            continue;
+        };
+        if !std::fs::symlink_metadata(&child)?.is_dir() {
+            continue;
+        }
+        let settled = if archive.is_file() {
+            std::fs::remove_dir_all(&child)
+        } else {
+            move_into_place(staging_dir, &archive, &child)
+        };
+        if let Err(error) = settled {
+            tracing::warn!(path = %child.display(), %error, "unpacking folder left by a stop not settled");
+        }
+    }
+    Ok(())
+}
+
 /// Unpack every archive in `staging_dir`, then group the audio into
-/// units. Notes say what was skipped and why, in plain words.
+/// units. Notes say what was skipped and why, in plain words. Safe to run
+/// again after a stop: each archive unpacks into a working folder that
+/// takes its name only once the archive is gone.
 pub fn extract_and_group(staging_dir: &Path) -> std::io::Result<(Vec<Unit>, Vec<String>)> {
     let mut notes = Vec::new();
+    settle_working_folders(staging_dir)?;
     for child in sorted_children(staging_dir)? {
         let is_zip = child.is_file()
             && child
@@ -88,17 +147,21 @@ pub fn extract_and_group(staging_dir: &Path) -> std::io::Result<(Vec<Unit>, Vec<
         if !is_zip {
             continue;
         }
-        let display = display_stem(&child);
-        let mut target = staging_dir.join(safe_component(&display));
-        if target.exists() {
-            target = staging_dir.join(safe_component(&display_stem_raw(&child)));
-        }
-        let label = format!("{display}.zip");
-        if let Err(note) = safe_extract(&child, &target, &label, &mut notes) {
-            notes.push(note);
+        let Some(working) = working_folder(&child) else {
+            continue;
+        };
+        let label = format!("{}.zip", display_stem(&child));
+        let unpacked = safe_extract(&child, &working, &label, &mut notes);
+        if let Err(note) = &unpacked {
+            notes.push(note.clone());
         }
         if let Err(error) = std::fs::remove_file(&child) {
             tracing::warn!(path = %child.display(), %error, "unpacked archive not removed");
+        }
+        if unpacked.is_ok()
+            && let Err(error) = move_into_place(staging_dir, &child, &working)
+        {
+            tracing::warn!(path = %working.display(), %error, "unpacked archive not named");
         }
     }
 
@@ -109,7 +172,10 @@ pub fn extract_and_group(staging_dir: &Path) -> std::io::Result<(Vec<Unit>, Vec<
     let mut loose = Vec::new();
     for child in sorted_children(staging_dir)? {
         let kind = std::fs::symlink_metadata(&child)?.file_type();
-        if kind.is_dir() {
+        let hidden = child
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with('.'));
+        if kind.is_dir() && !hidden {
             let mut audio = Vec::new();
             walk_audio(&child, 0, &mut audio);
             for file in audio {
@@ -202,55 +268,42 @@ fn walk_audio(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Extract only audio entries, refusing traversal, absolute paths and
-/// archives that unpack far larger than they claim. An entry holding more
-/// than its header declares fails to read, so the archive is refused as
-/// damaged; the cap on bytes written is our own bound on top. An `Err` is
-/// a note for the person: the archive was not usable, and nothing from it
-/// stays.
+/// Extract only audio entries into a fresh `target_dir`, refusing
+/// traversal, absolute paths and archives that unpack far larger than
+/// they claim. An entry holding more than its header declares fails to
+/// read, so the archive is refused as damaged; the cap on bytes written
+/// is our own bound on top. An `Err` is a note for the person: the
+/// archive was not usable, and nothing from it stays.
 fn safe_extract(
     archive: &Path,
     target_dir: &Path,
     label: &str,
     notes: &mut Vec<String>,
 ) -> Result<(), String> {
-    let fresh = !target_dir.exists();
-    let mut unpacked: Vec<PathBuf> = Vec::new();
-    let result = unpack(archive, target_dir, label, notes, &mut unpacked);
+    discard(target_dir);
+    let result = unpack(archive, target_dir, label, notes);
     if result.is_err() {
-        discard(target_dir, fresh, &unpacked);
+        discard(target_dir);
     }
     result
 }
 
-/// Remove what a failed archive unpacked: its whole folder when the
-/// unpacking made it, else only the files it wrote.
-fn discard(target_dir: &Path, fresh: bool, unpacked: &[PathBuf]) {
-    if fresh {
-        if let Err(error) = std::fs::remove_dir_all(target_dir)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(path = %target_dir.display(), %error, "failed archive's files not removed");
-        }
-        return;
-    }
-    for path in unpacked {
-        if let Err(error) = std::fs::remove_file(path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(path = %path.display(), %error, "failed archive's file not removed");
-        }
+/// Remove an archive's working folder and everything in it.
+fn discard(target_dir: &Path) {
+    if let Err(error) = std::fs::remove_dir_all(target_dir)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(path = %target_dir.display(), %error, "failed archive's files not removed");
     }
 }
 
-/// Unpack `archive` into `target_dir`, adding each file written to
-/// `unpacked`.
+/// Unpack `archive` into `target_dir`. Of two entries whose names come
+/// out the same, the first is kept and a note counts the rest.
 fn unpack(
     archive: &Path,
     target_dir: &Path,
     label: &str,
     notes: &mut Vec<String>,
-    unpacked: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
     let corrupt = || format!("Couldn't read {label}: the archive is damaged.");
     let file = std::fs::File::open(archive).map_err(|_| corrupt())?;
@@ -284,6 +337,7 @@ fn unpack(
         .saturating_add(1 << 20)
         .min(MAX_ARCHIVE_BYTES);
     let mut skipped = 0usize;
+    let mut same_name = 0usize;
     let mut written: u64 = 0;
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index).map_err(|_| corrupt())?;
@@ -306,8 +360,18 @@ fn unpack(
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|_| corrupt())?;
         }
-        let mut out = std::fs::File::create(&dest).map_err(|_| corrupt())?;
-        unpacked.push(dest);
+        let mut out = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest)
+        {
+            Ok(out) => out,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                same_name += 1;
+                continue;
+            }
+            Err(_) => return Err(corrupt()),
+        };
         let copied = copy_entry(&mut entry, &mut out, cap, &mut written);
         drop(out);
         let name = raw.to_string_lossy();
@@ -328,6 +392,12 @@ fn unpack(
     if skipped > 0 {
         let noun = if skipped == 1 { "file" } else { "files" };
         notes.push(format!("{label}: ignored {skipped} non-audio {noun}."));
+    }
+    if same_name > 0 {
+        let noun = if same_name == 1 { "file" } else { "files" };
+        notes.push(format!(
+            "{label}: skipped {same_name} {noun} named the same as another."
+        ));
     }
     Ok(())
 }

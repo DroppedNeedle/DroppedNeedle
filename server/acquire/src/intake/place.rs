@@ -404,7 +404,7 @@ async fn plan(
                     if specs::fingerprint_disagrees(
                         heard.get(&file.to_string()).map_or(&[], Vec::as_slice),
                         &release_track.recording_id,
-                        batch.files[*file].file.header.duration_seconds,
+                        measured_seconds(&batch.files[*file].file.header),
                         release_track.length_ms.map(|ms| ms as f64 / 1000.0),
                     ) {
                         refused.insert(*file);
@@ -449,7 +449,7 @@ async fn plan(
                     } else if specs::fingerprint_disagrees(
                         recordings,
                         &release_track.recording_id,
-                        batch.files[*file].file.header.duration_seconds,
+                        measured_seconds(&batch.files[*file].file.header),
                         release_track.length_ms.map(|ms| ms as f64 / 1000.0),
                     ) {
                         refused.insert(*file);
@@ -602,4 +602,10 @@ fn extra_file(file: &LandedFile) -> ExtraFile {
         disc: file.tag.disc_number.max(1),
         position: file.tag.track_number,
     }
+}
+
+/// A file's length when it was measured; an estimate never vouches for a
+/// track against its fingerprint.
+fn measured_seconds(header: &droppedneedle_library::tags::read::HeaderInfo) -> Option<f64> {
+    header.duration_seconds.filter(|_| header.duration_measured)
 }

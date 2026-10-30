@@ -1231,6 +1231,65 @@ async fn a_cut_off_upload_is_grouped_whole_or_not_at_all() {
     assert_eq!(folders, ["Album A", "Album B"]);
 }
 
+/// A stop while an upload unpacks leaves no half archive behind: an
+/// unpacking folder whose archive is still there is thrown away and the
+/// archive unpacks again whole, and one whose archive is gone had finished
+/// and takes its name. Each gives one item.
+#[tokio::test]
+async fn an_archive_cut_off_while_unpacking_unpacks_again_whole() {
+    let (_db, library, dir, auth) = bundles().await;
+    let acquire = acquire_over(
+        &auth,
+        &library,
+        Arc::new(LibraryLanding::new(
+            &library,
+            every_priority(Arc::new(OneRelease(release(&["Mysterons"], &[None])))),
+        )),
+    );
+    let staging = dir.join("cut-unpack");
+    std::fs::create_dir_all(&staging).expect("staging");
+    let mut zip = zip::ZipWriter::new(
+        std::fs::File::create(staging.join("001_Dummy.zip")).expect("zip file"),
+    );
+    let stored =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for entry in ["01 Mysterons.flac", "02 Sour Times.flac"] {
+        zip.start_file(entry, stored).expect("zip entry");
+        zip.write_all(b"audio").expect("zip bytes");
+    }
+    zip.finish().expect("zip finish");
+    let partial = staging.join(".001_Dummy.zip.unpacking");
+    std::fs::create_dir_all(&partial).expect("partial folder");
+    std::fs::write(partial.join("01 Mysterons.flac"), b"aud").expect("partial file");
+    let finished = staging.join(".002_Third.zip.unpacking");
+    std::fs::create_dir_all(&finished).expect("finished folder");
+    std::fs::write(finished.join("01 Roads.flac"), b"audio").expect("finished file");
+    let store = droppedneedle_acquire::drop_import::store::DropStore::new(acquire.db.clone());
+    store
+        .create_job(
+            "job-cut",
+            "u-curator",
+            "Cora",
+            "albums.zip",
+            &staging.to_string_lossy(),
+        )
+        .await
+        .expect("job");
+
+    acquire.drops.sweep_stale().await.unwrap();
+    let job = store.get_job("job-cut").await.expect("read").expect("job");
+    let mut units: Vec<(&str, usize)> = job
+        .items
+        .iter()
+        .map(|item| (item.folder_name.as_str(), item.staging_paths.len()))
+        .collect();
+    units.sort_unstable();
+    assert_eq!(units, [("Dummy", 2), ("Third", 1)]);
+    let whole = std::fs::read(staging.join("Dummy").join("01 Mysterons.flac")).expect("file");
+    assert_eq!(whole, b"audio", "the archive unpacked again whole");
+    assert!(!partial.exists() && !finished.exists());
+}
+
 /// An upload whose declared length is over the 8 GB limit is refused with
 /// 413 before any of it is written, so a person learns the cap at once
 /// instead of after sending gigabytes.
