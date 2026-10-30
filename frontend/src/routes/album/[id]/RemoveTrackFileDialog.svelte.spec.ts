@@ -15,6 +15,7 @@ describe('RemoveTrackFileDialog', () => {
 		});
 
 		await expect.element(screen.getByText('Aria')).toBeVisible();
+		await expect.element(screen.getByText(/goes to the recycle bin/)).toBeVisible();
 		await screen.getByRole('button', { name: 'Remove' }).click();
 
 		expect(onconfirm).toHaveBeenCalledTimes(1);
