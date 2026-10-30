@@ -396,10 +396,8 @@ pub fn plan(
     for found in found {
         let row = &found.row;
         let rel = row.dest_rel.as_str();
-        let (Some(track_id), Some(file)) = (
-            row.replaces.as_ref().and_then(|r| r.track_id.clone()),
-            found.file.as_ref(),
-        ) else {
+        let track_id = row.replaces.as_ref().and_then(|r| r.track_id.clone());
+        let Some(file) = found.file.as_ref() else {
             tracing::warn!(journal_id = %row.id, "a removal row has no planned file; nothing is put back");
             return Err(Refusal::Changed);
         };
@@ -460,6 +458,48 @@ pub fn plan(
             size: stat.size,
             sha256: sha256.clone(),
         });
+        let Some(track_id) = track_id else {
+            // A sidecar comes back when its copy is there and its place is
+            // free; one that can't is named, and the tracks still come
+            // back.
+            if std::fs::symlink_metadata(&home).is_ok() {
+                if home_holds(&home, std::slice::from_ref(&file.fingerprint)).is_none() {
+                    missing.push(rel.to_owned());
+                }
+                continue;
+            }
+            let (Some((copy_stat, _)), Some(fingerprint)) = (&copy_read, copy_print) else {
+                missing.push(rel.to_owned());
+                continue;
+            };
+            let root = registry
+                .resolve(&row.dest_root)
+                .ok_or(Refusal::OutsideRoot)?;
+            let policy = root.policy_for(&home);
+            if policy == EffectivePolicy::Excluded {
+                missing.push(rel.to_owned());
+                continue;
+            }
+            let own_bytes = fingerprint == file.fingerprint;
+            items.push(PutBackItem {
+                track_id: None,
+                root_id: row.dest_root.clone(),
+                relative_path: rel.to_owned(),
+                track_rel: rel.to_owned(),
+                copy: copy.to_string_lossy().into_owned(),
+                copy_in,
+                fingerprint,
+                copy_stat: *copy_stat,
+                policy,
+                policy_revision: registry.fingerprint().to_owned(),
+                home_already: false,
+                linkable: copy_in != CopyIn::OldBin
+                    && own_bytes
+                    && home_device(&home).is_some_and(|dev| dev == copy_stat.dev),
+                removal_row: row.id.clone(),
+            });
+            continue;
+        };
         let gone = format!("{HIDDEN_PREFIX}gone/{track_id}/{rel}");
         let track = match &found.track {
             Some((root, at, availability))
@@ -534,7 +574,7 @@ pub fn plan(
             return Err(Refusal::Excluded);
         }
         items.push(PutBackItem {
-            track_id,
+            track_id: Some(track_id),
             root_id: row.dest_root.clone(),
             relative_path: rel.to_owned(),
             track_rel,
@@ -551,7 +591,7 @@ pub fn plan(
             removal_row: row.id.clone(),
         });
     }
-    if items.is_empty() {
+    if !items.iter().any(|item| item.track_id.is_some()) {
         return Err(if missing.is_empty() {
             Refusal::NothingToRestore
         } else {
@@ -731,8 +771,12 @@ pub(super) fn journal_ids(bundle_id: &str, put_back: &PutBack) -> Vec<String> {
 
 /// The planned item a `put_back` row places.
 pub(super) fn item_of<'a>(put_back: &'a PutBack, journal: &FileJournal) -> Option<&'a PutBackItem> {
-    let track = journal.track_id.as_deref()?;
-    put_back.items.iter().find(|item| item.track_id == track)
+    put_back
+        .items
+        .iter()
+        .enumerate()
+        .find(|(index, _)| journal_id(&journal.bundle_id, *index) == journal.id)
+        .map(|(_, item)| item)
 }
 
 /// Copy the item's copy, checked where it is, into `temp` with permission
@@ -952,7 +996,7 @@ pub(super) fn read_placed(
     clock: &dyn Clock,
 ) -> Result<PutBackCommit, PublishError> {
     let mut indexed = Vec::with_capacity(put_back.items.len());
-    for item in &put_back.items {
+    for item in put_back.items.iter().filter(|item| item.track_id.is_some()) {
         let home = sandbox.resolve_removal(&item.root_id, &item.relative_path)?;
         indexed.push(super::publisher::index_file(
             &item.root_id,
@@ -987,15 +1031,19 @@ pub(super) fn commit(
             format!("removal {} was already put back", put_back.removal_bundle).into(),
         ));
     }
-    for (item, indexed) in put_back.items.iter().zip(&commit.indexed) {
+    let tracks = put_back
+        .items
+        .iter()
+        .filter_map(|item| Some((item, item.track_id.as_deref()?)));
+    for ((item, track_id), indexed) in tracks.zip(&commit.indexed) {
         let changed = || {
             PublishError::Catalog(
-                format!("track {} changed under bundle {bundle_id}", item.track_id).into(),
+                format!("track {track_id} changed under bundle {bundle_id}").into(),
             )
         };
         let place: Option<(String, String, String)> = conn
             .prepare_cached(sql::TRACK_PLACE.text())?
-            .query_row(params![item.track_id], |row| {
+            .query_row(params![track_id], |row| {
                 let row = sql::TrackPlace::read(row)?;
                 Ok((row.root_id, row.relative_path, row.availability))
             })
@@ -1021,8 +1069,7 @@ pub(super) fn commit(
                 if availability == "indexed" {
                     return Err(PublishError::Catalog(
                         format!(
-                            "track {occupant} is still listed where track {} goes back",
-                            item.track_id
+                            "track {occupant} is still listed where track {track_id} goes back"
                         )
                         .into(),
                     ));
@@ -1036,7 +1083,7 @@ pub(super) fn commit(
             }
             conn.prepare_cached(sql::TRACK_SET_PATH.text())?
                 .execute(params![
-                    item.track_id,
+                    track_id,
                     item.relative_path,
                     indexed.absolute_path,
                     sha256_hex(item.relative_path.as_bytes()),
@@ -1046,24 +1093,20 @@ pub(super) fn commit(
             conn,
             indexed,
             &crate::scan::sqlite_store::Adopted {
-                track_id: &item.track_id,
+                track_id,
                 album_id: None,
             },
         )?;
-        if adopted != item.track_id {
+        if adopted != track_id {
             return Err(PublishError::Catalog(
-                format!(
-                    "the file put back took track {adopted}, not {}",
-                    item.track_id
-                )
-                .into(),
+                format!("the file put back took track {adopted}, not {track_id}").into(),
             ));
         }
     }
     let track_ids: Vec<&str> = put_back
         .items
         .iter()
-        .map(|item| item.track_id.as_str())
+        .filter_map(|item| item.track_id.as_deref())
         .collect();
     super::remove::record_action(
         conn,

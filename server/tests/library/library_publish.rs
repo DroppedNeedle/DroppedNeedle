@@ -2845,6 +2845,7 @@ fn removal_bundle(
         sandbox,
         "bundle-r",
         &targets,
+        &[],
         "FILE_RECYCLED",
         None,
         None,
@@ -2915,6 +2916,111 @@ fn a_crash_after_the_first_of_two_removals_unwinds() {
         files_under(&fix.dir.join("bin")).is_empty(),
         "nothing in the bin"
     );
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// [`removal_bundle`] with `sidecars` (path, the folder it goes with when
+/// no music is left there) going with the tracks.
+fn removal_with_sidecars(
+    fix: &Fixture,
+    tracks: &[(&str, &str)],
+    sidecars: &[(&str, Option<&str>)],
+) -> PlanBundle {
+    let mut bundle = removal_bundle(fix, &fix.sandbox, "music", tracks);
+    let targets: Vec<remove::SidecarTarget> = sidecars
+        .iter()
+        .map(|(rel, emptied)| remove::SidecarTarget {
+            root_id: "music".to_string(),
+            relative_path: (*rel).to_string(),
+            emptied_folder: emptied.map(str::to_owned),
+            probe: remove::probe(
+                fix.sandbox.removal_root_dir("music").unwrap(),
+                &fix.sandbox.resolve_removal("music", rel).unwrap(),
+            )
+            .unwrap(),
+        })
+        .collect();
+    let with = remove::plan(
+        &restart(fix),
+        &fix.sandbox,
+        "bundle-r",
+        &[],
+        &targets,
+        "FILE_RECYCLED",
+        None,
+        None,
+        std::time::SystemTime::now(),
+    )
+    .unwrap();
+    if let Some(removal) = bundle.removal.as_mut() {
+        removal.sidecars = with.sidecars;
+    }
+    bundle
+}
+
+/// A removal that stops after its track's file is journaled, before its
+/// sidecars are, unwinds: the track's file and every sidecar stay home.
+#[test]
+fn a_crash_before_a_removals_sidecars_are_staged_unwinds_them_too() {
+    let fix = fixture("remove-sidecar-crash");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    write_source(&fix, "music", "staging/a.lrc", b"[00:01.00]words");
+    write_source(&fix, "music", "staging/cover.jpg", b"jpeg");
+    let bundle = removal_with_sidecars(
+        &fix,
+        &[("track-a", "staging/a.flac")],
+        &[("staging/a.lrc", None), ("staging/cover.jpg", None)],
+    );
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterFirstFileStaged));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &BTreeMap::new()),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+
+    reconcile(&restart(&fix), &fix.sandbox).unwrap();
+    for rel in ["staging/a.flac", "staging/a.lrc", "staging/cover.jpg"] {
+        assert!(
+            fix.sandbox.resolve("music", rel).unwrap().is_file(),
+            "{rel} is home"
+        );
+    }
+    assert_eq!(track_row(&open_db(&fix), "track-a").1, "indexed");
+    assert!(files_under(&fix.dir.join("bin")).is_empty());
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A folder's sidecars go only while no track is listed under it: one
+/// listed there by the time the removal commits refuses the removal, and
+/// its unwind puts every file back.
+#[test]
+fn a_track_listed_in_a_folder_whose_sidecars_go_refuses_the_removal() {
+    let fix = fixture("remove-sidecar-listed");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    write_source(&fix, "music", "staging/cover.jpg", b"jpeg");
+    let bundle = removal_with_sidecars(
+        &fix,
+        &[("track-a", "staging/a.flac")],
+        &[("staging/cover.jpg", Some("staging"))],
+    );
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &BTreeMap::new()),
+        Err(PublishError::Catalog(_))
+    ));
+
+    for rel in ["staging/a.flac", "staging/cover.jpg"] {
+        assert!(
+            fix.sandbox.resolve("music", rel).unwrap().is_file(),
+            "{rel} is home"
+        );
+    }
+    assert_eq!(track_row(&open_db(&fix), "track-a").1, "indexed");
+    assert!(files_under(&fix.dir.join("bin")).is_empty());
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
@@ -3175,6 +3281,7 @@ fn upgrade_bundle(
         &fix.sandbox,
         "bundle-u",
         &[target],
+        &[],
         "FILE_RECYCLED",
         None,
         None,
@@ -3429,6 +3536,7 @@ fn a_removed_file_edited_in_place_still_reaches_the_bin() {
 
     // The bin on another disk: the bytes copied are the ones read now.
     let from = fix.sandbox.resolve("music", "staging/c.flac").unwrap();
+    std::fs::create_dir_all(from.parent().unwrap()).unwrap();
     std::fs::write(&from, b"removed-library-file").unwrap();
     let known = publish::paths::FileStat::read(&from).unwrap();
     edit_keeping_size_and_mtime(&from);
