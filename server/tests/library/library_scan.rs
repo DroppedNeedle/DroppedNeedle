@@ -424,6 +424,54 @@ async fn a_carried_file_gets_its_edition_hints_from_its_tags() {
     );
 }
 
+/// Only an MP3 can have an estimated length: lofty counts its frames from
+/// a Xing, Info or VBRI header and otherwise divides by the first frame's
+/// bitrate. The scan records which. An MP3 row that does not say yet (from
+/// before the scan recorded it) is filled by the next scan from the first
+/// frame alone, without offering the album to identification again or
+/// writing the file.
+#[tokio::test]
+async fn a_scan_records_whether_each_length_was_measured() {
+    let scratch = ScratchDir::new("scan-measured");
+    let music = scratch.join("music");
+    plant(&music, "Album/01.flac", "flac_full_01.flac");
+    plant(&music, "Album/02.mp3", "mp3_full_01.mp3");
+    plant(&music, "Album/03.mp3", "mp3_vbr_no_xing.mp3");
+    let before = snapshot(&music);
+    let library = bundle(&scratch).await;
+    let as_read = |library: &LibrarySetup| {
+        query(
+            library,
+            "SELECT COUNT(*) FROM local_tracks WHERE (relative_path, duration_measured) IN \
+             (VALUES ('Album/01.flac', 1), ('Album/02.mp3', 1), ('Album/03.mp3', 0))",
+        )
+    };
+
+    let run = scan(&library).await;
+    assert_eq!(count(&run, Counter::Indexed), 3);
+    assert_eq!(
+        as_read(&library),
+        3,
+        "a VBR MP3 without a header is estimated"
+    );
+
+    library
+        .scan_store
+        .db()
+        .run_sql("UPDATE local_tracks SET duration_measured = NULL WHERE file_format = 'mp3'")
+        .expect("rows from before the flag");
+    let jobs = query(&library, "SELECT COUNT(*) FROM library_identify_jobs");
+    let again = scan(&library).await;
+    assert_eq!(count(&again, Counter::Unchanged), 3);
+    assert_eq!(as_read(&library), 3, "the next scan fills the flag");
+    assert_eq!(
+        query(&library, "SELECT COUNT(*) FROM library_identify_jobs"),
+        jobs,
+        "the flag alone does not offer the album again"
+    );
+    assert_eq!(snapshot(&music), before, "scans never write music files");
+}
+
 /// A vanished file is marked missing, never deleted. A scope that loses
 /// most of its files at once (an unmounted share) is held back instead.
 #[tokio::test]

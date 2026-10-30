@@ -549,7 +549,7 @@ impl SqliteIdentifyStore {
                  t.embedded_release_track_mbid, t.embedded_release_mbid, \
                  t.embedded_release_group_mbid, t.membership_locked, t.root_id, \
                  t.relative_path, t.stat_revision, h.media, h.barcode, h.catalog_number, \
-                 h.release_country, h.total_discs \
+                 h.release_country, h.total_discs, t.duration_measured \
                  FROM local_tracks t LEFT JOIN local_track_edition_tags h \
                  ON h.local_track_id = t.id \
                  WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
@@ -578,6 +578,7 @@ impl SqliteIdentifyStore {
                         duration_exact: row
                             .get::<_, Option<f64>>(5)?
                             .filter(|seconds| *seconds > 0.0),
+                        duration_measured: row.get::<_, Option<i64>>(19)? == Some(1),
                         media: row.get(14)?,
                         barcode: row.get(15)?,
                         catalog_number: row.get(16)?,

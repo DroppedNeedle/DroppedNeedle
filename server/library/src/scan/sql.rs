@@ -74,6 +74,13 @@ droppedneedle_kernel::sql! {
     /// Whether track `?1` has its edition hints stored.
     pub(super) HAS_EDITION_TAGS = "SELECT EXISTS(SELECT 1 FROM local_track_edition_tags \
              WHERE local_track_id = ?1)";
+    /// Whether track `?1`'s row does not say if its length was measured.
+    pub(super) LENGTH_UNREAD = "SELECT EXISTS(SELECT 1 FROM local_tracks \
+             WHERE id = ?1 AND duration_measured IS NULL)";
+    /// Record whether track `?1`, read at stat revision `?2`, has a measured
+    /// length (`?3`), unless the row moved on since or already says.
+    pub(super) FILL_LENGTH_MEASURED = "UPDATE local_tracks SET duration_measured = ?3 \
+             WHERE id = ?1 AND stat_revision = ?2 AND duration_measured IS NULL";
     /// Store the edition hints of track `?1` read at stat revision `?2`, unless
     /// the row moved on since or already holds them.
     pub(super) FILL_EDITION_TAGS = "INSERT INTO local_track_edition_tags (local_track_id, media, \

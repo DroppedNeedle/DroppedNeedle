@@ -39,6 +39,15 @@ pub enum TagReadError {
 /// write to the file: no padding rewrites, no mtime restores, no sidecars.
 pub trait TagReader: Send + Sync {
     fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError>;
+
+    /// Whether the file's length is measured
+    /// ([`crate::tags::read::HeaderInfo::duration_measured`]), for a
+    /// catalog row that does not say. A reader that can tell from less
+    /// than a full read overrides this.
+    fn length_measured(&self, path: &Path) -> Result<bool, TagReadError> {
+        self.read_tags(path)
+            .map(|read| read.header.duration_measured)
+    }
 }
 
 /// Null tag reader: every file reads clean with empty tags, so tests can

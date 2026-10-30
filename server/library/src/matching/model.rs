@@ -18,6 +18,9 @@ pub struct LocalTrack {
     /// 1 when the tags say nothing.
     pub disc_number: u32,
     pub duration_secs: Option<f64>,
+    /// The length was measured from the audio, not estimated from an
+    /// MP3's bitrate. Only a measured length settles anything on its own.
+    pub duration_measured: bool,
     pub recording_mbid: Option<String>,
     pub release_track_mbid: Option<String>,
     pub release_mbid: Option<String>,

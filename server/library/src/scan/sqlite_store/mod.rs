@@ -37,7 +37,7 @@ use super::revision::{exact_stat_revision, legacy_mtime_eps_seconds};
 use super::stop::{Backoff, RunStop, retry_busy};
 use super::store::{
     CatalogEntry, ClassifyInput, CommitIndexedItem, IndexWindow, InventoryPage, RevisionKind,
-    ScanStoreError, WindowOutcome,
+    ScanStoreError, UnreadRows, WindowOutcome,
 };
 use droppedneedle_kernel::db::writer::Lane;
 use droppedneedle_kernel::db::{ChunkedError, Db, fold_text};

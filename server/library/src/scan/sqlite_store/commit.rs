@@ -54,7 +54,7 @@ use crate::publish::HIDDEN_PREFIX;
 use crate::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
-use crate::scan::store::{EditionFill, IndexWindow, WindowOutcome};
+use crate::scan::store::{EditionFill, IndexWindow, LengthFill, WindowOutcome};
 use crate::tags::{AudioArtistCredit, AudioTag};
 use droppedneedle_kernel::db::savepoint;
 
@@ -1272,11 +1272,12 @@ fn write_item(
          bit_depth, channels, replaygain_track_gain, replaygain_album_gain, \
          replaygain_track_peak, replaygain_album_peak, availability, ingest_source, \
          imported_at, membership_source, desired_policy_revision, applied_policy_revision, \
-         applied_policy, title_provenance, album_title_provenance, album_artist_provenance) \
+         applied_policy, title_provenance, album_title_provenance, album_artist_provenance, \
+         duration_measured) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'exact', ?10, ?11, ?12, ?13, ?14, ?15, \
          ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, \
          ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, \
-         'indexed', 'scan', ?11, 'automatic', ?50, ?50, ?51, ?52, ?53, ?54) \
+         'indexed', 'scan', ?11, 'automatic', ?50, ?50, ?51, ?52, ?53, ?54, ?55) \
          ON CONFLICT (root_id, relative_path) DO UPDATE SET \
          local_album_id = CASE WHEN local_tracks.membership_locked = 1 \
            THEN local_tracks.local_album_id ELSE excluded.local_album_id END, \
@@ -1306,7 +1307,8 @@ fn write_item(
          embedded_release_track_mbid = excluded.embedded_release_track_mbid, \
          embedded_artist_mbid = excluded.embedded_artist_mbid, \
          embedded_album_artist_mbid = excluded.embedded_album_artist_mbid, \
-         duration_seconds = excluded.duration_seconds, file_format = excluded.file_format, \
+         duration_seconds = excluded.duration_seconds, \
+         duration_measured = excluded.duration_measured, file_format = excluded.file_format, \
          bit_rate = excluded.bit_rate, sample_rate = excluded.sample_rate, \
          bit_depth = excluded.bit_depth, channels = excluded.channels, \
          replaygain_track_gain = excluded.replaygain_track_gain, \
@@ -1379,6 +1381,7 @@ fn write_item(
         title_provenance,
         album_title_provenance,
         album_artist_provenance,
+        header.duration_measured,
     ])?;
     // The row's id and album as stored (a locked membership keeps its album).
     let (track_id, stored_album): (String, String) = tx
@@ -2975,6 +2978,7 @@ fn write_window(
         }
     }
     let (filled, relook) = fill_edition_tags(tx, &window.edition_fills)?;
+    let measured = fill_length_measured(tx, &window.length_fills)?;
     for album_id in &relook {
         if !held_back(tx, &window.run_id, album_id)? && offer_again(tx, album_id, now_ms)? {
             outcome.enqueued += 1;
@@ -3003,7 +3007,7 @@ fn write_window(
     }
     // New music shows as the scan goes: a window that wrote a catalog row
     // moves the revision with it.
-    if outcome.committed > 0 || filled > 0 {
+    if outcome.committed > 0 || filled > 0 || measured > 0 {
         bump_catalog(tx)?;
     }
     mark_window(tx, window, &indexed, &failed, &adjust)?;
@@ -3103,6 +3107,19 @@ fn fill_edition_tags(
     Ok((filled, relook))
 }
 
+/// Record whether each unchanged file's length was measured, on rows
+/// that did not say. Nothing is offered to identification for it: the
+/// flag only takes an estimated length out of the rules that settle on a
+/// length alone. Returns how many rows were written.
+fn fill_length_measured(tx: &Connection, fills: &[LengthFill]) -> rusqlite::Result<usize> {
+    let mut fill_row = tx.prepare_cached(crate::scan::sql::FILL_LENGTH_MEASURED.text())?;
+    let mut filled = 0;
+    for fill in fills {
+        filled += fill_row.execute(params![fill.track_id, fill.stat_revision, fill.measured])?;
+    }
+    Ok(filled)
+}
+
 /// The two halves of a window, split by path: each carries only its own
 /// rows, their items, failed marks and counters, and its own range. `None`
 /// for a window of one row.
@@ -3153,6 +3170,12 @@ pub(super) fn split_window(window: &IndexWindow) -> Option<(IndexWindow, IndexWi
             .collect(),
         edition_fills: window
             .edition_fills
+            .iter()
+            .filter(|fill| first_half(&fill.root_id, &fill.relative_path) == first)
+            .cloned()
+            .collect(),
+        length_fills: window
+            .length_fills
             .iter()
             .filter(|fill| first_half(&fill.root_id, &fill.relative_path) == first)
             .cloned()

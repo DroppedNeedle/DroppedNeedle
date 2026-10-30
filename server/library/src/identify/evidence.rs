@@ -58,6 +58,7 @@ pub fn local_album(
             duration_secs: track
                 .duration_exact
                 .or(track.duration_secs.map(|seconds| seconds as f64)),
+            duration_measured: track.duration_measured,
             recording_mbid: usable_mbid(track.recording_mbid.as_deref(), &mut dropped),
             release_track_mbid: usable_mbid(track.release_track_mbid.as_deref(), &mut dropped),
             release_mbid: usable_mbid(track.release_mbid.as_deref(), &mut dropped),

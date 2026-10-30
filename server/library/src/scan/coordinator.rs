@@ -30,7 +30,9 @@ use super::roots::{PolicyResolver, RootRegistry, yielded_by, yielded_home};
 use super::seams::{Checkpoint, ScannedTags, TagReadError, TagReader};
 use super::sqlite_store::SqliteScanStore;
 use super::stop::RunStop;
-use super::store::{CommitIndexedItem, EditionFill, IndexWindow, ScanStoreError};
+use super::store::{
+    CommitIndexedItem, EditionFill, IndexWindow, LengthFill, ScanStoreError, UnreadRows,
+};
 use super::walk::InventoryScanner;
 use super::watcher::WorkWakeups;
 use crate::clock::LibraryClock as _;
@@ -1123,8 +1125,9 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 break;
             }
             let short_page = page.len() < INDEX_PAGE_SIZE;
-            // Unchanged files whose edition hints no scan stored (files
-            // carried over from v2) are read for those hints alone.
+            // Unchanged files whose rows lack what only the file can tell
+            // (edition hints no scan stored, or whether the length was
+            // measured) are read for that alone.
             let unchanged: Vec<String> = if run.kind == ScanKind::Incremental {
                 page.iter()
                     .filter(|item| {
@@ -1137,9 +1140,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 Vec::new()
             };
             let unread = self
-                .on_store(stop, move |store, stop| {
-                    store.without_edition_tags(stop, &unchanged)
-                })
+                .on_store(stop, move |store, stop| store.unread(stop, &unchanged))
                 .await?;
             for rows in page.chunks(INDEX_FLUSH_EVERY) {
                 let Some(window) = self
@@ -1203,9 +1204,25 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         futures_util::future::join_all(reads).await
     }
 
+    /// Whether each file's length is measured, read without its tags.
+    async fn measure_files(&self, items: &[&ScanInventoryItem]) -> Vec<Result<bool, TagReadError>> {
+        let reads = items.iter().map(|item| {
+            let tags = Arc::clone(&self.tags);
+            let path = PathBuf::from(&item.absolute_path);
+            let pool = self.pool.clone();
+            async move {
+                pool.run(move || tags.length_measured(&path))
+                    .await
+                    .unwrap_or(Err(TagReadError::Fatal))
+            }
+        });
+        futures_util::future::join_all(reads).await
+    }
+
     /// Classify one window of inventory rows and read the tags the
-    /// catalog needs: in full for new and changed files, and the edition
-    /// hints alone for unchanged tracks in `unread`. `None` when the
+    /// catalog needs: in full for new and changed files, the edition
+    /// hints alone for unchanged tracks in `unread`, and only whether the
+    /// length is measured for those that lack just that. `None` when the
     /// checkpoint says stop.
     async fn read_window(
         &self,
@@ -1213,7 +1230,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         rows: &[ScanInventoryItem],
         after: Option<(String, String)>,
         frozen_policy_revision: &str,
-        unread: &HashSet<String>,
+        unread: &UnreadRows,
         counts: &mut IndexCounts,
     ) -> Option<IndexWindow> {
         let last = rows.last()?;
@@ -1227,6 +1244,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         let force = run.kind == ScanKind::RescanFiles;
         let mut to_read: Vec<&ScanInventoryItem> = Vec::new();
         let mut to_fill: Vec<&ScanInventoryItem> = Vec::new();
+        let mut to_measure: Vec<&ScanInventoryItem> = Vec::new();
         for item in rows {
             let row = (item.root_id.clone(), item.relative_path.clone());
             window.counters.push((row.clone(), Counter::Inspected, 1));
@@ -1241,12 +1259,12 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 // Reconcile-only runs refresh inventory, never tags.
                 window.counters.push((row, Counter::Unchanged, 1));
                 counts.unchanged += 1;
-                if item
-                    .local_track_id
-                    .as_ref()
-                    .is_some_and(|id| unread.contains(id))
-                {
-                    to_fill.push(item);
+                if let Some(id) = &item.local_track_id {
+                    if unread.edition_tags.contains(id) {
+                        to_fill.push(item);
+                    } else if unread.length.contains(id) {
+                        to_measure.push(item);
+                    }
                 }
             } else if item.comparison_result != Verdict::CandidateMissing {
                 to_read.push(item);
@@ -1320,11 +1338,16 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 let Some(track_id) = item.local_track_id.clone() else {
                     continue;
                 };
-                // A file that cannot be read gets an empty row, so it is not
-                // tried on every scan; changing it brings a full read. A busy
-                // file is tried again next scan.
-                let (edition, disc_number) = match outcome {
-                    Ok(tags) => (tags.tag.edition, tags.tag.disc_number),
+                // A file that cannot be read gets an empty row and an
+                // estimated length, so it is not tried on every scan;
+                // changing it brings a full read. A busy file is tried again
+                // next scan.
+                let (edition, disc_number, measured) = match outcome {
+                    Ok(tags) => (
+                        tags.tag.edition,
+                        tags.tag.disc_number,
+                        tags.header.duration_measured,
+                    ),
                     Err(TagReadError::Fatal) => {
                         tracing::warn!(
                             path = item.relative_path,
@@ -1340,6 +1363,15 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                         continue;
                     }
                 };
+                if unread.length.contains(&track_id) {
+                    window.length_fills.push(LengthFill {
+                        root_id: item.root_id.clone(),
+                        relative_path: item.relative_path.clone(),
+                        track_id: track_id.clone(),
+                        stat_revision: item.stat_revision.clone(),
+                        measured,
+                    });
+                }
                 window.edition_fills.push(EditionFill {
                     root_id: item.root_id.clone(),
                     relative_path: item.relative_path.clone(),
@@ -1348,6 +1380,43 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                     edition,
                     disc_number,
                     effective_policy: item.effective_policy,
+                });
+            }
+        }
+        for chunk in to_measure.chunks(INDEX_CHECKPOINT_EVERY) {
+            if !self.check(&run.id, frozen_policy_revision) {
+                return None;
+            }
+            let outcomes = self.measure_files(chunk).await;
+            for (item, outcome) in chunk.iter().zip(outcomes) {
+                let Some(track_id) = item.local_track_id.clone() else {
+                    continue;
+                };
+                // As for the edition hints: a file that cannot be read
+                // counts as estimated, a busy one waits for the next scan.
+                let measured = match outcome {
+                    Ok(measured) => measured,
+                    Err(TagReadError::Fatal) => {
+                        tracing::warn!(
+                            path = item.relative_path,
+                            "could not read an unchanged file's audio header"
+                        );
+                        false
+                    }
+                    Err(TagReadError::Deferred) => {
+                        tracing::debug!(
+                            path = item.relative_path,
+                            "audio header of an unchanged file waits for the next scan"
+                        );
+                        continue;
+                    }
+                };
+                window.length_fills.push(LengthFill {
+                    root_id: item.root_id.clone(),
+                    relative_path: item.relative_path.clone(),
+                    track_id,
+                    stat_revision: item.stat_revision.clone(),
+                    measured,
                 });
             }
         }

@@ -7947,6 +7947,52 @@ async fn the_leftover_check_gets_a_table() {
     }
 }
 
+/// Migration 0106 records whether each track's length was measured. Every
+/// format but MP3 is, so those rows say so; an MP3 row waits for its
+/// next scan to read the first frame, and only 0 or 1 is taken.
+#[tokio::test]
+async fn only_mp3_rows_wait_to_say_whether_their_length_was_measured() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(105)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, ingest_source, imported_at, \
+         membership_source) VALUES \
+         ('flac', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 1, 's1', 'One', 'one', 'T', \
+         't', 'flac', 'scan', 1, 'automatic'), \
+         ('mp3', 'al1', 'r1', '/m/2.mp3', '2.mp3', 'h2', 1, 1, 's2', 'Two', 'two', 'T', 't', \
+         'MP3', 'scan', 1, 'automatic'), \
+         ('named', 'al1', 'r1', '/m/3.MP3', '3.MP3', 'h3', 1, 1, 's3', 'Three', 'three', \
+         'T', 't', 'unknown', 'scan', 1, 'automatic');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    apply_migrations(&pool).await.unwrap();
+
+    let rows: Vec<(String, Option<i64>)> =
+        sqlx::query_as("SELECT id, duration_measured FROM local_tracks ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        [
+            ("flac".to_owned(), Some(1)),
+            ("mp3".to_owned(), None),
+            ("named".to_owned(), None),
+        ]
+    );
+    let refused = "UPDATE local_tracks SET duration_measured = 2 WHERE id = 'mp3'";
+    assert!(sqlx::raw_sql(refused).execute(&pool).await.is_err());
+}
+
 /// The runner's `-- no-transaction` path and the table-rebuild recipe in the
 /// kernel's `schema::boot` module doc, proven on a parent that cascade,
 /// restrict and set-null children point at.

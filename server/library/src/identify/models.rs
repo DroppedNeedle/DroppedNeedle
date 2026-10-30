@@ -299,6 +299,10 @@ pub struct LocalTrackFacts {
     /// Length with its fraction of a second, when known.
     #[serde(default)]
     pub duration_exact: Option<f64>,
+    /// The length was measured from the audio, not estimated from an
+    /// MP3's bitrate. False when the scan has not said yet.
+    #[serde(default)]
+    pub duration_measured: bool,
     /// Edition hints from the tags (`MEDIA`, `BARCODE`, `CATALOGNUMBER`,
     /// `RELEASECOUNTRY`, `TOTALDISCS`).
     #[serde(default)]

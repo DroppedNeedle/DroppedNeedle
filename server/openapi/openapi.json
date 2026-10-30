@@ -53189,7 +53189,7 @@
             "items": {
               "type": "string"
             },
-            "description": "What ties the file to the release track (`embedded_id`, `acoustid`,\n`title_position_length`, or `track_id_elsewhere`: the recording ID,\non a file whose track ID belongs to another edition), or why it does\nnot."
+            "description": "What ties the file to the release track (`embedded_id`, `acoustid`,\n`title_position_length`, or `track_id_elsewhere`: the recording ID,\non a file whose track ID belongs to another edition), or why it does\nnot (`distant_pair`: paired, but not closely). `acoustid_overruled`\nfollows when the file's measured length set aside a fingerprint\nthat named another track."
           },
           "local_track_id": {
             "type": "string"

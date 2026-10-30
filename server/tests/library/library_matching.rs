@@ -15,7 +15,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle_library::identify;
+use droppedneedle_library::identify::evidence::local_album;
 use droppedneedle_library::matching::decide::REVIEW_CEILING;
+use droppedneedle_library::matching::score::{heard_on_candidates, match_release};
 use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
 use droppedneedle_providers::executor::{Prepared, Wire, WireAnswer, WireError};
 use droppedneedle_providers::musicbrainz::{self, MbSource};
@@ -24,8 +26,9 @@ use futures_util::future::BoxFuture;
 use identify::models::EvidenceClass;
 use identify::models::{
     DecisionSource, IdentificationOutcome, IdentifyKind, LocalAlbumFacts, LocalTrackFacts,
+    RecallResult,
 };
-use identify::providers::LiveProviders;
+use identify::providers::{FakeProviders, LiveProviders};
 use identify::service::{IdentifyDeps, IdentifyService};
 use identify::sources::NoFingerprints;
 use identify::sqlite::SqliteIdentifyStore;
@@ -215,10 +218,10 @@ fn seed_album(rig: &Rig, facts: &LocalAlbumFacts) {
                  tag_revision, title, title_folded, artist_name, album_title, \
                  album_title_folded, disc_number, track_number, duration_seconds, \
                  embedded_recording_mbid, embedded_release_track_mbid, embedded_release_mbid, \
-                 file_format, ingest_source, imported_at, membership_source) \
+                 duration_measured, file_format, ingest_source, imported_at, membership_source) \
                  VALUES (?1, ?2, 'root-1', '/music/' || ?1 || '.flac', ?1 || '.flac', ?1, 1, 1, \
                  'stat-1', 'tag-1', ?3, lower(?3), ?4, ?5, lower(?5), ?6, ?7, ?8, ?9, ?10, ?11, \
-                 'flac', 'scan', 0, 'automatic')",
+                 1, 'flac', 'scan', 0, 'automatic')",
                 params![
                     track.local_track_id,
                     album,
@@ -290,6 +293,98 @@ async fn run(rig: &Rig) -> identify::service::AttemptReport {
         .await
         .unwrap()
         .expect("attempt report")
+}
+
+/// Four files that fit the night's release track for track, by title and
+/// length, while AcoustID hears the second track's recording in the first.
+async fn heard_as_its_neighbour(
+    measured: Option<i64>,
+) -> (
+    identify::service::AttemptReport,
+    droppedneedle_library::matching::score::ReleaseMatch,
+) {
+    let tracks = [
+        ("Lamplight", 214),
+        ("Blue Hour", 251),
+        ("Night Shift", 198),
+        ("Last Train Home", 305),
+    ];
+    let release = Release {
+        id: STANDARD.to_owned(),
+        release_group_id: GROUP.to_owned(),
+        title: "Night Shift".to_owned(),
+        artists: vec![CreditedArtist {
+            id: "c0ffee00-0000-4000-8000-00000000a001".to_owned(),
+            name: "The Lanterns".to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        status: Some("Official".to_owned()),
+        tracks: tracks
+            .iter()
+            .enumerate()
+            .map(|(index, (title, seconds))| ReleaseTrack {
+                id: format!("track-{index}"),
+                recording_id: format!("recording-{index}"),
+                title: (*title).to_owned(),
+                disc: 1,
+                position: index as u32 + 1,
+                absolute_position: index as u32 + 1,
+                length_ms: Some(seconds * 1000),
+                ..ReleaseTrack::default()
+            })
+            .collect(),
+        ..Release::default()
+    };
+    let recall = RecallResult {
+        releases: vec![release.clone()],
+        fingerprint_support: HashMap::from([("t1".to_owned(), vec!["recording-1".to_owned()])]),
+        ..RecallResult::default()
+    };
+    let providers = Arc::new(FakeProviders::with_recall(recall.clone()));
+    let mut rig = rig(false);
+    rig.service = IdentifyService::new(IdentifyDeps {
+        store: rig.store.clone(),
+        providers,
+    });
+    let files: Vec<FileTags<'_>> = tracks
+        .iter()
+        .map(|(title, seconds)| (*title, *seconds, None))
+        .collect();
+    seed_album(&rig, &album(&files));
+    rig.db
+        .execute(
+            "UPDATE local_tracks SET duration_measured = ?1 WHERE id = 't1'",
+            params![measured],
+        )
+        .expect("length marked");
+    let facts = rig
+        .store
+        .album_facts("album-1")
+        .unwrap()
+        .expect("album facts");
+    let heard = heard_on_candidates(&recall.fingerprint_support, &recall.releases);
+    let matched = match_release(&local_album(&facts, &heard), &release, &HashMap::new());
+    (run(&rig).await, matched)
+}
+
+/// A file whose measured length is its own track's and more than 3 s off
+/// the track AcoustID heard sets the fingerprint aside. An estimated or
+/// unknown length (an MP3 with no Xing, Info or VBRI header) settles
+/// nothing: the dispute stands and the album waits for a person.
+#[tokio::test]
+async fn only_a_measured_length_overrules_a_fingerprint() {
+    let (report, matched) = heard_as_its_neighbour(Some(1)).await;
+    assert_eq!(matched.overruled, vec![0]);
+    assert!(matched.disputed.is_empty());
+    assert_ne!(report.reason_code, "AUDIO_DISAGREES");
+
+    for estimated in [Some(0), None] {
+        let (report, matched) = heard_as_its_neighbour(estimated).await;
+        assert!(matched.overruled.is_empty(), "{estimated:?}");
+        assert_eq!(matched.disputed, vec![0], "{estimated:?}");
+        assert_eq!(report.reason_code, "AUDIO_DISAGREES", "{estimated:?}");
+    }
 }
 
 /// Files tagged by an older tagger carry a release id MusicBrainz has

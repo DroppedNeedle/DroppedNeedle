@@ -28,7 +28,7 @@ use crate::downloads::quarantine::QuarantineReason;
 use crate::reason::Reason;
 use droppedneedle_library::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK};
 use droppedneedle_library::matching::model::credit_text;
-use droppedneedle_library::matching::score::{NAME_GATE, Support, TrackPair};
+use droppedneedle_library::matching::score::{NAME_GATE, SAME_MASTER_SECS, Support, TrackPair};
 use droppedneedle_library::matching::strings::{
     artist_subset, fold, string_dist, strip_edition_words,
 };
@@ -1394,19 +1394,18 @@ impl ImportSpec for NotAlreadyImported {
 // Fingerprints.
 // ---------------------------------------------------------------------------
 
-/// How far a file's length may be off its track and still vouch for it
-/// against a fingerprint that names another recording. Copies of one
-/// master differ by a second or two (pregap, encoder padding, MusicBrainz
-/// rounding to the second), while another recording of a song is rarely
-/// within 3 s of it: a `max(15 s, 10%)` window lets most same-length pop songs
-/// through whatever AcoustID heard.
-pub const SAME_MASTER_SECS: f64 = 3.0;
-
 /// For the ids our lookup returns: AcoustID
 /// confidently heard recordings, none of them the expected one, and the
 /// file's length is not within [`SAME_MASTER_SECS`] of the expected
 /// track's. A length that agrees outranks a conflicting fingerprint, and
 /// no answer never holds anything.
+///
+/// That margin is how far a file's length may be off its track and still
+/// vouch for it against a fingerprint that names another recording.
+/// Copies of one master differ by a second or two (pregap, encoder
+/// padding, MusicBrainz rounding to the second), while another recording
+/// of a song is rarely within 3 s of it: a `max(15 s, 10%)` window lets
+/// most same-length pop songs through whatever AcoustID heard.
 pub fn fingerprint_disagrees(
     heard: &[String],
     expected_recording: &str,

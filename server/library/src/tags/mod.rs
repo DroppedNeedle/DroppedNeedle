@@ -19,6 +19,7 @@ pub mod fields;
 pub mod fingerprint;
 pub mod loudness;
 pub mod lyrics;
+pub mod mpeg_length;
 pub mod picard;
 pub mod probe;
 pub mod read;

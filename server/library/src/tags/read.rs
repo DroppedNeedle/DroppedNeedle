@@ -133,6 +133,11 @@ pub struct HeaderInfo {
     pub channels: Option<u32>,
     /// Meaningful bit depth: lossless containers only, as v2 stored it.
     pub bit_depth: Option<u8>,
+    /// The duration was measured, not estimated. Only an MP3 can be
+    /// estimated: lofty measures one from a Xing, Info or VBRI frame count
+    /// ([`super::mpeg_length`]) and otherwise estimates it from the first
+    /// frame's bitrate.
+    pub duration_measured: bool,
 }
 
 /// Tags plus header properties for one file, the way the scan indexes it.
@@ -152,8 +157,12 @@ pub fn read_scan_metadata(
                 sample_rate: Some(info.sample_rate).filter(|rate| *rate > 0),
                 channels: Some(info.channels).filter(|count| *count > 0),
                 bit_depth: None,
+                duration_measured: true,
             },
-            Err(_) => HeaderInfo::default(),
+            Err(_) => HeaderInfo {
+                duration_measured: true,
+                ..HeaderInfo::default()
+            },
         };
         return Ok((tag, header));
     }
@@ -196,6 +205,11 @@ pub fn read_scan_metadata(
         } else {
             None
         },
+        duration_measured: format != AudioFormat::Mp3
+            || super::mpeg_length::length_measured(path).map_err(|source| TagsError::Io {
+                path: path.display().to_string(),
+                source,
+            })?,
     };
     Ok((tag, header))
 }

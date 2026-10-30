@@ -30,7 +30,8 @@ edition tags and track lengths, as a tagger writes them.
     and stat revisions are left out. The three albums whose row an upgrade
     left on "Unknown Artist" (`crimson-king`, `close-to-the-edge`,
     `back-street-crawler-cd1`) show the row after the catalog cleanup gave
-    it its tracks' artist.
+    it its tracks' artist. Every track's `duration_measured` is true:
+    the test library's lengths were read as measured.
   - `truth`: the release group and release the album is. `release` is null
     when the files cannot tell its editions apart.
   - `tagged` and `stripped`: the recorded result for the album as tagged,

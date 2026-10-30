@@ -17679,7 +17679,9 @@ export interface components {
              * @description What ties the file to the release track (`embedded_id`, `acoustid`,
              *     `title_position_length`, or `track_id_elsewhere`: the recording ID,
              *     on a file whose track ID belongs to another edition), or why it does
-             *     not.
+             *     not (`distant_pair`: paired, but not closely). `acoustid_overruled`
+             *     follows when the file's measured length set aside a fingerprint
+             *     that named another track.
              */
             evidence_kinds: string[];
             local_track_id: string;

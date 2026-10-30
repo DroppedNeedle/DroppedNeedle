@@ -408,9 +408,13 @@ fn very_close_fit(
 }
 
 /// How many seconds a paired file is off its track; `None` when either
-/// length is unknown.
+/// length is unknown or the file's is an estimate.
 fn length_off(local: &LocalAlbum, release: &Release, pair: &TrackPair) -> Option<f64> {
-    let file = local.tracks.get(pair.local)?.duration_secs?;
+    let file = local.tracks.get(pair.local)?;
+    if !file.duration_measured {
+        return None;
+    }
+    let file = file.duration_secs?;
     let track = release.tracks.get(pair.track)?.length_ms?;
     Some((file - track as f64 / 1000.0).abs())
 }
@@ -773,8 +777,8 @@ mod tests {
         }
     }
 
-    /// Files titled like the release, at 200 s, plus `garbage` ones
-    /// (wrong title, length a minute and a half off), with recording
+    /// Files titled like the release, at a measured 200 s, plus `garbage`
+    /// ones (wrong title, length a minute and a half off), with recording
     /// MBIDs when `ids` is set.
     fn local(count: usize, garbage: usize, ids: bool) -> LocalAlbum {
         LocalAlbum {
@@ -791,6 +795,7 @@ mod tests {
                     track_number: index as u32 + 1,
                     disc_number: 1,
                     duration_secs: Some(if index < count { 200.0 } else { 290.0 }),
+                    duration_measured: true,
                     recording_mbid: ids.then(|| format!("recording-{index}")),
                     ..LocalTrack::default()
                 })
@@ -1234,6 +1239,8 @@ mod tests {
         };
         let mut five_seconds_off = local(4, 0, false);
         five_seconds_off.tracks[2].duration_secs = Some(205.0);
+        let mut one_estimated = local(4, 0, false);
+        one_estimated.tracks[1].duration_measured = false;
         let mut live_titles = local(4, 0, false);
         for track in &mut live_titles.tracks {
             track.title = format!("{} (Live)", track.title);
@@ -1278,6 +1285,12 @@ mod tests {
             (
                 "a track five seconds off is not nearly exact",
                 five_seconds_off,
+                vec![typed("Live", "night-1")],
+                Verdict::EditionUncertain(0),
+            ),
+            (
+                "an estimated length is not a known one",
+                one_estimated,
                 vec![typed("Live", "night-1")],
                 Verdict::EditionUncertain(0),
             ),

@@ -107,24 +107,29 @@ impl SqliteScanStore {
     }
 
     /// Of these catalog tracks, the ones whose edition hints were never
-    /// stored: files carried over from v2 that no scan has read since.
-    pub fn without_edition_tags(
+    /// stored (files carried over from v2 that no scan has read since), and
+    /// the ones whose row does not say whether their length was measured.
+    pub fn unread(
         &self,
         stop: &RunStop,
         track_ids: &[String],
-    ) -> Result<HashSet<String>, ScanStoreError> {
+    ) -> Result<UnreadRows, ScanStoreError> {
         if track_ids.is_empty() {
-            return Ok(HashSet::new());
+            return Ok(UnreadRows::default());
         }
-        self.read_long(stop, "scan_edition_tags_missing", |conn| {
+        self.read_long(stop, "scan_unread_rows", |conn| {
             let mut stored = conn.prepare_cached(crate::scan::sql::HAS_EDITION_TAGS.text())?;
-            let mut missing = HashSet::new();
+            let mut length = conn.prepare_cached(crate::scan::sql::LENGTH_UNREAD.text())?;
+            let mut unread = UnreadRows::default();
             for id in track_ids {
                 if !stored.query_row(params![id], |row| row.get::<_, bool>(0))? {
-                    missing.insert(id.clone());
+                    unread.edition_tags.insert(id.clone());
+                }
+                if length.query_row(params![id], |row| row.get::<_, bool>(0))? {
+                    unread.length.insert(id.clone());
                 }
             }
-            Ok(missing)
+            Ok(unread)
         })
     }
 

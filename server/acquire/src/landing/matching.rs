@@ -160,6 +160,7 @@ pub fn local_album(files: &[LandedFile], target: &Target) -> LocalAlbum {
                     name_disc.or_else(|| disc_folder(file)).unwrap_or(1)
                 },
                 duration_secs: file.header.duration_seconds,
+                duration_measured: file.header.duration_measured,
                 recording_mbid: usable_mbid(tag.musicbrainz_recording_id.as_deref(), &mut dropped),
                 release_track_mbid: usable_mbid(
                     tag.musicbrainz_release_track_id.as_deref(),

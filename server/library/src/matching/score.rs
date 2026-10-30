@@ -378,11 +378,14 @@ fn hears(local: &LocalTrack, candidate: &ReleaseTrack) -> bool {
 /// A file its audio disputes, settled by its measured length: within
 /// [`SAME_MASTER_SECS`] of the unheard track it pairs with, which clearly
 /// fits it, and further than that off every track its audio names. An
-/// unknown length on either side settles nothing.
+/// unknown or estimated length on either side settles nothing.
 fn length_overrules(local: &LocalTrack, release: &Release, paired: Option<&ReleaseTrack>) -> bool {
     let (Some(seconds), Some(own)) = (local.duration_secs, paired) else {
         return false;
     };
+    if !local.duration_measured {
+        return false;
+    }
     let near = |track: &ReleaseTrack| {
         track
             .length_ms
@@ -696,6 +699,7 @@ mod tests {
                 track_number: number,
                 disc_number: 1,
                 duration_secs: Some(seconds),
+                duration_measured: true,
                 fingerprint_recordings: vec![format!("recording-{heard}")],
                 ..LocalTrack::default()
             }],

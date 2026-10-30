@@ -37,6 +37,16 @@ impl TagReader for LoftyTagReader {
             }
         }
     }
+
+    /// Reads only the first MPEG frame of an MP3, never its tags; every
+    /// other format is measured.
+    fn length_measured(&self, path: &Path) -> Result<bool, TagReadError> {
+        let format = super::tags::format_for_path(path).map_err(|_| TagReadError::Fatal)?;
+        if format != super::tags::AudioFormat::Mp3 {
+            return Ok(true);
+        }
+        super::tags::mpeg_length::length_measured(path).map_err(|_| TagReadError::Deferred)
+    }
 }
 
 /// Map a tag failure onto the scan seam. I/O races (a file vanishing
