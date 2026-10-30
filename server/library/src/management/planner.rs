@@ -1661,7 +1661,7 @@ const MAX_SIDECARS: usize = 1_000;
 const MAX_SIDECAR_ENTRIES: usize = 10_000;
 
 /// Shell-style match with `*` and `?`, on already case-folded text.
-fn glob(pattern: &[char], text: &[char]) -> bool {
+pub(crate) fn glob(pattern: &[char], text: &[char]) -> bool {
     match (pattern.first(), text.first()) {
         (None, None) => true,
         (Some('*'), _) => {
@@ -1676,7 +1676,7 @@ fn glob(pattern: &[char], text: &[char]) -> bool {
 /// True when a sidecar pattern matches `relative` (folded). Patterns with
 /// a slash match the path below the album folder; others match files in
 /// the album folder itself.
-fn sidecar_match(patterns: &[Vec<char>], relative: &str) -> bool {
+pub(crate) fn sidecar_match(patterns: &[Vec<char>], relative: &str) -> bool {
     let text: Vec<char> = relative.chars().collect();
     patterns
         .iter()
@@ -1686,7 +1686,11 @@ fn sidecar_match(patterns: &[Vec<char>], relative: &str) -> bool {
 /// Files below `dir` relative to it, sorted, skipping symlinked folders.
 /// `None` when the folder is too large to walk or a matching file is a
 /// symbolic link.
-fn sidecar_candidates(dir: &Path, deep: bool, patterns: &[Vec<char>]) -> Option<Vec<String>> {
+pub(crate) fn sidecar_candidates(
+    dir: &Path,
+    deep: bool,
+    patterns: &[Vec<char>],
+) -> Option<Vec<String>> {
     let mut found = Vec::new();
     let mut pending = vec![String::new()];
     let mut examined = 0;

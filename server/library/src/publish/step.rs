@@ -1511,6 +1511,11 @@ impl Run<'_> {
                 if !moved && !super::put_back::taken_back(self.db, &journal.bundle_id) {
                     tracing::warn!(journal_id = %journal.id, "the file to recycle is gone; nothing was moved");
                 }
+                // The folders the removal emptied go with it, once the
+                // last of its files left.
+                if let Ok(home) = sandbox.resolve_removal(&journal.dest_root, &journal.dest_rel) {
+                    super::publisher::prune_removed_parents(sandbox, &journal.dest_root, &home);
+                }
                 return Ok(());
             }
             JournalKind::PutBack => {

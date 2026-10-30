@@ -2008,11 +2008,14 @@ impl Publishing {
     /// answers busy at once; with
     /// [`RemovalEntry::Wait`] the removal waits its turn. A removal whose
     /// commit landed answers what it removed even when a later step failed:
-    /// recovery finishes it. `album_removed` queues the album's clean-up in
-    /// the removal's commit. Blocking.
+    /// recovery finishes it. `sidecars` go with the tracks, those still as
+    /// they were read. `album_removed` queues the album's clean-up in the
+    /// removal's commit. Blocking.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn publish_removal(
         &self,
         targets: &[crate::publish::remove::Target],
+        sidecars: &[crate::publish::remove::SidecarTarget],
         reason_code: &str,
         actor: Option<&str>,
         undo: Option<crate::publish::planner::UndoRecord>,
@@ -2046,6 +2049,7 @@ impl Publishing {
             &open.sandbox,
             &bundle_id,
             targets,
+            sidecars,
             reason_code,
             actor,
             undo,
@@ -2132,9 +2136,7 @@ impl Publishing {
             .bundle
             .removal
             .as_ref()
-            .is_some_and(|removal| {
-                removal.undo.is_some() && removal.items.iter().any(|item| item.file.is_some())
-            })
+            .is_some_and(|removal| removal.undo.is_some() && remove::moves_a_file(removal))
             .then(|| bundle_id.to_owned());
         Ok(RemovalDone {
             track_ids,

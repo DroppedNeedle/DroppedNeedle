@@ -318,7 +318,7 @@ pub fn summary(
         older_folders: 0,
     };
     for (copy, track) in &due {
-        if track.as_ref().is_some_and(|track| held.contains(track)) {
+        if held.contains(track) {
             continue;
         }
         if let Look::Found(size) = look(sandbox, Path::new(copy)) {

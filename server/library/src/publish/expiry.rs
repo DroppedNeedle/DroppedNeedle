@@ -400,8 +400,10 @@ fn sync_dirs(dirs: &HashSet<PathBuf>) {
 }
 
 /// The tracks a put-back still holds: their copies stay in the bin until
-/// it is done. Few rows: only put-backs not settled yet.
-pub(super) fn held_tracks(db: &Db) -> Result<HashSet<String>, PublishError> {
+/// it is done. `None` stands for the files with no track (sidecars),
+/// which all stay while a put-back of one is not done. Few rows: only
+/// put-backs not settled yet.
+pub(super) fn held_tracks(db: &Db) -> Result<HashSet<Option<String>>, PublishError> {
     db.read_long("publish.expiry_held", &CancelFlag::never(), |conn| {
         let mut statement = conn.prepare_cached(sql::EXPIRY_HELD_TRACKS.text())?;
         let tracks = statement
@@ -415,17 +417,15 @@ pub(super) fn held_tracks(db: &Db) -> Result<HashSet<String>, PublishError> {
                     JournalState::NeedsAttention,
                     JournalKind::PutBack,
                 ],
-                |row| row.get::<_, String>(0),
+                |row| row.get::<_, Option<String>>(0),
             )?
             .collect::<Result<HashSet<_>, _>>()?;
         Ok::<_, PublishError>(tracks)
     })
 }
 
-fn is_held(held: &HashSet<String>, row: &DueRow) -> bool {
-    row.track_id
-        .as_ref()
-        .is_some_and(|track| held.contains(track))
+fn is_held(held: &HashSet<Option<String>>, row: &DueRow) -> bool {
+    held.contains(&row.track_id)
 }
 
 /// Every row due at `cutoff`, read `page` at a time in the order they
