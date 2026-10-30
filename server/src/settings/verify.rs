@@ -254,6 +254,8 @@ pub struct LiveProbes {
     pub youtube: YouTubeApi,
     /// The Ticketmaster client.
     pub ticketmaster: TicketmasterClient,
+    /// The Newznab indexers' clients.
+    pub newznab: droppedneedle_providers::newznab::NewznabIndexers,
     /// The Skiddle client.
     pub skiddle: SkiddleClient,
     /// The install ids presented to Plex. Without them the Plex checks
@@ -270,6 +272,7 @@ impl LiveProbes {
             listenbrainz: providers.listenbrainz.clone(),
             youtube: providers.youtube.clone(),
             ticketmaster: providers.ticketmaster.clone(),
+            newznab: providers.newznab.clone(),
             skiddle: providers.skiddle.clone(),
             install: None,
         }
@@ -773,7 +776,6 @@ impl VerifyProbes for LiveProbes {
 
     fn newznab<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, NewznabVerdict> {
         Box::pin(async move {
-            use droppedneedle_acquire::usenet::newznab::NewznabClient;
             if url.trim().is_empty() {
                 return NewznabVerdict {
                     valid: false,
@@ -785,11 +787,13 @@ impl VerifyProbes for LiveProbes {
                 };
             }
             let url = url.trim().trim_end_matches('/').to_owned();
-            let client = NewznabClient::new(self.http.clone(), &url, key, "", "");
-            let caps = match client.caps(PROBE_TIMEOUT).await {
+            // An admin waits on the Test Connection button.
+            let client = self.newznab.client("", "", &url, key);
+            let caps = match client.caps(RequestPriority::UserInitiated).await {
                 Ok(caps) => caps,
                 Err(error) => {
-                    return newznab_failure(&self.http, &url, key, &error.to_string()).await;
+                    return newznab_failure(&self.newznab, &url, key, newznab_message(&error))
+                        .await;
                 }
             };
             // Well-formed but empty caps mean the URL answered something
@@ -797,7 +801,7 @@ impl VerifyProbes for LiveProbes {
             // not an endpoint.
             if caps_are_empty(&caps) {
                 return newznab_failure(
-                    &self.http,
+                    &self.newznab,
                     &url,
                     key,
                     "The URL did not answer as a Newznab endpoint.",
@@ -887,13 +891,13 @@ impl VerifyProbes for LiveProbes {
 /// endpoint: offer `<url>/api` when it answers as a real endpoint.
 /// The URL is never echoed.
 async fn newznab_failure(
-    http: &reqwest::Client,
+    indexers: &droppedneedle_providers::newznab::NewznabIndexers,
     url: &str,
     key: &str,
     message: &str,
 ) -> NewznabVerdict {
     if let Some(suggestion) = api_path_suggestion(url)
-        && reaches_newznab(http, &suggestion, key).await
+        && reaches_newznab(indexers, &suggestion, key).await
     {
         return NewznabVerdict {
             valid: false,
@@ -960,22 +964,45 @@ fn api_path_suggestion(url: &str) -> Option<String> {
 /// Did `url` answer as a real Newznab endpoint? Non-empty caps, an
 /// auth error, or a rate limit all mean the API was reached; anything
 /// else means the suggestion is wrong too.
-async fn reaches_newznab(http: &reqwest::Client, url: &str, key: &str) -> bool {
-    use droppedneedle_acquire::client_error::ClientError;
-    use droppedneedle_acquire::usenet::newznab::{NewznabClient, NewznabError};
-    let client = NewznabClient::new(http.clone(), url, key, "", "");
-    match client.caps(PROBE_TIMEOUT).await {
+async fn reaches_newznab(
+    indexers: &droppedneedle_providers::newznab::NewznabIndexers,
+    url: &str,
+    key: &str,
+) -> bool {
+    use droppedneedle_providers::newznab::NewznabError;
+    let client = indexers.client("", "", url, key);
+    match client.caps(RequestPriority::UserInitiated).await {
         Ok(caps) => !caps_are_empty(&caps),
-        Err(NewznabError::Client(ClientError::Auth { .. } | ClientError::RateLimited { .. })) => {
-            true
-        }
+        Err(NewznabError::Provider(
+            ProviderError::Unauthorized { .. }
+            | ProviderError::Forbidden { .. }
+            | ProviderError::RateLimited { .. },
+        )) => true,
         Err(_) => false,
+    }
+}
+
+/// What a failed indexer test tells the admin. The indexer's own text and
+/// the URL are never echoed.
+fn newznab_message(error: &droppedneedle_providers::newznab::NewznabError) -> &'static str {
+    use droppedneedle_providers::newznab::NewznabError;
+    match error {
+        NewznabError::Provider(
+            ProviderError::Unauthorized { .. } | ProviderError::Forbidden { .. },
+        ) => "The indexer rejected the API key.",
+        NewznabError::Provider(ProviderError::RateLimited { .. }) => {
+            "The indexer is limiting requests. Try again later."
+        }
+        NewznabError::Provider(ProviderError::Transport { .. }) => {
+            "Couldn't reach the indexer. Check the URL."
+        }
+        _ => "The URL did not answer as a Newznab endpoint.",
     }
 }
 
 /// Empty caps (no server, no searching, no categories) mean the URL
 /// answered something other than a caps document.
-fn caps_are_empty(caps: &droppedneedle_acquire::usenet::newznab::NewznabCaps) -> bool {
+fn caps_are_empty(caps: &droppedneedle_providers::newznab::NewznabCaps) -> bool {
     caps.server_title.is_none()
         && caps.server_version.is_none()
         && !caps.supports_audio_search

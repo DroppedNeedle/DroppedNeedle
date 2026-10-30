@@ -233,6 +233,8 @@ The second source is Usenet through SABnzbd. For searching, either add Newznab-c
 2. Under Settings > Download Client, enable Usenet and enter your SABnzbd URL and API key.
 3. Under Settings > Indexers / Prowlarr, pick one search backend: add each indexer's URL plus API key, or enter your Prowlarr URL plus API key. Then Test and Save.
 
+Indexers added one by one are asked at most about once a second each. Many cap API calls and NZB grabs per day and report how much is used; DroppedNeedle keeps to those caps, skipping an indexer that has used up its day until its allowance comes back, and waits out any slow-down an indexer asks for.
+
 slskd and Usenet can run side by side; the source priority control picks who goes first.
 
 ### Drop imports

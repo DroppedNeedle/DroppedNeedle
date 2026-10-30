@@ -598,7 +598,13 @@ impl ProwlarrIndexer {
 }
 
 impl Indexer for ProwlarrIndexer {
-    fn search<'a>(&'a self, query: &'a IndexerQuery<'a>) -> BoxFuture<'a, Vec<IndexerResult>> {
+    /// Prowlarr is a service the user runs and is never paced, so the
+    /// priority is not used.
+    fn search<'a>(
+        &'a self,
+        query: &'a IndexerQuery<'a>,
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> BoxFuture<'a, Vec<IndexerResult>> {
         Box::pin(async move {
             match query {
                 IndexerQuery::Album(target) => {

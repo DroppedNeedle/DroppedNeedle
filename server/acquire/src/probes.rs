@@ -409,7 +409,13 @@ async fn refresh_sabnzbd_complete_dir(inputs: &ProbeInputs) -> Option<String> {
 
 async fn refresh_indexers(inputs: &ProbeInputs) -> Vec<IndexerProbe> {
     let native_ok = if inputs.newznab.is_configured() {
-        inputs.newznab.health_check().await.status == "ok"
+        // The probe loop runs in the background; nobody waits on it.
+        inputs
+            .newznab
+            .health_check(droppedneedle_providers::RequestPriority::BackgroundSync)
+            .await
+            .status
+            == "ok"
     } else {
         false
     };

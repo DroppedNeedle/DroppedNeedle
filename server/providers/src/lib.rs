@@ -5,7 +5,8 @@
 //! one client per service (MusicBrainz, the Cover Art Archive,
 //! ListenBrainz, Last.fm, TheAudioDB, AcoustID, Discogs, iTunes, Deezer,
 //! LRCLIB, Wikidata, Ticketmaster, Skiddle, Open-Meteo, YouTube, GitHub,
-//! Spotify, plex.tv and the image hosts), the limiters, the provider answer cache and the
+//! Spotify, plex.tv, the user's Newznab indexers and the image hosts), the
+//! limiters, the provider answer cache and the
 //! service health registry. Each client sends through its own [`Executor`].
 //!
 //! - [`executor`]: sends one request. It waits for a token at the caller's
@@ -57,6 +58,7 @@ pub mod limiter;
 pub mod listenbrainz;
 pub mod lrclib;
 pub mod musicbrainz;
+pub mod newznab;
 pub mod plextv;
 pub mod preview;
 pub mod rates;
@@ -239,6 +241,9 @@ pub struct Providers {
     /// plex.tv: the Plex sign-in, the Plex user import and the media
     /// server adapter's token lookup, on one bucket.
     pub plextv: plextv::PlexTvClient,
+    /// The user's Newznab indexers, each on a bucket of its own shaped by
+    /// the `newznab` row, held to the daily caps it reports.
+    pub newznab: newznab::NewznabIndexers,
 }
 
 impl Providers {
@@ -402,6 +407,12 @@ impl Providers {
         );
         let plextv =
             plextv::PlexTvClient::new(executor(&plextv::SPEC, plextv::SOURCE), &endpoints.plex_tv);
+        let newznab = newznab::NewznabIndexers::new(
+            limiters.for_executor(newznab::SOURCE),
+            Arc::clone(&wire),
+            Arc::clone(&health),
+            Arc::clone(&clock),
+        );
         Self {
             limiters,
             cache,
@@ -426,6 +437,7 @@ impl Providers {
             github_repos,
             spotify,
             plextv,
+            newznab,
         }
     }
 

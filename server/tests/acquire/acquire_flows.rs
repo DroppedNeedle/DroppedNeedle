@@ -238,6 +238,7 @@ async fn sources_over(
         .clone();
     let clients = Arc::new(LiveClients::new(
         http,
+        droppedneedle_providers::Providers::closed().newznab,
         ClientLives::new(settings),
         dir.join("slskd"),
         journal.clone(),

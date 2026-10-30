@@ -27,7 +27,7 @@ use droppedneedle_acquire::slskd::{
 use droppedneedle_acquire::sources::{SabnzbdSource, SlskdSource};
 use droppedneedle_acquire::target::SearchTarget;
 use droppedneedle_acquire::usenet::indexer::{Indexer, IndexerQuery, PluginIndexers};
-use droppedneedle_acquire::usenet::newznab::{NewznabClient, NewznabIndexer, NewznabIndexerEntry};
+use droppedneedle_acquire::usenet::newznab::{NewznabIndexer, NewznabIndexerEntry};
 use droppedneedle_acquire::usenet::policy::UsenetPolicy;
 use droppedneedle_acquire::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use droppedneedle_acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
@@ -36,6 +36,8 @@ use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_plugins::process::ProcessLauncher;
 use droppedneedle_plugins::runtime::RuntimeState;
+use droppedneedle_providers::newznab::NewznabIndexers;
+use droppedneedle_providers::{ProviderEndpoints, Providers, RequestPriority};
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use droppedneedle_testkit::usenet::{
     NewznabMock, NewznabScenario, ProwlarrMock, ProwlarrScenario, SabnzbdMock, serve_loopback,
@@ -207,13 +209,7 @@ async fn sabnzbd_conforms() {
     );
     let newznab = NewznabIndexer::new(
         vec![NewznabIndexerEntry {
-            client: NewznabClient::new(
-                reqwest::Client::new(),
-                &format!("{indexer}/api"),
-                "NZKEY",
-                "dummy",
-                "Dummy",
-            ),
+            client: newznab_indexers().client("dummy", "Dummy", &format!("{indexer}/api"), "NZKEY"),
             id: "dummy".to_owned(),
             name: "Dummy".to_owned(),
             categories: vec![3040],
@@ -221,8 +217,6 @@ async fn sabnzbd_conforms() {
             priority: 1,
             limit: 100,
         }],
-        WAIT,
-        WAIT,
         WAIT,
         WAIT,
     );
@@ -250,6 +244,19 @@ async fn sabnzbd_conforms() {
     .await;
 }
 
+/// The indexers are asked as a person's search would ask them.
+const USER: RequestPriority = RequestPriority::UserInitiated;
+
+/// The providers' Newznab indexers over real HTTP to loopback, unpaced.
+fn newznab_indexers() -> NewznabIndexers {
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
+    Providers::unpaced_at(
+        Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
+        ProviderEndpoints::closed(),
+    )
+    .newznab
+}
+
 fn album(artist: &str, title: &str) -> SearchTarget {
     SearchTarget {
         artist: artist.to_owned(),
@@ -265,7 +272,7 @@ fn album(artist: &str, title: &str) -> SearchTarget {
 /// carrying an NZB link.
 async fn answers(indexer: &dyn Indexer) {
     let target = album("Radiohead", "In Rainbows");
-    let hits = indexer.search(&IndexerQuery::Album(&target)).await;
+    let hits = indexer.search(&IndexerQuery::Album(&target), USER).await;
     assert!(!hits.is_empty(), "the indexer answers");
     for hit in &hits {
         assert_eq!(hit.source, SourceTag::Usenet);
@@ -278,20 +285,19 @@ async fn refused(indexer: &dyn Indexer) {
     let target = album("Radiohead", "In Rainbows");
     assert!(
         indexer
-            .search(&IndexerQuery::Album(&target))
+            .search(&IndexerQuery::Album(&target), USER)
             .await
             .is_empty()
     );
 }
 
 /// A 429 is no releases, and the indexer sits out for the `Retry-After`
-/// it was given (each indexer's own backoff is zero here, so only the
-/// header can keep it out).
+/// it was given.
 async fn limited(indexer: &dyn Indexer, searches: impl Fn() -> usize) {
     let target = album("Radiohead", "In Rainbows");
     assert!(
         indexer
-            .search(&IndexerQuery::Album(&target))
+            .search(&IndexerQuery::Album(&target), USER)
             .await
             .is_empty()
     );
@@ -299,7 +305,7 @@ async fn limited(indexer: &dyn Indexer, searches: impl Fn() -> usize) {
     assert!(asked > 0, "the indexer was asked");
     assert!(
         indexer
-            .search(&IndexerQuery::Album(&target))
+            .search(&IndexerQuery::Album(&target), USER)
             .await
             .is_empty()
     );
@@ -316,13 +322,7 @@ async fn newznab_on(scenario: NewznabScenario) -> Rig<NewznabIndexer, NewznabMoc
         .expect("mock serves");
     let indexer = NewznabIndexer::new(
         vec![NewznabIndexerEntry {
-            client: NewznabClient::new(
-                reqwest::Client::new(),
-                &format!("{base}/api"),
-                "NZKEY",
-                "nz",
-                "NZ",
-            ),
+            client: newznab_indexers().client("nz", "NZ", &format!("{base}/api"), "NZKEY"),
             id: "nz".to_owned(),
             name: "NZ".to_owned(),
             categories: vec![3040],
@@ -331,8 +331,6 @@ async fn newznab_on(scenario: NewznabScenario) -> Rig<NewznabIndexer, NewznabMoc
             limit: 100,
         }],
         WAIT,
-        WAIT,
-        Duration::ZERO,
         WAIT,
     );
     (indexer, mock, server)
@@ -660,7 +658,7 @@ async fn plugins_conform() {
     let indexers = PluginIndexers::new(rig.host.clone());
     answers(&indexers).await;
     let target = album("Radiohead", "In Rainbows");
-    let hits = indexers.search(&IndexerQuery::Album(&target)).await;
+    let hits = indexers.search(&IndexerQuery::Album(&target), USER).await;
     assert_eq!(hits.len(), 1, "a release without an NZB link is dropped");
 }
 

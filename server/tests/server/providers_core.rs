@@ -1410,3 +1410,58 @@ fn a_key_in_the_url_never_reaches_an_error_or_a_log() {
     assert!(!logs.contains("SECRET"), "{logs}");
     assert!(!logs.contains("/api/"), "{logs}");
 }
+
+/// A Newznab indexer at its daily cap is not called again until the cap
+/// frees up: a day after the oldest call it counts, as its answer says.
+#[tokio::test]
+async fn a_newznab_indexer_at_its_daily_cap_waits_for_the_reset() {
+    use droppedneedle_kernel::clock::ManualClock;
+    use droppedneedle_providers::newznab::NewznabError;
+
+    const NOW: i64 = 1_800_000_000;
+    // An hour before NOW.
+    const OLDEST: &str = "Fri, 15 Jan 2027 07:00:00 GMT";
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        "https://indexer.test/api",
+        200,
+        &[],
+        format!(
+            r#"<rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel>
+<newznab:apilimits apiCurrent="100" apiMax="100" grabCurrent="3" grabMax="50" apiOldestTime="{OLDEST}"/>
+</channel></rss>"#
+        ),
+    );
+    let clock = Arc::new(ManualClock::at(NOW * 1000));
+    let providers = Providers::over_wire(wire.clone(), clock.clone(), ProviderEndpoints::closed());
+    let client = providers
+        .newznab
+        .client("idx", "Indexer", "https://indexer.test/api", "KEY");
+    let search = || client.search("Radiohead", &[], 0, 100, RequestPriority::UserInitiated);
+
+    let (releases, _) = search().await.expect("the answer that reports the cap");
+    assert!(releases.is_empty());
+    assert_eq!(wire.sent().len(), 1);
+
+    let refusals = [
+        search().await.map(|_| ()),
+        client
+            .caps(RequestPriority::BackgroundSync)
+            .await
+            .map(|_| ()),
+    ];
+    for refused in refusals {
+        match refused {
+            Err(NewznabError::Provider(ProviderError::RateLimited {
+                retry_after: Some(wait),
+                ..
+            })) => assert_eq!(wait, Duration::from_secs(23 * 3600)),
+            other => panic!("not held to the cap: {other:?}"),
+        }
+    }
+    assert_eq!(wire.sent().len(), 1, "nothing sent while the cap holds");
+
+    clock.advance(23 * 3600 * 1000);
+    search().await.expect("the cap freed up");
+    assert_eq!(wire.sent().len(), 2);
+}

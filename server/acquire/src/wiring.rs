@@ -513,6 +513,7 @@ impl AcquireSetup {
         let quota = Arc::new(QuotaLedger::new(config_store.live(), db.clone()));
         let clients = Arc::new(LiveClients::new(
             http.clone(),
+            ports.providers.newznab.clone(),
             ClientLives::new(&config_store),
             config.slskd_downloads_path.clone(),
             stores.journal.clone(),

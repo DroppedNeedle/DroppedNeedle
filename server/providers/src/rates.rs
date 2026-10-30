@@ -249,6 +249,18 @@ pub const RATES: &[RateRow] = &[
         url: "https://developer.plex.tv/pms/",
     },
     RateRow {
+        source: "newznab",
+        per_second: Rate::Fixed(1.0),
+        burst: 5,
+        max_in_flight: None,
+        verified_on: "2026-10-30",
+        basis: "No documented limit common to Newznab indexers: each sets its own daily \
+                API and grab caps, which it reports on its answers and the client holds \
+                it to. Each indexer gets a bucket of its own of this shape, 1 per second \
+                with a burst of 5, so one search's caps and query calls go together.",
+        url: "",
+    },
+    RateRow {
         source: "ticketmaster",
         per_second: Rate::Fixed(2.0),
         burst: 1,

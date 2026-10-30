@@ -1084,6 +1084,7 @@ async fn soulseek_picks_follow_the_saved_quality_policy() {
         .clone();
     let clients = Arc::new(LiveClients::new(
         http,
+        droppedneedle_providers::Providers::closed().newznab,
         ClientLives::new(&settings),
         dir.join("slskd"),
         journal.clone(),

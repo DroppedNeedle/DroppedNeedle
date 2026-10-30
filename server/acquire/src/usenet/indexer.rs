@@ -4,7 +4,8 @@
 //! by plugin indexers that feed Usenet. The Usenet source holds the
 //! indexers the settings choose (the native list or Prowlarr, then any
 //! plugin indexers) and searches them all the same way; only the wiring
-//! reads the backend setting.
+//! reads the backend setting. Every search names its priority: a person's
+//! search is user priority, the download worker's background.
 
 use std::sync::Arc;
 
@@ -14,6 +15,7 @@ use super::newznab::{IndexerResult, UsenetRelease};
 use crate::downloads::source_tag::SourceTag;
 use crate::target::SearchTarget;
 use droppedneedle_plugins::host::PluginHost;
+use droppedneedle_providers::RequestPriority;
 
 /// What one Usenet search asks for.
 pub enum IndexerQuery<'a> {
@@ -32,8 +34,12 @@ pub enum IndexerQuery<'a> {
 /// that refuses, limits or answers garbage contributes no releases, so
 /// one bad indexer never sinks the others.
 pub trait Indexer: Send + Sync {
-    /// Releases for `query`, best first.
-    fn search<'a>(&'a self, query: &'a IndexerQuery<'a>) -> BoxFuture<'a, Vec<IndexerResult>>;
+    /// Releases for `query`, best first, asked at `priority`.
+    fn search<'a>(
+        &'a self,
+        query: &'a IndexerQuery<'a>,
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Vec<IndexerResult>>;
 }
 
 /// Every enabled plugin indexer whose target is Usenet.
@@ -50,8 +56,13 @@ impl PluginIndexers {
 
 impl Indexer for PluginIndexers {
     /// Results without an http(s) NZB URL cannot go to SABnzbd and are
-    /// skipped.
-    fn search<'a>(&'a self, query: &'a IndexerQuery<'a>) -> BoxFuture<'a, Vec<IndexerResult>> {
+    /// skipped. A plugin paces its own calls, so the priority is not
+    /// passed on.
+    fn search<'a>(
+        &'a self,
+        query: &'a IndexerQuery<'a>,
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, Vec<IndexerResult>> {
         Box::pin(async move {
             // Plugin indexers name the source they feed by its stored text.
             let usenet = SourceTag::Usenet.to_string();

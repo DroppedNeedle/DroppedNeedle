@@ -175,6 +175,7 @@ fn rig_with(
     let journal = Arc::new(Journal::new(db, quiet_ticks()));
     let clients = Arc::new(LiveClients::new(
         platform.http.shared().clone(),
+        droppedneedle_providers::Providers::closed().newznab,
         ClientLives::new(&platform.settings),
         platform.config.slskd_downloads_path.clone(),
         journal.clone(),

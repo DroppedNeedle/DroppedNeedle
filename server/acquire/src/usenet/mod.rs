@@ -8,16 +8,17 @@
 //! SAB/Newznab/Prowlarr servers the contract tests run against. No test
 //! touches the live network: every one runs against `127.0.0.1` mocks.
 //!
-//! HTTP seam: each client takes an injected `reqwest::Client` (built once
-//! from the shared `HttpClientFactory`). The provider catalog `HttpPort` is
-//! GET-only and does not fit SABnzbd's multipart POST, so Usenet keeps this
-//! minimal seam.
+//! HTTP seam: Newznab indexers are services on the internet, so they are
+//! called through their client in the providers crate, on its executor.
+//! SABnzbd and Prowlarr are services the user runs: each takes an
+//! injected `reqwest::Client` (built once from the shared
+//! `HttpClientFactory`) and is never paced.
 //!
 //! Live-version-cited quirks (each cited at its call site):
 //! SABnzbd 5.0.4 suffix params + `cat`-not-`category` + multipart addfile
 //! with the addurl fallback, the JSON/`"False"`/plain-text error forms,
-//! Newznab's XML-only feed with the 202 `t=music` → `t=search` fallback,
-//! and Prowlarr 2.3.5.5327's header auth with the never-logged key.
+//! Newznab's 202 `t=music` → `t=search` fallback, and Prowlarr
+//! 2.3.5.5327's header auth with the never-logged key.
 
 pub mod indexer;
 pub mod newznab;
@@ -25,7 +26,6 @@ pub mod policy;
 pub mod prowlarr;
 pub mod sabnzbd;
 pub mod sabnzbd_models;
-pub mod xml;
 
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
