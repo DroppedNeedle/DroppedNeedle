@@ -16,12 +16,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use droppedneedle_auth::{users::hibp::RANGE_URL_PREFIX, wiring::Upstreams};
 use droppedneedle_library::{contrib::ContribProviders, identify::providers::IdentifyProviders};
 use droppedneedle_providers::{
-    acoustid, audiodb, coverart, discogs, geocoding, github, images, itunes, lastfm, listenbrainz,
-    lrclib, musicbrainz, plextv::PLEX_TV_BASE, preview, skiddle, spotify, ticketmaster, wikidata,
-    youtube,
+    acoustid, audiodb, coverart, discogs, geocoding, github, hibp, images, itunes, lastfm,
+    listenbrainz, lrclib, musicbrainz, plextv::PLEX_TV_BASE, preview, skiddle, spotify,
+    ticketmaster, wikidata, youtube,
 };
 
 /// A provider port the builder fills with its live client unless one is
@@ -91,7 +90,8 @@ pub struct Outbound {
     pub youtube: String,
     /// AcoustID API origin.
     pub acoustid: String,
-    /// The breach check's range URL, up to the hash prefix.
+    /// The Pwned Passwords range API behind the password screen, up to
+    /// the hash prefix.
     pub pwned_passwords: String,
     /// plex.tv account API root.
     pub plex_tv: String,
@@ -143,7 +143,7 @@ impl Outbound {
             github_codeload: github::CODELOAD_BASE.to_owned(),
             youtube: youtube::YOUTUBE_API_HOST.to_owned(),
             acoustid: acoustid::DEFAULT_BASE_URL.to_owned(),
-            pwned_passwords: RANGE_URL_PREFIX.to_owned(),
+            pwned_passwords: hibp::RANGE_BASE.to_owned(),
             plex_tv: PLEX_TV_BASE.to_owned(),
             spotify_api: spotify::API_BASE.to_owned(),
             spotify_accounts: spotify::ACCOUNTS_BASE.to_owned(),
@@ -188,12 +188,6 @@ impl Outbound {
             spotify_cover_cdn: self.spotify_cover_cdn.clone(),
             deezer_images: self.deezer_images.clone(),
             plex_tv: self.plex_tv.clone(),
-        }
-    }
-
-    /// The addresses sign-in and account linking use.
-    pub fn sign_in(&self) -> Upstreams {
-        Upstreams {
             pwned_passwords: self.pwned_passwords.clone(),
         }
     }

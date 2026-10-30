@@ -1,9 +1,9 @@
 //! Production auth wiring: live sign-in clients, config bridges, one bundle.
 //!
-//! This module binds the live parts for serving traffic: the OIDC,
-//! Jellyfin and breach-check clients over the shared HTTP client, the
-//! plex.tv and Last.fm clients of the providers crate, the live settings
-//! sections auth reads, and [`AuthSetup`], the single bundle `create_app`
+//! This module binds the live parts for serving traffic: the Jellyfin
+//! client over the shared HTTP client, the OIDC, breach-check, plex.tv and
+//! Last.fm clients of the providers crate, the live settings sections auth
+//! reads, and [`AuthSetup`], the single bundle `create_app`
 //! builds its routers from. The sign-in media
 //! links and the configured Plex server come in through the
 //! [`MediaLinks`] and [`PlexServerIdentity`] ports.
@@ -32,16 +32,7 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
-
-/// Where the breach-check client sends its calls. Production uses the
-/// real service; the integration tests point it at a local mock. OIDC and
-/// Jellyfin need no entry: their URLs come from the settings. plex.tv and
-/// Last.fm are reached through the providers crate.
-#[derive(Debug, Clone)]
-pub struct Upstreams {
-    /// The breach check's range URL, up to the hash prefix.
-    pub pwned_passwords: String,
-}
+use droppedneedle_providers::Providers;
 
 /// Everything `create_app` needs to mount the auth routes and the session
 /// gate, built once at boot.
@@ -86,20 +77,17 @@ fn warn_on_public_http_oidc(sign_in: &SignInSettings) {
 }
 
 impl AuthSetup {
-    /// Build the bundle over `platform`: the sign-in clients use its
-    /// shared HTTP client, OIDC its no-redirect one, and every forwarded
-    /// header is read through its trusted proxies. `upstreams` gives the
-    /// breach-check address; `lastfm` is the one Last.fm client, which
-    /// account linking goes through; `plextv` is the one plex.tv client,
-    /// which the Plex sign-in and user import go through; `plex_server` reads
+    /// Build the bundle over `platform`: the Jellyfin client uses its
+    /// shared HTTP client, and every forwarded header is read through its
+    /// trusted proxies. `providers` holds the one client each for OIDC, the
+    /// breach check, Last.fm account linking and plex.tv (the Plex sign-in
+    /// and user import); `plex_server` reads
     /// the configured Plex server's machine id for the membership gate;
     /// `links` saves the media link a Plex or Jellyfin sign-in hands back.
     pub fn build(
         platform: &Platform,
         auth: ProdAuth,
-        upstreams: &Upstreams,
-        lastfm: &droppedneedle_providers::lastfm::LastFmClient,
-        plextv: &droppedneedle_providers::plextv::PlexTvClient,
+        providers: &Providers,
         plex_server: Arc<dyn PlexServerIdentity>,
         links: MediaLinks,
     ) -> Self {
@@ -110,9 +98,8 @@ impl AuthSetup {
         let (clock, ids, crypto) = (&platform.clock, &platform.ids, &platform.crypto);
         let sign_in = SignInSettings::new(config_store);
         warn_on_public_http_oidc(&sign_in);
-        let no_redirect = platform.http.no_redirect().clone();
         let http = platform.http.shared().clone();
-        let plex_tv = PlexTv::new(plextv.clone(), config_store.clone(), plex_server);
+        let plex_tv = PlexTv::new(providers.plextv.clone(), config_store.clone(), plex_server);
         let jellyfin_http = JellyfinHttp::new(http.clone(), config_store.clone());
         let users = UsersDeps {
             users: auth.users.clone(),
@@ -123,16 +110,13 @@ impl AuthSetup {
             avatars: auth.avatars.clone(),
             passwords: auth.passwords.clone(),
             screen: HibpScreen::new(
-                Arc::new(PwnedPasswordsHttp {
-                    client: http.clone(),
-                    range_url: upstreams.pwned_passwords.clone(),
-                }),
+                Arc::new(PwnedPasswordsHttp(providers.hibp.clone())),
                 config_store.live(),
             ),
             clock: clock.clone(),
             ids: ids.clone(),
             crypto: crypto.clone(),
-            lastfm_client: Arc::new(LastFmAuthHttp::new(lastfm.clone())),
+            lastfm_client: Arc::new(LastFmAuthHttp::new(providers.lastfm.clone())),
             lastfm_switch: LastFmSwitch::new(config_store.live()),
             lastfm_pending: Arc::default(),
             jellyfin_directory: Arc::new(jellyfin_http.clone()),
@@ -153,7 +137,7 @@ impl AuthSetup {
         let oidc = OidcRouteState::new(
             OidcLogin::new(
                 auth.federated.clone(),
-                OidcHttp::new(no_redirect),
+                OidcHttp::new(providers.oidc.clone()),
                 auth.oidc_states.clone(),
                 auth.sessions.clone(),
                 clock.clone(),

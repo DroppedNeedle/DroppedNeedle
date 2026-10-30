@@ -82,6 +82,7 @@ mod tests {
                 spotify_accounts: closed.clone(),
                 spotify_cover_cdn: None,
                 deezer_images: closed.clone(),
+                pwned_passwords: closed.clone(),
                 plex_tv: closed,
             },
         ))

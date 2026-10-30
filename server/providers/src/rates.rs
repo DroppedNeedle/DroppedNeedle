@@ -261,6 +261,28 @@ pub const RATES: &[RateRow] = &[
         url: "",
     },
     RateRow {
+        source: "hibp",
+        per_second: Rate::Fixed(5.0),
+        burst: 5,
+        max_in_flight: Some(4),
+        verified_on: "2026-10-30",
+        basis: "There is no rate limit on the Pwned Passwords API. Held at 5 per second \
+                with 4 in flight, so a burst of sign-ups stays a modest load on a free \
+                service.",
+        url: "https://haveibeenpwned.com/API/v3",
+    },
+    RateRow {
+        source: "oidc",
+        per_second: Rate::Fixed(10.0),
+        burst: 20,
+        max_in_flight: None,
+        verified_on: "2026-10-30",
+        basis: "No documented limit: the provider is whichever one the admin set, often \
+                self-hosted, and paced all the same. 10 per second with a burst of 20 is \
+                far above sign-in volume; a sign-in makes at most five calls.",
+        url: "",
+    },
+    RateRow {
         source: "ticketmaster",
         per_second: Rate::Fixed(2.0),
         burst: 1,

@@ -29,7 +29,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Secret};
 
-use super::{ScratchDir, TestPlatform, closed_outbound, scratch_runtime};
+use super::{ScratchDir, TestPlatform, scratch_runtime};
 
 /// The rig's clock at build: 2024-01-01T00:00:00Z.
 pub const TEST_NOW: i64 = 1_704_067_200;
@@ -104,9 +104,7 @@ impl AuthRig {
         let setup = AuthSetup::build(
             &platform,
             auth.clone(),
-            &closed_outbound().sign_in(),
-            &providers.lastfm,
-            &providers.plextv,
+            &providers,
             Arc::new(
                 droppedneedle_media::remotes::plex::ConfiguredPlexServer::new(
                     platform.http.shared().clone(),

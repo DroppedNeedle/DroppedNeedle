@@ -13,11 +13,11 @@
 //!
 //! Each provider has one concrete client in a `*_http` module:
 //! [`oidc_http::OidcHttp`] at the issuer and endpoints the OIDC settings
-//! and discovery name and [`jellyfin_http::JellyfinHttp`] at the Jellyfin
-//! settings' server, both through the shared outbound client, with their
-//! wire shapes in the matching `*_models` module; [`plex_http::PlexTv`]
-//! through the providers crate's plex.tv client, which holds plex.tv's
-//! shapes. The integration tests point the same clients at local mock
+//! and discovery name, through the providers crate's OIDC client, and
+//! [`jellyfin_http::JellyfinHttp`] at the Jellyfin settings' server,
+//! through the shared outbound client, with their wire shapes in the
+//! matching `*_models` module; [`plex_http::PlexTv`] through the providers
+//! crate's plex.tv client, which holds plex.tv's shapes. The integration tests point the same clients at local mock
 //! servers.
 //!
 //! Contracts with the rest of auth:

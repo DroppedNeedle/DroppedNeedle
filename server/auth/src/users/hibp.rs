@@ -13,16 +13,13 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::stores::BoxFuture;
-use droppedneedle_kernel::http_client::read_capped;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
+use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::hibp::HibpClient;
 
 /// Number of SHA-1 hex chars sent to the range API (k-anonymity prefix).
 pub const RANGE_PREFIX_LEN: usize = 5;
-/// Padding header the range API honors.
-pub const RANGE_URL_PREFIX: &str = "https://api.pwnedpasswords.com/range/";
-/// Largest range answer read.
-const MAX_RANGE_BYTES: usize = 4 * 1024 * 1024;
 
 /// SHA-1 hex digest (uppercase, the HIBP file ordering).
 pub fn sha1_hex_upper(data: &[u8]) -> String {
@@ -102,15 +99,12 @@ pub trait HibpHttp: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HibpHttpError;
 
-/// Production range client over the shared outbound factory client.
+/// Production range client: the providers crate's Pwned Passwords
+/// client. Every screen runs while a person sets a password, so lookups
+/// go at user priority; a lookup the row cannot fit fails open like any
+/// other failure.
 #[derive(Debug, Clone)]
-pub struct PwnedPasswordsHttp {
-    /// Factory-built client (owns timeouts and TLS behavior).
-    pub client: reqwest::Client,
-    /// The range URL up to the hash prefix; production passes
-    /// [`RANGE_URL_PREFIX`].
-    pub range_url: String,
-}
+pub struct PwnedPasswordsHttp(pub HibpClient);
 
 impl HibpHttp for PwnedPasswordsHttp {
     fn range<'a>(
@@ -118,31 +112,13 @@ impl HibpHttp for PwnedPasswordsHttp {
         prefix: &'a str,
     ) -> BoxFuture<'a, Result<HashSet<String>, HibpHttpError>> {
         Box::pin(async move {
-            let response = self
-                .client
-                .get(format!("{}{prefix}", self.range_url))
-                .header("Add-Padding", "true")
-                .send()
+            self.0
+                .range(prefix, RequestPriority::UserInitiated)
                 .await
-                .map_err(|_| HibpHttpError)?;
-            if response.status() != reqwest::StatusCode::OK {
-                return Err(HibpHttpError);
-            }
-            let bytes = read_capped(response, MAX_RANGE_BYTES)
-                .await
-                .map_err(|_| HibpHttpError)?;
-            let text = String::from_utf8_lossy(&bytes);
-            let mut suffixes = HashSet::new();
-            for line in text.lines() {
-                let Some((suffix, _)) = line.split_once(':') else {
-                    continue;
-                };
-                let suffix = suffix.trim().to_uppercase();
-                if !suffix.is_empty() {
-                    suffixes.insert(suffix);
-                }
-            }
-            Ok(suffixes)
+                .map_err(|error| {
+                    tracing::debug!(%error, "pwnedpasswords range lookup failed");
+                    HibpHttpError
+                })
         })
     }
 }

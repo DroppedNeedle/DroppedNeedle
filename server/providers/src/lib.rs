@@ -5,9 +5,10 @@
 //! one client per service (MusicBrainz, the Cover Art Archive,
 //! ListenBrainz, Last.fm, TheAudioDB, AcoustID, Discogs, iTunes, Deezer,
 //! LRCLIB, Wikidata, Ticketmaster, Skiddle, Open-Meteo, YouTube, GitHub,
-//! Spotify, plex.tv, the user's Newznab indexers and the image hosts), the
-//! limiters, the provider answer cache and the
-//! service health registry. Each client sends through its own [`Executor`].
+//! Spotify, plex.tv, Pwned Passwords, the configured OIDC provider, the
+//! user's Newznab indexers and the image hosts), the limiters, the provider
+//! answer cache and the service health registry. Each client sends through
+//! its own [`Executor`].
 //!
 //! - [`executor`]: sends one request. It waits for a token at the caller's
 //!   priority, sends with a deadline, reads the body under a cap, types the
@@ -51,6 +52,7 @@ pub mod executor;
 pub mod geocoding;
 pub mod github;
 pub mod health;
+pub mod hibp;
 pub mod images;
 pub mod itunes;
 pub mod lastfm;
@@ -59,6 +61,7 @@ pub mod listenbrainz;
 pub mod lrclib;
 pub mod musicbrainz;
 pub mod newznab;
+pub mod oidc;
 pub mod plextv;
 pub mod preview;
 pub mod rates;
@@ -143,6 +146,8 @@ pub struct ProviderEndpoints {
     pub deezer_images: String,
     /// plex.tv account API root.
     pub plex_tv: String,
+    /// The Pwned Passwords range API, up to the hash prefix.
+    pub pwned_passwords: String,
 }
 
 impl ProviderEndpoints {
@@ -178,6 +183,7 @@ impl ProviderEndpoints {
             spotify_cover_cdn: None,
             deezer_images: "http://127.0.0.1:9".to_owned(),
             plex_tv: "http://127.0.0.1:9/plex".to_owned(),
+            pwned_passwords: "http://127.0.0.1:9/range".to_owned(),
         }
     }
 }
@@ -244,6 +250,11 @@ pub struct Providers {
     /// The user's Newznab indexers, each on a bucket of its own shaped by
     /// the `newznab` row, held to the daily caps it reports.
     pub newznab: newznab::NewznabIndexers,
+    /// Pwned Passwords range lookups for the password screen.
+    pub hibp: hibp::HibpClient,
+    /// The OIDC provider an admin configured: discovery, signing keys,
+    /// the token endpoint and userinfo, on one bucket.
+    pub oidc: oidc::OidcClient,
 }
 
 impl Providers {
@@ -413,6 +424,14 @@ impl Providers {
             Arc::clone(&health),
             Arc::clone(&clock),
         );
+        let hibp = hibp::HibpClient::new(
+            executor(&hibp::SPEC, hibp::SOURCE),
+            &endpoints.pwned_passwords,
+        );
+        let oidc = oidc::OidcClient::new(
+            executor(&oidc::SPEC, oidc::SOURCE),
+            executor(&oidc::TOKEN_SPEC, oidc::SOURCE),
+        );
         Self {
             limiters,
             cache,
@@ -438,6 +457,8 @@ impl Providers {
             spotify,
             plextv,
             newznab,
+            hibp,
+            oidc,
         }
     }
 

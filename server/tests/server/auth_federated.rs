@@ -494,6 +494,70 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     );
 }
 
+/// OIDC discovery goes out on the `oidc` rate row at user priority. While
+/// the row is resting it sends nothing and answers "try again", and a
+/// callback is held before it spends its login state.
+#[tokio::test]
+async fn oidc_calls_are_paced_by_their_rate_row() {
+    use droppedneedle_auth::federated::FederatedError;
+    use droppedneedle_auth::federated::oidc_http::OidcHttp;
+    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::{
+        CallOutcome, ProviderEndpoints, Providers, RequestPriority, oidc,
+    };
+
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        "https://idp.test/.well-known/openid-configuration",
+        200,
+        &[],
+        json!({
+            "issuer": "https://idp.test",
+            "authorization_endpoint": "https://idp.test/authorize",
+            "token_endpoint": "https://idp.test/token",
+            "jwks_uri": "https://idp.test/keys",
+        })
+        .to_string(),
+    );
+    let providers = Providers::over_wire(
+        wire.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ProviderEndpoints::closed(),
+    );
+    let row = providers
+        .limiter(oidc::SOURCE)
+        .expect("oidc has a rate row");
+    let idp = OidcHttp::new(providers.oidc.clone());
+
+    row.cool_down(std::time::Duration::from_secs(60));
+    let busy = FederatedError::ProviderUnavailable("OIDC provider is busy; try again".to_owned());
+    assert_eq!(idp.room_for_callback().err(), Some(busy.clone()));
+    assert_eq!(idp.discover("https://idp.test").await.err(), Some(busy));
+    assert!(wire.sent().is_empty(), "a resting row sends nothing");
+
+    let fresh = Providers::over_wire(
+        wire.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ProviderEndpoints::closed(),
+    );
+    let idp = OidcHttp::new(fresh.oidc.clone());
+    assert!(idp.room_for_callback().is_ok());
+    let doc = idp.discover("https://idp.test/").await.expect("discovery");
+    assert_eq!(doc.token_endpoint, "https://idp.test/token");
+    let calls: Vec<_> = fresh
+        .limiter(oidc::SOURCE)
+        .expect("oidc has a rate row")
+        .calls()
+        .into_iter()
+        .map(|count| (count.priority, count.outcome, count.calls))
+        .collect();
+    assert_eq!(
+        calls,
+        vec![(RequestPriority::UserInitiated, CallOutcome::Ok, 1)],
+        "discovery went through the oidc row"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Jellyfin against a mock server
 // ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ use droppedneedle_auth::compat_auth::subsonic::{
 use droppedneedle_auth::passwords::Passwords;
 use droppedneedle_auth::prod::ProdAuth;
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_auth::wiring::{AuthSetup, Upstreams};
+use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::config::DEFAULT_PORT;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
@@ -60,7 +60,6 @@ pub(crate) struct E2e {
     platform: Platform,
     bundle: ProdAuth,
     pub(crate) store: Arc<ConfigStore>,
-    upstreams: Upstreams,
     lastfm: String,
     plex_tv: String,
     crypto: Arc<Crypto>,
@@ -102,11 +101,8 @@ impl E2e {
             bundle: ProdAuth::new(&platform),
             store,
             // Nothing listens on the discard port: no test reaches the real
-            // plex.tv, Last.fm or breach check unless it points these at
-            // its own mock.
-            upstreams: Upstreams {
-                pwned_passwords: "http://127.0.0.1:9/range/".to_owned(),
-            },
+            // plex.tv or Last.fm unless it points these at its own mock;
+            // the breach check stays on the closed address.
             lastfm: "http://127.0.0.1:9/".to_owned(),
             plex_tv: "http://127.0.0.1:9/plex".to_owned(),
             crypto: Arc::clone(&platform.crypto),
@@ -151,9 +147,7 @@ impl E2e {
         AuthSetup::build(
             p,
             self.bundle.clone(),
-            &self.upstreams,
-            &providers.lastfm,
-            &providers.plextv,
+            &providers,
             Arc::new(
                 droppedneedle_media::remotes::plex::ConfiguredPlexServer::new(
                     p.http.shared().clone(),
