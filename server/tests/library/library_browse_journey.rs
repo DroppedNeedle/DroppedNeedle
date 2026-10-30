@@ -111,7 +111,7 @@ async fn fixture() -> Fixture {
          requested_at, status) VALUES ('rg-req', 'RG-REQ', 'Someone', 'Wanted', 1704067200000, 'pending')",
     ]
     .join(";\n");
-    app.db().execute_batch(&seed).expect("seed batch runs");
+    app.seed(&seed).await;
     Fixture { app, admin, user }
 }
 

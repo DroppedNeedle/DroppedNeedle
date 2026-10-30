@@ -517,8 +517,7 @@ async fn an_album_sends_the_accepted_ids_else_its_tags() {
     assert_eq!(identity_rows(&rig), before, "reading wrote an identity");
 
     rig.app
-        .db()
-        .execute_batch(&format!(
+        .seed(&format!(
             "INSERT INTO local_album_external_identities (local_album_id, provider, \
              release_group_mbid, release_mbid, decision_source, selected_at) \
              VALUES ('{album}', 'musicbrainz', '{GROUP}', '{RELEASE}', 'manual', 1) \
@@ -527,7 +526,7 @@ async fn an_album_sends_the_accepted_ids_else_its_tags() {
              release_mbid = excluded.release_mbid, decision_source = 'manual'; \
              DELETE FROM library_album_match_state WHERE local_album_id = '{album}';"
         ))
-        .expect("match accepted");
+        .await;
     let before = identity_rows(&rig);
     let (subsonic, jellyfin) = album_ids_sent(&rig, &album, &airbag).await;
     assert_eq!(subsonic, json!(RELEASE));
@@ -538,13 +537,12 @@ async fn an_album_sends_the_accepted_ids_else_its_tags() {
     assert_eq!(identity_rows(&rig), before, "reading wrote an identity");
 
     rig.app
-        .db()
-        .execute(
+        .seed_with(
             "UPDATE local_album_external_identities SET release_mbid = NULL \
              WHERE local_album_id = ?1",
             [album.as_str()],
         )
-        .expect("release unknown");
+        .await;
     let (subsonic, jellyfin) = album_ids_sent(&rig, &album, &airbag).await;
     assert_eq!(subsonic, json!(GROUP));
     assert_eq!(jellyfin, json!({"MusicBrainzReleaseGroup": GROUP}));
@@ -1896,14 +1894,13 @@ async fn covered_jellyfin(tag: &str) -> (CompatApp, CoveredIds) {
         .expect("the covered song's catalog ids");
     let mbid = "5b11f4ce-a62d-471e-81fc-a69a8278c7da";
     rig.app
-        .db()
-        .execute(
+        .seed_with(
             "INSERT OR REPLACE INTO local_artist_external_identities \
              (local_artist_id, provider, provider_artist_id, decision_source, selected_at) \
              VALUES (?1, 'musicbrainz', ?2, 'manual', 1000)",
             [artist.as_str(), mbid],
         )
-        .expect("artist identity seeds");
+        .await;
     plant_artist_picture(&rig, mbid).await;
 
     let token = rig.jellyfin_auth();
@@ -2458,13 +2455,12 @@ async fn merged_artists_and_album_aliases_open_in_player_apps() {
 
     let legacy = "8c2a6c8e-61a3-4a31-9a0f-3a4c5e6b7d80";
     rig.app
-        .db()
-        .execute(
+        .seed_with(
             "INSERT INTO local_album_aliases (alias, local_album_id, kind, created_at) \
              VALUES (?1, ?2, 'legacy_release_group', 1)",
             [legacy, bokou.as_str()],
         )
-        .expect("legacy alias seeds");
+        .await;
     let album = subsonic_ok(&rig, &format!("getAlbum?id=al-{legacy}")).await;
     assert_eq!(album["album"]["id"], json!(format!("al-{bokou}")));
     let token = rig.jellyfin_auth();
@@ -2523,14 +2519,13 @@ async fn an_artist_merged_by_its_musicbrainz_id_opens_in_player_apps() {
     let survivor_id = jellyfin_artist_id(&rig, &teardrop).await;
 
     rig.app
-        .db()
-        .execute(
+        .seed_with(
             "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
              provider_artist_id, decision_source, selected_at) \
              VALUES (?1, 'musicbrainz', ?2, 'manual', 1)",
             [linked.as_str(), ARTIST],
         )
-        .expect("link seeded");
+        .await;
     rig.app.scan_library().await;
 
     let artist = subsonic_ok(&rig, &format!("getArtist?id=ar-{merged}")).await;
@@ -2578,8 +2573,7 @@ async fn a_continued_track_opens_by_its_old_id() {
     assert_eq!(copy_album, album);
     let release = "33333333-3333-4333-8333-333333333333";
     rig.app
-        .db()
-        .execute_batch(&format!(
+        .seed(&format!(
             "INSERT INTO local_album_external_identities (local_album_id, provider, \
              release_group_mbid, release_mbid, decision_source, selected_at) \
              VALUES ('{album}', 'musicbrainz', 'rg-3', '{release}', 'manual', 1) \
@@ -2594,7 +2588,7 @@ async fn a_continued_track_opens_by_its_old_id() {
              release_mbid = excluded.release_mbid, \
              release_track_mbid = excluded.release_track_mbid;"
         ))
-        .expect("both copies mapped");
+        .await;
     let bytes = rig.file("one");
     std::fs::remove_file(music.join("U2/Achtung Baby/03 One.mp3")).expect("original deleted");
     rig.app.scan_library().await;
@@ -2894,14 +2888,13 @@ async fn subsonic_ratings_are_per_user_and_follow_a_merge() {
     let highest = subsonic(&rig, "getAlbumList2?type=highest", &mine).await;
     assert_eq!(highest["albumList2"]["album"][0]["id"], json!(kept));
     rig.app
-        .db()
-        .execute(
+        .seed_with(
             "INSERT INTO library_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
              SELECT user_id, 'album', 'album-gone', 5, rated_at FROM library_user_ratings \
              WHERE item_id = ?1 AND rating = 2",
             [local(&kept)],
         )
-        .expect("a rated album that is gone");
+        .await;
     let page = subsonic(&rig, "getAlbumList2?type=highest&size=1", &mine).await;
     assert_eq!(
         page["albumList2"]["album"],
@@ -3194,13 +3187,11 @@ async fn lyrics_come_from_the_file_first() {
     .await;
     // The lookup skips a track shorter than a second, as every fixture is.
     rig.app
-        .db()
-        .execute(
+        .seed(
             "UPDATE local_tracks SET duration_seconds = 200 \
              WHERE relative_path = 'Radiohead/OK Computer/02 Paranoid Android.flac'",
-            [],
         )
-        .expect("duration seeds");
+        .await;
     rig.set_lyrics_lookup(true).await;
     rig.wait_for_lyrics_mark("Airbag").await;
 
@@ -3500,12 +3491,8 @@ async fn jellyfin_played_marks_are_the_callers_and_leave_plays_alone() {
     // A stop after the mark counts again. A mark and a play both read the
     // clock, a play in whole seconds, so the mark moves back a minute.
     rig.app
-        .db()
-        .execute(
-            "UPDATE library_user_play_marks SET marked_unplayed_at = marked_unplayed_at - 60000",
-            [],
-        )
-        .expect("the mark moves back");
+        .seed("UPDATE library_user_play_marks SET marked_unplayed_at = marked_unplayed_at - 60000")
+        .await;
     let (status, _) = rig
         .app
         .call(

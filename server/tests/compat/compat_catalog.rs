@@ -57,12 +57,8 @@ pub(crate) const LIBRARY: &str = "INSERT INTO local_artists (id, display_name, f
 /// The whole app with both protocols on, over the seeded catalog.
 async fn app(tag: &str) -> CompatApp {
     let rig = CompatApp::unscanned(tag).await;
-    seed(&rig, LIBRARY);
+    rig.app.seed(LIBRARY).await;
     rig
-}
-
-fn seed(rig: &CompatApp, sql: &str) {
-    rig.app.db().execute_batch(sql).expect("catalog seeds");
 }
 
 /// The JSON answer of a Subsonic app signed in as the player.
@@ -357,15 +353,16 @@ fn track_by(id: &str, title: &str, artist: &str, number: i64) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn short_words_narrow_a_search() {
     let rig = app("compat-catalog-short").await;
-    seed(
-        &rig,
-        &[
-            track_by("trk-a", "The Rip", "Portishead", 2),
-            track_by("trk-b", "Over The Hill", "Portishead", 3),
-            track_by("trk-c", "Intro", "The xx", 4),
-        ]
-        .concat(),
-    );
+    rig.app
+        .seed(
+            [
+                track_by("trk-a", "The Rip", "Portishead", 2),
+                track_by("trk-b", "Over The Hill", "Portishead", 3),
+                track_by("trk-c", "Intro", "The xx", 4),
+            ]
+            .concat(),
+        )
+        .await;
     let found = subsonic(
         &rig,
         "search3",
@@ -396,14 +393,15 @@ async fn short_words_narrow_a_search() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search3_sync_pages_are_stable_and_words_match_across_columns() {
     let rig = app("compat-catalog-pages").await;
-    seed(
-        &rig,
-        &[
-            track_row("trk-2", "Roads", 2),
-            track_row("trk-3", "Glory Box", 3),
-        ]
-        .concat(),
-    );
+    rig.app
+        .seed(
+            [
+                track_row("trk-2", "Roads", 2),
+                track_row("trk-3", "Glory Box", 3),
+            ]
+            .concat(),
+        )
+        .await;
     async fn page(rig: &CompatApp, offset: &str) -> String {
         let body = subsonic(
             rig,
@@ -429,7 +427,7 @@ async fn search3_sync_pages_are_stable_and_words_match_across_columns() {
         page(&rig, "2").await,
     ];
     assert_eq!(before, ["tr-trk-1", "tr-trk-2", "tr-trk-3"]);
-    seed(&rig, &track_row("trk-0", "Sour Times", 4));
+    rig.app.seed(track_row("trk-0", "Sour Times", 4)).await;
     let after = [
         page(&rig, "0").await,
         page(&rig, "1").await,

@@ -480,13 +480,11 @@ async fn response_shapes() {
     // The lyrics lookup skips a track shorter than a second, as every
     // fixture track is.
     rig.app
-        .db()
-        .execute(
+        .seed(
             "UPDATE local_tracks SET duration_seconds = 200 \
              WHERE relative_path = 'U2/Achtung Baby/03 One.mp3'",
-            [],
         )
-        .expect("duration seeds");
+        .await;
     let client = Client::player(&rig);
     let ids = Ids::read(&client).await;
     let (one, airbag) = (ids.song("One"), ids.song("Airbag"));
@@ -1048,14 +1046,13 @@ async fn covered(rig: &CompatApp, client: &Client<'_>) -> [String; 3] {
 
     let mbid = "5b11f4ce-a62d-471e-81fc-a69a8278c7da";
     rig.app
-        .db()
-        .execute(
+        .seed_with(
             "INSERT OR REPLACE INTO local_artist_external_identities \
              (local_artist_id, provider, provider_artist_id, decision_source, selected_at) \
              VALUES (?1, 'musicbrainz', ?2, 'manual', 1000)",
             [artist.trim_start_matches("ar-"), mbid],
         )
-        .expect("artist identity seeds");
+        .await;
     droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache::new(
         rig.app.config.cache_dir.join("covers"),
         64 * 1024 * 1024,
@@ -1156,17 +1153,18 @@ pub(crate) const GREEN: [u8; 3] = [20, 200, 20];
 /// albums: red on OK Computer, and green on Achtung Baby, which is made to
 /// credit them too. Their picture is then those two covers crosswise.
 /// Returns Radiohead's local id.
-pub(crate) fn two_covers_for_radiohead(rig: &CompatApp) -> String {
+pub(crate) async fn two_covers_for_radiohead(rig: &CompatApp) -> String {
     let music = rig.app.config.root_app_dir.join("music");
-    let db = rig.app.db();
     let album_of = |path: &str| -> (String, String) {
-        db.query_row(
-            "SELECT a.id, a.album_artist_id FROM local_tracks t \
-             JOIN local_albums a ON a.id = t.local_album_id WHERE t.relative_path = ?1",
-            [path],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("the album")
+        rig.app
+            .db()
+            .query_row(
+                "SELECT a.id, a.album_artist_id FROM local_tracks t \
+                 JOIN local_albums a ON a.id = t.local_album_id WHERE t.relative_path = ?1",
+                [path],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the album")
     };
     let (ok_computer, radiohead) = album_of("Radiohead/OK Computer/01 Airbag.flac");
     let (achtung_baby, _) = album_of("U2/Achtung Baby/03 One.mp3");
@@ -1176,21 +1174,23 @@ pub(crate) fn two_covers_for_radiohead(rig: &CompatApp) -> String {
     ] {
         let cover = music.join(folder).join("cover.png");
         std::fs::write(&cover, png(colour, 300)).expect("cover writes");
-        db.execute(
-            "INSERT INTO local_album_artwork \
+        rig.app
+            .seed_with(
+                "INSERT INTO local_album_artwork \
              (local_album_id, source, source_locator, version, updated_at) \
              VALUES (?1, 'folder', ?2, 1, 1)",
-            [album.as_str(), cover.to_str().expect("utf-8 path")],
-        )
-        .expect("art row");
+                [album.as_str(), cover.to_str().expect("utf-8 path")],
+            )
+            .await;
     }
-    db.execute(
-        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
+    rig.app
+        .seed_with(
+            "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
          SELECT ?1, MAX(position) + 1, ?2, 'main' FROM local_album_artists \
          WHERE local_album_id = ?1",
-        [achtung_baby.as_str(), radiohead.as_str()],
-    )
-    .expect("credit row");
+            [achtung_baby.as_str(), radiohead.as_str()],
+        )
+        .await;
     radiohead
 }
 
@@ -1223,7 +1223,7 @@ pub(crate) fn assert_quadrants(body: &[u8], side: u32, quadrants: [[u8; 3]; 4]) 
 async fn an_unlinked_artist_shows_their_album_mosaic() {
     let rig = CompatApp::start("compat-sub-artist-mosaic").await;
     let client = Client::player(&rig);
-    let radiohead = format!("ar-{}", two_covers_for_radiohead(&rig));
+    let radiohead = format!("ar-{}", two_covers_for_radiohead(&rig).await);
     let artist = client.ok("getArtist", &[("id", &radiohead)]).await;
     assert_eq!(artist["artist"]["coverArt"], radiohead.as_str(), "{artist}");
     for (size, side) in [(Some("100"), 250), (None, 500)] {

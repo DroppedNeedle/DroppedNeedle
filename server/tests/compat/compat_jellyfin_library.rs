@@ -730,14 +730,13 @@ async fn an_identified_artist_sends_its_musicbrainz_id() {
         )
         .expect("the album artist");
     rig.app
-        .db()
-        .execute(
+        .seed_with(
             "INSERT OR REPLACE INTO local_artist_external_identities \
              (local_artist_id, provider, provider_artist_id, decision_source, selected_at) \
              VALUES (?1, 'musicbrainz', ?2, 'manual', 1000)",
             [local.as_str(), MBID],
         )
-        .expect("artist identified");
+        .await;
 
     let artists = json(&rig, "/jellyfin/Artists", &auth).await;
     let radiohead = named(&artists["Items"], "Name", "Radiohead");
@@ -813,16 +812,14 @@ async fn a_failed_read_is_a_server_error_not_an_empty_answer() {
     );
 
     rig.app
-        .db()
-        .execute_batch("ALTER TABLE local_albums RENAME TO local_albums_gone;")
-        .expect("albums table renames");
+        .seed("ALTER TABLE local_albums RENAME TO local_albums_gone;")
+        .await;
     let items = get(&rig, "/jellyfin/Items", Some(&auth)).await;
     assert_eq!(items.bare(), (500, 0));
 
     rig.app
-        .db()
-        .execute_batch("ALTER TABLE compat_jellyfin_ids RENAME TO compat_jellyfin_ids_gone;")
-        .expect("ids table renames");
+        .seed("ALTER TABLE compat_jellyfin_ids RENAME TO compat_jellyfin_ids_gone;")
+        .await;
     assert_eq!(get(&rig, &picture, None).await.bare(), (500, 0));
 
     // A playlist write reads every id first, so a failed read writes
@@ -847,7 +844,7 @@ async fn an_unlinked_artist_shows_their_album_mosaic() {
     use crate::compat_subsonic_library::{GREEN, RED, assert_quadrants, two_covers_for_radiohead};
     let rig = CompatApp::start("jf-artist-mosaic").await;
     let auth = finamp(&rig.secret);
-    two_covers_for_radiohead(&rig);
+    two_covers_for_radiohead(&rig).await;
     let artists = json(&rig, "/jellyfin/Artists", &auth).await;
     let radiohead = named(&artists["Items"], "Name", "Radiohead");
     assert!(radiohead["ImageTags"]["Primary"].is_string(), "{radiohead}");
@@ -876,7 +873,7 @@ async fn a_merged_album_shows_the_picture_of_the_album_that_holds_it() {
     use crate::compat_subsonic_library::two_covers_for_radiohead;
     let rig = CompatApp::start("jf-merged-picture").await;
     let auth = finamp(&rig.secret);
-    two_covers_for_radiohead(&rig);
+    two_covers_for_radiohead(&rig).await;
     let mezzanine = album_id(&rig, &auth, "Mezzanine").await;
     let ok_computer = album_id(&rig, &auth, "OK Computer").await;
     rig.jellyfin_ids_caught_up().await;
@@ -1622,17 +1619,16 @@ async fn token_transports_and_the_older_item_address() {
 
 /// Point the app password `secret` at the token `token` instead, as one
 /// made elsewhere could be: the Jellyfin API finds a token by its hash.
-fn retoken(rig: &CompatApp, secret: &str, token: &str) {
+async fn retoken(rig: &CompatApp, secret: &str, token: &str) {
     use sha2::{Digest, Sha256};
     let hash = |raw: &str| format!("{:x}", Sha256::digest(raw.as_bytes()));
     let changed = rig
         .app
-        .db()
-        .execute(
+        .seed_with(
             "UPDATE auth_app_passwords SET secret_sha256 = ?1 WHERE secret_sha256 = ?2",
             [hash(token), hash(secret)],
         )
-        .expect("token changes");
+        .await;
     assert_eq!(changed, 1);
 }
 
@@ -1715,9 +1711,9 @@ async fn query_tokens_are_percent_decoded_exactly_once() {
 
     // Plus and space: the player's token becomes `d+s=`, the admin's
     // `d s=`.
-    retoken(&rig, &secret, "d+s=");
+    retoken(&rig, &secret, "d+s=").await;
     let admin = rig.admin_secret().await;
-    retoken(&rig, &admin, "d s=");
+    retoken(&rig, &admin, "d s=").await;
     for (token, name) in [
         ("d+s=", PLAYER),
         ("d%2Bs%3D", PLAYER),

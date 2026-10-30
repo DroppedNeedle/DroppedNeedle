@@ -831,7 +831,7 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
     let user = text("SELECT id FROM auth_users WHERE role = 'admin'")[0].clone();
     // The app linked the artist from its files' id by now; v2's link of
     // the same id takes its place.
-    db.execute_batch(&format!(
+    app.seed(&format!(
         "INSERT OR REPLACE INTO local_artist_external_identities (local_artist_id, provider, \
          provider_artist_id, decision_source, selected_at) \
          VALUES ('{artist}', 'musicbrainz', '{ARTIST}', 'legacy_import', 1); \
@@ -841,7 +841,7 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
          artist_name, played_at) VALUES ('play-1', '{user}', '{artist}', 'Song 1', 'Alpha', \
          '2026-01-01T00:00:00Z');"
     ))
-    .expect("link, favorite and play seeded");
+    .await;
 
     let (tags, job) = rig.write_edition_tags(&headers, &album).await;
     let written = read_fields(&music.join("album/02.flac")).expect("fields read");
@@ -1329,13 +1329,13 @@ async fn an_editions_tags_are_written_as_the_folders_profile_says() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    db.execute(
+    app.seed_with(
         "INSERT INTO library_management_overrides (id, subject_kind, local_track_id, \
          field_name, value_json, mode, subject_revision, created_at, updated_at) \
          VALUES ('ov-title', 'track', ?1, 'title', '\"Kept Title\"', 'replace', 1, 1, 1)",
         [&track],
     )
-    .expect("override saved");
+    .await;
 
     // Refused with a reason, and no job made: a stale revision, a held
     // album, one still being placed, and a custom edition.
@@ -1360,29 +1360,29 @@ async fn an_editions_tags_are_written_as_the_folders_profile_says() {
     };
     let revision = edition_status(app, &tris, &edition).await["identity_revision"].clone();
     assert_eq!(refused(ask(&json!(999))).await, json!("STALE_REVISION"));
-    exclude_by_hand(&db, &album);
+    app.seed_with(EXCLUDE_BY_HAND, [&album]).await;
     assert_eq!(refused(ask(&revision)).await, json!("EDITION_TAGS_HELD"));
-    db.execute(
+    app.seed_with(
         "DELETE FROM library_management_exclusions WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("hold lifted");
-    db.execute(
+    .await;
+    app.seed_with(
         "INSERT INTO library_edition_remap_queue \
          (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
          VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
         rusqlite::params![album, fit.id],
     )
-    .expect("remap row queued");
+    .await;
     assert_eq!(
         refused(ask(&revision)).await,
         json!("EDITION_REMAP_PENDING")
     );
-    db.execute(
+    app.seed_with(
         "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("remap row removed");
+    .await;
     let (status, body) = app
         .call(
             "POST",
@@ -2029,14 +2029,14 @@ async fn a_run_in_an_unknown_state_is_not_read_as_another() {
     let auth = app.login_admin().await;
     // The database's own check is set aside to store a state no release
     // wrote, as a damaged or foreign file could hold it.
-    app.db()
-        .execute_batch(
-            "PRAGMA ignore_check_constraints = ON;
+    app.seed(
+        "PRAGMA ignore_check_constraints = ON;
              INSERT INTO library_scan_runs (id, kind, trigger, state, phase, aggregate_scope,
                  queued_at, updated_at, terminal_at) VALUES
-                 ('strange', 'incremental', 'manual', 'resting', 'queued', 'all', 1.0, 1.0, 1.0);",
-        )
-        .expect("row stored");
+                 ('strange', 'incremental', 'manual', 'resting', 'queued', 'all', 1.0, 1.0, 1.0);
+             PRAGMA ignore_check_constraints = OFF;",
+    )
+    .await;
     let (status, body) = app
         .call(
             "GET",
@@ -3288,7 +3288,7 @@ async fn library_contribution_seed_callback_verify_links_album() {
 
     // One indexed two-track album, as a scan leaves it.
     let db = app.db();
-    db.execute_batch(
+    app.seed(
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
          VALUES ('artist-1', 'Test Artist', 'test artist', 'person', 1, 1); \
          INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
@@ -3296,9 +3296,9 @@ async fn library_contribution_seed_callback_verify_links_album() {
          VALUES ('album-1', 'music', 'k', 'Test Album', 'test album', 'Test Artist', \
          'artist-1', 2024, 'automatic', 1, 1);",
     )
-    .expect("album seeds");
+    .await;
     for (id, number, title) in [("t1", 1, "First Song"), ("t2", 2, "Second Song")] {
-        db.execute(
+        app.seed_with(
             "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
              path_hash, file_size_bytes, file_mtime_ns, stat_revision, tag_revision, title, \
              title_folded, artist_name, album_title, album_title_folded, track_number, \
@@ -3308,7 +3308,7 @@ async fn library_contribution_seed_callback_verify_links_album() {
              'automatic')",
             rusqlite::params![id, format!("album/{id}.flac"), title, number],
         )
-        .expect("track seeds");
+        .await;
     }
 
     let (status, created) = app
@@ -3657,17 +3657,15 @@ async fn library_journey_undo_automatic_edition() {
         "automatic".to_owned(),
     );
     {
-        let conn = droppedneedle_kernel::db::open_connection(&app.config.library_db_path)
-            .expect("db opens");
         for (track, row) in [(&manual_track, &manual_row), (&auto_track, &prior_auto_row)] {
-            conn.execute(
+            app.seed_with(
                 "INSERT INTO local_track_external_identities (local_track_id, provider, \
                  recording_mbid, release_mbid, release_track_mbid, medium_position, \
                  release_track_position, decision_source, selected_at, row_revision) \
                  VALUES (?1, 'musicbrainz', ?2, ?3, ?4, ?5, ?6, ?7, 1.0, 3)",
                 rusqlite::params![track, row.0, row.1, row.2, row.3, row.4, row.5],
             )
-            .expect("prior track row");
+            .await;
         }
     }
     let scripted = &rig.identify;
@@ -3810,19 +3808,19 @@ async fn library_journey_undo_automatic_edition() {
     assert_eq!(parked, 0, "no retry waits on a choice");
 
     // An edition someone chose is never retried: the review stays open.
-    db.execute(
+    app.seed_with(
         "UPDATE local_album_external_identities SET decision_source = 'manual' \
          WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("edition chosen");
-    db.execute(
+    .await;
+    app.seed_with(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
          candidates_json, state, created_ms, updated_ms) \
          VALUES ('rev-chosen', ?1, 'EDITION_KEPT_OVER_CONFLICT', '[]', 'pending', 5, 5)",
         [&album],
     )
-    .expect("review filed");
+    .await;
     let (status, tally) = app
         .call(
             "POST",
@@ -3883,11 +3881,11 @@ async fn library_journey_undo_automatic_edition() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    db.execute(
+    app.seed_with(
         "UPDATE local_tracks SET applied_policy = 'local_metadata' WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("policy set");
+    .await;
     let (status, body) = app
         .call(
             "POST",
@@ -3913,10 +3911,8 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
     let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
     {
-        let conn = droppedneedle_kernel::db::open_connection(&app.config.library_db_path)
-            .expect("db opens");
         for n in ["1", "2"] {
-            conn.execute_batch(&format!(
+            app.seed(&format!(
                 "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
                  updated_at) VALUES ('low-{n}', 'Low', 'low', 'group', {n}, {n});
                  INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
@@ -3932,7 +3928,7 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
                  '{n}.flac', 'h{n}', 1, 0, 's', 'Song', 'song', 'Album {n}', 'album {n}', \
                  'flac', 'scan', 0, 'manual');"
             ))
-            .expect("seed artist");
+            .await;
         }
     }
 
@@ -5920,14 +5916,14 @@ async fn management_hold(app: &TestApp, headers: &[(&str, &str)], album: &str) -
 
 /// Leave the album unmanaged by a person's own hand, as the album page
 /// would have it.
+/// Leave the album `?1` unmanaged, by the admin's hand.
+const EXCLUDE_BY_HAND: &str = "INSERT INTO library_management_exclusions (local_album_id, \
+     reason, excluded_by_user_id, excluded_at) \
+     SELECT ?1, 'manual', id, 5 FROM auth_users WHERE role = 'admin' LIMIT 1";
+
 fn exclude_by_hand(db: &rusqlite::Connection, album: &str) {
-    db.execute(
-        "INSERT INTO library_management_exclusions (local_album_id, reason, \
-         excluded_by_user_id, excluded_at) \
-         SELECT ?1, 'manual', id, 5 FROM auth_users WHERE role = 'admin' LIMIT 1",
-        [album],
-    )
-    .expect("album left unmanaged");
+    db.execute(EXCLUDE_BY_HAND, [album])
+        .expect("album left unmanaged");
 }
 
 fn catalog_actions(db: &rusqlite::Connection, album: &str, kind: &str) -> i64 {
@@ -6052,7 +6048,7 @@ async fn custom_edition_is_sealed_on_the_album_and_undone() {
 
     // With a person's "leave unmanaged": sealing and then choosing a
     // release both keep it.
-    exclude_by_hand(&db, &album);
+    app.seed_with(EXCLUDE_BY_HAND, [&album]).await;
     let revision = edition_status(app, &headers, &edition).await["identity_revision"].clone();
     let (status, body) = app
         .call(
@@ -6162,13 +6158,13 @@ async fn leave_unmanaged_on_the_album_and_undo() {
     assert_eq!(management_hold(app, &headers, &album).await, Value::Null);
     assert_eq!(catalog_actions(&db, &album, "leave_unmanaged"), 0);
 
-    db.execute(
+    app.seed_with(
         "INSERT INTO library_edition_remap_queue \
          (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
          VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
         rusqlite::params![album, fit.id],
     )
-    .expect("remap row queued");
+    .await;
     // The match waits in Unconfirmed matches; the person's word settles it.
     let match_state = || {
         use rusqlite::OptionalExtension as _;
@@ -6180,13 +6176,13 @@ async fn leave_unmanaged_on_the_album_and_undo() {
         .optional()
         .expect("match state reads")
     };
-    db.execute(
+    app.seed_with(
         "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
          release_mbid, candidates_json, updated_at) \
          VALUES (?1, 'unconfirmed', 'CLOSE_CALL', ?2, '[]', 1)",
         rusqlite::params![album, fit.id],
     )
-    .expect("match left unconfirmed");
+    .await;
     let (status, body) = app
         .call(
             "POST",
@@ -6232,7 +6228,7 @@ async fn leave_unmanaged_on_the_album_and_undo() {
 
     // A hold the person set before stays through the undo, and "Manage it
     // again" lifts it.
-    exclude_by_hand(&db, &album);
+    app.seed_with(EXCLUDE_BY_HAND, [&album]).await;
     let (status, body) = app
         .call(
             "POST",
@@ -6339,26 +6335,25 @@ async fn edition_status_says_what_happens_next() {
 
     // A remap row seeded with a far-off `not_before`, so the loop never
     // takes it: placing, then waiting on MusicBrainz, then done.
-    let db = app.db();
-    db.execute(
+    app.seed_with(
         "INSERT INTO library_edition_remap_queue \
          (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
          VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
         rusqlite::params![album, fit.id],
     )
-    .expect("remap row queued");
+    .await;
     assert_eq!(status().await["placing"], json!({"attempts": 0}));
-    db.execute(
+    app.seed_with(
         "UPDATE library_edition_remap_queue SET attempts = 1 WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("row updated");
+    .await;
     assert_eq!(status().await["placing"], json!({"attempts": 1}));
-    db.execute(
+    app.seed_with(
         "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("row removed");
+    .await;
     assert_eq!(status().await["placing"], Value::Null);
 
     // "Let DroppedNeedle choose" while identification is paused: the job
@@ -6410,22 +6405,21 @@ async fn edition_status_says_when_the_app_writes_the_files() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["files_by_itself"], json!(true), "{body}");
 
-    let db = app.db();
-    db.execute(
+    app.seed_with(
         "INSERT INTO library_management_exclusions \
          (local_album_id, reason, excluded_by_user_id, excluded_at) \
          SELECT ?1, 'user', id, 0 FROM auth_users WHERE role = 'admin' LIMIT 1",
         [&album],
     )
-    .expect("album left unmanaged");
+    .await;
     let (_, body) = app.call("GET", &edition, &headers, None).await;
     assert_eq!(body["files_by_itself"], json!(false), "{body}");
     assert_eq!(body["writing"], json!(false));
-    db.execute(
+    app.seed_with(
         "DELETE FROM library_management_exclusions WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("exclusion removed");
+    .await;
 
     let (status, body) = app
         .call(
@@ -6450,46 +6444,45 @@ async fn edition_status_says_when_the_app_writes_the_files() {
 
     // Parked, or waiting on a preview a person must look at: nothing is
     // about to be written.
-    db.execute(
+    app.seed_with(
         "UPDATE library_management_automatic_queue SET not_before = 1e15, \
          last_reason_code = 'MANAGEMENT_FAILED' WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("row parked");
+    .await;
     assert_eq!(writes(&status().await), (json!(true), json!(false)));
-    db.execute(
+    app.seed_with(
         "UPDATE library_management_automatic_queue SET not_before = 1e12, \
          last_reason_code = 'PREVIEW_BLOCKED' WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("row waits on a blocked preview");
+    .await;
     assert_eq!(writes(&status().await), (json!(true), json!(false)));
 
     // The app stepped back from the album: it writes nothing until the
     // album is handed back, and a hand-back on its way counts as done.
-    db.execute(
+    app.seed_with(
         "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
          VALUES (?1, 'files_changed', 0)",
         [&album],
     )
-    .expect("album taken over");
+    .await;
     assert_eq!(writes(&status().await), (json!(false), json!(false)));
-    db.execute(
+    app.seed_with(
         "UPDATE library_album_takeovers SET handed_back_at = 1, hand_back_retry_at = 1000000000000000 \
          WHERE local_album_id = ?1",
         [&album],
-    )
-    .expect("hand-back stamped");
+    ).await;
     assert_eq!(status().await["files_by_itself"], json!(true));
-    db.execute(
+    app.seed_with(
         "DELETE FROM library_album_takeovers WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("mark lifted");
+    .await;
 
     // A custom edition, where the folder does not manage custom editions
     // by itself.
-    db.execute_batch(&format!(
+    app.seed(&format!(
         "UPDATE local_album_external_identities SET release_mbid = NULL, \
          row_revision = row_revision + 1 WHERE local_album_id = '{album}'; \
          INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
@@ -6506,7 +6499,7 @@ async fn edition_status_says_when_the_app_writes_the_files() {
          VALUES ('{album}', 'manifest-1', 0);",
         group = fit.release_group_id,
     ))
-    .expect("custom edition sealed");
+    .await;
     let body = status().await;
     assert_eq!(body["edition_kind"], json!("custom"), "{body}");
     assert_eq!(writes(&body), (json!(false), json!(false)));
@@ -6515,7 +6508,7 @@ async fn edition_status_says_when_the_app_writes_the_files() {
     assert_eq!(status().await["files_by_itself"], json!(true));
     // A manifest that lists only some of the album's files is no custom
     // edition to the worker: it waits for a release, and so does the status.
-    db.execute_batch(&format!(
+    app.seed(&format!(
         "INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
          release_group_mbid, album_title, album_artist_name, source_album_revision, \
          input_revision, content_hash, sealed_by_user_id, sealed_at) \
@@ -6530,40 +6523,40 @@ async fn edition_status_says_when_the_app_writes_the_files() {
          WHERE local_album_id = '{album}';",
         group = fit.release_group_id,
     ))
-    .expect("manifest gone stale");
+    .await;
     let body = status().await;
     assert_eq!(body["edition_kind"], json!("custom"), "{body}");
     assert_eq!(writes(&body), (json!(false), json!(false)));
-    db.execute(
+    app.seed_with(
         "DELETE FROM library_custom_edition_active WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("custom edition let go");
+    .await;
     // Only a release group: nothing is written until a release is chosen.
     let body = status().await;
     assert_eq!(body["edition_kind"], json!("group_only"), "{body}");
     assert_eq!(writes(&body), (json!(false), json!(false)));
 
     // An unconfirmed match waits for a person before anything is written.
-    db.execute(
+    app.seed_with(
         "UPDATE local_album_external_identities SET release_mbid = ?2, \
          row_revision = row_revision + 1 WHERE local_album_id = ?1",
         [&album, &fit.id],
     )
-    .expect("release back");
+    .await;
     assert_eq!(status().await["files_by_itself"], json!(true));
-    db.execute(
+    app.seed_with(
         "INSERT INTO library_album_match_state (local_album_id, state, reason_code, updated_at) \
          VALUES (?1, 'unconfirmed', 'LOOSE_MATCH', 0)",
         [&album],
     )
-    .expect("match unconfirmed");
+    .await;
     assert_eq!(writes(&status().await), (json!(false), json!(false)));
-    db.execute(
+    app.seed_with(
         "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
         [&album],
     )
-    .expect("match confirmed");
+    .await;
 
     // An edition with no track for one of the files: that file can never
     // be written from it, so once the files are placed nothing is written
@@ -6854,12 +6847,11 @@ async fn an_unmatched_album_in_a_keep_tags_folder_says_why() {
         rig.scan_store.album_for_track(&second).unwrap().as_ref(),
         Some(&album)
     );
-    app.db()
-        .execute(
-            "UPDATE local_tracks SET applied_policy = 'automatic' WHERE id = ?1",
-            [&second],
-        )
-        .expect("one file identifies");
+    app.seed_with(
+        "UPDATE local_tracks SET applied_policy = 'automatic' WHERE id = ?1",
+        [&second],
+    )
+    .await;
     let (_, body) = app
         .call(
             "GET",
@@ -7200,7 +7192,7 @@ async fn library_journey_catalog_corrections() {
         store.album_for_track(&a2).unwrap().as_deref(),
         Some(album_a.as_str())
     );
-    let db = rusqlite::Connection::open(&app.config.library_db_path).expect("db opens");
+    let db = app.db();
     let retired_into = |album: &str| -> Option<String> {
         db.query_row(
             "SELECT retired_into_album_id FROM local_albums WHERE id = ?1",
@@ -7214,16 +7206,16 @@ async fn library_journey_catalog_corrections() {
     // Album B carries a chosen edition, album A none: merging B into A
     // moves the edition onto A.
     const CHOSEN: &str = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-    db.execute_batch(&format!(
+    app.seed(&format!(
         "DELETE FROM local_track_external_identities; \
          DELETE FROM local_album_external_identities; \
          INSERT INTO local_album_external_identities (local_album_id, release_group_mbid, \
          release_mbid, decision_source, selected_at) VALUES ('{album_b}', \
          '11111111-2222-4333-8444-555555555555', '{CHOSEN}', 'manual', 1);"
     ))
-    .expect("pin album b");
+    .await;
     // Someone favorited album B and played it; both follow the merge.
-    db.execute_batch(&format!(
+    app.seed(&format!(
         "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'album', '{album_b}', 1); \
          INSERT INTO library_user_favorite_names (user_id, item_kind, item_id, display_name) \
@@ -7232,7 +7224,7 @@ async fn library_journey_catalog_corrections() {
          artist_name, played_at) VALUES ('play-1', 'listener', '{album_b}', 'Song', \
          'Artist', '2026-01-01T00:00:00Z');"
     ))
-    .expect("favorite and play album b");
+    .await;
     let selection = json!({"track_ids": [b1], "target_album_id": album_a});
     let (status, preview) = app
         .call(
@@ -7342,14 +7334,14 @@ async fn library_journey_catalog_corrections() {
     );
 
     // Two artists that are the same person: merge one into the other.
-    db.execute_batch(
+    app.seed(
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
          VALUES ('artist-keep', 'Same', 'same', 'person', 1, 1), \
          ('artist-dupe', 'Same.', 'same.', 'person', 1, 1); \
          INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('someone', 'artist', 'artist-dupe', 1);",
     )
-    .expect("artists");
+    .await;
     let selection = json!({
         "source_artist_ids": ["artist-keep", "artist-dupe"],
         "surviving_artist_id": "artist-keep",
@@ -8613,26 +8605,24 @@ async fn library_journey_identity_repair_and_preparation() {
             )
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        let conn = droppedneedle_kernel::db::open_connection(&app.config.library_db_path)
-            .expect("db opens");
-        conn.execute(
+        app.seed_with(
             "DELETE FROM local_track_external_identities WHERE local_track_id IN \
              (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
             [&album],
         )
-        .expect("track rows cleared");
-        conn.execute(
+        .await;
+        app.seed_with(
             "DELETE FROM local_album_external_identities WHERE local_album_id = ?1",
             [&album],
         )
-        .expect("album identity cleared");
-        conn.execute(
+        .await;
+        app.seed_with(
             "INSERT OR REPLACE INTO library_album_match_state (local_album_id, state, \
              reason_code, candidates_json, updated_at) \
              VALUES (?1, 'unmatched', 'NO_CANDIDATE', '[]', 1.0)",
             [&album],
         )
-        .expect("match state planted");
+        .await;
     }
     let (_, job) = app
         .call(
@@ -11873,12 +11863,12 @@ async fn a_merge_and_a_split_carry_the_step_back() {
     let album_a = store.album_for_track(&a2).unwrap().expect("album a");
     let album_b = store.album_for_track(&b1).unwrap().expect("album b");
     let db = app.db();
-    db.execute(
+    app.seed_with(
         "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
          VALUES (?1, 'retag_followed', 1234)",
         [&album_b],
     )
-    .expect("album b marked");
+    .await;
     let marks = || -> Vec<(String, String, i64)> {
         let mut statement = db
             .prepare(
@@ -12185,12 +12175,11 @@ async fn left_unmanaged_albums_read_back_and_hand_back() {
         .expect("album");
     let db = app.db();
     let mark = || {
-        db.execute(
+        app.seed_with(
             "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
              VALUES (?1, 'files_changed', 1234)",
             [&album],
         )
-        .expect("album marked");
     };
     let album_url = format!("/api/v3/library/albums/{album}");
     let hold = || async {
@@ -12201,7 +12190,7 @@ async fn left_unmanaged_albums_read_back_and_hand_back() {
     };
     assert_eq!(hold().await, Value::Null);
 
-    mark();
+    mark().await;
     assert_eq!(
         hold().await,
         json!({
@@ -12227,18 +12216,17 @@ async fn left_unmanaged_albums_read_back_and_hand_back() {
     assert_eq!(list["items"][0]["noticed_at"], json!(1234));
 
     // A person's own choice is what the page shows when both are there.
-    db.execute(
+    app.seed_with(
         "INSERT INTO library_management_exclusions (local_album_id, reason, \
          excluded_by_user_id, excluded_at) SELECT ?1, 'manual', id, 5 FROM auth_users LIMIT 1",
         [&album],
     )
-    .expect("album excluded");
+    .await;
     let own = hold().await;
     assert_eq!(own["kind"], json!("your_choice"));
     assert_eq!(own["held_at"], json!(5000));
     assert_eq!(own["exclusion_revision"], json!(1));
-    db.execute("DELETE FROM library_management_exclusions", [])
-        .expect("exclusion lifted");
+    app.seed("DELETE FROM library_management_exclusions").await;
 
     let hand_back = format!("/api/v3/library/albums/{album}/management/hand-back");
     let (status, body) = app.call("POST", &hand_back, &headers, None).await;
@@ -12251,7 +12239,7 @@ async fn left_unmanaged_albums_read_back_and_hand_back() {
 
     // All at once: the route answers the count and the worker does the
     // rest.
-    mark();
+    mark().await;
     let (status, body) = app
         .call(
             "POST",
@@ -13885,15 +13873,14 @@ async fn library_journey_review_exclude_restore_dismiss() {
         .album_for_track(&track)
         .unwrap()
         .expect("album");
-    let conn =
-        droppedneedle_kernel::db::open_connection(&app.config.library_db_path).expect("db opens");
-    conn.execute(
+    let conn = app.db();
+    app.seed_with(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
          candidates_json, state, created_ms, updated_ms) \
          VALUES ('rev-1', ?1, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
         [&album],
     )
-    .expect("review filed");
+    .await;
     let availability = |conn: &rusqlite::Connection| -> Vec<String> {
         let mut statement = conn
             .prepare("SELECT availability FROM local_tracks WHERE local_album_id = ?1")
@@ -13983,13 +13970,13 @@ async fn library_journey_review_exclude_restore_dismiss() {
     assert_eq!(body["state_counts"]["pending"], json!(0));
 
     // A bulk keep-as-tagged previews first, and applies only that preview.
-    conn.execute(
+    app.seed_with(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
          candidates_json, state, created_ms, updated_ms) \
          VALUES ('rev-2', ?1, 'EDITION_CLEARED_CONFLICT', '[]', 'pending', 2, 2)",
         [&album],
     )
-    .expect("second review filed");
+    .await;
     let selection = json!({"action": "keep_tagged", "filter": {"root_id": "music"}});
     let (status, preview) = app
         .call(
@@ -14061,25 +14048,25 @@ async fn library_journey_review_exclude_restore_dismiss() {
     .await;
 
     // A bulk accept never replaces an edition someone picked by hand.
-    conn.execute(
+    app.seed_with(
         "INSERT INTO local_album_external_identities (local_album_id, provider, \
          release_group_mbid, decision_source, selected_at) \
          VALUES (?1, 'musicbrainz', 'rg-pinned', 'manual', 1.0)",
         [&album],
     )
-    .expect("pinned");
+    .await;
     let candidates = json!([{
         "candidate_key": "rg-other:", "release_group_mbid": "rg-other", "release_mbid": null,
         "album_title": "Other", "album_artist_name": "Someone", "track_evidence": [],
         "score": 0.9, "reason_code": "WEAK_MATCH"
     }]);
-    conn.execute(
+    app.seed_with(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
          candidates_json, state, created_ms, updated_ms) \
          VALUES ('rev-3', ?1, 'WEAK_MATCH', ?2, 'pending', 3, 3)",
         rusqlite::params![album, candidates.to_string()],
     )
-    .expect("third review filed");
+    .await;
     let (status, preview) = app
         .call(
             "POST",
@@ -14147,14 +14134,13 @@ async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
         }
     };
     let db = app.db();
-    let file = |id: &str, album: &str| {
-        db.execute(
+    let file = |id: String, album: String| {
+        app.seed_with(
             "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
              candidates_json, state, created_ms, updated_ms) \
              VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
             [id, album],
         )
-        .expect("review filed");
     };
     let states = || -> Vec<(String, i64)> {
         db.prepare("SELECT state, COUNT(*) FROM library_identify_reviews GROUP BY state")
@@ -14165,7 +14151,7 @@ async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
             .expect("rows")
     };
     for n in 0..30 {
-        file(&format!("keep-{n:02}"), &inside);
+        file(format!("keep-{n:02}"), inside.clone()).await;
     }
 
     let selection = json!({"action": "keep_tagged", "filter": {}});
@@ -14271,8 +14257,8 @@ async fn bulk_review_changes_and_folder_retries_run_as_one_pausable_job() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    file("retry-inside", &inside);
-    file("retry-outside", &outside);
+    file("retry-inside".to_owned(), inside.clone()).await;
+    file("retry-outside".to_owned(), outside.clone()).await;
     let (status, body) = app
         .call(
             "POST",
@@ -14359,13 +14345,13 @@ async fn a_review_job_step_that_fails_to_record_does_the_review_again() {
     };
     let db = app.db();
     for n in 0..3 {
-        db.execute(
+        app.seed_with(
             "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
              candidates_json, state, created_ms, updated_ms) \
              VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
             [format!("keep-{n}"), album.clone()],
         )
-        .expect("review filed");
+        .await;
     }
     let selection = json!({"action": "keep_tagged", "filter": {}});
     let (status, preview) = app
@@ -14391,12 +14377,12 @@ async fn a_review_job_step_that_fails_to_record_does_the_review_again() {
     let job_id = body["job"]["id"].as_str().expect("job id").to_owned();
 
     // Recording the second review's outcome fails once.
-    db.execute_batch(
+    app.seed(
         "CREATE TRIGGER fail_second_outcome BEFORE UPDATE OF state ON library_operation_work \
          WHEN NEW.ordinal = 1 AND NEW.state = 'succeeded' \
          BEGIN SELECT RAISE(ABORT, 'outcome write failed'); END;",
     )
-    .expect("trigger");
+    .await;
     assert!(matches!(step().await, Ok(ReviewStep::Worked(_))));
     assert!(step().await.is_err(), "the outcome write fails");
     let state_of = |ordinal: i64| -> String {
@@ -14408,8 +14394,7 @@ async fn a_review_job_step_that_fails_to_record_does_the_review_again() {
         .expect("work reads")
     };
     assert_eq!(state_of(1), "pending", "the review goes back to pending");
-    db.execute_batch("DROP TRIGGER fail_second_outcome")
-        .expect("trigger dropped");
+    app.seed("DROP TRIGGER fail_second_outcome").await;
 
     let finished = loop {
         match step().await.expect("step runs") {
@@ -14476,13 +14461,13 @@ async fn a_review_job_left_running_by_a_restart_finishes_its_reviews() {
     };
     let db = app.db();
     for n in 0..3 {
-        db.execute(
+        app.seed_with(
             "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
              candidates_json, state, created_ms, updated_ms) \
              VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
             [format!("keep-{n}"), album.clone()],
         )
-        .expect("review filed");
+        .await;
     }
     let selection = json!({"action": "keep_tagged", "filter": {}});
     let (status, preview) = app
@@ -14510,12 +14495,12 @@ async fn a_review_job_left_running_by_a_restart_finishes_its_reviews() {
     // The old process settled one review and was taking the next when it
     // stopped, its lease still current.
     assert!(matches!(step("stopped").await, ReviewStep::Worked(_)));
-    db.execute(
+    app.seed_with(
         "UPDATE library_operation_work SET state = 'running' \
          WHERE job_id = ?1 AND ordinal = 1",
         [&job_id],
     )
-    .expect("work taken");
+    .await;
     let work_state = |ordinal: i64| -> String {
         db.query_row(
             "SELECT state FROM library_operation_work WHERE job_id = ?1 AND ordinal = ?2",
@@ -14589,14 +14574,13 @@ async fn a_review_action_on_a_stale_revision_is_refused() {
         .album_for_track(&track)
         .unwrap()
         .expect("album");
-    app.db()
-        .execute(
-            "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+    app.seed_with(
+        "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
              candidates_json, state, created_ms, updated_ms) \
              VALUES ('rev-s', ?1, 'WEAK_MATCH', '[]', 'pending', 1, 1)",
-            [&album],
-        )
-        .expect("review filed");
+        [&album],
+    )
+    .await;
     let curator = app.login_user("cora").await;
     let (status, body) = app
         .call(
@@ -14900,7 +14884,7 @@ async fn a_merge_places_files_on_the_edition_the_album_has() {
         );
 
         let db = app.db();
-        db.execute_batch(&format!(
+        app.seed(&format!(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('curator', 'Curator', 'admin', 0); \
              INSERT INTO local_album_external_identities (local_album_id, provider, \
@@ -14922,7 +14906,7 @@ async fn a_merge_places_files_on_the_edition_the_album_has() {
              INSERT INTO library_management_automatic_queue (local_album_id, queued_at, \
              not_before, retag_followed_at) VALUES ('{album_a}', 1, 1, 5678);"
         ))
-        .expect("album a chosen and left unmanaged");
+        .await;
         let chosen = choice_row(&db, &album_a);
         let held = [placement(&db, &a1), placement(&db, &a2)];
 
@@ -15033,7 +15017,7 @@ async fn a_file_that_joins_while_musicbrainz_is_asked_is_placed_next() {
     let (a1, a2, b3) = (track("a/01.flac"), track("a/02.flac"), track("b/03.flac"));
     let album = store.album_for_track(&a1).unwrap().expect("album");
     let db = app.db();
-    db.execute_batch(&format!(
+    app.seed(&format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
          VALUES ('curator', 'Curator', 'admin', 0); \
          INSERT INTO local_album_external_identities (local_album_id, provider, \
@@ -15047,7 +15031,7 @@ async fn a_file_that_joins_while_musicbrainz_is_asked_is_placed_next() {
          ('{a2}', 'musicbrainz', 'rec-a2', '{REL_1}', 'rt-2', 1, 2, 'manual', 1), \
          ('{b3}', 'musicbrainz', 'rec-b3', '{REL_2}', 'other-3', 1, 3, 'automatic', 1);"
     ))
-    .expect("edition chosen");
+    .await;
     let held = [placement(&db, &a1), placement(&db, &a2)];
     // The first answer is made from the album as it was asked about; the
     // third file joins the album while that answer is on its way.
@@ -15066,12 +15050,12 @@ async fn a_file_that_joins_while_musicbrainz_is_asked_is_placed_next() {
         }
         one_track_per_title(facts)
     });
-    db.execute(
+    app.seed_with(
         "INSERT INTO library_edition_remap_queue (local_album_id, release_mbid, queued_at, \
          origin) VALUES (?1, ?2, 1, 'place_only')",
         rusqlite::params![album, REL_1],
     )
-    .expect("files queued");
+    .await;
     rig.edition_settled(&album).await;
 
     let (release, release_track, _) = placement(&db, &b3);
@@ -18383,7 +18367,7 @@ async fn retag_pairs_list_join_and_dismiss() {
         )
     };
     let db = app.db();
-    db.execute_batch(
+    app.seed(
         &[
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('curator', 'Curator', 'admin', 0);"
@@ -18448,7 +18432,7 @@ async fn retag_pairs_list_join_and_dismiss() {
         ]
         .join("\n"),
     )
-    .expect("pairs seeded");
+    .await;
 
     // Only an admin reaches the routes.
     let (a_old, a_new) = (id("a-old"), id("a-new"));
@@ -18704,11 +18688,8 @@ async fn retag_pairs_list_join_and_dismiss() {
         )
     );
     assert_eq!(pair_snapshot(&db, &c_old, &c_new), before);
-    db.execute(
-        "UPDATE library_contribution_drafts SET state = 'cancelled' WHERE id = 'draft-c'",
-        [],
-    )
-    .expect("draft closed");
+    app.seed("UPDATE library_contribution_drafts SET state = 'cancelled' WHERE id = 'draft-c'")
+        .await;
     let (status, body) = app.call("POST", &join_c, &headers, Some(plain)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["album_id"], json!(c_new));
@@ -18822,7 +18803,7 @@ async fn retag_pairs_list_join_and_dismiss() {
     // chosen release, leaves the custom edition's review. A refusal after
     // an edition was dropped puts the edition back.
     let (h_old, h_new, i_old, i_new) = (id("h-old"), id("h-new"), id("i-old"), id("i-new"));
-    db.execute_batch(
+    app.seed(
         &[
             choose("h-old", "rg-h", "'rel-h-old'"),
             choose("h-new", "rg-h", "NULL"),
@@ -18848,7 +18829,7 @@ async fn retag_pairs_list_join_and_dismiss() {
         ]
         .join("\n"),
     )
-    .expect("more pairs seeded");
+    .await;
     let (status, body) = app
         .call(
             "POST",
@@ -22132,14 +22113,14 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
     ))[0]
         .clone();
     let user = text("SELECT id FROM auth_users WHERE role = 'admin'")[0].clone();
-    db.execute_batch(&format!(
+    app.seed(&format!(
         "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('{user}', 'artist', '{artist}', 1); \
          INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
          artist_name, played_at) VALUES ('play-1', '{user}', '{artist}', 'First 1', \
          'Artist X', '2026-01-01T00:00:00Z');"
     ))
-    .expect("favorite and play seeded");
+    .await;
 
     tag(
         &plant(&music, "later/01.flac", "management_full.flac"),
@@ -22898,16 +22879,15 @@ async fn hand_match_album(rig: &Rig, folder: &str) -> HandMatchAlbum {
     assert_eq!(status, StatusCode::OK, "{body}");
 
     let listener = app.login_user("listener").await.user_id;
-    app.db()
-        .execute_batch(&format!(
-            "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+    app.seed(&format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('{listener}', 'track', '{}', 0); \
              INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
              artist_name, played_at) VALUES ('play-3', '{listener}', '{}', 'Track 3', \
              'Artist', '2026-01-01T00:00:00Z');",
-            tracks[2], tracks[2]
-        ))
-        .expect("play and star seeded");
+        tracks[2], tracks[2]
+    ))
+    .await;
 
     std::fs::remove_file(&third).expect("third file goes");
     let odd = plant(&music, &format!("{folder}/odd.flac"), "flac_full_02.flac");
@@ -23115,11 +23095,11 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
             |row| row.get(0),
         )
         .expect("album release");
-    db.execute(
+    app.seed_with(
         "DELETE FROM library_management_automatic_queue WHERE local_album_id = ?1",
         [album],
     )
-    .expect("queue cleared");
+    .await;
     let carries = continuations(&db);
 
     let (status, body) = app
@@ -23335,7 +23315,7 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
     assert_eq!(body["error"]["code"], json!("NO_HAND_MATCH"));
 
     // An edition the app picked, left as a best guess.
-    db.execute_batch(&format!(
+    app.seed(&format!(
         "UPDATE local_album_external_identities SET decision_source = 'automatic', \
          selected_by_user_id = NULL, row_revision = row_revision + 1 \
          WHERE local_album_id = '{album}'; \
@@ -23345,7 +23325,7 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
          release_mbid, candidates_json, updated_at) \
          VALUES ('{album}', 'unconfirmed', 'CLOSE_CALL', '{release}', '[]', 1);"
     ))
-    .expect("the app's best guess");
+    .await;
     let guessed = album_choice(&db, album);
     let before_guess = identity_of(&db, &h.odd);
     let revision = plan(plan_uri.clone()).await["identity_revision"].clone();
@@ -23389,13 +23369,13 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
     );
 
     // An edition carried from v2.
-    db.execute_batch(&format!(
+    app.seed(&format!(
         "UPDATE local_album_external_identities SET decision_source = 'legacy_import', \
          selected_by_user_id = NULL, row_revision = row_revision + 1 \
          WHERE local_album_id = '{album}'; \
          DELETE FROM library_album_match_state WHERE local_album_id = '{album}';"
     ))
-    .expect("v2's edition");
+    .await;
     let revision = plan(plan_uri.clone()).await["identity_revision"].clone();
     let (status, body) = app
         .call(
@@ -23497,11 +23477,11 @@ async fn a_match_by_hand_is_refused_with_nothing_changed() {
     };
     let tracks = |n: usize| h.fit.tracks[n].id.clone();
     // The second file loses its stored row: the matcher still places it.
-    db.execute(
+    app.seed_with(
         "DELETE FROM local_track_external_identities WHERE local_track_id = ?1",
         [&h.tracks[1]],
     )
-    .expect("second file's row gone");
+    .await;
 
     let current = revision().await;
     let refusals: [(&str, String, String, i64, StatusCode, &str); 7] = [

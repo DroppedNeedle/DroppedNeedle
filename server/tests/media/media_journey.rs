@@ -15,7 +15,7 @@ async fn media_connect_browse_play_seek_stop() {
     let auth = app.login_admin().await;
 
     // Seed one four-minute catalog track behind the playback lifecycle.
-    seed_track(&app);
+    seed_track(&app).await;
 
     // Connect: the admin saves the Plex server; the mock accepts its token.
     let (status, body) = app
@@ -222,7 +222,7 @@ async fn a_stream_from_a_server_that_is_down_answers_remote_unavailable() {
 }
 
 /// Minimal artist/album/track rows behind the playback lifecycle.
-fn seed_track(app: &TestApp) {
+async fn seed_track(app: &TestApp) {
     let seed = [
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
          VALUES ('journey-artist-1', 'Aurora Current', 'aurora current', 'group', 0, 0)",
@@ -239,5 +239,5 @@ fn seed_track(app: &TestApp) {
          'Neon Meridian', 'neon meridian', 'flac', 240.0, 'seed', 0, 'manual')",
     ]
     .join(";\n");
-    app.db().execute_batch(&seed).expect("seed batch runs");
+    app.seed(&seed).await;
 }

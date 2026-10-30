@@ -163,9 +163,7 @@ async fn failures_answer_the_fixed_body_and_an_outage_names_its_service() {
     // A chart ListenBrainz refuses, and a store that fails, both answer 500
     // with the fixed body naming the request id and nothing of the cause.
     // They go first: the outage below rests ListenBrainz for a while.
-    app.db()
-        .execute_batch("DROP TABLE catalog_ignored_releases")
-        .expect("ignore ledger dropped");
+    app.seed("DROP TABLE catalog_ignored_releases").await;
     for (n, uri) in [
         "/api/v3/home/popular/albums?source=listenbrainz",
         "/api/v3/discover/queue/ignored",

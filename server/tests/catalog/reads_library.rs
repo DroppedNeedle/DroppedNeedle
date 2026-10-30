@@ -810,10 +810,7 @@ async fn one_album_set_everywhere() {
     use droppedneedle_catalog::reads::discover::page::library::LibraryReads;
 
     let rig = CompatApp::unscanned("reads-library-album-set").await;
-    rig.app
-        .db()
-        .execute_batch(ALBUM_KINDS)
-        .expect("album kinds seed");
+    rig.app.seed(ALBUM_KINDS).await;
     let player_id: String = rig
         .app
         .db()
@@ -824,14 +821,13 @@ async fn one_album_set_everywhere() {
         )
         .expect("player row");
     rig.app
-        .db()
-        .execute(
+        .seed_with(
             "INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
              artist_name, followed_at, updated_at) VALUES (?1, 'mb-aurora', 'mb-aurora', \
              'Aurora', 1, 1)",
             [&player_id],
         )
-        .expect("follow seeds");
+        .await;
     let (status, login) = rig
         .app
         .call(

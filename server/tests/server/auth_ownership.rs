@@ -1293,7 +1293,7 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
         Owned::TagWrite => {
             let album = format!("tag-write-album-{n}");
             let job = format!("tag-write-job-{n}");
-            seed_tag_write(app, owner, &album, &job);
+            seed_tag_write(app, owner, &album, &job).await;
             ids.insert("album_id", album);
             ids.insert("job_id", job);
         }
@@ -1314,54 +1314,55 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
 
 /// A planned tag write of `album`'s edition that `owner` asked for, waiting
 /// to be applied, so the management worker leaves it as it is.
-fn seed_tag_write(app: &TestApp, owner: &Who, album: &str, job: &str) {
+async fn seed_tag_write(app: &TestApp, owner: &Who, album: &str, job: &str) {
     use droppedneedle_library::management::models::{
         EditionPin, JobIntent, Origin, Revisions, Summary,
     };
     use droppedneedle_library::management::store::{NewJob, insert_job};
-    let mut db = app.db();
-    let tx = db.transaction().expect("transaction opens");
-    insert_job(
-        &tx,
-        &NewJob {
-            id: job,
-            requested_by: Some(&owner.id),
-            idempotency_key: None,
-            mode: "preview",
-            selection_json: r#"{"kind":"tracks","ids":[]}"#,
-            profile_snapshot_json: "{}",
-            revisions: &Revisions {
-                profile: String::new(),
-                settings: String::new(),
-                naming: String::new(),
-                policy: String::new(),
-                overrides: String::new(),
+    let (owner, album, job) = (owner.id.clone(), album.to_owned(), job.to_owned());
+    app.seed_tx(move |tx| {
+        insert_job(
+            tx,
+            &NewJob {
+                id: &job,
+                requested_by: Some(&owner),
+                idempotency_key: None,
+                mode: "preview",
+                selection_json: r#"{"kind":"tracks","ids":[]}"#,
+                profile_snapshot_json: "{}",
+                revisions: &Revisions {
+                    profile: String::new(),
+                    settings: String::new(),
+                    naming: String::new(),
+                    policy: String::new(),
+                    overrides: String::new(),
+                },
+                catalog_revision: 0,
+                now: 1.0,
+                expires_at: 1e12,
+                target_root_id: None,
+                linked_job_id: None,
+                summary: &Summary::default(),
+                origin: Origin::Manual,
+                intent: &JobIntent {
+                    edition: Some(EditionPin {
+                        local_album_id: album.clone(),
+                        release_mbid: "00000000-0000-0000-0000-0000000000bb".to_owned(),
+                        identity_revision: 1,
+                    }),
+                    ..JobIntent::default()
+                },
+                proposed_settings_revision: None,
             },
-            catalog_revision: 0,
-            now: 1.0,
-            expires_at: 1e12,
-            target_root_id: None,
-            linked_job_id: None,
-            summary: &Summary::default(),
-            origin: Origin::Manual,
-            intent: &JobIntent {
-                edition: Some(EditionPin {
-                    local_album_id: album.to_owned(),
-                    release_mbid: "00000000-0000-0000-0000-0000000000bb".to_owned(),
-                    identity_revision: 1,
-                }),
-                ..JobIntent::default()
-            },
-            proposed_settings_revision: None,
-        },
-    )
-    .expect("tag write seeds");
-    tx.execute_batch(&format!(
-        "UPDATE library_operation_jobs SET state = 'ready' WHERE id = '{job}'; \
+        )
+        .expect("tag write seeds");
+        tx.execute_batch(&format!(
+            "UPDATE library_operation_jobs SET state = 'ready' WHERE id = '{job}'; \
          UPDATE library_management_job_snapshots SET phase = 'ready' WHERE job_id = '{job}';"
-    ))
-    .expect("tag write is planned");
-    tx.commit().expect("tag write lands");
+        ))
+        .expect("tag write is planned");
+    })
+    .await;
 }
 
 /// Upload one audio file to the drop import as `owner` and wait for the
@@ -1584,15 +1585,13 @@ async fn caller_keyed_state_stays_with_its_caller() {
     };
 
     // Favourites and ratings, on a library album.
-    app.db()
-        .execute_batch(
+    app.seed(
             "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
              VALUES ('own-artist', 'Someone', 'someone', 'person', 0, 0); \
              INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
              album_artist_id, grouping_source, created_at, updated_at) VALUES \
              ('own-album', 'root-1', 'g-own', 'Something', 'something', 'own-artist', 'manual', 0, 0);",
-        )
-        .expect("library album seeds");
+        ).await;
     let album = "own-album";
     let favorite = format!("/api/v3/favorites/album/{album}");
     let hearted = "/api/v3/library/albums?favorites=true";

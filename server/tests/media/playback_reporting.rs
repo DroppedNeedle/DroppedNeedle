@@ -974,20 +974,19 @@ async fn listener(app: &TestApp, name: &str, token: &str) -> crate::common::Logi
     let sealed = crypto
         .encrypt(&json!({"user_token": token, "username": name}).to_string())
         .expect("link seals");
-    let db = app.db();
-    db.execute(
+    app.seed_with(
         "INSERT INTO user_connections (user_id, service, connection_data, enabled, created_at, \
          updated_at) VALUES (?1, 'listenbrainz', ?2, 1, '', '')",
         [&login.user_id, &sealed],
     )
-    .expect("link stored");
-    db.execute(
+    .await;
+    app.seed_with(
         "INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
          navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 0, 1, 0, '') \
          ON CONFLICT (user_id) DO UPDATE SET scrobble_to_listenbrainz = 1",
         [&login.user_id],
     )
-    .expect("prefs saved");
+    .await;
     login
 }
 
@@ -1135,21 +1134,19 @@ async fn an_unreadable_last_fm_section_holds_the_scrobble() {
         "username": "listener",
         "session_key": seal("lfm-session"),
     });
-    let db = app.db();
-    db.execute(
+    app.seed_with(
         "INSERT INTO user_connections (user_id, service, connection_data, enabled, created_at, \
          updated_at) VALUES (?1, 'lastfm', ?2, 1, '', '')",
         [&user.user_id, &document.to_string()],
     )
-    .expect("link stored");
-    db.execute(
+    .await;
+    app.seed_with(
         "INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
          navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 1, 0, 0, '') \
          ON CONFLICT (user_id) DO UPDATE SET scrobble_to_lastfm = 1",
         [&user.user_id],
     )
-    .expect("prefs saved");
-    drop(db);
+    .await;
     let (app, ()) = app
         .while_stopped(|config| {
             rusqlite::Connection::open(&config.library_db_path)
@@ -1243,21 +1240,19 @@ async fn a_last_fm_scrobble_is_a_signed_form_with_the_session_key() {
         "username": "listener",
         "session_key": seal("lfm-session"),
     });
-    let db = app.db();
-    db.execute(
+    app.seed_with(
         "INSERT INTO user_connections (user_id, service, connection_data, enabled, created_at, \
          updated_at) VALUES (?1, 'lastfm', ?2, 1, '', '')",
         [&user.user_id, &document.to_string()],
     )
-    .expect("link stored");
-    db.execute(
+    .await;
+    app.seed_with(
         "INSERT INTO user_listening_prefs (user_id, scrobble_to_lastfm, scrobble_to_listenbrainz, \
          navidrome_handles_external_scrobbles, updated_at) VALUES (?1, 1, 0, 0, '') \
          ON CONFLICT (user_id) DO UPDATE SET scrobble_to_lastfm = 1",
         [&user.user_id],
     )
-    .expect("prefs saved");
-    drop(db);
+    .await;
 
     let (answer, played_at, play_id) = submit_play(&app, &user).await;
     assert_eq!(answer["services"]["lastfm"]["queued"], true, "{answer}");
@@ -1402,14 +1397,13 @@ async fn plays_from_every_player_are_filed_under_the_track() {
     let airbag = catalog_ids(app, "Airbag");
     let teardrop = catalog_ids(app, "Teardrop");
     // The album of "One" is matched to a release group; the others are not.
-    app.db()
-        .execute(
-            "INSERT INTO local_album_external_identities \
+    app.seed_with(
+        "INSERT INTO local_album_external_identities \
              (local_album_id, release_group_mbid, decision_source, selected_at) \
              VALUES (?1, ?2, 'manual', 1)",
-            [one.1.as_str(), GROUP],
-        )
-        .expect("the album is matched");
+        [one.1.as_str(), GROUP],
+    )
+    .await;
 
     // Now playing: the app's entry and the web player's carry one cover.
     let now_playing = rest(
@@ -1693,31 +1687,29 @@ async fn web_player_plays_are_filed_under_the_named_track() {
     let one = catalog_ids(app, "One");
     let airbag = catalog_ids(app, "Airbag");
     let teardrop = catalog_ids(app, "Teardrop");
-    let db = app.db();
-    db.execute(
+    app.seed_with(
         "UPDATE local_tracks SET embedded_recording_mbid = ?2 WHERE id = ?1",
         [one.0.as_str(), RECORDING],
     )
-    .expect("the track has a recording");
-    db.execute(
+    .await;
+    app.seed_with(
         "INSERT INTO local_album_external_identities \
          (local_album_id, release_group_mbid, decision_source, selected_at) \
          VALUES (?1, ?2, 'manual', 1)",
         [one.1.as_str(), GROUP],
     )
-    .expect("the album is matched");
+    .await;
     // Airbag's file went missing and the track continued into Teardrop.
-    db.execute(
+    app.seed_with(
         "UPDATE local_tracks SET availability = 'missing' WHERE id = ?1",
         [airbag.0.as_str()],
     )
-    .expect("the track is missing");
-    db.execute(
+    .await;
+    app.seed_with(
         "INSERT INTO local_track_aliases (alias, local_track_id, created_at) VALUES (?1, ?2, 1)",
         [airbag.0.as_str(), teardrop.0.as_str()],
     )
-    .expect("the old id is an alias");
-    drop(db);
+    .await;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1805,24 +1797,29 @@ struct OldPlay<'a> {
 }
 
 fn store_old_play(db: &rusqlite::Connection, play: &OldPlay<'_>) {
-    db.execute(
+    let (sql, params) = old_play_row(play);
+    db.execute(sql, params).expect("the old play is stored");
+}
+
+/// The insert that stores `play`, with its parameters.
+fn old_play_row<'p>(play: &'p OldPlay<'_>) -> (&'static str, [&'p dyn rusqlite::ToSql; 10]) {
+    (
         "INSERT INTO library_play_history (id, user_id, track_name, artist_name, album_name, \
          recording_mbid, release_group_mbid, duration_ms, source, played_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        rusqlite::params![
-            play.id,
-            play.user,
-            play.track,
-            play.artist,
-            play.album,
-            play.recording,
-            play.group,
-            play.length_ms,
-            play.source,
-            play.at,
+        [
+            &play.id,
+            &play.user,
+            &play.track,
+            &play.artist,
+            &play.album,
+            &play.recording,
+            &play.group,
+            &play.length_ms,
+            &play.source,
+            &play.at,
         ],
     )
-    .expect("the old play is stored");
 }
 
 /// The track, album and artist a play row is filed under, empty when not.
@@ -1869,17 +1866,17 @@ async fn older_plays_are_filed_and_count_in_player_apps() {
     let one = catalog_ids(app, "One");
     let airbag = catalog_ids(app, "Airbag");
     let teardrop = catalog_ids(app, "Teardrop");
-    let db = app.db();
     for (track, recording) in [(&one.0, ONE), (&teardrop.0, TEARDROP)] {
-        db.execute(
+        app.seed_with(
             "INSERT INTO local_track_external_identities \
              (local_track_id, recording_mbid, decision_source, selected_at) \
              VALUES (?1, ?2, 'manual', 1)",
             [track.as_str(), recording],
         )
-        .expect("the track has an accepted recording");
+        .await;
     }
-    let airbag_ms: i64 = db
+    let airbag_ms: i64 = app
+        .db()
         .query_row(
             "SELECT CAST(duration_seconds * 1000 AS INTEGER) FROM local_tracks WHERE id = ?1",
             [airbag.0.as_str()],
@@ -1946,9 +1943,9 @@ async fn older_plays_are_filed_and_count_in_player_apps() {
         },
     ];
     for play in &old {
-        store_old_play(&db, play);
+        let (sql, params) = old_play_row(play);
+        app.seed_with(sql, params).await;
     }
-    drop(db);
 
     app.scan_library().await;
     let job: String = app

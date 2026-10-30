@@ -495,10 +495,90 @@ impl TestApp {
             .collect()
     }
 
-    /// A connection to the app's database, for seeding rows and reading
-    /// them back.
+    /// A read-only connection to the app's database, for reading rows back.
+    /// It waits out the app's writes; seed rows with [`TestApp::seed`] or
+    /// [`TestApp::seed_with`].
     pub fn db(&self) -> rusqlite::Connection {
-        rusqlite::Connection::open(&self.config.library_db_path).expect("database opens")
+        let db = rusqlite::Connection::open_with_flags(
+            &self.config.library_db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .expect("database opens");
+        db.busy_timeout(PATIENCE).expect("busy timeout sets");
+        db
+    }
+
+    /// Run `sql`, one or more statements, as one write on the app's own
+    /// writer lane, so a seed takes its turn behind the app's background
+    /// work instead of racing it.
+    #[allow(dead_code)]
+    pub async fn seed(&self, sql: impl Into<String>) {
+        let sql: Arc<str> = sql.into().into();
+        self.write_seed(move |tx| tx.execute_batch(&sql)).await;
+    }
+
+    /// Run the one statement `sql` with `params` as [`TestApp::seed`] does,
+    /// answering how many rows it changed.
+    #[allow(dead_code)]
+    pub async fn seed_with<P>(&self, sql: &str, params: P) -> usize
+    where
+        P: IntoIterator,
+        P::Item: rusqlite::ToSql,
+    {
+        use rusqlite::ToSql as _;
+        let values: Arc<[rusqlite::types::Value]> = params
+            .into_iter()
+            .map(
+                |param| match param.to_sql().expect("seed parameter converts") {
+                    rusqlite::types::ToSqlOutput::Borrowed(value) => value.into(),
+                    rusqlite::types::ToSqlOutput::Owned(value) => value,
+                    other => panic!("unsupported seed parameter: {other:?}"),
+                },
+            )
+            .collect();
+        let sql: Arc<str> = sql.into();
+        self.write_seed(move |tx| tx.execute(&sql, rusqlite::params_from_iter(values.iter())))
+            .await
+    }
+
+    /// Run `write` as [`TestApp::seed`] does, for a seed that needs the
+    /// transaction itself. It may run more than once.
+    #[allow(dead_code)]
+    pub async fn seed_tx<R: Send + 'static>(
+        &self,
+        write: impl Fn(&rusqlite::Transaction) -> R + Send + Sync + 'static,
+    ) -> R {
+        self.write_seed(move |tx| Ok(write(tx))).await
+    }
+
+    /// One write on the app's writer lane. A turn refused as busy, or a
+    /// write that outran its budget on a loaded host, rolled back and runs
+    /// again.
+    async fn write_seed<R: Send + 'static>(
+        &self,
+        write: impl Fn(&rusqlite::Transaction) -> rusqlite::Result<R> + Send + Sync + 'static,
+    ) -> R {
+        use droppedneedle_kernel::db::{DbError, Lane};
+        let db = self.state().library.db.clone();
+        let write = Arc::new(write);
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let attempt = Arc::clone(&write);
+            let written = db
+                .write(Lane::Foreground, "test.seed", move |tx| {
+                    attempt(tx).map_err(DbError::from)
+                })
+                .await;
+            match written {
+                Ok(answer) => return answer,
+                Err(DbError::TxTimeout { .. } | DbError::Busy { .. })
+                    if Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(error) => panic!("seed write failed: {error}"),
+            }
+        }
     }
 
     /// The owner's `authorization` header value. The first call runs
