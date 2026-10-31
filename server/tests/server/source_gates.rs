@@ -486,6 +486,7 @@ const PLUGIN_REPLACED: &str =
     "stops a replaced plugin runtime off the request path; plugin lifecycle";
 const PLUGIN_CHILD: &str =
     "the plugin child's I/O pumps and host-call answers, ended with its pipes";
+const SHARED_FLIGHT: &str = "a coalesced flight that runs to its end, and gives back what it holds, when every caller stopped waiting";
 const PROVIDER_FETCH: &str = "a provider fetch shared by its callers, which stores its answer when they stop waiting and logs a panic";
 const BOOT_STEP: &str = "boot-time file work, awaited before serving";
 const HTTP_SERVER: &str = "the HTTP server, joined by serve at the shutdown deadline";
@@ -559,6 +560,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("plugins/src/host.rs", 1, PLUGIN_REPLACED),
     ("plugins/src/process.rs", 5, PLUGIN_CHILD),
     ("providers/src/cache.rs", 1, PROVIDER_FETCH),
+    ("providers/src/singleflight.rs", 1, SHARED_FLIGHT),
     ("providers/src/youtube.rs", 1, REQUEST),
     ("src/admin/handlers.rs", 1, REQUEST),
     ("src/bootstrap/key_check.rs", 1, BOOT_STEP),
