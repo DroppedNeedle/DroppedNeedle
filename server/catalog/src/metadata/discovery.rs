@@ -1292,21 +1292,17 @@ fn best_group<'a>(
 
 /// The best release group for a song among the releases of the recording
 /// the service named and the search hits with the song's title (folded).
-/// The search index lists no release status, so its releases count as
-/// official.
 fn song_group(
     named: &[RecordingRelease],
     title: &str,
     hits: &[RecordingSearchHit],
 ) -> Option<String> {
     let wanted = title_key(title);
+    let official =
+        |status: Option<&str>| status.is_some_and(|status| status.eq_ignore_ascii_case("official"));
     let from_named = named.iter().filter_map(|release| {
-        let official = release
-            .status
-            .as_deref()
-            .is_some_and(|status| status.eq_ignore_ascii_case("official"));
         Some((
-            official,
+            official(release.status.as_deref()),
             release.release_group.as_ref()?,
             release.date.as_deref(),
         ))
@@ -1319,9 +1315,13 @@ fn song_group(
                 .is_some_and(|found| title_key(found) == wanted)
         })
         .flat_map(|hit| {
-            hit.releases
-                .iter()
-                .filter_map(|release| Some((true, release.release_group.as_ref()?, None)))
+            hit.releases.iter().filter_map(|release| {
+                Some((
+                    official(release.status.as_deref()),
+                    release.release_group.as_ref()?,
+                    release.date.as_deref(),
+                ))
+            })
         });
     best_group(from_named.chain(from_search))
 }
@@ -1530,10 +1530,10 @@ mod tests {
     fn a_searched_song_takes_the_hits_with_its_title() {
         let hits: Vec<RecordingSearchHit> = serde_json::from_value(serde_json::json!([
             {"id": "a", "title": "Comptine d’un autre été : L’après-midi", "releases": [
-                {"id": "r1", "release-group": {"id": "OST", "primary-type": "Album",
+                {"id": "r1", "status": "Official", "release-group": {"id": "OST", "primary-type": "Album",
                  "secondary-types": ["Soundtrack"], "first-release-date": "2001"}}]},
             {"id": "b", "title": "Comptine d'un autre été, L'après-midi (Remix)", "releases": [
-                {"id": "r2", "release-group": {"id": "REMIX", "primary-type": "Album",
+                {"id": "r2", "status": "Official", "release-group": {"id": "REMIX", "primary-type": "Album",
                  "first-release-date": "1999"}}]}
         ]))
         .expect("hits decode");
@@ -1552,6 +1552,34 @@ mod tests {
         assert_eq!(
             song_group(&late, "Comptine d'un autre été, L'Après-midi", &hits).as_deref(),
             Some("ost")
+        );
+    }
+
+    /// Yann Tiersen's "J'y suis jamais allé" (Last.fm's id unknown to
+    /// MusicBrainz, live 2026-10-31): the search finds the song on "Rue des
+    /// cascades" (1996), the "Amélie" soundtrack (2001) and a dance
+    /// compilation entered as a plain album without a date. The search's
+    /// group facet has no first release date, so the release dates decide:
+    /// the original album wins, and a bootleg does not.
+    #[test]
+    fn a_searched_song_takes_the_earliest_release_date() {
+        let hits: Vec<RecordingSearchHit> = serde_json::from_value(serde_json::json!([
+            {"id": "a", "title": "J'y suis jamais alle", "releases": [
+                {"id": "r1", "status": "Official",
+                 "release-group": {"id": "BALLROOM", "primary-type": "Album"}}]},
+            {"id": "b", "title": "J’y suis jamais allé", "releases": [
+                {"id": "r2", "status": "Official", "date": "2001",
+                 "release-group": {"id": "OST", "primary-type": "Album",
+                  "secondary-types": ["Soundtrack"]}},
+                {"id": "r3", "status": "Bootleg", "date": "1990",
+                 "release-group": {"id": "AAA", "primary-type": "Album"}},
+                {"id": "r4", "status": "Official", "date": "1996-04-01",
+                 "release-group": {"id": "CASCADES", "primary-type": "Album"}}]}
+        ]))
+        .expect("hits decode");
+        assert_eq!(
+            song_group(&[], "J'y suis jamais allé", &hits).as_deref(),
+            Some("cascades")
         );
     }
 }
