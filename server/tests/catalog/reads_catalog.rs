@@ -675,6 +675,12 @@ async fn artist_sections_use_listenbrainz_then_lastfm() {
     );
     assert_eq!(titles(&songs["songs"]), ["Creep", "No Surprises"]);
     assert_eq!(songs["songs"][0]["listen_count"], 9_182_736);
+    assert_eq!(
+        (&songs["asked_source"], &songs["unavailable_sources"]),
+        (&json!("listenbrainz"), &json!([])),
+        "the page can tell Last.fm stood in for an empty ListenBrainz"
+    );
+    assert_eq!(similar["asked_source"], "listenbrainz");
 
     let lastfm_albums = get(
         &app,

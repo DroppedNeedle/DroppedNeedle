@@ -42,7 +42,8 @@
 		discographyDownloadStore,
 		type DiscographyRelease
 	} from '$lib/stores/discographyDownload.svelte';
-	import { Download } from 'lucide-svelte';
+	import { CircleAlert, Download } from 'lucide-svelte';
+	import { listeningSourceNotice } from '$lib/components/artist/listeningSourceNotice';
 	import ArtistReleasePagination from '$lib/components/ArtistReleasePagination.svelte';
 	import { mergeArtistReleasePages } from '$lib/queries/artist/artistReleasePages';
 	import { mergeArtistImages } from '$lib/queries/catalog/catalogAdapters';
@@ -194,6 +195,7 @@
 		enabled: discoveryEnabled
 	}));
 	const topAlbums = $derived(discoveryEnabled ? topAlbumsQuery.data : undefined);
+	const sourceNotice = $derived(listeningSourceNotice([topSongs, topAlbums, similarArtists]));
 	const loadingTopAlbums = $derived(!discoveryEnabled || topAlbumsQuery.isLoading);
 
 	const lastFmEnrichmentQuery = getArtistLastFmEnrichmentQuery(() => ({
@@ -488,6 +490,17 @@
 								activeSource.current = newSource;
 							}}
 						/>
+					</div>
+				{/if}
+
+				{#if sourceNotice}
+					<div
+						role="status"
+						class="alert alert-warning alert-soft mb-4 flex items-center gap-2 text-sm"
+						class:mt-8={linkedSources.length !== 2}
+					>
+						<CircleAlert class="h-4 w-4 shrink-0" />
+						<span>{sourceNotice}</span>
 					</div>
 				{/if}
 

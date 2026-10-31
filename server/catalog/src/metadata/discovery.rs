@@ -78,6 +78,11 @@ struct Answer {
     rows: SectionRows,
     source: ListenSource,
     configured: bool,
+    /// The source the caller asked for, or the preferred one.
+    asked: ListenSource,
+    /// Sources that failed, or are switched off, while the section was
+    /// built.
+    unavailable: Vec<ListenSource>,
 }
 
 /// What a section fetch found: rows, kept when every read behind them
@@ -104,8 +109,10 @@ impl Catalog {
         asked.unwrap_or_default()
     }
 
-    /// Build one artist section from the preferred source, falling back
-    /// from ListenBrainz to Last.fm when ListenBrainz has nothing.
+    /// Build one artist section from the preferred source, falling back to
+    /// the other listening service when the preferred one has nothing or
+    /// failed. The answer names the source asked for and the ones that
+    /// failed, so the page can say why it shows another service.
     async fn artist_section(
         &self,
         user_id: &str,
@@ -117,23 +124,29 @@ impl Catalog {
     ) -> Result<Answer, CatalogError> {
         let mbid = checked_mbid(raw_mbid, "artist")?;
         let source = self.preferred_source(asked);
-        let first = self
+        let mut first = self
             .section_from(source, user_id, &mbid, count, section, priority)
             .await;
-        if source == ListenSource::Listenbrainz && first.rows.is_empty() {
-            let fallback = self
-                .section_from(
-                    ListenSource::Lastfm,
-                    user_id,
-                    &mbid,
-                    count,
-                    section,
-                    priority,
-                )
+        // A service switched off cannot be asked either.
+        if !first.configured {
+            first.unavailable.push(source);
+        }
+        if first.rows.is_empty() {
+            let other = match source {
+                ListenSource::Listenbrainz => ListenSource::Lastfm,
+                ListenSource::Lastfm => ListenSource::Listenbrainz,
+            };
+            let mut fallback = self
+                .section_from(other, user_id, &mbid, count, section, priority)
                 .await;
+            let mut unavailable = std::mem::take(&mut first.unavailable);
+            unavailable.append(&mut fallback.unavailable);
             if fallback.configured && !fallback.rows.is_empty() {
+                fallback.asked = source;
+                fallback.unavailable = unavailable;
                 return Ok(fallback);
             }
+            first.unavailable = unavailable;
         }
         Ok(first)
     }
@@ -181,6 +194,8 @@ impl Catalog {
             rows: SectionRows::default(),
             source,
             configured: false,
+            asked: source,
+            unavailable: Vec::new(),
         };
         let rows = match source {
             ListenSource::Listenbrainz => {
@@ -255,9 +270,15 @@ impl Catalog {
             }
         };
         Answer {
+            unavailable: if rows.is_err() {
+                vec![source]
+            } else {
+                Vec::new()
+            },
             rows: rows.ok().flatten().unwrap_or_default(),
             source,
             configured: true,
+            asked: source,
         }
     }
 
@@ -459,6 +480,8 @@ impl Catalog {
             similar_artists: similar,
             source: answer.source,
             configured: answer.configured,
+            asked_source: answer.asked,
+            unavailable_sources: answer.unavailable,
         })
     }
 
@@ -481,6 +504,8 @@ impl Catalog {
             songs,
             source: answer.source,
             configured: answer.configured,
+            asked_source: answer.asked,
+            unavailable_sources: answer.unavailable,
         })
     }
 
@@ -597,6 +622,8 @@ impl Catalog {
             albums,
             source: answer.source,
             configured: answer.configured,
+            asked_source: answer.asked,
+            unavailable_sources: answer.unavailable,
         })
     }
 
