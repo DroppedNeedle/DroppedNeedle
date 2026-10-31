@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use droppedneedle_kernel::db::fold_text;
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_providers::musicbrainz::{
-    Criticality, RecordingRelease, RecordingSearchHit, ReleaseGroupRef, escape_lucene_phrase,
+    Criticality, RecordingRelease, RecordingSearchHit, ReleaseGroupRef,
 };
 use droppedneedle_providers::{
     CacheKey, Fetched, IntegrationStatus, Policy, RequestPriority, Source, lastfm, listenbrainz,
@@ -614,8 +614,11 @@ impl Catalog {
                         RequestPriority::BackgroundSync,
                         move |priority| async move {
                             let (client, _) = upstream.upstream().musicbrainz(priority);
-                            if let Some(recording) = &song.recording
-                                && let Some(found) = client
+                            // The recording the service names may be a late
+                            // re-recording; the title search finds where the
+                            // song first came out. The best of both wins.
+                            let named = match &song.recording {
+                                Some(recording) => client
                                     .lookup_recording(
                                         recording,
                                         &["releases", "release-groups"],
@@ -623,13 +626,18 @@ impl Catalog {
                                     )
                                     .await
                                     .map_err(mb_error)?
-                                && let Some(group) = song_group(&found.entity.releases)
-                            {
-                                return Ok(Fetched::Found(group));
-                            }
+                                    .map(|found| found.entity.releases)
+                                    .unwrap_or_default(),
+                                None => Vec::new(),
+                            };
+                            // Words, not a phrase: the titles differ in
+                            // punctuation ("été, L'Après-midi" against
+                            // "été : L’Après‐midi"); the folded title
+                            // comparison then keeps the same song only.
+                            // Folded words hold no Lucene syntax.
                             let query = format!(
-                                r#"recording:"{}" AND arid:{}"#,
-                                escape_lucene_phrase(&song.title),
+                                "recording:({}) AND arid:{}",
+                                title_key(&song.title),
                                 song.artist
                             );
                             let hits = client
@@ -640,7 +648,7 @@ impl Catalog {
                                 )
                                 .await
                                 .map_err(mb_error)?;
-                            Ok(searched_song_group(&song.title, &hits.items)
+                            Ok(song_group(&named, &song.title, &hits.items)
                                 .map_or(Fetched::Missing, Fetched::Found))
                         },
                     )
@@ -1282,9 +1290,17 @@ fn best_group<'a>(
         .map(|(_, group)| group)
 }
 
-/// The best release group among the releases of one recording.
-fn song_group(releases: &[RecordingRelease]) -> Option<String> {
-    best_group(releases.iter().filter_map(|release| {
+/// The best release group for a song among the releases of the recording
+/// the service named and the search hits with the song's title (folded).
+/// The search index lists no release status, so its releases count as
+/// official.
+fn song_group(
+    named: &[RecordingRelease],
+    title: &str,
+    hits: &[RecordingSearchHit],
+) -> Option<String> {
+    let wanted = title_key(title);
+    let from_named = named.iter().filter_map(|release| {
         let official = release
             .status
             .as_deref()
@@ -1294,27 +1310,20 @@ fn song_group(releases: &[RecordingRelease]) -> Option<String> {
             release.release_group.as_ref()?,
             release.date.as_deref(),
         ))
-    }))
-}
-
-/// The best release group among search hits whose title is the song's
-/// (folded). The search index lists no release status, so every release
-/// counts as official.
-fn searched_song_group(title: &str, hits: &[RecordingSearchHit]) -> Option<String> {
-    let wanted = title_key(title);
-    best_group(
-        hits.iter()
-            .filter(|hit| {
-                hit.title
-                    .as_deref()
-                    .is_some_and(|found| title_key(found) == wanted)
-            })
-            .flat_map(|hit| {
-                hit.releases
-                    .iter()
-                    .filter_map(|release| Some((true, release.release_group.as_ref()?, None)))
-            }),
-    )
+    });
+    let from_search = hits
+        .iter()
+        .filter(|hit| {
+            hit.title
+                .as_deref()
+                .is_some_and(|found| title_key(found) == wanted)
+        })
+        .flat_map(|hit| {
+            hit.releases
+                .iter()
+                .filter_map(|release| Some((true, release.release_group.as_ref()?, None)))
+        });
+    best_group(from_named.chain(from_search))
 }
 
 /// Match Last.fm's top albums to the artist's release groups: a Last.fm id
@@ -1505,13 +1514,13 @@ mod tests {
             {"id": "r5", "status": "Official"}
         ]))
         .expect("releases decode");
-        assert_eq!(song_group(&releases).as_deref(), Some("ost"));
+        assert_eq!(song_group(&releases, "x", &[]).as_deref(), Some("ost"));
         assert_eq!(
-            song_group(&releases[..1]).as_deref(),
+            song_group(&releases[..1], "x", &[]).as_deref(),
             Some("boot"),
             "a bootleg beats nothing"
         );
-        assert_eq!(song_group(&releases[5..]), None);
+        assert_eq!(song_group(&releases[5..], "x", &[]), None);
     }
 
     /// A song Last.fm names by an id MusicBrainz does not know is found by
@@ -1529,9 +1538,20 @@ mod tests {
         ]))
         .expect("hits decode");
         assert_eq!(
-            searched_song_group("Comptine d'un autre été, L'Après-midi", &hits).as_deref(),
+            song_group(&[], "Comptine d'un autre été, L'Après-midi", &hits).as_deref(),
             Some("ost")
         );
-        assert_eq!(searched_song_group("Something else", &hits), None);
+        assert_eq!(song_group(&[], "Something else", &hits), None);
+        // Last.fm named a late re-recording only on a 2025 album: the search
+        // still finds the soundtrack the song came out on.
+        let late: Vec<RecordingRelease> = serde_json::from_value(serde_json::json!([
+            {"id": "r9", "status": "Official", "release-group":
+                {"id": "CINEMA", "primary-type": "Album", "first-release-date": "2025"}}
+        ]))
+        .expect("releases decode");
+        assert_eq!(
+            song_group(&late, "Comptine d'un autre été, L'Après-midi", &hits).as_deref(),
+            Some("ost")
+        );
     }
 }
