@@ -335,6 +335,11 @@ pub struct SimilarArtistsResponse {
     pub source: ListenSource,
     /// False when the provider is not set up; the list is then empty.
     pub configured: bool,
+    /// The source the caller asked for (or the preferred one). When it
+    /// differs from `source`, the other service stood in.
+    pub asked_source: ListenSource,
+    /// Services that failed, or are switched off, while the list was built.
+    pub unavailable_sources: Vec<ListenSource>,
 }
 
 /// One of an artist's most played songs.
@@ -369,6 +374,11 @@ pub struct TopSongsResponse {
     pub source: ListenSource,
     /// False when the provider is not set up.
     pub configured: bool,
+    /// The source the caller asked for (or the preferred one). When it
+    /// differs from `source`, the other service stood in.
+    pub asked_source: ListenSource,
+    /// Services that failed, or are switched off, while the list was built.
+    pub unavailable_sources: Vec<ListenSource>,
 }
 
 /// `GET /artists/{artist_mbid}/top-albums`.
@@ -380,6 +390,11 @@ pub struct TopAlbumsResponse {
     pub source: ListenSource,
     /// False when the provider is not set up.
     pub configured: bool,
+    /// The source the caller asked for (or the preferred one). When it
+    /// differs from `source`, the other service stood in.
+    pub asked_source: ListenSource,
+    /// Services that failed, or are switched off, while the list was built.
+    pub unavailable_sources: Vec<ListenSource>,
 }
 
 /// A Last.fm tag.

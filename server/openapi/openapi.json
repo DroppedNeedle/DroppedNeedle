@@ -63600,9 +63600,15 @@
         "required": [
           "similar_artists",
           "source",
-          "configured"
+          "configured",
+          "asked_source",
+          "unavailable_sources"
         ],
         "properties": {
+          "asked_source": {
+            "$ref": "#/components/schemas/ListenSource",
+            "description": "The source the caller asked for (or the preferred one). When it\ndiffers from `source`, the other service stood in."
+          },
           "configured": {
             "type": "boolean",
             "description": "False when the provider is not set up; the list is then empty."
@@ -63617,6 +63623,13 @@
           "source": {
             "$ref": "#/components/schemas/ListenSource",
             "description": "Provider that answered."
+          },
+          "unavailable_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ListenSource"
+            },
+            "description": "Services that failed, or are switched off, while the list was built."
           }
         }
       },
@@ -64753,7 +64766,9 @@
         "required": [
           "albums",
           "source",
-          "configured"
+          "configured",
+          "asked_source",
+          "unavailable_sources"
         ],
         "properties": {
           "albums": {
@@ -64763,6 +64778,10 @@
             },
             "description": "Albums, most played first."
           },
+          "asked_source": {
+            "$ref": "#/components/schemas/ListenSource",
+            "description": "The source the caller asked for (or the preferred one). When it\ndiffers from `source`, the other service stood in."
+          },
           "configured": {
             "type": "boolean",
             "description": "False when the provider is not set up."
@@ -64770,6 +64789,13 @@
           "source": {
             "$ref": "#/components/schemas/ListenSource",
             "description": "Provider that answered."
+          },
+          "unavailable_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ListenSource"
+            },
+            "description": "Services that failed, or are switched off, while the list was built."
           }
         }
       },
@@ -64922,9 +64948,15 @@
         "required": [
           "songs",
           "source",
-          "configured"
+          "configured",
+          "asked_source",
+          "unavailable_sources"
         ],
         "properties": {
+          "asked_source": {
+            "$ref": "#/components/schemas/ListenSource",
+            "description": "The source the caller asked for (or the preferred one). When it\ndiffers from `source`, the other service stood in."
+          },
           "configured": {
             "type": "boolean",
             "description": "False when the provider is not set up."
@@ -64939,6 +64971,13 @@
           "source": {
             "$ref": "#/components/schemas/ListenSource",
             "description": "Provider that answered."
+          },
+          "unavailable_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ListenSource"
+            },
+            "description": "Services that failed, or are switched off, while the list was built."
           }
         }
       },

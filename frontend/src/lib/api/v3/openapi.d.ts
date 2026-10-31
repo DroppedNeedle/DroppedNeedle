@@ -22289,12 +22289,19 @@ export interface components {
         };
         /** @description `GET /artists/{artist_mbid}/similar`. */
         SimilarArtistsResponse: {
+            /**
+             * @description The source the caller asked for (or the preferred one). When it
+             *     differs from `source`, the other service stood in.
+             */
+            asked_source: components["schemas"]["ListenSource"];
             /** @description False when the provider is not set up; the list is then empty. */
             configured: boolean;
             /** @description Similar artists, most similar first. */
             similar_artists: components["schemas"]["ArtistRef"][];
             /** @description Provider that answered. */
             source: components["schemas"]["ListenSource"];
+            /** @description Services that failed, or are switched off, while the list was built. */
+            unavailable_sources: components["schemas"]["ListenSource"][];
         };
         /** @description Reviews one reason held back. */
         SkippedReviews: {
@@ -22792,10 +22799,17 @@ export interface components {
         TopAlbumsResponse: {
             /** @description Albums, most played first. */
             albums: components["schemas"]["AlbumRef"][];
+            /**
+             * @description The source the caller asked for (or the preferred one). When it
+             *     differs from `source`, the other service stood in.
+             */
+            asked_source: components["schemas"]["ListenSource"];
             /** @description False when the provider is not set up. */
             configured: boolean;
             /** @description Provider that answered. */
             source: components["schemas"]["ListenSource"];
+            /** @description Services that failed, or are switched off, while the list was built. */
+            unavailable_sources: components["schemas"]["ListenSource"][];
         };
         /** @description One personalized top pick. */
         TopPickItem: {
@@ -22856,12 +22870,19 @@ export interface components {
         };
         /** @description `GET /artists/{artist_mbid}/top-songs`. */
         TopSongsResponse: {
+            /**
+             * @description The source the caller asked for (or the preferred one). When it
+             *     differs from `source`, the other service stood in.
+             */
+            asked_source: components["schemas"]["ListenSource"];
             /** @description False when the provider is not set up. */
             configured: boolean;
             /** @description Songs, most played first. */
             songs: components["schemas"]["TopSong"][];
             /** @description Provider that answered. */
             source: components["schemas"]["ListenSource"];
+            /** @description Services that failed, or are switched off, while the list was built. */
+            unavailable_sources: components["schemas"]["ListenSource"][];
         };
         TrackAlignment: {
             classification: components["schemas"]["AlignmentClassification"];
