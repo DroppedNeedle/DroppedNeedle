@@ -412,6 +412,11 @@ Run from the repo root. `make help` lists every target.
   (open or written after the walk began), whose path such a row moved a
   file away from, or whose path an open row is placing a file at. A
   trigger on the journal stamps that revision, so no write can skip it.
+- A track a scan judged gone continues into a track an earlier scan read
+  only in the run end's late pass (`scan_end_continue_moved`): the match
+  `find_moved_track` makes, unambiguous both ways and timed by
+  `release_join::judge`. It reads rows already missing and never judges a
+  track gone.
 - A publish records each folder it makes, durably, right after making it and
   before anything is written into it. An unwind, forward or after a crash,
   removes exactly those folders, deepest first and only while empty, and

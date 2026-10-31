@@ -16,7 +16,9 @@
 //! track's file just went away continues that track (same album names,
 //! disc and track number, plus the same recording MBID or the same title
 //! and duration), so
-//! favorites, history and playlists follow a moved file. When every track
+//! favorites, history and playlists follow a moved file. A file read before
+//! its old copy went (its new folder scanned first) continues the old
+//! track at a later run end instead. When every track
 //! of an album is retagged into a new album in one run, the old row takes
 //! the new name instead of being left behind. When the retag is seen by
 //! more than one run, the end of the run that sees the rest merges the old
@@ -37,9 +39,9 @@ use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::artist_convergence::{converge_artists, record_move};
-use crate::corrections::continuation::{Scope, continue_tracks};
+use crate::corrections::continuation::{Pair, Scope, continue_tracks};
 use crate::corrections::placement::place_scanned;
-use crate::corrections::release_join::join_replaced;
+use crate::corrections::release_join::{Verdict, join_replaced, judge};
 use crate::corrections::retag_merge::{JoinCause, MergeOutcome, album_has_record, merge_retagged};
 use crate::identify::artist_links::{mark_stale, placeholder};
 use crate::identify::queue::offer_again;
@@ -596,6 +598,25 @@ fn give_up_path(tx: &Connection, track_id: &str, item: &CommitIndexedItem) -> ru
     Ok(())
 }
 
+/// The place a moved file must keep for the gone track `t` to continue
+/// into it: the same folded album title and album artist, disc and track
+/// number, each given as the new file's SQL value.
+macro_rules! same_place {
+    ($title:literal, $artist:literal, $disc:literal, $track:literal) => {
+        concat!(
+            "(t.album_title_folded = ",
+            $title,
+            " AND COALESCE(t.album_artist_name_folded, '') = ",
+            $artist,
+            " AND t.disc_number = ",
+            $disc,
+            " AND t.track_number = ",
+            $track,
+            ")"
+        )
+    };
+}
+
 /// The gone track a newly seen file continues, as (track id, album id):
 /// the same album names, disc and track number, plus the same recording
 /// MBID, or else the same title and duration. Only an unambiguous match
@@ -610,17 +631,13 @@ fn find_moved_track(
         album_id: String,
         same_place: bool,
     }
-    let columns = "SELECT t.id, t.local_album_id, \
-         (t.album_title_folded = ?3 AND COALESCE(t.album_artist_name_folded, '') = ?4 \
-          AND t.disc_number = ?5 AND t.track_number = ?6), t.duration_seconds \
-         FROM local_tracks t";
+    const SAME_PLACE: &str = same_place!("?3", "?4", "?5", "?6");
+    let columns = format!(
+        "SELECT t.id, t.local_album_id, {SAME_PLACE}, t.duration_seconds FROM local_tracks t"
+    );
     let sql = match key.recording_mbid {
         Some(_) => format!("{columns} WHERE t.embedded_recording_mbid = ?2 AND {TRACK_GONE}"),
-        None => format!(
-            "{columns} WHERE t.title_folded = ?2 AND t.album_title_folded = ?3 \
-             AND COALESCE(t.album_artist_name_folded, '') = ?4 AND t.disc_number = ?5 \
-             AND t.track_number = ?6 AND {TRACK_GONE}"
-        ),
+        None => format!("{columns} WHERE t.title_folded = ?2 AND {SAME_PLACE} AND {TRACK_GONE}"),
     };
     let first = key.recording_mbid.unwrap_or(key.title_folded);
     let mut candidates = Vec::new();
@@ -2135,15 +2152,17 @@ pub(super) fn albums_left(conn: &Connection, run_id: &str) -> rusqlite::Result<V
 ///    by their own ids ([`place_scanned`]);
 /// 6. missing tracks continue into the tracks that took their place
 ///    ([`continue_tracks`]);
-/// 7. artist rows MusicBrainz proves to be one artist are merged, and a
+/// 7. missing tracks continue into a file moved to another folder that an
+///    earlier scan read first ([`continue_moved`]);
+/// 8. artist rows MusicBrainz proves to be one artist are merged, and a
 ///    row a retag emptied follows its credits where the rule allows
 ///    ([`converge_artists`]);
-/// 8. new files that took the place of a hands-off album's are left
+/// 9. new files that took the place of a hands-off album's are left
 ///    alone ([`hold_replacements`]);
-/// 9. the albums the run held back are offered ([`offer_held_back`]);
-/// 10. the folders the mass-missing guard held back are recorded, and
+/// 10. the albums the run held back are offered ([`offer_held_back`]);
+/// 11. the folders the mass-missing guard held back are recorded, and
 ///     those the run walked as expected are let go ([`held_scopes::settle`]).
-pub(super) const END_PASSES: [EndPass; 10] = [
+pub(super) const END_PASSES: [EndPass; 11] = [
     EndPass {
         name: "scan_end_join_across_scans",
         work: EndWork::Whole(join_across_scans),
@@ -2170,6 +2189,10 @@ pub(super) const END_PASSES: [EndPass; 10] = [
     EndPass {
         name: "scan_end_continue_tracks",
         work: EndWork::Whole(|tx, _, now| continue_tracks(tx, Scope::Library, now).map(|()| 0)),
+    },
+    EndPass {
+        name: "scan_end_continue_moved",
+        work: EndWork::Whole(|tx, _, now| continue_moved(tx, now).map(|()| 0)),
     },
     EndPass {
         name: "scan_end_converge_artists",
@@ -2200,6 +2223,190 @@ pub(super) fn owe_end_passes(tx: &Connection, run_id: &str, now: f64) -> rusqlit
             now
         ])?;
     Ok(())
+}
+
+/// How a gone track `t` and an indexed track `n` match: `same_place!`,
+/// then the recording id `n`'s file holds, or with none the same title,
+/// both read from the tags. The lengths of a pair without a recording id
+/// are compared after ([`same_length`]). As [`find_moved_track`] reads
+/// `n`'s file, so a file read before its old copy went pairs as one read
+/// after.
+const MOVED_MATCH: &str = concat!(
+    same_place!(
+        "n.album_title_folded",
+        "COALESCE(n.album_artist_name_folded, '')",
+        "n.disc_number",
+        "n.track_number"
+    ),
+    " AND CASE WHEN trim(COALESCE(n.embedded_recording_mbid, '')) <> '' \
+     THEN t.embedded_recording_mbid = trim(n.embedded_recording_mbid) \
+     ELSE t.title_folded = n.title_folded AND t.title_provenance = 'tag' \
+       AND n.title_provenance = 'tag' END"
+);
+
+/// What [`MOVED_MATCH`] leaves to compare: the pair's ids and albums,
+/// whether `n` holds a recording id, and the two lengths.
+const MOVED_COLUMNS: &str = "t.id, t.local_album_id, n.id, n.local_album_id, \
+    trim(COALESCE(n.embedded_recording_mbid, '')) <> '', t.duration_seconds, n.duration_seconds";
+
+/// One row [`MOVED_COLUMNS`] reads.
+struct MovedRow {
+    old: String,
+    old_album: String,
+    new: String,
+    new_album: String,
+}
+
+/// Whether two lengths count as one recording's: within the tolerance,
+/// or both unknown.
+fn same_length(old: Option<f64>, new: Option<f64>) -> bool {
+    match (old, new) {
+        (Some(old), Some(new)) => (old - new).abs() < DURATION_TOLERANCE_SECONDS,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// The pairs one statement over [`MOVED_MATCH`] answers for `id`, lengths
+/// compared.
+fn moved_rows(conn: &Connection, sql: &str, id: &str) -> rusqlite::Result<Vec<MovedRow>> {
+    let mut rows = Vec::new();
+    let mut stmt = conn.prepare_cached(sql)?;
+    let mut found = stmt.query(params![id])?;
+    while let Some(row) = found.next()? {
+        let recording: bool = row.get(4)?;
+        if recording || same_length(row.get(5)?, row.get(6)?) {
+            rows.push(MovedRow {
+                old: row.get(0)?,
+                old_album: row.get(1)?,
+                new: row.get(2)?,
+                new_album: row.get(3)?,
+            });
+        }
+    }
+    Ok(rows)
+}
+
+/// Continue a gone track into the file it moved to, when a scan read the
+/// new folder before the old one: the file came back as a new row N, and
+/// a later scan marked the old row O missing (the one gone judgment,
+/// `walked_past!`). O continues into N when
+///
+/// - O is missing since the oldest run on record began, is not an alias
+///   and is not a file the publisher replaced (those stay as the publish
+///   left them);
+/// - N is the file [`find_moved_track`] would have continued O into had it
+///   read N after O went ([`MOVED_MATCH`], lengths compared without a
+///   recording id);
+/// - N matches no other missing row (of any age, alias or not) and O no
+///   other indexed row;
+/// - nobody dismissed the pair of their albums;
+/// - the run history shows a move, not two copies ([`judge`]); a pair
+///   that waits is looked at again at the next run end.
+///
+/// O's track credits then become N's, recording each credit that moved as
+/// a retag does, and O continues into N ([`continuation::continue_moved`]):
+/// what people made on it moves and its id opens N. Track and album
+/// identity stay on O. A store error rolls the pass back with one warning;
+/// the next run end tries again.
+///
+/// [`continuation::continue_moved`]: crate::corrections::continuation::continue_moved
+fn continue_moved(tx: &rusqlite::Transaction<'_>, now: f64) -> rusqlite::Result<()> {
+    match savepoint(tx, "scan_end_continue_moved", || {
+        continue_moved_pass(tx, now)
+    })? {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "moved tracks not continued; the next run end tries again"
+            );
+            Ok(())
+        }
+    }
+}
+
+fn continue_moved_pass(tx: &rusqlite::Transaction<'_>, now: f64) -> rusqlite::Result<()> {
+    let replaced = format!("{HIDDEN_PREFIX}replaced/");
+    let olds: Vec<String> = tx
+        .prepare_cached(
+            "SELECT t.id FROM local_tracks t WHERE t.availability = 'missing' \
+             AND t.missing_since >= (SELECT MIN(started_at) FROM library_scan_runs) \
+             AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = t.id) \
+             AND substr(t.relative_path, 1, length(?1)) <> ?1 \
+             ORDER BY t.id",
+        )?
+        .query_map(params![replaced], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    if olds.is_empty() {
+        return Ok(());
+    }
+    let into = format!(
+        "SELECT {MOVED_COLUMNS} FROM local_tracks t JOIN local_tracks n \
+         ON n.availability = 'indexed' AND n.album_title_folded = t.album_title_folded \
+         AND {MOVED_MATCH} WHERE t.id = ?1"
+    );
+    let from = format!(
+        "SELECT {MOVED_COLUMNS} FROM local_tracks n JOIN local_tracks t \
+         ON t.availability = 'missing' AND t.album_title_folded = n.album_title_folded \
+         AND {MOVED_MATCH} WHERE n.id = ?1"
+    );
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for old in olds {
+        let mut matched = moved_rows(tx, &into, &old)?;
+        let (Some(pair), true) = (matched.pop(), matched.is_empty()) else {
+            continue;
+        };
+        if moved_rows(tx, &from, &pair.new)?.len() != 1 {
+            continue;
+        }
+        let dismissed: bool = tx
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM library_retag_pairs \
+                 WHERE old_album_id = ?1 AND new_album_id = ?2 AND state = ?3)",
+            )?
+            .query_row(
+                params![
+                    pair.old_album,
+                    pair.new_album,
+                    RetagPairState::Dismissed.as_str()
+                ],
+                |row| row.get(0),
+            )?;
+        if dismissed {
+            continue;
+        }
+        let judged = Pair {
+            old: pair.old,
+            old_album: pair.old_album,
+            new: pair.new,
+            new_album: pair.new_album,
+        };
+        if !matches!(judge(tx, &judged, now)?, Verdict::Replaced) {
+            continue;
+        }
+        let before = credit_rows(tx, CreditSide::Track, &judged.old)?;
+        let after = credit_rows(tx, CreditSide::Track, &judged.new)?;
+        if before != after {
+            tx.prepare_cached("DELETE FROM local_track_artists WHERE local_track_id = ?1")?
+                .execute(params![judged.old])?;
+            tx.prepare_cached(
+                "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, \
+                 role, credited_name, join_phrase, artist_mbid) \
+                 SELECT ?1, position, local_artist_id, role, credited_name, join_phrase, \
+                 artist_mbid FROM local_track_artists WHERE local_track_id = ?2",
+            )?
+            .execute(params![judged.old, judged.new])?;
+            mark_stale(tx, &judged.old_album)?;
+            record_moves(tx, CreditSide::Track, &judged.old, &before, &after, now)?;
+        }
+        pairs.push((judged.old, judged.new));
+    }
+    if pairs.is_empty() {
+        return Ok(());
+    }
+    crate::corrections::continuation::continue_moved(tx, &pairs, now)?;
+    bump_catalog(tx).map(|_| ())
 }
 
 /// A track that left an album, by an earlier run (a departure on record)

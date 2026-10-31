@@ -17,7 +17,17 @@
 //! - N is the only indexed row on X. Every missing row on X that is not an
 //!   alias yet continues into N. Excluded rows are neither side.
 //!
-//! Nothing else is weighed: not names, recordings, lengths, paths or ages.
+//! The release proof weighs nothing else: not names, recordings, lengths,
+//! paths or ages.
+//!
+//! A file moved to another folder whose new folder a scan read before its
+//! old one comes back as a new row N, and a later scan marks the old row O
+//! missing. At a run end the scan continues O into N ([`continue_moved`])
+//! when N is the file it would have continued O into had it read N after
+//! O went (same album names, disc and track number, and the same
+//! recording id or tagged title and length), the match is unambiguous both
+//! ways and the run history shows a move, not two copies.
+//!
 //! No track row and no file is deleted, moved or read. The move has no
 //! undo, but its audit row keeps every row it moved or deleted.
 //!
@@ -163,8 +173,28 @@ pub(crate) fn continue_same_files(
     pairs: &[(String, String)],
     now: f64,
 ) -> rusqlite::Result<()> {
+    continue_given(tx, "continue_same_files", pairs, now)
+}
+
+/// Continue each `(old, new)` pair the scan proved to be one file moved to
+/// another folder, the new folder read first. The fit and the move are
+/// those of [`continue_same_files`].
+pub(crate) fn continue_moved(
+    tx: &Transaction<'_>,
+    pairs: &[(String, String)],
+    now: f64,
+) -> rusqlite::Result<()> {
+    continue_given(tx, "continue_moved", pairs, now)
+}
+
+fn continue_given(
+    tx: &Transaction<'_>,
+    name: &'static str,
+    pairs: &[(String, String)],
+    now: f64,
+) -> rusqlite::Result<()> {
     let created_ms = (now * 1000.0) as i64;
-    savepoint(tx, "continue_same_files", || {
+    savepoint(tx, name, || {
         for (old, new) in pairs {
             let fits: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM local_tracks o JOIN local_tracks n \
@@ -429,7 +459,7 @@ fn pairs_on(conn: &Connection, album: &str) -> rusqlite::Result<Vec<(String, Str
     let Some(release) = accepted_release(conn, album)? else {
         return Ok(Vec::new());
     };
-    Ok(pairs_among(conn, &[album], &release)?
+    Ok(pairs_among(conn, &[album], &release, false)?
         .into_iter()
         .map(|pair| (pair.old, pair.new))
         .collect())
@@ -466,11 +496,13 @@ pub(crate) struct Pair {
 /// together, each album matched to `release` (lowercased): per release
 /// track, unless a row on it names another release, every missing row
 /// pairs with the one indexed row, when there is exactly one. Aliases and
-/// excluded rows are neither side.
+/// excluded rows are neither side, except that with `aliased` a missing
+/// row whose alias names that one indexed row pairs with it too.
 pub(crate) fn pairs_among(
     conn: &Connection,
     albums: &[&str],
     release: &str,
+    aliased: bool,
 ) -> rusqlite::Result<Vec<Pair>> {
     struct Row {
         id: String,
@@ -478,18 +510,20 @@ pub(crate) fn pairs_among(
         indexed: bool,
         missing: bool,
         release: Option<String>,
+        alias_of: Option<String>,
     }
     let albums = serde_json::to_string(albums)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     let mut by_track: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     let mut statement = conn.prepare_cached(
         "SELECT t.id, t.local_album_id, t.availability, lower(trim(i.release_track_mbid)), \
-         lower(NULLIF(trim(i.release_mbid), '')) FROM local_tracks t \
+         lower(NULLIF(trim(i.release_mbid), '')), \
+         (SELECT x.local_track_id FROM local_track_aliases x WHERE x.alias = t.id) \
+         FROM local_tracks t \
          JOIN local_track_external_identities i \
            ON i.local_track_id = t.id AND i.provider = 'musicbrainz' \
          WHERE t.local_album_id IN (SELECT value FROM json_each(?1)) \
-         AND trim(COALESCE(i.release_track_mbid, '')) <> '' \
-         AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = t.id)",
+         AND trim(COALESCE(i.release_track_mbid, '')) <> ''",
     )?;
     let rows = statement.query_map(params![albums], |row| {
         let availability: String = row.get(2)?;
@@ -501,6 +535,7 @@ pub(crate) fn pairs_among(
                 indexed: availability == "indexed",
                 missing: availability == "missing",
                 release: row.get(4)?,
+                alias_of: row.get(5)?,
             },
         ))
     })?;
@@ -512,7 +547,7 @@ pub(crate) fn pairs_among(
     for rows in by_track.values() {
         let rows: Vec<&Row> = rows
             .iter()
-            .filter(|row| row.indexed || row.missing)
+            .filter(|row| (row.indexed || row.missing) && (aliased || row.alias_of.is_none()))
             .collect();
         if rows
             .iter()
@@ -524,12 +559,19 @@ pub(crate) fn pairs_among(
         let [new] = indexed.as_slice() else {
             continue;
         };
-        pairs.extend(rows.iter().filter(|row| row.missing).map(|row| Pair {
-            old: row.id.clone(),
-            old_album: row.album.clone(),
-            new: new.id.clone(),
-            new_album: new.album.clone(),
-        }));
+        let pairs_with_new =
+            |row: &&&Row| row.alias_of.as_ref().is_none_or(|target| *target == new.id);
+        pairs.extend(
+            rows.iter()
+                .filter(|row| row.missing)
+                .filter(pairs_with_new)
+                .map(|row| Pair {
+                    old: row.id.clone(),
+                    old_album: row.album.clone(),
+                    new: new.id.clone(),
+                    new_album: new.album.clone(),
+                }),
+        );
     }
     Ok(pairs)
 }

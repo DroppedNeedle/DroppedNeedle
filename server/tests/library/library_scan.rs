@@ -6128,6 +6128,70 @@ async fn an_album_is_not_joined_without_proof_it_was_replaced() {
     assert_eq!(rig.album_of("a/t000.flac"), old, "{case}");
 }
 
+/// A file a scan saw beside a copy of it is not moved to the copy when it
+/// goes, and a file away from the library for one scan is not moved to a
+/// copy scanned before it went: the star stays and nothing continues.
+#[tokio::test]
+async fn a_copy_or_a_share_that_drops_out_is_not_a_move() {
+    let copy = vec!["b/t000.flac".to_owned()];
+
+    let case = "a copy";
+    let (mut rig, _, rows) = continuation_album("moved-copy", 2).await;
+    let old = rows[0].clone();
+    rig.run(&star(&old));
+    let before = rig.before.clone();
+    rig.tag(&copy, &before);
+    rig.scan_folder("b").await;
+    rig.scan().await;
+    rig.lose(&["a/t000.flac".to_owned()]).await;
+    rig.scan().await;
+    assert_eq!(rig.stars_and_aliases(&old), (1, 0), "{case}");
+
+    let case = "a file away for one scan";
+    let (mut rig, _, rows) = continuation_album("moved-away", 2).await;
+    let old = rows[0].clone();
+    rig.run(&star(&old));
+    let before = rig.before.clone();
+    rig.tag(&copy, &before);
+    rig.scan_folder("b").await;
+    let away = rig.scratch.join("t000.flac");
+    std::fs::rename(rig.root.join("a/t000.flac"), &away).expect("away");
+    rig.scan().await;
+    std::fs::rename(&away, rig.root.join("a/t000.flac")).expect("back");
+    rig.scan().await;
+    assert_eq!(rig.stars_and_aliases(&old), (1, 0), "{case}");
+    assert_eq!(
+        rig.rows_at(&["a/t000.flac".to_owned()]),
+        vec![old],
+        "{case}"
+    );
+}
+
+/// An album matched to an edition and moved to another folder, the new
+/// folder scanned first, is joined to the new album once that is matched
+/// to the same edition, although its tracks continued into the new ones
+/// at an earlier run end.
+#[tokio::test]
+async fn a_matched_album_moved_new_folder_first_still_joins() {
+    let case = "moved, new folder first";
+    let (mut rig, old, old_rows) = mapped_album("moved-joins", 2).await;
+    rig.tag(&["a/z000.flac".to_owned()], "moved-joins bystander");
+    rig.scan().await;
+    let files = vec!["b/t000.flac".to_owned(), "b/t001.flac".to_owned()];
+    let before = rig.before.clone();
+    rig.tag(&files, &before);
+    rig.empty_a(2);
+    rig.scan_folder("b").await;
+    rig.scan_folder("a").await;
+    rig.scan().await;
+    let new = rig.album_of("b/t000.flac");
+    let new_rows = rig.rows_at(&files);
+    assert_eq!(rig.aliases().len(), 2, "{case}: the tracks continued");
+    rig.match_rows(&new, REL_R, &[(&new_rows[0], 0), (&new_rows[1], 1)]);
+    rig.scan().await;
+    rig.assert_joined(&old, &new, (&old_rows[0], &new_rows[0]), case);
+}
+
 impl RegroupRig {
     /// Record `a/` as a drive or share mounted inside the library folder,
     /// as a scan that found it on its own filesystem would.
@@ -7122,6 +7186,19 @@ impl ArtistRig {
         album_side: Side<'_>,
         track_side: Side<'_>,
     ) {
+        self.put_titled(relative, relative, album, release, album_side, track_side);
+    }
+
+    /// [`Self::put_on`], with a title of its own instead of the path.
+    fn put_titled(
+        &self,
+        relative: &str,
+        title: &str,
+        album: &str,
+        release: Option<&str>,
+        album_side: Side<'_>,
+        track_side: Side<'_>,
+    ) {
         use droppedneedle_library::tags::TagField;
         use droppedneedle_library::tags::save::{TagEdit, save_tags};
         let path = self.root.join(relative);
@@ -7142,7 +7219,7 @@ impl ArtistRig {
                 .unwrap_or_default()
         };
         let edits = vec![
-            TagEdit::verbatim(TagField::Title, vec![relative.to_owned()]),
+            TagEdit::verbatim(TagField::Title, vec![title.to_owned()]),
             TagEdit::verbatim(TagField::Album, vec![album.to_owned()]),
             TagEdit::verbatim(TagField::Artist, vec![track_side.names.join(" & ")]),
             TagEdit::verbatim(TagField::Artists, list(track_side)),
@@ -7177,6 +7254,26 @@ impl ArtistRig {
         let paths = HashMap::from([("music".to_owned(), self.root.clone())]);
         let run = self.coordinator.run_once(&paths).await.expect("scan runs");
         assert_eq!(run.state.scan_state(), ScanState::Completed);
+    }
+
+    /// Scan only `folder`, as a scan of one folder does.
+    async fn scan_folder(&self, folder: &str) {
+        let mut scope = ScanScope::root("music", &self.root.to_string_lossy(), "rev-1");
+        scope.relative_path = folder.to_owned();
+        let mut request = request(&self.root);
+        request.scopes = vec![scope];
+        self.coordinator.request_run(&request).expect("requested");
+        let paths = HashMap::from([("music".to_owned(), self.root.clone())]);
+        let run = self.coordinator.run_once(&paths).await.expect("scan runs");
+        assert_eq!(run.state.scan_state(), ScanState::Completed);
+    }
+
+    /// The track row of the file at `relative`, whatever its state.
+    fn track_of(&self, relative: &str) -> String {
+        self.text(&format!(
+            "SELECT id FROM local_tracks WHERE relative_path = '{relative}'"
+        ))
+        .expect("track row")
     }
 
     fn run(&self, sql: &str) {
@@ -8111,6 +8208,80 @@ async fn a_rename_with_a_featured_artist_is_offered_not_merged() {
             Some(new.clone()),
         )]
     );
+}
+
+/// A file retagged from "Oh" to "OH" with a featured artist and moved to
+/// another folder in one go, each folder scanned on its own, continues its
+/// track whichever folder is scanned first: the star on the track moves
+/// to it, the old id opens it, and Oh merges into OH. With the new folder
+/// scanned first, that happens a scan after the one that sees the old
+/// file gone.
+#[tokio::test]
+async fn a_moved_track_continues_whichever_folder_is_read_first() {
+    for new_first in [false, true] {
+        let case = if new_first {
+            "new folder first"
+        } else {
+            "old folder first"
+        };
+        let rig = ArtistRig::new(&format!("artist-moved-{new_first}"));
+        let band = plain(&["Band"]);
+        rig.put_titled("a/01.flac", "Song", "Album A", None, band, plain(&["Oh"]));
+        rig.put_titled("a/02.flac", "Other", "Album A", None, band, band);
+        rig.scan().await;
+        let old_track = rig.track_of("a/01.flac");
+        let oh = rig.track_artist("a/01.flac", 0);
+        rig.listen("listener", &oh);
+        rig.run(&star(&old_track));
+
+        std::fs::create_dir_all(rig.root.join("b")).expect("folder");
+        std::fs::rename(rig.root.join("a/01.flac"), rig.root.join("b/01.flac")).expect("moved");
+        let featured = listed(&["OH", "Y"], &[]);
+        rig.put_titled("b/01.flac", "Song", "Album A", None, band, featured);
+        let stars_on = |track: &str| {
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'track' \
+                 AND item_id = '{track}'"
+            ))
+        };
+        if new_first {
+            rig.scan_folder("b").await;
+            rig.scan_folder("a").await;
+            assert_eq!(stars_on(&old_track), 1, "{case}: nothing moves yet");
+            assert_eq!(
+                rig.count("SELECT COUNT(*) FROM local_track_aliases"),
+                0,
+                "{case}"
+            );
+            rig.scan().await;
+        } else {
+            rig.scan_folder("a").await;
+            rig.scan_folder("b").await;
+        }
+
+        let track = rig.track_of("b/01.flac");
+        assert_eq!(stars_on(&track), 1, "{case}");
+        assert_eq!(
+            rig.text(&format!(
+                "SELECT COALESCE((SELECT local_track_id FROM local_track_aliases \
+                 WHERE alias = '{old_track}'), '{old_track}')"
+            ))
+            .as_deref(),
+            Some(track.as_str()),
+            "{case}: the old id opens the track"
+        );
+        let new = rig.track_artist("b/01.flac", 0);
+        assert_eq!(rig.name(&new), "OH", "{case}");
+        assert_eq!(rig.retired_into(&oh), Some(new.clone()), "{case}");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'artist' \
+                 AND item_id = '{new}'"
+            )),
+            1,
+            "{case}"
+        );
+    }
 }
 
 /// Two artists who share a name but not their MusicBrainz id get a row

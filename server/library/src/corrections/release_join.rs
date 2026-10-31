@@ -13,7 +13,9 @@
 //! 2. no track row of A is indexed;
 //! 3. the rule that continues a missing track ([`pairs_among`]), run over
 //!    A and the albums on R together, pairs missing rows O of A with
-//!    indexed rows N on other albums. O is replaced by N when
+//!    indexed rows N on other albums. A row O that already continued into
+//!    N (a file moved to a folder a scan read first) still pairs with it
+//!    here. O is replaced by N when
 //!    1. a scan on record marked O missing, while it ran, and no person
 //!       removed O in the app;
 //!    2. the run history reaches back to N: some run on record ended at or
@@ -218,7 +220,7 @@ fn replaced_by(
         .collect();
     let mut replaced = Vec::new();
     let mut targets = BTreeSet::new();
-    for pair in pairs_among(tx, &albums, &release)? {
+    for pair in pairs_among(tx, &albums, &release, true)? {
         if pair.old_album != old || pair.new_album == old {
             continue;
         }
