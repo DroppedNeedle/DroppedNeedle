@@ -102,6 +102,7 @@ fn output_of(
         sha256,
         size,
         kind,
+        replaces: None,
     })
 }
 

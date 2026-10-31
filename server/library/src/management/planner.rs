@@ -821,6 +821,7 @@ fn generated_output(
         sha256,
         size: bytes.len() as u64,
         kind,
+        replaces: None,
     })
 }
 
@@ -1057,9 +1058,15 @@ fn plan_pictures(
     Ok(())
 }
 
-/// The album's cover file next to its tracks (external artwork):
-/// written only where no cover file the profile recognises already sits,
-/// in the folder the album ends up in or the one it comes from.
+/// The album's cover file next to its tracks (external artwork): the
+/// archive's cover for the edition, never one that came with the files.
+/// Where the album stays in its folder, a `cover.*` already there is
+/// replaced when it differs (in its own format, so one cover file stays;
+/// it goes to the recycle bin), unless the profile keeps a larger one, and
+/// a folder without one gets `cover.<ext>` even beside other images, which
+/// the pages read after it. An album that moves keeps the old rule: written
+/// only where no cover file the profile recognises sits, in the folder it
+/// ends up in or the one it comes from; the next run replaces it in place.
 fn cover_file(
     ctx: &PlanContext<'_>,
     item: &mut PlannedItem,
@@ -1068,6 +1075,8 @@ fn cover_file(
     dest_rel: &str,
     track: &CatalogTrack,
 ) -> Result<Option<crate::publish::GeneratedOutput>, ItemReason> {
+    use droppedneedle_kernel::runtime_config::sections::ArtworkOutputFormat;
+
     let art = &ctx.pinned.profile.artwork;
     if !art.external_enabled {
         return Ok(None);
@@ -1075,59 +1084,153 @@ fn cover_file(
     let Some(cover) = &extras.cover else {
         return Ok(None);
     };
-    let Some(rendered) =
-        super::enrich::render_cover(&cover.bytes, art.external_maximum_size, art.external_format)
-    else {
-        return Ok(None);
-    };
-    let patterns: Vec<Vec<char>> = art
-        .local_file_patterns
-        .iter()
-        .map(|pattern| pattern.to_lowercase().chars().collect())
-        .collect();
     let folder_of = |rel: &str| {
         Path::new(rel)
             .parent()
             .map(|parent| parent.to_string_lossy().replace('\\', "/"))
             .unwrap_or_default()
     };
-    let has_cover = |root: &str, folder: &str| {
+    let dest_folder = folder_of(dest_rel);
+    let in_place = dest_root == track.root_id && dest_folder == folder_of(&track.relative_path);
+    let listed = |root: &str, folder: &str| -> Vec<String> {
         ctx.sandbox
             .resolve_no_symlink(root, if folder.is_empty() { "." } else { folder })
             .ok()
             .and_then(|dir| std::fs::read_dir(dir).ok())
-            .is_some_and(|entries| {
-                entries.flatten().any(|entry| {
-                    let name: Vec<char> = entry
-                        .file_name()
-                        .to_string_lossy()
-                        .to_lowercase()
-                        .chars()
-                        .collect();
-                    // A `cover.*` file counts even when the profile lists
-                    // no patterns: it is where this one would go.
-                    name.starts_with(&['c', 'o', 'v', 'e', 'r', '.'])
-                        || patterns.iter().any(|pattern| glob(pattern, &name))
-                })
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
             })
+            .unwrap_or_default()
     };
-    let dest_folder = folder_of(dest_rel);
-    if has_cover(dest_root, &dest_folder)
-        || has_cover(&track.root_id, &folder_of(&track.relative_path))
+    let in_folder = |folder: &str, name: &str| {
+        if folder.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{folder}/{name}")
+        }
+    };
+    let format_of = |name: &str| match Path::new(name)
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_lowercase())
+        .as_deref()
     {
-        return Ok(None);
-    }
-    let extension = match rendered.mime.as_str() {
-        "image/png" => "png",
-        "image/webp" => "webp",
-        _ => "jpg",
+        Some("jpg" | "jpeg") => Some(ArtworkOutputFormat::Jpeg),
+        Some("png") => Some(ArtworkOutputFormat::Png),
+        Some("webp") => Some(ArtworkOutputFormat::Webp),
+        _ => None,
     };
-    let rel = if dest_folder.is_empty() {
-        format!("cover.{extension}")
+    let is_cover = |name: &str| name.to_lowercase().starts_with("cover.");
+    let mut replaces = None;
+    let (rendered, rel) = if in_place {
+        let names = listed(dest_root, &dest_folder);
+        let own = names
+            .iter()
+            .find(|name| is_cover(name) && format_of(name).is_some());
+        match own {
+            Some(name) => {
+                let rel = in_folder(&dest_folder, name);
+                let held = ctx
+                    .sandbox
+                    .resolve_no_symlink(dest_root, &rel)
+                    .ok()
+                    .and_then(|path| std::fs::read(path).ok());
+                let (Some(held), Some(format)) = (held, format_of(name)) else {
+                    return Ok(None);
+                };
+                // The profile's own encoding when it gives the file's
+                // format, so a cover written before reads as the same;
+                // else re-encoded into the file's format.
+                let Some(rendered) = super::enrich::render_cover(
+                    &cover.bytes,
+                    art.external_maximum_size,
+                    art.external_format,
+                )
+                .filter(|rendered| {
+                    format_of(&format!("x.{}", extension_of(&rendered.mime))) == Some(format)
+                })
+                .or_else(|| {
+                    super::enrich::render_cover(&cover.bytes, art.external_maximum_size, format)
+                }) else {
+                    return Ok(None);
+                };
+                let held_sha = sha256_hex(&held);
+                if sha256_hex(&rendered.bytes) == held_sha {
+                    return Ok(None);
+                }
+                let larger = art.never_replace_with_smaller
+                    && image_size(&held).is_some_and(|(width, height)| {
+                        u64::from(width) * u64::from(height)
+                            > u64::from(rendered.width) * u64::from(rendered.height)
+                    });
+                if larger {
+                    item.facts.warnings.push(format!(
+                        "{rel} is larger than the archive's cover, so it is kept."
+                    ));
+                    return Ok(None);
+                }
+                replaces = Some(crate::publish::Replacement {
+                    sha256: held_sha,
+                    track_id: None,
+                    recycle_to: String::new(),
+                });
+                (rendered, rel)
+            }
+            None => {
+                let Some(rendered) = super::enrich::render_cover(
+                    &cover.bytes,
+                    art.external_maximum_size,
+                    art.external_format,
+                ) else {
+                    return Ok(None);
+                };
+                let name = format!("cover.{}", extension_of(&rendered.mime));
+                // A cover.* in a format no cover is written in keeps its
+                // name; nothing is written beside it under the same one.
+                if names
+                    .iter()
+                    .any(|existing| existing.eq_ignore_ascii_case(&name))
+                {
+                    return Ok(None);
+                }
+                (rendered, in_folder(&dest_folder, &name))
+            }
+        }
     } else {
-        format!("{dest_folder}/cover.{extension}")
+        let Some(rendered) = super::enrich::render_cover(
+            &cover.bytes,
+            art.external_maximum_size,
+            art.external_format,
+        ) else {
+            return Ok(None);
+        };
+        let patterns: Vec<Vec<char>> = art
+            .local_file_patterns
+            .iter()
+            .map(|pattern| pattern.to_lowercase().chars().collect())
+            .collect();
+        let has_cover = |root: &str, folder: &str| {
+            listed(root, folder).iter().any(|name| {
+                let name: Vec<char> = name.to_lowercase().chars().collect();
+                // A `cover.*` file counts even when the profile lists
+                // no patterns: it is where this one would go.
+                name.starts_with(&['c', 'o', 'v', 'e', 'r', '.'])
+                    || patterns.iter().any(|pattern| glob(pattern, &name))
+            })
+        };
+        if has_cover(dest_root, &dest_folder)
+            || has_cover(&track.root_id, &folder_of(&track.relative_path))
+        {
+            return Ok(None);
+        }
+        let name = format!("cover.{}", extension_of(&rendered.mime));
+        (rendered, in_folder(&dest_folder, &name))
     };
-    let output = generated_output(ctx, dest_root, &rel, OutputKind::Artwork, &rendered.bytes)?;
+    let mut output = generated_output(ctx, dest_root, &rel, OutputKind::Artwork, &rendered.bytes)?;
+    output.replaces = replaces;
     item.desired.artwork.push(ArtworkChoice {
         output_kind: "external_art".to_owned(),
         image_type: "front".to_owned(),
@@ -1140,6 +1243,15 @@ fn cover_file(
         destination_relative_path: Some(rel),
     });
     Ok(Some(output))
+}
+
+/// The file extension a cover is written with.
+fn extension_of(mime: &str) -> &'static str {
+    match mime {
+        "image/png" => "png",
+        "image/webp" => "webp",
+        _ => "jpg",
+    }
 }
 
 /// Drop generated files that would land where a sidecar moving with the

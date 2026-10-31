@@ -10732,6 +10732,191 @@ async fn library_management_custom_edition_journey() {
     );
 }
 
+/// A cover file that came with imported files is not the album's cover:
+/// where the album stays in its folder, the run replaces a `cover.*` that
+/// differs from the archive's (the old one goes to the recycle bin), and a
+/// run after that leaves the replaced cover alone.
+#[tokio::test]
+async fn library_management_replaces_an_imported_cover_file() {
+    use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
+    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle_library::management::models::{Selection, SelectionKind};
+    use droppedneedle_library::management::service::{Management, PreviewRequest};
+    use droppedneedle_library::management::settings as lm;
+
+    let png = |rgb: [u8; 3]| {
+        let mut bytes = Vec::new();
+        image::RgbImage::from_pixel(8, 8, image::Rgb(rgb))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("png");
+        bytes
+    };
+    let archive = png([30, 30, 200]);
+    let (scratch, library, music) = bare_library_with(
+        "lib-management-cover-file",
+        Some(Arc::new(ScriptedEnrichment {
+            cover: Some(Cover {
+                bytes: archive.clone(),
+                mime: "image/png".to_owned(),
+            }),
+            ..Default::default()
+        })),
+    )
+    .await;
+    plant(&music, "art/track.m4a", "management_full.m4a");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "art/track.m4a")
+        .unwrap()
+        .expect("track indexed");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    scratch
+        .identify
+        .set_recall(ambiguous_recall(&library.identify_store, &album));
+    assert_eq!(library.identification.identify_tick().await, 1);
+    library
+        .scan_store
+        .db()
+        .run_sql(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', 0)",
+        )
+        .expect("admin row");
+    crate::common::library::operations(&library)
+        .confirm_match(&album, shown_revision(&library, &album), "admin")
+        .expect("match confirmed");
+    let mut settings = lm::initial_settings("");
+    for profile in settings
+        .profiles
+        .iter_mut()
+        .filter(|profile| profile.id == lm::PICARD_ORGANIZER_PROFILE_ID)
+    {
+        profile.artwork.embedded_enabled = false;
+        profile.artwork.external_enabled = true;
+    }
+    library
+        .settings
+        .store()
+        .save_blocking(settings)
+        .expect("settings saved");
+    lm::service::LibraryManagementService::new(Arc::new(library.settings.store().clone()))
+        .get_settings()
+        .expect("settings normalized");
+    let management = Management::new(&library);
+    let preview = |key: &str| PreviewRequest {
+        selection: Selection {
+            kind: SelectionKind::Albums,
+            ids: vec![album.clone()],
+            catalog_filter: None,
+        },
+        profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+        expected_settings_revision: lm::settings_revision(
+            &library
+                .settings
+                .store()
+                .get::<LibraryManagement>()
+                .expect("settings read"),
+        ),
+        expected_policy_revision: library.core.policy_revision().expect("policy revision"),
+        idempotency_key: Some(key.to_owned()),
+        target_root_id: None,
+        overrides: None,
+    };
+    let run = |key: &'static str| {
+        let management = &management;
+        let preview = &preview;
+        let library = &library;
+        async move {
+            let handle = management
+                .create_preview(preview(key), "admin")
+                .expect("preview");
+            assert!(management_step(library).await, "planning runs");
+            let items = management
+                .items(&handle.job_id, -1, 10, &Default::default())
+                .expect("items")
+                .items;
+            let item = items.first().expect("one file");
+            let generated = item.diff.generated.len();
+            // Nothing generated: nothing else changes either, so there is
+            // nothing to apply.
+            if generated == 0 {
+                return generated;
+            }
+            let applied = management_apply(library, &handle).await;
+            assert_eq!(
+                applied.job.state.as_str(),
+                "succeeded",
+                "{:?}",
+                applied.job.terminal_code
+            );
+            generated
+        }
+    };
+    let folder = || {
+        let rel: String =
+            droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+                .expect("db")
+                .query_row(
+                    "SELECT relative_path FROM local_tracks WHERE id = ?1",
+                    [&track],
+                    |row| row.get(0),
+                )
+                .expect("managed path");
+        music
+            .join(rel)
+            .parent()
+            .expect("album folder")
+            .to_path_buf()
+    };
+
+    // The first run organizes the album and writes the archive's cover.
+    assert_eq!(run("cover-1").await, 1);
+    let cover_file = folder().join("cover.png");
+    assert_eq!(std::fs::read(&cover_file).unwrap(), archive);
+
+    // Files brought in later carry another record's cover under that name.
+    let imported = png([200, 30, 30]);
+    std::fs::write(&cover_file, &imported).unwrap();
+    assert_eq!(run("cover-2").await, 1, "the imported cover is replaced");
+    assert_eq!(std::fs::read(&cover_file).unwrap(), archive);
+    let binned: Vec<Vec<u8>> = walkdir_files(&music.join(".recycle"))
+        .into_iter()
+        .map(|path| std::fs::read(path).unwrap())
+        .collect();
+    assert_eq!(binned, vec![imported], "the imported cover is in the bin");
+
+    assert_eq!(
+        run("cover-3").await,
+        0,
+        "the archive's cover stays as it is"
+    );
+}
+
+/// Every regular file below `dir`, recursively.
+fn walkdir_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(walkdir_files(&path));
+        } else if path.is_file() {
+            found.push(path);
+        }
+    }
+    found
+}
+
 /// Embedded art on an M4A file with a scrub on: the cover lands once and
 /// a second run leaves the pictures alone (MP4 stores no picture types),
 /// and the scrub keeps composer, work ids and ISRC while it removes an
