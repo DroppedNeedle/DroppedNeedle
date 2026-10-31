@@ -227,6 +227,15 @@ impl LibraryCore {
         fresh
     }
 
+    /// Have the scan loop look at album art and lyrics again soon, so art
+    /// a publish just wrote shows without waiting for the folder watcher
+    /// to notice it and a scan to run. Unchanged albums cost the sweep one
+    /// stat per folder.
+    pub fn sweep_soon(&self) {
+        self.wakeups.notify(super::jobs::SWEEP_WAKEUP);
+        self.wakeups.notify("scan");
+    }
+
     /// Live root registry: re-read from the settings, never cached.
     pub fn live_registry(&self) -> RootRegistry {
         self.refresh_registry()
