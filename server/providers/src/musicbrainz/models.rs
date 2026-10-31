@@ -643,6 +643,9 @@ pub struct ReleaseSearchHit {
 pub struct RecordingSearchHit {
     /// Recording MBID: required identity.
     pub id: String,
+    /// Recording title.
+    #[serde(default)]
+    pub title: Option<String>,
     /// Plain score key.
     #[serde(default)]
     pub score: Option<i64>,

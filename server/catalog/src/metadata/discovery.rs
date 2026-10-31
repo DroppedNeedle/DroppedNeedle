@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use droppedneedle_kernel::db::fold_text;
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
-use droppedneedle_providers::musicbrainz::Criticality;
+use droppedneedle_providers::musicbrainz::{
+    Criticality, RecordingRelease, RecordingSearchHit, ReleaseGroupRef, escape_lucene_phrase,
+};
 use droppedneedle_providers::{
     CacheKey, Fetched, IntegrationStatus, Policy, RequestPriority, Source, lastfm, listenbrainz,
     record_current,
@@ -155,11 +157,13 @@ impl Catalog {
             ),
             // Last.fm titles are matched against the MusicBrainz
             // discography, so the MusicBrainz source is in the key.
+            // `titles2`: rows matched since titles fold accents and
+            // punctuation; rows matched before would keep their gaps.
             (ListenSource::Lastfm, Section::TopAlbums) => {
                 let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
                 CacheKey::new(
                     Source::LastFm,
-                    &[&namespace, section.key_part(), mbid, &count_part],
+                    &[&namespace, section.key_part(), "titles2", mbid, &count_part],
                 )
             }
             (ListenSource::Lastfm, _) => {
@@ -478,6 +482,7 @@ impl Catalog {
             .await?;
         let mut songs = answer.rows.songs;
         self.fill_track_numbers(&mut songs).await;
+        self.fill_song_groups(mbid, &mut songs).await;
         Ok(TopSongsResponse {
             songs,
             source: answer.source,
@@ -530,6 +535,127 @@ impl Catalog {
             }
         }
         self.warm_releases(missing);
+    }
+
+    /// Release groups for top songs that name none, as Last.fm's do, so
+    /// they get a cover. Read from the cache; songs not looked up yet are
+    /// looked up once in the background, so the page answers at once and
+    /// carries the covers from the next load on.
+    async fn fill_song_groups(&self, artist: &str, songs: &mut [TopSong]) {
+        let mut missing: Vec<SongLookup> = Vec::new();
+        for song in songs
+            .iter_mut()
+            .filter(|song| song.release_group_mbid.is_none())
+        {
+            let lookup = SongLookup {
+                artist: artist.to_ascii_lowercase(),
+                title: song.title.clone(),
+                recording: song
+                    .recording_mbid
+                    .as_deref()
+                    .filter(|id| is_mbid(id))
+                    .map(str::to_ascii_lowercase),
+            };
+            match self
+                .upstream()
+                .cache()
+                .peek::<String>(&self.song_group_key(&lookup))
+                .await
+            {
+                Some(group) => song.release_group_mbid = group,
+                None => missing.push(lookup),
+            }
+        }
+        missing.truncate(MAX_TOP_SONG_RELEASES);
+        self.warm_song_groups(missing);
+    }
+
+    /// The cache key of a song's release group: the artist and the title,
+    /// folded.
+    fn song_group_key(&self, song: &SongLookup) -> CacheKey {
+        let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
+        CacheKey::new(
+            Source::MusicBrainz,
+            &[
+                &namespace,
+                "song_to_rg",
+                &song.artist,
+                &title_key(&song.title),
+            ],
+        )
+    }
+
+    /// Look songs' release groups up into the cache at background priority,
+    /// one task per song not already being looked up: the recording Last.fm
+    /// names, else (Last.fm's id unknown to MusicBrainz, or none) a search
+    /// for the title among the artist's recordings.
+    fn warm_song_groups(&self, songs: Vec<SongLookup>) {
+        for song in songs {
+            let key = self.song_group_key(&song);
+            let warm = format!("song:{}", key.as_str());
+            {
+                let mut warming = self
+                    .inner
+                    .warming
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                if !warming.insert(warm.clone()) {
+                    continue;
+                }
+            }
+            let catalog = self.clone();
+            tokio::spawn(async move {
+                let upstream = catalog.clone();
+                let title = song.title.clone();
+                let looked_up = catalog
+                    .cached(
+                        &key,
+                        Policy::RELEASE_TO_GROUP,
+                        RequestPriority::BackgroundSync,
+                        move |priority| async move {
+                            let (client, _) = upstream.upstream().musicbrainz(priority);
+                            if let Some(recording) = &song.recording
+                                && let Some(found) = client
+                                    .lookup_recording(
+                                        recording,
+                                        &["releases", "release-groups"],
+                                        Criticality::IdentityCritical,
+                                    )
+                                    .await
+                                    .map_err(mb_error)?
+                                && let Some(group) = song_group(&found.entity.releases)
+                            {
+                                return Ok(Fetched::Found(group));
+                            }
+                            let query = format!(
+                                r#"recording:"{}" AND arid:{}"#,
+                                escape_lucene_phrase(&song.title),
+                                song.artist
+                            );
+                            let hits = client
+                                .search_recordings_query(
+                                    &query,
+                                    SONG_SEARCH_LIMIT,
+                                    Criticality::IdentityCritical,
+                                )
+                                .await
+                                .map_err(mb_error)?;
+                            Ok(searched_song_group(&song.title, &hits.items)
+                                .map_or(Fetched::Missing, Fetched::Found))
+                        },
+                    )
+                    .await;
+                if let Err(error) = looked_up {
+                    tracing::warn!(song = %title, %error, "song release group warm failed");
+                }
+                catalog
+                    .inner
+                    .warming
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .remove(&warm);
+            });
+        }
     }
 
     /// Fetch release tracklists into the cache at background priority, one
@@ -1103,6 +1229,88 @@ fn type_rank(group: &ReleaseGroupItem) -> u8 {
     }
 }
 
+/// One top song to find a release group for.
+#[derive(Debug, Clone)]
+struct SongLookup {
+    /// Artist MBID, lowercased.
+    artist: String,
+    /// Song title as the listening service names it.
+    title: String,
+    /// Recording MBID the service names, when it is one.
+    recording: Option<String>,
+}
+
+/// Recordings a song title search reads.
+const SONG_SEARCH_LIMIT: u32 = 25;
+
+/// The release group a song is best shown with: official releases first,
+/// then the best type (plain album, album, EP, single, other), then the
+/// earliest. `None` when no candidate names a group.
+fn best_group<'a>(
+    candidates: impl Iterator<Item = (bool, &'a ReleaseGroupRef, Option<&'a str>)>,
+) -> Option<String> {
+    candidates
+        .map(|(official, group, release_date)| {
+            let rank = match group
+                .primary_type
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+            {
+                Some("album") if group.secondary_types.is_empty() => 0,
+                Some("album") => 1,
+                Some("ep") => 2,
+                Some("single") => 3,
+                _ => 4,
+            };
+            let date = group
+                .first_release_date
+                .as_deref()
+                .or(release_date)
+                .filter(|date| !date.is_empty())
+                .unwrap_or("9999")
+                .to_owned();
+            ((!official, rank, date), group.id.to_ascii_lowercase())
+        })
+        .min()
+        .map(|(_, group)| group)
+}
+
+/// The best release group among the releases of one recording.
+fn song_group(releases: &[RecordingRelease]) -> Option<String> {
+    best_group(releases.iter().filter_map(|release| {
+        let official = release
+            .status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("official"));
+        Some((
+            official,
+            release.release_group.as_ref()?,
+            release.date.as_deref(),
+        ))
+    }))
+}
+
+/// The best release group among search hits whose title is the song's
+/// (folded). The search index lists no release status, so every release
+/// counts as official.
+fn searched_song_group(title: &str, hits: &[RecordingSearchHit]) -> Option<String> {
+    let wanted = title_key(title);
+    best_group(
+        hits.iter()
+            .filter(|hit| {
+                hit.title
+                    .as_deref()
+                    .is_some_and(|found| title_key(found) == wanted)
+            })
+            .flat_map(|hit| {
+                hit.releases
+                    .iter()
+                    .filter_map(|release| Some((true, release.release_group.as_ref()?, None)))
+            }),
+    )
+}
+
 /// Match Last.fm's top albums to the artist's release groups: a Last.fm id
 /// that already is one of the artist's release groups wins, else a title
 /// match. Titles compare folded (accents, case, punctuation), also without
@@ -1268,5 +1476,54 @@ mod tests {
              same group, so it goes), a shared title takes the album, a true tie and \
              an unknown title stay unlinked"
         );
+    }
+
+    /// Yann Tiersen's "Comptine d'un autre été" (Last.fm names only the
+    /// recording): shown with the original soundtrack, not a later
+    /// compilation, a single, or a bootleg.
+    #[test]
+    fn a_song_shows_with_its_earliest_official_album() {
+        let releases: Vec<RecordingRelease> = serde_json::from_value(serde_json::json!([
+            {"id": "r1", "status": "Bootleg", "release-group":
+                {"id": "BOOT", "primary-type": "Album", "first-release-date": "1999"}},
+            {"id": "r2", "status": "Official", "release-group":
+                {"id": "BEST", "primary-type": "Album", "secondary-types": ["Compilation"],
+                 "first-release-date": "2009"}},
+            {"id": "r3", "status": "Official", "release-group":
+                {"id": "OST", "primary-type": "Album", "secondary-types": ["Soundtrack"],
+                 "first-release-date": "2001-04-23"}},
+            {"id": "r4", "status": "Official", "release-group":
+                {"id": "SINGLE", "primary-type": "Single", "first-release-date": "2000"}},
+            {"id": "r5", "status": "Official"}
+        ]))
+        .expect("releases decode");
+        assert_eq!(song_group(&releases).as_deref(), Some("ost"));
+        assert_eq!(
+            song_group(&releases[..1]).as_deref(),
+            Some("boot"),
+            "a bootleg beats nothing"
+        );
+        assert_eq!(song_group(&releases[4..]), None);
+    }
+
+    /// A song Last.fm names by an id MusicBrainz does not know is found by
+    /// its title among the artist's recordings; a hit with another title
+    /// (a remix, a cover) does not count.
+    #[test]
+    fn a_searched_song_takes_the_hits_with_its_title() {
+        let hits: Vec<RecordingSearchHit> = serde_json::from_value(serde_json::json!([
+            {"id": "a", "title": "Comptine d’un autre été : L’après-midi", "releases": [
+                {"id": "r1", "release-group": {"id": "OST", "primary-type": "Album",
+                 "secondary-types": ["Soundtrack"], "first-release-date": "2001"}}]},
+            {"id": "b", "title": "Comptine d'un autre été, L'après-midi (Remix)", "releases": [
+                {"id": "r2", "release-group": {"id": "REMIX", "primary-type": "Album",
+                 "first-release-date": "1999"}}]}
+        ]))
+        .expect("hits decode");
+        assert_eq!(
+            searched_song_group("Comptine d'un autre été, L'Après-midi", &hits).as_deref(),
+            Some("ost")
+        );
+        assert_eq!(searched_song_group("Something else", &hits), None);
     }
 }
