@@ -9089,6 +9089,120 @@ async fn the_management_loop_recovers_at_start_and_wakes_on_enqueue() {
         .await;
 }
 
+/// Art a publish wrote shows once the publish asks for the sweep: the
+/// scan loop looks at the album again without a scan, so the cover's
+/// version moves before the folder watcher (off here) would notice.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_scan_loop_sweeps_album_art_when_a_publish_asks() {
+    use droppedneedle_kernel::runtime_config::sections::FilesystemWatcher;
+
+    let scratch = Scratch {
+        dir: ScratchDir::new("lib-sweep-on-publish"),
+        identify: Arc::new(FakeProviders::default()),
+        enrichment: None,
+    };
+    crate::common::migrated_db(&scratch.join("app.db"));
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
+        .expect("database opens");
+    let platform = crate::common::TestPlatform::on(&db, &scratch)
+        .settings(Arc::new(
+            ConfigStore::scratch(
+                &scratch,
+                Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+            )
+            .expect("config opens"),
+        ))
+        .build()
+        .await;
+    let library = library_with(&platform, scratch.identify.clone(), None);
+    library
+        .settings
+        .store()
+        .save_blocking(FilesystemWatcher {
+            enabled: false,
+            ..FilesystemWatcher::default()
+        })
+        .expect("watcher off");
+    let music = scratch.join("music");
+    let track_path = plant(&music, "album/track.flac", "management_full.flac");
+    let cover = track_path.with_file_name("cover.png");
+    let png = |rgb: [u8; 3]| {
+        let mut bytes = Vec::new();
+        image::RgbImage::from_pixel(8, 8, image::Rgb(rgb))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("png");
+        bytes
+    };
+    std::fs::write(&cover, png([30, 30, 200])).unwrap();
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "album/track.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    let art = |album: String| {
+        let path = scratch.join("app.db");
+        async move {
+            tokio::task::spawn_blocking(move || {
+                droppedneedle_kernel::db::open_connection(&path)
+                    .expect("db")
+                    .query_row(
+                        "SELECT content_hash, version FROM local_album_artwork \
+                         WHERE local_album_id = ?1",
+                        [&album],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                    )
+                    .ok()
+            })
+            .await
+            .expect("read joins")
+        }
+    };
+    let until_version = |version: i64| {
+        let album = album.clone();
+        let art = &art;
+        async move {
+            let wait = async {
+                loop {
+                    if let Some(found) = art(album.clone()).await.filter(|(_, at)| *at == version) {
+                        return found.0;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(20), wait).await
+        }
+    };
+
+    crate::common::library::services(&library)
+        .start_loops(&platform.supervisor)
+        .expect("library loops start");
+    let first = until_version(1)
+        .await
+        .expect("the boot sweep records the cover");
+
+    // A publish replaced the cover; no scan runs and the watcher is off.
+    std::fs::write(&cover, png([200, 30, 30])).unwrap();
+    library.core.sweep_soon();
+    let second = until_version(2)
+        .await
+        .expect("the sweep the publish asked for records the new cover");
+    assert_ne!(first, second, "the new cover is recorded");
+
+    platform
+        .supervisor
+        .shutdown(std::time::Duration::from_secs(5))
+        .await;
+}
+
 /// The repairs worker on its own loop: its first turn requeues and
 /// finishes a repair job a stopped process left running, and a job queued
 /// later starts on the wakeup its queueing sent. No other library loop

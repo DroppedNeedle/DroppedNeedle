@@ -1790,6 +1790,7 @@ impl Publishing {
             .publisher
             .publish_as(&entry.sealed, &live, &entry.docs, applied_by)
             .map_err(publish_error)?;
+        self.core.sweep_soon();
         Ok(AppliedBundle {
             bundle_id: entry.sealed.bundle.id.clone(),
             outcome,
@@ -2292,6 +2293,7 @@ impl Publishing {
             override_of,
         )?;
         let outcome = open.publisher.publish(&sealed, &live, &docs)?;
+        self.core.sweep_soon();
         Ok(AppliedBundle {
             bundle_id: sealed.bundle.id.clone(),
             outcome,
@@ -3039,6 +3041,7 @@ impl Publishing {
             .publisher
             .publish(&sealed, &live, &docs)
             .map_err(publish_error)?;
+        self.core.sweep_soon();
         Ok(AppliedBundle {
             bundle_id: sealed.bundle.id.clone(),
             outcome,

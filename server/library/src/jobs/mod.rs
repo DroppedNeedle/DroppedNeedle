@@ -43,6 +43,9 @@ pub const MANAGEMENT_WAKEUP: &str = "library-management";
 pub const OPERATIONS_WAKEUP: &str = "library-operations";
 /// The wakeup the repairs loop listens on.
 pub const REPAIRS_WAKEUP: &str = "library-repairs";
+/// Asks the scan loop for the album art and lyrics sweeps without a scan:
+/// a publish rewrote files they read.
+pub const SWEEP_WAKEUP: &str = "library-sweep";
 
 /// This table's lease statements, for the kernel's lease core.
 const STATEMENTS: LeaseStatements = LeaseStatements {
