@@ -1244,24 +1244,30 @@ struct SongLookup {
 const SONG_SEARCH_LIMIT: u32 = 25;
 
 /// The release group a song is best shown with: official releases first,
-/// then the best type (plain album, album, EP, single, other), then the
-/// earliest. `None` when no candidate names a group.
+/// then where it first came out (an album, a soundtrack included, then an
+/// EP, a single; compilations, live and remix albums last), then the
+/// earliest. A later album that is a compilation in all but name still
+/// loses to the original on date. `None` when no candidate names a group.
 fn best_group<'a>(
     candidates: impl Iterator<Item = (bool, &'a ReleaseGroupRef, Option<&'a str>)>,
 ) -> Option<String> {
     candidates
         .map(|(official, group, release_date)| {
+            let gathered = group.secondary_types.iter().any(|kind| {
+                ["compilation", "live", "dj-mix", "remix", "mixtape/street"]
+                    .contains(&kind.to_ascii_lowercase().as_str())
+            });
             let rank = match group
                 .primary_type
                 .as_deref()
                 .map(str::to_ascii_lowercase)
                 .as_deref()
             {
-                Some("album") if group.secondary_types.is_empty() => 0,
-                Some("album") => 1,
-                Some("ep") => 2,
-                Some("single") => 3,
-                _ => 4,
+                _ if gathered => 3,
+                Some("album") => 0,
+                Some("ep") => 1,
+                Some("single") => 2,
+                _ => 3,
             };
             let date = group
                 .first_release_date
@@ -1494,6 +1500,8 @@ mod tests {
                  "first-release-date": "2001-04-23"}},
             {"id": "r4", "status": "Official", "release-group":
                 {"id": "SINGLE", "primary-type": "Single", "first-release-date": "2000"}},
+            {"id": "r6", "status": "Official", "release-group":
+                {"id": "CINEMA", "primary-type": "Album", "first-release-date": "2025"}},
             {"id": "r5", "status": "Official"}
         ]))
         .expect("releases decode");
@@ -1503,7 +1511,7 @@ mod tests {
             Some("boot"),
             "a bootleg beats nothing"
         );
-        assert_eq!(song_group(&releases[4..]), None);
+        assert_eq!(song_group(&releases[5..]), None);
     }
 
     /// A song Last.fm names by an id MusicBrainz does not know is found by
