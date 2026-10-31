@@ -547,6 +547,48 @@ async fn a_changed_cover_draws_a_new_mosaic() {
     assert_ne!(before, after);
 }
 
+/// Library Management embeds and writes the cover it is given, so that
+/// cover comes from the archive even while the pages prefer local art:
+/// art that came with imported files may be another record's, and handing
+/// it back as "the cover" kept it in the files for good.
+#[tokio::test]
+async fn library_management_gets_the_archive_cover_not_the_files_own() {
+    let files = ScratchDir::new("reads-artwork-management");
+    let track = files.join("01.flac");
+    std::fs::copy("tests/fixtures/library/management_full.flac", &track).unwrap();
+    let rig = rig(Some(&track)).await;
+    let store = SqliteScanStore::new(
+        rig.runtime.db().clone(),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    store.refresh_album_artwork(&|| false).unwrap();
+    let service = rig.service(true);
+
+    let shown = get(
+        Rig::router(service.clone()),
+        &format!("/api/v3/covers/release-group/{RG}?size=500"),
+    )
+    .await;
+    assert_eq!(
+        header(&shown.1, "x-cover-source"),
+        Some("embedded"),
+        "the pages keep showing the album's own art"
+    );
+
+    let cover = service
+        .front_cover(
+            "",
+            RG,
+            Some("500"),
+            droppedneedle_providers::RequestPriority::BackgroundSync,
+        )
+        .await
+        .expect("the archive answered")
+        .expect("the archive has a cover");
+    assert_eq!(cover.bytes, PNG_BYTES);
+    assert_eq!(cover.source, "cover-art-archive");
+}
+
 #[tokio::test]
 async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
     let files = ScratchDir::new("reads-artwork-files");

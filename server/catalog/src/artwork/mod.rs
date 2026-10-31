@@ -451,10 +451,14 @@ impl ArtworkService {
     }
 
     /// A release's front cover (its release group's when the release has
-    /// none) at `size` (`None` for the original), through the cache and
-    /// the fallbacks the pages use. Library Management embeds it and writes
-    /// it next to the album. `Err` when an archive fetch is still running.
-    /// The archive is asked at `priority`.
+    /// none, TheAudioDB's thumbnail when the archive has neither) at `size`
+    /// (`None` for the original), through the cache. Library Management
+    /// embeds it and writes it next to the album, so it never comes from the
+    /// album's own files, whatever the pages prefer: art that came with
+    /// imported files may belong to another record, and taking it as "the
+    /// cover" wrote it back for good (a best-of whose files carried a
+    /// stranger's compilation art kept it through every run). `Err` when an
+    /// archive fetch is still running. The archive is asked at `priority`.
     pub async fn front_cover(
         &self,
         release_mbid: &str,
@@ -467,8 +471,12 @@ impl ArtworkService {
             (EntityKind::Release, release_mbid),
             (EntityKind::ReleaseGroup, release_group_mbid),
         ] {
+            let mbid = mbid.trim().to_ascii_lowercase();
+            if !is_valid_mbid(&mbid) {
+                continue;
+            }
             match self
-                .mbid_cover(entity, mbid, size, PRECACHE_WAIT, priority)
+                .remote_cover(entity, &mbid, size, PRECACHE_WAIT, priority)
                 .await
             {
                 CoverLookup::Found(cover) => return Ok(Some(cover)),
@@ -476,7 +484,22 @@ impl ArtworkService {
                 CoverLookup::Missing => {}
             }
         }
-        if warming { Err(()) } else { Ok(None) }
+        if warming {
+            return Err(());
+        }
+        let group = release_group_mbid.trim().to_ascii_lowercase();
+        if is_valid_mbid(&group)
+            && let Some(cover) = self
+                .cached_image(
+                    &audiodb_cover_key(&group),
+                    AUDIODB_SOURCE,
+                    CoverOrigin::Remote,
+                )
+                .await
+        {
+            return Ok(Some(self.sized(cover, size).await));
+        }
+        Ok(None)
     }
 
     /// Whether TheAudioDB's thumbnail for a release group is settled.
