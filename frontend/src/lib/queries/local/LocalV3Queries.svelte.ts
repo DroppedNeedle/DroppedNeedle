@@ -30,6 +30,7 @@ export type AlbumCardV3 = Pick<
 	| 'total_size_bytes'
 	| 'format'
 	| 'cover_available'
+	| 'art_missing'
 	| 'date_added'
 >;
 
@@ -45,6 +46,7 @@ function toCard(album: AlbumViewV3): AlbumCardV3 {
 		total_size_bytes: album.total_size_bytes,
 		format: album.format,
 		cover_available: album.cover_available,
+		art_missing: album.art_missing,
 		date_added: album.date_added
 	};
 }

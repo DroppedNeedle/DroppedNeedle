@@ -81,6 +81,7 @@
 			<ArtistImage
 				mbid={artist.musicbrainz_artist_id ?? ''}
 				localId={artist.id}
+				artMissing={artist.art_missing}
 				alt={artist.name}
 				size="xl"
 				requestSize={250}

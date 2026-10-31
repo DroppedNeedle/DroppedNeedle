@@ -68,7 +68,7 @@ export function albumCardToSummary(card: AlbumCardV3): LocalAlbumSummary {
 		track_count: card.track_count,
 		total_size_bytes: card.total_size_bytes,
 		primary_format: card.format,
-		cover_url: localCoverUrl(card.release_group_mbid),
+		cover_url: card.art_missing ? null : localCoverUrl(card.release_group_mbid),
 		date_added: unixToIso(card.date_added)
 	};
 }

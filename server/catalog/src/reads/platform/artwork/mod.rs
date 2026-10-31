@@ -131,6 +131,52 @@ pub const PRECACHE_WAIT: Duration = Duration::from_secs(60);
 /// Wikidata has no match), so more would only queue.
 pub const ARTIST_RESOLVE_PERMITS: usize = 4;
 
+/// What the cover cache knows is missing, so a view can tell the web UI
+/// not to ask a cover route that would answer 404. Every answer is false
+/// while the cache index is not loaded.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct KnownMissing<'a> {
+    cache: Option<&'a ArtworkCache>,
+}
+
+impl KnownMissing<'_> {
+    /// Knows nothing: every answer is false.
+    #[must_use]
+    pub fn nothing() -> Self {
+        Self::default()
+    }
+
+    /// Whether the release-group route answers 404 for the 250 and 500
+    /// px covers: the archive's "no art" answer for the 500 file (which
+    /// both sizes share) is fresh and no TheAudioDB thumbnail stands in.
+    /// Local art of the group's albums is the caller's to check.
+    #[must_use]
+    pub fn release_group_cover(&self, mbid: &str) -> bool {
+        let mbid = mbid.trim().to_ascii_lowercase();
+        let Some(cache) = self.cache else {
+            return false;
+        };
+        is_valid_mbid(&mbid)
+            && cache.knows_missing(&format!(
+                "caa:{}:{mbid}:{}",
+                EntityKind::ReleaseGroup.path(),
+                DownloadSize::Size500.label()
+            ))
+            && !cache.holds(&audiodb_cover_key(&mbid))
+    }
+
+    /// Whether the artist route answers 404: the artist's "no picture"
+    /// answer is fresh.
+    #[must_use]
+    pub fn artist_image(&self, mbid: &str) -> bool {
+        let mbid = mbid.trim().to_ascii_lowercase();
+        let Some(cache) = self.cache else {
+            return false;
+        };
+        is_valid_mbid(&mbid) && cache.knows_missing(&artist_key(&mbid))
+    }
+}
+
 /// One artist picture to try, with the credit its source asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtistImageCandidate {
@@ -308,6 +354,15 @@ impl ArtworkService {
     /// The disk cache, for the admin stats and clears.
     pub fn cache(&self) -> &ArtworkCache {
         &self.cache
+    }
+
+    /// What the cache knows is missing, read from memory. Before the cache
+    /// index is loaded it knows nothing, and the first call starts the load
+    /// in the background, so a page never waits on the disk.
+    pub fn known_missing(&self) -> KnownMissing<'_> {
+        KnownMissing {
+            cache: self.cache.loaded_or_start().then_some(&self.cache),
+        }
     }
 
     /// The credit stored with the artist's image, while the image is held.

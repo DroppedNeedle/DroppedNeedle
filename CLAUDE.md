@@ -550,6 +550,8 @@ Run from the repo root. `make help` lists every target.
   `app.css` stops motion under `prefers-reduced-motion`; motion that
   carries meaning opts out with `motion-keep`, and Svelte transitions come
   from `$lib/ui/motion`.
+- A library view says `art_missing` when the server knows the cover routes
+  would answer 404; the web UI asks for no cover a view marks missing.
 - Navigation destinations live in `lib/components/shell/navItems.ts`; the
   sidebar, the bottom bar and the More sheet all render from it.
 - A Discover or Home section is one entry in the registry in

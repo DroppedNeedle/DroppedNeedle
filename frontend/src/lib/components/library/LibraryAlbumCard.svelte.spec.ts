@@ -61,4 +61,20 @@ describe('LibraryAlbumCard.svelte', () => {
 			.element(page.getByRole('img', { name: 'OK Computer' }))
 			.toHaveAttribute('data-src', `/api/v3/covers/release-group/${releaseGroup}?size=250`);
 	});
+
+	it('asks for no cover the server says is missing and shows the placeholder', async () => {
+		render(LibraryAlbumCard, {
+			props: {
+				album: {
+					...album,
+					cover_available: false,
+					art_missing: true,
+					musicbrainz_release_group_id: 'b1392450-e666-3926-a536-22c65f834433',
+					album_identity_state: 'release_group_linked'
+				}
+			}
+		});
+		await expect.element(page.getByTestId('cover-placeholder')).toBeInTheDocument();
+		await expect.element(page.getByRole('img', { name: 'OK Computer' })).not.toBeInTheDocument();
+	});
 });

@@ -37,7 +37,7 @@ droppedneedle_kernel::sql! {
          WHERE t2.local_album_id = a.id AND t2.availability = 'indexed' \
          GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1) AS format, \
         a.year AS year, a.is_compilation AS is_compilation, \
-        (w.local_album_id IS NOT NULL) AS cover_available, \
+        COALESCE(w.source IN ('folder','embedded'), 0) AS cover_available, \
         CASE WHEN w.source IN ('folder','embedded') THEN w.version END AS art_version, \
         a.created_at AS date_added, \
         (SELECT c.id FROM library_contribution_drafts c WHERE c.local_album_id = a.id \
@@ -162,7 +162,7 @@ droppedneedle_kernel::sql! {
          t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
          t.bit_depth AS bit_depth, t.channels AS channels, \
          t.file_size_bytes AS file_size_bytes, t.imported_at AS date_added, \
-         (w.local_album_id IS NOT NULL) AS cover_available"
+         COALESCE(w.source IN ('folder','embedded'), 0) AS cover_available"
     ));
     /// The track projection's joins. A statement adds the availability
     /// filter. Every join after the first credit is a primary-key lookup per
@@ -255,6 +255,12 @@ droppedneedle_kernel::sql! {
         WHERE t.local_album_id = ? AND t.availability = 'indexed'";
     /// The indexed tracks of several albums, by album, disc and track.
     family ALBUM_TRACKS_IN = album_tracks_in;
+    /// Which of some release groups a live album with art of its own is
+    /// identified as.
+    family GROUP_ART_IN = group_art_in;
+    /// Which of some artists lead or are credited on a live album with
+    /// indexed tracks and art of its own.
+    family ARTIST_ART_IN = artist_art_in;
     /// One genre (bound twice) on live tracks.
     pub(crate) fragment GENRE_FILTER = LIVE_TRACK + " AND \
         (EXISTS (SELECT 1 FROM local_track_genres g \
@@ -573,8 +579,8 @@ droppedneedle_kernel::sql! {
          ae.release_group_mbid AS release_group_mbid, t.release_type AS release_type, \
          t.replaygain_track_gain AS rg_track_gain, t.replaygain_album_gain AS rg_album_gain, \
          t.replaygain_track_peak AS rg_track_peak, t.replaygain_album_peak AS rg_album_peak, \
-         EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
-         AS cover_available, \
+         EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id \
+         AND w.source IN ('folder','embedded')) AS cover_available, \
          (SELECT w.version FROM local_album_artwork w WHERE w.local_album_id = a.id \
          AND w.source IN ('folder','embedded')) AS art_version, \
          EXISTS (SELECT 1 FROM local_track_lyrics l WHERE l.local_track_id = t.id) AS has_lyrics"
@@ -1180,6 +1186,41 @@ pub(crate) fn album_tracks_in(ids: ListLen) -> String {
         "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
          WHERE t.local_album_id IN ({}) AND t.availability = 'indexed' \
          ORDER BY t.local_album_id, t.disc_number, t.track_number, t.id",
+        marks(ids)
+    )
+}
+
+/// The release groups among `groups` that a live album with a folder image
+/// or an embedded picture is identified as: the art the release-group
+/// cover route serves before asking the archive.
+pub(crate) fn group_art_in(groups: ListLen) -> String {
+    format!(
+        "SELECT DISTINCT ae.release_group_mbid FROM local_album_external_identities ae \
+         JOIN local_albums a ON a.id = ae.local_album_id AND a.retired_into_album_id IS NULL \
+         JOIN local_album_artwork w ON w.local_album_id = ae.local_album_id \
+         AND w.source IN ('folder','embedded') \
+         WHERE ae.release_group_mbid IN ({})",
+        marks(groups)
+    )
+}
+
+/// The artists among `ids` whose picture the library artist artwork route
+/// can draw: some live album with indexed tracks that they lead or are
+/// credited on has a folder image or an embedded picture.
+pub(crate) fn artist_art_in(ids: ListLen) -> String {
+    format!(
+        "SELECT r.id FROM local_artists r WHERE r.id IN ({}) \
+         AND (EXISTS (SELECT 1 FROM local_albums a \
+         JOIN local_album_artwork w ON w.local_album_id = a.id \
+         AND w.source IN ('folder','embedded') \
+         WHERE a.album_artist_id = r.id AND a.retired_into_album_id IS NULL \
+         AND a.has_indexed_track = 1) \
+         OR EXISTS (SELECT 1 FROM local_album_artists laa \
+         JOIN local_albums a ON a.id = laa.local_album_id \
+         JOIN local_album_artwork w ON w.local_album_id = a.id \
+         AND w.source IN ('folder','embedded') \
+         WHERE laa.local_artist_id = r.id AND a.retired_into_album_id IS NULL \
+         AND a.has_indexed_track = 1))",
         marks(ids)
     )
 }

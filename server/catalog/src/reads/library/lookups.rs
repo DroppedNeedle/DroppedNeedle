@@ -217,6 +217,52 @@ impl LocalCatalog {
         .await
     }
 
+    /// The release groups among `groups`, as the catalog spells them, that
+    /// a live album with a folder image or an embedded picture is
+    /// identified as.
+    pub async fn release_groups_with_art(
+        &self,
+        groups: &[String],
+    ) -> Result<HashSet<String>, StoreError> {
+        self.each_with_art(groups, sql::group_art_in, "library.lookups.group_art")
+            .await
+    }
+
+    /// The artists among `ids` with a live album of indexed tracks, led or
+    /// credited, that has a folder image or an embedded picture.
+    pub async fn artists_with_album_art(
+        &self,
+        ids: &[String],
+    ) -> Result<HashSet<String>, StoreError> {
+        self.each_with_art(ids, sql::artist_art_in, "library.lookups.artist_art")
+            .await
+    }
+
+    /// The ids one of the art statements answers, one read per chunk.
+    async fn each_with_art(
+        &self,
+        ids: &[String],
+        statement: fn(ListLen) -> String,
+        name: &'static str,
+    ) -> Result<HashSet<String>, StoreError> {
+        let mut found = HashSet::new();
+        for chunk in ids.chunks(MAX_BINDS) {
+            let values = texts(chunk);
+            found.extend(
+                self.read(name, move |conn| {
+                    rows(
+                        conn,
+                        &statement(ListLen::new(values.len())),
+                        &values,
+                        |row| row.get::<_, String>(0),
+                    )
+                })
+                .await?,
+            );
+        }
+        Ok(found)
+    }
+
     /// Streamable tracks of the albums, ordered by album id, disc, track.
     pub async fn album_tracks_batch(
         &self,

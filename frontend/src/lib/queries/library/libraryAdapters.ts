@@ -48,6 +48,7 @@ export function toAlbumSummary(album: AlbumView): LibraryAlbumSummary {
 		is_compilation: album.is_compilation,
 		release_type: null,
 		cover_available: album.cover_available,
+		art_missing: album.art_missing,
 		date_added: album.date_added ?? null,
 		sort_name: null,
 		original_release_date: null,
@@ -102,6 +103,7 @@ export function toArtistSummary(artist: ArtistView): LibraryArtistSummary {
 		library_relationship: relationship(artist),
 		date_added: artist.date_added ?? null,
 		row_revision: 0,
+		art_missing: artist.art_missing,
 		favorite: artist.favorite
 	};
 }

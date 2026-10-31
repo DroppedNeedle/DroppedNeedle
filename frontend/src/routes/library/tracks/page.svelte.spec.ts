@@ -34,6 +34,7 @@ function track(id: string, title: string, artist: string): TrackPage['items'][nu
 		file_size_bytes: 1024,
 		date_added: 1,
 		cover_available: false,
+		art_missing: false,
 		favorite: false
 	};
 }

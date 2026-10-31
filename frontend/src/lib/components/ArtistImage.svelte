@@ -24,6 +24,8 @@
 		 * shows the art of one of their own albums.
 		 */
 		localId?: string | null;
+		/** The server says there is no picture: draw the placeholder, ask for nothing. */
+		artMissing?: boolean;
 	}
 
 	let {
@@ -42,11 +44,12 @@
 		source = 'provider',
 		available = true,
 		testId = undefined,
-		localId = null
+		localId = null,
+		artMissing = false
 	}: Props = $props();
 
 	let localArtUrl = $derived(
-		!isValidMbid(mbid) && localId
+		!artMissing && !isValidMbid(mbid) && localId
 			? artistArtworkPath(localId, requestSize ?? (size === 'xs' || size === 'sm' ? 250 : 500))
 			: null
 	);
@@ -63,11 +66,11 @@
 	{showPlaceholder}
 	{className}
 	{rounded}
-	{remoteUrl}
+	remoteUrl={artMissing ? null : remoteUrl}
 	{onload}
 	customUrl={localArtUrl}
 	source={localArtUrl ? 'local' : source}
-	available={localArtUrl ? true : available}
+	available={artMissing ? false : localArtUrl ? true : available}
 	retryOnError={!localArtUrl}
 	{testId}
 	imageType="artist"

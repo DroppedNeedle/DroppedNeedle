@@ -67,6 +67,7 @@ export function toNativeTrack(track: components['schemas']['TrackView']): Native
 		file_size_bytes: track.file_size_bytes,
 		date_added: track.date_added ?? null,
 		cover_available: track.cover_available,
+		art_missing: track.art_missing,
 		current_tier: null,
 		below_cutoff: false,
 		favorite: track.favorite

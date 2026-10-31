@@ -48,8 +48,14 @@ pub struct AlbumView {
     pub year: Option<i64>,
     /// True for compilations and various-artists sets.
     pub is_compilation: bool,
-    /// True when an artwork row exists for this album.
+    /// True when the album has art of its own: a folder image or an
+    /// embedded picture.
     pub cover_available: bool,
+    /// True when the server knows the cover routes the web UI would ask
+    /// answer 404: no art of its own, and no release group, or one whose
+    /// cover is known missing with no other copy's art standing in. False
+    /// means ask.
+    pub art_missing: bool,
     /// Import time, unix seconds.
     pub date_added: Option<f64>,
     /// True when the caller favorited this album.
@@ -61,9 +67,10 @@ pub struct AlbumView {
     pub contribution_state: Option<String>,
 }
 
-/// A library album with whether the caller favorited it.
-impl From<(AlbumRecord, bool)> for AlbumView {
-    fn from((album, favorite): (AlbumRecord, bool)) -> Self {
+/// A library album with whether the caller favorited it and whether its
+/// cover is known missing.
+impl From<(AlbumRecord, bool, bool)> for AlbumView {
+    fn from((album, favorite, art_missing): (AlbumRecord, bool, bool)) -> Self {
         Self {
             id: album.id,
             title: album.title,
@@ -80,6 +87,7 @@ impl From<(AlbumRecord, bool)> for AlbumView {
             year: album.year,
             is_compilation: album.is_compilation,
             cover_available: album.cover_available,
+            art_missing,
             date_added: album.date_added,
             favorite,
             contribution_id: album.contribution_id,
@@ -200,13 +208,18 @@ pub struct ArtistView {
     pub appearance_track_count: u64,
     /// First import time, unix seconds.
     pub date_added: Option<f64>,
+    /// True when the server knows the picture route the web UI would ask
+    /// answers 404: a linked artist's picture is known missing, or an
+    /// unlinked artist has no album art to draw from. False means ask.
+    pub art_missing: bool,
     /// True when the caller favorited this artist.
     pub favorite: bool,
 }
 
-/// A library artist with whether the caller favorited it.
-impl From<(ArtistRecord, bool)> for ArtistView {
-    fn from((artist, favorite): (ArtistRecord, bool)) -> Self {
+/// A library artist with whether the caller favorited it and whether its
+/// picture is known missing.
+impl From<(ArtistRecord, bool, bool)> for ArtistView {
+    fn from((artist, favorite, art_missing): (ArtistRecord, bool, bool)) -> Self {
         Self {
             id: artist.id,
             name: artist.name,
@@ -217,6 +230,7 @@ impl From<(ArtistRecord, bool)> for ArtistView {
             appearance_album_count: artist.appearance_album_count,
             appearance_track_count: artist.appearance_track_count,
             date_added: artist.date_added,
+            art_missing,
             favorite,
         }
     }
@@ -313,15 +327,20 @@ pub struct TrackView {
     pub file_size_bytes: i64,
     /// Import time, unix seconds.
     pub date_added: Option<f64>,
-    /// True when the owning album has artwork.
+    /// True when the owning album has art of its own: a folder image or an
+    /// embedded picture.
     pub cover_available: bool,
+    /// The owning album's `art_missing`: true when the server knows its
+    /// cover routes answer 404. False means ask.
+    pub art_missing: bool,
     /// True when the caller favorited this track.
     pub favorite: bool,
 }
 
-/// A library track with whether the caller favorited it.
-impl From<(TrackRecord, bool)> for TrackView {
-    fn from((track, favorite): (TrackRecord, bool)) -> Self {
+/// A library track with whether the caller favorited it and whether its
+/// album's cover is known missing.
+impl From<(TrackRecord, bool, bool)> for TrackView {
+    fn from((track, favorite, art_missing): (TrackRecord, bool, bool)) -> Self {
         Self {
             id: track.id,
             title: track.title,
@@ -348,6 +367,7 @@ impl From<(TrackRecord, bool)> for TrackView {
             file_size_bytes: track.file_size_bytes,
             date_added: track.date_added,
             cover_available: track.cover_available,
+            art_missing,
             favorite,
         }
     }
@@ -463,7 +483,7 @@ pub struct SuggestionTrack {
     pub artist_name: String,
     /// Owning local album id.
     pub album_id: String,
-    /// True when the owning album has artwork.
+    /// True when the owning album has a folder image or an embedded picture.
     pub cover_available: bool,
     /// Container or codec label.
     pub format: String,

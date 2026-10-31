@@ -150,6 +150,7 @@ impl ReadsSetup {
             settings,
             enrichment.as_ref(),
             library_files,
+            artwork.clone(),
         );
         let search_enrichment: Arc<dyn search::ports::EnrichmentPort> = match &enrichment {
             Some(pair) => pair.search.clone(),
@@ -178,12 +179,14 @@ impl ReadsSetup {
 /// The library reads: the one local catalog, and tags and lyrics read
 /// from the files first. Without the provider pair a track whose file
 /// carries no lyrics has none (404); with it, the online lyrics answer
-/// while the lyrics setting (read per call) is on.
+/// while the lyrics setting (read per call) is on. `covers` says which
+/// covers are known missing.
 fn library_deps(
     catalog: library::store::LocalCatalog,
     settings: &droppedneedle_kernel::runtime_config::ConfigStore,
     enrichment: Option<&enrichment::live::ProductionEnrichment>,
     files: droppedneedle_media::stream::local_files::LibraryFiles,
+    covers: platform::artwork::ArtworkService,
 ) -> library::LibraryDeps {
     let online = enrichment.map(|pair| pair.lyrics.clone());
     library::LibraryDeps {
@@ -195,6 +198,7 @@ fn library_deps(
         catalog,
         upgrade_policy: Some(settings.live()),
         tags: library::tags::FileTagReader::new(files),
+        covers: Some(covers),
     }
 }
 

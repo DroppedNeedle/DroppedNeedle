@@ -30,6 +30,7 @@ const contributors: RouteData<'GET /api/v3/library/artists'> = {
 			track_count: 5,
 			appearance_album_count: 2,
 			appearance_track_count: 3,
+			art_missing: false,
 			date_added: 1,
 			favorite: false
 		}

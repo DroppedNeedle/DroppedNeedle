@@ -18,6 +18,7 @@ const artist: RouteData<'GET /api/v3/library/artists/{id}'> = {
 	track_count: 1,
 	appearance_album_count: 1,
 	appearance_track_count: 1,
+	art_missing: false,
 	date_added: 1,
 	favorite: false
 };
@@ -35,6 +36,7 @@ const album: RouteData<'GET /api/v3/library/albums/{id}'> = {
 	format: 'flac',
 	year: 2020,
 	cover_available: false,
+	art_missing: false,
 	favorite: false,
 	date_added: 1
 };
@@ -61,6 +63,7 @@ const track: RouteData<'GET /api/v3/library/tracks'>['items'][number] = {
 	file_size_bytes: 1024,
 	date_added: 1,
 	cover_available: false,
+	art_missing: false,
 	favorite: false
 };
 

@@ -5,8 +5,9 @@
 //! allowed sizes and `original` aliases, ETag + `If-None-Match` handling
 //! (strong, weak, and `*`), and the 202 warming answer while art resolves in
 //! the background. An item with no art answers 404, and the web UI draws its
-//! own fallback. The v2 debug route is absent here on purpose (it lives in
-//! `covers_debug`).
+//! own fallback. Library views carry `art_missing` when the server already
+//! knows a route here would answer 404, so the web UI does not ask. The v2
+//! debug route is absent here on purpose (it lives in `covers_debug`).
 //!
 //! Caching follows Navidrome: the ETag is the content hash the art already
 //! carries (no hashing per request), `immutable` is sent only when the

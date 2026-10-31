@@ -193,6 +193,7 @@
 				albumId={album.id}
 				mbid={album.musicbrainz_release_group_id ?? ''}
 				available={album.cover_available}
+				artMissing={album.art_missing}
 				alt={`Cover for ${album.title}`}
 				size="full"
 				requestSize={500}

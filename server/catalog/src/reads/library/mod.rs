@@ -54,6 +54,11 @@ pub struct LibraryDeps {
     >,
     /// Tag reads from the files on disk (admin tag view).
     pub tags: tags::FileTagReader,
+    /// The cover service, whose cache tells the views which covers are
+    /// known missing. `None` knows no cache answers: only albums with no
+    /// art and no release group, and unlinked artists with no album art,
+    /// read as missing.
+    pub covers: Option<crate::reads::platform::artwork::ArtworkService>,
 }
 
 /// The library read routes, at their full `/api/v3` paths. Every handler

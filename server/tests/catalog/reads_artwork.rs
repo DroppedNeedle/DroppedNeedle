@@ -859,6 +859,92 @@ async fn a_built_discover_page_warms_its_covers_onto_disk() {
     server.abort();
 }
 
+/// A library album whose release group the archive has no cover for says so
+/// in its view once the cover cache has that answer, and so do its tracks,
+/// so the web UI asks for nothing. An unlinked artist with no album art says
+/// so too. Art that exists keeps them asking: another copy of the group with
+/// a folder image serves the group's cover and the artist's picture.
+#[tokio::test]
+async fn a_cover_the_archive_lacks_is_flagged_on_the_library_views() {
+    let stub = Router::new().fallback(|| async { StatusCode::NOT_FOUND });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    let app =
+        crate::common::TestApp::start_with("artwork-missing", crate::common::outbound_at(&origin))
+            .await;
+    app.seed(format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'Aurora', 'aurora', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+         created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'First Light', 'first light', 'Aurora', 'aurora', 'a1', \
+          'automatic', 1, 1), \
+         ('al2', 'r1', 'g2', 'First Light', 'first light', 'Aurora', 'aurora', 'a1', \
+          'automatic', 2, 2); \
+         INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, decision_source, selected_at) VALUES \
+         ('al1', 'musicbrainz', '{RG}', 'manual', 1), ('al2', 'musicbrainz', '{RG}', 'manual', 2); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, availability, ingest_source, \
+         imported_at, membership_source) VALUES \
+         ('t1', 'al1', 'r1', '/m/a/t1.flac', 'a/t1.flac', 'h1', 1, 1, 's1', 'Opener', 'opener', \
+          'First Light', 'first light', 'flac', 'indexed', 'scan', 1, 'automatic'), \
+         ('t2', 'al2', 'r1', '/m/b/t2.flac', 'b/t2.flac', 'h2', 1, 1, 's2', 'Opener', 'opener', \
+          'First Light', 'first light', 'flac', 'indexed', 'scan', 2, 'automatic');"
+    ))
+    .await;
+    let user = app.login_user("art").await;
+    let auth = [("authorization", user.authorization.as_str())];
+    let art_missing = |path: &'static str| {
+        let app = &app;
+        let auth = &auth;
+        async move {
+            let (status, view) = app.call("GET", path, auth, None).await;
+            assert_eq!(status, StatusCode::OK, "{path}: {view}");
+            view["art_missing"].clone()
+        }
+    };
+
+    assert_eq!(
+        art_missing("/api/v3/library/artists/a1").await,
+        true,
+        "an unlinked artist with no album art has no picture"
+    );
+
+    app.until("the archive says it has no cover", || async {
+        let (status, _, _) = app
+            .raw(
+                "GET",
+                &format!("/api/v3/covers/release-group/{RG}?size=250"),
+                &auth,
+                None,
+            )
+            .await;
+        (status == StatusCode::NOT_FOUND).then_some(())
+    })
+    .await;
+    assert_eq!(art_missing("/api/v3/library/albums/al1").await, true);
+    assert_eq!(art_missing("/api/v3/library/tracks/t1").await, true);
+
+    app.seed(
+        "INSERT INTO local_album_artwork (local_album_id, source, source_locator, version, \
+         updated_at) VALUES ('al2', 'folder', '/m/b/cover.jpg', 1, 1)",
+    )
+    .await;
+    assert_eq!(
+        art_missing("/api/v3/library/albums/al1").await,
+        false,
+        "another copy's art serves the group's cover"
+    );
+    assert_eq!(art_missing("/api/v3/library/artists/a1").await, false);
+
+    app.stop().await;
+    server.abort();
+}
+
 /// Now, by the system clock the cache under test runs on.
 fn unix_now() -> u64 {
     use droppedneedle_kernel::clock::Clock as _;

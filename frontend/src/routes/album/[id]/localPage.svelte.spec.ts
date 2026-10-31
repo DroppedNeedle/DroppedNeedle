@@ -28,6 +28,7 @@ const album: RouteData<'GET /api/v3/library/albums/{id}'> = {
 	format: 'flac',
 	year: 2026,
 	cover_available: false,
+	art_missing: false,
 	favorite: false,
 	date_added: 1
 };
@@ -54,6 +55,7 @@ const track: RouteData<'GET /api/v3/library/albums/{id}/tracks'>['items'][number
 	file_size_bytes: 1024,
 	date_added: 1,
 	cover_available: false,
+	art_missing: false,
 	favorite: false
 };
 

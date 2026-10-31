@@ -476,6 +476,7 @@ const BENCHMARKS: &str = "the read benchmarks, a test-only module";
 const IMAGE_WORK: &str = "image work off the async workers, awaited by the request";
 const COVER_FLIGHT: &str =
     "a cover fetch that still lands in the cache when its request stops waiting";
+const COVER_INDEX_LOAD: &str = "the cover cache index load a library view starts once, so the view never waits on the disk; its file work logs its own failure";
 const TEST_TEMPLATE: &str = "the test template migrates on its own thread, once per test process";
 const LOOP_STEP: &str =
     "a blocking step awaited inside a supervised loop, its stop checked between steps";
@@ -525,6 +526,11 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("catalog/src/reads/library/perf_tests.rs", 1, BENCHMARKS),
     ("catalog/src/reads/library/tags.rs", 1, REQUEST),
     ("catalog/src/reads/platform/artwork/cache.rs", 1, IMAGE_WORK),
+    (
+        "catalog/src/reads/platform/artwork/cache.rs",
+        1,
+        COVER_INDEX_LOAD,
+    ),
     ("catalog/src/reads/platform/artwork/local.rs", 2, IMAGE_WORK),
     ("catalog/src/reads/platform/artwork/mod.rs", 2, COVER_FLIGHT),
     ("catalog/src/reads/platform/artwork/mod.rs", 2, IMAGE_WORK),

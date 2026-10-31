@@ -17,13 +17,16 @@
 //! art is fetched again. Eviction also deletes the key records that point
 //! at the evicted blobs (a reverse map tracks them). A full pass over the
 //! key records, dropping orphans and miss markers past their time, runs
-//! when the cache loads and at most hourly after that. Every file operation runs on a blocking thread,
+//! when the cache loads and at most hourly after that. The index also
+//! keeps which key records hold an image and which a fresh "no art"
+//! marker, so a library view can tell, without touching the disk, that a
+//! cover route would answer 404. Every file operation runs on a blocking thread,
 //! and writes go through a temporary file and a rename so a crash never
 //! leaves a half-written image behind.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -41,6 +44,13 @@ pub const AUDIODB_KEY_PREFIX: &str = "audiodb:";
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+
+/// Which marker [`ArtworkCache::put_marker`] writes.
+#[derive(Debug, Clone, Copy)]
+enum Marker {
+    Miss,
+    Unreachable,
+}
 
 /// What a key file says.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +119,10 @@ struct Index {
     keys_by_hash: HashMap<String, HashSet<PathBuf>>,
     /// When the last full pass over the key records ran.
     last_full_clean: Option<Instant>,
+    /// "No art" markers by key record path, with the second they expire.
+    misses: HashMap<PathBuf, u64>,
+    /// Key records that point at an image.
+    held: HashSet<PathBuf>,
 }
 
 impl Index {
@@ -128,6 +142,8 @@ pub struct ArtworkCache {
     max_bytes: u64,
     index: Arc<Mutex<Option<Index>>>,
     clock: Arc<dyn Clock>,
+    /// Set once a background index load has been started.
+    load_started: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for ArtworkCache {
@@ -160,7 +176,40 @@ impl ArtworkCache {
             max_bytes,
             index: Arc::new(Mutex::new(None)),
             clock,
+            load_started: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Whether the index is in memory. When it is not, start loading it in
+    /// the background, once, and answer false: a caller that must not wait
+    /// on the disk treats the cache as knowing nothing yet.
+    pub fn loaded_or_start(&self) -> bool {
+        if self.lock().is_some() {
+            return true;
+        }
+        if !self.load_started.swap(true, Ordering::AcqRel) {
+            let cache = self.clone();
+            tokio::spawn(async move { cache.ensure_index().await });
+        }
+        false
+    }
+
+    /// Whether `key` holds a "no art" marker that has not expired, and no
+    /// image. False while the index is not loaded.
+    pub fn knows_missing(&self, key: &str) -> bool {
+        let path = self.key_path(key);
+        let now = self.unix_now();
+        self.lock().as_ref().is_some_and(|index| {
+            !index.held.contains(&path) && index.misses.get(&path).is_some_and(|until| *until > now)
+        })
+    }
+
+    /// Whether `key` points at an image, as far as the loaded index knows.
+    pub fn holds(&self, key: &str) -> bool {
+        let path = self.key_path(key);
+        self.lock()
+            .as_ref()
+            .is_some_and(|index| index.held.contains(&path))
     }
 
     /// Seconds since the epoch, by the cache's clock.
@@ -268,6 +317,8 @@ impl ArtworkCache {
                         },
                     );
                     if let Some(path) = key_path {
+                        index.misses.remove(&path);
+                        index.held.insert(path.clone());
                         index
                             .keys_by_hash
                             .entry(hash.clone())
@@ -301,6 +352,8 @@ impl ArtworkCache {
             Some(Ok(())) => {
                 if let Some(index) = self.lock().as_mut() {
                     index.touch(hash);
+                    index.misses.remove(&path);
+                    index.held.insert(path.clone());
                     index
                         .keys_by_hash
                         .entry(hash.to_owned())
@@ -317,25 +370,47 @@ impl ArtworkCache {
     /// that already holds an image still on disk keeps it: a failed fetch
     /// running beside one that succeeded never blanks the stored image.
     pub async fn put_miss(&self, key: &str, ttl_secs: u64) {
-        self.put_marker(key, "miss", ttl_secs).await;
+        self.put_marker(key, Marker::Miss, ttl_secs).await;
     }
 
     /// Record that the source could not be asked about `key`, for
     /// `ttl_secs`. Like [`ArtworkCache::put_miss`], a stored image is kept.
     pub async fn put_unreachable(&self, key: &str, ttl_secs: u64) {
-        self.put_marker(key, "unreachable", ttl_secs).await;
+        self.put_marker(key, Marker::Unreachable, ttl_secs).await;
     }
 
-    async fn put_marker(&self, key: &str, kind: &str, ttl_secs: u64) {
+    async fn put_marker(&self, key: &str, marker: Marker, ttl_secs: u64) {
         if let Some(KeyEntry::Hit { hash, .. }) = self.key(key).await
             && self.has_blob(&hash).await
         {
             return;
         }
         let path = self.key_path(key);
-        let text = format!("{kind}\n{}\n", self.unix_now() + ttl_secs);
-        if let Some(Err(error)) = blocking(move || write_atomic(&path, text.as_bytes())).await {
-            tracing::warn!(%error, "cover cache miss marker not written");
+        let until = self.unix_now() + ttl_secs;
+        let kind = match marker {
+            Marker::Miss => "miss",
+            Marker::Unreachable => "unreachable",
+        };
+        let text = format!("{kind}\n{until}\n");
+        let target = path.clone();
+        let written = match blocking(move || write_atomic(&target, text.as_bytes())).await {
+            Some(Ok(())) => true,
+            Some(Err(error)) => {
+                tracing::warn!(%error, "cover cache miss marker not written");
+                false
+            }
+            None => false,
+        };
+        if let Some(index) = self.lock().as_mut() {
+            index.held.remove(&path);
+            match marker {
+                Marker::Miss if written => {
+                    index.misses.insert(path, until);
+                }
+                _ => {
+                    index.misses.remove(&path);
+                }
+            }
         }
         let due = self.lock().as_ref().is_some_and(|index| {
             index
@@ -409,6 +484,8 @@ impl ArtworkCache {
                 clock,
                 keys_by_hash: HashMap::new(),
                 last_full_clean: None,
+                misses: HashMap::new(),
+                held: HashSet::new(),
             });
         }
         self.full_clean().await;
@@ -428,22 +505,33 @@ impl ArtworkCache {
         };
         let root = self.root.clone();
         let now = self.unix_now();
-        let Some((removed, kept)) = blocking(move || {
+        let Some((removed, kept, misses)) = blocking(move || {
             let mut removed = 0;
             let mut kept = Vec::new();
+            let mut misses = Vec::new();
             for dir in [KEYS_DIR, AUDIODB_KEYS_DIR] {
-                let (gone, held) = clean_key_files(&root.join(dir), &live, now);
-                removed += gone;
-                kept.extend(held);
+                let found = clean_key_files(&root.join(dir), &live, now);
+                removed += found.removed;
+                kept.extend(found.held);
+                misses.extend(found.misses);
             }
-            (removed, kept)
+            (removed, kept, misses)
         })
         .await
         else {
             return;
         };
         if let Some(index) = self.lock().as_mut() {
+            // Merged, never replaced: a write made while the pass ran has
+            // already updated the index, and an image it stored wins.
+            index.misses.retain(|_, until| *until > now);
+            for (path, until) in misses {
+                if !index.held.contains(&path) {
+                    index.misses.entry(path).or_insert(until);
+                }
+            }
             for (hash, path) in kept {
+                index.held.insert(path.clone());
                 index.keys_by_hash.entry(hash).or_default().insert(path);
             }
         }
@@ -483,7 +571,8 @@ impl ArtworkCache {
             return;
         }
         let count = victims.len();
-        blocking(move || {
+        let dropped = blocking(move || {
+            let mut dropped = Vec::new();
             for (blob, hash, keys) in victims {
                 if let Err(error) = std::fs::remove_file(&blob)
                     && error.kind() != std::io::ErrorKind::NotFound
@@ -499,13 +588,20 @@ impl ArtworkCache {
                         .is_some_and(|entry| {
                             matches!(entry, KeyEntry::Hit { hash: pointed, .. } if pointed == hash)
                         });
-                    if points_here {
-                        let _ = std::fs::remove_file(&key);
+                    if points_here && std::fs::remove_file(&key).is_ok() {
+                        dropped.push(key);
                     }
                 }
             }
+            dropped
         })
-        .await;
+        .await
+        .unwrap_or_default();
+        if let Some(index) = self.lock().as_mut() {
+            for key in &dropped {
+                index.held.remove(key);
+            }
+        }
         tracing::debug!(count, "cover cache evicted old images");
     }
 
@@ -614,18 +710,23 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     })
 }
 
+/// What one pass over a folder of key records found.
+#[derive(Default)]
+struct KeyPass {
+    /// Records deleted.
+    removed: usize,
+    /// (hash, path) of every record kept that points at a blob.
+    held: Vec<(String, PathBuf)>,
+    /// Path and expiry of every "no art" marker kept.
+    misses: Vec<(PathBuf, u64)>,
+}
+
 /// Delete key records that point at a blob not in `live`, expired miss
-/// markers, and records that do not parse. Returns how many went, and the
-/// (hash, path) of every record kept that points at a blob.
-fn clean_key_files(
-    dir: &Path,
-    live: &HashSet<String>,
-    now: u64,
-) -> (usize, Vec<(String, PathBuf)>) {
-    let mut removed = 0;
-    let mut kept = Vec::new();
+/// markers, and records that do not parse, and list what is kept.
+fn clean_key_files(dir: &Path, live: &HashSet<String>, now: u64) -> KeyPass {
+    let mut pass = KeyPass::default();
     let Ok(shards) = std::fs::read_dir(dir) else {
-        return (0, kept);
+        return pass;
     };
     for shard in shards.flatten() {
         let Ok(files) = std::fs::read_dir(shard.path()) else {
@@ -643,24 +744,28 @@ fn clean_key_files(
             {
                 Some(Some(KeyEntry::Hit { hash, .. })) => {
                     if live.contains(&hash) {
-                        kept.push((hash, path.clone()));
+                        pass.held.push((hash, path.clone()));
                         false
                     } else {
                         true
                     }
                 }
-                Some(Some(KeyEntry::Miss { until } | KeyEntry::Unreachable { until })) => {
+                Some(Some(KeyEntry::Miss { until })) => {
+                    if until > now {
+                        pass.misses.push((path.clone(), until));
+                    }
                     until <= now
                 }
+                Some(Some(KeyEntry::Unreachable { until })) => until <= now,
                 Some(None) => true,
                 None => false,
             };
             if stale && std::fs::remove_file(&path).is_ok() {
-                removed += 1;
+                pass.removed += 1;
             }
         }
     }
-    (removed, kept)
+    pass
 }
 
 /// Every blob on disk with its size; older files count as less recently
@@ -732,6 +837,33 @@ mod tests {
                 content_type: "image/jpeg".to_owned()
             })
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A "no art" marker is known in memory until it expires by the
+    /// cache's clock, and an image stored under its key ends it at once.
+    #[tokio::test]
+    async fn a_known_miss_ends_when_it_expires_or_art_arrives() {
+        let root = std::env::temp_dir().join(format!(
+            "dn-artwork-known-{}-{}",
+            std::process::id(),
+            droppedneedle_kernel::clock::SystemClock.now_ms()
+        ));
+        let clock = Arc::new(droppedneedle_kernel::clock::ManualClock::at(1_000_000));
+        let cache = ArtworkCache::new(root.clone(), 1024 * 1024, clock.clone());
+        let key = "caa:release-group:aff0622e-7bd3-4fb6-9ca3-0fa19dd2340b:500";
+        assert!(!cache.loaded_or_start(), "nothing is known before the load");
+        cache.ensure_index().await;
+
+        cache.put_miss(key, 60).await;
+        assert!(cache.knows_missing(key));
+        clock.advance(60_000);
+        assert!(!cache.knows_missing(key), "expired with the marker");
+
+        cache.put_miss(key, 60).await;
+        cache.put(Some(key), b"cover".to_vec(), "image/jpeg").await;
+        assert!(!cache.knows_missing(key), "stored art ends the miss");
+        assert!(cache.holds(key));
         let _ = std::fs::remove_dir_all(root);
     }
 }

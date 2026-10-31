@@ -19,7 +19,9 @@ use super::stores::{
     After, AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, KeyedPage,
     StoreError, TagRead, TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
 };
+use crate::reads::platform::artwork::{ArtworkService, KnownMissing};
 use droppedneedle_auth::Admin;
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use rusqlite::types::Value;
 
 /// Domain failures. Handlers convert these; nothing here names HTTP.
@@ -44,6 +46,119 @@ impl From<StoreError> for LibraryFailure {
             StoreError::Internal(cause) => Self::Internal(cause),
         }
     }
+}
+
+/// What the cover cache knows is missing; nothing when the reads run
+/// without one.
+fn known_missing(deps: &LibraryDeps) -> KnownMissing<'_> {
+    deps.covers
+        .as_ref()
+        .map_or_else(KnownMissing::nothing, ArtworkService::known_missing)
+}
+
+/// The albums, by id, whose cover the web UI would ask for and get a 404:
+/// no art of their own, and either no release group, or one whose cover
+/// the cover cache knows is missing and that no live copy with art of its
+/// own is identified as. Each album is `(id, own art, release group)`.
+async fn albums_without_art<'a>(
+    deps: &LibraryDeps,
+    albums: impl IntoIterator<Item = (&'a str, bool, Option<&'a str>)>,
+) -> Result<HashSet<String>, LibraryFailure> {
+    let known = known_missing(deps);
+    let mut missing = HashSet::new();
+    let mut asking: Vec<(String, String)> = Vec::new();
+    for (id, own_art, group) in albums {
+        if own_art {
+            continue;
+        }
+        match group.filter(|group| !group.trim().is_empty()) {
+            None => {
+                missing.insert(id.to_owned());
+            }
+            Some(group) if known.release_group_cover(group) => {
+                asking.push((id.to_owned(), group.to_owned()));
+            }
+            Some(_) => {}
+        }
+    }
+    if asking.is_empty() {
+        return Ok(missing);
+    }
+    let mut groups: Vec<String> = asking.iter().map(|(_, group)| group.clone()).collect();
+    groups.sort();
+    groups.dedup();
+    let with_art = deps.catalog.release_groups_with_art(&groups).await?;
+    missing.extend(
+        asking
+            .into_iter()
+            .filter(|(_, group)| !with_art.contains(group))
+            .map(|(id, _)| id),
+    );
+    Ok(missing)
+}
+
+/// [`albums_without_art`] for album records.
+async fn albums_missing_art(
+    deps: &LibraryDeps,
+    records: &[AlbumRecord],
+) -> Result<HashSet<String>, LibraryFailure> {
+    albums_without_art(
+        deps,
+        records.iter().map(|record| {
+            (
+                record.id.as_str(),
+                record.cover_available,
+                record.release_group_mbid.as_deref(),
+            )
+        }),
+    )
+    .await
+}
+
+/// [`albums_without_art`] for the albums of track records, by album id.
+async fn track_albums_missing_art(
+    deps: &LibraryDeps,
+    records: &[TrackRecord],
+) -> Result<HashSet<String>, LibraryFailure> {
+    albums_without_art(
+        deps,
+        records.iter().map(|record| {
+            (
+                record.album_id.as_str(),
+                record.cover_available,
+                record.release_group_mbid.as_deref(),
+            )
+        }),
+    )
+    .await
+}
+
+/// The artists, by id, whose picture the web UI would ask for and get a
+/// 404: a linked artist whose picture the cover cache knows is missing, or
+/// an unlinked one with no album art for the library artist route to draw.
+async fn artists_missing_art(
+    deps: &LibraryDeps,
+    records: &[ArtistRecord],
+) -> Result<HashSet<String>, LibraryFailure> {
+    let known = known_missing(deps);
+    let mut missing = HashSet::new();
+    let mut unlinked = Vec::new();
+    for record in records {
+        match record.artist_mbid.as_deref() {
+            Some(mbid) if is_valid_mbid(&mbid.trim().to_ascii_lowercase()) => {
+                if known.artist_image(mbid) {
+                    missing.insert(record.id.clone());
+                }
+            }
+            _ => unlinked.push(record.id.clone()),
+        }
+    }
+    if unlinked.is_empty() {
+        return Ok(missing);
+    }
+    let with_art = deps.catalog.artists_with_album_art(&unlinked).await?;
+    missing.extend(unlinked.into_iter().filter(|id| !with_art.contains(id)));
+    Ok(missing)
 }
 
 /// Parse `limit`/`offset`: defaults, then range.
@@ -191,13 +306,15 @@ async fn album_page(
 ) -> Result<AlbumPage, LibraryFailure> {
     let ids: Vec<String> = page.items.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "album", &ids).await?;
+    let missing = albums_missing_art(deps, &page.items).await?;
     Ok(AlbumPage {
         items: page
             .items
             .into_iter()
             .map(|record| {
                 let favorite = favorites.contains(&record.id);
-                AlbumView::from((record, favorite))
+                let art_missing = missing.contains(&record.id);
+                AlbumView::from((record, favorite, art_missing))
             })
             .collect(),
         total: page.total,
@@ -335,8 +452,11 @@ pub async fn get_album(
     let favorites = favorites_for(deps, user_id, "album", std::slice::from_ref(&record.id)).await?;
     let hold = deps.catalog.management_hold(&record.id).await?;
     let favorite = favorites.contains(&record.id);
+    let art_missing = albums_missing_art(deps, std::slice::from_ref(&record))
+        .await?
+        .contains(&record.id);
     Ok(AlbumDetailView {
-        album: AlbumView::from((record, favorite)),
+        album: AlbumView::from((record, favorite, art_missing)),
         management_hold: hold.map(|hold| ManagementHoldView {
             kind: hold.kind,
             held_at: hold.held_at,
@@ -358,12 +478,14 @@ pub async fn album_tracks(
     let (records, total) = deps.catalog.album_tracks(&album.id, limit, offset).await?;
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
+    let missing = track_albums_missing_art(deps, &records).await?;
     Ok(TrackPage {
         items: records
             .into_iter()
             .map(|record| {
                 let favorite = favorites.contains(&record.id);
-                TrackView::from((record, favorite))
+                let art_missing = missing.contains(&record.album_id);
+                TrackView::from((record, favorite, art_missing))
             })
             .collect(),
         total,
@@ -406,13 +528,15 @@ pub async fn album_copies(
     let records = deps.catalog.album_copies(&album.id).await?;
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "album", &ids).await?;
+    let missing = albums_missing_art(deps, &records).await?;
     let total = records.len() as u64;
     Ok(AlbumPage {
         items: records
             .into_iter()
             .map(|record| {
                 let favorite = favorites.contains(&record.id);
-                AlbumView::from((record, favorite))
+                let art_missing = missing.contains(&record.id);
+                AlbumView::from((record, favorite, art_missing))
             })
             .collect(),
         total,
@@ -463,13 +587,15 @@ pub async fn list_artists(
         .await?;
     let ids: Vec<String> = page.items.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "artist", &ids).await?;
+    let missing = artists_missing_art(deps, &page.items).await?;
     Ok(ArtistPage {
         items: page
             .items
             .into_iter()
             .map(|record| {
                 let favorite = favorites.contains(&record.id);
-                ArtistView::from((record, favorite))
+                let art_missing = missing.contains(&record.id);
+                ArtistView::from((record, favorite, art_missing))
             })
             .collect(),
         total: page.total,
@@ -490,7 +616,10 @@ pub async fn get_artist(
     let favorites =
         favorites_for(deps, user_id, "artist", std::slice::from_ref(&record.id)).await?;
     let favorite = favorites.contains(&record.id);
-    Ok(ArtistView::from((record, favorite)))
+    let art_missing = artists_missing_art(deps, std::slice::from_ref(&record))
+        .await?
+        .contains(&record.id);
+    Ok(ArtistView::from((record, favorite, art_missing)))
 }
 
 /// One page of albums led by the artist. Unknown artists are 404.
@@ -567,13 +696,15 @@ pub async fn list_tracks(
         .await?;
     let ids: Vec<String> = page.items.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
+    let missing = track_albums_missing_art(deps, &page.items).await?;
     Ok(TrackListPage {
         items: page
             .items
             .into_iter()
             .map(|record| {
                 let favorite = favorites.contains(&record.id);
-                TrackView::from((record, favorite))
+                let art_missing = missing.contains(&record.album_id);
+                TrackView::from((record, favorite, art_missing))
             })
             .collect(),
         total: page.total,
@@ -595,7 +726,10 @@ pub async fn get_track(
         .ok_or(LibraryFailure::NotFound)?;
     let favorites = favorites_for(deps, user_id, "track", std::slice::from_ref(&record.id)).await?;
     let favorite = favorites.contains(&record.id);
-    Ok(TrackView::from((record, favorite)))
+    let art_missing = track_albums_missing_art(deps, std::slice::from_ref(&record))
+        .await?
+        .contains(&record.album_id);
+    Ok(TrackView::from((record, favorite, art_missing)))
 }
 
 /// Library totals plus the caller's favorite counts, the review queue,
@@ -629,13 +763,15 @@ pub async fn recently_added(
     let records = deps.catalog.recently_added(limit).await?;
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "album", &ids).await?;
+    let missing = albums_missing_art(deps, &records).await?;
     let total = records.len() as u64;
     Ok(AlbumPage {
         items: records
             .into_iter()
             .map(|record| {
                 let favorite = favorites.contains(&record.id);
-                AlbumView::from((record, favorite))
+                let art_missing = missing.contains(&record.id);
+                AlbumView::from((record, favorite, art_missing))
             })
             .collect(),
         total,
@@ -676,12 +812,14 @@ pub async fn genre_tracks(
     let (records, total) = deps.catalog.genre_tracks(&folded, limit, offset).await?;
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
+    let missing = track_albums_missing_art(deps, &records).await?;
     Ok(TrackPage {
         items: records
             .into_iter()
             .map(|record| {
                 let favorite = favorites.contains(&record.id);
-                TrackView::from((record, favorite))
+                let art_missing = missing.contains(&record.album_id);
+                TrackView::from((record, favorite, art_missing))
             })
             .collect(),
         total,
@@ -916,6 +1054,7 @@ pub async fn album_status(
     };
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
+    let missing = track_albums_missing_art(deps, &records).await?;
     let policy = UpgradePolicy::read(deps.upgrade_policy.as_ref());
     let album_id = records
         .first()
@@ -927,8 +1066,9 @@ pub async fn album_status(
         .map(|record| {
             let tier = tier_for(&record.format, record.bit_rate, record.bit_depth);
             let favorite = favorites.contains(&record.id);
+            let art_missing = missing.contains(&record.album_id);
             LibraryStatusTrack {
-                track: TrackView::from((record, favorite)),
+                track: TrackView::from((record, favorite, art_missing)),
                 current_tier: tier.to_owned(),
                 below_cutoff: below_cutoff(tier, &policy),
             }

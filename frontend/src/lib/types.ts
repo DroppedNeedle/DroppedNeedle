@@ -542,6 +542,8 @@ export interface TargetNativeTrack {
 	file_size_bytes: number;
 	date_added: number | null;
 	cover_available: boolean;
+	/** The server knows the album's cover routes answer 404: ask for no cover. */
+	art_missing?: boolean;
 	current_tier: string | null;
 	below_cutoff: boolean;
 	/** Whether the caller favorited it, where the read says. */
@@ -567,6 +569,8 @@ export interface LibraryAlbumSummary {
 	is_compilation: boolean;
 	release_type: string | null;
 	cover_available: boolean;
+	/** The server knows its cover routes answer 404: ask for no cover. */
+	art_missing?: boolean;
 	date_added: number | null;
 	sort_name: string | null;
 	original_release_date: string | null;
@@ -873,6 +877,8 @@ export interface LibraryArtistSummary {
 	library_relationship: LibraryArtistRelationship;
 	date_added: number | null;
 	row_revision: number;
+	/** The server knows its picture route answers 404: ask for no picture. */
+	art_missing?: boolean;
 	/** Whether the caller favorited it, where the read says. */
 	favorite?: boolean;
 }

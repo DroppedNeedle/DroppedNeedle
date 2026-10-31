@@ -74,6 +74,7 @@ function localTrack(i: number, albumIdOfFile: string): LocalTrack {
 		file_size_bytes: 1,
 		format: 'flac',
 		cover_available: false,
+		art_missing: false,
 		favorite: false
 	};
 }
@@ -91,6 +92,7 @@ function localAlbum(): RouteData<'GET /api/v3/library/albums/{id}'> {
 		artist_name: 'Lumen',
 		release_group_mbid: albumId,
 		cover_available: false,
+		art_missing: false,
 		favorite: false,
 		identity_state: 'matched',
 		is_compilation: false,

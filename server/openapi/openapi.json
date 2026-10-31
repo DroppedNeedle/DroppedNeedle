@@ -37126,9 +37126,14 @@
           "total_size_bytes",
           "is_compilation",
           "cover_available",
+          "art_missing",
           "favorite"
         ],
         "properties": {
+          "art_missing": {
+            "type": "boolean",
+            "description": "True when the server knows the cover routes the web UI would ask\nanswer 404: no art of its own, and no release group, or one whose\ncover is known missing with no other copy's art standing in. False\nmeans ask."
+          },
           "artist_id": {
             "type": "string",
             "description": "Local album-artist id."
@@ -37160,7 +37165,7 @@
           },
           "cover_available": {
             "type": "boolean",
-            "description": "True when an artwork row exists for this album."
+            "description": "True when the album has art of its own: a folder image or an\nembedded picture."
           },
           "date_added": {
             "type": [
@@ -38776,6 +38781,7 @@
           "track_count",
           "appearance_album_count",
           "appearance_track_count",
+          "art_missing",
           "favorite"
         ],
         "properties": {
@@ -38796,6 +38802,10 @@
             "format": "int64",
             "description": "Streamable tracks credited to this artist on albums led by someone\nelse.",
             "minimum": 0
+          },
+          "art_missing": {
+            "type": "boolean",
+            "description": "True when the server knows the picture route the web UI would ask\nanswers 404: a linked artist's picture is known missing, or an\nunlinked artist has no album art to draw from. False means ask."
           },
           "artist_mbid": {
             "type": [
@@ -65499,7 +65509,7 @@
           },
           "cover_available": {
             "type": "boolean",
-            "description": "True when the owning album has artwork."
+            "description": "True when the owning album has a folder image or an embedded picture."
           },
           "duration_seconds": {
             "type": [
@@ -66599,6 +66609,7 @@
           "format",
           "file_size_bytes",
           "cover_available",
+          "art_missing",
           "favorite"
         ],
         "properties": {
@@ -66627,6 +66638,10 @@
           "album_title": {
             "type": "string",
             "description": "Album title."
+          },
+          "art_missing": {
+            "type": "boolean",
+            "description": "The owning album's `art_missing`: true when the server knows its\ncover routes answer 404. False means ask."
           },
           "artist_id": {
             "type": [
@@ -66672,7 +66687,7 @@
           },
           "cover_available": {
             "type": "boolean",
-            "description": "True when the owning album has artwork."
+            "description": "True when the owning album has art of its own: a folder image or an\nembedded picture."
           },
           "date_added": {
             "type": [

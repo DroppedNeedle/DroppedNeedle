@@ -62,6 +62,7 @@ fn deps(db: &Db, lyrics: Option<Arc<dyn LyricsPort>>) -> LibraryDeps {
         catalog,
         upgrade_policy: None,
         tags: FileTagReader::new(files),
+        covers: None,
     }
 }
 

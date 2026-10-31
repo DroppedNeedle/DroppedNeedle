@@ -175,7 +175,7 @@ pub struct AlbumRecord {
     pub year: Option<i64>,
     /// True for compilations.
     pub is_compilation: bool,
-    /// True when an artwork row exists.
+    /// True when the album has a folder image or an embedded picture.
     pub cover_available: bool,
     /// The version of the album's own art (a folder image or an embedded
     /// picture), when it has some. It goes up when the art changes.
@@ -281,7 +281,7 @@ pub struct TrackRecord {
     pub file_size_bytes: i64,
     /// Import time, unix seconds.
     pub date_added: Option<f64>,
-    /// True when the owning album has artwork.
+    /// True when the owning album has a folder image or an embedded picture.
     pub cover_available: bool,
 }
 

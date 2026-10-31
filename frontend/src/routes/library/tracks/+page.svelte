@@ -290,6 +290,7 @@
 							albumId={track.album_id}
 							mbid={track.musicbrainz_release_group_id ?? ''}
 							available={track.cover_available}
+							artMissing={track.art_missing}
 							alt={track.album_title}
 							size="full"
 							requestSize={250}
