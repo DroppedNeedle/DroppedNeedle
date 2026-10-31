@@ -430,6 +430,7 @@ _TASK_UPDATABLE = frozenset(
         "attempt_number",
         "attempt_total",
         "has_next_source",
+        "searched_sources_json",
         "quality_snapshot_json",
         "quality_snapshot_hash",
         "quality_snapshot_summary",
@@ -515,6 +516,7 @@ _TASK_COLUMNS = (
     "attempt_number",
     "attempt_total",
     "has_next_source",
+    "searched_sources_json",
     "quality_snapshot_json",
     "quality_snapshot_hash",
     "quality_snapshot_summary",
@@ -699,6 +701,7 @@ class DownloadStore(PersistenceBase):
                 ("attempt_number", "INTEGER NOT NULL DEFAULT 0"),
                 ("attempt_total", "INTEGER NOT NULL DEFAULT 0"),
                 ("has_next_source", "INTEGER NOT NULL DEFAULT 0"),
+                ("searched_sources_json", "TEXT"),
                 ("quality_snapshot_json", "TEXT"),
                 ("quality_snapshot_hash", "TEXT"),
                 ("quality_snapshot_summary", "TEXT"),
@@ -1593,7 +1596,7 @@ class DownloadStore(PersistenceBase):
                      files_failed = 0,
                      remote_queued = 0, preferred_quality_fallback_at = NULL,
                      quality_pool_key = NULL, attempt_number = 0, attempt_total = 0,
-                     has_next_source = 0,
+                     has_next_source = 0, searched_sources_json = NULL,
                      error_message = NULL, queue_position_start = NULL,
                      queue_position_end = NULL,
                      status = ?, updated_at = ?
@@ -3034,6 +3037,29 @@ class DownloadStore(PersistenceBase):
             return _row_to_search_job(row)
 
         return await self._read(operation)
+
+    async def record_source_search(
+        self,
+        task_id: str,
+        job_id: str,
+        sources: list[str],
+        candidates: list[ScoredCandidate],
+    ) -> None:
+        """Checkpoint the searched frontier with its pool; candidate indices stay stable."""
+        blob = _encode_json(to_jsonable(candidates))
+        sources_json = _encode_json(sources)
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "UPDATE search_jobs SET candidates_blob = ?, updated_at = ? WHERE id = ?",
+                (blob, time.time(), job_id),
+            )
+            conn.execute(
+                "UPDATE download_tasks SET searched_sources_json = ? WHERE id = ?",
+                (sources_json, task_id),
+            )
+
+        await self._write(operation)
 
     async def get_search_job_candidates(self, job_id: str) -> list[ScoredCandidate]:
         def operation(conn: sqlite3.Connection) -> list[ScoredCandidate]:

@@ -14,6 +14,7 @@ manifest.json``; the audio itself is written by slskd into its own download dir
 """
 
 import asyncio
+import json
 import logging
 from infrastructure.observability.provider_counters import ProviderWorkload, provider_workload_scope
 import shutil
@@ -1064,11 +1065,15 @@ class DownloadOrchestrator:
         )
 
         remembered: list[list] = []
+        searched: list[str] = []
         if self._source_selection_mode(snapshot) == "quality_first":
             by_source = await self._concurrent_search_and_score(task, snapshot=snapshot)
             for source in self._ordered_enabled_sources():
                 remembered.append(by_source.get(source, []))
             pooled_flat = [c for group in remembered for c in group]
+            await self._store.record_source_search(
+                task.id, job.id, self._ordered_enabled_sources(), pooled_flat
+            )
             await self._store.set_search_job_candidates(job.id, pooled_flat)
             picked = self._global_preference_pick(
                 pooled_flat, self._remember_offsets(remembered)
@@ -1118,6 +1123,10 @@ class DownloadOrchestrator:
         for source in self._ordered_enabled_sources():
             candidates = await self._search_and_score(task, source, snapshot=snapshot)
             remembered.append(candidates)
+            searched.append(source)
+            await self._store.record_source_search(
+                task.id, job.id, searched, [c for group in remembered for c in group]
+            )
             logger.info(
                 "download.search.completed",
                 extra={
@@ -1607,7 +1616,22 @@ class DownloadOrchestrator:
         )
 
         task = await self._prepare_candidate_state(task)
-        tried_usernames: set[str] = set()
+        candidates = await self._store.get_search_job_candidates(task.search_job_id)
+        attempts = await self._store.list_download_attempts(task.id)
+        tried_usernames = {
+            self._candidate_source_identity(candidates[a.candidate_index])
+            for a in attempts
+            if a.source == task.source
+            and 0 <= a.candidate_index < len(candidates)
+            and a.candidate_index != task.candidate_index
+        }
+        if task.searched_sources_json is None:
+            # Legacy/manual picks have no recorded routing history. Name only
+            # sources evidenced by attempts, rather than assuming all were searched.
+            searched = list(dict.fromkeys([a.source for a in attempts] + [task.source]))
+            await self._store.record_source_search(
+                task.id, task.search_job_id, searched, candidates
+            )
         first = True
         imported_any = False
         wrong_track = False
@@ -1653,7 +1677,7 @@ class DownloadOrchestrator:
                     raise _Cancelled()
                 if outcome == _OUT_PREFERRED_QUALITY:
                     await self._mark_candidate_tried(task, tried_usernames)
-                    attempts = len(await self._store.list_download_attempts(task.id))
+                    attempts = len(await self._budget_attempts(task))
                     details = self._candidate_quality_details(
                         (
                             await self._store.get_search_job_candidates(
@@ -1890,7 +1914,7 @@ class DownloadOrchestrator:
             # tried release by its SOURCE identity (slskd peer username; Usenet title+
             # size) so failover dedups correctly within the source (review M2).
             await self._mark_candidate_tried(task, tried_usernames)
-            attempts = len(await self._store.list_download_attempts(task.id))
+            attempts = len(await self._budget_attempts(task))
             entry = (
                 await self._next_candidate_entry(task, tried_usernames)
                 if attempts < self._max_failover
@@ -1915,6 +1939,10 @@ class DownloadOrchestrator:
                 await self._finalize(task, DownloadStatus.COMPLETED)
                 return
             pending_positions = remaining
+            if entry is None:
+                entry = await self._next_source_entry(task)
+                if entry is not None:
+                    tried_usernames.clear()
             if entry is None:
                 # Every source for a single track failed the canonical-duration gate:
                 # the MB length is probably wrong (not the files), so re-pull the best
@@ -2312,6 +2340,65 @@ class DownloadOrchestrator:
             "has_next_source": task.has_next_source,
         }
 
+    async def _budget_attempts(self, task):  # noqa: ANN001, ANN201
+        attempts = await self._store.list_download_attempts(task.id)
+        snapshot = await self._task_quality_snapshot(task)
+        if self._source_selection_mode(snapshot) == "source_first":
+            return [a for a in attempts if a.source == task.source]
+        return attempts
+
+    async def _next_source_entry(self, task):  # noqa: ANN001, ANN201
+        """Exhaustion is a new source lifecycle, never a cross-source pool pick.
+
+        Append to the existing job so durable attempt candidate indices remain valid.
+        A crash after search but before linking reuses the checkpointed pool.
+        quality_first keeps its existing pooled selection semantics.
+        """
+        snapshot = await self._task_quality_snapshot(task)
+        if self._source_selection_mode(snapshot) != "source_first":
+            return None
+        sources = self._ordered_enabled_sources()
+        if task.source not in sources or task.search_job_id is None:
+            return None
+        current = await self._store.get_task(task.id)
+        searched = (
+            json.loads(current.searched_sources_json)
+            if current.searched_sources_json is not None
+            else [task.source]
+        )
+        candidates = await self._store.get_search_job_candidates(task.search_job_id)
+        for source in sources[sources.index(task.source) + 1 :]:
+            current = await self._store.get_task(task.id)
+            if current.status == DownloadStatus.CANCELLED:
+                raise _Cancelled()
+            if source not in searched:
+                fresh = await self._search_and_score(task, source, snapshot=snapshot)
+                logger.info(
+                    "download.search.completed",
+                    extra={
+                        "task_id": task.id,
+                        "source": source,
+                        "candidates_count": len(fresh),
+                        "top_score": fresh[0].final_score if fresh else 0.0,
+                    },
+                )
+                candidates.extend(fresh)
+                searched.append(source)
+                await self._store.record_source_search(
+                    task.id, task.search_job_id, searched, candidates
+                )
+            # Reuse the normal quarantine/quality gate, scoped to the NEW source.
+            scan = msgspec.structs.replace(task, source=source, candidate_index=-1)
+            while (entry := await self._next_candidate_entry(scan, set())) is not None:
+                idx, candidate = entry
+                if candidate.tier == "auto":
+                    current = await self._store.get_task(task.id)
+                    if current.status == DownloadStatus.CANCELLED:
+                        raise _Cancelled()
+                    return entry
+                scan = msgspec.structs.replace(scan, candidate_index=idx)
+        return None
+
     async def _next_candidate_entry(
         self,
         task,
@@ -2327,15 +2414,16 @@ class DownloadOrchestrator:
         # Wrong-product exclusions (Slice 3): consulted fresh per call because a
         # just-failed attempt records its folder between failover steps. Ranked
         # candidates predate the exclusion, so the rank-time consult cannot help.
+        blocked = await self._store.load_quarantine_set()
         folder_blocked: set[tuple[str, str]] | None = None
         folder_artist: frozenset[str] = frozenset()
         if (
             getattr(task, "source", None) == SOURCE_SOULSEEK
             and getattr(task, "release_group_mbid", None)
         ):
-            folder_blocked = await self._store.load_quarantine_set()
+            folder_blocked = blocked
             folder_artist = artist_words(getattr(task, "artist_name", ""))
-        start = (task.candidate_index or 0) + 1
+        start = (task.candidate_index if task.candidate_index is not None else 0) + 1
         for idx in range(start, len(candidates)):
             cand = candidates[idx]
             # Stay within the task's source (never cross Soulseek<->Usenet in the pooled
@@ -2344,16 +2432,20 @@ class DownloadOrchestrator:
                 continue
             if self._candidate_source_identity(cand) in tried_usernames:
                 continue
+            if (cand.source, self._candidate_source_identity(cand)) in blocked:
+                continue
             if folder_blocked is not None:
                 normalized = normalize_folder_identity(
                     cand.parent_directory, artist_words=folder_artist
                 )
-                if normalized and (
-                    SOURCE_SOULSEEK,
-                    soulseek_folder_identity(
-                        task.release_group_mbid, normalized
-                    ),
-                ) in folder_blocked:
+                if (
+                    normalized
+                    and (
+                        SOURCE_SOULSEEK,
+                        soulseek_folder_identity(task.release_group_mbid, normalized),
+                    )
+                    in folder_blocked
+                ):
                     continue
             # re-gate: failover must not fall through to a now out-of-policy candidate (D2)
             if not await self._candidate_passes_quality(task, cand):
@@ -2377,7 +2469,7 @@ class DownloadOrchestrator:
             return task
         candidate = candidates[task.candidate_index]
         details = self._candidate_quality_details(candidate)
-        attempts = await self._store.list_download_attempts(task.id)
+        attempts = await self._budget_attempts(task)
         current_attempt_exists = any(
             attempt.source == task.source
             and attempt.candidate_index == task.candidate_index
@@ -2809,7 +2901,16 @@ class DownloadOrchestrator:
         elif tag_mismatch:
             fail_msg = _TAG_MISMATCH_MSG
         else:
-            fail_msg = self._no_source_message()
+            current = await self._store.get_task(task.id)
+            searched = current.searched_sources_json if current is not None else None
+            if searched is not None:
+                names = {SOURCE_SOULSEEK: "Soulseek", "usenet": "Usenet"}
+                fail_msg = f"{_NO_SOURCE_MSG} on " + " or ".join(
+                    names.get(source, source)
+                    for source in json.loads(searched)
+                )
+            else:
+                fail_msg = self._no_source_message()
         if task.download_type == "track":
             await self._finalize(
                 task,
@@ -3275,7 +3376,7 @@ class DownloadOrchestrator:
                 )
 
             candidates = await self._store.get_search_job_candidates(task.search_job_id)
-            attempts = await self._store.list_download_attempts(task.id)
+            attempts = await self._budget_attempts(task)
             tried = {
                 self._candidate_source_identity(candidates[attempt.candidate_index])
                 for attempt in attempts

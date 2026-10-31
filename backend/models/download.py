@@ -192,6 +192,8 @@ class DownloadTask(AppStruct):
     attempt_number: int = 0
     attempt_total: int = 0
     has_next_source: bool = False
+    # Search frontier, including sources with no candidates; NULL on legacy tasks.
+    searched_sources_json: str | None = None
     # Immutable acquisition-quality snapshot pinned at task creation (the
     # policy that governs search/score/failover for THIS row; later settings
     # saves never mutate it - restart-with-current-policy is the refresh).

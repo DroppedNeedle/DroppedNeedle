@@ -5245,3 +5245,202 @@ async def test_collision_does_not_quarantine_through_import(tmp_path: Path):
 
     assert (await store.get_task(task.id)).status == "failed"
     assert await store.load_quarantine_set() == set()
+
+
+async def _cross_source_setup(tmp_path, *, budget=2):
+    sab = _StubClient()
+    sab.enqueue.return_value = TaskHandle(
+        source="usenet", nzo_id="nzo-1", job_name="album"
+    )
+    store, orch, fp, lib = _build(
+        tmp_path,
+        usenet_client=sab,
+        max_failover=budget,
+        album_service=_album_service_with([_mb_track(1, title="One")]),
+    )
+    orch._usenet_enabled = True
+    orch._source_priority = ["usenet", "soulseek"]
+    usenet = [_usenet_candidate(f"Artist - Album FLAC {n}", 100 + n) for n in range(3)]
+    soulseek = [_candidate(0.9)]
+    soulseek[0].files[0].filename = "peer/01 One.flac"
+    orch._search_and_score = AsyncMock(
+        side_effect=lambda task, source, **kw: (
+            usenet if source == "usenet" else soulseek
+        )
+    )
+    return store, orch, usenet, soulseek
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget", [1, 2, 4])
+async def test_cross_source_verify_exhaustion_searches_fresh_and_completes(
+    tmp_path, budget
+):
+    store, orch, usenet, soulseek = await _cross_source_setup(tmp_path, budget=budget)
+    failed = ProcessResult(
+        succeeded=[],
+        failed=[FileFailure(filename="bad.flac", reason="quality_mismatch")],
+    )
+    good = ProcessResult(succeeded=["/lib/01.flac"], failed=[])
+    attempts_a = min(budget, len(usenet))
+    orch._import_files = AsyncMock(
+        side_effect=[(failed, True)] * attempts_a + [(good, True)]
+    )
+    orch._enqueue = AsyncMock(wraps=orch._enqueue)
+    task = await _new_task(store)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "completed"
+    assert final.source == "soulseek"
+    assert final.attempt_number == 1
+    assert orch._enqueue.await_args.kwargs["remaining_positions"] == frozenset({(1, 1)})
+    assert [call.args[1] for call in orch._search_and_score.await_args_list] == [
+        "usenet",
+        "soulseek",
+    ]
+    attempts = await store.list_download_attempts(task.id)
+    assert [a.source for a in attempts] == ["usenet"] * attempts_a + ["soulseek"]
+    assert len(await store.get_search_job_candidates(final.search_job_id)) == 4
+    blocked = await store.load_quarantine_set()
+    assert ("usenet", orch._candidate_source_identity(usenet[0])) in blocked
+    assert ("soulseek", orch._candidate_source_identity(soulseek[0])) not in blocked
+
+
+@pytest.mark.asyncio
+async def test_cross_source_empty_first_search_keeps_existing_routing(tmp_path):
+    store, orch, _, soulseek = await _cross_source_setup(tmp_path)
+    orch._search_and_score.side_effect = lambda task, source, **kw: (
+        [] if source == "usenet" else soulseek
+    )
+    orch._import_files = AsyncMock(
+        return_value=(ProcessResult(succeeded=["/lib/01.flac"], failed=[]), True)
+    )
+    task = await _new_task(store)
+    await orch.process_task(task.id)
+    final = await store.get_task(task.id)
+    assert final.status == "completed"
+    assert msgspec.json.decode(final.searched_sources_json) == ["usenet", "soulseek"]
+    assert [c.args[1] for c in orch._search_and_score.await_args_list] == [
+        "usenet",
+        "soulseek",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cross_source_coverage_satisfied_does_not_search_again(tmp_path):
+    store, orch, _, _ = await _cross_source_setup(tmp_path, budget=1)
+    orch._import_files = AsyncMock(
+        return_value=(ProcessResult(succeeded=[], failed=[]), True)
+    )
+    orch._remaining_track_positions = AsyncMock(return_value=frozenset())
+    task = await _new_task(store)
+    await orch.process_task(task.id)
+    assert (await store.get_task(task.id)).status == "completed"
+    assert orch._search_and_score.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_source_all_exhausted_names_only_searched_sources(tmp_path):
+    store, orch, _, _ = await _cross_source_setup(tmp_path, budget=1)
+    orch._import_files = AsyncMock(
+        return_value=(
+            ProcessResult(
+                succeeded=[],
+                failed=[FileFailure(filename="bad", reason="quality_mismatch")],
+            ),
+            True,
+        )
+    )
+    task = await _new_task(store)
+    await orch.process_task(task.id)
+    final = await store.get_task(task.id)
+    assert final.status == "failed"
+    assert final.error_message == "No working source found on Usenet or Soulseek"
+    assert orch._search_and_score.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cross_source_checkpoint_reuses_search_after_restart_and_checks_cancel(
+    tmp_path,
+):
+    store, orch, _, _ = await _cross_source_setup(tmp_path)
+    task = await _new_task(store)
+    assert await orch._search_score_autopick(task)
+    task = await store.get_task(task.id)
+    entry = await orch._next_source_entry(task)
+    assert entry[1].source == "soulseek"
+    # Reload from SQLite, as startup recovery does, before the candidate was linked.
+    restarted = await store.get_task(task.id)
+    orch._search_and_score.reset_mock()
+    assert (await orch._next_source_entry(restarted))[0] == entry[0]
+    orch._search_and_score.assert_not_awaited()
+    await store.update_status(task.id, DownloadStatus.CANCELLED)
+    with pytest.raises(_Cancelled):
+        await orch._next_source_entry(restarted)
+
+
+@pytest.mark.asyncio
+async def test_cross_source_quarantine_is_scoped_and_folders_stay_blocked(tmp_path):
+    store, orch, usenet, _ = await _cross_source_setup(tmp_path)
+    from models.download_identity import soulseek_folder_identity
+    from services.native.acquisition.scoring_core import (
+        normalize_folder_identity,
+        artist_words,
+    )
+
+    blocked = _candidate(0.9, username="blocked")
+    allowed = _candidate(0.9, username="allowed")
+    await store.record_quarantine(
+        source="soulseek",
+        identity=soulseek_folder_identity(
+            "rg-1",
+            normalize_folder_identity("blocked", artist_words=artist_words("Artist")),
+        ),
+        release_group_mbid="rg-1",
+        reason="verify_failed",
+    )
+    # The same identity string on another source must not reject a healthy candidate.
+    await store.record_quarantine(
+        source="usenet",
+        identity=orch._candidate_source_identity(allowed),
+        release_group_mbid="rg-1",
+        reason="verify_failed",
+    )
+    orch._search_and_score.side_effect = lambda task, source, **kw: (
+        usenet if source == "usenet" else [blocked, allowed]
+    )
+    task = await _new_task(store)
+    assert await orch._search_score_autopick(task)
+    entry = await orch._next_source_entry(await store.get_task(task.id))
+    assert entry[1].username == "allowed"
+
+
+@pytest.mark.asyncio
+async def test_cross_source_normal_success_does_not_search_next_source(tmp_path):
+    store, orch, _, _ = await _cross_source_setup(tmp_path)
+    orch._import_files = AsyncMock(return_value=(ProcessResult(succeeded=["/lib/01.flac"], failed=[]), True))
+    task = await _new_task(store)
+    await orch.process_task(task.id)
+    assert (await store.get_task(task.id)).status == "completed"
+    assert orch._search_and_score.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_source_cancel_during_search_does_not_link_candidate(tmp_path):
+    store, orch, _, soulseek = await _cross_source_setup(tmp_path)
+    task = await _new_task(store)
+    assert await orch._search_score_autopick(task)
+    task = await store.get_task(task.id)
+
+    async def cancelled_search(*args, **kwargs):
+        await store.update_status(task.id, DownloadStatus.CANCELLED)
+        return soulseek
+
+    orch._search_and_score.side_effect = cancelled_search
+    with pytest.raises(_Cancelled):
+        await orch._next_source_entry(task)
+    final = await store.get_task(task.id)
+    assert final.status == "cancelled"
+    assert final.source == "usenet"
