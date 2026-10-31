@@ -139,6 +139,30 @@ fn query(library: &LibrarySetup, sql: &str) -> i64 {
         .unwrap_or_else(|error| panic!("{sql}: {error}"))
 }
 
+/// The multi-disc naming preset names disc folders after the medium
+/// (`{medium_format} {medium_number:02d}`, path-cleaned `12_ Vinyl 01`).
+/// Such folders fold into their album like `CD1`, so a double vinyl the
+/// library organized itself stays one album.
+#[tokio::test]
+async fn disc_folders_named_after_the_medium_stay_one_album() {
+    let scratch = ScratchDir::new("scan-medium-discs");
+    let music = scratch.join("music");
+    plant(&music, "Album/12_ Vinyl 01/01.mp3", "mp3_full_01.mp3");
+    plant(&music, "Album/12_ Vinyl 02/01.mp3", "mp3_full_01.mp3");
+    let library = bundle(&scratch).await;
+
+    let run = scan(&library).await;
+    assert_eq!(count(&run, Counter::Indexed), 2);
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(DISTINCT local_album_id) FROM local_tracks"
+        ),
+        1,
+        "both vinyls are one album"
+    );
+}
+
 /// The catalog holds what the tags say, with provenance and header
 /// durations, the changed albums are offered to identification once, and
 /// neither scan nor a no-op rescan writes a byte of music.

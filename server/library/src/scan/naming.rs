@@ -43,8 +43,103 @@ pub fn artist_mbid_key(mbid: &str) -> String {
 }
 
 /// True for a disc folder name like `CD1`, `Disc 02`, `(Vol. 3)`, matched
-/// case-insensitively with balanced parentheses.
+/// case-insensitively with balanced parentheses, or a medium format and
+/// its number like `12" Vinyl 01`, the folders the multi-disc naming preset
+/// writes.
 pub fn is_disc_directory(segment: &str) -> bool {
+    is_numbered_disc(segment) || is_numbered_medium(segment)
+}
+
+/// MusicBrainz medium formats (<https://musicbrainz.org/doc/Release/Format>),
+/// as [`folded_words`] leaves them. The multi-disc naming preset names a disc
+/// folder `{medium_format} {medium_number:02d}`, and path cleaning may
+/// replace the `"` of `12" Vinyl` or the spaces, so names are compared as
+/// words.
+const MEDIUM_FORMATS: &[&str] = &[
+    "cd",
+    "cd r",
+    "enhanced cd",
+    "copy control cd",
+    "data cd",
+    "dts cd",
+    "hdcd",
+    "shm cd",
+    "blu spec cd",
+    "blu spec cd2",
+    "8cm cd",
+    "mixed mode cd",
+    "cd g",
+    "8cm cd g",
+    "cdv",
+    "hqcd",
+    "minimax cd",
+    "sacd",
+    "hybrid sacd",
+    "dualdisc",
+    "dvd",
+    "dvd audio",
+    "dvd video",
+    "data dvd",
+    "blu ray",
+    "hd dvd",
+    "vhs",
+    "laserdisc",
+    "vcd",
+    "svcd",
+    "vinyl",
+    "7 vinyl",
+    "10 vinyl",
+    "12 vinyl",
+    "flexi disc",
+    "7 flexi disc",
+    "shellac",
+    "7 shellac",
+    "10 shellac",
+    "12 shellac",
+    "acetate",
+    "7 acetate",
+    "10 acetate",
+    "12 acetate",
+    "cassette",
+    "microcassette",
+    "dcc",
+    "cartridge",
+    "8 track cartridge",
+    "reel to reel",
+    "digital media",
+    "download card",
+    "usb flash drive",
+    "slotmusic",
+    "minidisc",
+    "dat",
+    "floppy disk",
+    "zip disk",
+    "umd",
+    "playbutton",
+    "wax cylinder",
+    "piano roll",
+];
+
+/// Lowercase words: every run of characters that are not letters or
+/// digits becomes one space.
+fn folded_words(text: &str) -> String {
+    text.to_lowercase()
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A medium format followed by a disc number, like `Copy Control CD 02`.
+fn is_numbered_medium(segment: &str) -> bool {
+    let words = folded_words(segment);
+    let Some((format, number)) = words.rsplit_once(' ') else {
+        return false;
+    };
+    number.chars().all(|ch| ch.is_ascii_digit()) && MEDIUM_FORMATS.contains(&format)
+}
+
+fn is_numbered_disc(segment: &str) -> bool {
     let mut depth = 0i32;
     for ch in segment.chars() {
         match ch {
@@ -328,6 +423,17 @@ mod tests {
         assert!(is_disc_directory("(vol. 3)"));
         assert!(!is_disc_directory("(CD1"));
         assert!(!is_disc_directory("Discography"));
+        // The multi-disc naming preset: `{medium_format} {medium_number:02d}`.
+        assert!(is_disc_directory("12\" Vinyl 01"));
+        assert!(is_disc_directory("12_ Vinyl 02"));
+        assert!(is_disc_directory("Copy Control CD 01"));
+        assert!(is_disc_directory("Copy_Control_CD_01"));
+        assert!(is_disc_directory("Digital Media 03"));
+        assert!(!is_disc_directory("Vinyl"));
+        assert!(!is_disc_directory("Digital Media"));
+        assert!(!is_disc_directory("Vinyl Days 2"));
+        assert!(!is_disc_directory("Monstercat 001"));
+        assert_eq!(grouping_directory("A/Album/12_ Vinyl 02/01.mp3"), "A/Album");
         assert_eq!(grouping_directory("A/Album/CD1/01.flac"), "A/Album");
         assert_eq!(grouping_directory("CD2/01.flac"), ".");
         assert_eq!(grouping_directory("A/Album/01.flac"), "A/Album");
