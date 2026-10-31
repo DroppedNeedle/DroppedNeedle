@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use droppedneedle_kernel::db::fold_text;
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_providers::musicbrainz::Criticality;
 use droppedneedle_providers::{
@@ -17,8 +18,8 @@ use droppedneedle_providers::{
     record_current,
 };
 
-use super::artist::ReleaseGroupList;
 use super::artist::checked_mbid;
+use super::artist::{ReleaseGroupItem, ReleaseGroupList};
 use super::error::CatalogError;
 use super::mapping;
 use super::models::{
@@ -1074,25 +1075,47 @@ fn note_catalog_failure(hold: &mut CacheHold, error: &CatalogError) {
     }
 }
 
-/// Collapse a title for matching: casefolded, whitespace collapsed.
+/// A title folded for matching across services: accents and case folded,
+/// and every run of punctuation one space, so Last.fm's `d'Amelie` meets
+/// MusicBrainz's `d’Amélie`.
 fn title_key(title: &str) -> String {
-    title
-        .to_lowercase()
-        .split_whitespace()
+    fold_text(title)
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
 }
 
+/// How well a release group fits a title shared by several: a plain album
+/// first, then any album, an EP, a single, anything else.
+fn type_rank(group: &ReleaseGroupItem) -> u8 {
+    match group
+        .primary_type
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("album") if group.secondary_types.is_empty() => 0,
+        Some("album") => 1,
+        Some("ep") => 2,
+        Some("single") => 3,
+        _ => 4,
+    }
+}
+
 /// Match Last.fm's top albums to the artist's release groups: a Last.fm id
-/// that already is one of the artist's release groups wins, else a unique
-/// title match (deluxe suffixes dropped), else the row stays unlinked. One
-/// row per group.
+/// that already is one of the artist's release groups wins, else a title
+/// match. Titles compare folded (accents, case, punctuation), also without
+/// a trailing bracket like `(Bande originale du film)` or
+/// `[Deluxe Edition]`; a title several groups share goes to the
+/// best-fitting type, and a tie of the same type stays unlinked. One row
+/// per group.
 fn match_lastfm_albums(
     top: Vec<lastfm::TopItem>,
     groups: Option<&ReleaseGroupList>,
 ) -> Vec<AlbumRef> {
     let mut ids: HashSet<String> = HashSet::new();
-    let mut by_title: HashMap<String, Option<String>> = HashMap::new();
+    let mut by_title: HashMap<String, (u8, Option<String>)> = HashMap::new();
     for group in groups.map(|list| list.items.as_slice()).unwrap_or_default() {
         let id = group.id.to_ascii_lowercase();
         ids.insert(id.clone());
@@ -1104,14 +1127,17 @@ fn match_lastfm_albums(
         else {
             continue;
         };
+        let rank = type_rank(group);
         by_title
             .entry(title)
-            .and_modify(|known| {
-                if known.as_deref() != Some(id.as_str()) {
+            .and_modify(|(best, known)| {
+                if rank < *best {
+                    (*best, *known) = (rank, Some(id.clone()));
+                } else if rank == *best && known.as_deref() != Some(id.as_str()) {
                     *known = None;
                 }
             })
-            .or_insert(Some(id));
+            .or_insert((rank, Some(id)));
     }
     let mut seen = HashSet::new();
     let mut albums = Vec::new();
@@ -1119,7 +1145,7 @@ fn match_lastfm_albums(
         let raw = item.mbid.as_deref().map(str::to_ascii_lowercase);
         let by_name = title_candidates(&item.name)
             .into_iter()
-            .find_map(|key| by_title.get(&key).cloned())
+            .find_map(|key| by_title.get(&key).map(|(_, id)| id.clone()))
             .flatten();
         let group = raw.filter(|id| ids.contains(id)).or(by_name);
         if let Some(group) = &group
@@ -1137,22 +1163,22 @@ fn match_lastfm_albums(
     albums
 }
 
-/// The title and, for deluxe editions, the title without the suffix.
+/// The folded title and, when it ends in a bracket, the title without it.
 fn title_candidates(title: &str) -> Vec<String> {
     let key = title_key(title);
     if key.is_empty() {
         return Vec::new();
     }
-    let mut candidates = vec![key.clone()];
-    for suffix in [
-        " (deluxe)",
-        " (deluxe edition)",
-        " [deluxe]",
-        " [deluxe edition]",
-    ] {
-        if let Some(stripped) = key.strip_suffix(suffix) {
-            candidates.push(stripped.trim_end().to_owned());
-            break;
+    let mut candidates = vec![key];
+    let trimmed = title.trim_end();
+    if let Some(open) = match trimmed.chars().last() {
+        Some(')') => trimmed.rfind('('),
+        Some(']') => trimmed.rfind('['),
+        _ => None,
+    } {
+        let stripped = title_key(&trimmed[..open]);
+        if !stripped.is_empty() {
+            candidates.push(stripped);
         }
     }
     candidates
@@ -1164,4 +1190,83 @@ fn title_candidates(title: &str) -> Vec<String> {
 struct SimilarAlbumRows {
     albums: Vec<AlbumRef>,
     similar: Vec<(String, String)>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn group(id: &str, title: &str, primary: &str, secondary: &[&str]) -> ReleaseGroupItem {
+        ReleaseGroupItem {
+            id: id.to_owned(),
+            title: Some(title.to_owned()),
+            primary_type: Some(primary.to_owned()),
+            secondary_types: secondary.iter().map(|value| (*value).to_owned()).collect(),
+            first_release_date: None,
+            artist_name: None,
+        }
+    }
+
+    fn top(name: &str) -> lastfm::TopItem {
+        lastfm::TopItem {
+            name: name.to_owned(),
+            artist_name: "Yann Tiersen".to_owned(),
+            mbid: None,
+            playcount: Some(1),
+            image_url: String::new(),
+        }
+    }
+
+    /// Yann Tiersen's Last.fm top albums against his discography
+    /// (MusicBrainz, 2026-10-31): before, 2 of 10 rows found a release
+    /// group, so 8 showed no cover.
+    #[test]
+    fn last_fm_titles_find_their_release_groups() {
+        let groups = ReleaseGroupList {
+            items: vec![
+                group(
+                    "amelie",
+                    "Le Fabuleux Destin d’Amélie Poulain",
+                    "Album",
+                    &["Soundtrack"],
+                ),
+                group("cascades-ep", "Rue des cascades", "EP", &[]),
+                group("cascades", "Rue des cascades", "Album", &[]),
+                group("lenin", "Good Bye Lenin!", "Album", &["Soundtrack"]),
+                group("lenin-ep", "Good Bye Lenin!", "EP", &[]),
+                group("twin-a", "Twin", "Single", &[]),
+                group("twin-b", "Twin", "Single", &[]),
+            ],
+            complete: true,
+            total: 7,
+        };
+        let albums = match_lastfm_albums(
+            vec![
+                top("Le Fabuleux Destin d'Amelie Poulain"),
+                top("Le fabuleux destin d'Amélie Poulain (Bande originale du film)"),
+                top("Rue Des Cascades"),
+                top("Good Bye Lenin!"),
+                top("Twin"),
+                top("Amelie From Montmartre"),
+            ],
+            Some(&groups),
+        );
+        let found: Vec<(&str, Option<&str>)> = albums
+            .iter()
+            .map(|album| (album.title.as_str(), album.musicbrainz_id.as_deref()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("Le Fabuleux Destin d'Amelie Poulain", Some("amelie")),
+                ("Rue Des Cascades", Some("cascades")),
+                ("Good Bye Lenin!", Some("lenin")),
+                ("Twin", None),
+                ("Amelie From Montmartre", None),
+            ],
+            "accents and apostrophes fold, a trailing bracket drops (its row is the \
+             same group, so it goes), a shared title takes the album, a true tie and \
+             an unknown title stay unlinked"
+        );
+    }
 }
