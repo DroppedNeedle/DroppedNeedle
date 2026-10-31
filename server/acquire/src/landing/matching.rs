@@ -15,12 +15,14 @@ use std::collections::{HashMap, HashSet};
 
 use super::ports::{LandingLibrary, OwnedTracks};
 use super::probe::{LandedFile, Landing};
-use super::specs::Target;
+use super::specs::{Target, album_version};
 use droppedneedle_library::identify::providers::GROUP_FETCH;
 use droppedneedle_library::identify::sources::ReleaseHit;
 use droppedneedle_library::matching::decide::{ACCEPT_TRACK, EDITION_COHORT};
-use droppedneedle_library::matching::score::TrackPair;
-use droppedneedle_library::matching::strings::{fold, string_dist};
+use droppedneedle_library::matching::score::{NAME_GATE, TrackPair};
+use droppedneedle_library::matching::strings::{
+    artist_subset, fold, string_dist, strip_edition_words,
+};
 use droppedneedle_library::matching::{
     LocalAlbum, LocalTrack, Release, ReleaseMatch, ReleaseTrack, usable_mbid,
 };
@@ -63,6 +65,10 @@ pub struct MatchSummary {
     pub considered: Vec<(String, f64)>,
     /// Tracks of the group the library already holds.
     pub owned: OwnedTracks,
+    /// For a single the person chose to take from its album: files tagged
+    /// as a track of another group's release, by file index, with the
+    /// recording their tags name. Matched without their ids.
+    pub album_copies: HashMap<usize, String>,
 }
 
 impl MatchSummary {
@@ -177,7 +183,7 @@ pub fn local_album(files: &[LandedFile], target: &Target) -> LocalAlbum {
             "malformed MusicBrainz ids in tags left out of matching"
         );
     }
-    let album_tag = most_common(files.iter().map(|file| file.tag.album.trim()));
+    let album_name = most_common(files.iter().map(album_tag));
     let artist_tag = most_common(files.iter().map(|file| {
         file.tag
             .album_artist
@@ -187,7 +193,7 @@ pub fn local_album(files: &[LandedFile], target: &Target) -> LocalAlbum {
             .unwrap_or(file.tag.artist.trim())
     }));
     LocalAlbum {
-        title: album_tag.unwrap_or_else(|| target.album_title.clone()),
+        title: album_name.unwrap_or_else(|| target.album_title.clone()),
         artist: artist_tag.unwrap_or_else(|| target.artist_name.clone()),
         year: files.iter().find_map(|file| file.tag.year).or(target.year),
         is_compilation: files.iter().any(|file| file.tag.compilation),
@@ -204,7 +210,7 @@ pub async fn find(
     target: &Target,
     landing: &Landing,
 ) -> MatchSummary {
-    let local = local_album(&landing.audio, target);
+    let mut local = local_album(&landing.audio, target);
     let owned = if target.release_group_mbid.is_empty() {
         OwnedTracks::default()
     } else {
@@ -214,10 +220,11 @@ pub async fn find(
     };
     let recalled = async {
         let releases = recall(library, target, &local).await?;
+        let album_copies = take_album_copies(library, target, &mut local, &releases).await?;
         let aliases = merged_recordings(library, &local, &releases, PRIORITY).await?;
-        Ok::<_, String>((releases, aliases))
+        Ok::<_, String>((releases, aliases, album_copies))
     };
-    let (releases, aliases) = match recalled.await {
+    let (releases, aliases, album_copies) = match recalled.await {
         Ok(recalled) => recalled,
         Err(detail) => {
             return MatchSummary {
@@ -225,12 +232,201 @@ pub async fn find(
                 found: None,
                 considered: Vec::new(),
                 owned,
+                album_copies: HashMap::new(),
             };
         }
     };
     let mut summary = choose(&local, releases, &aliases, target);
     summary.owned = owned;
+    summary.album_copies = album_copies;
     summary
+}
+
+/// For a single the person chose to take from its album: files tagged as
+/// a track of the release their tags name, when that release belongs to
+/// another group, are that album's copy of the song. Their MusicBrainz
+/// ids are set aside so they pair with the single by title and length,
+/// and their tagged recordings are answered by file index.
+async fn take_album_copies(
+    library: &dyn LandingLibrary,
+    target: &Target,
+    local: &mut LocalAlbum,
+    releases: &[Release],
+) -> Result<HashMap<usize, String>, String> {
+    let mut copies = HashMap::new();
+    if !target.is_track || !target.album_version || target.release_group_mbid.is_empty() {
+        return Ok(copies);
+    }
+    let Some(tagged) = local.tagged_release() else {
+        return Ok(copies);
+    };
+    if releases.iter().any(|release| release.answers_to(&tagged)) {
+        return Ok(copies);
+    }
+    let Some(album) = library
+        .release(&tagged, PRIORITY)
+        .await
+        .map_err(|error| error.0)?
+    else {
+        return Ok(copies);
+    };
+    if album
+        .release_group_id
+        .eq_ignore_ascii_case(&target.release_group_mbid)
+    {
+        return Ok(copies);
+    }
+    for (index, track) in local.tracks.iter_mut().enumerate() {
+        let on_album = track
+            .release_mbid
+            .as_deref()
+            .is_some_and(|id| album.answers_to(id));
+        let recording = track.recording_mbid.clone().filter(|recording| {
+            album
+                .tracks
+                .iter()
+                .any(|track| track.recording_id.eq_ignore_ascii_case(recording))
+        });
+        let (true, Some(recording)) = (on_album, recording) else {
+            continue;
+        };
+        track.recording_mbid = None;
+        track.release_track_mbid = None;
+        track.release_mbid = None;
+        copies.insert(index, recording.to_ascii_lowercase());
+    }
+    Ok(copies)
+}
+
+/// Whether a single's file that looks like its album's copy
+/// ([`album_version`]) is shown to be one by more than its album tag: its
+/// own MusicBrainz release group or release names another group, or
+/// MusicBrainz lists an album of that title by the requested artist with
+/// a track of the file's title. A lookup that fails shows nothing.
+pub async fn album_copy_proven(
+    library: &dyn LandingLibrary,
+    target: &Target,
+    landing: &Landing,
+    matched: &MatchSummary,
+) -> bool {
+    let group = target.release_group_mbid.as_str();
+    if !target.is_track || target.album_version || group.is_empty() {
+        return false;
+    }
+    let Some(found) = matched.best() else {
+        return false;
+    };
+    let (Some(album), Some(pair)) = (
+        album_version(target, landing, found),
+        found.requested_pair(target),
+    ) else {
+        return false;
+    };
+    let Some(file) = landing.audio.get(pair.local) else {
+        return false;
+    };
+    let other_group = |id: &str| !id.trim().is_empty() && !id.trim().eq_ignore_ascii_case(group);
+    let tag = &file.tag;
+    if tag
+        .musicbrainz_release_group_id
+        .as_deref()
+        .is_some_and(other_group)
+    {
+        return true;
+    }
+    if let Some(tagged) = tag
+        .musicbrainz_release_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && !found.release.answers_to(id))
+    {
+        match library.release(tagged, PRIORITY).await {
+            Ok(Some(release)) if other_group(&release.release_group_id) => return true,
+            Ok(_) => {}
+            Err(error) => {
+                tracing::debug!(
+                    error = error.0,
+                    "tagged release unreadable; not proof of an album copy"
+                );
+            }
+        }
+    }
+    let various = is_various(&target.artist_name);
+    let artist = if various {
+        ""
+    } else {
+        target.artist_name.as_str()
+    };
+    let hits = match library.search(&album, artist, PRIORITY).await {
+        Ok(hits) => hits,
+        Err(error) => {
+            tracing::debug!(
+                error = error.0,
+                "album search failed; not proof of an album copy"
+            );
+            return false;
+        }
+    };
+    let titled = |a: &str, b: &str| {
+        string_dist(&strip_edition_words(a), &strip_edition_words(b)) <= NAME_GATE
+    };
+    let Some(hit) = hits
+        .iter()
+        .filter(|hit| other_group(&hit.release_group_id) && titled(&hit.title, &album))
+        .max_by_key(|hit| hit.score)
+    else {
+        return false;
+    };
+    let release = match library.release(&hit.id, PRIORITY).await {
+        Ok(Some(release)) => release,
+        Ok(None) => return false,
+        Err(error) => {
+            tracing::debug!(
+                error = error.0,
+                "album release unreadable; not proof of an album copy"
+            );
+            return false;
+        }
+    };
+    let credit = release.artist_text();
+    let same_artist = various
+        || string_dist(&credit, &target.artist_name) <= NAME_GATE
+        || artist_subset(&target.artist_name, &credit);
+    let title = match tag.title.trim() {
+        "" => file_name_parts(file).2,
+        tagged => tagged.to_owned(),
+    };
+    same_artist
+        && release
+            .tracks
+            .iter()
+            .any(|track| titled(&track.title, &title))
+}
+
+/// Whether the person chose the single's album copy for this file and
+/// AcoustID heard the recording its own tags name.
+pub fn heard_own_album_recording(summary: &MatchSummary, file: usize, heard: &[String]) -> bool {
+    summary.album_copies.get(&file).is_some_and(|own| {
+        heard
+            .iter()
+            .any(|recording| recording.eq_ignore_ascii_case(own))
+    })
+}
+
+/// Album tags taggers write when they know none, read as no album tag.
+const PLACEHOLDER_ALBUMS: [&str; 2] = ["unknown album", "unknown"];
+
+/// The file's album tag, empty when it is blank or a placeholder.
+pub fn album_tag(file: &LandedFile) -> &str {
+    let album = file.tag.album.trim();
+    if PLACEHOLDER_ALBUMS
+        .iter()
+        .any(|placeholder| album.eq_ignore_ascii_case(placeholder))
+    {
+        ""
+    } else {
+        album
+    }
 }
 
 /// The ids MusicBrainz merged the files' recording MBIDs into, for every
@@ -385,6 +581,7 @@ pub fn choose(
             found: None,
             considered: Vec::new(),
             owned: OwnedTracks::default(),
+            album_copies: HashMap::new(),
         };
     }
     let scored: Vec<ReleaseMatch> = releases
@@ -409,6 +606,7 @@ pub fn choose(
             found: None,
             considered,
             owned: OwnedTracks::default(),
+            album_copies: HashMap::new(),
         };
     };
     let tagged = local.tagged_release();
@@ -441,6 +639,7 @@ pub fn choose(
             found: None,
             considered,
             owned: OwnedTracks::default(),
+            album_copies: HashMap::new(),
         };
     };
     let mut releases = releases;
@@ -453,6 +652,7 @@ pub fn choose(
         }),
         considered,
         owned: OwnedTracks::default(),
+        album_copies: HashMap::new(),
     }
 }
 

@@ -471,11 +471,10 @@ impl DownloadDispatch {
         Ok(self.journal.read_reimportable(task_id).await?)
     }
 
-    /// Whether the task's newest landing held a single because only its
-    /// album's track was found.
+    /// Whether the task held a single because only its album's track was
+    /// found.
     pub async fn album_version_only(&self, task_id: &str) -> Result<bool, DispatchError> {
-        let code = self.journal.read_hold_code(task_id).await?;
-        Ok(code == Some(crate::reason::Reason::AlbumVersionOnly))
+        Ok(self.journal.read_album_version_only(task_id).await?)
     }
 
     /// The pending auto-retry for one failed task, or `None` when no retry

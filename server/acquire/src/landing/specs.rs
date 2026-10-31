@@ -22,7 +22,9 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use super::matching::{FoundRelease, MatchState, MatchSummary, file_name_parts, is_various};
+use super::matching::{
+    FoundRelease, MatchState, MatchSummary, album_tag, file_name_parts, is_various,
+};
 use super::probe::Landing;
 use crate::downloads::quarantine::QuarantineReason;
 use crate::reason::Reason;
@@ -127,6 +129,12 @@ pub struct Target {
     /// album, so the album's track stands for the requested recording
     /// when it is the right track.
     pub album_version: bool,
+    /// For a track download whose file looks like its album's copy of the
+    /// song ([`album_version`]): something other than the album tag shows
+    /// it is (the file's own MusicBrainz tags, or MusicBrainz listing the
+    /// song on an album of that name by the artist). Without it the file
+    /// is a weak match and the next source is tried.
+    pub album_copy_proven: bool,
     /// For a track download: the album release acquisition resolved the
     /// track to and the track's (disc, track) position on it.
     pub album_positions: Option<(String, Vec<crate::downloads::TrackPosition>)>,
@@ -719,11 +727,20 @@ impl ImportSpec for PinnedEdition {
             Some(release) => release.answers_to(id),
             None => id.eq_ignore_ascii_case(pin),
         };
+        // The album copy of a single the person chose to take from its
+        // album names the album's release, not another edition.
+        let album_copy = |index: &usize| {
+            subject
+                .matched
+                .is_some_and(|matched| matched.album_copies.contains_key(index))
+        };
         let tagged: Vec<&str> = subject
             .landing
             .audio
             .iter()
-            .filter_map(|file| file.tag.musicbrainz_release_id.as_deref())
+            .enumerate()
+            .filter(|(index, _)| !album_copy(index))
+            .filter_map(|(_, file)| file.tag.musicbrainz_release_id.as_deref())
             .map(str::trim)
             .filter(|id| !id.is_empty())
             .collect();
@@ -765,8 +782,9 @@ impl ImportSpec for IdsAgree {
 
 /// Lidarr's `CloseAlbumMatch`: the album as a whole must be close, and
 /// its title and artist must agree with the release. A single found only
-/// as its album's track is held with its own reason, and passes only once
-/// the person chose to take it from the album.
+/// as its album's track, shown to be that album's copy, is held with its
+/// own reason, and passes once the person chose to take it from the
+/// album.
 struct CloseAlbumMatch;
 
 impl ImportSpec for CloseAlbumMatch {
@@ -793,15 +811,19 @@ impl ImportSpec for CloseAlbumMatch {
             return Verdict::accept();
         };
         // A single whose only copy is its album's track waits for the
-        // person, who can choose to take it from the album.
+        // person, who can choose to take it from the album. An album tag
+        // alone ("Singles 2020") does not show that: the next source is
+        // tried.
         if let Some(album) = album_version(subject.target, subject.landing, found) {
             if subject.target.album_version {
                 return Verdict::note(format!("the track from '{album}', taken as this song"));
             }
-            return Verdict::hold(
-                Reason::AlbumVersionOnly,
-                format!("the only copy found is the track on '{album}'"),
-            );
+            if subject.target.album_copy_proven {
+                return Verdict::hold(
+                    Reason::AlbumVersionOnly,
+                    format!("the only copy found is the track on '{album}'"),
+                );
+            }
         }
         Verdict::hold(Reason::WeakMatch, weak)
     }
@@ -814,8 +836,9 @@ impl ImportSpec for CloseAlbumMatch {
 /// does not pass) and at its length ([`wrong_track`] finds nothing; a
 /// track with no known length leaves the title as the guard), the files'
 /// artist is the release's, and their album tag names a different
-/// release. Answers that album's name.
-fn album_version(target: &Target, landing: &Landing, found: &FoundRelease) -> Option<String> {
+/// release (a placeholder such as "Unknown Album" names none). Answers
+/// that album's name.
+pub fn album_version(target: &Target, landing: &Landing, found: &FoundRelease) -> Option<String> {
     if !target.is_track {
         return None;
     }
@@ -837,7 +860,7 @@ fn album_version(target: &Target, landing: &Landing, found: &FoundRelease) -> Op
         return None;
     }
     let tag = &file.tag;
-    let album = tag.album.trim();
+    let album = album_tag(file);
     if album.is_empty()
         || string_dist(
             &strip_edition_words(album),
@@ -1293,7 +1316,8 @@ impl ImportSpec for CloseTrackMatch {
 
 /// Files the release does not account for (bonus tracks MusicBrainz
 /// lacks, scene extras) are left out; a download that is
-/// mostly such files is not this release.
+/// mostly such files is not this release, unless it is the album a
+/// single was taken from, as the person chose.
 struct FilesAccountedFor;
 
 impl ImportSpec for FilesAccountedFor {
@@ -1309,7 +1333,9 @@ impl ImportSpec for FilesAccountedFor {
         if extra == 0 {
             return Verdict::accept();
         }
-        if extra > found.scored.pairs.len() {
+        let from_album = subject.target.album_version
+            && album_version(subject.target, subject.landing, found).is_some();
+        if extra > found.scored.pairs.len() && !from_album {
             return Verdict::hold(
                 Reason::MostlyUnmatched,
                 format!("{extra} of the files match no track of the release"),

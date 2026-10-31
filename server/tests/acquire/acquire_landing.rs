@@ -4904,6 +4904,85 @@ async fn a_worse_version_after_a_stopped_swap_finds_yours_in_place() {
     assert_eq!(rig.availability(&v.old).await, "indexed");
 }
 
+// The edition's version was asked for and the first source lacks it: it
+// is still missing, so the next source is asked for it, even though the
+// library holds the same recording in the person's version.
+#[tokio::test]
+async fn a_missing_version_is_asked_of_the_next_source() {
+    let v = VersionCase::new(21, 1, false, "02 Sour Times.flac").await;
+    let rig = &v.rig;
+    v.ask("t-version").await;
+    let mysterons = rig.landed("t-version", &v.e.new, 0, FIXTURES[0]);
+    let report = v.land_directly("t-version", mysterons).await;
+    assert_eq!(
+        (report.result.clone(), report.local_only),
+        (LandingResult::Imported { complete: false }, false),
+        "{report:?}"
+    );
+    let sour =
+        v.e.new
+            .tracks
+            .iter()
+            .find(|track| track.title == TITLES[1])
+            .expect("track on NEW");
+    let missing: String = rig
+        .scalar(
+            "SELECT missing_positions FROM download_import_decisions \
+             WHERE task_id = 't-version'",
+        )
+        .await;
+    assert_eq!(
+        missing,
+        format!("[[{},{}]]", sour.disc.max(1), sour.position)
+    );
+}
+
+// Two tracks asked for, each brought by a different source: the second
+// landing finds the first's track in the library, so the download is
+// complete and the second source, which delivered, is not failed over.
+#[tokio::test]
+async fn asked_tracks_brought_by_two_sources_complete_the_download() {
+    let e = editions(22, &fixture_lengths());
+    let rig = join_rig(vec![e.new2.clone()]).await;
+    let task_id = "t-two-sources";
+    rig.ask(
+        task_id,
+        &e.group,
+        &e.new2.title,
+        "user",
+        Some(&e.new2.id),
+        None,
+        &[],
+    )
+    .await;
+    let plan: TaskPlan = serde_json::from_value(serde_json::json!({
+        "release_mbid": e.new2.id,
+        "album_wanted": [{"disc": 1, "track": 1}, {"disc": 1, "track": 2}],
+    }))
+    .expect("plan");
+    rig.acquire
+        .journal
+        .run("test.plan", move |store| {
+            store.set_task_plan(task_id, &plan, 1.0)
+        })
+        .await
+        .expect("plan set");
+    for (index, complete) in [(0, false), (1, true)] {
+        let row = rig.task(task_id).await;
+        let file = rig.landed(task_id, &e.new2, index, FIXTURES[index]);
+        let landed = Landed {
+            files: vec![Reported::path(file)],
+            mounts: vec![rig.downloads.clone().into()],
+        };
+        let report = rig.acquire.landing.land(&row, None, landed, false).await;
+        assert_eq!(
+            report.result,
+            LandingResult::Imported { complete },
+            "{report:?}"
+        );
+    }
+}
+
 // After the ask the copy moved to another edition, or the app stepped
 // back from it: nothing is recycled and O keeps its file and history.
 #[tokio::test]
@@ -5147,81 +5226,321 @@ async fn a_failed_request_follows_its_retry_to_imported() {
     assert_eq!(recorded.keys().len(), 1, "nothing is announced twice");
 }
 
-/// A single requested as one track, landed as a file tagged `title` from
-/// the album "Dummy", at the single's length: the landing's decisions.
-async fn land_single(task_id: &'static str, title: &str) -> Vec<(String, Option<String>)> {
-    const SINGLE_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000031";
-    const SINGLE_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000032";
-    const RECORDING: &str = "6d0b7a1e-0000-4000-8000-000000000038";
-    let db = AcquireDb::scratch().expect("scratch db");
-    db.add_user("u-ada", "Ada", "user").await.expect("user");
-    let dir = db.path().parent().expect("scratch dir").to_path_buf();
-    let config = Arc::new(
-        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
-            .expect("config"),
-    );
-    let platform = TestPlatform::on(db.db(), &dir)
-        .settings(config)
-        .build()
-        .await;
-    let (library, _) = library_at(&platform);
-    let downloads = dir.join("downloads");
-    let file = land_file(
-        &downloads.join("Dummy"),
-        &format!("04 - {title}.flac"),
-        "flac_full_01.flac",
-        title,
-        4,
-    );
-    let mut single = release(
-        SINGLE_RELEASE,
-        SINGLE_GROUP,
-        &["Love Me"],
-        &[length_ms(&file)],
-    );
-    single.title = "Love Me".to_owned();
-    assert_eq!(single.tracks[0].recording_id, RECORDING);
-    let acquire = acquire_over(
-        &platform,
-        &library,
-        Arc::new(LibraryLanding::new(
-            &library,
-            every_priority(Arc::new(Releases(vec![single]))),
-        )),
-    );
-    let task = NewTask {
-        album_title: "Love Me".to_owned(),
-        ..new_task(task_id, SINGLE_GROUP)
-    };
-    acquire
-        .journal
-        .run("test.seed", move |store| {
-            store.insert_track_task(&task, RECORDING, 1.0)
-        })
-        .await
-        .expect("task");
-    let row = acquire.journal.read_task(task_id).await.unwrap().unwrap();
-    let landed = Landed {
-        mounts: vec![downloads.into()],
-        files: vec![Reported::path(file)],
-    };
-    acquire.landing.land(&row, None, landed, false).await;
-    decisions(&acquire, task_id).await
+const SINGLE_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000031";
+const SINGLE_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000032";
+/// The single's one track, as `release` numbers it.
+const SINGLE_RECORDING: &str = "6d0b7a1e-0000-4000-8000-000000000038";
+const DUMMY_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000041";
+const DUMMY_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000051";
+/// "Love Me" on the album, the fourth track as `release` numbers it.
+const DUMMY_LOVE_ME: &str = "6d0b7a1e-0000-4000-8000-00000000004b";
+const DUMMY_TITLES: [&str; 12] = [
+    "Mysterons",
+    "Sour Times",
+    "Strangers",
+    "Love Me",
+    "Wandering Star",
+    "It's a Fire",
+    "Numb",
+    "Roads",
+    "Pedestal",
+    "Biscuit",
+    "Glory Box",
+    "Hidden",
+];
+
+/// The single "Love Me" asked for as one track, with MusicBrainz knowing
+/// the single and the album "Dummy" that also holds the song.
+struct SingleRig {
+    acquire: droppedneedle_acquire::AcquireSetup,
+    music: PathBuf,
+    downloads: PathBuf,
+    _grounds: Grounds,
 }
 
-/// The album's version is offered only for the same song: "Love Me Do"
-/// by the same artist at the single's length is another song, held as a
-/// weak match, while the album's "Love Me" is held as the album version.
+/// One landing for the single.
+#[derive(Clone, Copy)]
+struct SingleCase {
+    /// The landed song's title tag.
+    title: &'static str,
+    /// Its album tag.
+    album: &'static str,
+    /// The person chose "Get it from the album".
+    from_album: bool,
+    /// The whole album landed, the song among its twelve files.
+    whole_album: bool,
+    /// The song carries the album's own MusicBrainz ids, as Picard tags it.
+    album_ids: bool,
+}
+
+impl SingleCase {
+    fn titled(title: &'static str, album: &'static str) -> Self {
+        Self {
+            title,
+            album,
+            from_album: false,
+            whole_album: false,
+            album_ids: false,
+        }
+    }
+}
+
+impl SingleRig {
+    /// `single_off_ms` is how far the single's length is off the file's;
+    /// AcoustID hears `heard` in every file when given.
+    async fn new(single_off_ms: u64, heard: Option<&'static str>) -> Self {
+        let db = AcquireDb::scratch().expect("scratch db");
+        db.add_user("u-ada", "Ada", "user").await.expect("user");
+        let dir = db.path().parent().expect("scratch dir").to_path_buf();
+        let config = Arc::new(
+            ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+                .expect("config"),
+        );
+        let platform = TestPlatform::on(db.db(), &dir)
+            .settings(config)
+            .build()
+            .await;
+        let (mut library, _) = library_at(&platform);
+        if let Some(heard) = heard {
+            library.imports.fingerprints = Arc::new(HearsEverywhere(heard));
+        }
+        let music = dir.join("music");
+        std::fs::create_dir_all(&music).expect("music root");
+        library
+            .scans
+            .add_root(
+                Some("music".to_owned()),
+                music.to_string_lossy().into_owned(),
+                EffectivePolicy::Automatic,
+            )
+            .expect("root adds");
+        let length = length_ms(&fixture("flac_full_01.flac")).map(|ms| ms + single_off_ms);
+        let mut single = release(SINGLE_RELEASE, SINGLE_GROUP, &["Love Me"], &[length]);
+        single.title = "Love Me".to_owned();
+        assert_eq!(single.tracks[0].recording_id, SINGLE_RECORDING);
+        let album = release(DUMMY_RELEASE, DUMMY_GROUP, &DUMMY_TITLES, &[None; 12]);
+        assert_eq!(album.tracks[3].recording_id, DUMMY_LOVE_ME);
+        let acquire = acquire_over(
+            &platform,
+            &library,
+            Arc::new(LibraryLanding::new(
+                &library,
+                every_priority(Arc::new(Releases(vec![single, album]))),
+            )),
+        );
+        Self {
+            acquire,
+            music,
+            downloads: dir.join("downloads"),
+            _grounds: (platform, db),
+        }
+    }
+
+    /// Land `case` for a new track task `task_id`; answers its decisions.
+    async fn land(&self, task_id: &str, case: SingleCase) -> Vec<(String, Option<String>)> {
+        let folder = self.downloads.join(task_id);
+        let song = land_file(
+            &folder,
+            &format!("04 - {}.flac", case.title),
+            "flac_full_01.flac",
+            case.title,
+            4,
+        );
+        let mut files = vec![song.clone()];
+        if case.whole_album {
+            for (index, title) in DUMMY_TITLES.iter().enumerate().filter(|(i, _)| *i != 3) {
+                let name = format!("{:02} - {title}.flac", index + 1);
+                files.push(land_file(
+                    &folder,
+                    &name,
+                    "flac_full_01.flac",
+                    title,
+                    index as u32 + 1,
+                ));
+            }
+        }
+        let mut edits = vec![TagEdit::new(TagField::Album, vec![case.album.to_owned()])];
+        if case.album_ids {
+            for (field, id) in [
+                (TagField::MusicBrainzRecordingId, DUMMY_LOVE_ME),
+                (TagField::MusicBrainzReleaseId, DUMMY_RELEASE),
+                (TagField::MusicBrainzReleaseGroupId, DUMMY_GROUP),
+            ] {
+                edits.push(TagEdit::new(field, vec![id.to_owned()]));
+            }
+        }
+        save_tags(&song, &edits).expect("tags save");
+        let task = NewTask {
+            album_title: "Love Me".to_owned(),
+            ..new_task(task_id, SINGLE_GROUP)
+        };
+        let id = task_id.to_owned();
+        self.acquire
+            .journal
+            .run("test.seed", move |store| {
+                store.insert_track_task(&task, SINGLE_RECORDING, 1.0)?;
+                store.set_task_plan(
+                    &id,
+                    &TaskPlan {
+                        album_version: case.from_album,
+                        ..TaskPlan::default()
+                    },
+                    1.0,
+                )
+            })
+            .await
+            .expect("task");
+        let row = self
+            .acquire
+            .journal
+            .read_task(task_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let landed = Landed {
+            mounts: vec![self.downloads.clone().into()],
+            files: files.into_iter().map(Reported::path).collect(),
+        };
+        self.acquire.landing.land(&row, None, landed, false).await;
+        decisions(&self.acquire, task_id).await
+    }
+
+    async fn held(&self, task_id: &str) -> Vec<(String, String)> {
+        sqlx::query_as("SELECT state, path FROM acquire_held_files WHERE source_task_id = ?1")
+            .bind(task_id)
+            .fetch_all(self.acquire.db.db().sqlx())
+            .await
+            .expect("held rows")
+    }
+}
+
+fn held_as(code: &str) -> Vec<(String, Option<String>)> {
+    vec![("held".to_owned(), Some(code.to_owned()))]
+}
+
+fn imported() -> Vec<(String, Option<String>)> {
+    vec![("imported".to_owned(), None)]
+}
+
+/// A single stops as "only the album version" only when more than its
+/// album tag shows the file is the album's copy: here MusicBrainz lists
+/// the song on "Dummy" by the artist. A placeholder album tag is no album
+/// tag, so the file lands as the single. An album MusicBrainz does not
+/// know ("Singles 2020"), or another song ("Love Me Do"), is a weak match
+/// and the next source is tried. The request's button reads the held file
+/// even when the landing's decision was never recorded.
 #[tokio::test]
-async fn only_the_same_song_counts_as_the_album_version() {
+async fn a_single_stops_at_its_album_copy_only_on_proof() {
+    let rig = SingleRig::new(0, None).await;
     assert_eq!(
-        land_single("t-love-me", "Love Me").await,
-        vec![("held".to_owned(), Some("album_version_only".to_owned()))]
+        rig.land("t-unknown", SingleCase::titled("Love Me", "Unknown Album"))
+            .await,
+        imported()
+    );
+    assert_eq!(files_under(&rig.music, "flac").len(), 1);
+    assert_eq!(
+        rig.land("t-singles", SingleCase::titled("Love Me", "Singles 2020"))
+            .await,
+        held_as("weak_match")
     );
     assert_eq!(
-        land_single("t-love-me-do", "Love Me Do").await,
-        vec![("held".to_owned(), Some("weak_match".to_owned()))]
+        rig.land("t-love-me-do", SingleCase::titled("Love Me Do", "Dummy"))
+            .await,
+        held_as("weak_match")
     );
+    assert_eq!(
+        rig.land("t-dummy", SingleCase::titled("Love Me", "Dummy"))
+            .await,
+        held_as("album_version_only")
+    );
+
+    // On its own rig: the held list keeps one row per file name for a song.
+    let rig = SingleRig::new(0, None).await;
+    rig.land("t-dummy", SingleCase::titled("Love Me", "Dummy"))
+        .await;
+    rig.acquire
+        .db
+        .db()
+        .run_sql("DELETE FROM download_import_decisions WHERE task_id = 't-dummy'")
+        .expect("decision removed");
+    assert!(
+        rig.acquire
+            .journal
+            .read_album_version_only("t-dummy")
+            .await
+            .expect("read")
+    );
+}
+
+/// "Get it from the album" takes the song out of a whole-album landing:
+/// only its file imports and the other eleven are neither imported nor
+/// held. An album copy carrying the album's own recording id imports as
+/// the song too, AcoustID hearing that recording agreeing with it; without
+/// the choice that copy is held as before.
+#[tokio::test]
+async fn a_single_taken_from_its_album_imports_only_the_song() {
+    let rig = SingleRig::new(0, None).await;
+    let whole = SingleCase {
+        from_album: true,
+        whole_album: true,
+        ..SingleCase::titled("Love Me", "Dummy")
+    };
+    assert_eq!(rig.land("t-whole", whole).await, imported());
+    assert_eq!(files_under(&rig.music, "flac").len(), 1);
+    assert!(rig.held("t-whole").await.is_empty());
+
+    // The single is 5 s longer than the file, so its length cannot vouch
+    // for the file against what AcoustID heard.
+    let rig = SingleRig::new(5_000, Some(DUMMY_LOVE_ME)).await;
+    let picard = SingleCase {
+        album_ids: true,
+        ..SingleCase::titled("Love Me", "Dummy")
+    };
+    assert_eq!(rig.land("t-picard", picard).await, held_as("tag_mismatch"));
+    let chosen = SingleCase {
+        from_album: true,
+        ..picard
+    };
+    assert_eq!(rig.land("t-chosen", chosen).await, imported());
+    let recording: String = sqlx::query_scalar(
+        "SELECT i.recording_mbid FROM local_track_external_identities i \
+         JOIN local_tracks t ON t.id = i.local_track_id WHERE t.availability = 'indexed'",
+    )
+    .fetch_one(rig.acquire.db.db().sqlx())
+    .await
+    .expect("identity");
+    assert_eq!(recording, SINGLE_RECORDING, "imported as the single");
+}
+
+/// Once the song came in from its album, the copies held as "only the
+/// album version" are discarded, but never one in an entry a person is
+/// acting on.
+#[tokio::test]
+async fn a_claimed_album_version_hold_is_left_alone() {
+    let rig = SingleRig::new(0, None).await;
+    assert_eq!(
+        rig.land("t-first", SingleCase::titled("Love Me", "Dummy"))
+            .await,
+        held_as("album_version_only")
+    );
+    rig.acquire
+        .db
+        .db()
+        .run_sql(
+            "UPDATE acquire_held_entries SET state = 'placing' WHERE id IN \
+             (SELECT entry_id FROM acquire_held_files WHERE source_task_id = 't-first')",
+        )
+        .expect("claimed");
+    let chosen = SingleCase {
+        from_album: true,
+        ..SingleCase::titled("Love Me", "Dummy")
+    };
+    assert_eq!(rig.land("t-second", chosen).await, imported());
+    let held = rig.held("t-first").await;
+    let held_dir = &rig.acquire.held.folders().held;
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].0, "held");
+    assert!(held_dir.join(&held[0].1).is_file(), "the copy stays");
 }
 
 /// A single requested by a person, which Soulseek offers only inside its
@@ -5293,7 +5612,10 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
     let mut single = release(SINGLE_RELEASE, SINGLE_GROUP, &["Glory Box"], &[length]);
     single.title = "Glory Box".to_owned();
     assert_eq!(single.tracks[0].recording_id, RECORDING);
-    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![single]));
+    // MusicBrainz lists the song on the album too, which shows the peers'
+    // file is the album's copy.
+    let album = release(DUMMY_RELEASE, DUMMY_GROUP, &DUMMY_TITLES, &[None; 12]);
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![single, album]));
     let acquire = acquire_over(
         &platform,
         &library,

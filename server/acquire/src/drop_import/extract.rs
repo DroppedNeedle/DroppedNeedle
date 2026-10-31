@@ -109,10 +109,22 @@ fn move_into_place(staging_dir: &Path, archive: &Path, working: &Path) -> std::i
     std::fs::rename(working, target)
 }
 
+/// The note for an archive whose unpacked folder could take no name, so
+/// its files stay out of the import.
+fn unnamed(archive: &Path, error: &std::io::Error) -> String {
+    let label = display_stem(archive);
+    if error.kind() == std::io::ErrorKind::AlreadyExists {
+        format!("Skipped {label}.zip: too many folders here already have its name.")
+    } else {
+        format!("Skipped {label}.zip: its unpacked files could not be moved into place.")
+    }
+}
+
 /// Settle the working folders a stopped run left. One whose archive is
 /// still there was cut off mid-unpack and goes; the archive unpacks again.
-/// One whose archive is gone was finished, and takes its name.
-fn settle_working_folders(staging_dir: &Path) -> std::io::Result<()> {
+/// One whose archive is gone was finished, and takes its name; when no
+/// name is free, a note says so.
+fn settle_working_folders(staging_dir: &Path, notes: &mut Vec<String>) -> std::io::Result<()> {
     for child in sorted_children(staging_dir)? {
         let Some(archive) = archive_of(&child) else {
             continue;
@@ -124,6 +136,7 @@ fn settle_working_folders(staging_dir: &Path) -> std::io::Result<()> {
             std::fs::remove_dir_all(&child)
         } else {
             move_into_place(staging_dir, &archive, &child)
+                .inspect_err(|error| notes.push(unnamed(&archive, error)))
         };
         if let Err(error) = settled {
             tracing::warn!(path = %child.display(), %error, "unpacking folder left by a stop not settled");
@@ -138,7 +151,7 @@ fn settle_working_folders(staging_dir: &Path) -> std::io::Result<()> {
 /// takes its name only once the archive is gone.
 pub fn extract_and_group(staging_dir: &Path) -> std::io::Result<(Vec<Unit>, Vec<String>)> {
     let mut notes = Vec::new();
-    settle_working_folders(staging_dir)?;
+    settle_working_folders(staging_dir, &mut notes)?;
     for child in sorted_children(staging_dir)? {
         let is_zip = child.is_file()
             && child
@@ -155,13 +168,18 @@ pub fn extract_and_group(staging_dir: &Path) -> std::io::Result<(Vec<Unit>, Vec<
         if let Err(note) = &unpacked {
             notes.push(note.clone());
         }
-        if let Err(error) = std::fs::remove_file(&child) {
+        // While a failed archive's working folder is still there, the
+        // archive stays: without it, the next run would take the partial
+        // folder for a finished one.
+        let leftover = unpacked.is_err() && std::fs::symlink_metadata(&working).is_ok();
+        if !leftover && let Err(error) = std::fs::remove_file(&child) {
             tracing::warn!(path = %child.display(), %error, "unpacked archive not removed");
         }
         if unpacked.is_ok()
             && let Err(error) = move_into_place(staging_dir, &child, &working)
         {
             tracing::warn!(path = %working.display(), %error, "unpacked archive not named");
+            notes.push(unnamed(&child, &error));
         }
     }
 

@@ -16,7 +16,9 @@
 //! stops after the claim leaves the entries claimed until the next start
 //! gives them back. While any of the album's entries is in use (a
 //! person's action, or a claim a stopped run left), the job does what it
-//! can and runs again later, so their copies go once they are free.
+//! can and runs again later, so their copies go once they are free. Its
+//! tries last a few hours: an entry in use for longer keeps its copy listed
+//! until the 90-day prune or a person's discard.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,8 +36,10 @@ use super::downloads::store::{DownloadStore, StoreError};
 use super::held::store::HeldRows;
 use super::requests::sqlite::{rearm_after_removal, stop_after_removal};
 
-/// How the clean-up runs: the queue's defaults.
-pub const SPEC: KindSpec = KindSpec::new(ALBUM_REMOVED);
+/// How the clean-up runs: the queue's defaults, with enough tries that an
+/// entry a person is acting on is waited out (about five hours of
+/// backoff) rather than left to the held list's 90-day prune.
+pub const SPEC: KindSpec = KindSpec::new(ALBUM_REMOVED).max_attempts(12);
 
 /// A clean-up write that did not finish.
 const CLEANUP_FAILED: &str = "CLEANUP_FAILED";

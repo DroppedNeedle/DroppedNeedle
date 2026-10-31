@@ -27,8 +27,11 @@ droppedneedle_kernel::sql! {
            AND (lower(ai.release_group_mbid) = ?1 \
              OR (ai.local_album_id IS NULL AND lower(t.embedded_release_group_mbid) = ?1))";
     /// [`OWNED_TRACKS_FROM`] kept to one library album when `?2` names one,
-    /// followed to the album it was merged into.
-    fragment IN_ALBUM = " AND (?2 IS NULL OR b.id = (SELECT COALESCE(retired_into_album_id, id) \
+    /// followed to the album it was merged into. An album since deleted
+    /// keeps nothing: the whole group is read.
+    fragment IN_ALBUM = " AND (?2 IS NULL \
+         OR NOT EXISTS (SELECT 1 FROM local_albums WHERE id = ?2) \
+         OR b.id = (SELECT COALESCE(retired_into_album_id, id) \
          FROM local_albums WHERE id = ?2))";
     /// Indexed tracks of one release group: release track and recording
     /// (sealed identity first, then the file's own tags) and quality facts.

@@ -381,6 +381,9 @@ impl LandingService {
             ),
             (None, Some(library)) => {
                 let matched = find(library.as_ref(), &target, &landing).await;
+                target.album_copy_proven =
+                    matching::album_copy_proven(library.as_ref(), &target, &landing, &matched)
+                        .await;
                 let heard = hear_untagged(&target, &landing, &matched, library.as_ref()).await;
                 let decision = decide(&target, &landing, &policy, &matched, heard.as_ref(), checks);
                 match &decision.outcome {
@@ -407,34 +410,90 @@ impl LandingService {
 
     /// The song came in from its album: the copies earlier downloads held
     /// as "only the album version" have nothing left to decide, so they
-    /// are discarded. Best effort: a failure leaves them held.
+    /// are discarded. Each entry is claimed first, as a person's action
+    /// claims one, so an entry a person is acting on is left alone; the
+    /// copies go outside the write, only the rows whose copies are gone
+    /// are discarded, and the entries are given back. Best effort: what
+    /// fails stays held.
     async fn discard_album_version_holds(&self, task: &TaskRow) {
         let Some(recording) = task.recording_mbid.clone() else {
             return;
         };
         let (user_id, task_id) = (task.user_id.clone(), task.id.clone());
-        let clock = self.journal.db().clock().clone();
-        let discarded = self
-            .journal
-            .db()
-            .write_background("downloads.album_version_discard", move |tx| {
+        let db = self.journal.db();
+        let claimed = db
+            .write_background("downloads.album_version_claim", move |tx| {
                 let rows = HeldRows::new(tx);
                 let files = rows.album_version_files(&user_id, &recording, &task_id)?;
-                let now = clock.now_ms();
+                let mut claimed: Vec<i64> = Vec::new();
+                let mut in_use: Vec<i64> = Vec::new();
                 for file in &files {
-                    rows.resolve(file.entry_id, &[file.id], FileState::Discarded, now)?;
+                    if claimed.contains(&file.entry_id) || in_use.contains(&file.entry_id) {
+                        continue;
+                    }
+                    if rows.claim(file.entry_id)? {
+                        claimed.push(file.entry_id);
+                    } else {
+                        in_use.push(file.entry_id);
+                    }
                 }
-                Ok::<_, droppedneedle_kernel::db::DbError>(files)
+                let files: Vec<(i64, String)> = files
+                    .into_iter()
+                    .filter(|file| claimed.contains(&file.entry_id))
+                    .map(|file| (file.id, file.path))
+                    .collect();
+                Ok::<_, droppedneedle_kernel::db::DbError>((claimed, files, in_use.len()))
             })
             .await;
-        match discarded {
-            Ok(files) => {
-                for file in files {
-                    super::held::remove_copy(&self.held_dir, &file.path).await;
-                }
-            }
+        let (claimed, files, in_use) = match claimed {
+            Ok(claimed) => claimed,
             Err(error) => {
                 tracing::warn!(task_id = %task.id, %error, "album version holds not discarded");
+                return;
+            }
+        };
+        if in_use > 0 {
+            tracing::info!(task_id = %task.id, in_use, "album version holds in use are left to the person");
+        }
+        if claimed.is_empty() {
+            return;
+        }
+        let mut gone: Vec<i64> = Vec::with_capacity(files.len());
+        for (file, path) in &files {
+            if super::held::remove_copy(&self.held_dir, path).await {
+                gone.push(*file);
+            }
+        }
+        let clock = db.clock().clone();
+        let entries = claimed.clone();
+        let settled = db
+            .write_background("downloads.album_version_discard", move |tx| {
+                let rows = HeldRows::new(tx);
+                let now = clock.now_ms();
+                for file in &gone {
+                    rows.resolve_claimed(*file, FileState::Discarded, now)?;
+                }
+                for entry in &entries {
+                    rows.release(*entry, now)?;
+                }
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            })
+            .await;
+        if let Err(error) = settled {
+            tracing::warn!(task_id = %task.id, %error, "album version holds not discarded");
+            let clock = db.clock().clone();
+            let released = db
+                .write_background("downloads.album_version_release", move |tx| {
+                    let rows = HeldRows::new(tx);
+                    let now = clock.now_ms();
+                    for entry in &claimed {
+                        rows.release(*entry, now)?;
+                    }
+                    Ok::<_, droppedneedle_kernel::db::DbError>(())
+                })
+                .await;
+            if let Err(error) = released {
+                tracing::warn!(task_id = %task.id, %error, "album version holds stay claimed until the next start");
             }
         }
     }
@@ -538,6 +597,8 @@ impl LandingService {
         let Some(found) = matched.best() else {
             return Acted::decided(decision, 0);
         };
+        let heard =
+            own_album_recording_agrees(landing, matched, &plan, heard, library.as_ref()).await;
         let held: Vec<intake::Hold> = plan
             .held
             .iter()
@@ -661,8 +722,17 @@ impl LandingService {
         let held_count = self.hold(task, target, landing, Some(found), held).await;
 
         // What the release still lacks after this landing: the next
-        // candidate is asked for these positions only.
+        // candidate is asked for these positions only. A track the person
+        // asked for by position ("get missing tracks", replacing other
+        // versions) is lacking until the library holds that release track,
+        // from this landing or an earlier source's: a copy of the same
+        // recording elsewhere does not count.
         let covered: HashSet<usize> = imported_tracks.iter().copied().collect();
+        let asked = |track: &droppedneedle_library::matching::ReleaseTrack| {
+            target
+                .album_wanted
+                .contains(&(track.disc.max(1), track.position))
+        };
         let lacking: Vec<usize> = if target.is_track {
             Vec::new()
         } else {
@@ -673,8 +743,15 @@ impl LandingService {
                 .enumerate()
                 .filter(|(index, track)| {
                     !covered.contains(index)
-                        && !matched.owns(track)
                         && !owned_tracks.contains(index)
+                        && if asked(track) {
+                            !matched
+                                .owned
+                                .release_tracks
+                                .contains(&track.id.to_ascii_lowercase())
+                        } else {
+                            !matched.owns(track)
+                        }
                 })
                 .map(|(index, _)| index)
                 .collect()
@@ -939,6 +1016,7 @@ pub fn target_for(task: &TaskRow, details: &TaskDetails, plan: &TaskPlan) -> Tar
         track_title: details.track_title.clone(),
         origin: task.origin.clone(),
         album_version: task.download_type == "track" && plan.album_version,
+        album_copy_proven: false,
         album_positions: plan.track_album.as_ref().map(|album| {
             (
                 plan.release_mbid
@@ -1066,6 +1144,52 @@ fn remote_names(task_id: &str, handle: Option<&str>) -> Vec<String> {
             Vec::new()
         }
     }
+}
+
+/// For a single taken from its album as the person chose: AcoustID hearing
+/// the recording the file's own tags name (the album's copy of the song)
+/// counts as hearing the requested one. Every file about to import is
+/// asked, once; another recording still holds a file unless its measured
+/// length vouches for the track. `heard` unchanged when no file is such a
+/// copy.
+async fn own_album_recording_agrees(
+    landing: &Landing,
+    matched: &MatchSummary,
+    plan: &FilePlan,
+    heard: Option<HashMap<String, Vec<String>>>,
+    library: &dyn LandingLibrary,
+) -> Option<HashMap<String, Vec<String>>> {
+    let Some(found) = matched.best() else {
+        return heard;
+    };
+    if !plan
+        .import
+        .iter()
+        .any(|(file, _)| matched.album_copies.contains_key(file))
+    {
+        return heard;
+    }
+    let mut heard = match heard {
+        Some(heard) => heard,
+        None => {
+            let files = plan
+                .import
+                .iter()
+                .map(|(file, _)| (file.to_string(), landing.audio[*file].path.clone()))
+                .collect();
+            library.fingerprints(files).await
+        }
+    };
+    for (file, track) in &plan.import {
+        let key = file.to_string();
+        let Some(recordings) = heard.get_mut(&key) else {
+            continue;
+        };
+        if matching::heard_own_album_recording(matched, *file, recordings) {
+            recordings.push(found.release.tracks[*track].recording_id.clone());
+        }
+    }
+    Some(heard)
 }
 
 /// AcoustID's answer for every paired file, asked only when the files are

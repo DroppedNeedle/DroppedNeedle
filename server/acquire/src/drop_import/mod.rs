@@ -692,8 +692,13 @@ impl DropImports {
                     .await;
             }
             // Background identification reads a busy edition until it
-            // answers, so busy never reaches here.
-            Outcome::Busy => {}
+            // answers, so busy should never reach here.
+            Outcome::Busy => {
+                tracing::warn!(
+                    item_id,
+                    "drop import: identification answered busy; item left as it is"
+                );
+            }
             Outcome::Closed => return Ok(Ran::Stopped),
         }
         Ok(Ran::Done)

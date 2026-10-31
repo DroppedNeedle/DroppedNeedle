@@ -232,17 +232,35 @@ impl Journal {
         .await
     }
 
-    /// The reason the task's newest landing held its files, when it held.
-    pub async fn read_hold_code(
-        &self,
-        task_id: &str,
-    ) -> Result<Option<crate::reason::Reason>, StoreError> {
+    /// Whether a single's task held its file because only the album's
+    /// track was found: its newest landing says so, or its file waits in
+    /// the held list for that reason (the hold is written before the
+    /// landing's decision, which may not have been recorded).
+    pub async fn read_album_version_only(&self, task_id: &str) -> Result<bool, StoreError> {
+        use crate::reason::Reason;
         let task_id = task_id.to_owned();
-        self.read("downloads.hold_code", move |store| {
-            Ok(store
+        self.read("downloads.album_version_only", move |store| {
+            let decided = store
                 .latest_import_decision(&task_id)?
                 .filter(|row| row.outcome == "held")
-                .and_then(|row| row.reason_code))
+                .and_then(|row| row.reason_code);
+            if decided == Some(Reason::AlbumVersionOnly) {
+                return Ok(true);
+            }
+            let Some(task) = store.get_task(&task_id)? else {
+                return Ok(false);
+            };
+            let Some(recording) = task.recording_mbid.as_deref() else {
+                return Ok(false);
+            };
+            let held = crate::held::store::HeldRows::new(store.conn()).album_version_files(
+                &task.user_id,
+                recording,
+                "",
+            )?;
+            Ok(held
+                .iter()
+                .any(|file| file.source_task_id.as_deref() == Some(task_id.as_str())))
         })
         .await
     }
