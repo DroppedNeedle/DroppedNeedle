@@ -43,8 +43,158 @@ pub fn artist_mbid_key(mbid: &str) -> String {
 }
 
 /// True for a disc folder name like `CD1`, `Disc 02`, `(Vol. 3)`, matched
-/// case-insensitively with balanced parentheses.
+/// case-insensitively with balanced parentheses, or a medium format and
+/// its number like `12" Vinyl 01`, the folders the multi-disc naming preset
+/// writes.
 pub fn is_disc_directory(segment: &str) -> bool {
+    is_numbered_disc(segment) || is_numbered_medium(segment)
+}
+
+/// MusicBrainz medium formats, as [`folded_words`] leaves them. The
+/// multi-disc naming preset names a disc folder
+/// `{medium_format} {medium_number:02d}`, and path cleaning may replace the
+/// `"` of `12" Vinyl` or the spaces, so names are compared as words. Checked
+/// 2026-11-03 against <https://musicbrainz.org/doc/Release/Format> and the
+/// database's own names as Picard generates them
+/// (`picard/const/attributes.py`). "Other" is left out: too plain a word to
+/// take a folder for a disc.
+const MEDIUM_FORMATS: &[&str] = &[
+    "cd",
+    "dvd",
+    "sacd",
+    "dualdisc",
+    "laserdisc",
+    "minidisc",
+    "vinyl",
+    "cassette",
+    "cartridge",
+    "reel to reel",
+    "dat",
+    "digital media",
+    "wax cylinder",
+    "piano roll",
+    "dcc",
+    "hd dvd",
+    "dvd audio",
+    "dvd video",
+    "blu ray",
+    "vhs",
+    "vcd",
+    "svcd",
+    "betamax",
+    "hdcd",
+    "usb flash drive",
+    "slotmusic",
+    "umd",
+    "7 vinyl",
+    "10 vinyl",
+    "12 vinyl",
+    "cd r",
+    "8cm cd",
+    "blu spec cd",
+    "shm cd",
+    "hqcd",
+    "hybrid sacd",
+    "cd g",
+    "8cm cd g",
+    "cdv",
+    "enhanced cd",
+    "data cd",
+    "dts cd",
+    "playbutton",
+    "download card",
+    "dvdplus",
+    "vinyldisc",
+    "3 5 floppy disk",
+    "edison diamond disc",
+    "flexi disc",
+    "7 flexi disc",
+    "shellac",
+    "10 shellac",
+    "12 shellac",
+    "7 shellac",
+    "shm sacd",
+    "pathé disc",
+    "vhd",
+    "ced",
+    "copy control cd",
+    "sd card",
+    "hybrid sacd cd layer",
+    "hybrid sacd sacd layer",
+    "dualdisc dvd audio side",
+    "dualdisc dvd video side",
+    "dualdisc cd side",
+    "dvdplus dvd audio side",
+    "dvdplus dvd video side",
+    "dvdplus cd side",
+    "8 laserdisc",
+    "12 laserdisc",
+    "phonograph record",
+    "playtape",
+    "hipac",
+    "floppy disk",
+    "zip disk",
+    "8 track cartridge",
+    "blu ray r",
+    "vinyldisc dvd side",
+    "vinyldisc vinyl side",
+    "vinyldisc cd side",
+    "microcassette",
+    "sacd 2 channels",
+    "sacd multichannel",
+    "hybrid sacd sacd layer multichannel",
+    "hybrid sacd sacd layer 2 channels",
+    "shm sacd multichannel",
+    "shm sacd 2 channels",
+    "tefifon",
+    "5 25 floppy disk",
+    "dvd r video",
+    "data dvd r",
+    "data dvd",
+    "kit album",
+    "dataplay",
+    "mixed mode cd",
+    "dualdisc dvd side",
+    "betacam sp",
+    "microsd",
+    "minimax cd",
+    "minidvd",
+    "minimax dvd",
+    "minidvd audio",
+    "minidvd video",
+    "minimax dvd audio",
+    "minimax dvd video",
+    "acetate",
+    "7 acetate",
+    "10 acetate",
+    "12 acetate",
+    "3 vinyl",
+    "rom cartridge",
+    "cd i",
+    "8cm cd r",
+    "ultra hd blu ray",
+];
+
+/// Lowercase words: every run of characters that are not letters or
+/// digits becomes one space.
+fn folded_words(text: &str) -> String {
+    text.to_lowercase()
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A medium format followed by a disc number, like `Copy Control CD 02`.
+fn is_numbered_medium(segment: &str) -> bool {
+    let words = folded_words(segment);
+    let Some((format, number)) = words.rsplit_once(' ') else {
+        return false;
+    };
+    number.chars().all(|ch| ch.is_ascii_digit()) && MEDIUM_FORMATS.contains(&format)
+}
+
+fn is_numbered_disc(segment: &str) -> bool {
     let mut depth = 0i32;
     for ch in segment.chars() {
         match ch {
@@ -328,6 +478,18 @@ mod tests {
         assert!(is_disc_directory("(vol. 3)"));
         assert!(!is_disc_directory("(CD1"));
         assert!(!is_disc_directory("Discography"));
+        // The multi-disc naming preset: `{medium_format} {medium_number:02d}`.
+        assert!(is_disc_directory("12\" Vinyl 01"));
+        assert!(is_disc_directory("12_ Vinyl 02"));
+        assert!(is_disc_directory("Copy Control CD 01"));
+        assert!(is_disc_directory("Copy_Control_CD_01"));
+        assert!(is_disc_directory("Digital Media 03"));
+        assert!(is_disc_directory("Hybrid SACD (CD layer) 01"));
+        assert!(!is_disc_directory("Vinyl"));
+        assert!(!is_disc_directory("Digital Media"));
+        assert!(!is_disc_directory("Vinyl Days 2"));
+        assert!(!is_disc_directory("Monstercat 001"));
+        assert_eq!(grouping_directory("A/Album/12_ Vinyl 02/01.mp3"), "A/Album");
         assert_eq!(grouping_directory("A/Album/CD1/01.flac"), "A/Album");
         assert_eq!(grouping_directory("CD2/01.flac"), ".");
         assert_eq!(grouping_directory("A/Album/01.flac"), "A/Album");
