@@ -45,11 +45,13 @@ pub enum AutomaticOutcome {
 /// the supported files it still holds (a person's track row stays), and
 /// the match flag (cleared for a confident match, set for a best guess).
 /// A file whose release track a person's row of another file holds keeps
-/// its recording, off the release. The revisable rows of the files it did
-/// not write that name another release leave it, as automatic, keeping
-/// their recording. For an exact edition the rows it replaced are kept
-/// for undo. A person's album row is never replaced, and a match that
-/// already reads so is left as it is, its undo included.
+/// its recording, off the release. When it changes the album row to an
+/// exact edition, the rows it replaced are kept for undo and the revisable
+/// rows of the files it did not write that name another release leave it,
+/// as automatic, keeping their recording. Any change to the album row is
+/// in the audit. A person's album row is never replaced, and a match that
+/// already reads so is left as it is, its undo and the other files' rows
+/// included.
 pub fn seal_automatic(
     tx: &Transaction<'_>,
     seal: &AutomaticSeal,
@@ -114,11 +116,12 @@ pub fn seal_automatic(
             album,
         ])?;
     }
-    // Every file the seal wrote names its release or none, so what still
-    // names another one is a file it did not write.
-    tx.prepare_cached(sql::SEAL_UNPLACE_ELSEWHERE.text())?
-        .execute(params![album, seal.release_mbid, now, PROVIDER])?;
     if album_changed && seal.release_mbid.is_some() {
+        // Every file the seal wrote names its release or none, so what
+        // still names another one is a file it did not write. Only a seal
+        // that keeps its undo moves them, so that undo puts them back.
+        tx.prepare_cached(sql::SEAL_UNPLACE_ELSEWHERE.text())?
+            .execute(params![album, seal.release_mbid, now, PROVIDER])?;
         keep_automatic_undo(
             tx,
             album,
@@ -129,6 +132,24 @@ pub fn seal_automatic(
                 reason_code: "AUTOMATIC_EXACT_EDITION",
                 now,
             },
+        )?;
+    }
+    if album_changed {
+        record_action(
+            tx,
+            CatalogAction {
+                actor: "system",
+                kind: "automatic_match_sealed",
+                album_id: album,
+                job_id: None,
+                before: serde_json::to_value(&prior).unwrap_or_default(),
+                after: serde_json::json!({
+                    "release_group_mbid": seal.release_group_mbid,
+                    "release_mbid": seal.release_mbid,
+                }),
+                reason: "AUTOMATIC_MATCH_SEALED",
+            },
+            now,
         )?;
     }
     join_replaced(tx, Scope::Album(album), now)?;
@@ -288,12 +309,15 @@ fn still_as_checked(
 /// files leave their release tracks, a waiting placement and any match
 /// flag go; a file whose row is a person's keeps it, and a file placed on
 /// a release track a person's row of another file holds leaves the
-/// release instead. The rows it replaced are kept as both undos (the album
-/// page's edition undo and the automatic-edition undo), and either puts
-/// the earlier match state back. A person's choice, made now or carried
-/// over from v2, is never replaced, and an album that moved since the check
-/// ([`Accepted::expected`]) is left as it is: `None` then. Returns the
-/// audit row id.
+/// release instead, keeping its recording. The rows it replaced are kept
+/// as both undos (the album page's edition undo and the automatic-edition
+/// undo), and either puts the earlier match state back. A person's undo
+/// still carried through the identification their change queued is kept
+/// instead of the edition undo: keyed to the match this leaves and still
+/// carried, it brings their edition back. A person's choice, made now or
+/// carried over from v2, is never replaced, and an album that moved since
+/// the check ([`Accepted::expected`]) is left as it is: `None` then.
+/// Returns the audit row id.
 pub fn accept_automatic(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -308,6 +332,7 @@ pub fn accept_automatic(
         return Ok(None);
     }
     let before = tx.total_changes();
+    let prior_revision = identity_revision(tx, album_id)?;
     let replaced = snapshot(tx, album_id)?;
     let prior = replaced.identity.clone();
     let prior_tracks = replaced.tracks.clone();
@@ -321,16 +346,6 @@ pub fn accept_automatic(
                 &placement.release_track_mbid,
             )
         });
-    let extra: Vec<&str> = accepted
-        .extra
-        .iter()
-        .map(String::as_str)
-        .chain(
-            taken
-                .iter()
-                .map(|placement| placement.local_track_id.as_str()),
-        )
-        .collect();
     tx.prepare_cached(sql::ACCEPT_ALBUM.text())?
         .execute(params![
             album_id,
@@ -353,7 +368,18 @@ pub fn accept_automatic(
                 album_id,
             ])?;
     }
-    for track_id in &extra {
+    for placement in &taken {
+        tx.prepare_cached(sql::SEAL_TRACK.text())?.execute(params![
+            placement.local_track_id,
+            PROVIDER,
+            placement.recording_mbid,
+            None::<&str>,
+            None::<&str>,
+            now,
+            album_id,
+        ])?;
+    }
+    for track_id in accepted.extra {
         tx.prepare_cached(sql::UNPLACE_TRACK.text())?
             .execute(params![track_id, now, PROVIDER, album_id])?;
     }
@@ -384,13 +410,23 @@ pub fn accept_automatic(
                 "release_group_mbid": accepted.release_group_mbid,
                 "release_mbid": accepted.release_mbid,
                 "placed": placed.len(),
-                "extra": extra.len(),
+                "extra": accepted.extra.len() + taken.len(),
             }),
             reason: accepted.reason_code,
         },
         now,
     )?;
-    keep_choice_undo(tx, album_id, &replaced, &action, false, now)?;
+    let persons_kept = tx
+        .prepare_cached(sql::KEEP_CARRIED_CHOICE_UNDO.text())?
+        .execute(params![
+            album_id,
+            prior_revision,
+            identity_revision(tx, album_id)?
+        ])?
+        == 1;
+    if !persons_kept {
+        keep_choice_undo(tx, album_id, &replaced, &action, false, now)?;
+    }
     bump_if_changed(tx, before)?;
     Ok(Some(action))
 }

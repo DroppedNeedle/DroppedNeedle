@@ -10179,7 +10179,7 @@ export interface components {
          * @description What one history entry tells.
          * @enum {string}
          */
-        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "retag_dismissal_ended" | "leftover_joined" | "tracks_other_music" | "tracks_new_copy" | "artist_from_tracks" | "edition_changed" | "edition_chosen" | "edition_change_undone" | "fold_undone" | "unfolded_from" | "hand_back_given_up";
+        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "retag_dismissal_ended" | "leftover_joined" | "tracks_other_music" | "tracks_new_copy" | "artist_from_tracks" | "edition_changed" | "edition_chosen" | "match_withdrawn" | "edition_change_undone" | "fold_undone" | "unfolded_from" | "hand_back_given_up";
         /**
          * @description An album's history, newest first: at most ten entries, none older than
          *     180 days.

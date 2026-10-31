@@ -12,7 +12,9 @@
 //! an identification, whose seal would move the revision before the person
 //! could use the undo. Their undo is marked carried, and the first
 //! automatic seal or retraction keys it to the revision it leaves and
-//! clears the mark. An administrator's undo of that seal keys it again, to
+//! clears the mark. An automatic acceptance before that keys it to the
+//! revision it leaves too, keeps the mark, and keeps no undo of its own.
+//! An administrator's undo of that seal or acceptance keys it again, to
 //! the revision the administrator's undo leaves.
 //!
 //! The choice undo also keeps the album's matches by hand: a change that

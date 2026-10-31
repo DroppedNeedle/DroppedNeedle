@@ -286,14 +286,18 @@ droppedneedle_kernel::sql! {
              AND trim(COALESCE(i.release_track_mbid, '')) <> '' ORDER BY t.id";
     /// The album's (`?1`) files whose match by hand stands, with the
     /// release track each holds (provider `?2`). The row the hand match
-    /// wrote is `manual`, so only such a row stands for it.
+    /// wrote is `manual`, so only such a row stands for it, and only on
+    /// the album's current release.
     pub(super) HAND_MATCHES_STANDING = "SELECT h.local_track_id, i.release_track_mbid \
              FROM library_track_hand_matches h \
              JOIN " + ALBUM_TRACKS + " ON t.id = h.local_track_id \
              JOIN local_track_external_identities i \
              ON i.local_track_id = h.local_track_id AND i.provider = ?2 \
+             JOIN local_album_external_identities a \
+             ON a.local_album_id = ?1 AND a.provider = ?2 \
              WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
              AND i.decision_source = 'manual' AND lower(i.release_mbid) = lower(h.release_mbid) \
+             AND lower(h.release_mbid) = lower(a.release_mbid) \
              AND lower(i.release_track_mbid) = lower(h.release_track_mbid) \
              ORDER BY h.local_track_id";
     /// The revisions an automatic-edition undo of the album (`?1`,
@@ -358,6 +362,11 @@ droppedneedle_kernel::sql! {
     pub(super) CARRY_CHOICE_UNDO = "UPDATE library_edition_choice_undo \
              SET expected_identity_revision = ?3, \
              prior_hold_json = json_set(prior_hold_json, '$.carried', json('false')) \
+             WHERE local_album_id = ?1 AND expected_identity_revision = ?2 AND " + CARRIED;
+    /// Key the album's (`?1`) carried undo still at revision `?2` to `?3`,
+    /// keeping its mark.
+    pub(super) KEEP_CARRIED_CHOICE_UNDO = "UPDATE library_edition_choice_undo \
+             SET expected_identity_revision = ?3 \
              WHERE local_album_id = ?1 AND expected_identity_revision = ?2 AND " + CARRIED;
     /// Forget the album's (`?1`) choice undo unless it is carried and at
     /// revision `?2`.

@@ -109,6 +109,8 @@
 				return 'DroppedNeedle moved this album to another edition.';
 			case 'edition_chosen':
 				return 'DroppedNeedle picked an edition for this album.';
+			case 'match_withdrawn':
+				return "DroppedNeedle took this album's match off.";
 			case 'edition_change_undone':
 				if (entry.by === 'you') return "You undid DroppedNeedle's edition change.";
 				if (entry.by === 'person') return "An admin undid DroppedNeedle's edition change.";

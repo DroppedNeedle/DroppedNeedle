@@ -3393,7 +3393,13 @@ fn an_automatic_placement_never_takes_a_persons_track() {
     let accepted =
         rig.change(|tx| accept_automatic(tx, "album-1", &candidate, "R", None, None, 1.0));
     assert!(matches!(accepted, Ok(Some(_))), "{accepted:?}");
-    assert_eq!(tracks(), vec![persons.clone()]);
+    assert_eq!(
+        tracks(),
+        vec![
+            persons.clone(),
+            format!("track t2 {RECORDING_1} - - -/- automatic 1")
+        ]
+    );
 
     let sealed = rig.store.seal_automatic(&AutomaticSeal {
         local_album_id: "album-1".to_owned(),
@@ -3414,7 +3420,7 @@ fn an_automatic_placement_never_takes_a_persons_track() {
         tracks(),
         vec![
             persons,
-            format!("track t2 {RECORDING_2} - - -/- automatic 1")
+            format!("track t2 {RECORDING_2} - - -/- automatic 2")
         ]
     );
 }
@@ -3423,7 +3429,8 @@ fn an_automatic_placement_never_takes_a_persons_track() {
 /// acceptance's own undo. A person's undo the seal carried (a hand back's,
 /// a repair's detach) is keyed to what the administrator's undo leaves, so
 /// it still brings the person's edition back: when the earlier match comes
-/// back and when the album is left with none.
+/// back and when the album is left with none. An automatic acceptance
+/// before the seal keeps the person's undo instead of its own.
 #[test]
 fn an_admin_undo_keeps_the_persons_undo() {
     use droppedneedle_library::operations::{choice, decisions};
@@ -3519,13 +3526,57 @@ fn an_admin_undo_keeps_the_persons_undo() {
             format!("track t2 {RECORDING_1} {RELEASE_A1} rt-t2 -/- automatic 1"),
         ]
     );
+
+    // Handed back, an identity check accepts A1 before identification
+    // seals A3: the acceptance keeps the person's undo instead of its own,
+    // so it still brings back their A2.
+    rig.seed_album(&album_facts("album-3", &[("t3", Some(RECORDING_1))]));
+    rig.run(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('album-3', 'musicbrainz', '{GROUP_A}', '{RELEASE_A2}', 'manual', 0, 3); \
+         INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+         VALUES ('t3', 'musicbrainz', '{RECORDING_1}', '{RELEASE_A2}', 'rt-a2', 'manual', 0);"
+    ));
+    let handed = rig.change(|tx| choice::hand_back(tx, "album-3", "curator-1", 1.0));
+    assert_eq!(handed, Ok(()));
+    let candidate = offering(RELEASE_A1, &["t3"], &[]);
+    let accepted =
+        rig.change(|tx| choice::accept_automatic(tx, "album-3", &candidate, "R", None, None, 1.0));
+    assert!(matches!(accepted, Ok(Some(_))), "{accepted:?}");
+    let sealed = rig.store.seal_automatic(&AutomaticSeal {
+        local_album_id: "album-3".to_owned(),
+        release_group_mbid: GROUP_A.to_owned(),
+        release_mbid: Some(RELEASE_A3.to_owned()),
+        tracks: vec![TrackIdentity {
+            local_track_id: "t3".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            recording_mbid: Some(RECORDING_1.to_owned()),
+            release_track_mbid: Some("rt-t3".to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        }],
+        flag: None,
+    });
+    assert_eq!(sealed.ok(), Some(true));
+    let undone = rig.change(|tx| choice::undo(tx, "album-3", "curator-1", 3.0));
+    assert_eq!(undone, Ok(()));
+    assert_eq!(
+        rig.identity_tables("album-3")[..2],
+        [
+            format!("album {GROUP_A} {RELEASE_A2} manual 7"),
+            format!("track t3 {RECORDING_1} {RELEASE_A2} rt-a2 -/- manual 5"),
+        ]
+    );
 }
 
 /// A re-seal on another release takes the revisable rows of the files it
 /// did not write off the old release, keeping their recording, and the
 /// administrator's undo puts them back. A retraction deletes the automatic
 /// rows on the release it withdrew, leaves rows on another release, and
-/// the person's undo brings the deleted rows back.
+/// the person's undo brings the deleted rows back. A seal that leaves the
+/// album row as it was keeps no undo, so it moves no other file's row.
 #[test]
 fn no_revisable_row_is_left_on_a_release_the_album_left() {
     use droppedneedle_library::identify::models::{MatchFlag, MatchFlagState};
@@ -3651,6 +3702,195 @@ fn no_revisable_row_is_left_on_a_release_the_album_left() {
         vec![
             format!("track u1 {RECORDING_1} {RELEASE_A1} rt-u1 -/- automatic 1"),
             format!("track u2 {RECORDING_2} {RELEASE_A2} rt-u2 -/- automatic 2"),
+        ]
+    );
+
+    rig.seed_album(&album_facts(
+        "album-3",
+        &[("v1", Some(RECORDING_1)), ("v2", Some(RECORDING_2))],
+    ));
+    rig.run(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('album-3', 'musicbrainz', '{GROUP_A}', '{RELEASE_A1}', 'automatic', 0, 2); \
+         INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, decision_source, selected_at) \
+         VALUES ('v2', 'musicbrainz', '{RECORDING_2}', '{RELEASE_A2}', 'embedded', 0);"
+    ));
+    let resealed = rig.store.seal_automatic(&AutomaticSeal {
+        local_album_id: "album-3".to_owned(),
+        release_group_mbid: GROUP_A.to_owned(),
+        release_mbid: Some(RELEASE_A1.to_owned()),
+        tracks: vec![identity("v1", RECORDING_1)],
+        flag: None,
+    });
+    assert_eq!(resealed.ok(), Some(true));
+    assert_eq!(
+        tracks("album-3"),
+        vec![
+            format!("track v1 {RECORDING_1} {RELEASE_A1} rt-v1 -/- automatic 1"),
+            format!("track v2 {RECORDING_2} {RELEASE_A2} - -/- embedded 1"),
+        ]
+    );
+    assert_eq!(
+        decisions::live_automatic_edition_undo(&rig.db, "album-3").expect("reads"),
+        None
+    );
+}
+
+/// A match by hand stands only on the album's current release. Once a
+/// curator approves another edition, placing the files on it takes the
+/// file off the release the album left and ends its match by hand.
+#[test]
+fn a_match_by_hand_ends_once_the_album_leaves_its_release() {
+    use droppedneedle_library::identity::remap::{PendingRemap, RemapOrigin, place_choice};
+    use droppedneedle_library::identity::{Approved, Offer, Placed, approve};
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.run(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator-1', 'Curator', 'admin', 0);",
+    );
+    rig.seed_album(&album_facts(
+        "album-1",
+        &[("t1", Some(RECORDING_1)), ("t2", Some(RECORDING_2))],
+    ));
+    rig.run(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('album-1', 'musicbrainz', '{GROUP_A}', '{RELEASE_A2}', 'manual', 0, 1); \
+         INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+         VALUES ('t1', 'musicbrainz', '{RECORDING_1}', '{RELEASE_A2}', 'rt-a2-1', 'manual', 0); \
+         INSERT INTO library_track_hand_matches (local_track_id, release_mbid, \
+         release_track_mbid, matched_at) VALUES ('t1', '{RELEASE_A2}', 'rt-a2-1', 0);"
+    ));
+    let approved = rig.change(|tx| {
+        Ok(approve(
+            tx,
+            "album-1",
+            &Approved {
+                release_group_mbid: GROUP_A,
+                release_mbid: Some(RELEASE_A1),
+                by_user_id: "curator-1",
+                now: 1.0,
+            },
+        )?)
+    });
+    assert_eq!(approved, Ok(()));
+    let spot = |file: &str, recording: &str, position: u32| Placed {
+        local_track_id: file.to_owned(),
+        recording_mbid: recording.to_owned(),
+        release_track_mbid: format!("rt-{file}"),
+        disc: 1,
+        position,
+    };
+    let placed = rig.change(|tx| {
+        Ok(place_choice(
+            tx,
+            &PendingRemap {
+                local_album_id: "album-1".to_owned(),
+                release_mbid: RELEASE_A1.to_owned(),
+                chosen_by_user_id: Some("curator-1".to_owned()),
+                attempts: 0,
+                origin: RemapOrigin::AlbumPin,
+            },
+            &Offer {
+                release_group_mbid: GROUP_A.to_owned(),
+                release_mbid: RELEASE_A1.to_owned(),
+                spots: vec![spot("t1", RECORDING_1, 1), spot("t2", RECORDING_2, 2)],
+                weighed: vec!["t1".to_owned(), "t2".to_owned()],
+            },
+            2.0,
+        )?)
+    });
+    assert_eq!(placed, Ok((2, 0)));
+    assert_eq!(
+        rig.identity_tables("album-1")
+            .into_iter()
+            .filter(|line| line.starts_with("track t1") || line.starts_with("hand match"))
+            .collect::<Vec<_>>(),
+        vec![format!(
+            "track t1 {RECORDING_1} {RELEASE_A1} rt-t1 1/1 manual 2"
+        )]
+    );
+}
+
+/// Album history lists each edition identification moved the album to
+/// and the match it took off, newest first. Sealing the match the album
+/// already holds writes no audit row.
+#[test]
+fn album_history_lists_sealed_editions_and_a_withdrawn_match() {
+    use droppedneedle_library::identify::models::{MatchFlag, MatchFlagState};
+    use droppedneedle_library::identity::{Inputs, retract};
+    use droppedneedle_library::operations::history::{HistoryKind, album_history};
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    let seal = |release: &str| {
+        rig.store
+            .seal_automatic(&AutomaticSeal {
+                local_album_id: "album-1".to_owned(),
+                release_group_mbid: GROUP_A.to_owned(),
+                release_mbid: Some(release.to_owned()),
+                tracks: vec![TrackIdentity {
+                    local_track_id: "t1".to_owned(),
+                    provider: "musicbrainz".to_owned(),
+                    recording_mbid: Some(RECORDING_1.to_owned()),
+                    release_track_mbid: Some("rt-t1".to_owned()),
+                    decision_source: DecisionSource::Automatic,
+                    row_revision: 1,
+                }],
+                flag: None,
+            })
+            .expect("seal lands")
+    };
+    let actions = || {
+        rig.texts(
+            "SELECT CAST(count(*) AS TEXT) FROM library_catalog_actions \
+             WHERE local_album_id = ?1",
+            "album-1",
+        )
+    };
+    for release in [RELEASE_A1, RELEASE_A2, RELEASE_A3] {
+        assert!(seal(release));
+    }
+    let audited = actions();
+    assert!(seal(RELEASE_A3));
+    assert_eq!(actions(), audited, "an unchanged reseal is not audited");
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after 1970")
+        .as_secs_f64();
+    let flag = MatchFlag {
+        state: MatchFlagState::Unmatched,
+        reason_code: "CONFLICTING_TRACK_EVIDENCE".to_owned(),
+        release_mbid: None,
+        candidates: Vec::new(),
+    };
+    let retracted = rig.change(|tx| {
+        let revision = identify::queue::album_input_revision(tx, "album-1")?;
+        let inputs = Inputs {
+            input_revision: &revision,
+            now,
+        };
+        Ok(retract(tx, "album-1", true, &flag, inputs)?)
+    });
+    assert!(retracted.is_ok(), "{retracted:?}");
+
+    let kinds: Vec<HistoryKind> = album_history(&rig.db, "album-1", "listener", now)
+        .expect("history reads")
+        .expect("album live")
+        .into_iter()
+        .map(|entry| entry.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            HistoryKind::MatchWithdrawn,
+            HistoryKind::EditionChanged,
+            HistoryKind::EditionChanged,
         ]
     );
 }

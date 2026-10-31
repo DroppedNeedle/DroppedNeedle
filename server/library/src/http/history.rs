@@ -65,6 +65,8 @@ pub enum AlbumHistoryKindView {
     EditionChanged,
     /// The app gave the album, matched to a release group only, an edition.
     EditionChosen,
+    /// The app took the album's match off: new evidence contradicted it.
+    MatchWithdrawn,
     /// Someone undid the app's edition change.
     EditionChangeUndone,
     /// The fold of a leftover album into this one was undone.
@@ -129,6 +131,7 @@ impl From<HistoryEntry> for AlbumHistoryEntryView {
                 HistoryKind::ArtistFromTracks => AlbumHistoryKindView::ArtistFromTracks,
                 HistoryKind::EditionChanged => AlbumHistoryKindView::EditionChanged,
                 HistoryKind::EditionChosen => AlbumHistoryKindView::EditionChosen,
+                HistoryKind::MatchWithdrawn => AlbumHistoryKindView::MatchWithdrawn,
                 HistoryKind::EditionChangeUndone => AlbumHistoryKindView::EditionChangeUndone,
                 HistoryKind::FoldUndone => AlbumHistoryKindView::FoldUndone,
                 HistoryKind::UnfoldedFrom => AlbumHistoryKindView::UnfoldedFrom,

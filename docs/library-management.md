@@ -122,7 +122,7 @@ An album you sealed as a custom edition (its files as they are, under a release 
 
 ### Undoing an automatic edition
 
-An edition picked automatically can be undone by an admin. The album and its tracks go back to exactly what they were before. Tracks you matched by hand are left alone. Once anything else changes the album, the undo is no longer offered. "Album history" on the album page lists the edition the app picked or moved the album to, and the undo.
+An edition picked automatically can be undone by an admin. The album and its tracks go back to exactly what they were before. Tracks you matched by hand are left alone. Once anything else changes the album, the undo is no longer offered. "Album history" on the album page lists each edition the app picked or moved the album to, a match it took off, and the undo.
 
 ### Undoing a split-album fold
 

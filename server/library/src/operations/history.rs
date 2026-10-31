@@ -2,9 +2,8 @@
 //! album holds, which albums it is made of, which edition it is on, or
 //! where people's history lives, and the undos of those changes.
 //!
-//! Read from `library_catalog_actions`, and for an edition identification
-//! sealed from `library_automatic_edition_undo`, which keeps the album's
-//! latest one. The audit JSON keeps every row a move touched, other
+//! Read from `library_catalog_actions`. The audit JSON keeps every row a
+//! move touched, other
 //! people's included, so only the typed fields below leave this module: no
 //! album or track ids, no reason codes, no counts of what moved. The one id
 //! is the audit row of a fold or of an artist repair, as its undo handle.
@@ -52,6 +51,8 @@ pub enum HistoryKind {
     EditionChanged,
     /// The app gave the album, matched to a release group only, an edition.
     EditionChosen,
+    /// The app took the album's match off: new evidence contradicted it.
+    MatchWithdrawn,
     /// A person undid the app's edition change.
     EditionChangeUndone,
     /// The fold of a leftover album into this one was undone: it is its
@@ -150,8 +151,9 @@ const ROWS: &str = "SELECT a.id, a.actor_user_id, a.action_kind, a.reason_code, 
       OR a.action_kind = 'retag_dismissal_ended' \
       OR (a.action_kind = 'album_artist' AND a.local_album_id = ?1 \
         AND a.reason_code = 'PLACEHOLDER_ARTIST_FROM_TRACKS') \
-      OR a.action_kind IN ('automatic_exact_edition', 'undo_automatic_edition', \
-        'fold_undone', 'management_hand_back_given_up')) \
+      OR a.action_kind IN ('automatic_exact_edition', 'automatic_match_sealed', \
+        'automatic_match_withdrawn', 'undo_automatic_edition', 'fold_undone', \
+        'management_hand_back_given_up')) \
     ORDER BY a.created_at DESC, a.rowid DESC LIMIT 10";
 
 struct Row {
@@ -196,7 +198,7 @@ pub fn album_history(
         })?
         .collect::<rusqlite::Result<_>>()?;
     let since = now - MAX_AGE_SECS;
-    let mut entries = sealed_editions(conn, album_id, since)?;
+    let mut entries = Vec::new();
     for row in rows {
         let at = (row.created_at * 1000.0) as i64;
         if let Some(kind) = album_event(&row) {
@@ -403,6 +405,8 @@ fn album_event(row: &Row) -> Option<HistoryKind> {
                 _ => HistoryKind::EditionChosen,
             }
         }
+        "automatic_match_sealed" => return sealed_edition(row),
+        "automatic_match_withdrawn" => HistoryKind::MatchWithdrawn,
         "undo_automatic_edition" => HistoryKind::EditionChangeUndone,
         identity::FOLD_UNDONE => HistoryKind::UnfoldedFrom,
         "management_hand_back_given_up" => HistoryKind::HandBackGivenUp,
@@ -467,52 +471,32 @@ fn fold_undone(
     .optional()
 }
 
-/// The album's edition change that identification sealed, kept as its
-/// automatic-edition undo; an exact edition a recheck accepted has its own
-/// audit row instead. Only the latest is kept, and only a change counts:
-/// the album was matched before, and is on another edition now or the
-/// change was undone.
-fn sealed_editions(
-    conn: &Connection,
-    album_id: &str,
-    since: f64,
-) -> rusqlite::Result<Vec<HistoryEntry>> {
-    let sealed: Option<(Option<String>, f64, bool, Option<String>)> = conn
-        .prepare_cached(
-            "SELECT u.prior_identity_json, u.created_at, u.consumed_at IS NOT NULL, \
-             i.release_mbid FROM library_automatic_edition_undo u \
-             LEFT JOIN local_album_external_identities i \
-             ON i.local_album_id = u.local_album_id AND i.provider = 'musicbrainz' \
-             WHERE u.local_album_id = ?1 AND u.reason_code = 'AUTOMATIC_EXACT_EDITION' \
-             AND u.created_at >= ?2",
-        )?
-        .query_row(params![album_id, since], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
-        .optional()?;
-    let Some((Some(prior), created_at, undone, release)) = sealed else {
-        return Ok(Vec::new());
+/// The edition a seal moved the album to, as its audit row keeps it.
+#[derive(Deserialize)]
+struct Sealed {
+    release_mbid: Option<String>,
+}
+
+/// The entry for an identification seal that changed the album row. Only
+/// a change of edition tells something: a first match, a group-only seal
+/// and the same release spelled otherwise have none.
+fn sealed_edition(row: &Row) -> Option<HistoryKind> {
+    let prior = serde_json::from_str::<Option<PriorAlbumIdentity>>(&row.before);
+    let sealed = serde_json::from_str::<Sealed>(&row.after);
+    let (Ok(prior), Ok(sealed)) = (prior, sealed) else {
+        tracing::warn!(
+            action_id = row.id,
+            "album history skips an unreadable action"
+        );
+        return None;
     };
-    let Ok(prior) = serde_json::from_str::<PriorAlbumIdentity>(&prior) else {
-        tracing::warn!(album_id, "album history skips an unreadable edition undo");
-        return Ok(Vec::new());
-    };
-    if prior.release_group_mbid.is_none() || (!undone && prior.release_mbid == release) {
-        return Ok(Vec::new());
+    let prior = prior.filter(|prior| prior.release_group_mbid.is_some())?;
+    let release = sealed.release_mbid?;
+    match prior.release_mbid {
+        None => Some(HistoryKind::EditionChosen),
+        Some(before) if before.eq_ignore_ascii_case(&release) => None,
+        Some(_) => Some(HistoryKind::EditionChanged),
     }
-    Ok(vec![HistoryEntry {
-        kind: if prior.release_mbid.is_some() {
-            HistoryKind::EditionChanged
-        } else {
-            HistoryKind::EditionChosen
-        },
-        at: (created_at * 1000.0) as i64,
-        by: None,
-        track_count: 0,
-        track_titles: Vec::new(),
-        other_album_title: None,
-        undo_id: None,
-    }])
 }
 
 /// The first titles of `tracks`, by disc and track number.
