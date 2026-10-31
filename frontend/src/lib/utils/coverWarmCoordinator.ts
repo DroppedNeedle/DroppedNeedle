@@ -2,7 +2,13 @@ import { api } from '$lib/api/client';
 
 export const COVER_VISUAL_SETTLE_MS = 6500;
 
-const RETRY_DELAYS_MS = [1500, 3000, 5000, 8000, 12000, 20000] as const;
+// Quick polls for a cover being fetched, then slower ones for a cover
+// archive that is down for a while (it answered 500 for minutes on
+// 2026-10-31): about ten minutes in all while the cover is on screen, so a
+// short outage does not leave the placeholder until the page is reloaded.
+const RETRY_DELAYS_MS = [
+	1500, 3000, 5000, 8000, 12000, 20000, 30000, 60000, 120000, 300000
+] as const;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export type CoverWarmUpdate =
