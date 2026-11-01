@@ -21573,7 +21573,7 @@ export interface components {
          * @description Automatic-scan cadence values.
          * @enum {string}
          */
-        ScanFrequency: "manual" | "5min" | "10min" | "30min" | "1hr" | "6hr" | "12hr" | "24hr" | "3d" | "7d" | "daily";
+        ScanFrequency: "manual" | "30min" | "1hr" | "6hr" | "12hr" | "24hr" | "3d" | "7d" | "daily";
         /**
          * @description Scan kind. `rescan_files` re-reads every in-policy file even when its
          *     stat revision is unchanged; `policy_reconcile` walks but skips tag reads.

@@ -31,7 +31,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use droppedneedle_kernel::runtime_config::ingest::{
-    move_recycle_bin, move_recycle_retention, read_legacy,
+    move_recycle_bin, move_recycle_retention, read_legacy, retire_fast_scan_schedule,
 };
 use droppedneedle_kernel::runtime_config::sql as settings_sql;
 use droppedneedle_kernel::runtime_config::store::{decode_text, encode_text};
@@ -715,6 +715,15 @@ fn stage_settings(
             "library_management.recycle_retention_days".to_owned(),
             "imported",
             "moved from the download policy".to_owned(),
+        );
+    }
+
+    if retire_fast_scan_schedule(staged_object) {
+        report.note(
+            "settings",
+            "library_scan_schedule.scan_frequency".to_owned(),
+            "imported",
+            "v3 has no 5 or 10 minute scan schedule; it is now 30 minutes".to_owned(),
         );
     }
 

@@ -39,7 +39,9 @@ use sha2::{Digest, Sha256};
 use crate::db::{Db, DbError, DurableLane};
 
 use super::error::ConfigError;
-use super::sections::{DownloadPolicy, LibraryManagement, Section as _};
+use super::sections::{
+    DownloadPolicy, LibraryManagement, LibraryScanSchedule, Section as _, current_scan_frequency,
+};
 use super::store::encode_text;
 use super::{KNOWN_TOP_LEVEL_KEYS, sql};
 use crate::clock::Clock;
@@ -195,6 +197,7 @@ fn parse_file(path: &Path) -> Result<LegacyFile, ConfigError> {
     };
     move_recycle_bin(&mut object);
     move_recycle_retention(&mut object);
+    retire_fast_scan_schedule(&mut object);
     let mut rows = Vec::new();
     let mut left_behind = Vec::new();
     for (key, mut value) in object {
@@ -298,6 +301,27 @@ pub fn move_recycle_retention(object: &mut serde_json::Map<String, serde_json::V
         return false;
     };
     management.insert(FIELD.to_owned(), days);
+    true
+}
+
+/// Rewrite a retired scan schedule in a settings object keyed by section,
+/// so it lands as 30 minutes rather than as a section that does not read.
+/// Says whether it changed anything. The v2 import uses it too.
+pub fn retire_fast_scan_schedule(object: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+    let Some(frequency) = object
+        .get_mut(LibraryScanSchedule::KEY)
+        .and_then(|schedule| schedule.get_mut("scan_frequency"))
+    else {
+        return false;
+    };
+    let Some(stored) = frequency.as_str() else {
+        return false;
+    };
+    let current = current_scan_frequency(stored);
+    if current == stored {
+        return false;
+    }
+    *frequency = serde_json::Value::String(current.to_owned());
     true
 }
 

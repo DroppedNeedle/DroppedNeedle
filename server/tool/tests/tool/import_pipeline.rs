@@ -683,6 +683,50 @@ async fn schedule_carry_moves_sync_frequency_once() {
     );
 }
 
+/// v3 has no 5 or 10 minute scan schedule. Either one in a v2 export or in
+/// its `config.json` imports as 30 minutes, and the report says so for the
+/// export's.
+#[tokio::test]
+async fn fast_scan_schedules_import_as_thirty_minutes() {
+    let fixture = Fixture::shared();
+
+    let mut export = fixture.shell();
+    export["settings"]["library_scan_schedule"] =
+        json!({"scan_frequency": "5min", "daily_scan_time": "04:00"});
+    let pool = migrated_pool().await;
+    let (_dir, config_path, crypto) = scratch_config("schedule-fast-export");
+    let report = run_import(import_request(&export, pool.clone(), config_path, crypto)).await;
+    assert_eq!(report.exit.code, ExitCode::Ok);
+    let stored = stored_settings(&pool).await;
+    assert_eq!(
+        stored["library_scan_schedule"],
+        json!({"scan_frequency": "30min", "daily_scan_time": "04:00"})
+    );
+    assert!(
+        report
+            .to_json()
+            .contains("library_scan_schedule.scan_frequency"),
+        "the report names the rewrite"
+    );
+
+    let export = fixture.shell();
+    let pool = migrated_pool().await;
+    let (dir, config_path, crypto) = scratch_config("schedule-fast-carry");
+    let v2_config = dir.join("v2-config.json");
+    std::fs::write(
+        &v2_config,
+        r#"{"library_sync_settings": {"sync_frequency": "10min"}}"#,
+    )
+    .unwrap();
+    let mut request = import_request(&export, pool.clone(), config_path, crypto);
+    request.v2_config_path = Some(v2_config);
+    assert_eq!(run_import(request).await.exit.code, ExitCode::Ok);
+    assert_eq!(
+        stored_settings(&pool).await["library_scan_schedule"]["scan_frequency"],
+        json!("30min")
+    );
+}
+
 #[tokio::test]
 async fn schedule_carry_ignores_unknown_values() {
     assert_eq!(

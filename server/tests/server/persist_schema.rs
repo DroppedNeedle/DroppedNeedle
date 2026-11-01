@@ -9734,3 +9734,55 @@ async fn auth_rows_carry_onto_strict_tables_on_upgrade() {
     );
     assert!(app.get_active_by_sha256("sha-two").await.unwrap().is_none());
 }
+
+/// Migration 0114 rewrites a stored 5 or 10 minute scan schedule to 30
+/// minutes and keeps the row's other fields, even ones that do not decode. A
+/// row with another value or shape is left as it was and does not stop the
+/// migration.
+#[tokio::test]
+async fn a_fast_scan_schedule_becomes_thirty_minutes_on_upgrade() {
+    let upgraded = async |stored: &str| {
+        let pool = scratch_pool().await;
+        run_migrations(&pool, &migrator_through(113)).await.unwrap();
+        sqlx::query(
+            "INSERT INTO config_sections (key, value_json, revision, updated_at) \
+             VALUES ('library_scan_schedule', ?, 4, 1700000000000)",
+        )
+        .bind(stored)
+        .execute(&pool)
+        .await
+        .unwrap();
+        apply_migrations(&pool).await.unwrap();
+        sqlx::query_as::<_, (String, i64)>(
+            "SELECT value_json, revision FROM config_sections \
+             WHERE key = 'library_scan_schedule'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+
+    for (stored, rewritten) in [
+        (
+            r#"{"scan_frequency":"5min","daily_scan_time":"04:00"}"#,
+            r#"{"scan_frequency":"30min","daily_scan_time":"04:00"}"#,
+        ),
+        (
+            r#"{"scan_frequency":"10min","daily_scan_time":7}"#,
+            r#"{"scan_frequency":"30min","daily_scan_time":7}"#,
+        ),
+    ] {
+        assert_eq!(upgraded(stored).await, (rewritten.to_owned(), 5));
+    }
+    for stored in [
+        r#"{"scan_frequency":"1hr","daily_scan_time":"04:00"}"#,
+        r#"{"scan_frequency":"fortnightly"}"#,
+        r#"{"daily_scan_time":"04:00"}"#,
+        r#"{"scan_frequency":5}"#,
+        r#"{"scan_frequency":["5min"]}"#,
+        r#""5min""#,
+        r#"["5min"]"#,
+    ] {
+        assert_eq!(upgraded(stored).await, (stored.to_owned(), 4));
+    }
+}

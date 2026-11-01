@@ -33,13 +33,6 @@
 	);
 	const lastScan = $derived(scheduleQuery.data?.last_scan_at ?? null);
 
-	// Hide the legacy 5/10-minute options unless one is already selected.
-	const options = $derived(
-		SCAN_FREQUENCY_OPTIONS.filter(
-			(o) => !o.legacy || o.value === scheduleQuery.data?.scan_frequency
-		)
-	);
-
 	async function handleSave() {
 		try {
 			await save.mutateAsync({
@@ -66,10 +59,7 @@
 		<SelectField
 			label="Scheduled scan frequency"
 			bind:value={frequency}
-			options={options.map((opt) => ({
-				value: opt.value,
-				label: `${opt.label}${opt.legacy ? ' (legacy)' : ''}`
-			}))}
+			options={SCAN_FREQUENCY_OPTIONS}
 		/>
 		{#if isDaily}
 			<Field label="Time of day">

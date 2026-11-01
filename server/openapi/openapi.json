@@ -62352,8 +62352,6 @@
         "description": "Automatic-scan cadence values.",
         "enum": [
           "manual",
-          "5min",
-          "10min",
           "30min",
           "1hr",
           "6hr",

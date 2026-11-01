@@ -9,13 +9,13 @@
 
 use std::path::Path;
 
+use droppedneedle_kernel::runtime_config::sections::current_scan_frequency;
 use serde_json::Value;
 use thiserror::Error;
 
-/// v2 `sync_frequency` values; a strict subset of v3 `scan_frequency`.
-const KNOWN_FREQUENCIES: &[&str] = &[
-    "manual", "5min", "10min", "30min", "1hr", "6hr", "12hr", "24hr", "3d", "7d",
-];
+/// v2 `sync_frequency` values v3 keeps; a strict subset of its
+/// `scan_frequency`. v2's 5 and 10 minutes carry as 30.
+const KNOWN_FREQUENCIES: &[&str] = &["manual", "30min", "1hr", "6hr", "12hr", "24hr", "3d", "7d"];
 
 /// Every way the schedule carry can fail. A missing or unreadable v2 file is
 /// not an error: the carry simply does not happen.
@@ -51,10 +51,12 @@ pub enum ScheduleCarryError {
 /// schedule; the v3 default stands).
 #[must_use]
 pub fn read_sync_frequency(v2_config: &Value) -> Option<String> {
-    let frequency = v2_config
-        .get("library_sync_settings")?
-        .get("sync_frequency")?
-        .as_str()?;
+    let frequency = current_scan_frequency(
+        v2_config
+            .get("library_sync_settings")?
+            .get("sync_frequency")?
+            .as_str()?,
+    );
     if KNOWN_FREQUENCIES.contains(&frequency) {
         Some(frequency.to_owned())
     } else {

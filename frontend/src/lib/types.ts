@@ -967,7 +967,7 @@ export interface LibraryStats {
 }
 
 export type ScanFrequency =
-	'manual' | '5min' | '10min' | '30min' | '1hr' | '6hr' | '12hr' | '24hr' | '3d' | '7d' | 'daily';
+	'manual' | '30min' | '1hr' | '6hr' | '12hr' | '24hr' | '3d' | '7d' | 'daily';
 
 export interface LibraryScanSchedule {
 	scan_frequency: ScanFrequency;

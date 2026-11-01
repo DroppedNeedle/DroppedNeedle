@@ -47,8 +47,6 @@ impl ScheduleSettings {
 /// `daily`.
 fn interval_seconds(frequency: ScanFrequency) -> Option<f64> {
     match frequency {
-        ScanFrequency::Min5 => Some(300.0),
-        ScanFrequency::Min10 => Some(600.0),
         ScanFrequency::Min30 => Some(1_800.0),
         ScanFrequency::Hr1 => Some(3_600.0),
         ScanFrequency::Hr6 => Some(21_600.0),

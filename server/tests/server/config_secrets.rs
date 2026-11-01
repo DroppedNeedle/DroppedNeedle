@@ -16,7 +16,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    LibraryScanSchedule, MusicBrainzSettings, PluginConfig,
+    LibraryScanSchedule, MusicBrainzSettings, PluginConfig, ScanFrequency,
 };
 use droppedneedle_kernel::runtime_config::store::ConfigStore;
 use droppedneedle_kernel::runtime_config::{ConfigError, DROPPED_SECTIONS};
@@ -299,6 +299,22 @@ fn wrong_shapes_fail_typed_not_panics() {
             ..
         })
     ));
+}
+
+/// A first start's `config.json` holding a retired scan schedule lands as 30
+/// minutes, not as a section that does not read and stops scheduled scans.
+#[test]
+fn a_config_json_fast_scan_schedule_lands_as_thirty_minutes() {
+    let dir = test_dir("fast-schedule");
+    std::fs::write(
+        dir.join("config.json"),
+        r#"{"library_scan_schedule": {"scan_frequency": "5min", "daily_scan_time": "04:00"}}"#,
+    )
+    .unwrap();
+    let store = open_store(&dir, [42u8; 32]);
+    let schedule: LibraryScanSchedule = store.get().unwrap();
+    assert_eq!(schedule.scan_frequency, ScanFrequency::Min30);
+    assert_eq!(schedule.daily_scan_time, "04:00");
 }
 
 #[test]

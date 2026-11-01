@@ -345,6 +345,8 @@ machine and its data folders can run it.
 
   The outbound HTTP timeouts are environment variables, `HTTP_TIMEOUT` and
   `HTTP_CONNECT_TIMEOUT`, as before.
+- **5 and 10 minute scan schedules.** v3 has neither. A schedule of either
+  becomes 30 minutes.
 - **Max connections.** v2 had a "max connections" setting for outbound HTTP,
   also read from `HTTP_MAX_CONNECTIONS`. v3 has neither. The nearest is the
   `HTTP_MAX_KEEPALIVE` environment variable, the number of idle connections

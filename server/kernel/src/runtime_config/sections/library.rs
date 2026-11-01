@@ -20,12 +20,6 @@ pub enum ScanFrequency {
     /// wrote the variant name.
     #[serde(rename = "manual", alias = "Manual")]
     Manual,
-    /// Every 5 minutes.
-    #[serde(rename = "5min")]
-    Min5,
-    /// Every 10 minutes.
-    #[serde(rename = "10min")]
-    Min10,
     /// Every 30 minutes.
     #[serde(rename = "30min")]
     Min30,
@@ -51,6 +45,16 @@ pub enum ScanFrequency {
     /// Once a day at `daily_scan_time`.
     #[serde(rename = "daily")]
     Daily,
+}
+
+/// The cadence an imported value means now: the retired 5 and 10 minute
+/// schedules are 30 minutes. Anything else is returned as it is.
+#[must_use]
+pub fn current_scan_frequency(value: &str) -> &str {
+    match value {
+        "5min" | "10min" => "30min",
+        other => other,
+    }
 }
 
 /// Native automatic-scan schedule.
