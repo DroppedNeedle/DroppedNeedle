@@ -19,6 +19,7 @@
 		TriangleAlert
 	} from 'lucide-svelte';
 
+	import { withBasePath } from '$lib/utils/basePath';
 	import LibraryManagementActivationDialog from './LibraryManagementActivationDialog.svelte';
 	import LibraryManagementProfileEditor from './LibraryManagementProfileEditor.svelte';
 	import LibraryManagementProfileList from './LibraryManagementProfileList.svelte';
@@ -493,8 +494,9 @@
 								variant="warning"
 								size="sm"
 								icon={ShieldAlert}
-								href={`/library/management/previews/${encodeURIComponent(remoteActivation.operation.id)}`}
-								>Review dry run</Button
+								href={withBasePath(
+									`/library/management/previews/${encodeURIComponent(remoteActivation.operation.id)}`
+								)}>Review dry run</Button
 							>
 						</div>
 					{:else if activationHealthQuery.isError}

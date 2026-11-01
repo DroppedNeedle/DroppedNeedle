@@ -10,6 +10,7 @@
 	import { LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE } from '$lib/queries/library-management/LibraryManagementConfirmation';
 	import type { LibraryRootSettings } from '$lib/queries/library/LibraryOperationsTypes';
 	import Button from '$lib/ui/Button.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';
 
@@ -198,7 +199,9 @@
 						variant="ghost"
 						size="sm"
 						class="mt-3 self-start"
-						href={`/library/management/previews/${encodeURIComponent(wizard.jobId ?? '')}`}
+						href={withBasePath(
+							`/library/management/previews/${encodeURIComponent(wizard.jobId ?? '')}`
+						)}
 						target="_blank"
 						rel="noopener noreferrer">Review file-by-file dry run</Button
 					>

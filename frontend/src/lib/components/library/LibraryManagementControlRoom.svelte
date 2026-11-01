@@ -830,7 +830,9 @@
 					>
 					<ul class="mt-2 flex flex-col gap-2 text-sm">
 						{#each skippedAlbums as album (album.album_id)}<li>
-								<a class="link font-medium" href={`/album/${encodeURIComponent(album.album_id)}`}
+								<a
+									class="link font-medium"
+									href={withBasePath(`/album/${encodeURIComponent(album.album_id)}`)}
 									>{album.album_title}</a
 								>{#if album.artist_name}<span class="text-base-content/60">
 										· {album.artist_name}</span

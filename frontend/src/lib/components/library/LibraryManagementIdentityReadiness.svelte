@@ -486,7 +486,8 @@
 									size="xs"
 									icon={ArrowRight}
 									iconPosition="end"
-									href={`/album/${encodeURIComponent(finding.local_album_id)}`}>Open release</Button
+									href={withBasePath(`/album/${encodeURIComponent(finding.local_album_id)}`)}
+									>Open release</Button
 								>
 							{/if}
 						</div>

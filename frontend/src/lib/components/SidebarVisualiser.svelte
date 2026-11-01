@@ -1,11 +1,12 @@
 <script lang="ts">
 	import '$lib/components/now-playing.css';
 	import { nowPlayingMerged } from '$lib/stores/nowPlayingMerged.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 
 	const sourceHub: Record<string, string> = {
-		jellyfin: '/library/jellyfin',
-		navidrome: '/library/navidrome',
-		plex: '/library/plex'
+		jellyfin: withBasePath('/library/jellyfin'),
+		navidrome: withBasePath('/library/navidrome'),
+		plex: withBasePath('/library/plex')
 	};
 </script>
 

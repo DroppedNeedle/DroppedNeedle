@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('$app/environment', () => ({ browser: true }));
 vi.mock('$app/navigation', () => ({ goto: state.goto }));
-vi.mock('$app/paths', () => ({ resolve: (path: string) => path }));
+vi.mock('$app/paths', () => ({ base: '' }));
 vi.mock('$lib/api/client', () => ({ api: { v3: { POST: state.apiLogout } } }));
 vi.mock('$lib/utils/userSessionCleanup', () => ({ clearUserSessionState: state.cleanup }));
 

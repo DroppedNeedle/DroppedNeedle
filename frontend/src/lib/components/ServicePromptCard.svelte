@@ -2,6 +2,7 @@
 	import type { ServicePrompt } from '$lib/queries/discover/types';
 	import { ArrowRight, Headphones, Tv, Download, Radio, Music, X } from 'lucide-svelte';
 	import { dismiss } from '$lib/utils/dismissedPrompts';
+	import { withBasePath } from '$lib/utils/basePath';
 	import type { ComponentType } from 'svelte';
 	import Button, { type ButtonVariant } from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -64,8 +65,9 @@
 
 	function getSettingsLink(service: string): string {
 		// Per-user scrobble/discovery connections live on /profile, not the admin /settings tabs.
-		if (service === 'listenbrainz' || service === 'lastfm') return '/profile#scrobbling';
-		return `/settings?tab=${service}`;
+		if (service === 'listenbrainz' || service === 'lastfm')
+			return withBasePath('/profile#scrobbling');
+		return withBasePath(`/settings?tab=${service}`);
 	}
 
 	function handleDismiss() {

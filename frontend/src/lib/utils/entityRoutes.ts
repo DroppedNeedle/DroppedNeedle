@@ -1,11 +1,11 @@
-import { resolve } from '$app/paths';
+import { withBasePath } from '$lib/utils/basePath';
 
 export function albumHref(id: string): string {
-	return resolve('/album/[id]', { id });
+	return withBasePath(`/album/${encodeURIComponent(id)}`);
 }
 
 export function artistHref(id: string): string {
-	return resolve('/artist/[id]', { id });
+	return withBasePath(`/artist/${encodeURIComponent(id)}`);
 }
 
 export function localAlbumHref(id: string): string {

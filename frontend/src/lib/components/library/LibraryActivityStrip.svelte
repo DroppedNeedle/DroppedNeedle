@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 	import { getLibraryActivityQuery } from '$lib/queries/library/LibraryActivityQueries.svelte';
 	import type {
 		LibraryActivityResponse,
@@ -96,7 +97,11 @@
 	const primary = $derived(workItems[0] ?? null);
 	const additional = $derived(workItems.slice(1));
 	const destination = $derived(
-		primary ? (isAdmin ? libraryWorkHref(primary) : '/library') : '/library'
+		primary
+			? isAdmin
+				? libraryWorkHref(primary)
+				: withBasePath('/library')
+			: withBasePath('/library')
 	);
 	const announcement = $derived(
 		primary
@@ -186,7 +191,7 @@
 			<div id="library-activity-work-stack" class="library-activity-stack">
 				{#each additional as item (item.id)}
 					<a
-						href={isAdmin ? libraryWorkHref(item) : '/library'}
+						href={isAdmin ? libraryWorkHref(item) : withBasePath('/library')}
 						class="library-activity-stack__item"
 					>
 						<span class="library-activity-stack__icon"><LibraryWorkIcon {item} /></span>

@@ -1,7 +1,7 @@
 <!-- The search dialog the sidebar and the bottom bar open. -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { resolve } from '$app/paths';
+	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { X } from 'lucide-svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import SearchSuggestions from '$lib/components/SearchSuggestions.svelte';
@@ -29,8 +29,11 @@
 
 	function handleSelect(result: SuggestResult) {
 		open = false;
-		const routeId = result.type === 'artist' ? '/artist/[id]' : '/album/[id]';
-		goto(resolve(routeId, { id: result.musicbrainz_id }));
+		goto(
+			result.type === 'artist'
+				? artistHref(result.musicbrainz_id)
+				: albumHref(result.musicbrainz_id)
+		);
 	}
 </script>
 

@@ -8,6 +8,7 @@
 	import { playerStore } from '$lib/stores/player.svelte';
 	import type { NativeTrackListItem } from '$lib/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
+	import { withBasePath } from '$lib/utils/basePath';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import { NOISE_TEXTURE } from './noiseTexture';
@@ -59,7 +60,7 @@
 		results ? results.artists.length + results.albums.length + results.tracks.length : 0
 	);
 	const showSkeleton = $derived(searchQuery.isLoading && !results);
-	const discoverHref = $derived(`/search?q=${encodeURIComponent(term.trim())}`);
+	const discoverHref = $derived(withBasePath(`/search?q=${encodeURIComponent(term.trim())}`));
 
 	function clear() {
 		term = '';

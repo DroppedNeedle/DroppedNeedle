@@ -174,7 +174,7 @@
 				<div class="flex items-center justify-between mb-4">
 					<h2 class="text-xl font-bold">Songs</h2>
 					<a
-						href={`/search/tracks?q=${encodeURIComponent(normalizedQuery)}`}
+						href={withBasePath(`/search/tracks?q=${encodeURIComponent(normalizedQuery)}`)}
 						class="text-sm text-primary hover:underline"
 					>
 						View more <ArrowRight class="h-4 w-4 inline align-middle" />
@@ -239,7 +239,7 @@
 				<h2 class="text-xl font-bold">Albums</h2>
 				{#if displayedAlbums.length > 0}
 					<a
-						href={`/search/albums?q=${encodeURIComponent(normalizedQuery)}`}
+						href={withBasePath(`/search/albums?q=${encodeURIComponent(normalizedQuery)}`)}
 						class="text-sm text-primary hover:underline"
 					>
 						View more <ArrowRight class="h-4 w-4 inline align-middle" />

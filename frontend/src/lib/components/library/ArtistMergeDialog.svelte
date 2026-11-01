@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { FingerprintPattern } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 
 	import type { LibraryArtistSummary } from '$lib/types';
 
@@ -10,7 +11,9 @@
 
 	let { artist }: Props = $props();
 	const identityDeskUrl = $derived(
-		`/library/management/artists?artist=${encodeURIComponent(artist.id)}&q=${encodeURIComponent(artist.name)}`
+		withBasePath(
+			`/library/management/artists?artist=${encodeURIComponent(artist.id)}&q=${encodeURIComponent(artist.name)}`
+		)
 	);
 </script>
 

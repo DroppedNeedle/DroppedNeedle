@@ -76,7 +76,6 @@ export function createEventHandlers(deps: EventHandlerDeps) {
 
 	function goToArtist(): void {
 		const album = deps.getAlbum();
-		// eslint-disable-next-line svelte/no-navigation-without-resolve -- artistHref uses resolve() internally
 		if (album?.artist_id) goto(artistHref(album.artist_id));
 	}
 

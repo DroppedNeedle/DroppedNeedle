@@ -1,7 +1,7 @@
 <!-- The bar along the top: logo, search, service health and the profile link. -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { resolve } from '$app/paths';
+	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { UserRound } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -21,8 +21,11 @@
 	}
 
 	function handleSelect(result: SuggestResult) {
-		const routeId = result.type === 'artist' ? '/artist/[id]' : '/album/[id]';
-		goto(resolve(routeId, { id: result.musicbrainz_id }));
+		goto(
+			result.type === 'artist'
+				? artistHref(result.musicbrainz_id)
+				: albumHref(result.musicbrainz_id)
+		);
 	}
 </script>
 

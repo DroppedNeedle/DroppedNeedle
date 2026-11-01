@@ -142,6 +142,35 @@ const kitRules = [
 	}
 ];
 
+// In-app links and goto take their path through withBasePath
+// (lib/utils/basePath.ts), so a deployment base path is kept. A root path
+// written as a literal skips it: an href (static, in {...} or a template
+// literal) or the first argument of goto.
+const ROOT_PATH = '/^\\/(?!\\/)/';
+const LINK_MESSAGE = 'Wrap an in-app path in withBasePath from $lib/utils/basePath.';
+const linkRules = [
+	{
+		selector: `SvelteAttribute[key.name='href'] > SvelteLiteral[value=${ROOT_PATH}]`,
+		message: LINK_MESSAGE
+	},
+	{
+		selector: `SvelteAttribute[key.name='href'] > SvelteMustacheTag > Literal[value=${ROOT_PATH}]`,
+		message: LINK_MESSAGE
+	},
+	{
+		selector: `SvelteAttribute[key.name='href'] > SvelteMustacheTag > TemplateLiteral[quasis.0.value.raw=${ROOT_PATH}]`,
+		message: LINK_MESSAGE
+	},
+	{
+		selector: `CallExpression[callee.name='goto'] > Literal.arguments:first-child[value=${ROOT_PATH}]`,
+		message: LINK_MESSAGE
+	},
+	{
+		selector: `CallExpression[callee.name='goto'] > TemplateLiteral.arguments:first-child[quasis.0.value.raw=${ROOT_PATH}]`,
+		message: LINK_MESSAGE
+	}
+];
+
 // The transport itself: the api client and the page-scoped fetch it wraps.
 const TRANSPORT = ['src/lib/api/**', 'src/lib/utils/navigationAbort.ts'];
 
@@ -160,6 +189,8 @@ export default defineConfig(
 			// typescript-eslint strongly recommend that you do not use the no-undef lint rule on TypeScript projects.
 			// see: https://typescript-eslint.io/troubleshooting/faqs/eslint/#i-get-errors-from-the-no-undef-rule-about-global-variables-not-being-defined-even-though-there-are-no-typescript-errors
 			'no-undef': 'off',
+			// In-app paths go through withBasePath, which linkRules checks.
+			'svelte/no-navigation-without-resolve': 'off',
 			'@typescript-eslint/no-explicit-any': 'error',
 			'@typescript-eslint/no-unused-vars': [
 				'error',
@@ -176,9 +207,6 @@ export default defineConfig(
 				parser: ts.parser,
 				svelteConfig
 			}
-		},
-		rules: {
-			'svelte/no-navigation-without-resolve': 'off'
 		}
 	},
 	{
@@ -198,7 +226,13 @@ export default defineConfig(
 		files: ['src/**/*.ts', 'src/**/*.js', 'src/**/*.svelte'],
 		ignores: [...TRANSPORT, 'src/**/*.spec.ts', 'src/**/*.test.ts', 'src/**/*.d.ts'],
 		rules: {
-			'no-restricted-syntax': ['error', ...queryClientRules, ...transportRules, ...markupRules]
+			'no-restricted-syntax': [
+				'error',
+				...queryClientRules,
+				...transportRules,
+				...markupRules,
+				...linkRules
+			]
 		}
 	},
 	{
@@ -210,7 +244,8 @@ export default defineConfig(
 				...queryClientRules,
 				...transportRules,
 				...markupRules,
-				...kitRules
+				...kitRules,
+				...linkRules
 			]
 		}
 	},
