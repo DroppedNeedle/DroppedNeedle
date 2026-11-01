@@ -861,6 +861,9 @@ impl HeldService {
                     code = deferred.reason.code(),
                     "held import refused"
                 );
+                if deferred.reason == Reason::JournalUnreadable {
+                    return Err(HeldError::Busy("held import".to_owned()));
+                }
                 if deferred.reason != Reason::LibraryChanged {
                     return Err(refused(deferred.reason));
                 }
@@ -1145,6 +1148,9 @@ impl HeldService {
                 .await
                 .map_err(|deferred| {
                     tracing::warn!(entry_id = entry.id, detail = %deferred.detail, "held match refused");
+                    if deferred.reason == Reason::JournalUnreadable {
+                        return HeldError::Busy("held match import".to_owned());
+                    }
                     refused(deferred.reason)
                 })?;
             let by_path = |path: &Path| {

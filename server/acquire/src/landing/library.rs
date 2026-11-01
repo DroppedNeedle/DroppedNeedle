@@ -492,6 +492,7 @@ impl LandingLibrary for LibraryLanding {
                     Err(ImportFailure::FolderMissing(folder))
                 }
                 Err(ImportError::LibraryOff) => Err(ImportFailure::LibraryOff),
+                Err(ImportError::Busy(cause)) => Err(ImportFailure::Busy(cause)),
             }
         })
     }

@@ -400,6 +400,9 @@ impl DropImports {
             self.store
                 .save_item(&back, DropItemStatus::Processing)
                 .await?;
+            if reason == Reason::JournalUnreadable {
+                return Err(DropError::Busy("drop match import".to_owned()));
+            }
             return Err(DropError::Conflict(format!(
                 "{} {}",
                 reason.message(),
@@ -803,6 +806,19 @@ impl DropImports {
             },
             owner: job.user_id.clone(),
         };
+        let pairing_of = |file: usize, track: Option<usize>| {
+            let track = track.or_else(|| found.scored.pair_for(file).map(|pair| pair.track))?;
+            let on = release.tracks.get(track)?;
+            Some(HeldPairing {
+                release_mbid: Some(release.id.clone()),
+                release_track_mbid: Some(on.id.clone()),
+                recording_mbid: Some(on.recording_id.clone()),
+                disc_number: Some(i64::from(on.disc.max(1))),
+                track_number: Some(i64::from(on.position)),
+                track_title: Some(on.title.clone()),
+                expected_duration_seconds: on.length_ms.map(|ms| ms as f64 / 1000.0),
+            })
+        };
         let placed = match intake::place(library, &batch, pairing, None).await {
             Ok(placed) => placed,
             Err(deferred) => {
@@ -818,7 +834,17 @@ impl DropImports {
                     Reason::LibraryOff => (Reason::LibraryOff, None),
                     _ => (Reason::LibraryUnavailable, None),
                 };
-                let (item, fates) = all_wait(item, reason, specifics);
+                // An automatic upload is held paired, so the held list retries
+                // it by itself; a person's Match answers busy and changes
+                // nothing.
+                let put_off = match deferred.reason {
+                    Reason::JournalUnreadable => Reason::JournalUnreadable,
+                    _ => reason,
+                };
+                let (item, mut fates) = all_wait(item, reason, specifics);
+                for (file, fate) in fates.iter_mut().take(landing.audio.len()).enumerate() {
+                    fate.pairing = pairing_of(file, None);
+                }
                 return Organised {
                     item,
                     fates,
@@ -826,7 +852,7 @@ impl DropImports {
                     release: release.clone(),
                     placed: 0,
                     fulfills: false,
-                    deferred: Some(reason),
+                    deferred: Some(put_off),
                 };
             }
         };
@@ -835,19 +861,6 @@ impl DropImports {
             expected: release.tracks.len(),
             tags_kept: placed.tags_kept,
             ..Counts::default()
-        };
-        let pairing_of = |file: usize, track: Option<usize>| {
-            let track = track.or_else(|| found.scored.pair_for(file).map(|pair| pair.track))?;
-            let on = release.tracks.get(track)?;
-            Some(HeldPairing {
-                release_mbid: Some(release.id.clone()),
-                release_track_mbid: Some(on.id.clone()),
-                recording_mbid: Some(on.recording_id.clone()),
-                disc_number: Some(i64::from(on.disc.max(1))),
-                track_number: Some(i64::from(on.position)),
-                track_title: Some(on.title.clone()),
-                expected_duration_seconds: on.length_ms.map(|ms| ms as f64 / 1000.0),
-            })
         };
         let mut imported_tracks: HashSet<usize> = HashSet::new();
         // Imported and already owned uploads are consumed; the rest wait

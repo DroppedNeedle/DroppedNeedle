@@ -59,6 +59,24 @@ pub(crate) fn staging_settled(
     Ok(!unsettled)
 }
 
+/// Whether a publish that took files from `task_dir` needs a person: it
+/// needs attention and nobody has closed it yet.
+pub(crate) fn staging_needs_attention(
+    conn: &rusqlite::Connection,
+    task_dir: &str,
+) -> rusqlite::Result<bool> {
+    let folder = format!("{task_dir}/");
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
+         WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
+         WHERE substr(source_rel, 1, length(?1)) = ?1) \
+         AND state = 'needs_attention' AND bundle_id NOT IN \
+         (SELECT bundle_id FROM library_publish_resolutions))",
+        rusqlite::params![folder],
+        |row| row.get(0),
+    )
+}
+
 /// Copy one landed file, opened by the caller, into the hidden import
 /// folder, synced, hashing the bytes as they stream through.
 pub(crate) fn copy_in(

@@ -136,6 +136,9 @@ pub enum ImportFailure {
     FolderMissing(String),
     /// The library-wide switch is off. The download waits until it is on.
     LibraryOff,
+    /// The database was busy, so no import finished. The import runs again
+    /// later and spends no try.
+    Busy(String),
 }
 
 /// The library as the landing sees it. MusicBrainz is asked at the

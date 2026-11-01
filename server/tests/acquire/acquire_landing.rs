@@ -1915,6 +1915,7 @@ async fn a_landing_waits_while_the_chosen_edition_does_not_read() {
         changes: 0.into(),
         after_import: None,
         edition_busy: true,
+        busy_once: Default::default(),
     });
     let acquire = acquire_over(&platform, &library, port);
     let landed = Landed {
@@ -1934,6 +1935,206 @@ async fn a_landing_waits_while_the_chosen_edition_does_not_read() {
         .await
         .expect("quarantine count");
     assert_eq!(quarantined, 0);
+}
+
+/// An import whose reads find the database busy places nothing and waits
+/// like an unreadable journal, so the download is not failed and spends
+/// none of its waits; the next landing imports the files.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_landing_whose_import_finds_the_database_busy_waits_and_lands_next() {
+    use droppedneedle_kernel::db::{DbConfig, open_runtime};
+
+    let dir = crate::common::ScratchDir::new("landing-import-busy");
+    crate::common::migrated_db(&dir.join("app.db"));
+    // One reader and a short wait for it: while a read holds it, the
+    // import's reads answer busy at once.
+    let mut db_config =
+        DbConfig::new(&dir.join("app.db")).with_read_wait(std::time::Duration::from_millis(100));
+    db_config.readers = 1;
+    let runtime = open_runtime(&db_config).await.expect("database opens");
+    let db = AcquireDb::new(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(runtime.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .scans
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let mount = dir.join("downloads");
+    let file = land_file(
+        &mount.join("job"),
+        "01 - Mysterons.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    let releases = Releases(vec![release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons"],
+        &[length_ms(&file)],
+    )]);
+    let port: Arc<dyn LandingLibrary> = Arc::new(Shaky {
+        inner: Arc::new(LibraryLanding::new(
+            &library,
+            every_priority(Arc::new(releases)),
+        )),
+        changes: 0.into(),
+        after_import: None,
+        edition_busy: false,
+        busy_once: std::sync::Mutex::new(Some(runtime.db().clone())),
+    });
+    let acquire = acquire_over(&platform, &library, port);
+    let landed = || Landed {
+        mounts: vec![mount.clone().into()],
+        files: vec![Reported::path(file.clone())],
+    };
+    let waiting = rejection(&acquire, "t-import-busy", landed(), false)
+        .await
+        .expect("the landing waits");
+    assert_eq!(
+        (waiting.code, waiting.disposition),
+        (Reason::JournalUnreadable, Disposition::Temporary),
+        "a busy import waits: {}",
+        waiting.detail
+    );
+    assert!(file.exists(), "the files stay where they are");
+    assert!(files_under(&music, "flac").is_empty(), "nothing is placed");
+
+    let task = acquire
+        .journal
+        .read_task("t-import-busy")
+        .await
+        .expect("task reads")
+        .expect("task");
+    let again = acquire.landing.land(&task, None, landed(), false).await;
+    assert!(
+        matches!(again.result, LandingResult::Imported { complete: true }),
+        "the next landing imports: {:?}",
+        again.result
+    );
+    assert_eq!(files_under(&music, "flac").len(), 1);
+    drop((acquire, library, platform, db));
+    runtime.shutdown().await;
+}
+
+/// A publish a busy database stopped leaves open journal rows. The next
+/// landing of that download recovers it and waits, and the one after
+/// imports; only a bundle that needs a person stops the landing.
+#[tokio::test]
+async fn a_landing_waits_out_its_own_stopped_publish() {
+    let (db, dir, _auth) = bare_db().await;
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .scans
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let mount = dir.join("downloads");
+    let file = land_file(
+        &mount.join("job"),
+        "01 - Mysterons.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    let releases = Releases(vec![release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons"],
+        &[length_ms(&file)],
+    )]);
+    let port = Arc::new(LibraryLanding::new(
+        &library,
+        every_priority(Arc::new(releases)),
+    ));
+    let acquire = acquire_over(&platform, &library, port);
+    let landed = || Landed {
+        mounts: vec![mount.clone().into()],
+        files: vec![Reported::path(file.clone())],
+    };
+    let seed = |task: &str, state: &str| {
+        let source = format!(
+            "{}import/{task}/01.flac",
+            droppedneedle_library::publish::HIDDEN_PREFIX
+        );
+        let staged = music.join(&source);
+        let staged = staged.display();
+        db.db()
+            .run_sql(&format!(
+                "INSERT INTO library_publish_journal (id, bundle_id, kind, source_root, \
+                 source_rel, dest_root, dest_rel, staged, staged_sha256, state) VALUES \
+                 ('{task}-000', '{task}', 'audio', 'music', '{source}', 'music', \
+                 'gone/01.flac', '{staged}', 'abc', '{state}')"
+            ))
+            .expect("journal row");
+    };
+
+    seed("t-attention", "needs_attention");
+    let stuck = rejection(&acquire, "t-attention", landed(), false)
+        .await
+        .expect("a person must act");
+    assert_eq!(
+        (stuck.code, stuck.disposition),
+        (Reason::LocalFault, Disposition::LocalFault),
+        "{}",
+        stuck.detail
+    );
+
+    seed("t-stopped", "prepared");
+    let waiting = rejection(&acquire, "t-stopped", landed(), false)
+        .await
+        .expect("the landing waits");
+    assert_eq!(
+        (waiting.code, waiting.disposition),
+        (Reason::JournalUnreadable, Disposition::Temporary),
+        "{}",
+        waiting.detail
+    );
+    assert!(file.exists(), "the files stay where they are");
+    let task = acquire
+        .journal
+        .read_task("t-stopped")
+        .await
+        .expect("task reads")
+        .expect("task");
+    assert_ne!(task.status, TaskStatus::Failed);
+    let again = acquire.landing.land(&task, None, landed(), false).await;
+    assert!(
+        matches!(again.result, LandingResult::Imported { complete: true }),
+        "the next landing imports: {:?}",
+        again.result
+    );
+    assert_eq!(files_under(&music, "flac").len(), 1);
 }
 
 /// A person confirmed a pick outside the quality band: the attempt that
@@ -5973,6 +6174,7 @@ async fn land_swapped(
         changes: 0.into(),
         after_import: (at == SwapAt::Import).then_some(swap),
         edition_busy: false,
+        busy_once: Default::default(),
     });
     let acquire = acquire_over(&platform, &library, port);
     acquire
@@ -6133,12 +6335,15 @@ impl FingerprintSource for Hears {
 /// The real library port, whose first `changes` imports find the library
 /// changed under them (a destination taken between the plan and the
 /// publish), and which runs `after_import` once an import is done. With
-/// `edition_busy`, the album's chosen edition does not read.
+/// `edition_busy`, the album's chosen edition does not read. With
+/// `busy_once`, the first import runs while that database's only reader
+/// is held, so its reads answer busy.
 struct Shaky {
     inner: Arc<dyn LandingLibrary>,
     changes: std::sync::atomic::AtomicUsize,
     after_import: Option<Swap>,
     edition_busy: bool,
+    busy_once: std::sync::Mutex<Option<droppedneedle_kernel::db::Db>>,
 }
 
 impl LandingLibrary for Shaky {
@@ -6263,6 +6468,25 @@ impl LandingLibrary for Shaky {
                 Err(ImportFailure::Occupied(
                     "a file appeared where this one goes".to_owned(),
                 ))
+            });
+        }
+        let busy = self.busy_once.lock().expect("busy flag").take();
+        if let Some(db) = busy {
+            return Box::pin(async move {
+                let (entered, inside) = std::sync::mpsc::channel();
+                let (let_go, release) = std::sync::mpsc::channel::<()>();
+                let held = std::thread::spawn(move || {
+                    db.read_blocking("test.held", |_| {
+                        entered.send(()).expect("test waits");
+                        release.recv().expect("test lets go");
+                        Ok::<_, DbError>(())
+                    })
+                });
+                inside.recv().expect("reader held");
+                let answer = self.inner.import(request).await;
+                let_go.send(()).expect("reader waits");
+                held.join().expect("reader joins").expect("held read");
+                answer
             });
         }
         let Some(swap) = self.after_import.clone() else {
@@ -6401,6 +6625,7 @@ impl IntakeCase {
             changes: row.changes.into(),
             after_import: None,
             edition_busy: false,
+            busy_once: Default::default(),
         });
         let acquire = acquire_over(&platform, &library, port);
         let targets = Arc::new(droppedneedle_acquire::target::Targets::new(

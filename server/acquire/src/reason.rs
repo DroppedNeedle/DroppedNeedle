@@ -478,7 +478,7 @@ impl Reason {
                 "Check that a library folder is set up and has free space, then try again."
             }
             Self::NamingScriptFailed => {
-                "Fix the import naming script in Settings, Library, then try again."
+                "Fix the import naming script, or the Excluded folder or path rule its path falls under, in Settings, Library, then try again."
             }
             Self::LibraryFolderMissing => {
                 "Check the library folder in Settings, Library, and that the server can write to it. Downloads go ahead by themselves once it is back."

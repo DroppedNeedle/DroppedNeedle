@@ -789,6 +789,58 @@ async fn a_deferred_upload_match_leaves_its_files_as_they_were() {
     );
 }
 
+/// An automatic upload the library could not take is held paired with its
+/// track, so the held loop places it by itself once the library is on.
+#[tokio::test]
+async fn an_upload_deferred_with_the_library_off_is_retried_by_itself() {
+    use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+
+    let (_db, library, dir, auth) = bundles().await;
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).expect("work dir");
+    let bytes = tagged(&work, "flac_full_01.flac", "Dummy", "Mysterons", 1);
+    let lengths = [length_ms(&bytes, &work)];
+    let acquire = acquire_over(
+        &auth,
+        &library,
+        Arc::new(LibraryLanding::new(
+            &library,
+            every_priority(Arc::new(OneRelease(release(&["Mysterons"], &lengths)))),
+        )),
+    );
+    let switch = |on: bool| {
+        library
+            .settings
+            .store()
+            .update_secret_blocking::<TypedLibrary, String, _>(move |stored| {
+                let mut settings = stored.into_inner();
+                settings.enabled = on;
+                Ok(settings)
+            })
+            .expect("library switch saved");
+        library.core.refresh_registry();
+    };
+    let curator = Viewer {
+        user_id: "u-curator".to_owned(),
+        admin: false,
+    };
+    switch(false);
+    let job = drop_zip(
+        &acquire,
+        &curator,
+        "library-off",
+        &[("Dummy/01 - Mysterons.flac", &bytes)],
+    )
+    .await;
+    assert_eq!(job.items[0].status, DropItemStatus::NeedsReview);
+    let music = dir.join("music");
+    assert!(files_under(&music).is_empty(), "nothing lands while off");
+
+    switch(true);
+    acquire.held.tend().await;
+    assert_eq!(files_under(&music).len(), 1, "the held loop placed it");
+}
+
 /// A bonus track of an upload a curator matched, which the library could
 /// not take because its place was taken, loses the pairing the app had
 /// guessed for it: the held loop's retry never places it on that album.

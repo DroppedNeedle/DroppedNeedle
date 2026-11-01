@@ -71,11 +71,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use droppedneedle_kernel::db::{Db, Lane};
+use droppedneedle_kernel::db::{CancelFlag, Db, Lane};
 
 use super::clock::LibraryClock as _;
+use super::identify::stores::StoreError;
 use super::matching::Release;
-use super::publish::import_staging::{copy_in, remove_staging, staging_rel, staging_settled};
+use super::publish::import_staging::{
+    copy_in, remove_staging, staging_needs_attention, staging_rel, staging_settled,
+};
 use super::publish::paths::{ResolvedRoot, left_out};
 use super::publish::planner::{
     AlbumJoin, Capability, JoinedTrack, PlanBundle, PlanItem, PlanKind, ReleaseIdentity, Removal,
@@ -201,6 +204,18 @@ pub enum ImportError {
     FolderMissing(String),
     /// The library-wide switch is off. The files wait until it is on.
     LibraryOff,
+    /// The database was busy or shutting down, so no import finished. The
+    /// files wait and the import runs again.
+    Busy(String),
+}
+
+/// A database that refused the call waits as [`ImportError::Busy`]; any
+/// other store failure is a local fault.
+fn store_fault(error: PublishError) -> ImportError {
+    match error {
+        PublishError::Interrupted(cause) => ImportError::Busy(cause),
+        other => ImportError::LocalFault(other.to_string()),
+    }
 }
 
 /// One planned file.
@@ -368,7 +383,7 @@ impl Imports {
                 .read_blocking("import.group_held", |conn| {
                     Ok::<_, PublishError>(group_held(conn, &import.release.release_group_id)?)
                 })
-                .map_err(|error| fault(error.to_string()))?;
+                .map_err(store_fault)?;
         let tagged = plain
             .then(|| {
                 usable
@@ -432,7 +447,7 @@ impl Imports {
                     }
                     Ok::<_, PublishError>(folders)
                 })
-                .map_err(|error| fault(error.to_string()))?,
+                .map_err(store_fault)?,
             None => vec![None; sources.len()],
         };
         let (root, dests) = match tagged {
@@ -504,7 +519,13 @@ impl Imports {
         // outside call, so it is kept first.
         self.identify_store
             .save_release(&import.release, Lane::Background)
-            .map_err(|error| fault(format!("the release document was not kept: {error}")))?;
+            .map_err(|error| match error {
+                StoreError::Busy(cause) => ImportError::Busy(cause),
+                StoreError::Closed => ImportError::Busy(error.to_string()),
+                StoreError::Failed(_) => {
+                    fault(format!("the release document was not kept: {error}"))
+                }
+            })?;
 
         let mut cell = self
             .core
@@ -518,14 +539,44 @@ impl Imports {
             return Err(ImportError::LibraryOff);
         }
         cell.refresh(&registry, &self.core.root_dirs)
-            .map_err(|error| fault(error.to_string()))?;
-        let open = cell.open().map_err(|error| fault(error.to_string()))?;
-        // Whether an earlier landing still waits, the album the files
-        // join, and the folder of each joined file's copy, in one read.
-        let (settled, joined, folders) = self
+            .map_err(store_fault)?;
+        // An earlier publish from this folder that a busy database stopped
+        // gets its recovery now, not at the next maintenance tick. This pass
+        // waits even when that settles it: recovery may have finished it
+        // forward, so the next pass plans afresh and finds the files owned.
+        let settled = self
+            .db
+            .read_blocking("import.staging_settled", |conn| {
+                Ok::<_, PublishError>(staging_settled(conn, &task_dir)?)
+            })
+            .map_err(store_fault)?;
+        if !settled {
+            cell.retry_held().map_err(store_fault)?;
+            let attention = self
+                .db
+                .read_blocking("import.staging_needs_attention", |conn| {
+                    Ok::<_, PublishError>(staging_needs_attention(conn, &task_dir)?)
+                })
+                .map_err(store_fault)?;
+            if attention {
+                return Err(fault(
+                    "an earlier import of this download needs attention".to_owned(),
+                ));
+            }
+            tracing::warn!(
+                task_dir,
+                "a landing waits: an earlier import of this download was unfinished"
+            );
+            return Err(ImportError::Busy(
+                "an earlier import of this download was unfinished".to_owned(),
+            ));
+        }
+        let open = cell.open().map_err(store_fault)?;
+        // The album the files join and the folder of each joined file's
+        // copy, in one read.
+        let (joined, folders) = self
             .db
             .read_blocking("import.join_state", |conn| {
-                let settled = staging_settled(conn, &task_dir)?;
                 let joined = match &join {
                     Some(join) => joined_album(conn, join)?,
                     None => None,
@@ -537,16 +588,9 @@ impl Imports {
                         None => None,
                     });
                 }
-                Ok::<_, PublishError>((settled, joined, folders))
+                Ok::<_, PublishError>((joined, folders))
             })
-            .map_err(|error| fault(error.to_string()))?;
-        // A publish of an earlier landing that still waits for recovery
-        // reads the provenance record in this folder: leave it as it is.
-        if !settled {
-            return Err(fault(
-                "an earlier import of this download is waiting for recovery".to_owned(),
-            ));
-        }
+            .map_err(store_fault)?;
         // When the copy sits in another library folder, the files go
         // there, staged there too, if that folder is there, takes managed
         // writes and leaves none of them excluded; else they stay in the
@@ -630,7 +674,7 @@ impl Imports {
             .read_blocking("import.replaced_indexed", |conn| {
                 Ok::<_, PublishError>(indexed_among(conn, &wanted)?)
             })
-            .map_err(|error| fault(error.to_string()))?;
+            .map_err(store_fault)?;
         // Files bound for a taken destination are held on their own (the
         // first of two files bound for one path keeps it); the rest import.
         // A file whose replaced tracks cannot be taken away is held too,
@@ -694,7 +738,7 @@ impl Imports {
                             &freed,
                         )?)
                     })
-                    .map_err(|error| fault(error.to_string()))?
+                    .map_err(store_fault)?
                 {
                     Ok(track_id) => {
                         placement.track_id = track_id;
@@ -734,7 +778,7 @@ impl Imports {
                             | PublishError::BinsUnknown(_)
                             | PublishError::TimedOut(_)),
                         ..
-                    }) => return Err(fault(error.to_string())),
+                    }) => return Err(store_fault(error)),
                     Err(refusal) => {
                         claimed.remove(&key);
                         blocked.push((placement.index, blocked_reason(&refusal)));
@@ -884,7 +928,7 @@ impl Imports {
                 .publish(&sealed, &live, &BTreeMap::new())
                 .map_err(|error| match error {
                     PublishError::Collision(detail) => ImportError::Occupied(detail.message),
-                    other => fault(other.to_string()),
+                    other => store_fault(other),
                 })?;
             Ok(sealed.bundle)
         })();
@@ -916,7 +960,7 @@ impl Imports {
             .collect();
         let album_id = self
             .db
-            .read_blocking("import.album", |conn| {
+            .read_long("import.album", &CancelFlag::never(), |conn| {
                 Ok::<_, PublishError>(crate::identity::import_album(conn, &tracks)?)
             })
             .map_err(|error| fault(format!("the catalog could not be read: {error}")))?
@@ -1031,7 +1075,7 @@ impl Imports {
                 }
                 Ok::<_, PublishError>(rows)
             })
-            .map_err(|error| ImportError::LocalFault(error.to_string()))?;
+            .map_err(store_fault)?;
         let mut targets = Vec::with_capacity(rows.len());
         for (track_id, root_id, relative_path) in rows {
             let path = registry.resolve(&root_id).and_then(|root| {

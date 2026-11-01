@@ -56,6 +56,11 @@ pub async fn place(
             ImportFailure::NamingScript(detail) => {
                 return deferred(Reason::NamingScriptFailed, detail);
             }
+            // A busy database waits like an unreadable journal: the caller
+            // tries again later without spending a try.
+            ImportFailure::Busy(cause) => {
+                return deferred(Reason::JournalUnreadable, format!("database busy: {cause}"));
+            }
         }
     }
 }

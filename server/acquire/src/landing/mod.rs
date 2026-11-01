@@ -663,6 +663,12 @@ impl LandingService {
                         quarantine: None,
                         detail: deferred.detail,
                     },
+                    // A busy database waits without using up the landing's
+                    // waits; the next pass lands again.
+                    Reason::JournalUnreadable => Rejection {
+                        detail: deferred.detail,
+                        ..journal_unreadable()
+                    },
                     code => Rejection {
                         code,
                         ..local_fault(deferred.detail)
