@@ -392,13 +392,13 @@ textarea {
 	letter-spacing: 0.02em;
 }
 
-/* toast placement, shared by the kit Toaster and the playback toast */
-.droppedneedle-playback-toast {
+/* toast placement for the kit Toaster */
+.droppedneedle-toast {
 	bottom: calc(var(--ms-bottom-nav-offset) + 0.75rem);
 	width: min(calc(100vw - 1rem), 28rem);
 }
 
-.droppedneedle-playback-toast.droppedneedle-playback-toast--player {
+.droppedneedle-toast.droppedneedle-toast--player {
 	bottom: calc(var(--ms-bottom-nav-offset) + var(--ms-player-height) + 0.75rem);
 }
 
@@ -416,11 +416,11 @@ textarea {
 		--ms-player-height: 5.625rem;
 	}
 
-	.droppedneedle-playback-toast {
+	.droppedneedle-toast {
 		bottom: 1rem;
 	}
 
-	.droppedneedle-playback-toast.droppedneedle-playback-toast--player {
+	.droppedneedle-toast.droppedneedle-toast--player {
 		bottom: 6.5rem;
 	}
 }

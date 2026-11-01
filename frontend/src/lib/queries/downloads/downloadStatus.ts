@@ -39,17 +39,6 @@ export function tabForTask(task: DownloadTask): DownloadBucketTab {
 	return 'active';
 }
 
-export type DownloadBuckets = Record<DownloadBucketTab, DownloadTask[]>;
-
-export function bucketDownloads(tasks: DownloadTask[]): DownloadBuckets {
-	const buckets: DownloadBuckets = { active: [], review: [], completed: [], failed: [] };
-	for (const task of tasks) buckets[tabForTask(task)].push(task);
-	for (const key of Object.keys(buckets) as DownloadBucketTab[]) {
-		buckets[key].sort((a, b) => b.created_at - a.created_at);
-	}
-	return buckets;
-}
-
 export function activeCount(tasks: DownloadTask[]): number {
 	let count = 0;
 	for (const task of tasks) if (tabForTask(task) === 'active') count++;

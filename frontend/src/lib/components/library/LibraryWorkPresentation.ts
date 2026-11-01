@@ -141,7 +141,7 @@ export function libraryWorkFacts(item: LibraryWorkItem): string[] {
 	].filter((value): value is string => value !== null);
 }
 
-export const STALE_INPUT_TERMINAL_CODE = 'STALE_INPUT';
+const STALE_INPUT_TERMINAL_CODE = 'STALE_INPUT';
 
 export const STALE_INPUT_HINT =
 	'Inputs moved since planning. Retry or refresh to rebuild this preview. No files were changed.';
@@ -165,7 +165,7 @@ export interface FailedGroupSource {
  * Group key collapsing duplicate failed cards for the same album.
  * Only single-kind album selections group; anything else stays individual (null).
  */
-export function selectionAlbumGroupKey(selection: unknown): string | null {
+function selectionAlbumGroupKey(selection: unknown): string | null {
 	if (typeof selection !== 'object' || selection === null || Array.isArray(selection)) {
 		return null;
 	}

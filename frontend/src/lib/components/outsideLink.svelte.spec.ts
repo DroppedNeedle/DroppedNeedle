@@ -40,6 +40,12 @@ describe('outsideLink', () => {
 		expect(outsideLink(undefined)).toBeUndefined();
 	});
 
+	it('refuses a web address that does not parse', () => {
+		for (const address of ['https://', 'http://[']) {
+			expect(outsideLink(address), address).toBeUndefined();
+		}
+	});
+
 	it('passes web addresses through unchanged', () => {
 		for (const address of [
 			'https://example.org/a?b=c#d',

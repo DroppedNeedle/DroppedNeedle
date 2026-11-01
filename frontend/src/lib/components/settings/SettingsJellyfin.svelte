@@ -63,6 +63,7 @@
 					mono
 					placeholder="http://localhost:8096"
 					bind:value={draft.jellyfin_url}
+					error={section.fieldError('jellyfin_url', 'Jellyfin URL')}
 				/>
 				<div class="grid gap-4 md:grid-cols-2">
 					<SecretField
@@ -71,12 +72,14 @@
 						placeholder="Your Jellyfin API key"
 						help="Dashboard → API Keys → Create"
 						bind:value={draft.api_key}
+						error={section.fieldError('api_key', 'API key')}
 					/>
 					{#if users.length > 0}
 						<SelectField
 							label="User"
 							bind:value={draft.user_id}
 							options={users.map((user) => ({ value: user.id, label: user.name }))}
+							error={section.fieldError('user_id', 'User')}
 						/>
 					{:else}
 						<TextField
@@ -85,6 +88,7 @@
 							placeholder="Test to pick a user"
 							help="Test the connection to choose from a list."
 							bind:value={draft.user_id}
+							error={section.fieldError('user_id', 'User ID')}
 						/>
 					{/if}
 				</div>

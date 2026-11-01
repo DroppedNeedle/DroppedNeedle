@@ -18,7 +18,7 @@ export type QueueStatus = components['schemas']['DiscoverQueueStatusResponse'];
 /** How often a building queue's status is checked, in milliseconds. */
 const BUILD_POLL_MS = 4000;
 
-export const getDiscoverQueueStatusQueryOptions = (userId: string | null | undefined) =>
+const getDiscoverQueueStatusQueryOptions = (userId: string | null | undefined) =>
 	queryOptions({
 		meta: PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.queueStatus(userId),

@@ -9,7 +9,7 @@ import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
 import { playerStore } from '$lib/stores/player.svelte';
 import { radioSession } from '$lib/stores/radioSession.svelte';
 import { audioFocus } from '$lib/stores/audioFocus.svelte';
-import { playbackToast } from '$lib/stores/playbackToast.svelte';
+import { toastStore } from '$lib/stores/toast';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 import {
 	needsHydration,
@@ -33,7 +33,7 @@ export interface LaunchRadioOptions {
 	count?: number;
 }
 
-export function radioTrackKey(track: { artist_name: string; track_name: string }): string {
+function radioTrackKey(track: { artist_name: string; track_name: string }): string {
 	return `radio:${track.artist_name.toLowerCase()}|${track.track_name.toLowerCase()}`;
 }
 
@@ -134,13 +134,13 @@ export async function launchRadio(
 	} catch {
 		if (!radioSession.isCurrent(launch.generation)) return false;
 		radioSession.end();
-		playbackToast.show("Couldn't tune this station", 'error');
+		toastStore.notify("Couldn't tune this station", 'error');
 		return false;
 	}
 	if (!radioSession.isCurrent(launch.generation)) return false;
 	if (plan.tracks.length === 0) {
 		radioSession.end();
-		playbackToast.show(
+		toastStore.notify(
 			mode === 'library'
 				? 'Nothing in your library for this yet - try the full-tracks mode'
 				: 'Nothing to play for this station yet',
@@ -166,7 +166,7 @@ export async function launchRadio(
 	}
 	if (items.length === 0) {
 		radioSession.end();
-		playbackToast.show('Nothing playable for this station right now', 'warning');
+		toastStore.notify('Nothing playable for this station right now', 'warning');
 		return false;
 	}
 

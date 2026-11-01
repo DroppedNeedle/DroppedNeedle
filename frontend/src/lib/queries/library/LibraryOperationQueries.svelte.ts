@@ -16,7 +16,7 @@ import { STALE_LIVE } from '$lib/queries/staleTime';
 const HISTORY_PAGE = 50;
 const FAILURES_PAGE = 50;
 
-export const getCurrentLibraryRunsQueryOptions = () =>
+const getCurrentLibraryRunsQueryOptions = () =>
 	queryOptions({
 		queryKey: LibraryQueryKeyFactory.currentRuns(),
 		queryFn: async ({ signal }) =>

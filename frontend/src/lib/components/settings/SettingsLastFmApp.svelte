@@ -69,6 +69,7 @@
 						mask={SECRET_MASK}
 						placeholder="Last.fm API key"
 						bind:value={draft.api_key}
+						error={section.fieldError('api_key', 'API key')}
 					/>
 
 					<SecretField
@@ -76,6 +77,7 @@
 						mask={SECRET_MASK}
 						placeholder="Shared secret"
 						bind:value={draft.shared_secret}
+						error={section.fieldError('shared_secret', 'Shared secret')}
 					/>
 
 					<a

@@ -28,9 +28,7 @@ import type {
 import { authStore } from '$lib/stores/authStore.svelte';
 import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
-export function settingsPayload(
-	response: LibraryManagementSettingsResponse
-): LibraryManagementSettings {
+function settingsPayload(response: LibraryManagementSettingsResponse): LibraryManagementSettings {
 	const value = structuredClone(response);
 	const {
 		settings_revision: _revision,

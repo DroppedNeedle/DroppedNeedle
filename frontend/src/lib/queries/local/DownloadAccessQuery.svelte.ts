@@ -6,7 +6,7 @@ import { LOCAL_KEYS } from './LocalV3Keys';
 import { STALE_LIVE } from '$lib/queries/staleTime';
 
 // Whether the viewer may download local files.
-export const getDownloadAccessQueryOptions = (userId: string | undefined) =>
+const getDownloadAccessQueryOptions = (userId: string | undefined) =>
 	queryOptions({
 		queryKey: LOCAL_KEYS.downloadAccess(userId),
 		queryFn: ({ signal }) => api.v3.GET(LocalDownloadsApi.access(), { signal }),

@@ -61,6 +61,7 @@
 						mask={SECRET_MASK}
 						placeholder="No key set"
 						bind:value={draft.api_key}
+						error={section.fieldError('api_key', 'API key')}
 					/>
 
 					<Button variant="outline" size="sm" pill class="w-fit" onclick={() => generateKey(draft)}>

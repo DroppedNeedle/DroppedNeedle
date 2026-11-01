@@ -265,8 +265,9 @@
 							<div>
 								<h3 class="font-semibold">Library downloads</h3>
 								<p class="text-xs text-base-content/50">
-									Who can download library files and full-album archives. Streaming is never
-									restricted.
+									Who can download library files and full-album archives. Holds for Subsonic apps
+									and download addresses. Streaming is never restricted, so an app that saves
+									through its play address is not stopped.
 								</p>
 							</div>
 						</div>
@@ -409,6 +410,7 @@
 							bind:value={draft.content_security_policy}
 							options={POLICY_MODES}
 							help={POLICY_MODE_HELP[draft.content_security_policy]}
+							error={security.fieldError('content_security_policy', 'Policy')}
 						/>
 
 						<p class="text-sm text-base-content/70">
@@ -481,15 +483,21 @@
 							placeholder="https://accounts.example.com"
 							help="The base URL of your OIDC provider. Must serve a /.well-known/openid-configuration document."
 							bind:value={draft.issuer}
+							error={security.fieldError('issuer', 'Issuer URL')}
 						/>
 
-						<TextField label="Client ID" bind:value={draft.client_id} />
+						<TextField
+							label="Client ID"
+							bind:value={draft.client_id}
+							error={security.fieldError('client_id', 'Client ID')}
+						/>
 
 						<SecretField
 							label="Client Secret"
 							mask={SECRET_MASK}
 							help="Optional - leave blank for public/PKCE clients"
 							bind:value={draft.client_secret}
+							error={security.fieldError('client_secret', 'Client Secret')}
 						/>
 
 						<TextField
@@ -498,12 +506,14 @@
 							placeholder={`https://droppedneedle.example.com${AUTH_ENDPOINTS.oidcCallback}`}
 							help={`This must point to the DroppedNeedle backend API (it ends in ${AUTH_ENDPOINTS.oidcCallback}), not the web app page. Register this exact URL as a redirect/callback URI with your provider.`}
 							bind:value={draft.redirect_uri}
+							error={security.fieldError('redirect_uri', 'Redirect URI')}
 						/>
 
 						<TextField
 							label="Scopes"
 							placeholder="openid email profile"
 							bind:value={draft.scopes}
+							error={security.fieldError('scopes', 'Scopes')}
 						/>
 
 						<ToggleRow

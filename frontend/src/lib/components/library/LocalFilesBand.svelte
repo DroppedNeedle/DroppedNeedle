@@ -7,7 +7,7 @@
 	import { formatBytes } from '$lib/utils/formatting';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
-	import { playbackToast } from '$lib/stores/playbackToast.svelte';
+	import { toastStore } from '$lib/stores/toast';
 	import { fetchLibraryTracks, libraryTrackParams } from '$lib/queries/library/libraryTracks';
 	import { createLibraryTrackQueue } from '$lib/queries/library/libraryTrackQueue.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
@@ -25,7 +25,7 @@
 		playQueue: (items, startIndex, shuffle) => playerStore.playQueue(items, startIndex, shuffle),
 		appendQueue: (items) => playerStore.appendQueueSilent(items),
 		reshuffle: () => playerStore.regenerateShuffleOrder(),
-		toast: (message, type) => playbackToast.show(message, type)
+		toast: (message, type) => toastStore.notify(message, type)
 	});
 
 	let busy = $state<'' | 'play' | 'shuffle' | 'surprise'>('');
@@ -36,7 +36,7 @@
 		try {
 			const started =
 				kind === 'play' ? await queue.playAll('recent', '') : await queue.shuffleAll('');
-			if (started === 'empty') playbackToast.show('No tracks to play yet', 'info');
+			if (started === 'empty') toastStore.notify('No tracks to play yet', 'info');
 		} finally {
 			busy = '';
 		}
@@ -52,12 +52,12 @@
 			const page = await fetchLibraryTracks(libraryTrackParams(1, 'random'), null);
 			const track = page.items[0];
 			if (!track) {
-				playbackToast.show('Nothing to surprise you with yet', 'info');
+				toastStore.notify('Nothing to surprise you with yet', 'info');
 				return;
 			}
 			playerStore.playQueue(buildDiscoveryQueueFromLocal([track]), 0, false);
 		} catch {
-			playbackToast.show("Couldn't pick a track", 'error');
+			toastStore.notify("Couldn't pick a track", 'error');
 		} finally {
 			busy = '';
 		}

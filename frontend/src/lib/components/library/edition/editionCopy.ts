@@ -145,7 +145,7 @@ function chipFor(status: EditionStatus): PlateCopy['chip'] {
 }
 
 /** Line 2 while the edition's files are placed or written, if they are. */
-export function busyLine(status: EditionStatus): string | null {
+function busyLine(status: EditionStatus): string | null {
 	if (status.placing) {
 		return status.placing.attempts > 0 ? 'Waiting for MusicBrainz' : 'Matching your files to it...';
 	}

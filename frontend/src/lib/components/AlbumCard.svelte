@@ -19,6 +19,8 @@
 		onadded?: (() => void) | undefined;
 		onremoved?: (() => void) | undefined;
 		onenrichmentrequest?: (() => void) | undefined;
+		/** Pass false for the first cards on screen. */
+		lazy?: boolean;
 	}
 
 	let {
@@ -26,7 +28,8 @@
 		enrichmentSource = null,
 		onadded = undefined,
 		onremoved = undefined,
-		onenrichmentrequest = undefined
+		onenrichmentrequest = undefined,
+		lazy = true
 	}: Props = $props();
 
 	let listenTitle = $derived(getListenTitle(enrichmentSource, 'album'));
@@ -36,9 +39,7 @@
 	const albumRequest = requestAlbum();
 
 	let inLibrary = $derived(
-		libraryStore.isInLibrary(album.musicbrainz_id) ||
-			(!$libraryStore.initialized && album.in_library) ||
-			false
+		libraryStore.isInLibrary(album.musicbrainz_id) || album.in_library || false
 	);
 	let isRequested = $derived(
 		!inLibrary && (album.requested || libraryStore.isRequested(album.musicbrainz_id))
@@ -104,6 +105,7 @@
 				alt={album.title}
 				size="full"
 				requestSize={250}
+				{lazy}
 				responsiveSizes="(max-width: 639px) calc(50vw - 2.5rem), (max-width: 1023px) calc(25vw - 2rem), 200px"
 				rounded="none"
 				className="w-full h-full"

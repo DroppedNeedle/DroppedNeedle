@@ -121,12 +121,14 @@
 					mono
 					bind:value={draft.url}
 					placeholder="http://sabnzbd:8080"
+					error={section.fieldError('url', 'SABnzbd URL')}
 				/>
 				<SecretField
 					label="API key (full)"
 					mask={SECRET_MASK}
 					bind:value={draft.api_key}
 					placeholder="SABnzbd full API key"
+					error={section.fieldError('api_key', 'API key (full)')}
 				/>
 			</section>
 
@@ -140,6 +142,7 @@
 				bind:value={draft.category}
 				options={categoryOptions(draft.category)}
 				help="Run Test to load categories. A dedicated droppedneedle category gives predictable folders, but * works."
+				error={section.fieldError('category', 'Category')}
 			/>
 
 			<section class="space-y-2">

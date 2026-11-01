@@ -14,7 +14,7 @@
  */
 import { SvelteSet } from 'svelte/reactivity';
 import { audioFocus } from '$lib/stores/audioFocus.svelte';
-import { playbackToast } from '$lib/stores/playbackToast.svelte';
+import { toastStore } from '$lib/stores/toast';
 import { outsideLink } from '$lib/components/outsideLink';
 import type { PreviewTrackItem } from '$lib/queries/discover/types';
 import { fetchAlbumPreview, fetchTrackPreview } from '$lib/queries/discover/DiscoverQueueQueries';
@@ -369,7 +369,7 @@ function createDeckSampler() {
 		playAttempt++;
 		pausePool(mySession);
 		status = 'paused';
-		playbackToast.show('Tap the preview play button to keep sampling', 'warning');
+		toastStore.notify('Tap the preview play button to keep sampling', 'warning');
 	}
 
 	async function playTrack(index: number, mySession: number, fadeIn: boolean): Promise<void> {
@@ -529,7 +529,7 @@ function createDeckSampler() {
 		const wasSingle = station.length === 1;
 		stopAll();
 		status = 'error';
-		playbackToast.show(
+		toastStore.notify(
 			wasSingle
 				? entry.kind === 'album'
 					? `No preview available for ${entry.title}`

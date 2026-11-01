@@ -139,6 +139,11 @@ function refusedField(error: unknown): RefusedField | null {
 	return typeof field === 'string' && typeof reason === 'string' ? { field, reason } : null;
 }
 
+function spokenKey(key: string): string {
+	const words = key.replaceAll('_', ' ');
+	return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 function failureMessage(
 	error: unknown,
 	fallback: string,
@@ -163,6 +168,8 @@ export function createSettingsSection<T extends object>(
 	let draft = $state<T | undefined>(undefined);
 	let status = $state<SettingsStatus | null>(null);
 	let refused = $state<RefusedField | null>(null);
+	// The on-screen names the form passed to `fieldError`, for the save line.
+	const fieldLabels: Record<string, string> = {};
 	let testing = $state(false);
 	let testPassed = $state(false);
 	let clearTimer: ReturnType<typeof setTimeout> | undefined;
@@ -224,11 +231,16 @@ export function createSettingsSection<T extends object>(
 			setStatus({ tone: 'success', message: options.savedMessage ?? 'Saved.' }, true);
 			if (options.refreshIntegration) await refreshIntegration();
 		} catch (error) {
+			const field = refusedField(error);
+			const explained = error instanceof ApiError ? options.explain?.(error) : undefined;
 			setStatus({
 				tone: 'error',
-				message: failureMessage(error, 'Could not save. Try again.', options.explain)
+				message:
+					field && !explained
+						? `${fieldLabels[field.field] ?? spokenKey(field.field)}: ${field.reason}`
+						: failureMessage(error, 'Could not save. Try again.', options.explain)
 			});
-			refused = refusedField(error);
+			refused = field;
 		}
 	}
 
@@ -273,8 +285,9 @@ export function createSettingsSection<T extends object>(
 		get status() {
 			return status;
 		},
-		/** Why the last save refused this field, or null. */
-		fieldError(field: string): string | null {
+		/** Why the last save refused this field, or null. `label` names it on the save line. */
+		fieldError(field: string, label?: string): string | null {
+			if (label) fieldLabels[field] = label;
 			return refused?.field === field ? refused.reason : null;
 		},
 		// The query's shape, so the section can be handed to QueryBoundary.

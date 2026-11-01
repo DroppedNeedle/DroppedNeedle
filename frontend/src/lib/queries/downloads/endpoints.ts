@@ -19,7 +19,6 @@ export const DOWNLOAD_SETTINGS_ENDPOINTS = {
 	prowlarrConfig: () => v3('/api/v3/settings/prowlarr/config'),
 	prowlarrTest: () => v3('/api/v3/settings/prowlarr/test'),
 	policy: () => v3('/api/v3/settings/download-clients/policy'),
-	policySummary: () => v3('/api/v3/settings/download-clients/policy-summary'),
 	sourcePriority: () => v3('/api/v3/settings/download-clients/source-priority'),
 	wanted: () => v3('/api/v3/settings/download-clients/wanted')
 } as const;

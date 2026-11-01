@@ -315,8 +315,8 @@
 							{track.title}
 						</div>
 						<div class="truncate text-xs text-base-content/55">
-							{track.artist_name}{#if track.album_title}<span class="text-base-content/35">
-									· {track.album_title}</span
+							{track.artist_name}{#if track.album_title}<span class="ml-1 text-base-content/35"
+									>· {track.album_title}</span
 								>{/if}
 						</div>
 					</div>

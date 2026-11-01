@@ -17,5 +17,6 @@ function rpc(method, params) {
     parent.postMessage({ id, method, params: params || {} }, "*");
   });
 }
+$("count").textContent = "click to count";
 $("count").onclick = () => { $("count").textContent = `clicked ${++count}x`; };
 rpc("sources.list", {}).then((res) => { $("sources").textContent = JSON.stringify((res && res.sources) || res); });

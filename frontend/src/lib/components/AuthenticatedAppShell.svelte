@@ -4,13 +4,12 @@
 	import { beforeNavigate, afterNavigate } from '$app/navigation';
 	import { withoutBasePath } from '$lib/utils/basePath';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { migratePageSourceKeys } from '$lib/stores/musicSource';
 	import { watchMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import { getIntegrationStatusQuery } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import { loadAdvancedSettings } from '$lib/queries/AdvancedSettingsReads.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
-	import { playbackToast } from '$lib/stores/playbackToast.svelte';
+	import { toastStore } from '$lib/stores/toast';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
 	import { serviceStatusStore } from '$lib/stores/serviceStatus';
 	import { resumeAudioEngine, setAudioElement } from '$lib/player/audioElement';
@@ -48,11 +47,7 @@
 	import BottomNav from '$lib/components/shell/BottomNav.svelte';
 	import MoreNavSheet from '$lib/components/shell/MoreNavSheet.svelte';
 	import SearchDialog from '$lib/components/shell/SearchDialog.svelte';
-	import ErrorDialog from '$lib/components/shell/ErrorDialog.svelte';
-	import PlaybackToast from '$lib/components/shell/PlaybackToast.svelte';
 	import { handlePlayerShortcut, restorePlayerSession } from '$lib/components/shell/playerSession';
-
-	migratePageSourceKeys();
 
 	let { children }: { children: Snippet } = $props();
 	type PlaylistModalComponent = Component<Record<string, never>, PlaylistModalHandle>;
@@ -145,7 +140,7 @@
 			.catch(() => {
 				if (cancelled) return;
 				resetPlaylistModal();
-				playbackToast.show('Could not load the playlist dialog. Try again.', 'error');
+				toastStore.notify('Could not load the playlist dialog. Try again.', 'error');
 			});
 		return () => {
 			cancelled = true;
@@ -162,7 +157,7 @@
 			.catch(() => {
 				if (cancelled) return;
 				discographyDownloadStore.close();
-				playbackToast.show('Could not load the discography dialog. Try again.', 'error');
+				toastStore.notify('Could not load the discography dialog. Try again.', 'error');
 			});
 		return () => {
 			cancelled = true;
@@ -303,8 +298,6 @@
 	updateAvailable={versionUpdateAvailable}
 />
 <SearchDialog bind:open={searchOpen} />
-<ErrorDialog />
-<PlaybackToast />
 <Toaster abovePlayer={playerStore.isPlayerVisible} />
 
 {#if browser}

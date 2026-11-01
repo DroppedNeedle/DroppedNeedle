@@ -18,7 +18,8 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 vi.mock('$lib/queries/requests/RequestQueries.svelte', () => ({
-	getActiveRequestCountQuery: () => ({ data: { count: 0 } })
+	getActiveRequestCountQuery: () => ({ data: { count: 0 } }),
+	getActiveRequestsQuery: () => ({ data: { items: [], count: 0 }, isFetching: false })
 }));
 vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
 	getCutoffUnmetQuery: () => ({ data: undefined, isPending: false, isError: false }),

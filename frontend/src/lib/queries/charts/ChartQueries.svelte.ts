@@ -9,12 +9,7 @@ import { PERSIST } from '$lib/queries/persistedCache';
 type Getter<T> = () => T;
 export type ChartItem = AlbumRef | ArtistRef;
 
-export const CHART_RANGES: readonly StatsRange[] = [
-	'this_week',
-	'this_month',
-	'this_year',
-	'all_time'
-];
+const CHART_RANGES: readonly StatsRange[] = ['this_week', 'this_month', 'this_year', 'all_time'];
 
 export interface ChartPage {
 	items: ChartItem[];

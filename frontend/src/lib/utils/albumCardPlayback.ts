@@ -1,7 +1,7 @@
 import { fetchLocalAlbumMatch, fetchRemoteAlbumMatch } from '$lib/queries/albumMatch';
 import { readIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 import { playerStore } from '$lib/stores/player.svelte';
-import { playbackToast } from '$lib/stores/playbackToast.svelte';
+import { toastStore } from '$lib/stores/toast';
 import { recordingFor, REMOTE_FORMAT, remoteStreamKey } from '$lib/player/queueHelpers';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 import type { LocalTrackInfo, QueueItem } from '$lib/player/types';
@@ -109,7 +109,7 @@ export async function fetchAlbumQueueItems(
 export async function cardQuickPlay(meta: AlbumCardMeta, signal?: AbortSignal): Promise<boolean> {
 	const items = await fetchAlbumQueueItems(meta, signal);
 	if (items.length === 0) {
-		playbackToast.show('Nothing here can be played right now', 'info');
+		toastStore.notify('Nothing here can be played right now', 'info');
 		return false;
 	}
 	playerStore.playQueue(items, 0, false);
@@ -122,7 +122,7 @@ export async function cardQuickShuffle(
 ): Promise<boolean> {
 	const items = await fetchAlbumQueueItems(meta, signal);
 	if (items.length === 0) {
-		playbackToast.show('Nothing here can be played right now', 'info');
+		toastStore.notify('Nothing here can be played right now', 'info');
 		return false;
 	}
 	playerStore.playQueue(items, 0, true);
@@ -132,7 +132,7 @@ export async function cardQuickShuffle(
 export async function cardAddToQueue(meta: AlbumCardMeta, signal?: AbortSignal): Promise<boolean> {
 	const items = await fetchAlbumQueueItems(meta, signal);
 	if (items.length === 0) {
-		playbackToast.show('Nothing here can be played right now', 'info');
+		toastStore.notify('Nothing here can be played right now', 'info');
 		return false;
 	}
 	playerStore.addMultipleToQueue(items);
@@ -142,7 +142,7 @@ export async function cardAddToQueue(meta: AlbumCardMeta, signal?: AbortSignal):
 export async function cardPlayNext(meta: AlbumCardMeta, signal?: AbortSignal): Promise<boolean> {
 	const items = await fetchAlbumQueueItems(meta, signal);
 	if (items.length === 0) {
-		playbackToast.show('Nothing here can be played right now', 'info');
+		toastStore.notify('Nothing here can be played right now', 'info');
 		return false;
 	}
 	playerStore.playMultipleNext(items);

@@ -75,7 +75,6 @@ const editions = section<EditionPreferences>(
 	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.editionPreferences(), { signal }),
 	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.editionPreferences(), body)
 );
-export const EditionPreferencesQueryKeyFactory = editions.keys;
 export const getEditionPreferencesQuery = editions.query;
 export const createSaveEditionPreferencesMutation = editions.save;
 
@@ -87,7 +86,6 @@ const events = section<EventsSettings>(
 	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.events(), body),
 	() => [concertsChanged(authStore.user?.id)]
 );
-export const EventsSettingsQueryKeyFactory = events.keys;
 export const getEventsSettingsQuery = events.query;
 export const createSaveEventsSettingsMutation = events.save;
 
@@ -96,7 +94,6 @@ const getIt = section<GetItSettings>(
 	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.getIt(), { signal }),
 	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.getIt(), body)
 );
-export const GetItSettingsQueryKeyFactory = getIt.keys;
 export const getGetItSettingsQuery = getIt.query;
 export const createSaveGetItSettingsMutation = getIt.save;
 
@@ -105,7 +102,6 @@ const lastfm = section<LastFmSettings>(
 	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.lastfm(), { signal }),
 	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.lastfm(), body)
 );
-export const LastFmSettingsQueryKeyFactory = lastfm.keys;
 export const getLastFmSettingsQuery = lastfm.query;
 export const createSaveLastFmSettingsMutation = lastfm.save;
 
@@ -123,7 +119,6 @@ const navidrome = section<NavidromeSettings>(
 	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.navidrome(), { signal }),
 	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.navidrome(), body)
 );
-export const NavidromeSettingsQueryKeyFactory = navidrome.keys;
 export const getNavidromeSettingsQuery = navidrome.query;
 export const createSaveNavidromeSettingsMutation = navidrome.save;
 
@@ -142,7 +137,6 @@ const oidc = section<OidcSettings>(
 	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.oidc(), { signal }),
 	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.oidc(), body)
 );
-export const OidcSettingsQueryKeyFactory = oidc.keys;
 export const getOidcSettingsQuery = oidc.query;
 export const createSaveOidcSettingsMutation = oidc.save;
 
@@ -151,7 +145,6 @@ const plex = section<PlexSettings>(
 	(signal) => api.v3.GET(PLEX_ENDPOINTS.settings(), { signal }),
 	(body) => api.v3.PUT(PLEX_ENDPOINTS.settings(), body)
 );
-export const PlexSettingsQueryKeyFactory = plex.keys;
 export const getPlexSettingsQuery = plex.query;
 export const createSavePlexSettingsMutation = plex.save;
 
@@ -160,7 +153,6 @@ const security = section<SecuritySettings>(
 	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.security(), { signal }),
 	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.security(), body)
 );
-export const SecuritySettingsQueryKeyFactory = security.keys;
 export const getSecuritySettingsQuery = security.query;
 export const createSaveSecuritySettingsMutation = security.save;
 
@@ -169,7 +161,6 @@ const spotify = section<SpotifySettings>(
 	(signal) => api.v3.GET(SPOTIFY_ENDPOINTS.settings(), { signal }),
 	(body) => api.v3.PUT(SPOTIFY_ENDPOINTS.settings(), body)
 );
-export const SpotifySettingsQueryKeyFactory = spotify.keys;
 export const getSpotifySettingsQuery = spotify.query;
 export const createSaveSpotifySettingsMutation = spotify.save;
 
@@ -178,7 +169,6 @@ const wrapped = section<WrappedSettings>(
 	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.wrapped(), { signal }),
 	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.wrapped(), body)
 );
-export const WrappedSettingsQueryKeyFactory = wrapped.keys;
 export const getWrappedSettingsQuery = wrapped.query;
 export const createSaveWrappedSettingsMutation = wrapped.save;
 
@@ -187,7 +177,6 @@ const youtube = section<YouTubeSettings>(
 	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.youtube(), { signal }),
 	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.youtube(), body)
 );
-export const YouTubeSettingsQueryKeyFactory = youtube.keys;
 export const getYouTubeSettingsQuery = youtube.query;
 export const createSaveYouTubeSettingsMutation = youtube.save;
 

@@ -39,7 +39,7 @@ function toReason(view: ReasonView | null | undefined): LibraryManagementReason 
 	return view ? { code: view.code, message: view.message, action: view.action } : null;
 }
 
-export function toPlanItem(view: PlanItemView): LibraryManagementPlanItem {
+function toPlanItem(view: PlanItemView): LibraryManagementPlanItem {
 	return {
 		ordinal: view.ordinal,
 		bundle_ordinal: view.bundle_ordinal,

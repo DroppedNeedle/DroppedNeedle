@@ -55,6 +55,7 @@
 						max={20}
 						bind:value={draft.max_checks_per_sweep}
 						disabled={!draft.enabled}
+						error={section.fieldError('max_checks_per_sweep', 'Albums checked per sweep')}
 					/>
 				</div>
 				<SaveBar {...section.bar} />

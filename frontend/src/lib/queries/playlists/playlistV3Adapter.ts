@@ -21,7 +21,7 @@ export function epochSecToIso(epochSec: number): string {
 }
 
 /** Narrow a V3 list row to its redacted stub. */
-export function isRedactedListItemV3(
+function isRedactedListItemV3(
 	item: PlaylistListItemV3
 ): item is components['schemas']['RedactedPlaylist'] {
 	return item.is_redacted === true;
@@ -52,7 +52,7 @@ export function toPageTrack(track: PlaylistTrackV3): PlaylistTrack {
 }
 
 /** V3 summary to the page summary shape (provenance passes through). */
-export function toPageSummary(summary: PlaylistSummaryV3): PlaylistSummary {
+function toPageSummary(summary: PlaylistSummaryV3): PlaylistSummary {
 	return {
 		id: summary.id,
 		name: summary.name,

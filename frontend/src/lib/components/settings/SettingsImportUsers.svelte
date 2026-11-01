@@ -79,7 +79,7 @@
 	description="Pre-provision accounts from your media server. Each imported user signs in with their own Jellyfin or Plex login - no password is set here."
 	size="lg"
 >
-	<div role="tablist" class="tabs tabs-boxed">
+	<div role="tablist" class="tabs tabs-box">
 		<button
 			role="tab"
 			aria-selected={activeProvider === 'jellyfin'}

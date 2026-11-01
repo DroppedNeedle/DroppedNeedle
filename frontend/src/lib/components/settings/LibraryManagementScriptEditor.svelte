@@ -224,7 +224,7 @@
 					</div>
 				{:else}
 					<p class="mt-2">
-						Statements: set, append, delete, if, else, end. Custom fields use custom.NAME.
+						Statements: set, append, delete, if ...:, else:, end. Custom fields use custom.NAME.
 					</p>
 					<p class="mt-1">
 						Scripts run in the attached order. Exact field-level effects are attributed in the

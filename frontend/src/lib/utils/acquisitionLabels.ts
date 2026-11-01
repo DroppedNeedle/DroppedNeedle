@@ -12,107 +12,8 @@
 
 import type { Reason } from '$lib/types';
 
-// ---------------------------------------------------------------------------
-// Preference-step labels
-// ---------------------------------------------------------------------------
-
-/**
- * Step-index label used on task cards.
- * - step 0 -> "Preferred"
- * - step n -> "Fallback n"
- * - step null/negative/out of [0, total) -> "Outside policy"
- */
-export function labelForQualityStep(
-	step: number | null | undefined,
-	total: number | null | undefined
-): string {
-	if (typeof step !== 'number' || !Number.isFinite(step) || step < 0 || !Number.isInteger(step)) {
-		return 'Outside policy';
-	}
-	if (typeof total === 'number' && Number.isFinite(total) && total > 0 && step >= total) {
-		return 'Outside policy';
-	}
-	return step === 0 ? 'Preferred' : `Fallback ${step}`;
-}
-
-// ---------------------------------------------------------------------------
-// Fallback countdown copy
-// ---------------------------------------------------------------------------
-
 /** Shown when a zero-byte wait has no deadline and nothing further can follow. */
 export const NO_FALLBACK_COPY = 'No fallback accepted';
-
-const LOSSLESS_EXTENSIONS: Record<string, true> = {
-	flac: true,
-	alac: true,
-	wav: true,
-	ape: true,
-	wv: true,
-	aiff: true,
-	aif: true,
-	dsf: true,
-	dff: true
-};
-const LOSSY_EXTENSIONS: Record<string, true> = {
-	mp3: true,
-	ogg: true,
-	oga: true,
-	opus: true,
-	aac: true,
-	m4a: true,
-	wma: true,
-	mp2: true
-};
-
-function khzLabel(sampleRateHz: number): string {
-	const khz = sampleRateHz / 1000;
-	return Number.isInteger(khz) ? khz.toFixed(0) : khz.toFixed(1);
-}
-
-export interface NextPreferenceSource {
-	format?: string | null;
-	bitrate?: number | null;
-	bit_depth?: number | null;
-	sample_rate?: number | null;
-}
-
-/**
- * Names the preference currently being awaited, from advertised evidence.
- * Lossless requires depth AND rate known; lossy requires a positive bitrate;
- * anything unnameable returns null so callers use "Next accepted preference".
- * Exact outputs: "24-bit/96 kHz lossless", "Lossy 320".
- */
-export function nextPreferenceLabel(source?: NextPreferenceSource | null): string | null {
-	if (!source) return null;
-	const ext = source.format?.toLowerCase().trim() ?? '';
-	const depth =
-		typeof source.bit_depth === 'number' && source.bit_depth > 0 ? source.bit_depth : null;
-	const rate =
-		typeof source.sample_rate === 'number' && source.sample_rate > 0 ? source.sample_rate : null;
-	if (LOSSLESS_EXTENSIONS[ext] && depth !== null && rate !== null) {
-		return `${depth}-bit/${khzLabel(rate)} kHz lossless`;
-	}
-	const bitrate = typeof source.bitrate === 'number' && source.bitrate > 0 ? source.bitrate : null;
-	if (LOSSY_EXTENSIONS[ext] && bitrate !== null) {
-		return `Lossy ${Math.round(bitrate)}`;
-	}
-	return null;
-}
-
-/**
- * Countdown line while queued on a zero-byte source.
- * Exact outputs: "Lossy 320 fallback in 8m", "Next accepted preference fallback in 8m"
- * and (for the no-deadline/no-next-source slot) NO_FALLBACK_COPY.
- */
-export function fallbackCopy(
-	nextPreferenceName: string | null | undefined,
-	minutes: number | null | undefined
-): string {
-	if (typeof minutes !== 'number' || !Number.isFinite(minutes)) return NO_FALLBACK_COPY;
-	const whole = Math.max(0, Math.ceil(minutes));
-	const label = nextPreferenceName || 'Next accepted preference';
-	return `${label} fallback in ${whole}m`;
-}
 
 // ---------------------------------------------------------------------------
 // Request-copy lines (spec: four request-status strings)
@@ -126,7 +27,7 @@ export const ALREADY_IN_LIBRARY_COPY = 'Album is already in the library';
 /** A request accepted while no download source is set up: it is held, not started. */
 export const WAITING_FOR_SOURCE_COPY = 'Requested - waiting for a download source.';
 
-export const SUBMITTED_FOR_APPROVAL_COPY =
+const SUBMITTED_FOR_APPROVAL_COPY =
 	'Submitted for approval. The current server policy will apply when approved.';
 
 const REQUEST_STATUS_TOKENS: Record<string, RequestStatusToken> = {
@@ -191,25 +92,17 @@ export function batchRequestCopy(requested: number, skipped: number, overflow: n
 // Failure / empty-state classification (purely from DownloadTask fields)
 // ---------------------------------------------------------------------------
 
-export type AcquisitionEmptyState =
-	'probe-mismatch' | 'unknown-only' | 'nothing-found' | 'source-failure';
+export type AcquisitionEmptyState = 'probe-mismatch' | 'nothing-found' | 'source-failure';
 
 export interface EmptyStateSource {
 	status?: string;
 	outcome_code?: Reason | null;
-	manual_quality_override?: boolean;
-	quality_certainty?: string | null;
-	quality_snapshot_summary?: string | null;
 }
 
 export const EMPTY_STATE_COPY: Record<AcquisitionEmptyState, { title: string; detail: string }> = {
 	'nothing-found': {
 		title: 'Nothing found yet',
 		detail: 'The search finished without matching copies. Try again later.'
-	},
-	'unknown-only': {
-		title: 'Only unknown-resolution copies were found',
-		detail: 'Everything available hid its real quality, so we stopped instead of guessing.'
 	},
 	'probe-mismatch': {
 		title: 'Quality did not match what was promised',
@@ -233,19 +126,12 @@ const NOTHING_FOUND: ReadonlySet<Reason> = new Set<Reason>([
 
 /**
  * Classifies a non-productive task purely from persisted fields. Precedence:
- * manual override / a quality refusal -> probe mismatch; family-unknown
- * evidence -> unknown-only; no source had it -> nothing-found; any other
+ * a quality refusal -> probe mismatch; no source had it -> nothing-found; any other
  * outcome -> source-failure; otherwise null (healthy/active task, no extra UI).
  */
 export function classifyEmptyState(task: EmptyStateSource): AcquisitionEmptyState | null {
 	const outcome = task.outcome_code ?? null;
-	if (task.manual_quality_override || outcome === 'quality_rejected') return 'probe-mismatch';
-	if (
-		task.quality_certainty === 'unknown' ||
-		/unknown-resolution/i.test(task.quality_snapshot_summary ?? '')
-	) {
-		return 'unknown-only';
-	}
+	if (outcome === 'quality_rejected') return 'probe-mismatch';
 	if (outcome === null) return null;
 	if (NOTHING_FOUND.has(outcome)) return 'nothing-found';
 	return 'source-failure';

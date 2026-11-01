@@ -174,11 +174,17 @@
 				</div>
 
 				<div class="grid gap-4 md:grid-cols-2">
-					<SelectField label="Release date" options={dateOptions} bind:value={draft.date} />
+					<SelectField
+						label="Release date"
+						options={dateOptions}
+						bind:value={draft.date}
+						error={section.fieldError('date', 'Release date')}
+					/>
 					<SelectField
 						label="Standard or deluxe"
 						options={versionOptions}
 						bind:value={draft.version}
+						error={section.fieldError('version', 'Standard or deluxe')}
 					/>
 				</div>
 

@@ -239,7 +239,7 @@
 				>
 					{#if result.type === 'artist'}
 						<ArtistImage
-							mbid={result.musicbrainz_id}
+							mbid={isLocalOnly(result) ? '' : result.musicbrainz_id}
 							alt={result.title}
 							size="full"
 							requestSize={250}
@@ -250,7 +250,7 @@
 						/>
 					{:else}
 						<AlbumImage
-							mbid={result.musicbrainz_id}
+							mbid={isLocalOnly(result) ? '' : result.musicbrainz_id}
 							alt={result.title}
 							size="full"
 							requestSize={250}

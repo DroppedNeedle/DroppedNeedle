@@ -6,7 +6,7 @@ import { LibraryV3Api } from './LibraryV3Api';
 import type { LibraryActivityResponse } from './LibraryOperationsTypes';
 import { STALE_LIVE } from '$lib/queries/staleTime';
 
-export const getLibraryActivityQueryOptions = (userId: string | undefined) =>
+const getLibraryActivityQueryOptions = (userId: string | undefined) =>
 	queryOptions({
 		queryKey: LibraryQueryKeyFactory.activity(userId),
 		queryFn: async ({ signal }): Promise<LibraryActivityResponse> =>

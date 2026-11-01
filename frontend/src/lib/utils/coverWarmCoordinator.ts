@@ -66,7 +66,7 @@ async function poll(key: string, entry: WarmEntry) {
 			return;
 		}
 
-		if (response.ok && response.headers.get('x-cover-source') !== 'placeholder') {
+		if (response.ok) {
 			const objectUrl = URL.createObjectURL(await response.blob());
 			notify(entry, { status: 'ready', url: objectUrl });
 			return;

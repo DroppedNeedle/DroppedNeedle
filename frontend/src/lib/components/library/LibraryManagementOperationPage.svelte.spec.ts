@@ -132,7 +132,7 @@ describe('LibraryManagementOperationPage', () => {
 			.toBeVisible();
 		await expect
 			.element(page.getByRole('link', { name: 'Open baseline restore...' }))
-			.toHaveAttribute('href', '/library/management?runner=baseline_restore');
+			.toHaveAttribute('href', '/library/management?tab=organize&runner=baseline_restore');
 		await page.getByRole('button', { name: 'Preview Undo...' }).click();
 		await expect
 			.element(page.getByRole('heading', { name: 'Generate an Undo preview?' }))

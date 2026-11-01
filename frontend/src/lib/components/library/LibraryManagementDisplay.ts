@@ -449,6 +449,7 @@ export function titleManagementValue(value: string): string {
  */
 export const MANAGEMENT_REASON_LABELS: Record<string, string> = {
 	MANAGEMENT_DISABLED: 'File organization is turned off',
+	SCAN_HELD_BACK: 'Held back after a scan found files gone',
 	UNCONFIRMED_MATCH: 'Edition is a best guess nobody confirmed',
 	UNMATCHED_ALBUM: 'Album is not matched to MusicBrainz',
 	CHOSEN_EDITION_FITS_NO_FILE: 'Chosen edition does not fit these files',

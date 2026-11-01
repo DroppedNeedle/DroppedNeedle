@@ -32,9 +32,11 @@
 		items: MenuItem[];
 		position?: 'start' | 'end';
 		size?: 'xs' | 'sm';
+		/** What the button is called; name the row when a list has many. */
+		label?: string;
 	}
 
-	let { items, position = 'end', size = 'sm' }: Props = $props();
+	let { items, position = 'end', size = 'sm', label = 'More actions' }: Props = $props();
 	let detailsEl = $state<HTMLDetailsElement | null>(null);
 	let summaryEl = $state<HTMLElement | null>(null);
 	let menuEl = $state<HTMLUListElement | null>(null);
@@ -134,7 +136,7 @@
 		bind:ref={summaryEl}
 		size={size === 'xs' ? 'xs' : 'sm'}
 		icon={EllipsisVertical}
-		label="More actions"
+		{label}
 		aria-haspopup="menu"
 		onclick={(e: MouseEvent) => e.stopPropagation()}
 	/>

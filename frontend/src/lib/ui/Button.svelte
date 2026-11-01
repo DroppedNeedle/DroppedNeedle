@@ -138,8 +138,8 @@
 	href={tag === 'a' && !blocked ? href : undefined}
 	type={tag === 'button' ? type : undefined}
 	disabled={tag === 'button' ? blocked : undefined}
-	aria-disabled={tag !== 'button' && blocked ? true : undefined}
-	aria-busy={loading || undefined}
+	aria-disabled={rest['aria-disabled'] ?? (tag !== 'button' && blocked ? true : undefined)}
+	aria-busy={rest['aria-busy'] ?? (loading || undefined)}
 >
 	{#if loading}
 		<span class={spinnerSizes[size]} aria-hidden="true"></span>

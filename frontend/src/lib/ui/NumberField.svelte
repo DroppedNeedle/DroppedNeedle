@@ -1,7 +1,5 @@
 <!--
 	A labelled number input with an optional unit.
-	Replaces `settings/SettingsNumberField.svelte` and the hand-written number
-	inputs beside it.
 -->
 <script lang="ts">
 	import Field from './Field.svelte';

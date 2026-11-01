@@ -295,7 +295,7 @@
 			title: r.title,
 			type: r.type ?? 'Album',
 			year: r.year,
-			in_library: libraryStore.isInLibrary(r.id) || (!$libraryStore.initialized && r.in_library),
+			in_library: libraryStore.isInLibrary(r.id) || r.in_library,
 			requested: r.requested || libraryStore.isRequested(r.id)
 		}));
 		discographyDownloadStore.show(artist.name, data.artistId, items);
@@ -308,7 +308,7 @@
 			title: r.title,
 			type,
 			year: r.year,
-			in_library: libraryStore.isInLibrary(r.id) || (!$libraryStore.initialized && r.in_library),
+			in_library: libraryStore.isInLibrary(r.id) || r.in_library,
 			requested: r.requested || libraryStore.isRequested(r.id)
 		}));
 		discographyDownloadStore.show(artist.name, data.artistId, items);

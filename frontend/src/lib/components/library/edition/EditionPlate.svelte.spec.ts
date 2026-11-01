@@ -103,7 +103,6 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 		edition?.state === 'waiting' || edition?.state === 'fetching',
 	previewEditionTags: () => mutation(),
 	getTagWriteQuery: () => ({ data: undefined, refetch: vi.fn() }),
-	tagWriteFinished: vi.fn(),
 	writeEditionTags: () => mutation(),
 	undoTagWrite: () => mutation(),
 	removeEditionExtras: () => mutation(),

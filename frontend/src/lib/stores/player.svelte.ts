@@ -9,7 +9,7 @@ import { createPlaybackSource } from '$lib/player/createSource';
 import { api } from '$lib/api/client';
 import { createPlaybackSession, sessionKeyFor } from '$lib/player/playbackSession';
 import { prefetchPathFor, streamUrlFor } from '$lib/player/streamUrl';
-import { playbackToast } from '$lib/stores/playbackToast.svelte';
+import { toastStore } from '$lib/stores/toast';
 import { radioSession } from '$lib/stores/radioSession.svelte';
 import {
 	getStoredVolume,
@@ -280,7 +280,7 @@ function createPlayerStore() {
 		const { phase } = recovery;
 		// A first failure may be transient: reload the same item once.
 		if (item && (phase === 'loading' || phase === 'playing')) {
-			playbackToast.show(
+			toastStore.notify(
 				`"${trackName}" failed on ${failedSource}${detailSuffix}, retrying...`,
 				'warning'
 			);
@@ -293,10 +293,7 @@ function createPlayerStore() {
 			const switched = next ? changeItemSource(queue, index, next) : null;
 			if (switched && !switched.error) {
 				queue = switched.newQueue;
-				playbackToast.show(
-					`"${trackName}" failed on ${failedSource}, trying ${next}...`,
-					'warning'
-				);
+				toastStore.notify(`"${trackName}" failed on ${failedSource}, trying ${next}...`, 'warning');
 				void loadQueueItem(index, 'fallback');
 				return;
 			}
@@ -307,13 +304,13 @@ function createPlayerStore() {
 		playbackState = 'error';
 		if (recovery.failed.length >= MAX_CONSECUTIVE_ERRORS) {
 			const named = recovery.failed.map((n) => `"${n}"`).join(', ');
-			playbackToast.show(`Several tracks failed: ${named} - playback stopped.`, 'error');
+			toastStore.notify(`Several tracks failed: ${named} - playback stopped.`, 'error');
 			applyResetState();
 			return;
 		}
 		const nextIdx = getNextIndex();
 		if (nextIdx !== null) {
-			playbackToast.show(
+			toastStore.notify(
 				`"${trackName}" failed on ${failedSource}${detailSuffix}, skipping...`,
 				'warning'
 			);
@@ -322,7 +319,7 @@ function createPlayerStore() {
 				if (isCurrent(gen)) void loadQueueItem(nextIdx);
 			}, ERROR_SKIP_DELAY_MS);
 		} else {
-			playbackToast.show(`"${trackName}" failed on ${failedSource}${detailSuffix}`, 'error');
+			toastStore.notify(`"${trackName}" failed on ${failedSource}${detailSuffix}`, 'error');
 		}
 	}
 
@@ -689,12 +686,12 @@ function createPlayerStore() {
 		changeTrackSource(index: number, newSourceType: SourceType): void {
 			if (index < 0 || index >= queue.length) return;
 			if (index === currentIndex) {
-				playbackToast.show('Cannot change source for the currently playing track', 'warning');
+				toastStore.notify('Cannot change source for the currently playing track', 'warning');
 				return;
 			}
 			const r = changeItemSource(queue, index, newSourceType);
 			if (r.error) {
-				playbackToast.show(r.error, 'warning');
+				toastStore.notify(r.error, 'warning');
 				return;
 			}
 			queue = r.newQueue;

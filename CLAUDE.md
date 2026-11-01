@@ -521,6 +521,8 @@ Run from the repo root. `make help` lists every target.
   user's keys never leak to another. A query is saved to the browser only
   when its `meta.persist` says so, and a query whose answer depends on the
   metadata source carries `meta.provider`, so a source switch drops it.
+- An effect that seeds a form from `query.data` guards itself: any change to
+  the query re-runs it.
 - Change the cache only through `setQueryDataWithPersister` and
   `invalidateQueriesWithPersister`. Mutations invalidate every affected
   prefix, including other features'.

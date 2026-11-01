@@ -1,9 +1,9 @@
-export const SCROBBLE_PERCENT_THRESHOLD = 0.5;
+const SCROBBLE_PERCENT_THRESHOLD = 0.5;
 export const SCROBBLE_TIME_THRESHOLD_MS = 240_000;
-export const NOW_PLAYING_DEBOUNCE_MS = 3000;
+const NOW_PLAYING_DEBOUNCE_MS = 3000;
 const SEEK_TOLERANCE_S = 3;
 export const MIN_TRACK_DURATION_MS = 30_000;
-export const LOOP_RESET_TOLERANCE_S = 3;
+const LOOP_RESET_TOLERANCE_S = 3;
 
 export function makeTrackKey(artistName: string, trackName: string): string {
 	return `${artistName.toLowerCase()}::${trackName.toLowerCase()}`;
@@ -29,7 +29,7 @@ export function shouldSendNowPlaying(accumulatedMs: number, alreadySent: boolean
 	return !alreadySent && accumulatedMs >= NOW_PLAYING_DEBOUNCE_MS;
 }
 
-export function getScrobbleThreshold(durationMs: number): number {
+function getScrobbleThreshold(durationMs: number): number {
 	const halfDuration = durationMs * SCROBBLE_PERCENT_THRESHOLD;
 	return Math.min(halfDuration, SCROBBLE_TIME_THRESHOLD_MS);
 }
@@ -44,7 +44,7 @@ export function shouldScrobble(
 	return accumulatedMs >= getScrobbleThreshold(durationMs);
 }
 
-export const MAX_SCROBBLE_RETRIES = 3;
+const MAX_SCROBBLE_RETRIES = 3;
 const SCROBBLE_RETRY_BASE_MS = 5_000;
 
 /** The pause before retrying a failed submit, or null once the play has used its retries. */

@@ -112,7 +112,13 @@
 		if (plexPollInterval) clearInterval(plexPollInterval);
 		try {
 			const { pin_id, authorize_url } = await plexPin.mutateAsync({ purpose: 'login' });
-			window.open(authorize_url, '_blank', 'width=800,height=600');
+			const authorizeLink = outsideLink(authorize_url);
+			if (!authorizeLink) {
+				plexError = 'Sign-in provider address refused';
+				plexLoading = false;
+				return;
+			}
+			window.open(authorizeLink, '_blank', 'width=800,height=600');
 
 			plexPollInterval = setInterval(async () => {
 				try {
@@ -146,7 +152,7 @@
 			// document names, and assigning a script address here would run it.
 			const authorizeLink = outsideLink(authorize_url);
 			if (!authorizeLink) {
-				oidcError = 'SSO is not configured';
+				oidcError = 'Sign-in provider address refused';
 				oidcLoading = false;
 				return;
 			}

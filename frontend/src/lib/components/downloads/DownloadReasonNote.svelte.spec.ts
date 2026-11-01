@@ -47,7 +47,6 @@ function task(overrides: Partial<DownloadTask> = {}): DownloadTask {
 		queue_position_start: null,
 		queue_position_end: null,
 		remote_queued: false,
-		preferred_quality_fallback_at: null,
 		attempt_number: 0,
 		attempt_total: 0,
 		has_next_source: false,

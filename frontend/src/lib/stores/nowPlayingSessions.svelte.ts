@@ -24,7 +24,7 @@ export interface NowPlayingSession {
 	_isLocal?: boolean;
 }
 
-export function nowPlayingEntryToSession(entry: NowPlayingEntry): NowPlayingSession {
+function nowPlayingEntryToSession(entry: NowPlayingEntry): NowPlayingSession {
 	return {
 		id: entry.id,
 		user_name: entry.user_name,
@@ -51,7 +51,7 @@ const MAX_INTERPOLATION_ADVANCE_MS = 12_000;
 
 type InterpolationBasis = { serverProgress: number; updatedAt: number };
 
-export function createNowPlayingStore(events: EventDispatcher = serverEvents) {
+function createNowPlayingStore(events: EventDispatcher = serverEvents) {
 	let sessions = $state<NowPlayingSession[]>([]);
 	let unsubSnapshot: MuxUnsubscribe | null = null;
 	let tickTimer: ReturnType<typeof setInterval> | undefined;

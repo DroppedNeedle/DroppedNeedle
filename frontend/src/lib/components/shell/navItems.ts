@@ -30,7 +30,7 @@ export type NavBadge = 'library-sync' | 'downloads' | 'following' | 'approvals' 
 export type SidebarGroup = 'search' | 'browse' | 'requests' | 'admin' | 'footer';
 
 /** Whether the current path (without the base path) highlights a destination. */
-export type NavMatch = (path: string) => boolean;
+export type NavMatch = (path: string, tab?: string | null) => boolean;
 
 export interface NavItem {
 	id: string;
@@ -81,7 +81,7 @@ export const navItems: NavItem[] = [
 		icon: House,
 		href: '/',
 		audience: 'everyone',
-		sidebar: { group: 'browse' },
+		sidebar: { group: 'browse', active: exactly('/') },
 		bottom: { active: exactly('/') }
 	},
 	{
@@ -90,7 +90,7 @@ export const navItems: NavItem[] = [
 		icon: Compass,
 		href: '/discover',
 		audience: 'everyone',
-		sidebar: { group: 'browse' },
+		sidebar: { group: 'browse', active: within('/discover') },
 		bottom: { active: within('/discover') }
 	},
 	{
@@ -118,7 +118,7 @@ export const navItems: NavItem[] = [
 		href: '/downloads',
 		audience: 'everyone',
 		badge: 'downloads',
-		sidebar: { group: 'browse' },
+		sidebar: { group: 'browse', active: within('/downloads') },
 		more: { active: within('/downloads'), badge: false }
 	},
 	{
@@ -146,7 +146,10 @@ export const navItems: NavItem[] = [
 		icon: Inbox,
 		href: '/requests',
 		audience: 'everyone',
-		sidebar: { group: 'requests' },
+		sidebar: {
+			group: 'requests',
+			active: (path, tab) => within('/requests')(path) && tab !== 'approvals'
+		},
 		more: { active: within('/requests') }
 	},
 	{
@@ -166,7 +169,10 @@ export const navItems: NavItem[] = [
 		href: '/requests?tab=approvals',
 		audience: 'admin',
 		badge: 'approvals',
-		sidebar: { group: 'admin' },
+		sidebar: {
+			group: 'admin',
+			active: (path, tab) => within('/requests')(path) && tab === 'approvals'
+		},
 		more: { active: within('/requests') }
 	},
 	{

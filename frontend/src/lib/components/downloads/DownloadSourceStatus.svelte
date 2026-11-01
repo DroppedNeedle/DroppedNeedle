@@ -1,12 +1,7 @@
 <script lang="ts">
 	import { Clock3, ListOrdered, SkipForward } from 'lucide-svelte';
 
-	import {
-		NO_FALLBACK_COPY,
-		fallbackCopy,
-		labelForQualityStep,
-		nextPreferenceLabel
-	} from '$lib/utils/acquisitionLabels';
+	import { NO_FALLBACK_COPY } from '$lib/utils/acquisitionLabels';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	import { tryNextSource } from '$lib/queries/downloads/DownloadMutations.svelte';
@@ -29,7 +24,6 @@
 	}: Props = $props();
 
 	const nextSource = tryNextSource();
-	let now = $state(Date.now());
 	let actionMessage = $state<string | null>(null);
 	let actionCandidate = $state<string | null>(null);
 
@@ -49,9 +43,6 @@
 	const queueStart = $derived(live ? live.queue_position_start : task.queue_position_start);
 	const queueEnd = $derived(live ? live.queue_position_end : task.queue_position_end);
 	const remoteQueued = $derived(live ? live.remote_queued : task.remote_queued);
-	const fallbackAt = $derived(
-		live ? live.preferred_quality_fallback_at : task.preferred_quality_fallback_at
-	);
 	const attemptNumber = $derived(live?.attempt_number || task.attempt_number);
 	const attemptTotal = $derived(live?.attempt_total || task.attempt_total);
 	const hasNext = $derived(live?.has_next_source ?? task.has_next_source);
@@ -88,25 +79,7 @@
 		return `${queueStart.toLocaleString()}–${queueEnd.toLocaleString()}`;
 	});
 
-	const fallbackMinutes = $derived(
-		fallbackAt == null ? null : Math.max(0, Math.ceil((fallbackAt * 1000 - now) / 60_000))
-	);
-
-	const nextPreferenceName = $derived(
-		nextPreferenceLabel({
-			format: qualityFormat,
-			bitrate: task.quality_bitrate,
-			bit_depth: qualityBitDepth,
-			sample_rate: qualitySampleRate
-		})
-	);
-	// Replacement for the old hard-coded "Lower-quality fallback in Nm" line; when a
-	// deadline never starts and no further source exists we explicitly say so.
-	const fallbackLine = $derived.by(() => {
-		if (!isQueued) return null;
-		if (fallbackMinutes !== null) return fallbackCopy(nextPreferenceName, fallbackMinutes);
-		return hasNext ? null : NO_FALLBACK_COPY;
-	});
+	const fallbackLine = $derived(isQueued && !hasNext ? NO_FALLBACK_COPY : null);
 	const awaitingReview = $derived(
 		task.status === 'queued' &&
 			Boolean(task.search_job_id) &&
@@ -116,25 +89,7 @@
 	const evidenceChips = $derived.by(() => {
 		const chips: string[] = [];
 		if (task.quality_bitrate) chips.push(`${task.quality_bitrate} kbps`);
-		if (typeof task.quality_preference_step === 'number') {
-			chips.push(labelForQualityStep(task.quality_preference_step, null));
-		}
-		if (task.quality_certainty) {
-			chips.push(
-				`Certainty: ${task.quality_certainty[0].toUpperCase()}${task.quality_certainty.slice(1)}`
-			);
-		}
-		if (task.quality_provenance) {
-			chips.push(`Provenance: ${task.quality_provenance.replaceAll('_', ' ')}`);
-		}
-		if (task.manual_quality_override) chips.push('Manual pick');
 		return chips;
-	});
-
-	$effect(() => {
-		if (fallbackAt == null) return;
-		const timer = window.setInterval(() => (now = Date.now()), 30_000);
-		return () => window.clearInterval(timer);
 	});
 
 	function onTryNext() {
@@ -216,11 +171,6 @@
 			{#each evidenceChips as chip (chip)}
 				<span class="badge badge-ghost badge-sm">{chip}</span>
 			{/each}
-			{#if task.quality_snapshot_summary}
-				<span class="max-w-full truncate" title={task.quality_snapshot_summary}>
-					{task.quality_snapshot_summary}
-				</span>
-			{/if}
 		</div>
 
 		{#if canTryNext}

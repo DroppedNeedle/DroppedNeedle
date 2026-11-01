@@ -61,10 +61,10 @@ vi.stubGlobal('localStorage', {
 	})
 });
 
-vi.mock('$lib/stores/playbackToast.svelte', () => ({
-	playbackToast: {
-		show: vi.fn(),
-		dismiss: vi.fn(),
+vi.mock('$lib/stores/toast', () => ({
+	toastStore: {
+		notify: vi.fn(),
+		hide: vi.fn(),
 		get visible() {
 			return false;
 		},
@@ -87,7 +87,7 @@ vi.mock('$lib/api/client', () => ({
 }));
 
 import { playerStore } from './player.svelte';
-import { playbackToast } from '$lib/stores/playbackToast.svelte';
+import { toastStore } from '$lib/stores/toast';
 import { radioSession } from '$lib/stores/radioSession.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { startPlaybackSession, stopPlaybackSession } from '$lib/player/playbackGateway';
@@ -229,7 +229,7 @@ describe('playerStore queue methods', () => {
 			const beforeSource = playerStore.queue[currentIdx].sourceType;
 			playerStore.changeTrackSource(currentIdx, 'jellyfin');
 			expect(playerStore.queue[currentIdx].sourceType).toBe(beforeSource);
-			expect(playbackToast.show).toHaveBeenCalled();
+			expect(toastStore.notify).toHaveBeenCalled();
 		});
 
 		it('updates streamUrl for target source', () => {
@@ -659,7 +659,7 @@ describe('track failure reporting', () => {
 
 		// Retry reloads the same track instead of skipping onward.
 		expect(playerStore.currentIndex).toBe(0);
-		expect(playbackToast.show).toHaveBeenLastCalledWith(
+		expect(toastStore.notify).toHaveBeenLastCalledWith(
 			'"Track 1" failed on local (stream failed), retrying...',
 			'warning'
 		);
@@ -668,7 +668,7 @@ describe('track failure reporting', () => {
 		await vi.advanceTimersByTimeAsync(2100);
 
 		expect(playerStore.currentIndex).toBe(1);
-		expect(playbackToast.show).toHaveBeenLastCalledWith(
+		expect(toastStore.notify).toHaveBeenLastCalledWith(
 			'"Track 1" failed on local (stream failed), skipping...',
 			'warning'
 		);
@@ -698,7 +698,7 @@ describe('track failure reporting', () => {
 		expect(playerStore.currentIndex).toBe(0);
 		expect(playerStore.queue[0].sourceType).toBe('local');
 		expect(playerStore.queue[0].trackSourceId).toBe('file-1');
-		expect(playbackToast.show).toHaveBeenLastCalledWith(
+		expect(toastStore.notify).toHaveBeenLastCalledWith(
 			'"Plex Track" failed on plex, trying local...',
 			'warning'
 		);
@@ -707,7 +707,7 @@ describe('track failure reporting', () => {
 		await vi.advanceTimersByTimeAsync(2100);
 
 		expect(playerStore.currentIndex).toBe(1);
-		expect(playbackToast.show).toHaveBeenLastCalledWith(
+		expect(toastStore.notify).toHaveBeenLastCalledWith(
 			'"Plex Track" failed on local (stream failed), skipping...',
 			'warning'
 		);

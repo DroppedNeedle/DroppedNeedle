@@ -268,9 +268,10 @@
 						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 					>
 						<ViewMoreAlbumCard />
-						{#each displayedAlbums as album (album.musicbrainz_id)}
+						{#each displayedAlbums as album, index (album.musicbrainz_id)}
 							<AlbumCard
 								{album}
+								lazy={index >= 12}
 								{enrichmentSource}
 								onenrichmentrequest={() => enrichCollector.requestAlbum(album)}
 							/>

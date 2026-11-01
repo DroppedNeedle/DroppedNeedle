@@ -51,6 +51,7 @@
 						bind:value={draft.store_region}
 						options={regions.map((region) => ({ value: region.code, label: region.label }))}
 						help="The storefront iTunes links point to."
+						error={section.fieldError('store_region', 'Store region')}
 					/>
 				</div>
 				<SaveBar {...section.bar} />

@@ -28,7 +28,6 @@ export interface DownloadSourceUpdate {
 	queue_position_start: number | null;
 	queue_position_end: number | null;
 	remote_queued: boolean;
-	preferred_quality_fallback_at: number | null;
 	attempt_number: number;
 	attempt_total: number;
 	has_next_source: boolean;
@@ -102,11 +101,6 @@ function parseSourceUpdate(
 		),
 		remote_queued:
 			'remote_queued' in data ? Boolean(data.remote_queued) : (previous?.remote_queued ?? false),
-		preferred_quality_fallback_at: nullableNumber(
-			data,
-			'preferred_quality_fallback_at',
-			previous?.preferred_quality_fallback_at ?? null
-		),
 		attempt_number: Number(data.attempt_number ?? data.attempt ?? previous?.attempt_number ?? 0),
 		attempt_total: Number(data.attempt_total ?? previous?.attempt_total ?? 0),
 		has_next_source:

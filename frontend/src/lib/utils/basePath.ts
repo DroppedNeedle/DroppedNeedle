@@ -18,7 +18,7 @@ function splitSuffix(path: string): { pathPart: string; suffix: string } {
  * tolerates a trailing slash on the configured base while '' or '/'
  * stays empty. Shared by the path prefix helpers and the v3 client base URL.
  */
-export function basePathPrefix(): string {
+function basePathPrefix(): string {
 	return !base || base === '/' ? '' : base.replace(/\/+$/, '');
 }
 

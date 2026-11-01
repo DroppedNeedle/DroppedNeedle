@@ -7,7 +7,7 @@ import { createQuery } from '@tanstack/svelte-query';
 import { DiagnosticsQueryKeyFactory } from './DiagnosticsQueryKeyFactory';
 import { STALE_LIVE } from '$lib/queries/staleTime';
 
-export const DIAGNOSTICS_ENDPOINTS = {
+const DIAGNOSTICS_ENDPOINTS = {
 	queueStats: () => v3('/api/v3/admin/queue-stats'),
 	providerStats: () => v3('/api/v3/admin/provider-stats')
 } as const;

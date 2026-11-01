@@ -104,7 +104,7 @@ export function recordingFor(
 	return recordingMbid ? { [source]: recordingMbid } : undefined;
 }
 
-export function getAvailableSources(data: TrackSourceData): SourceType[] {
+function getAvailableSources(data: TrackSourceData): SourceType[] {
 	const sources: SourceType[] = [];
 	if (data.localTrack) sources.push('local');
 	if (data.navidromeTrack) sources.push('navidrome');

@@ -17,9 +17,10 @@ const HOSTILE_PARTS = [
 	'<svg><a xlink:href="javascript:window.__xss = \'svg\'"><text>svg link</text></a></svg>'
 ].join('');
 
-// A well-formed remote image: allowed in our own release notes, never in
-// third-party notes.
-const REMOTE_IMAGE = '<img src="https://example.invalid/cover.png" alt="remote image">';
+// A well-formed web image: allowed in our own release notes, never in
+// third-party notes. It points at the test's own host, so no real network.
+const REMOTE_IMAGE_SRC = `${window.location.origin}/remote-image-test/cover.png`;
+const REMOTE_IMAGE = `<img src="${REMOTE_IMAGE_SRC}" alt="remote image">`;
 
 const HOSTILE_HTML =
 	'<p>Kept paragraph with <strong>bold</strong> and <a href="https://example.org/kept">a kept link</a>.</p>' +
@@ -115,6 +116,6 @@ describe('third-party HTML', () => {
 		await expectNothingRunnable();
 		await expect
 			.element(page.getByRole('img', { name: 'remote image' }))
-			.toHaveAttribute('src', 'https://example.invalid/cover.png');
+			.toHaveAttribute('src', REMOTE_IMAGE_SRC);
 	});
 });

@@ -107,7 +107,7 @@ const enrichFingerprint = (body: EnrichmentBatchRequestV3) => ({
 	albums: [...(body.albums ?? [])].map((album) => album.musicbrainz_id).sort()
 });
 
-export const getSearchEnrichBatchV3QueryOptions = (
+const getSearchEnrichBatchV3QueryOptions = (
 	userId: SearchV3UserId,
 	body: EnrichmentBatchRequestV3
 ) =>

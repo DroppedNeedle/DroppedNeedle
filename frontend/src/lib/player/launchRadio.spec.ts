@@ -13,14 +13,14 @@ const { apiMock, playerMock, toastMock } = vi.hoisted(() => ({
 		removeFromQueue: vi.fn(),
 		pause: vi.fn()
 	},
-	toastMock: { show: vi.fn() }
+	toastMock: { notify: vi.fn() }
 }));
 
 vi.mock('$lib/api/client', () => ({
 	api: { v3: { GET: apiMock.get, POST: apiMock.post } }
 }));
 vi.mock('$lib/stores/player.svelte', () => ({ playerStore: playerMock }));
-vi.mock('$lib/stores/playbackToast.svelte', () => ({ playbackToast: toastMock }));
+vi.mock('$lib/stores/toast', () => ({ toastStore: toastMock }));
 const resolveRadioPatch = vi.hoisted(() => vi.fn());
 vi.mock('$lib/player/radioQueueHydrator', () => ({
 	startRadioHydration: vi.fn(),

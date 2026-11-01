@@ -3,7 +3,7 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { browser } from '$app/environment';
 	import { playerStore } from '$lib/stores/player.svelte';
-	import { playbackToast } from '$lib/stores/playbackToast.svelte';
+	import { toastStore } from '$lib/stores/toast';
 	import { setQueueMutationToastsSuppressed } from '$lib/stores/playerUtils';
 	import { deckFocus } from '$lib/stores/deckFocus.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -172,7 +172,7 @@
 			);
 			if (album.year) eraDecade = Math.floor(album.year / 10) * 10;
 		} catch {
-			playbackToast.show("Couldn't load that album", 'error');
+			toastStore.notify("Couldn't load that album", 'error');
 		}
 	}
 
@@ -197,7 +197,7 @@
 				tracks.map((t) => matchTrackToQueueItem(t, cover, album.musicbrainz_id))
 			);
 		} catch {
-			playbackToast.show("Couldn't queue that album", 'error');
+			toastStore.notify("Couldn't queue that album", 'error');
 		}
 	}
 

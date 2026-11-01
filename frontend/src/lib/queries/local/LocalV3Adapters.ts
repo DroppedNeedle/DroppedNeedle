@@ -28,7 +28,7 @@ function toCrateReason(reason: string): CrateReason {
 
 // v3 cover URL for one release-group mbid, or null when the album is
 // unidentified. Callers wrap it with getApiUrl at render time.
-export function localCoverUrl(
+function localCoverUrl(
 	releaseGroupMbid: string | null | undefined,
 	size: 250 | 500 | 1200 = 250
 ): string | null {

@@ -59,7 +59,7 @@
 		files alone.
 	</p>
 
-	<div role="tablist" class="tabs tabs-boxed w-fit">
+	<div role="tablist" class="tabs tabs-box w-fit">
 		<button
 			role="tab"
 			class="tab {view === 'unconfirmed' ? 'tab-active' : ''}"

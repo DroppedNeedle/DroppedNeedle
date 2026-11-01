@@ -5,7 +5,7 @@ import { v3 } from '$lib/api/v3/endpoint';
 import { STALE_SLOW } from '$lib/queries/staleTime';
 import { ArtistQueryKeyFactory } from './ArtistQueryKeyFactory';
 
-export const ARTIST_IMAGE_CREDIT_ENDPOINT = (mbid: string) =>
+const ARTIST_IMAGE_CREDIT_ENDPOINT = (mbid: string) =>
 	v3('/api/v3/covers/artist/{artist_id}/credit', { path: { artist_id: mbid } });
 
 export const getArtistImageCreditQuery = (getParams: Getter<{ mbid: string; enabled: boolean }>) =>

@@ -19,7 +19,14 @@ const adminTabs = new Set([
 	'wrapped',
 	'users',
 	'backups',
-	'musicbrainz'
+	'musicbrainz',
+	'jellyfin',
+	'navidrome',
+	'plex',
+	'youtube',
+	'settings',
+	'cache',
+	'advanced'
 ]);
 
 export function isSettingsTabVisible(id: string, isAdmin: boolean): boolean {

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { apiGet, focus, playbackToast } = vi.hoisted(() => ({
+const { apiGet, focus, toastStore } = vi.hoisted(() => ({
 	apiGet: vi.fn(),
 	focus: { claim: vi.fn(), release: vi.fn(), interrupt: vi.fn() },
-	playbackToast: { show: vi.fn(), dismiss: vi.fn() }
+	toastStore: { notify: vi.fn(), hide: vi.fn() }
 }));
 // Every preview read goes straight to the scripted answer, never a cache.
 vi.mock('$lib/queries/discover/DiscoverQueueQueries', () => ({
@@ -11,7 +11,7 @@ vi.mock('$lib/queries/discover/DiscoverQueueQueries', () => ({
 	fetchAlbumPreview: (...args: unknown[]) => apiGet(...args)
 }));
 vi.mock('$lib/stores/audioFocus.svelte', () => ({ audioFocus: focus }));
-vi.mock('$lib/stores/playbackToast.svelte', () => ({ playbackToast }));
+vi.mock('$lib/stores/toast', () => ({ toastStore }));
 
 // A controllable stand-in for HTMLAudioElement: tests drive currentTime / ended
 // to simulate a clip reaching its end, then let the ticker advance.
@@ -98,7 +98,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	deckSampler.stop();
-	playbackToast.dismiss();
+	toastStore.hide();
 	vi.useRealTimers();
 });
 
@@ -190,7 +190,7 @@ describe('deckSampler transport', () => {
 		deckSampler.start('rg-blocked', 'Artist', 'Blocked');
 		await waitForStatus('paused');
 
-		expect(playbackToast.show).toHaveBeenCalledWith(
+		expect(toastStore.notify).toHaveBeenCalledWith(
 			expect.stringContaining('Tap the preview play button'),
 			'warning'
 		);

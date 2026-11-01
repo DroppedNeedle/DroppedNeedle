@@ -52,7 +52,6 @@ export type Album = {
 	selected_release_mbid?: string | null;
 	pick_basis?: EditionPickBasis | null;
 	local_id?: string | null;
-	cover_available?: boolean;
 	art_missing?: boolean;
 };
 
@@ -980,56 +979,9 @@ export interface LibraryScanSchedule {
 	last_scan_at?: number | null;
 }
 
-export interface LibraryActionResponse {
-	status: string;
-	message: string;
-}
-
-// mirrors backend api/v1/schemas/common.py StatusMessageResponse
-export interface StatusMessageResponse {
-	status: string;
-	message: string;
-}
-
-// Hand-mirrors backend PluginRouteRequest/PluginRouteResponse
-// (infrastructure/plugins/protocols.py). Typed transport for one /ext/ call.
-export interface PluginRouteRequest {
-	method: string;
-	subpath: string;
-	query: Record<string, string>;
-	body: unknown;
-}
-export interface PluginRouteResponse {
-	status: number;
-	body: unknown;
-}
-
-// Envelope for the admin-only plugin UI bundle (panel.js) RPC channel.
-export interface PluginUiRpcRequest {
-	request_id: string;
-	method: string;
-	params: Record<string, unknown>;
-}
-export interface PluginUiRpcResponse {
-	request_id: string;
-	ok: boolean;
-	result: unknown;
-	error: string | null;
-}
-
 export type DownloadStatus = components['schemas']['TaskStatus'];
 
-// The source status still reads the quality projection and the fallback time,
-// which the server does not send; they stay optional until it does or the
-// screen stops reading them.
-export type DownloadTask = components['schemas']['DownloadTaskResponse'] & {
-	preferred_quality_fallback_at?: number | null;
-	quality_snapshot_summary?: string | null;
-	quality_preference_step?: number | null;
-	quality_certainty?: string | null;
-	quality_provenance?: string | null;
-	manual_quality_override?: boolean;
-};
+export type DownloadTask = components['schemas']['DownloadTaskResponse'];
 
 /** Why a download, held file or upload sits where it does. */
 export type Reason = components['schemas']['Reason'];

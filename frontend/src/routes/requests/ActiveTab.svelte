@@ -1,12 +1,3 @@
-<script lang="ts" module>
-	export interface ActiveSummary {
-		count: number;
-		downloading: number;
-		searching: number;
-		fetching: boolean;
-	}
-</script>
-
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity';
 	import { fade, fly } from '$lib/ui/motion';
@@ -21,35 +12,18 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';
-	import { liveRequestStatus } from '$lib/queries/requests/liveStatus';
 	import { itemKind, itemRequestKey, requestKey } from './requestItems';
 
 	interface Props {
 		active: boolean;
-		onsummary?: (summary: ActiveSummary) => void;
 	}
 
-	let { active, onsummary }: Props = $props();
+	let { active }: Props = $props();
 
 	const activeListQuery = getActiveRequestsQuery(() => active);
 	const activeItems = $derived(activeListQuery.data?.items ?? []);
 	const activeLoading = $derived(activeListQuery.isPending);
 	const activeError = $derived(activeListQuery.isError ? "Couldn't load active requests" : null);
-
-	const liveStatusOf = (item: (typeof activeItems)[number]) => liveRequestStatus(item);
-
-	$effect(() => {
-		onsummary?.({
-			count: activeListQuery.data?.count ?? activeItems.length,
-			downloading: activeItems.filter((i) => liveStatusOf(i) === 'downloading').length,
-			searching: activeItems.filter((i) => {
-				if (i.waiting_reason) return false;
-				const status = liveStatusOf(i);
-				return status === 'pending' || status === 'queued';
-			}).length,
-			fetching: activeListQuery.isFetching
-		});
-	});
 
 	// Batch-cancel selection.
 	let selectedKeys = $state<Set<string>>(new Set());

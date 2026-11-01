@@ -4,7 +4,6 @@ export type { MusicBrainzSourceMode } from '$lib/queries/musicbrainz/types';
 
 export const MUSICBRAINZ_GUIDE_HREF = '/docs/musicbrainz-mirror-selfhosting.md';
 export const BRAINZMASH_ENDPOINT_URL = 'https://api.brainzmash.cc/ws/2';
-export const BRAINZMASH_DISCLOSURE_VERSION = '2026-08-31';
 export const BRAINZMASH_SUPPORTED_ROUTE_FAMILIES = [
 	'artist',
 	'release-group',
@@ -18,7 +17,6 @@ export const BRAINZMASH_SUPPORTED_ROUTE_FAMILIES = [
 export const OFFICIAL_RATE_MAX = 1;
 export const BRAINZMASH_RATE_MAX = 10;
 export const NON_OFFICIAL_RATE_MAX = 500;
-export const UNLIMITED_RATE_SENTINEL = 0;
 
 export interface SourceBounds {
 	rateMax: number;

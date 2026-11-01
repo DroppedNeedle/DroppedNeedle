@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { SunMoon } from 'lucide-svelte';
 	import { themeStore, type ThemePreference } from '$lib/stores/theme.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	const options: { value: ThemePreference; label: string; hint: string }[] = [
 		{ value: 'dark', label: 'Dark', hint: 'The default look.' },
@@ -17,9 +18,7 @@
 		Appearance
 	</h2>
 
-	<div
-		class="space-y-3 rounded-2xl border border-base-300/50 bg-base-200/40 p-4 backdrop-blur-sm sm:p-5"
-	>
+	<Card variant="bordered" padding="md">
 		<fieldset class="grid gap-3 sm:grid-cols-3">
 			<legend class="sr-only">Theme</legend>
 			{#each options as option (option.value)}
@@ -40,6 +39,6 @@
 				</label>
 			{/each}
 		</fieldset>
-		<p class="px-1 text-xs text-base-content/40">Saved in this browser only.</p>
-	</div>
+		<p class="mt-3 px-1 text-xs text-base-content/40">Saved in this browser only.</p>
+	</Card>
 </section>

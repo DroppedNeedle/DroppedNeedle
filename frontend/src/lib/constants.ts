@@ -13,20 +13,10 @@ export const PAGE_SOURCE_KEYS = {
 } as const;
 
 export const API_SIZES = {
-	XS: 250,
-	SM: 250,
-	MD: 250,
-	LG: 500,
-	XL: 500,
-	HERO: 500,
-	FULL: 500
+	SMALL: 250,
+	LARGE: 500
 } as const;
 
 export const TOAST_DURATION = 2000;
-
-export const STATUS_COLORS = {
-	REQUESTED: '#F59E0B',
-	MONITORED: '#6B7280'
-} as const;
 
 export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';

@@ -4,6 +4,8 @@ import { isHttpError } from '@sveltejs/kit';
 import { toAuthUser } from '$lib/queries/auth/types';
 import type { RemoteSource } from '$lib/queries/remotes/types';
 import { remoteSources } from '$lib/queries/remotes/remoteSources';
+import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
+import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { playerStore } from '$lib/stores/player.svelte';
 import { apiError, fakeApi, type FakeRoutes, type RouteData } from '$lib/test/api';
@@ -179,6 +181,11 @@ beforeEach(() => {
 	localStorage.clear();
 	location.url = new URL('http://localhost/');
 	signIn();
+	setQueryDataWithPersister(HomeQueryKeyFactory.integrationStatus(authStore.user?.id), {
+		jellyfin: true,
+		navidrome: true,
+		plex: true
+	});
 });
 
 afterEach(() => {

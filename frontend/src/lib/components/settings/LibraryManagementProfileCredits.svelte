@@ -48,6 +48,18 @@
 
 	const enabled = $derived(metadata.enabled || genres.enabled);
 	const relationshipsOn = $derived(metadata.enabled && metadata.relationships.enabled);
+
+	// Rows keep their id while their text is typed, so focus stays in the box.
+	const aliasRowIds = new WeakMap<object, number>();
+	let nextAliasRowId = 0;
+	function aliasRowKey(alias: object): number {
+		let id = aliasRowIds.get(alias);
+		if (id === undefined) {
+			id = nextAliasRowId++;
+			aliasRowIds.set(alias, id);
+		}
+		return id;
+	}
 </script>
 
 <LibraryManagementEditorSection
@@ -244,7 +256,7 @@
 								>Add alias</Button
 							>
 						</div>
-						{#each genres.aliases as alias, index (`${index}:${alias.source}`)}
+						{#each genres.aliases as alias, index (aliasRowKey(alias))}
 							<div class="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2">
 								<Input
 									size="sm"

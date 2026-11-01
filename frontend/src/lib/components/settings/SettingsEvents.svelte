@@ -133,6 +133,7 @@
 							mask={SECRET_MASK}
 							placeholder="Consumer Key from developer.ticketmaster.com"
 							bind:value={draft.ticketmaster_api_key}
+							error={section.fieldError('ticketmaster_api_key', 'Consumer key')}
 						/>
 						<div class="flex flex-wrap items-center gap-3">
 							<Button
@@ -186,6 +187,7 @@
 							mask={SECRET_MASK}
 							placeholder="API key from skiddle.com/api"
 							bind:value={draft.skiddle_api_key}
+							error={section.fieldError('skiddle_api_key', 'API key')}
 						/>
 						<div class="flex flex-wrap items-center gap-3">
 							<Button

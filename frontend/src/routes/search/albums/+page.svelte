@@ -205,9 +205,10 @@
 			<div
 				class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 			>
-				{#each topAlbum ? albums.filter((a) => !sameMbid(a, topAlbum)) : albums as album (album.musicbrainz_id)}
+				{#each topAlbum ? albums.filter((a) => !sameMbid(a, topAlbum)) : albums as album, index (album.musicbrainz_id)}
 					<AlbumCard
 						{album}
+						lazy={index >= 12}
 						{enrichmentSource}
 						onenrichmentrequest={() => enrichCollector.requestAlbum(album)}
 					/>

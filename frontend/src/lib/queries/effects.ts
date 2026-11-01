@@ -231,11 +231,8 @@ export const EFFECTS = {
 	],
 	/** The order download sources are tried in. */
 	sourcePriorityChanged: (): Sweep[] => [{ key: DownloadQueryKeyFactory.sourcePriority() }],
-	/** The download policy and its summary. */
-	downloadPolicyChanged: (): Sweep[] => [
-		{ key: DownloadQueryKeyFactory.policy() },
-		{ key: DownloadQueryKeyFactory.policySummary() }
-	],
+	/** The download policy. */
+	downloadPolicyChanged: (): Sweep[] => [{ key: DownloadQueryKeyFactory.policy() }],
 	/** The wanted watcher's settings. */
 	wantedSettingsChanged: (): Sweep[] => [{ key: DownloadQueryKeyFactory.wantedSettings() }],
 	/** Any download, in the caller's views and the admin's. */

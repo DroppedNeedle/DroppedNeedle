@@ -6,7 +6,6 @@ import {
 	MORE_INFO_DISCLOSURES,
 	NON_OFFICIAL_RATE_MAX,
 	OFFICIAL_RATE_MAX,
-	UNLIMITED_RATE_SENTINEL,
 	sourceBounds
 } from './musicBrainzSourceCopy';
 
@@ -31,7 +30,6 @@ describe('MusicBrainz source bounds', () => {
 		});
 		expect(sourceBounds('community')).toEqual(sourceBounds('mirror'));
 		expect(NON_OFFICIAL_RATE_MAX).toBe(500);
-		expect(UNLIMITED_RATE_SENTINEL).toBe(0);
 	});
 });
 

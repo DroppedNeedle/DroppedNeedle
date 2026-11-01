@@ -103,13 +103,13 @@
 	};
 
 	const apiSizes: Record<typeof size, number> = {
-		xs: API_SIZES.XS,
-		sm: API_SIZES.SM,
-		md: API_SIZES.MD,
-		lg: API_SIZES.LG,
-		xl: API_SIZES.XL,
-		hero: API_SIZES.HERO,
-		full: API_SIZES.FULL
+		xs: API_SIZES.SMALL,
+		sm: API_SIZES.SMALL,
+		md: API_SIZES.SMALL,
+		lg: API_SIZES.LARGE,
+		xl: API_SIZES.LARGE,
+		hero: API_SIZES.LARGE,
+		full: API_SIZES.LARGE
 	};
 
 	const BLANK_GIF =

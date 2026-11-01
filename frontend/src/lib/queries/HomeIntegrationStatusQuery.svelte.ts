@@ -23,7 +23,7 @@ const NONE_SET_UP: IntegrationStatus = {
 	youtube_api: false
 };
 
-export const getIntegrationStatusQueryOptions = (userId: string | null | undefined) =>
+const getIntegrationStatusQueryOptions = (userId: string | null | undefined) =>
 	queryOptions({
 		queryKey: HomeQueryKeyFactory.integrationStatus(userId),
 		enabled: Boolean(userId),

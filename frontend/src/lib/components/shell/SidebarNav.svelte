@@ -3,6 +3,7 @@
 	services, and the icon row at the bottom (settings, log out, collapse).
 -->
 <script lang="ts">
+	import { page } from '$app/state';
 	import { LogOut, PanelLeft } from 'lucide-svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import SidebarServices from '$lib/components/SidebarServices.svelte';
@@ -46,7 +47,7 @@
 </script>
 
 {#snippet entry(item: NavItem)}
-	{@const active = item.sidebar?.active?.(currentPath) ?? false}
+	{@const active = item.sidebar?.active?.(currentPath, page.url.searchParams.get('tab')) ?? false}
 	<li>
 		{#if item.href === undefined}
 			<button

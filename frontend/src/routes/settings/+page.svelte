@@ -69,61 +69,41 @@
 
 	const tabs = [
 		{ id: 'library', label: 'Library', tier: 'setup', icon: Music },
-		...(authStore.isAdmin
-			? [{ id: 'editions', label: 'Editions', tier: 'setup', icon: Disc3 }]
-			: []),
-		...(authStore.isAdmin
-			? [
-					{
-						id: 'download-client',
-						label: 'Download Client',
-						tier: 'setup',
-						icon: HardDriveDownload
-					},
-					{ id: 'indexers', label: 'Indexers / Prowlarr', tier: 'setup', icon: Search },
-					{ id: 'lidarr-import', label: 'Lidarr Import', tier: 'setup', icon: CloudDownload }
-				]
-			: []),
+		{ id: 'editions', label: 'Editions', tier: 'setup', icon: Disc3 },
+		{
+			id: 'download-client',
+			label: 'Download Client',
+			tier: 'setup',
+			icon: HardDriveDownload
+		},
+		{ id: 'indexers', label: 'Indexers / Prowlarr', tier: 'setup', icon: Search },
+		{ id: 'lidarr-import', label: 'Lidarr Import', tier: 'setup', icon: CloudDownload },
 		{ id: 'connect-apps', label: 'Connect Apps', tier: 'setup', icon: Waypoints },
 		{ id: 'jellyfin', label: 'Jellyfin', tier: 'setup', icon: JellyfinIcon },
 		{ id: 'navidrome', label: 'Navidrome', tier: 'setup', icon: NavidromeIcon },
 		{ id: 'plex', label: 'Plex', tier: 'setup', icon: PlexIcon },
 		{ id: 'youtube', label: 'YouTube', tier: 'setup', icon: YouTubeIcon },
-		...(authStore.isAdmin ? [{ id: 'lastfm', label: 'Last.fm', tier: 'setup', icon: Radio }] : []),
-		...(authStore.isAdmin
-			? [{ id: 'listenbrainz', label: 'ListenBrainz', tier: 'setup', icon: AudioLines }]
-			: []),
-		...(authStore.isAdmin
-			? [{ id: 'spotify', label: 'Spotify', tier: 'setup', icon: SpotifyIcon }]
-			: []),
-		...(authStore.isAdmin
-			? [{ id: 'events', label: 'Live Events', tier: 'setup', icon: CalendarClock }]
-			: []),
-		...(authStore.isAdmin
-			? [{ id: 'get-it', label: 'Get it', tier: 'setup', icon: ShoppingBag }]
-			: []),
+		{ id: 'lastfm', label: 'Last.fm', tier: 'setup', icon: Radio },
+		{ id: 'listenbrainz', label: 'ListenBrainz', tier: 'setup', icon: AudioLines },
+		{ id: 'spotify', label: 'Spotify', tier: 'setup', icon: SpotifyIcon },
+		{ id: 'events', label: 'Live Events', tier: 'setup', icon: CalendarClock },
+		{ id: 'get-it', label: 'Get it', tier: 'setup', icon: ShoppingBag },
 		{ id: 'settings', label: 'Release Types', tier: 'personalize', icon: Settings2 },
 		{ id: 'home', label: 'Home', tier: 'personalize', icon: House },
 		{ id: 'discover', label: 'Discover', tier: 'personalize', icon: Compass },
 		{ id: 'sidebar', label: 'Sidebar', tier: 'personalize', icon: PanelLeft },
 		{ id: 'music-source', label: 'Music Source', tier: 'personalize', icon: ChartColumn },
 		{ id: 'cache', label: 'Cache', tier: 'system', icon: Database },
-		...(isSettingsTabVisible('musicbrainz', authStore.isAdmin)
-			? [{ id: 'musicbrainz', label: 'MusicBrainz', tier: 'system', icon: Globe }]
-			: []),
-		...(authStore.isAdmin
-			? [
-					{ id: 'users', label: 'Users', tier: 'system', icon: Users },
-					{ id: 'backups', label: 'Backups', tier: 'system', icon: DatabaseBackup },
-					{ id: 'security', label: 'Security', tier: 'system', icon: ShieldCheck },
-					{ id: 'plugins', label: 'Plugins', tier: 'system', icon: Blocks },
-					{ id: 'wrapped', label: 'Wrapped API', tier: 'system', icon: Gift },
-					{ id: 'diagnostics', label: 'Diagnostics', tier: 'system', icon: Activity }
-				]
-			: []),
+		{ id: 'musicbrainz', label: 'MusicBrainz', tier: 'system', icon: Globe },
+		{ id: 'users', label: 'Users', tier: 'system', icon: Users },
+		{ id: 'backups', label: 'Backups', tier: 'system', icon: DatabaseBackup },
+		{ id: 'security', label: 'Security', tier: 'system', icon: ShieldCheck },
+		{ id: 'plugins', label: 'Plugins', tier: 'system', icon: Blocks },
+		{ id: 'wrapped', label: 'Wrapped API', tier: 'system', icon: Gift },
+		{ id: 'diagnostics', label: 'Diagnostics', tier: 'system', icon: Activity },
 		{ id: 'advanced', label: 'Advanced', tier: 'system', icon: Settings },
 		{ id: 'about', label: 'About', tier: 'system', icon: Info }
-	];
+	].filter((tab) => isSettingsTabVisible(tab.id, authStore.isAdmin));
 	const requestedTab = page.url.searchParams.get('tab');
 	let activeTab = $state(
 		requestedTab && tabs.some((tab) => tab.id === requestedTab) ? requestedTab : 'library'

@@ -63,6 +63,7 @@
 							placeholder="http://localhost:8686"
 							help="Your Lidarr address. A plain http:// LAN URL is fine."
 							bind:value={draft.url}
+							error={section.fieldError('url', 'URL')}
 						/>
 
 						<SecretField
@@ -70,6 +71,7 @@
 							mask={SECRET_MASK}
 							placeholder="Lidarr → Settings → General → Security → API Key"
 							bind:value={draft.api_key}
+							error={section.fieldError('api_key', 'API key')}
 						/>
 
 						<SaveBar {...section.bar} disabled={!draft.url.trim()} />

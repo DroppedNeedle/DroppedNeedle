@@ -71,6 +71,7 @@
 						placeholder="Your YouTube Data API v3 key"
 						help="Enable YouTube Data API v3, then create an API key in Credentials"
 						bind:value={draft.api_key}
+						error={section.fieldError('api_key', 'API Key')}
 					/>
 
 					<ToggleRow
@@ -89,6 +90,7 @@
 							min={1}
 							max={10000}
 							bind:value={draft.daily_quota_limit}
+							error={section.fieldError('daily_quota_limit', 'Daily Quota Limit')}
 						/>
 					</div>
 				</fieldset>

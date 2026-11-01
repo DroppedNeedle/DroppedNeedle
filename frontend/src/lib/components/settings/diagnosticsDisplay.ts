@@ -9,7 +9,7 @@ type ProviderCallsView = components['schemas']['ProviderCallsView'];
 type RequestPriority = components['schemas']['RequestPriority'];
 type CallOutcome = components['schemas']['CallOutcome'];
 
-export const PRIORITY_LABELS: Readonly<Record<RequestPriority, string>> = {
+const PRIORITY_LABELS: Readonly<Record<RequestPriority, string>> = {
 	user_initiated: 'User',
 	image_fetch: 'Artwork',
 	prefetch_visible: 'Prefetch',
@@ -17,7 +17,7 @@ export const PRIORITY_LABELS: Readonly<Record<RequestPriority, string>> = {
 	opportunistic: 'Low'
 };
 
-export const OUTCOME_LABELS: Readonly<Record<CallOutcome, string>> = {
+const OUTCOME_LABELS: Readonly<Record<CallOutcome, string>> = {
 	ok: 'OK',
 	not_found: 'Not found',
 	rate_limited: 'Rate limited',

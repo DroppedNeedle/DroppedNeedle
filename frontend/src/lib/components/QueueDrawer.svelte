@@ -2,7 +2,7 @@
 	import { tick } from 'svelte';
 	import { fly, fade } from '$lib/ui/motion';
 	import { playerStore } from '$lib/stores/player.svelte';
-	import { playbackToast } from '$lib/stores/playbackToast.svelte';
+	import { toastStore } from '$lib/stores/toast';
 	import { X, GripVertical, ListMusic, Shuffle, Trash2 } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -54,12 +54,12 @@
 		e.stopPropagation();
 		const trackName = queue[index]?.trackName ?? 'Track';
 		playerStore.removeFromQueue(index);
-		playbackToast.show(`Removed "${trackName}" from queue`, 'info');
+		toastStore.notify(`Removed "${trackName}" from queue`, 'info');
 	}
 
 	function handleClearQueue() {
 		playerStore.clearQueue();
-		playbackToast.show('Upcoming queue cleared', 'info');
+		toastStore.notify('Upcoming queue cleared', 'info');
 		handleClose();
 	}
 
@@ -140,7 +140,7 @@
 			const handles = document.querySelectorAll<HTMLElement>('[aria-label="Drag to reorder"]');
 			handles[newPos!]?.focus();
 		});
-		playbackToast.show(`Track moved to position ${newPos + 1}`, 'info');
+		toastStore.notify(`Track moved to position ${newPos + 1}`, 'info');
 	}
 
 	function formatDuration(seconds?: number): string {

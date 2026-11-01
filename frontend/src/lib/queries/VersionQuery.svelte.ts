@@ -7,7 +7,7 @@ import { VersionQueryKeyFactory } from './VersionQueryKeyFactory';
 
 export type GitHubRelease = components['schemas']['GitHubRelease'];
 
-export const VERSION_ENDPOINTS = {
+const VERSION_ENDPOINTS = {
 	info: () => v3('/api/v3/version'),
 	checkUpdate: () => v3('/api/v3/version/check-update'),
 	releases: () => v3('/api/v3/version/releases')

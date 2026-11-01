@@ -702,6 +702,7 @@
 										: 'https://mb.example.org/ws/2'}
 									help="The full URL to the server's MusicBrainz API, including the version path."
 									bind:value={draft.api_url}
+									error={section.fieldError('api_url')}
 								/>
 								{#if selectedMode === 'mirror'}
 									<p class="mt-1 ml-1 text-xs text-base-content/50">

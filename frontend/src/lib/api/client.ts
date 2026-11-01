@@ -2,6 +2,7 @@ import { getApiUrl } from '$lib/api/api-utils';
 import { withBasePath } from '$lib/utils/basePath';
 import { browser } from '$app/environment';
 import { authStore } from '$lib/stores/authStore.svelte';
+import { providerUnavailableMessage } from '$lib/utils/serviceError';
 import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
 import { createV3Client, type V3Client } from './v3/client';
 import { ApiError, SessionExpiredError, TransportError, type TransportErrorCode } from './errors';
@@ -46,7 +47,10 @@ async function handleResponse<T = void>(res: Response): Promise<T> {
 		} catch {
 			// preserve non-JSON error bodies
 		}
-		throw new ApiError(res.status, message, code, details);
+		const error = new ApiError(res.status, message, code, details);
+		// Every toast that shows an error's message names the service that is down.
+		error.message = providerUnavailableMessage(error) ?? message;
+		throw error;
 	}
 
 	if (res.status === 204 || res.headers.get('content-length') === '0') {

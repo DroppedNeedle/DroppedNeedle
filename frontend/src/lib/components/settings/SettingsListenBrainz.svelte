@@ -53,6 +53,7 @@
 						label="Username"
 						placeholder="Your ListenBrainz username"
 						bind:value={draft.username}
+						error={section.fieldError('username', 'Username')}
 					/>
 
 					<SecretField
@@ -60,6 +61,7 @@
 						mask={SECRET_MASK}
 						placeholder="User token"
 						bind:value={draft.user_token}
+						error={section.fieldError('user_token', 'User token')}
 					/>
 
 					<a

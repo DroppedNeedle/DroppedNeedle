@@ -321,7 +321,7 @@
 				<h2 class="text-lg font-semibold">User Management</h2>
 				<p class="text-sm text-base-content/50 mt-0.5">Manage accounts and roles.</p>
 			</div>
-			<div class="flex gap-2">
+			<div class="flex flex-wrap gap-2">
 				<IconButton
 					size="sm"
 					icon={RefreshCw}
@@ -478,7 +478,7 @@
 								{/each}
 							</div>
 						{/if}
-						<div class="flex w-full items-center justify-end gap-2 sm:w-auto sm:shrink-0">
+						<div class="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
 							<span class="badge {roleBadgeClass(user.role)} badge-sm hidden gap-1 sm:inline-flex">
 								<RoleIcon class="h-3 w-3" />
 								{roleLabel[user.role]}

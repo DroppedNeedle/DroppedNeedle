@@ -5,6 +5,7 @@
 // Absolute web addresses only. The patterns are anchored on the raw value,
 // so whitespace or control characters before the scheme fail, as do
 // relative and scheme-relative addresses, which would point into this app.
+// A link must also parse, with a host: `https://` alone is a dead link.
 export const WEB_URL = /^https?:\/\//i;
 
 // Prose (notes, release notes) may also link an email address.
@@ -13,5 +14,10 @@ export const PROSE_LINK_URL = /^(?:https?:\/\/|mailto:)/i;
 // The address when it is safe to bind as a link, otherwise undefined, so
 // the caller renders no link at all.
 export function outsideLink(address: string | null | undefined): string | undefined {
-	return typeof address === 'string' && WEB_URL.test(address) ? address : undefined;
+	if (typeof address !== 'string' || !WEB_URL.test(address)) return undefined;
+	try {
+		return new URL(address).hostname ? address : undefined;
+	} catch {
+		return undefined;
+	}
 }

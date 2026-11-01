@@ -107,6 +107,7 @@
 						label="Client ID"
 						placeholder="Spotify Client ID"
 						bind:value={draft.client_id}
+						error={section.fieldError('client_id', 'Client ID')}
 					/>
 
 					<SecretField
@@ -114,6 +115,7 @@
 						mask={SECRET_MASK}
 						placeholder="Spotify Client Secret"
 						bind:value={draft.client_secret}
+						error={section.fieldError('client_secret', 'Client Secret')}
 					/>
 
 					<TextField
@@ -121,6 +123,7 @@
 						placeholder="https://music.example.com"
 						help="Leave this empty and DroppedNeedle uses the address it works out for itself. That is right when you reach it directly, or through a reverse proxy that is listed in TRUSTED_PROXY_IPS and sends X-Forwarded-Proto. Fill it in (no path) when the redirect URI below does not start with the address in your browser's address bar."
 						bind:value={draft.spotify_redirect_origin}
+						error={section.fieldError('spotify_redirect_origin', 'Redirect Origin (optional)')}
 					/>
 
 					<ToggleRow label="Enable Spotify integration" bind:checked={draft.enabled} />
@@ -132,7 +135,7 @@
 							</p>
 							<div class="flex items-center gap-2">
 								<code
-									class="flex-1 truncate rounded-lg bg-base-100/60 px-2.5 py-1.5 text-xs text-base-content/80"
+									class="min-w-0 flex-1 break-all rounded-lg bg-base-100/60 px-2.5 py-1.5 text-xs text-base-content/80"
 								>
 									{redirectUri}
 								</code>

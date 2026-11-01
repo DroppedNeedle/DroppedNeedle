@@ -32,6 +32,7 @@
 	import HubFavorites from './HubFavorites.svelte';
 	import HubHistory from './HubHistory.svelte';
 	import HubSimilarAlbums from './HubSimilarAlbums.svelte';
+	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -43,13 +44,28 @@
 	let modalOpen = $state(false);
 	let refreshing = $state(false);
 
-	const hubQuery = getRemoteHubQuery(() => remote.source);
+	// A source that is off answers nothing useful, so it is not asked.
+	const integrations = useIntegrationStatus();
+	const sourceOn = $derived(integrations.current[remote.source]);
+	const sourceOff = $derived(integrations.current.loaded && !sourceOn);
+
+	const hubQuery = getRemoteHubQuery(
+		() => remote.source,
+		() => sourceOn
+	);
 	const favoritesQuery = getRemoteFavoritesQuery(
 		() => remote.source,
-		() => caps.favorites
+		() => caps.favorites && sourceOn
 	);
-	const artistIndexQuery = getRemoteArtistIndexQuery(() => remote.source);
-	const playlistsQuery = getSourcePlaylistsQuery(() => remote.source);
+	const artistIndexQuery = getRemoteArtistIndexQuery(
+		() => remote.source,
+		() => sourceOn
+	);
+	const playlistsQuery = getSourcePlaylistsQuery(
+		() => remote.source,
+		undefined,
+		() => sourceOn
+	);
 
 	const hub = $derived(hubQuery.data ?? null);
 	const playlists = $derived(playlistsQuery.data);
@@ -133,132 +149,136 @@
 		{/snippet}
 	</SourceHubHeader>
 
-	<BrowseHeroCards cards={browseCards} />
+	{#if sourceOff}
+		<p class="text-sm text-base-content/70">{remote.label} isn't set up.</p>
+	{:else}
+		<BrowseHeroCards cards={browseCards} />
 
-	<PlaylistImportBanner
-		playlists={playlists?.playlists ?? []}
-		accountMode={playlists?.account_mode}
-		accountLabel={playlists?.account_label}
-		loading={playlistsQuery.isPending}
-		errorCode={playlistErrorCode}
-		onretry={() => void playlistsQuery.refetch()}
-		sourceLabel={remote.label}
-		playlistsHref={withBasePath(`${base}/playlists`)}
-	>
-		{#snippet sourceIcon()}
-			<remote.icon class="h-4 w-4 {remote.tone}" />
-		{/snippet}
-	</PlaylistImportBanner>
+		<PlaylistImportBanner
+			playlists={playlists?.playlists ?? []}
+			accountMode={playlists?.account_mode}
+			accountLabel={playlists?.account_label}
+			loading={playlistsQuery.isPending}
+			errorCode={playlistErrorCode}
+			onretry={() => void playlistsQuery.refetch()}
+			sourceLabel={remote.label}
+			playlistsHref={withBasePath(`${base}/playlists`)}
+		>
+			{#snippet sourceIcon()}
+				<remote.icon class="h-4 w-4 {remote.tone}" />
+			{/snippet}
+		</PlaylistImportBanner>
 
-	<NowPlayingWidget {sessions} />
+		<NowPlayingWidget {sessions} />
 
-	<QueryBoundary query={hubQuery} what="{remote.label} library">
-		{#snippet loading()}
-			<HubPageSkeleton />
-		{/snippet}
-		{#snippet children(hub)}
-			<FeaturedAlbumHero albums={hub.recently_played} onAlbumClick={openAlbum} />
+		<QueryBoundary query={hubQuery} what="{remote.label} library">
+			{#snippet loading()}
+				<HubPageSkeleton />
+			{/snippet}
+			{#snippet children(hub)}
+				<FeaturedAlbumHero albums={hub.recently_played} onAlbumClick={openAlbum} />
 
-			{#if caps.similarAlbums}
-				<HubSimilarAlbums
-					{remote}
-					seed={hub.recently_played[0] ?? favoritesQuery.data?.albums[0] ?? null}
-					onopen={openAlbum}
-				/>
-			{/if}
+				{#if caps.similarAlbums}
+					<HubSimilarAlbums
+						{remote}
+						seed={hub.recently_played[0] ?? favoritesQuery.data?.albums[0] ?? null}
+						onopen={openAlbum}
+					/>
+				{/if}
 
-			{#if caps.favorites}
-				<HubFavorites
-					favorites={favoritesQuery.data}
-					loading={favoritesQuery.isFetching}
-					onopen={openAlbum}
-				/>
-			{/if}
+				{#if caps.favorites}
+					<HubFavorites
+						favorites={favoritesQuery.data}
+						loading={favoritesQuery.isFetching}
+						onopen={openAlbum}
+					/>
+				{/if}
 
-			<HubDiscovery {remote} genres={hub.genres} onopen={openAlbum} />
+				<HubDiscovery {remote} genres={hub.genres} onopen={openAlbum} />
 
-			{#if caps.recentlyAdded}
-				<div use:reveal>
-					<HubShelf title="Recently Added" seeAllHref={recentlyAddedHref}>
-						{#if hub.recently_added.length > 0}
-							<AlbumGrid
-								albums={hub.recently_added}
-								seeAllHref={recentlyAddedHref}
-								onAlbumClick={openAlbum}
+				{#if caps.recentlyAdded}
+					<div use:reveal>
+						<HubShelf title="Recently Added" seeAllHref={recentlyAddedHref}>
+							{#if hub.recently_added.length > 0}
+								<AlbumGrid
+									albums={hub.recently_added}
+									seeAllHref={recentlyAddedHref}
+									onAlbumClick={openAlbum}
+								/>
+							{:else}
+								<p class="text-sm text-base-content/50">Nothing new yet.</p>
+							{/if}
+						</HubShelf>
+					</div>
+				{/if}
+
+				{#if caps.artistInfo}
+					<HubArtistShelves
+						{remote}
+						artist={hub.favorite_artists[0] ?? null}
+						track={favoritesQuery.data?.tracks[0] ?? null}
+					/>
+				{/if}
+
+				{#if caps.playCounts && hub.most_played_artists.length > 0}
+					<div use:reveal>
+						<HubShelf title="Most Played">
+							<MostPlayedSection
+								artists={hub.most_played_artists.map((a) => ({
+									id: a.id,
+									name: a.name,
+									image_url: a.image_url,
+									musicbrainz_id: a.artist_mbid,
+									album_count: a.album_count ?? undefined
+								}))}
+								albums={[]}
 							/>
+						</HubShelf>
+					</div>
+				{/if}
+
+				{#if caps.activity}
+					<div class="section-divider-glow"></div>
+					<HubHistory {remote} />
+				{/if}
+
+				<div class="section-divider-glow"></div>
+
+				<div class="mt-10 mb-6 rounded-2xl bg-base-200/20 p-6 space-y-6">
+					<HubShelf title="Artists A-Z" loading={artistIndexQuery.isFetching}>
+						{#if artistIndex.length > 0}
+							<ArtistIndexSidebar
+								index={artistIndex}
+								onselect={(artist) => {
+									if (artist.musicbrainz_id) {
+										goto(withBasePath(`/artist/${artist.musicbrainz_id}`));
+									} else {
+										goto(
+											withBasePath(
+												`${base}/${remote.artistSearch}?search=${encodeURIComponent(artist.name)}`
+											)
+										);
+									}
+								}}
+							/>
+						{:else if artistIndexQuery.isError}
+							<p class="text-sm text-base-content/50">Couldn't load the artists.</p>
+						{:else if !artistIndexQuery.isFetching}
+							<p class="text-sm text-base-content/50">No artists found.</p>
+						{/if}
+					</HubShelf>
+
+					<HubShelf title="Browse Albums" seeAllHref={withBasePath(`${base}/albums`)}>
+						{#if hub.all_albums_preview.length > 0}
+							<AlbumCarousel albums={hub.all_albums_preview} onopen={openAlbum} />
 						{:else}
-							<p class="text-sm text-base-content/50">Nothing new yet.</p>
+							<p class="text-sm text-base-content/50">No albums found.</p>
 						{/if}
 					</HubShelf>
 				</div>
-			{/if}
-
-			{#if caps.artistInfo}
-				<HubArtistShelves
-					{remote}
-					artist={hub.favorite_artists[0] ?? null}
-					track={favoritesQuery.data?.tracks[0] ?? null}
-				/>
-			{/if}
-
-			{#if caps.playCounts && hub.most_played_artists.length > 0}
-				<div use:reveal>
-					<HubShelf title="Most Played">
-						<MostPlayedSection
-							artists={hub.most_played_artists.map((a) => ({
-								id: a.id,
-								name: a.name,
-								image_url: a.image_url,
-								musicbrainz_id: a.artist_mbid,
-								album_count: a.album_count ?? undefined
-							}))}
-							albums={[]}
-						/>
-					</HubShelf>
-				</div>
-			{/if}
-
-			{#if caps.activity}
-				<div class="section-divider-glow"></div>
-				<HubHistory {remote} />
-			{/if}
-
-			<div class="section-divider-glow"></div>
-
-			<div class="mt-10 mb-6 rounded-2xl bg-base-200/20 p-6 space-y-6">
-				<HubShelf title="Artists A-Z" loading={artistIndexQuery.isFetching}>
-					{#if artistIndex.length > 0}
-						<ArtistIndexSidebar
-							index={artistIndex}
-							onselect={(artist) => {
-								if (artist.musicbrainz_id) {
-									goto(withBasePath(`/artist/${artist.musicbrainz_id}`));
-								} else {
-									goto(
-										withBasePath(
-											`${base}/${remote.artistSearch}?search=${encodeURIComponent(artist.name)}`
-										)
-									);
-								}
-							}}
-						/>
-					{:else if artistIndexQuery.isError}
-						<p class="text-sm text-base-content/50">Couldn't load the artists.</p>
-					{:else if !artistIndexQuery.isFetching}
-						<p class="text-sm text-base-content/50">No artists found.</p>
-					{/if}
-				</HubShelf>
-
-				<HubShelf title="Browse Albums" seeAllHref={withBasePath(`${base}/albums`)}>
-					{#if hub.all_albums_preview.length > 0}
-						<AlbumCarousel albums={hub.all_albums_preview} onopen={openAlbum} />
-					{:else}
-						<p class="text-sm text-base-content/50">No albums found.</p>
-					{/if}
-				</HubShelf>
-			</div>
-		{/snippet}
-	</QueryBoundary>
+			{/snippet}
+		</QueryBoundary>
+	{/if}
 </div>
 
 <SourceAlbumModal

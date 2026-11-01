@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { EAGER_IMAGE_COUNT } from '$lib/utils/lazyImage';
 	import type { Album } from '$lib/types';
 	import type { AlbumRef } from '$lib/queries/discover/types';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -57,9 +58,9 @@
 		</Card>
 	{:else}
 		<HorizontalCarousel>
-			{#each albums as album (album.musicbrainz_id)}
+			{#each albums as album, index (album.musicbrainz_id)}
 				<div class="w-36 shrink-0">
-					<AlbumCard album={toAlbum(album)} />
+					<AlbumCard album={toAlbum(album)} lazy={index >= EAGER_IMAGE_COUNT} />
 				</div>
 			{/each}
 		</HorizontalCarousel>

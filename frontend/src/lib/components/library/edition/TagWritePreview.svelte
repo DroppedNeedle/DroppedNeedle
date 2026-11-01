@@ -10,7 +10,6 @@
 	import {
 		getTagWriteQuery,
 		previewEditionTags,
-		tagWriteFinished,
 		undoTagWrite,
 		writeEditionTags,
 		type TagWriteJob
@@ -75,6 +74,14 @@
 					file.artwork_changed)
 		) ?? []
 	);
+	// A refusal of the whole album is said once, not on every file.
+	const albumBlock = $derived.by(() => {
+		const sentences = new Set(
+			blocked.map((file) => (file.blocked ? reasonSentence(file.blocked) : ''))
+		);
+		const [only] = sentences;
+		return blocked.length > 1 && sentences.size === 1 ? only : null;
+	});
 	const unchanged = $derived((planned?.files.length ?? 0) - changed.length - blocked.length);
 
 	// Where the job ends: an undo that is planned applies at once; a write
@@ -82,23 +89,19 @@
 	// failed part way can still be undone.
 	$effect(() => {
 		if (!job || !current) return;
-		const { userId, localId } = album;
 		if (job.step === 'failed') {
 			error = job.reason ? reasonSentence(job.reason) : "The tags couldn't be written.";
 			if (job.undo_available) {
 				written = { id: job.job_id, rowRevision: job.row_revision };
-				tagWriteFinished({ userId, localId });
 			}
 			current = null;
 		} else if (job.step === 'done' && job.undo) {
 			written = null;
 			undone = true;
 			current = null;
-			tagWriteFinished({ userId, localId });
 		} else if (job.step === 'done') {
 			written = { id: job.job_id, rowRevision: job.row_revision };
 			current = null;
-			tagWriteFinished({ userId, localId });
 		} else if (job.step === 'ready' && !job.ready_to_apply) {
 			error = job.stale_reasons[0] ?? 'This preview expired. Preview the new tags again.';
 			current = null;
@@ -218,11 +221,15 @@
 					{/each}
 				</ul>
 			{/if}
-			{#each blocked as file (file.path)}
-				<span class="text-warning"
-					>{fileName(file.path)}: {file.blocked ? reasonSentence(file.blocked) : ''}</span
-				>
-			{/each}
+			{#if albumBlock}
+				<span class="text-warning">{albumBlock}</span>
+			{:else}
+				{#each blocked as file (file.path)}
+					<span class="text-warning"
+						>{fileName(file.path)}: {file.blocked ? reasonSentence(file.blocked) : ''}</span
+					>
+				{/each}
+			{/if}
 			{#if unchanged}
 				<span class="text-base-content/60">{alreadyTaggedSentence(unchanged)}</span>
 			{/if}

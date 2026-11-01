@@ -109,12 +109,14 @@
 									{ value: 'mp3', label: 'MP3' },
 									{ value: 'opus', label: 'Opus' }
 								]}
+								error={section.fieldError('transcode_default_format', 'Default format')}
 							/>
 							<NumberField
 								label="Max bitrate (kbps)"
 								min={32}
 								max={1411}
 								bind:value={draft.transcode_max_bitrate_kbps}
+								error={section.fieldError('transcode_max_bitrate_kbps', 'Max bitrate (kbps)')}
 							/>
 						</div>
 					{/if}

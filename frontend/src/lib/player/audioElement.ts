@@ -27,13 +27,6 @@ export function getAudioElement(): HTMLAudioElement {
 	return audioElement;
 }
 
-export function getAudioEngine(): AudioEngine {
-	if (!engine) {
-		throw new Error('Audio engine not initialized: setAudioElement() must be called first');
-	}
-	return engine;
-}
-
 export function tryGetAudioEngine(): AudioEngine | null {
 	return engine;
 }
@@ -45,10 +38,4 @@ export async function resumeAudioEngine(): Promise<void> {
 		// Browsers can reject resume() outside a user activation. Native audio
 		// playback should still continue; the next user gesture can retry.
 	}
-}
-
-export function _resetAudioElement(): void {
-	engine?.destroy();
-	engine = null;
-	audioElement = null;
 }

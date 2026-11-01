@@ -138,15 +138,6 @@
 										{#each plugin.targets ?? [] as target (target)}
 											<span class="badge badge-sm badge-success badge-outline">dst:{target}</span>
 										{/each}
-										{#if plugin.capabilities?.includes('scheduler')}
-											<span class="badge badge-sm badge-warning badge-outline">scheduler</span>
-										{/if}
-										{#if plugin.capabilities?.includes('streaming_source')}
-											<span class="badge badge-sm badge-accent badge-outline">streaming</span>
-										{/if}
-										{#if plugin.capabilities?.includes('metadata_provider')}
-											<span class="badge badge-sm badge-secondary badge-outline">metadata</span>
-										{/if}
 									</div>
 								</div>
 								<label class="flex cursor-pointer items-center gap-2">

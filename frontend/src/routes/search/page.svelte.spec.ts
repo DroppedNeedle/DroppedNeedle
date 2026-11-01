@@ -124,7 +124,7 @@ describe('search page album covers', () => {
 
 		await expect
 			.element(page.getByRole('img', { name: 'Kitchen Tapes' }))
-			.toHaveAttribute('data-src', expect.stringContaining('/library/albums/album-art/artwork'));
+			.toHaveAttribute('src', expect.stringContaining('/library/albums/album-art/artwork'));
 		const bare = page.getByRole('link', { name: 'Open Home Demos' });
 		await expect.element(bare.getByTestId('cover-placeholder')).toBeInTheDocument();
 		await expect.element(page.getByRole('img', { name: 'Home Demos' })).not.toBeInTheDocument();

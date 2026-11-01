@@ -182,7 +182,7 @@ const editionPlanKey = LibraryQueryKeyFactory.catalog.editionPlan;
 // follow along without a reload.
 const EDITION_BUSY_POLL_MS = 2_000;
 
-export function editionBusy(status: EditionStatus | null | undefined): boolean {
+function editionBusy(status: EditionStatus | null | undefined): boolean {
 	return Boolean(status && (status.placing || status.writing || status.identifying));
 }
 
@@ -498,9 +498,23 @@ export const getTagWriteQuery = (
 		};
 	});
 
-/** A tag write or its undo finished: everything that shows the files is stale. */
-export function tagWriteFinished(target: EditionTarget): void {
-	void applyEffects(...heldEditionScope(target));
+// A write or undo that was applied runs on after the sheet closes, so its end
+// is watched here: then everything that shows the files is stale, whether it
+// finished or failed part way.
+function refreshWhenTagWriteEnds(target: EditionTarget, jobId: string): void {
+	const poll = async (): Promise<void> => {
+		try {
+			const job = await api.v3.GET(LibraryV3Api.editionTagWrite(target.localId, jobId));
+			if (tagWriteMoving(job)) {
+				setTimeout(() => void poll(), TAG_WRITE_POLL_MS);
+				return;
+			}
+		} catch {
+			// The job can no longer be read; refresh with what is known.
+		}
+		await applyEffects(...heldEditionScope(target));
+	};
+	setTimeout(() => void poll(), TAG_WRITE_POLL_MS);
 }
 
 export function previewEditionTags() {
@@ -541,6 +555,7 @@ export function writeEditionTags() {
 				expected_row_revision: rowRevision,
 				idempotency_key: `apply-${jobId}`
 			}),
+		onSuccess: (_job, variables) => refreshWhenTagWriteEnds(variables, variables.jobId),
 		effects: (_job, variables) => heldEditionScope(variables)
 	}));
 }

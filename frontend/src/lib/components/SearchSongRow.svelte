@@ -47,18 +47,16 @@
 </script>
 
 <div
-	class="group flex cursor-pointer items-center gap-3 px-3 py-2 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary {playing
+	class="group relative flex items-center gap-3 px-3 py-2 transition-colors {playing
 		? 'bg-accent/10'
 		: 'hover:bg-base-200/50'}"
-	onclick={play}
-	onkeydown={(e) =>
-		e.target === e.currentTarget &&
-		(e.key === 'Enter' || e.key === ' ') &&
-		(e.preventDefault(), play())}
-	tabindex="0"
-	role="button"
-	aria-label="Play {song.title}"
 >
+	<button
+		type="button"
+		class="absolute inset-0 cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+		aria-label="Play {song.title}"
+		onclick={play}
+	></button>
 	<div class="relative h-12 w-12 shrink-0">
 		<AlbumImage
 			albumId={song.track.album_id}
@@ -90,10 +88,8 @@
 		<div class="truncate text-xs text-base-content/55">
 			{#if song.artist}{song.artist}<span class="mx-1 text-base-content/35">·</span>{/if}<span
 				class="text-base-content/35"
-				><a
-					href={localAlbumHref(song.track.album_id)}
-					class="hover:underline"
-					onclick={(e) => e.stopPropagation()}>{song.track.album_title}</a
+				><a href={localAlbumHref(song.track.album_id)} class="relative hover:underline"
+					>{song.track.album_title}</a
 				></span
 			>
 		</div>
@@ -106,9 +102,14 @@
 			</span>
 		{/if}
 		<div
-			class="opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+			class="relative opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
 		>
-			<ContextMenu items={menuItems} position="end" size="xs" />
+			<ContextMenu
+				items={menuItems}
+				position="end"
+				size="xs"
+				label="More actions for {song.title}"
+			/>
 		</div>
 	</div>
 </div>

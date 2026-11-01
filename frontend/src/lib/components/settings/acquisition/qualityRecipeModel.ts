@@ -159,7 +159,7 @@ function wholeNumber(value: number | string | null | undefined): number | null {
 	return parsed !== null && Number.isInteger(parsed) ? parsed : null;
 }
 
-export function recipeEntryKey(
+function recipeEntryKey(
 	entry: Pick<QualityRecipeEntry, 'format' | 'quality'> & Partial<QualityRecipeEntry>
 ): string {
 	return [
@@ -184,7 +184,7 @@ export function stripRecipeIds(recipe: readonly RecipeDraftEntry[]): QualityReci
 	return recipe.map(({ id: _id, ...entry }) => ({ ...entry }));
 }
 
-export function recipeEntryRange(
+function recipeEntryRange(
 	entry: Pick<QualityRecipeEntry, 'format' | 'quality' | 'min_bitrate_kbps' | 'max_bitrate_kbps'>
 ): { min: number; max: number } | null {
 	if (entry.format !== 'mp3') return null;
@@ -360,7 +360,7 @@ export function moveRecipeEntry(
 	return next;
 }
 
-export function migrationStatusFromPolicy(
+function migrationStatusFromPolicy(
 	policy: DownloadPolicySettings
 ): { status: RecipeMigrationStatus; message?: string | null } | null {
 	if (policy.quality_recipe_status) {
@@ -548,20 +548,7 @@ export function legacyRangeFromRecipe(
 	return { quality_min: minimum, quality_max: maximum };
 }
 
-export function isRecipeMigrationStatus(
-	value: string | null | undefined
-): value is RecipeMigrationStatus {
-	return (
-		value === 'v1' ||
-		value === 'v2' ||
-		value === 'current' ||
-		value === 'projected' ||
-		value === 'non_convertible' ||
-		value === 'invalid'
-	);
-}
-
-export function legacyRecipeKey(entry: QualityRecipeEntry): string | null {
+function legacyRecipeKey(entry: QualityRecipeEntry): string | null {
 	if (entry.format === 'flac')
 		return RECIPE_TO_LEGACY[entry.quality as keyof typeof RECIPE_TO_LEGACY] ?? null;
 	if (entry.quality === 'below_192') return 'low';

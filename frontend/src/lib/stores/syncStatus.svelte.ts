@@ -48,7 +48,7 @@ const EMPTY_STATUS: SyncStatus = {
 const AUTO_HIDE_SUCCESS_MS = 4000;
 const AUTO_HIDE_ERROR_MS = 6000;
 
-export function createSyncStatusStore(events: EventDispatcher = serverEvents) {
+function createSyncStatusStore(events: EventDispatcher = serverEvents) {
 	let status = $state<SyncStatus>({ ...EMPTY_STATUS });
 	let isDismissed = $state(false);
 	let isMinimized = $state(false);

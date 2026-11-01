@@ -177,7 +177,6 @@
 		const url = new SvelteURL(page.url);
 		if (mode) url.searchParams.set('runner', mode);
 		else url.searchParams.delete('runner');
-		url.hash = 'management-controls';
 		replaceState(url, page.state);
 	}
 

@@ -13,7 +13,7 @@ import { toArtistInfoBasic, toArtistReleases } from '../catalog/catalogAdapters'
 import { CATALOG_ENDPOINTS } from '../catalog/endpoints';
 import { PERSIST, PERSIST_PROVIDER } from '$lib/queries/persistedCache';
 
-export const getBasicArtistQueryOptions = (artistId: string) =>
+const getBasicArtistQueryOptions = (artistId: string) =>
 	queryOptions({
 		staleTime: STALE_SLOW,
 		meta: PERSIST_PROVIDER,
@@ -26,13 +26,11 @@ export const getBasicArtistQueryOptions = (artistId: string) =>
 export const getBasicArtistQuery = (getArtistId: Getter<string>) =>
 	createQuery(() => getBasicArtistQueryOptions(getArtistId()));
 
-export const getExtendedArtistQueryOptions = (artistId: string) =>
+const getExtendedArtistQueryOptions = (artistId: string) =>
 	queryOptions({
 		staleTime: STALE_SLOW,
 		meta: PERSIST_PROVIDER,
 		queryKey: ArtistQueryKeyFactory.extended(artistId),
-		// A fast extended query can finish before the provider page observes its lazy fields.
-		notifyOnChangeProps: 'all',
 		queryFn: ({ signal }) => api.v3.GET(CATALOG_ENDPOINTS.artistExtended(artistId), { signal })
 	});
 

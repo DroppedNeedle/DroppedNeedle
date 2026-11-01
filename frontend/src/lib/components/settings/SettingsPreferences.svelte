@@ -22,10 +22,13 @@
 		secondary_types: []
 	});
 	// The form starts from the saved choices, or the defaults when they can't be read.
+	// Seeded once from a real answer: a later refetch must not undo unsaved edits.
+	let seeded = false;
 	$effect(() => {
-		if (preferencesQuery.isPending) return;
+		if (seeded || preferencesQuery.isPending) return;
 		const saved = preferencesQuery.data;
 		preferences = { ...DEFAULT_PREFERENCES, ...saved };
+		seeded = saved !== undefined;
 	});
 	let saving = $state(false);
 	let saveMessage = $state('');
@@ -192,8 +195,8 @@
 		{#if saveMessage}
 			<div
 				class="alert flex-1"
-				class:alert-success={saveMessage.includes('success')}
-				class:alert-error={saveMessage.includes('Failed')}
+				class:alert-success={saveMessage.startsWith('Saved')}
+				class:alert-error={!saveMessage.startsWith('Saved')}
 			>
 				<span>{saveMessage}</span>
 			</div>

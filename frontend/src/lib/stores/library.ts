@@ -3,17 +3,11 @@ import { get, writable } from 'svelte/store';
 interface LibraryState {
 	mbidSet: Set<string>;
 	requestedSet: Set<string>;
-	loading: boolean;
-	lastUpdated: number | null;
-	initialized: boolean;
 }
 
 const initialState: LibraryState = {
 	mbidSet: new Set(),
-	requestedSet: new Set(),
-	loading: false,
-	lastUpdated: null,
-	initialized: false
+	requestedSet: new Set()
 };
 
 function createLibraryStore() {

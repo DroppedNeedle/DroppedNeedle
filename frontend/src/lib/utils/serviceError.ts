@@ -42,6 +42,8 @@ export const PROVIDER_NAMES: Readonly<Record<string, string>> = {
 	github: 'GitHub',
 	spotify: 'Spotify',
 	plextv: 'Plex',
+	newznab: 'Newznab',
+	hibp: 'Have I Been Pwned',
 	oidc: 'Your sign-in provider',
 	purchase: 'Purchase links',
 	plugins: 'Plugins',

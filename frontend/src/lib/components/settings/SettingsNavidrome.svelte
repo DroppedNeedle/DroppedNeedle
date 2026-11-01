@@ -87,12 +87,14 @@
 					type="url"
 					placeholder="http://localhost:4533"
 					bind:value={draft.navidrome_url}
+					error={section.fieldError('navidrome_url', 'Navidrome URL')}
 				/>
 
 				<TextField
 					label="Username"
 					placeholder="Your Navidrome username"
 					bind:value={draft.username}
+					error={section.fieldError('username', 'Username')}
 				/>
 
 				<SecretField
@@ -100,6 +102,7 @@
 					mask={SECRET_MASK}
 					placeholder="Your Navidrome password"
 					bind:value={draft.password}
+					error={section.fieldError('password', 'Password')}
 				/>
 
 				<ToggleRow
@@ -134,6 +137,7 @@
 						placeholder="/music/playlists"
 						help="An absolute path inside the DroppedNeedle container that must sit inside the same music library tree Navidrome scans. Track paths are written relative to this folder, so both apps have to see the same folder-to-track relationship."
 						bind:value={draft.playlist_sync_path}
+						error={section.fieldError('playlist_sync_path', 'Playlist folder')}
 					/>
 
 					<SelectField
@@ -144,6 +148,7 @@
 							{ value: 'all', label: 'All playlists' }
 						]}
 						help="Navidrome does not scope an imported playlist to a user, so anything exported is visible to everyone on that server. &quot;All playlists&quot; therefore publishes other users' private playlists too. To have them correctly scoped to a user on Navidrome, imported playlists can be assigned to a user (and made private or public) within the Navidrome dashboard."
+						error={section.fieldError('playlist_sync_scope', 'Which playlists')}
 					/>
 
 					<ToggleRow

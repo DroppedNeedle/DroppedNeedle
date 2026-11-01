@@ -562,7 +562,7 @@
 						variant="ghost"
 						size="sm"
 						class="mt-3 self-start"
-						href={withBasePath('/library/management?runner=baseline_restore')}
+						href={withBasePath('/library/management?tab=organize&runner=baseline_restore')}
 						>Open baseline restore...</Button
 					>
 				</Card>

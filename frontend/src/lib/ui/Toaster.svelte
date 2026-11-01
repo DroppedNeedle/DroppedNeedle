@@ -1,9 +1,5 @@
 <!--
-	Shows the current toast from `toastStore`, the store nearly every screen
-	already calls. Mount it once in the app shell.
-	Replaces the shell's inline toast markup, the `Toast` component with its
-	page-local state, the inline `class="toast"` blocks on the search pages and
-	the separate playback toast.
+	Shows the current toast from `toastStore`. Mount it once in the app shell.
 -->
 <script lang="ts">
 	import { Check, Info, TriangleAlert, X } from 'lucide-svelte';
@@ -27,8 +23,8 @@
 {#if $toastStore}
 	{@const tone: string = $toastStore.type}
 	<div
-		class="droppedneedle-playback-toast fixed left-1/2 z-50 -translate-x-1/2"
-		class:droppedneedle-playback-toast--player={abovePlayer}
+		class="droppedneedle-toast fixed left-1/2 z-50 -translate-x-1/2"
+		class:droppedneedle-toast--player={abovePlayer}
 	>
 		<div
 			role={tone === 'error' ? 'alert' : 'status'}

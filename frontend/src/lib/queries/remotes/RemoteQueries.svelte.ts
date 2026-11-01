@@ -252,7 +252,7 @@ export const getRemoteTracksQuery = (
 		getEnabled
 	}));
 
-export const REMOTE_ALBUMS_PAGE_SIZE = 48;
+const REMOTE_ALBUMS_PAGE_SIZE = 48;
 
 /**
  * A server's albums a page at a time. A search answers in one page from the

@@ -140,6 +140,8 @@ export const queryClient = new QueryClient({
 	defaultOptions: {
 		queries: {
 			enabled: browser,
+			// A flag read after `a.isLoading ||` is not tracked, so every change notifies.
+			notifyOnChangeProps: 'all',
 			retry: false,
 			refetchOnWindowFocus: true,
 			staleTime: STALE_DEFAULT,

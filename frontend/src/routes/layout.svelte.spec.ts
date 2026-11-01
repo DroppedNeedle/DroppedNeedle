@@ -51,14 +51,6 @@ vi.mock('$app/stores', () => ({
 		})
 	}
 }));
-vi.mock('$lib/stores/errorModal', () => ({
-	errorModal: {
-		subscribe: vi.fn((cb: (v: unknown) => void) => {
-			cb({ show: false });
-			return () => {};
-		})
-	}
-}));
 vi.mock('$lib/stores/library', () => ({
 	libraryStore: {
 		subscribe: vi.fn((cb: (v: unknown) => void) => {
@@ -130,9 +122,6 @@ vi.mock('$lib/stores/player.svelte', () => ({
 	}
 }));
 vi.mock('$lib/player/launchYouTubePlayback', () => ({ launchYouTubePlayback: vi.fn() }));
-vi.mock('$lib/stores/playbackToast.svelte', () => ({
-	playbackToast: { visible: false, message: '', type: 'info', show: vi.fn(), dismiss: vi.fn() }
-}));
 vi.mock('$lib/stores/scrobble.svelte', () => ({
 	scrobbleManager: { init: vi.fn().mockResolvedValue(undefined) }
 }));

@@ -11,7 +11,6 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { SvelteURL } from 'svelte/reactivity';
-	import { onMount, tick } from 'svelte';
 
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import LibraryScanningPanel from '$lib/components/library/LibraryScanningPanel.svelte';
@@ -78,48 +77,6 @@
 		if (tab === 'organize') return `${segmentBase} bg-warning/15 text-warning`;
 		return `${segmentBase} bg-base-100 text-base-content shadow-sm`;
 	}
-
-	function legacyTarget(): TabId | null {
-		const hash = page.url.hash;
-		const runner = page.url.searchParams.get('runner');
-		if (hash === '#scanning-controls' || hash === '#recent-runs') return 'scanning';
-		if (
-			hash === '#management-controls' ||
-			hash === '#identity-readiness' ||
-			runner === 'manage' ||
-			runner === 'baseline_restore'
-		)
-			return 'organize';
-		if (hash === '#management-settings') return 'automation';
-		return null;
-	}
-
-	async function applyLegacyLink(): Promise<void> {
-		const target = legacyTarget();
-		if (!target) return;
-		const anchorId = page.url.hash.startsWith('#') ? page.url.hash.slice(1) : null;
-		if (target !== activeTab) {
-			const url = new SvelteURL(page.url);
-			url.searchParams.set('tab', target);
-			url.hash = '';
-			await goto(url, { replaceState: true, noScroll: true, keepFocus: true });
-		}
-		if (!anchorId) return;
-		await tick();
-		const anchor = document.getElementById(anchorId);
-		if (!(anchor instanceof HTMLElement)) return;
-		anchor.scrollIntoView({
-			behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-			block: 'start'
-		});
-	}
-
-	onMount(() => {
-		void applyLegacyLink();
-		const handleHashChange = (): void => void applyLegacyLink();
-		window.addEventListener('hashchange', handleHashChange);
-		return () => window.removeEventListener('hashchange', handleHashChange);
-	});
 </script>
 
 <svelte:head><title>Library Management · DroppedNeedle</title></svelte:head>

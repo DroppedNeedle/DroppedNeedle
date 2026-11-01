@@ -34,7 +34,7 @@ function errorMessage(err: unknown, fallback: string): string {
 	return err instanceof Error && err.message ? err.message : fallback;
 }
 
-export const getSearchJobQueryOptions = (jobId: string) =>
+const getSearchJobQueryOptions = (jobId: string) =>
 	queryOptions({
 		staleTime: STALE_LIVE,
 		enabled: jobId !== '',

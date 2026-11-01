@@ -2,7 +2,12 @@ import { api } from '$lib/api/client';
 import { toastStore } from '$lib/stores/toast';
 
 import { PLUGIN_ENDPOINTS } from './endpoints';
-import { createAppMutation, pluginFilesChanged, pluginsChanged } from '$lib/queries/effects';
+import {
+	createAppMutation,
+	libraryChanged,
+	pluginFilesChanged,
+	pluginsChanged
+} from '$lib/queries/effects';
 
 export const updatePluginMutation = () =>
 	createAppMutation(() => ({
@@ -50,5 +55,5 @@ export const undoPluginFileMutation = () =>
 		onSuccess: () => {
 			toastStore.show({ message: 'File removed.', type: 'success' });
 		},
-		effects: (_answer, { name }) => [pluginFilesChanged(name)]
+		effects: (_answer, { name }) => [pluginFilesChanged(name), libraryChanged()]
 	}));

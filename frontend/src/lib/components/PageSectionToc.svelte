@@ -153,11 +153,10 @@
 	</aside>
 
 	<div
-		class="fixed left-4 z-40 xl:hidden"
-		class:bottom-36={playerStore.isPlayerVisible}
-		class:bottom-6={!playerStore.isPlayerVisible}
+		class="section-jump fixed right-4 z-40 xl:hidden"
+		class:section-jump--player={playerStore.isPlayerVisible}
 	>
-		<details bind:this={mobileMenu} class="dropdown dropdown-top dropdown-start">
+		<details bind:this={mobileMenu} class="dropdown dropdown-top dropdown-end">
 			<IconButton as="summary" variant="primary" icon={List} label="Open section navigation" />
 			<div
 				class="dropdown-content z-[1] mb-2 w-52 rounded-box border border-base-content/10 bg-base-200/95 p-3 shadow-xl backdrop-blur-md"
@@ -186,3 +185,14 @@
 		</details>
 	</div>
 {/if}
+
+<style>
+	/* On the right, clear of the sidebar; above the bottom bar and the player. */
+	.section-jump {
+		bottom: calc(var(--ms-bottom-nav-offset) + 0.75rem);
+	}
+
+	.section-jump--player {
+		bottom: calc(var(--ms-bottom-nav-offset) + var(--ms-player-height) + 0.75rem);
+	}
+</style>

@@ -20,9 +20,3 @@ export const SCAN_FREQUENCY_OPTIONS: ScanFrequencyOption[] = [
 	{ value: '3d', label: 'Every 3 days' },
 	{ value: '7d', label: 'Every 7 days' }
 ];
-
-const LABELS = new Map(SCAN_FREQUENCY_OPTIONS.map((o) => [o.value, o.label]));
-
-export function scanFrequencyLabel(value: ScanFrequency | undefined): string {
-	return (value && LABELS.get(value)) ?? 'Every 24 hours';
-}

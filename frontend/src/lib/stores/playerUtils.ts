@@ -1,5 +1,5 @@
 import type { NowPlaying, QueueItem, QueueOrigin } from '$lib/player/types';
-import { playbackToast } from '$lib/stores/playbackToast.svelte';
+import { toastStore } from '$lib/stores/toast';
 
 const VOLUME_STORAGE_KEY = 'droppedneedle_player_volume';
 const SESSION_STORAGE_KEY = 'droppedneedle_player_session_v3';
@@ -44,13 +44,13 @@ export function showQueueMutationToast(action: 'queue' | 'next', count: number):
 	if (queueMutationToastsSuppressed) return;
 	const label = count === 1 ? 'track' : 'tracks';
 	if (action === 'queue') {
-		playbackToast.show(
+		toastStore.notify(
 			count === 1 ? 'Added track to queue' : `Added ${count} ${label} to queue`,
 			'info'
 		);
 		return;
 	}
-	playbackToast.show(
+	toastStore.notify(
 		count === 1 ? 'Queued track to play next' : `Queued ${count} ${label} to play next`,
 		'info'
 	);

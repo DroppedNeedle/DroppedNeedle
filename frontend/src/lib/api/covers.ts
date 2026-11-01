@@ -11,7 +11,7 @@ export type CoverSize = number | 'original';
 export type CoverKind = 'artist' | 'release-group' | 'release';
 
 /** Typed v3 cover URLs; pass them through `coverSrc` for an `<img>` src. */
-export const COVER_ENDPOINTS = {
+const COVER_ENDPOINTS = {
 	artist: (artistId: string, size = 500) =>
 		v3('/api/v3/covers/artist/{artist_id}', {
 			path: { artist_id: artistId },

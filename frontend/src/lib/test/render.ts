@@ -14,7 +14,7 @@ export async function renderWithQuery<Props extends object>(
 ) {
 	const client = new QueryClient({
 		defaultOptions: {
-			queries: { retry: false, refetchOnWindowFocus: false },
+			queries: { retry: false, refetchOnWindowFocus: false, notifyOnChangeProps: 'all' },
 			mutations: { retry: false }
 		}
 	});

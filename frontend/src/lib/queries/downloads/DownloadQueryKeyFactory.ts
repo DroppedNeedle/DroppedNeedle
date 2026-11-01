@@ -43,7 +43,6 @@ export const DownloadQueryKeyFactory = {
 	sourcePriority: () => key(ADMIN, 'downloads', 'source-priority'),
 	sabnzbdStatus: () => key(ADMIN, 'downloads', 'sabnzbd-status'),
 	policy: () => key(ADMIN, 'downloads', 'policy'),
-	policySummary: () => key(SHARED, 'downloads', 'policy-summary'),
 	wantedSettings: () => key(ADMIN, 'downloads', 'wanted-settings'),
 	cutoffUnmet: () => key(ADMIN, 'downloads', 'cutoff-unmet')
 };

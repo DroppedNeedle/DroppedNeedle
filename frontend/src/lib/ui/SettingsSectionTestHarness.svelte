@@ -23,7 +23,7 @@
 	{#snippet children(draft)}
 		<TextField
 			label="Server URL"
-			error={section.fieldError('jellyfin_url')}
+			error={section.fieldError('jellyfin_url', 'Jellyfin URL')}
 			bind:value={draft.jellyfin_url}
 		/>
 		<SecretField label="API key" mask={SECRET_MASK} bind:value={draft.api_key} />

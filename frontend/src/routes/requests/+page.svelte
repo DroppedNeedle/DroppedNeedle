@@ -2,9 +2,13 @@
 	import { replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { Download, Heart, History, Radar, Search, ShieldCheck, TrendingUp } from 'lucide-svelte';
-	import { getActiveRequestCountQuery } from '$lib/queries/requests/RequestQueries.svelte';
+	import {
+		getActiveRequestCountQuery,
+		getActiveRequestsQuery
+	} from '$lib/queries/requests/RequestQueries.svelte';
+	import { liveRequestStatus } from '$lib/queries/requests/liveStatus';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import ActiveTab, { type ActiveSummary } from './ActiveTab.svelte';
+	import ActiveTab from './ActiveTab.svelte';
 	import ApprovalsTab from './ApprovalsTab.svelte';
 	import AutoDownloadTab from './AutoDownloadTab.svelte';
 	import HistoryTab from './HistoryTab.svelte';
@@ -38,11 +42,20 @@
 		replaceState(url, {});
 	}
 
-	let activeSummary = $state<ActiveSummary>({
-		count: 0,
-		downloading: 0,
-		searching: 0,
-		fetching: false
+	// The header's counts show on every tab, so the page reads the list itself.
+	const activeListQuery = getActiveRequestsQuery(() => !!authStore.user?.id);
+	const activeSummary = $derived.by(() => {
+		const items = activeListQuery.data?.items ?? [];
+		return {
+			count: activeListQuery.data?.count ?? items.length,
+			downloading: items.filter((i) => liveRequestStatus(i) === 'downloading').length,
+			searching: items.filter((i) => {
+				if (i.waiting_reason) return false;
+				const status = liveRequestStatus(i);
+				return status === 'pending' || status === 'queued';
+			}).length,
+			fetching: activeListQuery.isFetching
+		};
 	});
 	let counts = $state({ history: 0, wanted: 0, approvals: 0, auto: 0, upgrades: 0 });
 
@@ -177,7 +190,7 @@
 		{/each}
 	</div>
 
-	<ActiveTab active={activeTab === 'active'} onsummary={(summary) => (activeSummary = summary)} />
+	<ActiveTab active={activeTab === 'active'} />
 	<HistoryTab active={activeTab === 'history'} oncount={(n) => (counts.history = n)} />
 	<WantedTab active={activeTab === 'wanted'} oncount={(n) => (counts.wanted = n)} />
 	{#if authStore.isAdmin}

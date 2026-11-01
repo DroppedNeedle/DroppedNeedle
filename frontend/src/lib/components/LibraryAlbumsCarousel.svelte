@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { EAGER_IMAGE_COUNT } from '$lib/utils/lazyImage';
 	import type { ReleaseGroup, Album } from '$lib/types';
 	import HorizontalCarousel from './HorizontalCarousel.svelte';
 	import CarouselSkeleton from './CarouselSkeleton.svelte';
@@ -16,7 +17,7 @@
 
 	let libraryReleases = $derived(
 		releases
-			.filter((r) => libraryStore.isInLibrary(r.id) || (!$libraryStore.initialized && r.in_library))
+			.filter((r) => libraryStore.isInLibrary(r.id) || r.in_library)
 			.sort((a, b) => {
 				const ya = a.year ?? 0;
 				const yb = b.year ?? 0;
@@ -30,7 +31,7 @@
 			artist: artistName,
 			year: rg.year ?? null,
 			musicbrainz_id: rg.id,
-			in_library: libraryStore.isInLibrary(rg.id) || (!$libraryStore.initialized && rg.in_library),
+			in_library: libraryStore.isInLibrary(rg.id) || rg.in_library,
 			requested: rg.requested,
 			cover_url: null,
 			type_info: rg.type
@@ -53,9 +54,9 @@
 			In your library
 		</h3>
 		<HorizontalCarousel>
-			{#each libraryReleases as release (release.id)}
+			{#each libraryReleases as release, index (release.id)}
 				<div class="w-36 shrink-0">
-					<AlbumCard album={toAlbum(release)} />
+					<AlbumCard album={toAlbum(release)} lazy={index >= EAGER_IMAGE_COUNT} />
 				</div>
 			{/each}
 		</HorizontalCarousel>

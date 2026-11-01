@@ -91,10 +91,7 @@ export const getLibraryMembershipQueryOptions = (
 export const getLibraryMembershipQuery = (getAlbumIds: Getter<string[]>) =>
 	createQuery(() => getLibraryMembershipQueryOptions(authStore.user?.id, getAlbumIds()));
 
-export const getLibraryAlbumsQueryOptions = (
-	forUser: LibraryV3UserId,
-	params: LibraryV3AlbumsParams
-) =>
+const getLibraryAlbumsQueryOptions = (forUser: LibraryV3UserId, params: LibraryV3AlbumsParams) =>
 	queryOptions({
 		placeholderData: keepPreviousData,
 		meta: PERSIST,
@@ -203,7 +200,7 @@ export const getLibraryArtistThumbsQuery = () =>
 			fetchArtists({ limit: ARTIST_THUMBS_LIMIT, sort: 'album_count', order: 'desc' }, null, signal)
 	}));
 
-export const getLibraryStatsQueryOptions = (forUser: LibraryV3UserId) =>
+const getLibraryStatsQueryOptions = (forUser: LibraryV3UserId) =>
 	queryOptions({
 		meta: PERSIST,
 		queryKey: LibraryQueryKeyFactory.catalog.stats(forUser),
@@ -255,7 +252,7 @@ export const cacheCanonicalLibraryAlbumDetail = (album: LibraryAlbumDetail) =>
 		album
 	);
 
-export const getLibraryAlbumCopiesQueryOptions = (forUser: LibraryV3UserId, albumId: string) =>
+const getLibraryAlbumCopiesQueryOptions = (forUser: LibraryV3UserId, albumId: string) =>
 	queryOptions({
 		queryKey: LibraryQueryKeyFactory.catalog.albumCopies(forUser, albumId),
 		queryFn: async ({ signal }) =>
