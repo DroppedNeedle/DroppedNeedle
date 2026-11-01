@@ -1,6 +1,4 @@
 <script lang="ts">
-	import { TriangleAlert } from 'lucide-svelte';
-
 	import {
 		getDownloadPolicyQuery,
 		saveDownloadPolicy
@@ -42,7 +40,7 @@
 	}
 
 	// The stored policy plus the editable recipe. Fields this form does not
-	// edit, such as ignored terms and the recycle bin, are sent back as stored.
+	// edit, such as ignored terms, are sent back as stored.
 	type PolicyDraft = DownloadPolicyView & { recipe: RecipeDraftEntry[] };
 
 	function toDraft(view: DownloadPolicyView): PolicyDraft {
@@ -158,13 +156,6 @@
 						fallbacks. New work uses saved changes.
 					</p>
 				</div>
-
-				{#if section.saved?.recycle_bin_warning}
-					<div class="alert alert-warning items-start text-sm" role="status">
-						<TriangleAlert class="mt-0.5 h-5 w-5" aria-hidden="true" />
-						<p class="min-w-0 flex-1">{section.saved.recycle_bin_warning}</p>
-					</div>
-				{/if}
 
 				<QualityOrderSection
 					bind:qualityRecipe={draft.recipe}

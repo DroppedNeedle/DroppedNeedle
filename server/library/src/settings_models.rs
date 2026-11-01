@@ -52,6 +52,16 @@ pub struct LibraryManagementSettingsResponse {
     /// Every tag field a profile can manage, in the editor's order, with
     /// the genre row last.
     pub managed_fields: Vec<ManagedFieldInfo>,
+    /// Why the recycle bin path is not used, when it is not: each library
+    /// folder's `.recycle` takes its place, or files wait for a folder
+    /// that can't be reached. Set on the settings read and save only.
+    #[serde(default)]
+    pub recycle_bin_warning: Option<String>,
+    /// The stored settings cannot be read, so these are the seeded ones
+    /// and a save replaces the row. Removals, upgrades and automatic work
+    /// wait until then.
+    #[serde(default)]
+    pub settings_unreadable: bool,
 }
 
 /// One row of a profile's field table.

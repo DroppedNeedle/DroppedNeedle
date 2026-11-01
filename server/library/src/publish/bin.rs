@@ -2,13 +2,13 @@
 //! a configured bin passes before it is used, fresh entry names, and the
 //! move of a replaced file into its bin after its bundle committed.
 //!
-//! The configured bin (the download settings' `recycle_bin_path`) is
+//! The configured bin (Library Management's `recycle_bin_path`) is
 //! resolved once per session, symlinks and all, and every overlap check
 //! runs on the resolved folder. A configured bin that is, contains or sits
 //! inside a library root (other than as that root's `.recycle`), or that
 //! overlaps a download folder, is not used: each root's `.recycle` takes
-//! its place, logged once per change and shown on the download settings.
-//! While the download settings cannot be read, or the configured bin's
+//! its place, logged once per change and shown on the Library Management
+//! settings. While those settings cannot be read, or the configured bin's
 //! folder cannot be reached, the bins are unknown and nothing that would
 //! go into a bin moves: no `.recycle` stands in for a bin that is down.
 
@@ -21,7 +21,7 @@ use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
-use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
+use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
 use super::PublishError;
 use super::journal::{FileJournal, JournalKind, JournalReplacement, JournalWriter};
@@ -56,7 +56,7 @@ pub enum BinRefusal {
 }
 
 impl BinRefusal {
-    /// What the download settings say about it.
+    /// What the Library Management settings say about it.
     pub fn message(self) -> &'static str {
         match self {
             Self::NotAbsolute => {
@@ -95,7 +95,7 @@ pub struct BinChoice {
 /// roots come resolved; the download folders are asked for only when a
 /// bin could reach them (a configured one, or a `.recycle` link), once.
 /// `Err` while they cannot be read, or while the configured folder cannot
-/// be reached ([`BIN_UNREACHABLE`]): then nothing moves into a bin and no
+/// be reached ([`BinsUnknown::Unreachable`]): then nothing moves into a bin and no
 /// `.recycle` stands in.
 pub fn choose(
     configured: &str,
@@ -130,7 +130,7 @@ pub fn choose(
         {
             refused = Some(BinRefusal::NotAbsolute);
         } else {
-            let resolved = resolve_existing(path).map_err(|_| BIN_UNREACHABLE)?;
+            let resolved = resolve_existing(path).map_err(|_| BinsUnknown::Unreachable)?;
             match clear(&resolved)? {
                 Some(refusal) => refused = Some(refusal),
                 None => {
@@ -222,23 +222,37 @@ fn resolve_existing(path: &Path) -> std::io::Result<PathBuf> {
     }
 }
 
-/// Why no bin is known: a setting that cannot be read, or
-/// [`BIN_UNREACHABLE`].
-pub type BinsUnknown = &'static str;
+/// Why no bin is known. Its text completes "no recycle bin is known
+/// while ...".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BinsUnknown {
+    /// The Library Management settings, which name the bin, cannot be
+    /// read.
+    SettingsUnread,
+    /// A setting naming a download folder the bin must stay clear of
+    /// cannot be read.
+    DownloadsUnread,
+    /// The configured bin folder cannot be reached (permission denied, an
+    /// I/O error, a link loop): files wait for it rather than go to a
+    /// library folder's `.recycle`.
+    Unreachable,
+}
 
-/// The configured recycle bin folder cannot be reached (permission
-/// denied, an I/O error, a link loop): files wait for it rather than go
-/// to a library folder's `.recycle`.
-pub const BIN_UNREACHABLE: BinsUnknown = "the recycle bin folder can't be reached";
+impl std::fmt::Display for BinsUnknown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::SettingsUnread => "the Library Management settings can't be read",
+            Self::DownloadsUnread => "the slskd or SABnzbd settings can't be read",
+            Self::Unreachable => "the recycle bin folder can't be reached",
+        })
+    }
+}
 
-const POLICY_UNREAD: BinsUnknown = "the download settings cannot be read";
-const DOWNLOADS_UNREAD: BinsUnknown = "the slskd or SABnzbd settings cannot be read";
-
-/// Where the library's bins come from: the download settings' recycle bin
+/// Where the library's bins come from: Library Management's recycle bin
 /// path, checked against the library roots and the download folders.
 #[derive(Clone)]
 pub struct BinSource {
-    policy: Live<DownloadPolicy>,
+    management: Live<LibraryManagement>,
     library: Live<TypedLibrary>,
     downloads: DownloadTrees,
     logged: Arc<Mutex<Logged>>,
@@ -254,15 +268,15 @@ struct Logged {
 }
 
 impl BinSource {
-    /// Bins from `policy`, checked against the roots in `library` and the
-    /// folders `downloads` names.
+    /// Bins from `management`, checked against the roots in `library` and
+    /// the folders `downloads` names.
     pub fn new(
-        policy: Live<DownloadPolicy>,
+        management: Live<LibraryManagement>,
         library: Live<TypedLibrary>,
         downloads: DownloadTrees,
     ) -> Self {
         Self {
-            policy,
+            management,
             library,
             downloads,
             logged: Arc::default(),
@@ -276,7 +290,7 @@ impl BinSource {
     }
 
     /// The bins for `roots`, already resolved, now. `Err` with the cause
-    /// while the download settings or a setting naming a download folder
+    /// while the Library Management settings or a setting naming a download folder
     /// cannot be read, or while the configured bin cannot be reached: then
     /// nothing moves into a bin and no other bin stands in.
     pub fn current_over(&self, roots: &[ResolvedRoot]) -> Result<BinChoice, BinsUnknown> {
@@ -290,12 +304,12 @@ impl BinSource {
         roots: &[ResolvedRoot],
         downloads: Option<&[PathBuf]>,
     ) -> Result<BinChoice, BinsUnknown> {
-        let policy = self.policy.read().ok_or(POLICY_UNREAD)?;
+        let management = self.management.read().ok_or(BinsUnknown::SettingsUnread)?;
         let mut trees = || match downloads {
             Some(trees) => Ok(trees.to_vec()),
-            None => (self.downloads)().ok_or(DOWNLOADS_UNREAD),
+            None => (self.downloads)().ok_or(BinsUnknown::DownloadsUnread),
         };
-        choose(&policy.recycle_bin_path, roots, &mut trees)
+        choose(&management.recycle_bin_path, roots, &mut trees)
     }
 
     /// The bins expiry may delete from for `registry`'s roots now, with a
@@ -308,7 +322,7 @@ impl BinSource {
         registry: &RootRegistry,
     ) -> Result<(Vec<Root>, Vec<String>), BinsUnknown> {
         let resolved = resolve_roots(registry);
-        let downloads = (self.downloads)().ok_or(DOWNLOADS_UNREAD)?;
+        let downloads = (self.downloads)().ok_or(BinsUnknown::DownloadsUnread)?;
         let choice = self.read(&resolved, Some(&downloads))?;
         let left_out = paths::left_out(&resolved);
         Ok(expiry_guard(
@@ -319,8 +333,8 @@ impl BinSource {
         ))
     }
 
-    /// Why `configured` would not be used as the bin, for the download
-    /// settings. `None` when it would be, or while that cannot be told.
+    /// Why `configured` would not be used as the bin, for the Library
+    /// Management settings. `None` when it would be, or while that cannot be told.
     /// Blocking: it resolves paths.
     pub fn refusal(&self, configured: &str) -> Option<BinRefusal> {
         if configured.trim().is_empty() {
@@ -328,10 +342,10 @@ impl BinSource {
         }
         let library = self.library.read()?;
         let registry = crate::settings::registry_from(&library);
-        let mut trees = || (self.downloads)().ok_or(DOWNLOADS_UNREAD);
+        let mut trees = || (self.downloads)().ok_or(BinsUnknown::DownloadsUnread);
         match choose(configured, &resolve_roots(&registry), &mut trees) {
             Ok(choice) => choice.refused,
-            Err(BIN_UNREACHABLE) => Some(BinRefusal::Unresolvable),
+            Err(BinsUnknown::Unreachable) => Some(BinRefusal::Unresolvable),
             Err(_) => None,
         }
     }
@@ -348,7 +362,7 @@ impl BinSource {
                     logged.problems = state;
                 }
             }
-            Err(cause) if logged.waits.insert(cause) => {
+            Err(cause) if logged.waits.insert(*cause) => {
                 tracing::warn!("no recycle bin is known while {cause}; removals and upgrades wait");
             }
             Err(cause) => {

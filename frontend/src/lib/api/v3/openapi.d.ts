@@ -12702,6 +12702,13 @@ export interface components {
              * @description Albums removed with the batch.
              */
             removed_albums?: number;
+            /**
+             * Format: int64
+             * @description Albums left in the batch because no recycle bin is known yet.
+             */
+            waiting?: number;
+            /** @description Why those albums wait, when any do. */
+            waiting_reason?: string | null;
         };
         /** @description A batch without its album outcomes. */
         DiscoveryBatchSummary: {
@@ -12824,7 +12831,7 @@ export interface components {
         };
         /**
          * @description Download policy: quality tiers, recipe v2, timeouts, retry, retention,
-         *     recycle bin, quotas, and the upgrade scan.
+         *     recycle bin retention, quotas, and the upgrade scan.
          */
         DownloadPolicy: {
             /**
@@ -12966,11 +12973,6 @@ export interface components {
              */
             quality_recipe: components["schemas"]["QualityRecipeEntry"][];
             /**
-             * @description Recycle-bin path ("" disables).
-             * @default
-             */
-            recycle_bin_path: string;
-            /**
              * Format: int64
              * @description Recycle retention in days.
              * @default 30
@@ -13009,11 +13011,6 @@ export interface components {
             quality_recipe_error?: string | null;
             /** @description Read-only recipe verdict. */
             quality_recipe_status: components["schemas"]["QualityRecipeStatus"];
-            /**
-             * @description Why the recycle bin path is not used, when it is not: each library
-             *     folder's `.recycle` takes its place. Read-only.
-             */
-            recycle_bin_warning?: string | null;
         };
         /**
          * @description `download_progress`: the worker polled one of the user's live
@@ -15874,6 +15871,12 @@ export interface components {
              */
             profiles: components["schemas"]["LibraryManagementProfile"][];
             /**
+             * @description The recycle bin folder removed and replaced files go to ("" uses
+             *     each library folder's own `.recycle`).
+             * @default
+             */
+            recycle_bin_path: string;
+            /**
              * @description Root assignments.
              * @default []
              */
@@ -15913,8 +15916,20 @@ export interface components {
              *     the genre row last.
              */
             managed_fields: components["schemas"]["ManagedFieldInfo"][];
+            /**
+             * @description Why the recycle bin path is not used, when it is not: each library
+             *     folder's `.recycle` takes its place, or files wait for a folder
+             *     that can't be reached. Set on the settings read and save only.
+             */
+            recycle_bin_warning?: string | null;
             /** @description Settings content revision. */
             settings_revision: string;
+            /**
+             * @description The stored settings cannot be read, so these are the seeded ones
+             *     and a save replaces the row. Removals, upgrades and automatic work
+             *     wait until then.
+             */
+            settings_unreadable?: boolean;
         };
         /**
          * @description Every MusicBrainz release group the library holds and every album with

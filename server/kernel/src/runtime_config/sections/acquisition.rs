@@ -573,7 +573,7 @@ pub fn validate_quality_recipe(entries: &[QualityRecipeEntry]) -> Result<(), Con
 }
 
 /// Download policy: quality tiers, recipe v2, timeouts, retry, retention,
-/// recycle bin, quotas, and the upgrade scan.
+/// recycle bin retention, quotas, and the upgrade scan.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct DownloadPolicy {
@@ -617,8 +617,6 @@ pub struct DownloadPolicy {
     pub quality_cutoff: String,
     /// Background upgrades switch.
     pub upgrade_allowed: bool,
-    /// Recycle-bin path ("" disables).
-    pub recycle_bin_path: String,
     /// Recycle retention in days.
     pub recycle_retention_days: i64,
     /// Library size cap in GB (0 unlimited).
@@ -665,7 +663,6 @@ impl Default for DownloadPolicy {
             required_terms: Vec::new(),
             quality_cutoff: "lossless".to_owned(),
             upgrade_allowed: false,
-            recycle_bin_path: String::new(),
             recycle_retention_days: 30,
             max_library_size_gb: 0,
             default_request_quota_count: 0,

@@ -429,7 +429,6 @@ impl SettingsService {
                 policy: DownloadPolicy::default(),
                 quality_recipe_status: QualityRecipeStatus::Invalid,
                 quality_recipe_error: Some(reason),
-                recycle_bin_warning: None,
             }),
             Err(other) => Err(self.config(other)),
         }
@@ -819,7 +818,6 @@ fn policy_view(policy: DownloadPolicy) -> DownloadPolicyView {
         policy,
         quality_recipe_status: status,
         quality_recipe_error: error,
-        recycle_bin_warning: None,
     }
 }
 

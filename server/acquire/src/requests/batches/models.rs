@@ -161,4 +161,10 @@ pub struct DiscoveryBatchRemoveResult {
     /// Albums kept (already landed or owned elsewhere).
     #[serde(default)]
     pub kept: i64,
+    /// Albums left in the batch because no recycle bin is known yet.
+    #[serde(default)]
+    pub waiting: i64,
+    /// Why those albums wait, when any do.
+    #[serde(default)]
+    pub waiting_reason: Option<String>,
 }

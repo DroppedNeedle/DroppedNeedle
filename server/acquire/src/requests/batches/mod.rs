@@ -24,7 +24,7 @@ use std::collections::HashSet;
 use droppedneedle_auth::{Admin, Principal, Role};
 use droppedneedle_catalog::reads::catalog::library::LocalCatalog;
 use droppedneedle_catalog::reads::library::stores::StoreError;
-use droppedneedle_library::mutations::{LIBRARY_OFF, MutationError};
+use droppedneedle_library::mutations::{LIBRARY_OFF, MutationError, RECYCLE_BIN_UNKNOWN};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 use self::models::{
@@ -55,6 +55,9 @@ enum Step {
     Cancelled,
     /// Left as it was.
     Kept,
+    /// Left in the batch: no recycle bin is known yet, so removing the
+    /// batch again takes it once one is. Holds why.
+    Waiting(&'static str),
 }
 
 /// What filing a batch came to.
@@ -353,10 +356,11 @@ impl DiscoveryBatches {
     }
 
     /// Move one album's files to the recycle bin and clear its download
-    /// state, as `admin`. True when the library held it.
-    async fn recycle(&self, admin: &Admin, mbid: &str) -> Result<bool, RequestsError> {
+    /// state, as `admin`. Removed when the library held it; waiting while
+    /// no recycle bin is known.
+    async fn recycle(&self, admin: &Admin, mbid: &str) -> Result<Step, RequestsError> {
         let Some(library) = self.requests.albums.clone() else {
-            return Ok(false);
+            return Ok(Step::Kept);
         };
         let (album, actor_id) = (mbid.to_owned(), admin.user_id().to_owned());
         let removed = tokio::task::spawn_blocking(move || {
@@ -365,14 +369,22 @@ impl DiscoveryBatches {
         .await
         .map_err(|error| RequestsError::internal(&format_args!("batch album removal: {error}")))?;
         match removed {
-            Ok(_) => Ok(true),
-            Err(MutationError::NotFound(_)) => Ok(false),
+            Ok(_) => Ok(Step::Removed),
+            Err(MutationError::NotFound(_)) => Ok(Step::Kept),
             Err(MutationError::Conflict(reason)) if reason == LIBRARY_OFF => {
                 tracing::info!(
                     album = mbid,
                     "batch removal kept an album: the library is off"
                 );
-                Ok(false)
+                Ok(Step::Kept)
+            }
+            Err(MutationError::Conflict(reason)) if reason.code == RECYCLE_BIN_UNKNOWN => {
+                tracing::info!(
+                    album = mbid,
+                    "batch removal left an album in the batch: {}",
+                    reason.message
+                );
+                Ok(Step::Waiting(reason.message))
             }
             Err(error) => Err(RequestsError::internal(&format_args!(
                 "batch album removal: {error:?}"
@@ -397,6 +409,8 @@ impl DiscoveryBatches {
             removed_albums: 0,
             cancelled_requests: 0,
             kept: 0,
+            waiting: 0,
+            waiting_reason: None,
         };
         let mut failed_items: Vec<String> = Vec::new();
         if remove_albums {
@@ -412,10 +426,7 @@ impl DiscoveryBatches {
                         // Never takes an album someone else asked for,
                         // favourited, rated, marked or played.
                         Some(admin) => match self.store.held_by_others(mbid, &owner).await {
-                            Ok(false) => self
-                                .recycle(admin, mbid)
-                                .await
-                                .map(|removed| if removed { Step::Removed } else { Step::Kept }),
+                            Ok(false) => self.recycle(admin, mbid).await,
                             Ok(true) => Ok(Step::Kept),
                             Err(error) => Err(error),
                         },
@@ -442,6 +453,11 @@ impl DiscoveryBatches {
                     Ok(Step::Removed) => result.removed_albums += 1,
                     Ok(Step::Cancelled) => result.cancelled_requests += 1,
                     Ok(Step::Kept) => result.kept += 1,
+                    Ok(Step::Waiting(reason)) => {
+                        result.waiting += 1;
+                        result.waiting_reason = Some(reason.to_owned());
+                        failed_items.push(mbid.to_owned());
+                    }
                     Err(error) => {
                         tracing::warn!(album = mbid, ?error, "batch removal kept an album");
                         result.kept += 1;

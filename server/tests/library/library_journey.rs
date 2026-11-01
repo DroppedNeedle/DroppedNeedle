@@ -4080,6 +4080,126 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
     );
 }
 
+/// The bin Library Management names is the one removals use. While it
+/// can't be reached a removal is refused, saying so, the file stays and no
+/// `.recycle` stands in; once it can be, the file lands in that folder.
+#[tokio::test]
+async fn removals_use_the_bin_library_management_names() {
+    use droppedneedle_kernel::db::DurableLane;
+    use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
+    use droppedneedle_library::mutations::{MutationError, Mutations, RECYCLE_BIN_UNKNOWN};
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (scratch, library, music) = bare_library("lib-remove-named-bin").await;
+    let file = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "Band/LP/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    library
+        .scan_store
+        .db()
+        .run_sql(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', 0)",
+        )
+        .expect("admin row");
+    let vault = scratch.to_path_buf().join("vault");
+    let bin = vault.join("bin");
+    std::fs::create_dir_all(&bin).expect("bin made");
+    let configured = bin.display().to_string();
+    library
+        .settings
+        .store()
+        .update_blocking::<LibraryManagement, String, _>(
+            DurableLane::Foreground,
+            move |mut stored| {
+                stored.recycle_bin_path = configured;
+                Ok(stored)
+            },
+        )
+        .expect("bin saved");
+
+    std::fs::set_permissions(&vault, std::fs::Permissions::from_mode(0o000)).expect("locked");
+    let refused = std::fs::read_dir(&vault)
+        .is_err()
+        .then(|| Mutations::new(&library).remove_track_now(&track, true, "admin"));
+    std::fs::set_permissions(&vault, std::fs::Permissions::from_mode(0o755)).expect("unlocked");
+    if let Some(refused) = refused {
+        let Err(MutationError::Conflict(reason)) = refused else {
+            panic!("expected a refusal");
+        };
+        assert_eq!(reason.code, RECYCLE_BIN_UNKNOWN);
+        assert!(reason.message.contains("nothing was removed"), "{reason:?}");
+        assert!(file.exists(), "the file stays");
+        assert!(!music.join(".recycle").exists(), "no other bin stood in");
+    }
+
+    Mutations::new(&library)
+        .remove_track_now(&track, true, "admin")
+        .expect("track removed");
+    assert!(!file.exists());
+    assert_eq!(std::fs::read_dir(&bin).expect("bin").count(), 1);
+    assert!(!music.join(".recycle").exists());
+}
+
+/// A `library_management` row that does not decode stops removals with no
+/// `.recycle` standing in. The settings page still opens, on a marked seeded
+/// view, and saving it replaces the row and lets the removal go.
+#[tokio::test]
+async fn an_unreadable_section_can_be_repaired_from_the_page() {
+    use droppedneedle_library::management::settings::service::LibraryManagementService;
+    use droppedneedle_library::mutations::{MutationError, Mutations, RECYCLE_BIN_UNKNOWN};
+
+    let (_scratch, library, music) = bare_library("lib-remove-repair").await;
+    let file = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "Band/LP/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let db = library.scan_store.db();
+    db.run_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('admin', 'Admin', 'admin', 0)",
+    )
+    .expect("admin row");
+    let store = library.settings.store();
+    store
+        .replace_stored_for_test("library_management", r#"{"profiles":"not a list"}"#)
+        .expect("row broken");
+
+    let refused = Mutations::new(&library).remove_track_now(&track, true, "admin");
+    let Err(MutationError::Conflict(reason)) = refused else {
+        panic!("expected a refusal");
+    };
+    assert_eq!(reason.code, RECYCLE_BIN_UNKNOWN);
+    assert!(file.exists());
+    assert!(!music.join(".recycle").exists(), "no other bin stood in");
+
+    let service = LibraryManagementService::new(Arc::new(store.clone()));
+    let view = service.get_settings().expect("the page opens");
+    assert!(view.settings_unreadable);
+    assert!(!view.settings.profiles.is_empty(), "a seeded view");
+    let saved = service
+        .save_settings(view.settings.clone(), &view.settings_revision)
+        .expect("the save replaces the row");
+    assert!(!saved.settings_unreadable);
+    assert!(!service.get_settings().unwrap().settings_unreadable);
+
+    Mutations::new(&library)
+        .remove_track_now(&track, true, "admin")
+        .expect("track removed");
+    assert!(!file.exists());
+    assert_eq!(
+        std::fs::read_dir(music.join(".recycle")).unwrap().count(),
+        1
+    );
+}
+
 /// A removed album's download and wanted clean-up is written with the
 /// removal itself: when the process stops right after the removal's
 /// commit, the clean-up still runs once after the restart.

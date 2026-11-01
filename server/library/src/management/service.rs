@@ -2199,7 +2199,7 @@ impl Management {
                 }
                 if let crate::publish::PublishError::BinsUnknown(cause) = error {
                     return Refused::Busy(ManagementError::BinsUnknown(
-                        crate::mutations::bins_unknown(cause),
+                        crate::mutations::bins_unknown(cause, crate::mutations::BinUse::Run),
                     ));
                 }
                 let reason = reasons::from_publish(&error);

@@ -30,7 +30,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use droppedneedle_kernel::runtime_config::ingest::read_legacy;
+use droppedneedle_kernel::runtime_config::ingest::{move_recycle_bin, read_legacy};
 use droppedneedle_kernel::runtime_config::sql as settings_sql;
 use droppedneedle_kernel::runtime_config::store::{decode_text, encode_text};
 use droppedneedle_kernel::runtime_config::{ConfigError, LegacyConfig};
@@ -685,6 +685,25 @@ fn stage_settings(
                 staged_object.remove(*section);
                 report.setting_defaulted((*section).to_owned());
             }
+        }
+    }
+
+    // v2 named the recycle bin in its download policy; v3 sets it in
+    // Library Management only.
+    if let Some(moved) = move_recycle_bin(staged_object) {
+        report.note(
+            "settings",
+            "library_management.recycle_bin_path".to_owned(),
+            "imported",
+            "moved from the download policy".to_owned(),
+        );
+        if let Some(replaced) = moved.replaced {
+            report.note(
+                "settings",
+                format!("library_management.recycle_bin_path ({replaced})"),
+                DROPPED_SETTING,
+                "v2's removals used the download policy's path, which replaces it".to_owned(),
+            );
         }
     }
 

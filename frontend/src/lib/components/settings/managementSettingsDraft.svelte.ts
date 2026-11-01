@@ -32,7 +32,13 @@ export function settingsPayload(
 	response: LibraryManagementSettingsResponse
 ): LibraryManagementSettings {
 	const value = structuredClone(response);
-	const { settings_revision: _revision, managed_fields: _fields, ...settings } = value;
+	const {
+		settings_revision: _revision,
+		managed_fields: _fields,
+		recycle_bin_warning: _warning,
+		settings_unreadable: _unreadable,
+		...settings
+	} = value;
 	return settings;
 }
 

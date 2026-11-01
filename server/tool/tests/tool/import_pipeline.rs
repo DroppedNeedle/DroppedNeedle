@@ -1247,7 +1247,9 @@ async fn v2_profile_that_ticked_other_gets_the_role_fields() {
 
 /// A v2 export carrying settings v3 removed imports, never refused: the
 /// report names each removed setting as dropped, the fields kept beside
-/// them land, and the stored download policy still decodes.
+/// them land, and the stored download policy still decodes. Its recycle
+/// bin path moves to Library Management, where v3 sets the bin, over a path
+/// removals never used, and the report names the path dropped.
 #[tokio::test]
 async fn removed_settings_import_and_are_reported() {
     use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
@@ -1264,11 +1266,13 @@ async fn removed_settings_import_and_are_reported() {
     export["settings"]["download_policy"] = json!({
         "flac_mp3_only": true,
         "verify_downloads": true,
+        "recycle_bin_path": "/srv/bin",
         "quality_recipe": [
             {"format": "mp3", "quality": "custom", "min_bitrate_kbps": 192,
              "target_bitrate_kbps": 256, "max_bitrate_kbps": 320},
         ],
     });
+    export["settings"]["library_management"] = json!({"recycle_bin_path": "/srv/stale"});
     export["settings"]["download_clients"] =
         json!({"sabnzbd": {"url": "http://sab:8080", "post_processing": 3}});
     export["settings"]["indexers"] =
@@ -1301,6 +1305,7 @@ async fn removed_settings_import_and_are_reported() {
             "download_policy.quality_recipe[0].target_bitrate_kbps",
             "download_policy.verify_downloads",
             "indexers[0].type",
+            "library_management.recycle_bin_path (/srv/stale)",
             "scrobble_settings",
         ]
     );
@@ -1315,6 +1320,33 @@ async fn removed_settings_import_and_are_reported() {
     let policy: DownloadPolicy =
         serde_json::from_value(stored["download_policy"].clone()).expect("the policy decodes");
     assert_eq!(policy.quality_recipe[0].max_bitrate_kbps, Some(320));
+    assert!(stored["download_policy"].get("recycle_bin_path").is_none());
+    assert_eq!(
+        stored["library_management"],
+        json!({"recycle_bin_path": "/srv/bin"})
+    );
+}
+
+/// With a blank download policy path, the path a person set in v2's Library
+/// Management stays.
+#[tokio::test]
+async fn a_chosen_bin_stays_when_the_download_policy_names_none() {
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    export["settings"]["download_policy"] = json!({"recycle_bin_path": " "});
+    export["settings"]["library_management"] = json!({"recycle_bin_path": "/srv/chosen"});
+
+    let pool = migrated_pool().await;
+    let (_dir, config_path, crypto) = scratch_config("chosen-bin");
+    let report = run_import(import_request(&export, pool.clone(), config_path, crypto)).await;
+
+    assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
+    let stored = stored_settings(&pool).await;
+    assert_eq!(
+        stored["library_management"]["recycle_bin_path"],
+        "/srv/chosen"
+    );
+    assert!(stored["download_policy"].get("recycle_bin_path").is_none());
 }
 
 #[tokio::test]

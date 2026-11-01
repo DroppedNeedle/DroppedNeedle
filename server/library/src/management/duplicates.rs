@@ -229,7 +229,8 @@ impl Management {
     /// Give the publisher the file a duplicate resolution replaces: it
     /// is set aside under the publish journal, recycled to a fresh bin
     /// entry after commit, and put back if the publish unwinds.
-    /// While the download settings cannot be read no bin is known, and
+    /// While no bin is known (Library Management's settings or a download
+    /// folder's cannot be read, or the configured bin cannot be reached)
     /// the job waits as it does for a busy database.
     pub(super) fn plan_replacements(
         &self,
@@ -263,7 +264,7 @@ impl Management {
                             .to_owned(),
                     }));
                 }
-                Err(MutationError::Conflict(reason)) if reason.code == RECYCLE_BIN_UNKNOWN.code => {
+                Err(MutationError::Conflict(reason)) if reason.code == RECYCLE_BIN_UNKNOWN => {
                     return Err(Refused::Busy(ManagementError::BinsUnknown(reason)));
                 }
                 Err(MutationError::Conflict(reason)) => {
@@ -279,7 +280,7 @@ impl Management {
                         "No recycle bin is available for {}, so it cannot be replaced.",
                         first.relative_path
                     ),
-                    action: "Set a recycle bin in the download settings, or keep both files."
+                    action: "Set a recycle bin in Library Management, or keep both files."
                         .to_owned(),
                 })?;
             for plan in plans.iter_mut().filter(|plan| plan.track_id == track_id) {

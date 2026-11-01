@@ -2576,7 +2576,7 @@ fn nothing_goes_to_a_bin_while_the_bins_are_unknown() {
     let unknown = fix
         .sandbox
         .clone()
-        .with_bins_unknown("the download settings cannot be read");
+        .with_bins_unknown(publish::bin::BinsUnknown::SettingsUnread);
     let mut publisher = Publisher::new(
         unknown.clone(),
         restart(&fix),
@@ -2619,7 +2619,7 @@ fn choose_bins(
     configured: &str,
     library: &[Root],
     downloads: &[PathBuf],
-) -> Result<publish::bin::BinChoice, &'static str> {
+) -> Result<publish::bin::BinChoice, publish::bin::BinsUnknown> {
     let resolved: Vec<publish::paths::ResolvedRoot> = library
         .iter()
         .map(|root| publish::paths::ResolvedRoot::of(&root.id, &root.dir))

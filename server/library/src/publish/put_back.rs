@@ -59,7 +59,7 @@ pub enum Refusal {
     /// A file's folder is now excluded from the library.
     Excluded,
     /// No recycle bin is known while this setting cannot be read.
-    BinsUnknown(&'static str),
+    BinsUnknown(super::bin::BinsUnknown),
     /// Another file sits where a removed file was, while its copy is
     /// still there to come back.
     Occupied,

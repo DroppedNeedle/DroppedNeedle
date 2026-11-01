@@ -781,8 +781,7 @@ pub async fn get_policy(
     State(settings): State<SettingsSetup>,
     _caller: Admin,
 ) -> JsonResult<DownloadPolicyView> {
-    let view = settings.service().get_policy()?;
-    Ok(Json(settings.with_bin_warning(view).await))
+    Ok(Json(settings.service().get_policy()?))
 }
 
 /// Save the acquisition policy. Read-only verdict fields in the body are
@@ -799,8 +798,7 @@ pub async fn put_policy(
     _caller: Admin,
     ValidJson(body): ValidJson<DownloadPolicy>,
 ) -> JsonResult<DownloadPolicyView> {
-    let view = settings.service().save_policy(body).await?;
-    Ok(Json(settings.with_bin_warning(view).await))
+    Ok(Json(settings.service().save_policy(body).await?))
 }
 
 /// Safe policy summary for the settings page: the contract sentence
@@ -1091,11 +1089,10 @@ pub async fn get_library_management(
     State(settings): State<SettingsSetup>,
     _caller: Admin,
 ) -> JsonResult<LibraryManagementSettingsResponse> {
-    settings
+    let response = settings
         .management(|service| service.get_settings())
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
+        .await?;
+    Ok(Json(settings.with_bin_warning(response).await))
 }
 
 /// Save the Library Management settings under CAS. Giving an automatic
@@ -1116,13 +1113,12 @@ pub async fn put_library_management(
     _caller: Admin,
     ValidJson(body): ValidJson<LibraryManagementSaveRequest>,
 ) -> JsonResult<LibraryManagementSettingsResponse> {
-    settings
+    let response = settings
         .management(move |service| {
             service.save_settings(body.settings, &body.expected_settings_revision)
         })
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
+        .await?;
+    Ok(Json(settings.with_bin_warning(response).await))
 }
 
 /// Dry-run activation health for the active automatic roots.

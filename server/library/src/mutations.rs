@@ -10,11 +10,11 @@
 //! file move into its own `<stamp>-<id>` recycle bin entry, so equal names
 //! never collide. A removal that stops before its commit puts every file
 //! back; one that stops after it finishes on restart. This module decides
-//! what to remove and never moves a file itself. The bin is the download
-//! settings' `recycle_bin_path` (the one upgrades use, pruned on the same
-//! retention window) when it overlaps no library or download folder, else
-//! `.recycle` at the top of the file's library root, which the scanner
-//! skips and which keeps the move a rename on the same filesystem.
+//! what to remove and never moves a file itself. The bin is Library
+//! Management's `recycle_bin_path` (the one upgrades use, pruned on the
+//! same retention window) when it overlaps no library or download folder,
+//! else `.recycle` at the top of the file's library root, which the
+//! scanner skips and which keeps the move a rename on the same filesystem.
 //!
 //! Every refusal carries one [`Reason`]: a stable code, a plain sentence
 //! and what to do next. All functions here block; callers run them off
@@ -34,7 +34,7 @@ use super::manage::{RemovalDone, RemovalEntry};
 use super::management::takeover;
 use super::operations::reasons::Reason;
 use super::publish::PublishError;
-use super::publish::bin::{fresh_entry, serving};
+use super::publish::bin::{BinsUnknown, fresh_entry, serving};
 use super::publish::paths::Root;
 use super::publish::planner::UndoRecord;
 use super::publish::put_back::Refusal as PutBackRefusal;
@@ -108,27 +108,82 @@ pub const FILE_NOT_LINKABLE: Reason = reason(
 pub const NO_RECYCLE_BIN: Reason = reason(
     "NO_RECYCLE_BIN",
     "This library folder has no usable recycle bin, so nothing was removed: its .recycle links somewhere it may not.",
-    "Make .recycle a plain folder, or set a recycle bin in the download settings.",
+    "Make .recycle a plain folder, or set a recycle bin in Library Management.",
 );
-pub const RECYCLE_BIN_UNKNOWN: Reason = reason(
-    "RECYCLE_BIN_UNKNOWN",
-    "No recycle bin is known while the download or SABnzbd settings can't be read, so nothing was removed.",
-    "Open those settings and save them again, then try again.",
+/// The code of every refusal while no recycle bin is known.
+pub const RECYCLE_BIN_UNKNOWN: &str = "RECYCLE_BIN_UNKNOWN";
+
+/// What was being done when no recycle bin was known, for its wording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinUse {
+    /// Removing files into the bin.
+    Removal,
+    /// Putting removed files back from the bin.
+    PutBack,
+    /// Applying a change by hand.
+    Change,
+    /// An incoming file waiting to replace a library copy.
+    Wait,
+    /// A management job, which goes back to the queue by itself.
+    Run,
+}
+
+/// The wordings, in [`BinUse`] order, for one cause.
+macro_rules! bin_reasons {
+    ($lead:literal, $fix:literal) => {
+        [
+            reason(
+                RECYCLE_BIN_UNKNOWN,
+                concat!($lead, ", so nothing was removed."),
+                concat!($fix, ", then try again."),
+            ),
+            reason(
+                RECYCLE_BIN_UNKNOWN,
+                concat!($lead, ", so nothing was put back."),
+                concat!($fix, ", then try again."),
+            ),
+            reason(
+                RECYCLE_BIN_UNKNOWN,
+                concat!($lead, ", so nothing was changed."),
+                concat!($fix, ", then try again."),
+            ),
+            reason(
+                RECYCLE_BIN_UNKNOWN,
+                concat!($lead, ", so this file waits."),
+                concat!($fix, ". It goes ahead by itself."),
+            ),
+            reason(
+                RECYCLE_BIN_UNKNOWN,
+                concat!($lead, ", so this run waits."),
+                concat!($fix, ". It carries on by itself."),
+            ),
+        ]
+    };
+}
+
+const SETTINGS_UNREAD: [Reason; 5] = bin_reasons!(
+    "No recycle bin is known while the Library Management settings can't be read",
+    "Open the Automation tab of Library Management and save it"
 );
-pub const RECYCLE_BIN_UNREACHABLE: Reason = reason(
-    "RECYCLE_BIN_UNKNOWN",
-    "The recycle bin folder can't be reached, so nothing was removed.",
-    "Check that its drive or share is mounted and the server can open it, then try again.",
+const DOWNLOADS_UNREAD: [Reason; 5] = bin_reasons!(
+    "No recycle bin is known while the slskd or SABnzbd settings can't be read",
+    "Open those settings and save them again"
+);
+const BIN_UNREACHABLE: [Reason; 5] = bin_reasons!(
+    "The recycle bin folder can't be reached",
+    "Check that its drive or share is mounted and the server can open it"
 );
 
-/// What a person reads while no recycle bin is known because `cause`.
-pub fn bins_unknown(cause: &'static str) -> Reason {
-    tracing::debug!(cause, "no recycle bin is known");
-    if cause == crate::publish::bin::BIN_UNREACHABLE {
-        RECYCLE_BIN_UNREACHABLE
-    } else {
-        RECYCLE_BIN_UNKNOWN
-    }
+/// What a person reads while no recycle bin is known because `cause`,
+/// worded for what was being done.
+pub fn bins_unknown(cause: BinsUnknown, during: BinUse) -> Reason {
+    tracing::debug!(%cause, "no recycle bin is known");
+    let wordings = match cause {
+        BinsUnknown::SettingsUnread => &SETTINGS_UNREAD,
+        BinsUnknown::DownloadsUnread => &DOWNLOADS_UNREAD,
+        BinsUnknown::Unreachable => &BIN_UNREACHABLE,
+    };
+    wordings[during as usize]
 }
 pub const LIBRARY_BUSY: Reason = reason(
     "LIBRARY_BUSY",
@@ -657,8 +712,9 @@ impl Mutations {
 
     /// The recycle bin a file of this library folder goes to: the
     /// configured bin when it passes its checks, else the folder's own
-    /// `.recycle`. None while the download settings do not read, so
-    /// nothing is recycled.
+    /// `.recycle`. None while no bin is known (a setting it comes from
+    /// does not read, or the configured folder can't be reached) or the
+    /// folder has no usable one, so nothing is recycled.
     pub fn bin_for(&self, root_id: &str) -> Option<PathBuf> {
         let bins = self.bins(&self.core.live_registry()).ok()?;
         bin_dir(&bins, root_id).ok()
@@ -667,7 +723,7 @@ impl Mutations {
     /// A fresh recycle-bin entry for a file named `name` from this
     /// library folder: `<bin>/<stamp>-<id>/<name>`, not created yet.
     /// `None` for a name that cannot be one. `Err` while no bin is known
-    /// ([`RECYCLE_BIN_UNKNOWN`]) or the folder has no usable one
+    /// ([`bins_unknown`]) or the folder has no usable one
     /// ([`NO_RECYCLE_BIN`]).
     pub fn recycle_entry(
         &self,
@@ -890,7 +946,7 @@ impl Mutations {
             .bins
             .current(registry)
             .map(|choice| choice.roots)
-            .map_err(|cause| MutationError::Conflict(bins_unknown(cause)))
+            .map_err(|cause| MutationError::Conflict(bins_unknown(cause, BinUse::Run)))
     }
     /// Resolve a local album id (following merges) or a release-group
     /// MBID to the live local album.
@@ -1022,7 +1078,9 @@ fn refusal(refused: Refusal) -> MutationError {
         Refusal::LibraryOff => MutationError::Conflict(LIBRARY_OFF),
         Refusal::Changed => MutationError::Conflict(REMOVAL_CHANGED),
         Refusal::OutsideRoot => MutationError::Conflict(FILE_OUTSIDE_ROOT),
-        Refusal::BinsUnknown(cause) => MutationError::Conflict(bins_unknown(cause)),
+        Refusal::BinsUnknown(cause) => {
+            MutationError::Conflict(bins_unknown(cause, BinUse::Removal))
+        }
         Refusal::NoBin(root) => {
             tracing::warn!(root, "a removal found no usable recycle bin");
             MutationError::Conflict(NO_RECYCLE_BIN)
@@ -1033,7 +1091,9 @@ fn refusal(refused: Refusal) -> MutationError {
         }
         Refusal::Publish { error, kept: false } => match error {
             PublishError::Interrupted(cause) => MutationError::Busy(cause),
-            PublishError::BinsUnknown(cause) => MutationError::Conflict(bins_unknown(cause)),
+            PublishError::BinsUnknown(cause) => {
+                MutationError::Conflict(bins_unknown(cause, BinUse::Removal))
+            }
             PublishError::Validation(_) | PublishError::Catalog(_) | PublishError::Collision(_) => {
                 tracing::info!(%error, "a removal found its files or tracks changed");
                 MutationError::Conflict(REMOVAL_CHANGED)
@@ -1081,7 +1141,9 @@ fn put_back_refusal(refused: PutBackRefusal) -> MutationError {
         PutBackRefusal::OutsideRoot => MutationError::Conflict(FILE_OUTSIDE_ROOT),
         PutBackRefusal::FolderMissing => MutationError::Conflict(LIBRARY_FOLDER_MISSING),
         PutBackRefusal::Excluded => MutationError::Conflict(RESTORE_FOLDER_EXCLUDED),
-        PutBackRefusal::BinsUnknown(cause) => MutationError::Conflict(bins_unknown(cause)),
+        PutBackRefusal::BinsUnknown(cause) => {
+            MutationError::Conflict(bins_unknown(cause, BinUse::PutBack))
+        }
         PutBackRefusal::Occupied => MutationError::Conflict(RESTORE_PATH_OCCUPIED),
         PutBackRefusal::AllGone => MutationError::Conflict(RECYCLED_FILES_GONE),
         PutBackRefusal::TrackElsewhere => MutationError::Conflict(RESTORE_TRACK_ELSEWHERE),
@@ -1090,7 +1152,9 @@ fn put_back_refusal(refused: PutBackRefusal) -> MutationError {
         PutBackRefusal::CopyUnreadable => MutationError::Files(RECYCLED_COPY_UNREADABLE),
         PutBackRefusal::Publish(error) => match error {
             PublishError::Interrupted(cause) => MutationError::Busy(cause),
-            PublishError::BinsUnknown(cause) => MutationError::Conflict(bins_unknown(cause)),
+            PublishError::BinsUnknown(cause) => {
+                MutationError::Conflict(bins_unknown(cause, BinUse::PutBack))
+            }
             PublishError::Collision(_) => {
                 tracing::info!(%error, "a file took a removed file's place during its put-back");
                 MutationError::Conflict(RESTORE_PATH_OCCUPIED)

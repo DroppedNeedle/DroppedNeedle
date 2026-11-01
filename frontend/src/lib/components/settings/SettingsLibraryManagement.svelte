@@ -15,7 +15,8 @@
 		FolderCog,
 		History,
 		RefreshCw,
-		ShieldAlert
+		ShieldAlert,
+		TriangleAlert
 	} from 'lucide-svelte';
 
 	import LibraryManagementActivationDialog from './LibraryManagementActivationDialog.svelte';
@@ -46,6 +47,7 @@
 	import NumberField from '$lib/ui/NumberField.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SaveBar from '$lib/ui/SaveBar.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import UnsavedChangesGuard from '$lib/ui/UnsavedChangesGuard.svelte';
 
@@ -93,6 +95,7 @@
 		wizard.persist(authStore.user?.id);
 	});
 
+	const unreadable = $derived(settings.query.data?.settings_unreadable ?? false);
 	const saving = $derived(section.saving || validateSettings.isPending || impactSettings.isPending);
 	const saveStatus = $derived(
 		settings.error ? { tone: 'error' as const, message: settings.error } : section.status
@@ -194,6 +197,11 @@
 
 	/** Saves the draft, first stopping a dry run that no longer covers it. */
 	async function saveChanges(opener: HTMLElement | null): Promise<void> {
+		// The checks read the stored row, which is what cannot be read here.
+		if (unreadable) {
+			await section.save();
+			return;
+		}
 		if (wizard.active && !wizard.coversDraft) {
 			if (wizard.pending) return;
 			if (wizard.canStop) {
@@ -295,6 +303,23 @@
 		{/snippet}
 		{#snippet children(draft)}
 			<div class="space-y-6 p-5 sm:p-6">
+				{#if unreadable}
+					<div class="alert alert-warning items-start text-sm" role="alert">
+						<TriangleAlert class="mt-0.5 h-5 w-5" aria-hidden="true" />
+						<div class="min-w-0 flex-1 space-y-2">
+							<p>
+								The saved settings can't be read, so removals, upgrades and automation wait. Saving
+								replaces them with what's shown here.
+							</p>
+							<Button
+								variant="warning"
+								size="sm"
+								disabled={section.saving}
+								onclick={() => void section.save()}>Save these settings</Button
+							>
+						</div>
+					</div>
+				{/if}
 				<LibraryManagementProfileList
 					{settings}
 					{roots}
@@ -330,12 +355,27 @@
 					<summary
 						><span class="management-editor-icon"><History class="h-4 w-4" /></span><span
 							class="flex flex-col"
-							><strong>Retention and refresh</strong><small class="text-xs text-base-content/55"
-								>Advanced recovery settings</small
+							><strong>Recycle bin, retention and refresh</strong><small
+								class="text-xs text-base-content/55">Advanced recovery settings</small
 							></span
 						><ChevronRight class="ml-auto h-4 w-4 management-editor-chevron" /></summary
 					>
 					<div class="mt-4 grid gap-x-4 gap-y-2 sm:grid-cols-2">
+						<div class="sm:col-span-2">
+							<TextField
+								label="Recycle bin folder"
+								mono
+								placeholder="/srv/music-recycle"
+								help="Where removed and replaced files go. Empty uses a .recycle folder in each library folder."
+								bind:value={draft.recycle_bin_path}
+							/>
+						</div>
+						{#if settings.query.data?.recycle_bin_warning}
+							<div class="alert alert-warning items-start text-sm sm:col-span-2" role="status">
+								<TriangleAlert class="mt-0.5 h-5 w-5" aria-hidden="true" />
+								<p class="min-w-0 flex-1">{settings.query.data.recycle_bin_warning}</p>
+							</div>
+						{/if}
 						<NumberField
 							label="Undo snapshots (days)"
 							min={1}

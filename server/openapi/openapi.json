@@ -42490,6 +42490,18 @@
             "type": "integer",
             "format": "int64",
             "description": "Albums removed with the batch."
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums left in the batch because no recycle bin is known yet."
+          },
+          "waiting_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why those albums wait, when any do."
           }
         }
       },
@@ -42770,7 +42782,7 @@
       },
       "DownloadPolicy": {
         "type": "object",
-        "description": "Download policy: quality tiers, recipe v2, timeouts, retry, retention,\nrecycle bin, quotas, and the upgrade scan.",
+        "description": "Download policy: quality tiers, recipe v2, timeouts, retry, retention,\nrecycle bin retention, quotas, and the upgrade scan.",
         "properties": {
           "auto_retry_base_interval_minutes": {
             "type": "integer",
@@ -42914,11 +42926,6 @@
             "description": "Closed v2 quality recipe (empty means a v1 policy).",
             "default": []
           },
-          "recycle_bin_path": {
-            "type": "string",
-            "description": "Recycle-bin path (\"\" disables).",
-            "default": ""
-          },
           "recycle_retention_days": {
             "type": "integer",
             "format": "int64",
@@ -42973,13 +42980,6 @@
               "quality_recipe_status": {
                 "$ref": "#/components/schemas/QualityRecipeStatus",
                 "description": "Read-only recipe verdict."
-              },
-              "recycle_bin_warning": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Why the recycle bin path is not used, when it is not: each library\nfolder's `.recycle` takes its place. Read-only."
               }
             }
           }
@@ -49277,6 +49277,11 @@
             "description": "Named profiles.",
             "default": []
           },
+          "recycle_bin_path": {
+            "type": "string",
+            "description": "The recycle bin folder removed and replaced files go to (\"\" uses\neach library folder's own `.recycle`).",
+            "default": ""
+          },
           "root_assignments": {
             "type": "array",
             "items": {
@@ -49347,9 +49352,20 @@
                 },
                 "description": "Every tag field a profile can manage, in the editor's order, with\nthe genre row last."
               },
+              "recycle_bin_warning": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why the recycle bin path is not used, when it is not: each library\nfolder's `.recycle` takes its place, or files wait for a folder\nthat can't be reached. Set on the settings read and save only."
+              },
               "settings_revision": {
                 "type": "string",
                 "description": "Settings content revision."
+              },
+              "settings_unreadable": {
+                "type": "boolean",
+                "description": "The stored settings cannot be read, so these are the seeded ones\nand a save replaces the row. Removals, upgrades and automatic work\nwait until then."
               }
             }
           }

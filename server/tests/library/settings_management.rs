@@ -527,14 +527,45 @@ fn a_section_from_before_removed_options_keeps_its_activation() {
             |row| row.get(0),
         )
         .expect("the section is stored");
-    for removed in [
-        "file_behavior",
-        "approved_only",
-        "recycle_bin_path",
-        "variations",
-    ] {
+    assert_eq!(read.settings.recycle_bin_path, "/recycle");
+    for removed in ["file_behavior", "approved_only", "variations"] {
         assert!(!stored.contains(removed), "{removed} is written back out");
     }
+}
+
+/// A recycle bin set in an old `config.json`'s download policy is Library
+/// Management's after the one-time copy, over a path removals never used, and
+/// stays through the first read, which seeds the profiles. The policy no
+/// longer holds it.
+#[test]
+fn an_old_download_policy_bin_is_library_managements() {
+    use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+    use droppedneedle_library::management::settings::service::LibraryManagementService;
+    use std::sync::Arc;
+
+    let dir = common::ScratchDir::new("management-moved-bin");
+    std::fs::write(
+        dir.join("config.json"),
+        serde_json::json!({
+            "download_policy": { "recycle_bin_path": "/srv/bin" },
+            "library_management": { "recycle_bin_path": "/srv/stale" },
+        })
+        .to_string(),
+    )
+    .expect("config writes");
+    let store = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("store opens"),
+    );
+    let read = LibraryManagementService::new(store.clone())
+        .get_settings()
+        .expect("the section reads");
+    assert!(!read.settings.profiles.is_empty(), "the first read seeds");
+    assert_eq!(read.settings.recycle_bin_path, "/srv/bin");
+    let policy = store
+        .stored_text("download_policy")
+        .expect("the policy is stored");
+    assert!(!policy.contains("recycle_bin_path"), "{policy}");
 }
 
 /// Scripts are checked by the compiler management runs them with. A

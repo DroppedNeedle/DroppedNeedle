@@ -1180,7 +1180,11 @@ fn blocked_reason(refusal: &Refusal) -> String {
         Refusal::LibraryOff => "The library is switched off.".to_owned(),
         Refusal::Changed => "Your copy changed while it was being checked.".to_owned(),
         Refusal::OutsideRoot => OUTSIDE_ROOT.to_owned(),
-        Refusal::BinsUnknown(cause) => format!("No recycle bin is known while {cause}."),
+        Refusal::BinsUnknown(cause) => {
+            crate::mutations::bins_unknown(*cause, crate::mutations::BinUse::Wait)
+                .message
+                .to_owned()
+        }
         Refusal::NoBin(_) => "Your copy's library folder has no usable recycle bin.".to_owned(),
         Refusal::Publish { error, .. } => {
             tracing::warn!(%error, "the copy an imported file replaces could not be taken away");

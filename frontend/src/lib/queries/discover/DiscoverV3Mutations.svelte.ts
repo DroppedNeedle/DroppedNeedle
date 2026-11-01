@@ -138,6 +138,13 @@ export async function removeDiscoveryBatchV3(
 					(result.kept ? `, left ${result.kept} untouched` : ''),
 				type: 'success'
 			});
+			if (result.waiting) {
+				const albums = `${result.waiting} album${result.waiting === 1 ? '' : 's'}`;
+				toastStore.show({
+					message: `${albums} stayed in the batch. ${result.waiting_reason ?? ''}`.trim(),
+					type: 'warning'
+				});
+			}
 		} else {
 			toastStore.show({ message: 'Batch record removed - albums kept', type: 'success' });
 		}

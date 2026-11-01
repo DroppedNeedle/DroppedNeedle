@@ -67,7 +67,7 @@ pub enum Refusal {
     /// A track's library folder is not one the publisher holds.
     OutsideRoot,
     /// No recycle bin is known while this setting cannot be read.
-    BinsUnknown(&'static str),
+    BinsUnknown(super::bin::BinsUnknown),
     /// This library folder has no usable recycle bin.
     NoBin(String),
     /// The publish refused or failed. `kept`: its unwind kept a file under

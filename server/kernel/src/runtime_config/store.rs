@@ -967,6 +967,15 @@ impl ConfigStore {
         .map_err(|error| error.to_string())
     }
 
+    /// Store `text` as one section, undecoded, for tests of a row that does
+    /// not read.
+    pub fn replace_stored_for_test(&self, key: &str, text: &str) -> Result<(), ConfigError> {
+        let value = decode_text(text)?;
+        self.change(DurableLane::Foreground, "config.test_replace", key, |_| {
+            Ok::<_, ConfigError>(Change::Write(value, ()))
+        })
+    }
+
     /// The stored text of one section, for tests that check what reaches
     /// the database.
     pub fn stored_text(&self, key: &str) -> Option<String> {

@@ -111,7 +111,7 @@ pub struct Sandbox {
     /// `Err` with the cause while the bins are unknown (a setting they
     /// come from cannot be read): nothing then moves into a bin, and no
     /// other bin stands in.
-    bins: Result<Vec<Root>, &'static str>,
+    bins: Result<Vec<Root>, super::bin::BinsUnknown>,
     /// Keyed by (is a bin, id), so a bin id never shadows a root id.
     modes: Arc<Mutex<BTreeMap<(bool, String), PlacementMode>>>,
 }
@@ -148,7 +148,7 @@ impl Sandbox {
     /// The same sandbox while its bins are unknown because `cause`: no
     /// entry is checked or written until a session that knows them opens.
     #[must_use]
-    pub fn with_bins_unknown(mut self, cause: &'static str) -> Self {
+    pub fn with_bins_unknown(mut self, cause: super::bin::BinsUnknown) -> Self {
         self.bins = Err(cause);
         self
     }
@@ -405,7 +405,7 @@ impl Sandbox {
     }
 
     /// Why the session's bins are unknown, while they are.
-    pub fn bins_unknown(&self) -> Option<&'static str> {
+    pub fn bins_unknown(&self) -> Option<super::bin::BinsUnknown> {
         self.bins.as_ref().err().copied()
     }
 

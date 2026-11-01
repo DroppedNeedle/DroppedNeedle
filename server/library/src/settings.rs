@@ -38,9 +38,9 @@ pub struct LibrarySettings {
     pub schedule_zone: TimeZone,
     /// The filesystem watcher.
     pub watcher: Live<FilesystemWatcher>,
-    /// Library Management's profiles and undo retention.
+    /// Library Management's profiles, undo retention and recycle bin.
     pub management: Live<LibraryManagement>,
-    /// The recycle bin.
+    /// The recycle bin retention.
     pub download_policy: Live<DownloadPolicy>,
     /// Edition preferences, for identification and management.
     pub editions: LivePreferences,

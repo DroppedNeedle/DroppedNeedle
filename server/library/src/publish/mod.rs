@@ -269,7 +269,7 @@ pub enum PublishError {
     /// or the configured bin cannot be reached), so a publish that would
     /// send a file to a bin waits before anything moves.
     #[error("no recycle bin is known while {0}")]
-    BinsUnknown(&'static str),
+    BinsUnknown(bin::BinsUnknown),
     /// A write ran past its time budget and was rolled back: nothing it
     /// would have written landed.
     #[error("store: {0}")]

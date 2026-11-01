@@ -7996,6 +7996,90 @@ async fn only_mp3_rows_wait_to_say_whether_their_length_was_measured() {
     assert!(sqlx::raw_sql(refused).execute(&pool).await.is_err());
 }
 
+/// Migration 0110 moves the recycle bin path to Library Management. A path
+/// stored there before was never honoured, so the one removals used decides:
+/// a policy path overwrites it, and with a blank policy it goes, so removals
+/// keep `.recycle`. The policy loses the field, and every other field of both
+/// rows is kept.
+#[tokio::test]
+async fn the_recycle_bin_path_moves_to_library_management_on_upgrade() {
+    use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, LibraryManagement};
+
+    let policy =
+        r#"{"quality_min":"flac","recycle_bin_path":"/srv/bin","recycle_retention_days":12}"#;
+    let upgraded = |rows: Vec<(&'static str, &'static str)>| async move {
+        let pool = scratch_pool().await;
+        run_migrations(&pool, &migrator_through(108)).await.unwrap();
+        for (key, value) in rows {
+            sqlx::query(
+                "INSERT INTO config_sections (key, value_json, revision, updated_at) \
+                 VALUES (?, ?, 4, 1700000000000)",
+            )
+            .bind(key)
+            .bind(value)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        apply_migrations(&pool).await.unwrap();
+        let stored: BTreeMap<String, (String, i64)> = sqlx::query_as::<_, (String, String, i64)>(
+            "SELECT key, value_json, revision FROM config_sections",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(key, value, revision)| (key, (value, revision)))
+        .collect();
+        let (policy, policy_revision) = &stored["download_policy"];
+        assert!(!policy.contains("recycle_bin_path"), "{policy}");
+        let policy: DownloadPolicy = serde_json::from_str(policy).expect("the policy decodes");
+        assert_eq!(policy.recycle_retention_days, 12);
+        let (text, revision) = &stored["library_management"];
+        let management: LibraryManagement =
+            serde_json::from_str(text).expect("Library Management decodes");
+        (management, *revision, text.clone(), *policy_revision)
+    };
+
+    let (management, revision, _, policy_revision) =
+        upgraded(vec![("download_policy", policy)]).await;
+    assert_eq!(management.recycle_bin_path, "/srv/bin");
+    assert_eq!((revision, policy_revision), (1, 5));
+    assert_eq!(
+        management.undo_retention_days, 90,
+        "the rest reads as defaults"
+    );
+
+    let (management, revision, _, _) = upgraded(vec![
+        ("download_policy", policy),
+        (
+            "library_management",
+            r#"{"undo_retention_days":7,"recycle_bin_path":"/srv/music-recycle"}"#,
+        ),
+    ])
+    .await;
+    assert_eq!(
+        management.recycle_bin_path, "/srv/bin",
+        "the bin in use wins"
+    );
+    assert_eq!((management.undo_retention_days, revision), (7, 5));
+
+    let (management, revision, text, _) = upgraded(vec![
+        (
+            "download_policy",
+            r#"{"recycle_bin_path":" ","recycle_retention_days":12}"#,
+        ),
+        (
+            "library_management",
+            r#"{"undo_retention_days":7,"recycle_bin_path":"/srv/music-recycle"}"#,
+        ),
+    ])
+    .await;
+    assert_eq!(management.recycle_bin_path, "", "removals keep .recycle");
+    assert!(!text.contains("recycle_bin_path"), "{text}");
+    assert_eq!((management.undo_retention_days, revision), (7, 5));
+}
+
 /// Migration 0108 makes marking a write handled move the scan fence: the
 /// revision moves once and lands on that write's rows that name a track,
 /// and on no other row. Marking it again moves nothing.

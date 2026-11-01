@@ -42,7 +42,6 @@ const basePolicy: DownloadPolicySettings = {
 	ignored_terms: [],
 	required_terms: [],
 	max_size_mb: 0,
-	recycle_bin_path: '',
 	recycle_retention_days: 30,
 	search_review: 'when_unsure',
 	usenet_retention_days: 0,

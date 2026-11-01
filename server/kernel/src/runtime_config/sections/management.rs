@@ -765,6 +765,9 @@ pub struct LibraryManagement {
     pub preview_retention_hours: i64,
     /// External refresh.
     pub external_refresh: ExternalRefreshSettings,
+    /// The recycle bin folder removed and replaced files go to ("" uses
+    /// each library folder's own `.recycle`).
+    pub recycle_bin_path: String,
     /// The document these settings were decoded from, never written: an
     /// activation pinned against options since removed hashed them too,
     /// and a read needs their stored values to carry it.
@@ -817,6 +820,7 @@ impl Default for LibraryManagement {
             undo_retention_days: 90,
             preview_retention_hours: 24,
             external_refresh: ExternalRefreshSettings::default(),
+            recycle_bin_path: String::new(),
             as_read: AsRead::default(),
         }
     }
