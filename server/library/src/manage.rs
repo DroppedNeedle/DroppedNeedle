@@ -826,6 +826,11 @@ impl super::wiring::LibraryCore {
                         "the first library folder is excluded from the library",
                     )));
                 }
+                if root.policy_for(&root.path.join(relative_path)) == EffectivePolicy::Excluded {
+                    return Some(Err(PluginFileRefusal::FolderUnusable(
+                        "that path is excluded from the library by a path rule",
+                    )));
+                }
             }
             _ => {
                 return Some(Err(PluginFileRefusal::FolderUnusable(

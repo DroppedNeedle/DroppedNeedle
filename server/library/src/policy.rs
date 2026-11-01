@@ -529,6 +529,7 @@ pub fn resolve_path(
             .iter()
             .map(|rule| (rule.relative_path.as_str(), rule)),
         &relative_parts,
+        |rule| crate::settings::policy(rule.policy),
     );
     let relative_path = if relative_parts.is_empty() {
         ".".to_owned()

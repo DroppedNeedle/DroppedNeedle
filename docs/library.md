@@ -31,6 +31,8 @@ While the library is switched off under Settings > Library, nothing changes your
 
 Between scheduled scans, DroppedNeedle checks your library folders every few minutes and starts a scan when files change. Turn this off with "Watch folders for changes" under Settings > Library > Automatic scanning; scheduled and manual scans still run.
 
+Sub-folder rules match folder names without regard to letter case or Unicode form, on every disk. On a case-sensitive disk a rule `Live` also covers a separate `live` folder: a scan treats `live/` as Excluded when the rule is Excluded, and walks it when the rule is included under an excluded folder.
+
 After a scan, the library notes which tracks carry lyrics (a lyrics tag, or a `.lrc` file named like the track); it only reads them.
 
 Recent runs can also export a diagnostic report for a scan: a small JSON file with the run's counters, timings, scopes and failed files, to attach to a bug report. Paths are replaced by fingerprints, and it holds no user names, passwords or error text.

@@ -134,6 +134,8 @@ pub struct LibraryCore {
     pub(crate) clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     /// The undo copies, in the folder beside the database.
     pub(crate) blobs: super::publish::BlobStore,
+    /// The settings revision whose skipped roots were last logged.
+    pub(crate) root_problems_at: Arc<std::sync::atomic::AtomicI64>,
 }
 
 impl LibraryCore {
@@ -149,10 +151,14 @@ impl LibraryCore {
             LibrarySettings::new(&platform.settings, platform.config.timezone.as_deref());
         // The roots load before anything can scan or stream: a restart
         // comes back with exactly the roots the settings hold.
-        let registry: Arc<SharedResolver> = Arc::new(SharedResolver::new(
-            super::settings::registry(&settings.library)
-                .map_err(|error| format!("library roots: {error}"))?,
-        ));
+        let section = settings
+            .library
+            .get()
+            .map_err(|error| format!("library roots: {error}"))?;
+        let (roots, problems) = super::settings::build_registry(&section);
+        let root_problems_at = Arc::new(std::sync::atomic::AtomicI64::new(-1));
+        super::settings::log_root_problems(&root_problems_at, &settings.library, &problems);
+        let registry: Arc<SharedResolver> = Arc::new(SharedResolver::new(roots));
         let root_dirs: RootDirs = {
             let registry = registry.clone();
             Arc::new(move || registry.resolver().registry().root_paths())
@@ -185,6 +191,7 @@ impl LibraryCore {
             bins,
             clock: platform.clock.clone(),
             blobs,
+            root_problems_at,
         })
     }
 
@@ -194,13 +201,13 @@ impl LibraryCore {
     /// current registry.
     pub fn refresh_registry(&self) -> RootRegistry {
         let current = self.registry.resolver().registry().clone();
-        let fresh = match super::settings::registry(&self.library) {
-            Ok(fresh) => fresh,
-            Err(error) => {
-                tracing::warn!(%error, "cannot read the library roots; keeping the current set");
-                return current;
-            }
+        // An unreadable section keeps the current set; `Live::read` logs it
+        // once per revision.
+        let Some(section) = self.library.read() else {
+            return current;
         };
+        let (fresh, problems) = super::settings::build_registry(&section);
+        super::settings::log_root_problems(&self.root_problems_at, &self.library, &problems);
         if fresh.fingerprint() == current.fingerprint() {
             return current;
         }

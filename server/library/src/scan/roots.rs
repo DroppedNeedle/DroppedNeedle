@@ -70,6 +70,7 @@ impl LibraryRoot {
                 .iter()
                 .map(|rule| (rule.relative_path.as_str(), rule.policy)),
             &parts,
+            |policy| *policy,
         )
         .unwrap_or(self.policy)
     }
@@ -104,10 +105,11 @@ pub fn rule_covers(rule_path: &str, parts: &[String]) -> Option<bool> {
 
 /// The value of the deepest rule among `rules` that covers `parts`; at
 /// one depth a rule that matches exactly beats one that matches only once
-/// folded.
+/// folded, and two that tie take the stricter policy.
 pub fn deepest_rule<'a, T>(
     rules: impl IntoIterator<Item = (&'a str, T)>,
     parts: &[String],
+    policy_of: impl Fn(&T) -> EffectivePolicy,
 ) -> Option<T> {
     let mut best: Option<((usize, bool), T)> = None;
     for (path, value) in rules {
@@ -118,11 +120,82 @@ pub fn deepest_rule<'a, T>(
             path.split('/').filter(|part| !part.is_empty()).count(),
             exact,
         );
-        if best.as_ref().is_none_or(|(kept, _)| rank > *kept) {
+        let wins = match &best {
+            None => true,
+            Some((kept, held)) => {
+                rank > *kept
+                    || (rank == *kept
+                        && strictness(policy_of(&value)) > strictness(policy_of(held)))
+            }
+        };
+        if wins {
             best = Some((rank, value));
         }
     }
     best.map(|(_, value)| value)
+}
+
+/// How far a policy keeps files out: Excluded, then Local metadata, then
+/// Automatic.
+fn strictness(policy: EffectivePolicy) -> u8 {
+    match policy {
+        EffectivePolicy::Excluded => 2,
+        EffectivePolicy::LocalMetadata => 1,
+        EffectivePolicy::Automatic => 0,
+    }
+}
+
+/// Whether the scope at `ancestor` covers the scope at `path`, both relative
+/// to a root (`.` is the root). Folders match as [`rule_covers`] says.
+pub fn scope_covers(ancestor: &str, path: &str) -> bool {
+    if ancestor == "." {
+        return true;
+    }
+    let parts: Vec<String> = path
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .map(str::to_owned)
+        .collect();
+    rule_covers(ancestor, &parts).is_some()
+}
+
+/// The rule's path spelled the way the disk has it, folder by folder: each
+/// component takes the real folder whose name matches exactly, else the
+/// first (by name) that folds to it. Once a folder is missing, the rest keeps
+/// the rule's spelling, so the walk finds nothing there, as before. Only real
+/// folders are read, so a link below the root is never followed.
+pub fn on_disk_rule_path(root: &Path, rule_path: &str) -> String {
+    let mut at = root.to_path_buf();
+    let mut spelled: Vec<String> = Vec::new();
+    let mut parts = rule_path.split('/').filter(|part| !part.is_empty());
+    for wanted in parts.by_ref() {
+        let key = fold(wanted);
+        let mut exact: Option<String> = None;
+        let mut folded: Option<String> = None;
+        for entry in std::fs::read_dir(&at).into_iter().flatten().flatten() {
+            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            if name == wanted {
+                exact = Some(name);
+                break;
+            }
+            if fold(&name) == key && folded.as_ref().is_none_or(|kept| name < *kept) {
+                folded = Some(name);
+            }
+        }
+        let Some(name) = exact.or(folded) else {
+            spelled.push(wanted.to_owned());
+            break;
+        };
+        at.push(&name);
+        spelled.push(name);
+    }
+    spelled.extend(parts.map(str::to_owned));
+    spelled.join("/")
 }
 
 /// A name folded the way the publisher's collision keys fold it.
@@ -494,6 +567,34 @@ mod tests {
         assert_eq!(at("caf\u{e9}/disc/x.flac"), EffectivePolicy::LocalMetadata);
         assert_eq!(at("Mixed/x.flac"), EffectivePolicy::LocalMetadata);
         assert_eq!(at("MIXED/x.flac"), EffectivePolicy::Excluded);
+    }
+
+    /// Two stored rules that fold together at one depth: the stricter
+    /// policy wins, whichever is stored first.
+    #[test]
+    fn folded_rules_tie_to_the_stricter_policy() {
+        let rule = |id: &str, path: &str, policy| PolicyRule {
+            id: id.to_owned(),
+            relative_path: path.to_owned(),
+            policy,
+        };
+        for rules in [
+            vec![
+                rule("automatic", "Live", EffectivePolicy::Automatic),
+                rule("excluded", "LIVE", EffectivePolicy::Excluded),
+            ],
+            vec![
+                rule("excluded", "LIVE", EffectivePolicy::Excluded),
+                rule("automatic", "Live", EffectivePolicy::Automatic),
+            ],
+        ] {
+            let root = LibraryRoot::new("a", PathBuf::from("/music/a"), EffectivePolicy::Automatic)
+                .with_rules(rules);
+            assert_eq!(
+                root.policy_for(&Path::new("/music/a").join("live/x.flac")),
+                EffectivePolicy::Excluded
+            );
+        }
     }
 
     #[test]

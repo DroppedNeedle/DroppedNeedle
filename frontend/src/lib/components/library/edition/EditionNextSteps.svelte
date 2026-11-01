@@ -76,7 +76,7 @@
 	const tags = $derived.by((): TagsMode => {
 		if (held) return 'held';
 		if (status?.files_by_itself) return status.writing || placing ? 'writing' : 'written';
-		return 'manual';
+		return (status ?? choice.status).keeps_own_tags ? 'kept' : 'manual';
 	});
 </script>
 

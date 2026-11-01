@@ -7,6 +7,7 @@
 //! change takes effect without a restart, and the roots survive restarts.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use super::scan::models::EffectivePolicy;
 use super::scan::roots::{LibraryRoot, PolicyRule, RootRegistry, fingerprint_roots};
@@ -127,7 +128,7 @@ fn schedule_zone(configured: Option<&str>) -> TimeZone {
     })
 }
 
-fn policy(stored: IdentificationPolicy) -> EffectivePolicy {
+pub(crate) fn policy(stored: IdentificationPolicy) -> EffectivePolicy {
     match stored {
         IdentificationPolicy::Automatic => EffectivePolicy::Automatic,
         IdentificationPolicy::LocalMetadata => EffectivePolicy::LocalMetadata,
@@ -150,31 +151,37 @@ fn overlaps(a: &Path, b: &Path) -> bool {
 
 /// Build the engine registry from the stored settings. Roots that cannot
 /// be used (relative path, a path another root already covers) are left
-/// out with a warning instead of failing every root. The library is
-/// enabled when the master switch is on and at least one root exists.
+/// out instead of failing every root; [`build_registry`] names them.
 pub fn registry_from(settings: &TypedLibrary) -> RootRegistry {
+    build_registry(settings).0
+}
+
+/// The registry the stored settings describe, and why each root it left
+/// out cannot be used. The library is enabled when the master switch is on
+/// and at least one root exists.
+pub fn build_registry(settings: &TypedLibrary) -> (RootRegistry, Vec<String>) {
     let mut roots: Vec<LibraryRoot> = Vec::new();
+    let mut problems: Vec<String> = Vec::new();
     for stored in &settings.library_roots {
         let Some(path) = clean_absolute(&stored.path) else {
-            tracing::warn!(
-                root_id = stored.id,
-                "library root path is not absolute; skipped"
-            );
+            problems.push(format!(
+                "root {} has a path that is not absolute",
+                stored.id
+            ));
             continue;
         };
         if stored.id.trim().is_empty() {
-            tracing::warn!(path = %path.display(), "library root has no id; skipped");
+            problems.push(format!("the root at {} has no id", path.display()));
             continue;
         }
         if let Some(other) = roots
             .iter()
             .find(|root| root.id == stored.id || overlaps(&root.path, &path))
         {
-            tracing::warn!(
-                root_id = stored.id,
-                other = other.id,
-                "library root duplicates or overlaps another root; skipped"
-            );
+            problems.push(format!(
+                "root {} duplicates or overlaps root {}",
+                stored.id, other.id
+            ));
             continue;
         }
         let rules = stored
@@ -191,7 +198,24 @@ pub fn registry_from(settings: &TypedLibrary) -> RootRegistry {
     }
     let enabled = settings.enabled && !roots.is_empty();
     let revision = fingerprint_roots(&roots, enabled);
-    RootRegistry::new(roots, enabled, &revision)
+    (RootRegistry::new(roots, enabled, &revision), problems)
+}
+
+/// Logs the roots a registry left out, once per settings revision. `latch`
+/// holds the revision last logged and starts at -1; it lives beside the
+/// registry it reports on.
+pub(crate) fn log_root_problems(
+    latch: &AtomicI64,
+    library: &Live<TypedLibrary>,
+    problems: &[String],
+) {
+    let revision = *library.subscribe().borrow();
+    if latch.swap(revision, Ordering::Relaxed) == revision {
+        return;
+    }
+    for problem in problems {
+        tracing::warn!(%problem, "library root skipped");
+    }
 }
 
 /// The registry the saved settings describe now.

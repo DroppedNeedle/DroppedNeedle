@@ -353,6 +353,17 @@ impl Imports {
                 .map(|((_, track, _), format)| name(root, track, *format))
                 .collect()
         };
+        // A folder the naming script gives no path in is skipped, and the
+        // skip is logged the same way on every path.
+        let render_logged = |root: &LibraryRoot| {
+            render(root).inspect_err(|error| {
+                tracing::info!(
+                    root = root.id,
+                    ?error,
+                    "an import skips a folder the naming script gives no path in"
+                );
+            })
+        };
         // Joins, upgrades, drop imports and downloads for an album the
         // library already holds take the first folder where no file's
         // destination is excluded. A plain download takes the first folder
@@ -390,15 +401,7 @@ impl Imports {
                     .iter()
                     .filter(|root| !left_out.contains(&root.id))
                     .find_map(|root| {
-                        let dests = render(root)
-                            .inspect_err(|error| {
-                                tracing::info!(
-                                    root = root.id,
-                                    ?error,
-                                    "a download skips a folder the naming script gives no path in"
-                                );
-                            })
-                            .ok()?;
+                        let dests = render_logged(root).ok()?;
                         dests
                             .iter()
                             .all(|dest| {
@@ -457,7 +460,7 @@ impl Imports {
                 // files: the script's own fault, or an excluded path.
                 let mut refused = None;
                 let chosen = usable.iter().find_map(|root| {
-                    let dests = render(root)
+                    let dests = render_logged(root)
                         .inspect_err(|error| {
                             refused.get_or_insert_with(|| error.clone());
                         })

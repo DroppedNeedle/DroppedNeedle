@@ -1160,6 +1160,14 @@ const WRITER_MANIFEST: &str = "[plugin]\n\
 
 /// Make `<rig>/music` the one library folder.
 async fn music_root(rig: &Rig) -> std::path::PathBuf {
+    music_root_with(rig, Vec::new()).await
+}
+
+/// Make `<rig>/music` the one library folder, with `rules` under it.
+async fn music_root_with(
+    rig: &Rig,
+    rules: Vec<droppedneedle_kernel::runtime_config::secret_sections::LibraryPathRule>,
+) -> std::path::PathBuf {
     use droppedneedle_kernel::runtime_config::secret_sections::{LibraryRoot, TypedLibrary};
 
     let music = rig.dir.join("music");
@@ -1172,6 +1180,7 @@ async fn music_root(rig: &Rig) -> std::path::PathBuf {
             library.library_roots = vec![LibraryRoot {
                 id: "music".to_owned(),
                 path,
+                rules,
                 ..LibraryRoot::default()
             }];
             Ok(library)
@@ -1523,6 +1532,46 @@ async fn a_held_library_refuses_late_and_over_allowance_writes() {
     first.await.unwrap().unwrap();
     library.publishing.set_publish_hooks(None, None);
     assert!(!music.join("notes/over.txt").exists());
+}
+
+/// A plugin's file never lands under an Excluded path rule, whatever case
+/// its path is written in: the rule covers `live/` on every disk. A path
+/// outside the rule still lands.
+#[tokio::test]
+async fn a_plugin_write_under_an_excluded_path_rule_is_refused() {
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        IdentificationPolicy, LibraryPathRule,
+    };
+
+    let rig = rig("write-excluded-rule").await;
+    let music = music_root_with(
+        &rig,
+        vec![LibraryPathRule {
+            id: "live".to_owned(),
+            relative_path: "Live".to_owned(),
+            policy: IdentificationPolicy::Excluded,
+        }],
+    )
+    .await;
+    write_plugin(&rig.dir, "toy", WRITER_MANIFEST);
+    rig.host.load_all();
+    rig.host
+        .update_settings("toy", true, HashMap::new())
+        .unwrap();
+
+    let refused = rig
+        .host
+        .write_library_file("toy", "live/late.txt", b"late".to_vec())
+        .await
+        .unwrap_err();
+    assert!(refused.contains("path rule"), "{refused}");
+    assert!(!music.join("live/late.txt").exists());
+
+    rig.host
+        .write_library_file("toy", "notes/kept.txt", b"kept".to_vec())
+        .await
+        .unwrap();
+    assert!(music.join("notes/kept.txt").exists());
 }
 
 const BIG_MANIFEST: &str = "[plugin]\n\

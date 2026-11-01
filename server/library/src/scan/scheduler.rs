@@ -10,6 +10,7 @@
 //! and ported exactly, including the absolute-seconds DST note.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use droppedneedle_kernel::runtime_config::sections::ScanFrequency;
 use jiff::Timestamp;
@@ -17,7 +18,7 @@ use jiff::civil::Date;
 use jiff::tz::TimeZone;
 
 use super::models::{Disposition, EffectivePolicy, ScanKind, ScanRequest, ScanScope, ScanTrigger};
-use super::roots::RootRegistry;
+use super::roots::{RootRegistry, on_disk_rule_path, scope_covers};
 
 /// Schedule settings for automatic scans.
 #[derive(Debug, Clone)]
@@ -153,16 +154,17 @@ pub fn scheduled_scopes(registry: &RootRegistry, rules: &[InclusionRule]) -> Vec
         let Some(root_path) = excluded_paths.get(rule.root_id.as_str()) else {
             continue;
         };
-        if selected.iter().any(|parent| {
-            rule.relative_path == *parent || rule.relative_path.starts_with(&format!("{parent}/"))
-        }) {
+        if selected
+            .iter()
+            .any(|parent| scope_covers(parent, &rule.relative_path))
+        {
             continue;
         }
         selected.push(rule.relative_path.clone());
         scopes.push(ScanScope {
             root_id: rule.root_id.clone(),
             scope_id: Some(rule.rule_id.clone()),
-            relative_path: rule.relative_path.clone(),
+            relative_path: on_disk_rule_path(Path::new(root_path), &rule.relative_path),
             root_path: Some(root_path.clone()),
             effective_policy: EffectivePolicy::Automatic,
             policy_revision: registry.fingerprint().to_owned(),
@@ -312,6 +314,33 @@ mod tests {
         assert!(scopes.iter().any(|scope| scope.relative_path == "."));
         assert!(scopes.iter().any(|scope| scope.relative_path == "keep"));
         assert!(scopes.iter().any(|scope| scope.relative_path == "other"));
+    }
+
+    /// An included rule walks the folder the disk has when only the case
+    /// differs, and a rule its folded spelling covers adds nothing.
+    #[test]
+    fn included_rules_walk_the_folder_on_disk() {
+        let dir =
+            droppedneedle_kernel::db::scratch::ScratchDir::new("scheduler-rules").expect("scratch");
+        std::fs::create_dir_all(dir.path().join("live").join("90s")).unwrap();
+        let registry = RootRegistry::new(
+            vec![LibraryRoot::new(
+                "x",
+                dir.path().to_path_buf(),
+                EffectivePolicy::Excluded,
+            )],
+            true,
+            "rev-1",
+        );
+        let rules = vec![
+            InclusionRule::new("x", "rule-1", "Live"),
+            InclusionRule::new("x", "rule-2", "live/90s"),
+        ];
+        let paths: Vec<String> = scheduled_scopes(&registry, &rules)
+            .into_iter()
+            .map(|scope| scope.relative_path)
+            .collect();
+        assert_eq!(paths, vec!["live".to_owned()]);
     }
 
     #[test]

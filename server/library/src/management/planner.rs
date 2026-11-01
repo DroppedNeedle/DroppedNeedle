@@ -554,11 +554,10 @@ fn plan_file(
         .map_err(|_| reasons::format_unsupported(&track.file_format))?;
     let format_name = format.as_str().to_owned();
     item.facts.audio_format = format_name.clone();
-    if ctx
-        .registry
-        .resolve(&track.root_id)
-        .is_none_or(|root| root.policy == EffectivePolicy::Excluded)
-    {
+    if ctx.registry.resolve(&track.root_id).is_none_or(|root| {
+        root.policy == EffectivePolicy::Excluded
+            || root.policy_for(&root.path.join(&track.relative_path)) == EffectivePolicy::Excluded
+    }) {
         return Err(reasons::root_unavailable());
     }
     let unreadable = |error: PublishError| {

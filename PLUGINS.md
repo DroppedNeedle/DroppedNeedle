@@ -366,7 +366,8 @@ name differs only in letter case or Unicode form (`Straße` for
 folder set to Excluded, one that isn't there (a share not mounted), one
 reached through a link into another library folder, or one on a disk that
 can only add a file by checking first and then renaming, takes no plugin
-files: the call fails. While the library is switched off, the call fails
+files: the call fails. Neither does a path under a path rule set to
+Excluded. While the library is switched off, the call fails
 with `the library is switched off; try again once it is on`. Each plugin may
 write 100 MiB and 1000 files a day; past either the call fails until older
 writes are a day old. The allowance is kept in the database, so a restart

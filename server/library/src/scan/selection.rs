@@ -7,8 +7,8 @@
 
 use std::collections::BTreeSet;
 
-use super::models::{ScanScope, scope_covers_path};
-use super::roots::RootRegistry;
+use super::models::ScanScope;
+use super::roots::{RootRegistry, on_disk_rule_path, scope_covers};
 
 /// Some selected ids name no root or rule the scan engine knows. Holds
 /// those ids, sorted.
@@ -41,7 +41,7 @@ pub fn select_scopes(
             candidates.push(ScanScope {
                 root_id: root.id.clone(),
                 scope_id: Some(rule.id.clone()),
-                relative_path: rule.relative_path.clone(),
+                relative_path: on_disk_rule_path(&root.path, &rule.relative_path),
                 root_path: Some(root_path.clone().into_owned()),
                 effective_policy: rule.policy,
                 policy_revision: registry.fingerprint().to_owned(),
@@ -73,7 +73,7 @@ pub fn select_scopes(
     for candidate in candidates {
         let covered = scopes.iter().any(|kept| {
             kept.root_id == candidate.root_id
-                && scope_covers_path(&kept.relative_path, &candidate.relative_path)
+                && scope_covers(&kept.relative_path, &candidate.relative_path)
         });
         if !covered {
             scopes.push(candidate);

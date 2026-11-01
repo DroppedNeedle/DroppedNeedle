@@ -13994,6 +13994,47 @@ async fn a_preview_never_moves_a_file_under_an_excluded_path() {
     assert_eq!(items[0].reason().expect("a reason").code, "ROOT_READ_ONLY");
 }
 
+/// A folder set to Excluded takes no management, even where a path rule
+/// inside it includes files again.
+#[tokio::test]
+async fn a_preview_under_an_excluded_folder_is_refused_inside_an_included_rule() {
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        IdentificationPolicy, LibraryPathRule, TypedLibrary,
+    };
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
+
+    let managed = ManagedLibrary::start("lib-preview-excluded-folder", |_| {}).await;
+    let (album, _) = managed.add_album("Keep", 1).await;
+    managed
+        .library
+        .settings
+        .store()
+        .update_secret_blocking::<TypedLibrary, String, _>(|stored| {
+            let mut settings = stored.into_inner();
+            let music = settings
+                .library_roots
+                .iter_mut()
+                .find(|root| root.id == "music")
+                .ok_or_else(|| "no music folder".to_owned())?;
+            music.policy = IdentificationPolicy::Excluded;
+            music.rules.push(LibraryPathRule {
+                id: "keep".to_owned(),
+                relative_path: "Keep".to_owned(),
+                policy: IdentificationPolicy::Automatic,
+            });
+            Ok(settings)
+        })
+        .expect("folder saved");
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "after")
+        .await;
+    assert_eq!(items[0].eligibility, Eligibility::Blocked);
+    assert_eq!(
+        items[0].reason().expect("a reason").code,
+        "ROOT_UNAVAILABLE"
+    );
+}
+
 /// "Get missing tracks" for the second track of `album`: a download of it
 /// joined to the album's edition.
 fn join_second_track(
