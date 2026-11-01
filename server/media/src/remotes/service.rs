@@ -1023,6 +1023,7 @@ impl RemotesService {
             Ok(resolved) => ConnectionStatus {
                 source,
                 connected: true,
+                server_url: (resolved.account_mode == "linked").then(|| resolved.base_url.clone()),
                 account_mode: resolved.account_mode,
                 account_label: resolved.account_label,
             },
@@ -1031,12 +1032,14 @@ impl RemotesService {
                 connected: false,
                 account_mode: "linked".to_owned(),
                 account_label: "Reconnect required".to_owned(),
+                server_url: None,
             },
             Err(ResolveError::NotConfigured) => ConnectionStatus {
                 source,
                 connected: false,
                 account_mode: "linked".to_owned(),
                 account_label: String::new(),
+                server_url: None,
             },
             Err(ResolveError::Store(cause)) => return Err(RemotesFailure::Internal(cause)),
         })

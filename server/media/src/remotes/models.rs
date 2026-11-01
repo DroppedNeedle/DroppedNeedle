@@ -458,6 +458,9 @@ pub struct ConnectionStatus {
     pub account_mode: String,
     /// Display label, e.g. the login name.
     pub account_label: String,
+    /// The configured server address. Set only when the caller's own account
+    /// is linked to that server, so nobody else learns it.
+    pub server_url: Option<String>,
 }
 
 /// Link the caller's own Navidrome or Jellyfin account on the server the

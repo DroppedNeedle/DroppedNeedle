@@ -12108,6 +12108,11 @@ export interface components {
             account_mode: string;
             /** @description True when a credential is stored and the source is enabled. */
             connected: boolean;
+            /**
+             * @description The configured server address. Set only when the caller's own account
+             *     is linked to that server, so nobody else learns it.
+             */
+            server_url?: string | null;
             /** @description Owning source. */
             source: components["schemas"]["SourceName"];
         };

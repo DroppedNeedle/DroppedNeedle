@@ -40928,6 +40928,13 @@
             "type": "boolean",
             "description": "True when a credential is stored and the source is enabled."
           },
+          "server_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The configured server address. Set only when the caller's own account\nis linked to that server, so nobody else learns it."
+          },
           "source": {
             "$ref": "#/components/schemas/SourceName",
             "description": "Owning source."

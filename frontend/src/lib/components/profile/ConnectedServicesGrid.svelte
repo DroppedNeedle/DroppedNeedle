@@ -3,6 +3,7 @@
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import { outsideLink } from '$lib/components/outsideLink';
 	import type { ProfileServiceConnection } from '$lib/queries/profile/types';
 	import Card from '$lib/ui/Card.svelte';
 
@@ -37,7 +38,21 @@
 	<div class="grid gap-3 sm:grid-cols-3">
 		{#each services as service (service.name)}
 			{@const Icon = getServiceIcon(service.name)}
-			<Card variant="bordered" padding="md">
+			{@const href = outsideLink(service.url)}
+			<Card
+				variant="bordered"
+				padding="md"
+				class={href ? 'transition-colors hover:border-primary/40' : undefined}
+			>
+				{#if href}
+					<a
+						{href}
+						target="_blank"
+						rel="noopener noreferrer"
+						aria-label="Open {service.name}"
+						class="absolute inset-0 rounded-box focus-visible:outline-2 focus-visible:outline-primary"
+					></a>
+				{/if}
 				<div class="flex items-center gap-3">
 					<div
 						class="flex h-10 w-10 items-center justify-center rounded-lg bg-base-300/60 {getServiceColor(
@@ -53,6 +68,9 @@
 								<span class="status status-success status-sm"></span>
 							{:else}
 								<span class="status status-error status-sm"></span>
+							{/if}
+							{#if href}
+								<ExternalLink class="h-3.5 w-3.5 text-base-content/40" />
 							{/if}
 						</div>
 						{#if service.enabled && service.username}

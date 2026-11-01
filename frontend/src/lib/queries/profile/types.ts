@@ -9,10 +9,10 @@ import type { components } from '$lib/api/v3/openapi';
 export type ProfileData = components['schemas']['ProfileResponse'];
 
 /** One row of the profile's connected-services grid, mapped at runtime from
- *  the connections aggregate and the remotes connection reads. `url` is
- *  always null for media servers: v3 exposes server URLs only through
- *  admin settings reads, and members see this page too, so the grid renders
- *  those cards without an outbound link. */
+ *  the connections aggregate and the remotes connection reads. `url` is the
+ *  server address from the connection read. The server sends it only when the
+ *  caller's own account is linked to that server; otherwise it is null and the
+ *  card has no link. */
 export interface ProfileServiceConnection {
 	name: string;
 	enabled: boolean;

@@ -1739,6 +1739,10 @@ async fn caller_keyed_state_stays_with_its_caller() {
     let (status, body) = call(&app, &bob, "GET", connection, None).await;
     ok(status, &body, "B reads the link");
     assert_eq!(body["connected"], json!(false), "B sees A's link: {body}");
+    assert!(
+        body["server_url"].is_null(),
+        "B sees the server address: {body}"
+    );
     let (status, body) = call(&app, &bob, "DELETE", connection, None).await;
     ok(status, &body, "B unlinks");
     let (_, body) = call(&app, &ada, "GET", connection, None).await;
@@ -1746,6 +1750,11 @@ async fn caller_keyed_state_stays_with_its_caller() {
         body["connected"],
         json!(true),
         "B's unlink ended A's: {body}"
+    );
+    assert_eq!(
+        body["server_url"],
+        json!(navidrome.base_url),
+        "A's linked tile lost the server address: {body}"
     );
 
     let folders = "/api/v3/remotes/navidrome/folders";
@@ -1781,6 +1790,35 @@ async fn caller_keyed_state_stays_with_its_caller() {
         body["mode"],
         json!("selected"),
         "B's choice changed A's: {body}"
+    );
+
+    // With a shared Navidrome account, B is still not linked: no address.
+    let (status, mut settings) =
+        call(&app, &admin, "GET", "/api/v3/settings/navidrome", None).await;
+    ok(status, &settings, "admin reads Navidrome settings");
+    settings["username"] = json!(droppedneedle_testkit::remotes::NAVIDROME_USER);
+    settings["password"] = json!("pw");
+    let (status, body) = call(
+        &app,
+        &admin,
+        "PUT",
+        "/api/v3/settings/navidrome",
+        Some(settings),
+    )
+    .await;
+    ok(status, &body, "admin shares the Navidrome account");
+    let (status, body) = call(&app, &bob, "DELETE", connection, None).await;
+    ok(status, &body, "B drops its own link");
+    let (status, body) = call(&app, &bob, "GET", connection, None).await;
+    ok(status, &body, "B reads the shared account");
+    assert_eq!(
+        body["account_mode"],
+        json!("shared"),
+        "B is not on the shared account: {body}"
+    );
+    assert!(
+        body["server_url"].is_null(),
+        "B sees the server address on the shared account: {body}"
     );
     app.stop().await;
 }
