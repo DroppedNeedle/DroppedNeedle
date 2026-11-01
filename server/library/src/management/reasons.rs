@@ -396,7 +396,7 @@ pub fn from_publish(error: &PublishError) -> ItemReason {
         PublishError::Collision(_) => path_collision(false),
         PublishError::Validation(_) => file_changed(),
         PublishError::Space { .. } => insufficient_space(),
-        PublishError::Catalog(_) => catalog_changed(),
+        PublishError::Catalog(_) | PublishError::JoinChanged(_) => catalog_changed(),
         PublishError::Journal(_) => recovery_needs_attention(),
         PublishError::Snapshot(_) => ItemReason::new(
             "BASELINE_UNAVAILABLE",

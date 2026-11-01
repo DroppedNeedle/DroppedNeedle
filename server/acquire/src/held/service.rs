@@ -1466,10 +1466,24 @@ impl HeldService {
                 }
             };
             let mut committed = Vec::new();
+            let mut absent = Vec::new();
             for file in &entry.files {
                 let Some(path) = self.folders.locate(file.root, &file.path) else {
                     continue;
                 };
+                // A discard cut off after it removed the copy: the row goes
+                // too. A folder that is not there says nothing about a file.
+                if tokio::fs::try_exists(self.folders.dir(file.root))
+                    .await
+                    .unwrap_or(false)
+                    && matches!(
+                        tokio::fs::symlink_metadata(&path).await,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                    )
+                {
+                    absent.push(file.id);
+                    continue;
+                }
                 let hashed = tokio::task::spawn_blocking(move || {
                     droppedneedle_kernel::db::backup::file_sha256(&path)
                 })
@@ -1488,6 +1502,7 @@ impl HeldService {
                         rows.add_item_imports(item, ids.len())?;
                     }
                     rows.resolve(entry_id, &ids, FileState::Imported, now)?;
+                    rows.resolve(entry_id, &absent, FileState::Discarded, now)?;
                     rows.release(entry_id, now)?;
                     Ok(())
                 })

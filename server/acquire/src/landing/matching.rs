@@ -244,9 +244,11 @@ pub async fn find(
 
 /// For a single the person chose to take from its album: files tagged as
 /// a track of the release their tags name, when that release belongs to
-/// another group, are that album's copy of the song. Their MusicBrainz
-/// ids are set aside so they pair with the single by title and length,
-/// and their tagged recordings are answered by file index.
+/// another group and the track's title agrees with the requested song's,
+/// are that album's copy of the song. A recording MusicBrainz has since
+/// retired is found by the file's release track id. Their MusicBrainz ids
+/// are set aside so they pair with the single by title and length, and the
+/// album track's recordings are answered by file index.
 async fn take_album_copies(
     library: &dyn LandingLibrary,
     target: &Target,
@@ -270,6 +272,17 @@ async fn take_album_copies(
     else {
         return Ok(copies);
     };
+    let requested = target.track_title.as_deref().or_else(|| {
+        let recording = target.recording_mbid.as_deref()?;
+        releases
+            .iter()
+            .flat_map(|release| &release.tracks)
+            .find(|track| track.recording_id.eq_ignore_ascii_case(recording))
+            .map(|track| track.title.as_str())
+    });
+    let Some(requested) = requested else {
+        return Ok(copies);
+    };
     if album
         .release_group_id
         .eq_ignore_ascii_case(&target.release_group_mbid)
@@ -281,21 +294,33 @@ async fn take_album_copies(
             .release_mbid
             .as_deref()
             .is_some_and(|id| album.answers_to(id));
-        let recording = track.recording_mbid.clone().filter(|recording| {
-            album
-                .tracks
-                .iter()
-                .any(|track| track.recording_id.eq_ignore_ascii_case(recording))
-        });
+        let tagged = |id: Option<&str>, on: &str| id.is_some_and(|id| on.eq_ignore_ascii_case(id));
+        let recording = album
+            .tracks
+            .iter()
+            .find(|on| tagged(track.recording_mbid.as_deref(), &on.recording_id))
+            .or_else(|| {
+                album
+                    .tracks
+                    .iter()
+                    .find(|on| tagged(track.release_track_mbid.as_deref(), &on.id))
+            })
+            .filter(|on| same_song_title(&on.title, requested))
+            .map(|on| on.recording_id.to_ascii_lowercase());
         let (true, Some(recording)) = (on_album, recording) else {
             continue;
         };
         track.recording_mbid = None;
         track.release_track_mbid = None;
         track.release_mbid = None;
-        copies.insert(index, recording.to_ascii_lowercase());
+        copies.insert(index, recording);
     }
     Ok(copies)
+}
+
+/// Whether two titles name one song, whatever edition words they carry.
+fn same_song_title(a: &str, b: &str) -> bool {
+    string_dist(&strip_edition_words(a), &strip_edition_words(b)) <= NAME_GATE
 }
 
 /// Whether a single's file that looks like its album's copy
@@ -325,7 +350,8 @@ pub async fn album_copy_proven(
     let Some(file) = landing.audio.get(pair.local) else {
         return false;
     };
-    let other_group = |id: &str| !id.trim().is_empty() && !id.trim().eq_ignore_ascii_case(group);
+    let other_group =
+        |id: &str| usable_mbid(Some(id), &mut 0).is_some_and(|id| !id.eq_ignore_ascii_case(group));
     let tag = &file.tag;
     if tag
         .musicbrainz_release_group_id
@@ -337,10 +363,10 @@ pub async fn album_copy_proven(
     if let Some(tagged) = tag
         .musicbrainz_release_id
         .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty() && !found.release.answers_to(id))
+        .and_then(|id| usable_mbid(Some(id), &mut 0))
+        .filter(|id| !found.release.answers_to(id))
     {
-        match library.release(tagged, PRIORITY).await {
+        match library.release(&tagged, PRIORITY).await {
             Ok(Some(release)) if other_group(&release.release_group_id) => return true,
             Ok(_) => {}
             Err(error) => {
@@ -367,12 +393,9 @@ pub async fn album_copy_proven(
             return false;
         }
     };
-    let titled = |a: &str, b: &str| {
-        string_dist(&strip_edition_words(a), &strip_edition_words(b)) <= NAME_GATE
-    };
     let Some(hit) = hits
         .iter()
-        .filter(|hit| other_group(&hit.release_group_id) && titled(&hit.title, &album))
+        .filter(|hit| other_group(&hit.release_group_id) && same_song_title(&hit.title, &album))
         .max_by_key(|hit| hit.score)
     else {
         return false;
@@ -400,7 +423,7 @@ pub async fn album_copy_proven(
         && release
             .tracks
             .iter()
-            .any(|track| titled(&track.title, &title))
+            .any(|track| same_song_title(&track.title, &title))
 }
 
 /// Whether the person chose the single's album copy for this file and

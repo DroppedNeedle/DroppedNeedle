@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use rusqlite::{Connection, OptionalExtension as _};
+use rusqlite::Connection;
 
 use super::decisions::indexed_track_ids;
 use super::models::{
@@ -717,8 +717,8 @@ impl Operations {
         Ok((facts, release, candidate))
     }
 
-    /// The library's copy of a release group that has an edition: a copy a
-    /// person chose first, then the oldest, as acquisition picks it.
+    /// The library's copy of a release group, when it has an edition: the
+    /// copy the album page shows, as acquisition picks it.
     pub async fn album_for_group(
         &self,
         release_group_mbid: &str,
@@ -726,17 +726,11 @@ impl Operations {
         let (ops, group) = (self.clone(), release_group_mbid.trim().to_ascii_lowercase());
         tokio::task::spawn_blocking(move || {
             ops.db.read_blocking("operations.album_for_group", |conn| {
-                conn.query_row(
-                    "SELECT e.local_album_id FROM local_album_external_identities e \
-                     JOIN local_albums b ON b.id = e.local_album_id \
-                     WHERE b.retired_into_album_id IS NULL AND e.provider = ?2 \
-                       AND lower(e.release_group_mbid) = ?1 AND e.release_mbid IS NOT NULL \
-                     ORDER BY e.decision_source <> 'manual', b.created_at LIMIT 1",
-                    rusqlite::params![group, store::PROVIDER],
-                    |row| row.get(0),
+                Ok::<_, OperationError>(
+                    crate::identity::reads::copy_for_group(conn, &group)?
+                        .filter(|copy| copy.release_mbid.is_some())
+                        .map(|copy| copy.album_id),
                 )
-                .optional()
-                .map_err(OperationError::from)
             })
         })
         .await

@@ -41,11 +41,13 @@ pub async fn place(
         };
         let deferred = |reason, detail| Err(Deferred { reason, detail });
         match failure {
-            ImportFailure::Occupied(detail) if !retried => {
+            ImportFailure::Occupied(detail) | ImportFailure::LibraryChanged(detail) if !retried => {
                 tracing::info!(%detail, "the library changed under an import; planning it again");
                 retried = true;
             }
-            ImportFailure::Occupied(detail) => return deferred(Reason::LibraryChanged, detail),
+            ImportFailure::Occupied(detail) | ImportFailure::LibraryChanged(detail) => {
+                return deferred(Reason::LibraryChanged, detail);
+            }
             ImportFailure::LocalFault(detail) => return deferred(Reason::LocalFault, detail),
             ImportFailure::FolderMissing(folder) => {
                 return deferred(Reason::LibraryFolderMissing, folder);

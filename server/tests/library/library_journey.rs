@@ -14079,6 +14079,59 @@ fn exclude_path(library: &LibrarySetup, relative: &str) {
         .expect("rule saved");
 }
 
+/// A file staging cannot write stays a local fault, for a person to look at:
+/// only a joined album that moved reads as the library having changed.
+#[tokio::test]
+async fn a_file_staging_cannot_read_is_a_local_fault() {
+    use droppedneedle_library::import::{DownloadImport, ImportError, ImportOrigin, ImportSource};
+
+    let (scratch, library, music) = bare_library("lib-import-unreadable").await;
+    std::fs::create_dir_all(&music).expect("music folder");
+    add_music_root(&library, &music).await;
+    let source = scratch.to_path_buf().join("incoming/01.flac");
+    std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+    std::fs::write(&source, b"not audio").expect("download planted");
+    let release = Release {
+        id: "70000000-0000-4000-8000-00000000001d".to_owned(),
+        release_group_id: "70000000-0000-4000-8000-00000000001e".to_owned(),
+        title: "Golden".to_owned(),
+        artists: vec![CreditedArtist {
+            id: "70000000-0000-4000-8000-00000000001a".to_owned(),
+            name: "Artist".to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        tracks: vec![ReleaseTrack {
+            id: "70000000-0000-4000-8000-00000000001b".to_owned(),
+            recording_id: "70000000-0000-4000-8000-00000000001c".to_owned(),
+            title: "Song".to_owned(),
+            disc: 1,
+            position: 1,
+            absolute_position: 1,
+            ..ReleaseTrack::default()
+        }],
+        ..Release::default()
+    };
+    let refused = library
+        .imports
+        .import_download(&DownloadImport {
+            task_id: "task-1".to_owned(),
+            origin: ImportOrigin::Download,
+            staging: None,
+            release,
+            files: vec![ImportSource {
+                path: source.clone(),
+                track: 0,
+                replaces: Vec::new(),
+            }],
+            extras: Vec::new(),
+            actor: None,
+        })
+        .expect_err("the file does not read");
+    assert!(matches!(refused, ImportError::LocalFault(_)), "{refused:?}");
+    assert!(source.is_file(), "the download stays");
+}
+
 /// An import never places a file where a path rule leaves files out, the
 /// rule matching whatever the letter case: with one library folder it
 /// fails as a naming script fault and places nothing; with another

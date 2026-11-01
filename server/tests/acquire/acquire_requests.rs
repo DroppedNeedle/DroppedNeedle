@@ -1623,6 +1623,117 @@ async fn edition_setup() -> (RequestsState, AcquireDb, Downloads) {
     (state, db, dispatch)
 }
 
+// With two copies and no chosen release, a fetch with no album named joins
+// the copy the album page shows, on its release: here the newer copy, the
+// only one with files. A shown copy that names no release gives no edition.
+#[tokio::test]
+async fn a_fetch_follows_the_copy_the_album_page_shows() {
+    let (state, db, dispatch) = setup().await;
+    seed_edition_album(&db).await;
+    let group = MBID_A.to_owned();
+    let seed_group = group.clone();
+    db.write("test.seed_copies", move |tx| {
+        tx.execute_batch(&format!(
+            "UPDATE local_albums SET created_at = 5, title = 'Shown', album_artist_name = 'A' WHERE id = 'al1';
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+               album_artist_id, grouping_source, created_at, updated_at)
+               VALUES ('al0', 'r1', 'g0', 'Empty', 'empty', 'ar1', 'automatic', 0, 0);
+             INSERT INTO local_album_external_identities (local_album_id, provider,
+               release_group_mbid, release_mbid, decision_source, selected_at, row_revision)
+               VALUES ('al0', 'musicbrainz', '{seed_group}', 'rel-empty', 'automatic', 0, 1),
+                      ('al1', 'musicbrainz', '{seed_group}', 'rel-shown', 'automatic', 0, 1);"
+        ))?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let page = droppedneedle_catalog::reads::catalog::library::LocalCatalog::new(db.db().clone())
+        .album(&group)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(page.title, "Shown");
+    let edition = droppedneedle_acquire::edition::chosen_edition(db.db(), &group)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(edition.release_mbid, "rel-shown");
+    let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire");
+    let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let planned = dispatch.take_calls().await[0]
+        .planned_album
+        .clone()
+        .expect("a planned copy");
+    assert_eq!(
+        (planned.album_id.as_str(), planned.release_mbid.as_str()),
+        ("al1", "rel-shown")
+    );
+
+    db.write("test.unmanaged", |tx| {
+        tx.execute_batch(
+            "UPDATE local_album_external_identities SET release_mbid = NULL \
+             WHERE local_album_id = 'al1'",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        droppedneedle_acquire::edition::chosen_edition(db.db(), &group)
+            .await
+            .unwrap(),
+        None,
+        "another copy's release does not stand in"
+    );
+}
+
+// Two copies with files: the newer one a person picked is the one the album
+// page shows and a fetch joins.
+#[tokio::test]
+async fn a_fetch_and_the_album_page_agree_on_a_picked_copy() {
+    let (state, db, dispatch) = setup().await;
+    seed_edition_album(&db).await;
+    let group = MBID_A.to_owned();
+    let seed_group = group.clone();
+    db.write("test.seed_copies", move |tx| {
+        tx.execute_batch(&format!(
+            "UPDATE local_albums SET created_at = 5, title = 'Picked', album_artist_name = 'A'
+               WHERE id = 'al1';
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+               album_artist_id, grouping_source, album_artist_name, created_at, updated_at)
+               VALUES ('al0', 'r1', 'g0', 'Older', 'older', 'ar1', 'automatic', 'A', 0, 0);
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
+               path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
+               album_title, album_title_folded, file_format, bit_rate, ingest_source, imported_at,
+               membership_source)
+               VALUES ('t0', 'al0', 'r1', '/m/0.flac', '0.flac', 'h0', 1, 0, 's', 'T', 't', 'T',
+                 't', 'flac', NULL, 'scan', 0, 'automatic');
+             INSERT INTO local_album_external_identities (local_album_id, provider,
+               release_group_mbid, release_mbid, decision_source, selected_at, row_revision)
+               VALUES ('al0', 'musicbrainz', '{seed_group}', 'rel-older', 'automatic', 0, 1),
+                      ('al1', 'musicbrainz', '{seed_group}', 'rel-picked', 'manual', 0, 1);"
+        ))?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let page = droppedneedle_catalog::reads::catalog::library::LocalCatalog::new(db.db().clone())
+        .album(&group)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(page.title, "Picked");
+    let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire");
+    let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let planned = dispatch.take_calls().await[0]
+        .planned_album
+        .clone()
+        .expect("a planned copy");
+    assert_eq!(planned.album_id, "al1");
+}
+
 // "Get missing tracks" sends one album download on the chosen edition for
 // the missing track plus the owned track below the cutoff, and refuses a
 // second while it runs. A track the copy holds in another version is

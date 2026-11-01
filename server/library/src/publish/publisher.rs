@@ -181,6 +181,9 @@ pub(super) fn commit_bundle(
     if commit.tracks.is_empty() && commit.removal.is_none() && commit.put_back.is_none() {
         return Ok(());
     }
+    // Before any row moves: a removal in this commit takes files off the
+    // copy it reads.
+    check_copy_seals(conn, commit)?;
     if let Some(removal) = &commit.removal {
         super::remove::commit(conn, &commit.bundle_id, removal, clock.now_secs())?;
     }
@@ -500,6 +503,73 @@ pub(crate) fn joined_album(
     } else {
         None
     })
+}
+
+/// The library folder and the one folder in it that hold the album's
+/// indexed files on `disc` (all of its indexed files when none is on that
+/// disc). `None` when they sit in several folders or at the top of a
+/// library folder.
+pub(crate) fn copy_folder(
+    conn: &Connection,
+    album_id: &str,
+    disc: u32,
+) -> rusqlite::Result<Option<(String, String)>> {
+    let rows: Vec<(String, String, i64)> = conn
+        .prepare(
+            "SELECT root_id, relative_path, disc_number FROM local_tracks \
+             WHERE local_album_id = ?1 AND availability = 'indexed'",
+        )?
+        .query_map(rusqlite::params![album_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let disc = i64::from(disc.max(1));
+    let on_disc: Vec<&(String, String, i64)> =
+        rows.iter().filter(|row| row.2.max(1) == disc).collect();
+    let files = if on_disc.is_empty() {
+        rows.iter().collect()
+    } else {
+        on_disc
+    };
+    let mut folders = files.iter().map(|(root, rel, _)| {
+        let folder = Path::new(rel)
+            .parent()
+            .map(|parent| parent.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        (root.as_str(), folder)
+    });
+    let Some(first) = folders.next() else {
+        return Ok(None);
+    };
+    let one = folders.all(|folder| folder == first);
+    Ok((one && !first.1.is_empty()).then(|| (first.0.to_owned(), first.1)))
+}
+
+/// Refuse the bundle when a file's joined copy no longer sits where its
+/// placement read it: the file would be on that album in the wrong folder.
+fn check_copy_seals(conn: &Connection, commit: &BundleCommit) -> Result<(), PublishError> {
+    for track in &commit.tracks {
+        let Some(adoption) = &track.adopt else {
+            continue;
+        };
+        let (Some(join), Some(seal)) = (&adoption.join, &adoption.copy_seal) else {
+            continue;
+        };
+        let folder = match joined_album(conn, join)? {
+            Some(joined) => copy_folder(conn, &joined.album_id, seal.disc)?,
+            None => None,
+        };
+        if folder != seal.folder {
+            return Err(PublishError::JoinChanged(
+                format!(
+                    "the album of track {} moved while it was being written",
+                    track.track_id
+                )
+                .into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Add a file the bundle brought into the library: index the published

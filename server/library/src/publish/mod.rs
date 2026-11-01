@@ -217,6 +217,10 @@ pub enum PublishError {
     /// policy no longer match the sealed preview.
     #[error("validation: {0}")]
     Validation(Detail),
+    /// The album a file joins no longer sits where its placement read it.
+    /// Nothing landed; the import can plan again.
+    #[error("join changed: {0}")]
+    JoinChanged(Detail),
     /// Catalog-commit gate: the bundle's own rows moved since its seal,
     /// or the commit transaction refused a row.
     #[error("catalog commit: {0}")]
@@ -317,6 +321,7 @@ impl PublishError {
             | Self::Snapshot(detail)
             | Self::Journal(detail)
             | Self::Validation(detail)
+            | Self::JoinChanged(detail)
             | Self::Catalog(detail)
             | Self::Cleanup(detail)
             | Self::UnsafePath(detail)
@@ -341,6 +346,7 @@ impl PublishError {
             | Self::Snapshot(detail)
             | Self::Journal(detail)
             | Self::Validation(detail)
+            | Self::JoinChanged(detail)
             | Self::Catalog(detail)
             | Self::Cleanup(detail)
             | Self::UnsafePath(detail)

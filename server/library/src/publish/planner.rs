@@ -232,6 +232,19 @@ pub struct Adoption {
     /// edition.
     #[serde(default)]
     pub track: Option<JoinedTrack>,
+    /// What the placement read of the joined copy's folder. The commit
+    /// refuses the bundle when the copy has moved since; a resumed commit
+    /// has none and finishes.
+    #[serde(skip)]
+    pub copy_seal: Option<CopySeal>,
+}
+
+/// The joined copy's folder as a placement read it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopySeal {
+    pub disc: u32,
+    /// The library folder and the folder in it.
+    pub folder: Option<(String, String)>,
 }
 
 /// The album files fetched for a library copy join. The commit follows
@@ -287,6 +300,7 @@ impl Adoption {
             ingest_source,
             join: journaled.and_then(|adopt| adopt.join.clone()).or(join),
             track: journaled.and_then(|adopt| adopt.track.clone()).or(track),
+            copy_seal: None,
         }
     }
 

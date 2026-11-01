@@ -11,7 +11,7 @@ use std::collections::HashSet;
 
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_library::identity::DecisionSource;
-use droppedneedle_library::identity::reads::{Pick, copy_for_group};
+use droppedneedle_library::identity::reads::copy_for_group;
 use rusqlite::types::Value;
 
 use crate::reads::library::sql;
@@ -248,7 +248,7 @@ impl LocalCatalog {
     }
 
     /// The local copy of one release group, live with or without files
-    /// (the oldest copy with files, else the oldest copy), with its
+    /// (one with files first, then one picked by hand, then the oldest), with its
     /// indexed tracks.
     pub async fn album(&self, release_group_mbid: &str) -> Result<Option<LocalAlbum>, StoreError> {
         let values = vec![Value::Text(release_group_mbid.to_ascii_lowercase())];
@@ -303,7 +303,7 @@ impl LocalCatalog {
         let release_group_mbid = release_group_mbid.to_owned();
         let copy = self
             .read("catalog.library.edition_evidence", move |conn| {
-                copy_for_group(conn, &release_group_mbid, Pick::Shown)
+                copy_for_group(conn, &release_group_mbid)
             })
             .await?;
         let Some(copy) = copy else {

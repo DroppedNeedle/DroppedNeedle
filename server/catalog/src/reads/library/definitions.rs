@@ -64,12 +64,16 @@ macro_rules! owned_album {
 }
 
 /// The order a lookup by release group picks a copy in, over an album
-/// alias: the oldest copy with files, else the oldest copy.
+/// alias and its identity alias: a copy with files first, then one picked
+/// by hand, then the oldest. The same order as the identity read
+/// acquisition follows.
 macro_rules! copy_order {
-    ($album:literal) => {
+    ($album:literal, $identity:literal) => {
         concat!(
             $album,
             ".has_indexed_track DESC, ",
+            $identity,
+            ".decision_source <> 'manual', ",
             $album,
             ".created_at ASC, ",
             $album,

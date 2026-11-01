@@ -526,9 +526,8 @@ impl RequestsService {
     }
 
     /// The library copy a fetch with no plan is for: the copy asked for
-    /// (followed to the album it was merged into), else the group's copy
-    /// with an edition, a person's first, then the oldest. `None` when that
-    /// copy's identity names no release.
+    /// (followed to the album it was merged into), else the copy the album
+    /// page shows. `None` when that copy's identity names no release.
     async fn planned_copy(
         &self,
         album_id: Option<&str>,
@@ -540,12 +539,23 @@ impl RequestsService {
             .library
             .db()
             .read("editions.planned_copy", move |conn| {
-                conn.query_row(
-                    sql::PLANNED_COPY.text(),
-                    rusqlite::params![group, album_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()
+                match album_id {
+                    Some(album_id) => conn
+                        .query_row(
+                            sql::PLANNED_COPY.text(),
+                            rusqlite::params![group, album_id],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .optional(),
+                    None => droppedneedle_library::identity::reads::copy_for_group(conn, &group)
+                        .map(|copy| {
+                            copy.and_then(|copy| {
+                                let release =
+                                    copy.release_mbid.filter(|id| !id.trim().is_empty())?;
+                                Some((copy.album_id, release))
+                            })
+                        }),
+                }
                 .map_err(DbError::from)
             })
             .await

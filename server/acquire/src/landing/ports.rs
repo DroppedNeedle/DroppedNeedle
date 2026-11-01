@@ -128,6 +128,9 @@ pub enum ImportFailure {
     /// A file already sits where the import would go and the catalog
     /// cannot prove it is this track: hold for a person.
     Occupied(String),
+    /// The album the files join changed under the import. Nothing landed:
+    /// plan it again.
+    LibraryChanged(String),
     /// The library's import naming script gave no usable path for a file.
     /// The download stays for a reimport once the script is fixed.
     NamingScript(String),

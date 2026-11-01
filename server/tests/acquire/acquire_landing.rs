@@ -1573,6 +1573,56 @@ async fn a_held_import_cut_off_by_a_restart_never_places_its_file_twice() {
     assert!(files_under(&music.join(".recycle"), "flac").is_empty());
 }
 
+/// A discard a restart cut off after it removed the copy: the row is
+/// discarded with it. While the held folder itself is not there nothing is
+/// judged gone.
+#[tokio::test]
+async fn a_cut_off_entry_loses_a_row_whose_copy_is_gone() {
+    let rig = SingleRig::new(0, None).await;
+    let acquire = &rig.acquire;
+    let held_dir = acquire.held.folders().held.clone();
+    acquire
+        .db
+        .write("test.held", |tx| {
+            tx.execute_batch(
+                "INSERT INTO acquire_held_entries (id, user_id, origin, group_key, \
+                 release_group_mbid, state, created_at, expires_at) VALUES (1, 'u-ada', \
+                 'download', 'album:g', 'g', 'placing', 1, 9999999999999); \
+                 INSERT INTO acquire_held_files (entry_id, root, path, original_name, reason, \
+                 source, state, created_at) VALUES (1, 'held', 'gone.flac', 'gone.flac', \
+                 'weak_match', 'soulseek', 'held', 1);",
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("held rows");
+    let state = || async {
+        let state: String = sqlx::query_scalar("SELECT state FROM acquire_held_files")
+            .fetch_one(acquire.db.db().sqlx())
+            .await
+            .expect("held row");
+        state
+    };
+
+    let _ = std::fs::remove_dir_all(&held_dir);
+    acquire.held.recover().await;
+    acquire.held.tend().await;
+    assert_eq!(state().await, "held", "no folder says nothing about a file");
+
+    std::fs::create_dir_all(&held_dir).expect("held folder back");
+    acquire
+        .db
+        .write("test.claim", |tx| {
+            tx.execute("UPDATE acquire_held_entries SET state = 'placing'", [])?;
+            Ok(())
+        })
+        .await
+        .expect("claimed");
+    acquire.held.recover().await;
+    acquire.held.tend().await;
+    assert_eq!(state().await, "discarded");
+}
+
 /// The 90-day prune: an entry past its expiry loses its held copies and
 /// nothing else, a library file and a downloads folder file of the same
 /// name stay, an entry an action holds is skipped, and an expired upload
@@ -4877,6 +4927,81 @@ impl JoinRig {
     }
 }
 
+// A move that fails after the file landed keeps the pair: the alias stays,
+// and the next drain moves what people made, the old row's overrides
+// staying on it.
+#[tokio::test]
+async fn a_failed_continuation_keeps_its_pair_for_the_drain() {
+    let v = VersionCase::new(16, 1, true, "02 Sour Times.flac").await;
+    let rig = &v.rig;
+    rig.sql(
+        "CREATE TRIGGER no_move BEFORE UPDATE OF local_track_id ON library_play_history \
+         BEGIN SELECT RAISE(ABORT, 'refused'); END",
+    );
+    v.ask("t-version").await;
+    rig.land(vec![v.sour("t-version")]).await;
+    let (new, ..) = rig.row_at(&copy_rel(16, SOUR_TIMES)).await;
+    assert_eq!(rig.alias_of(&v.old).await, Some(new.clone()));
+    assert_eq!(rig.overrides_follow(&v.old).await, 0);
+    assert_eq!(
+        rig.version_history(&v.old).await,
+        (v.old.clone(), v.old.clone(), v.old.clone(), v.old.clone()),
+        "the failed move left everything on O"
+    );
+    rig.sql("DROP TRIGGER no_move");
+    let store = rig.library.identify_store.clone();
+    tokio::task::spawn_blocking(move || store.sweep_artist_links())
+        .await
+        .expect("sweep ran")
+        .expect("sweep");
+    assert_eq!(
+        rig.version_history(&v.old).await,
+        (new.clone(), new.clone(), new.clone(), v.old.clone()),
+        "the drain moved the history; the override stays on O"
+    );
+}
+
+// A copy that leaves its folder while its landing is being written: the
+// commit refuses, the files are put back, and the landing is planned again.
+// The file never lands in the folder the copy left.
+#[tokio::test]
+async fn a_copy_gone_at_commit_is_planned_again() {
+    let e = editions(30, &fixture_lengths());
+    let rig = join_rig(vec![e.old.clone(), e.new.clone()]).await;
+    rig.plant(&copy_rel(30, MYSTERONS), 0, &e.old);
+    rig.scan().await;
+    let track = rig.track_at(&copy_rel(30, MYSTERONS));
+    let album = rig.album_of(&track);
+    rig.set_edition(&album, &e.group, &e.new.id, "manual");
+    rig.place(&track, &e.new, 0, "manual");
+    rig.ask(
+        "t-gone",
+        &e.group,
+        &e.new.title,
+        "user",
+        Some(&e.new.id),
+        Some((&album, &e.new.id)),
+        &[(2, 1)],
+    )
+    .await;
+    rig.sql(&format!(
+        "CREATE TRIGGER copy_gone AFTER INSERT ON library_publish_journal BEGIN \
+         UPDATE local_tracks SET availability = 'missing', missing_since = 1 \
+         WHERE local_album_id = '{album}'; END"
+    ));
+    rig.land(vec![rig.landed("t-gone", &e.new, 1, FIXTURES[1])])
+        .await;
+    assert!(
+        !rig.music.join(copy_rel(30, SOUR_TIMES)).exists(),
+        "nothing in the folder the copy left"
+    );
+    assert_eq!(
+        files_under(&rig.music, "flac").len(),
+        2,
+        "the second plan filed the file by its tags"
+    );
+}
+
 // "Replace tracks you have in another version": the edition's version of
 // a track lands in the copy, on its edition track; the person's version
 // goes to the recycle bin and its play, star and playlist entry follow the
@@ -5435,6 +5560,9 @@ const DUMMY_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000041";
 const DUMMY_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000051";
 /// "Love Me" on the album, the fourth track as `release` numbers it.
 const DUMMY_LOVE_ME: &str = "6d0b7a1e-0000-4000-8000-00000000004b";
+const DUMMY_LOVE_ME_TRACK: &str = "6d0b7a1e-0000-4000-8000-00000000005b";
+/// The album's first track, as `release` numbers it.
+const DUMMY_MYSTERONS: &str = "6d0b7a1e-0000-4000-8000-000000000048";
 const DUMMY_TITLES: [&str; 12] = [
     "Mysterons",
     "Sour Times",
@@ -5472,6 +5600,12 @@ struct SingleCase {
     whole_album: bool,
     /// The song carries the album's own MusicBrainz ids, as Picard tags it.
     album_ids: bool,
+    /// With `album_ids`, its recording tag, when not "Love Me"'s.
+    recording_tag: Option<&'static str>,
+    /// With `album_ids`, its release track tag.
+    release_track_tag: Option<&'static str>,
+    /// A release group tag alone.
+    group_tag: Option<&'static str>,
 }
 
 impl SingleCase {
@@ -5482,6 +5616,9 @@ impl SingleCase {
             from_album: false,
             whole_album: false,
             album_ids: false,
+            recording_tag: None,
+            release_track_tag: None,
+            group_tag: None,
         }
     }
 }
@@ -5563,12 +5700,27 @@ impl SingleRig {
         let mut edits = vec![TagEdit::new(TagField::Album, vec![case.album.to_owned()])];
         if case.album_ids {
             for (field, id) in [
-                (TagField::MusicBrainzRecordingId, DUMMY_LOVE_ME),
+                (
+                    TagField::MusicBrainzRecordingId,
+                    case.recording_tag.unwrap_or(DUMMY_LOVE_ME),
+                ),
                 (TagField::MusicBrainzReleaseId, DUMMY_RELEASE),
                 (TagField::MusicBrainzReleaseGroupId, DUMMY_GROUP),
             ] {
                 edits.push(TagEdit::new(field, vec![id.to_owned()]));
             }
+            if let Some(id) = case.release_track_tag {
+                edits.push(TagEdit::new(
+                    TagField::MusicBrainzReleaseTrackId,
+                    vec![id.to_owned()],
+                ));
+            }
+        }
+        if let Some(id) = case.group_tag {
+            edits.push(TagEdit::new(
+                TagField::MusicBrainzReleaseGroupId,
+                vec![id.to_owned()],
+            ));
         }
         save_tags(&song, &edits).expect("tags save");
         let task = NewTask {
@@ -5644,6 +5796,15 @@ async fn a_single_stops_at_its_album_copy_only_on_proof() {
             .await,
         held_as("weak_match")
     );
+    let malformed = SingleCase {
+        group_tag: Some("not-a-release-group"),
+        ..SingleCase::titled("Love Me", "Singles 2020")
+    };
+    assert_eq!(
+        rig.land("t-malformed", malformed).await,
+        held_as("weak_match"),
+        "a malformed group tag proves nothing"
+    );
     assert_eq!(
         rig.land("t-love-me-do", SingleCase::titled("Love Me Do", "Dummy"))
             .await,
@@ -5711,6 +5872,33 @@ async fn a_single_taken_from_its_album_imports_only_the_song() {
     .await
     .expect("identity");
     assert_eq!(recording, SINGLE_RECORDING, "imported as the single");
+
+    // A recording of the album that is another song, under this song's
+    // title tag, is not the album's copy of it, even when AcoustID hears
+    // that recording.
+    let rig = SingleRig::new(5_000, Some(DUMMY_MYSTERONS)).await;
+    let false_title = SingleCase {
+        from_album: true,
+        album_ids: true,
+        recording_tag: Some(DUMMY_MYSTERONS),
+        ..SingleCase::titled("Love Me", "Dummy")
+    };
+    assert_eq!(
+        rig.land("t-false-title", false_title).await,
+        held_as("tag_mismatch")
+    );
+
+    // A retired recording id is not on the album; the file's release track
+    // still places it there.
+    let rig = SingleRig::new(5_000, Some(DUMMY_LOVE_ME)).await;
+    let retired = SingleCase {
+        from_album: true,
+        album_ids: true,
+        recording_tag: Some("6d0b7a1e-0000-4000-8000-0000000000ff"),
+        release_track_tag: Some(DUMMY_LOVE_ME_TRACK),
+        ..SingleCase::titled("Love Me", "Dummy")
+    };
+    assert_eq!(rig.land("t-retired", retired).await, imported());
 }
 
 /// Once the song came in from its album, the copies held as "only the

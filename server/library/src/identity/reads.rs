@@ -1,7 +1,7 @@
 //! Reads of an album's identity: its match row and its files' rows, the
 //! revisions an undo is keyed to, the stored release document, and the
-//! library copy of one release group, as the catalog and acquisition read
-//! it ([`copy_for_group`], which differ only in the [`Pick`] they pass).
+//! library copy of one release group, which the catalog and acquisition
+//! read alike ([`copy_for_group`]).
 
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest as _, Sha256};
@@ -260,21 +260,13 @@ pub(crate) fn stored_release(
     }
 }
 
-/// Which copy [`copy_for_group`] returns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Pick {
-    /// The copy the library shows, whatever its release: one with files
-    /// before one without. A copy that names no release (left unmanaged)
-    /// still counts.
-    Shown,
-    /// The first copy that names a release: the one acquisition can fetch.
-    WithRelease,
-}
-
-/// One copy of a release group, as the edition reads see it.
+/// The copy of a release group the edition reads see.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopyEdition {
-    /// The release its identity names, as stored. `None` when it names none.
+    /// The library album that is the copy.
+    pub album_id: String,
+    /// The release its identity names, as stored. `None` when it names none
+    /// (left unmanaged).
     pub release_mbid: Option<String>,
     /// Who chose the identity.
     pub source: DecisionSource,
@@ -282,27 +274,23 @@ pub struct CopyEdition {
     pub file_count: i64,
 }
 
-/// The copy of `release_group_mbid` that `pick` names, over live albums.
-/// The group matches ignoring ASCII case. A copy picked by hand (`manual`)
-/// comes first, then the oldest. `None` when no live copy is identified as
-/// the group.
+/// The copy of `release_group_mbid` the library shows, over live albums, so
+/// a download joins the copy a person sees: a copy with files first, then
+/// one picked by hand (`manual`), then the oldest. The group matches
+/// ignoring ASCII case. `None` when no live copy is identified as the group.
 pub fn copy_for_group(
     conn: &Connection,
     release_group_mbid: &str,
-    pick: Pick,
 ) -> rusqlite::Result<Option<CopyEdition>> {
-    let statement = match pick {
-        Pick::Shown => sql::COPY_SHOWN,
-        Pick::WithRelease => sql::COPY_WITH_RELEASE,
-    };
-    conn.prepare_cached(statement.text())?
+    conn.prepare_cached(sql::COPY_SHOWN.text())?
         .query_row(
             params![release_group_mbid.to_ascii_lowercase(), PROVIDER],
             |row| {
                 Ok(CopyEdition {
-                    release_mbid: row.get(0)?,
-                    source: row.get(1)?,
-                    file_count: row.get(2)?,
+                    album_id: row.get(0)?,
+                    release_mbid: row.get(1)?,
+                    source: row.get(2)?,
+                    file_count: row.get(3)?,
                 })
             },
         )

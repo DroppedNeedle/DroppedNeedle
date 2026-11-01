@@ -1094,7 +1094,10 @@ fn refusal(refused: Refusal) -> MutationError {
             PublishError::BinsUnknown(cause) => {
                 MutationError::Conflict(bins_unknown(cause, BinUse::Removal))
             }
-            PublishError::Validation(_) | PublishError::Catalog(_) | PublishError::Collision(_) => {
+            PublishError::Validation(_)
+            | PublishError::JoinChanged(_)
+            | PublishError::Catalog(_)
+            | PublishError::Collision(_) => {
                 tracing::info!(%error, "a removal found its files or tracks changed");
                 MutationError::Conflict(REMOVAL_CHANGED)
             }
@@ -1159,7 +1162,9 @@ fn put_back_refusal(refused: PutBackRefusal) -> MutationError {
                 tracing::info!(%error, "a file took a removed file's place during its put-back");
                 MutationError::Conflict(RESTORE_PATH_OCCUPIED)
             }
-            PublishError::Validation(_) | PublishError::Catalog(_) => {
+            PublishError::Validation(_)
+            | PublishError::JoinChanged(_)
+            | PublishError::Catalog(_) => {
                 tracing::info!(%error, "a put-back found its files or tracks changed");
                 MutationError::Conflict(RESTORE_CHANGED)
             }

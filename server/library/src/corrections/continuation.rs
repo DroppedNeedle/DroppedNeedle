@@ -155,23 +155,34 @@ pub(crate) fn drain_continuations(
 /// without the proof, its field overrides staying on the old row. Only
 /// when the two rows differ, both are on `album`, the old one is missing
 /// and not an alias yet, and the new one is indexed; otherwise nothing is
-/// written for that pair.
+/// written for that pair. The aliases are written in `tx`, so a store error
+/// there fails the import that names them. Only the move is in the
+/// savepoint: when it fails, the aliases stay and
+/// [`drain_continuations`] moves what is on the old rows later.
 pub(crate) fn continue_replaced(
     tx: &Transaction<'_>,
     album: &str,
     replaced: &[(String, String)],
     now: f64,
 ) -> rusqlite::Result<()> {
-    run(
-        tx,
-        Scope::Album(album),
-        replaced,
-        None,
-        true,
-        WRITE_BOUND,
-        now,
-    )
-    .map(|_| ())
+    let created_ms = (now * 1000.0) as i64;
+    let mut made = Vec::new();
+    for (old, new) in replaced {
+        let fits: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM local_tracks o JOIN local_tracks n \
+             ON n.id = ?2 AND n.local_album_id = o.local_album_id \
+             AND n.availability = 'indexed' \
+             WHERE o.id = ?1 AND o.local_album_id = ?3 AND o.availability = 'missing' \
+             AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = o.id))",
+            params![old, new, album],
+            |row| row.get(0),
+        )?;
+        if old != new && fits {
+            add_alias(tx, old, new, false, created_ms)?;
+            made.push((old.clone(), new.clone()));
+        }
+    }
+    run(tx, Scope::Album(album), &made, None, true, WRITE_BOUND, now).map(|_| ())
 }
 
 /// Continue each `(old, new)` pair of rows for one file that two library
@@ -260,13 +271,14 @@ fn add_alias(
     Ok(())
 }
 
-/// One pass in a savepoint. `discover` looks for new pairs; `limit`
-/// bounds the aliases moved beyond the pairs made on the pass's album.
-/// `true` when aliases that hold something are left.
+/// One pass in a savepoint. `made` holds the replaced pairs the caller
+/// has just made aliases of; `discover` looks for new pairs; `limit` bounds
+/// the aliases moved beyond the pairs made on the pass's album. `true` when
+/// aliases that hold something are left.
 fn run(
     tx: &Transaction<'_>,
     scope: Scope<'_>,
-    replaced: &[(String, String)],
+    made: &[(String, String)],
     proven: Option<Proven>,
     discover: bool,
     limit: usize,
@@ -277,7 +289,7 @@ fn run(
         pass(
             tx,
             scope,
-            replaced,
+            made,
             proven.as_ref(),
             discover,
             limit,
@@ -325,7 +337,7 @@ struct AlbumLog {
 fn pass(
     tx: &Transaction<'_>,
     scope: Scope<'_>,
-    given: &[(String, String)],
+    made: &[(String, String)],
     proven: Option<&Proven>,
     discover: bool,
     limit: usize,
@@ -346,36 +358,14 @@ fn pass(
     let mut new_pairs: BTreeSet<(String, String)> = proven
         .map(|proven| proven.pairs.clone())
         .unwrap_or_default();
-    let mut replaced: BTreeSet<String> = BTreeSet::new();
+    new_pairs.extend(made.iter().cloned());
+    let replaced: BTreeSet<String> = made.iter().map(|(old, _)| old.clone()).collect();
     let created_ms = (now * 1000.0) as i64;
-    // The alias, and every alias naming the old row moved on to the new
-    // one: no alias ever names an alias. A replaced version's overrides
-    // stay, and so do those of the rows that continued into it.
+    // Every alias naming the old row moves on to the new one: no alias ever
+    // names an alias.
     let alias = |old: &str, new: &str, moves_overrides: bool| {
         add_alias(tx, old, new, moves_overrides, created_ms)
     };
-    if let Some(album) = only {
-        for (old, new) in given {
-            at.album = Some(album.to_owned());
-            at.old = Some(old.clone());
-            at.new = Some(new.clone());
-            let fits: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM local_tracks o JOIN local_tracks n \
-                 ON n.id = ?2 AND n.local_album_id = o.local_album_id \
-                 AND n.availability = 'indexed' \
-                 WHERE o.id = ?1 AND o.local_album_id = ?3 AND o.availability = 'missing' \
-                 AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = o.id))",
-                params![old, new, album],
-                |row| row.get(0),
-            )?;
-            if old == new || !fits {
-                continue;
-            }
-            alias(old, new, false)?;
-            replaced.insert(old.clone());
-            new_pairs.insert((old.clone(), new.clone()));
-        }
-    }
     let albums: Vec<String> = if discover {
         tx.prepare_cached(CANDIDATE_ALBUMS)?
             .query_map(params![only], |row| row.get(0))?

@@ -486,14 +486,14 @@ impl ImportSpec for WrongEdition {
         for file in audio {
             // The album tag when there is one: a peer's folder layout
             // ("Artist/Discography/...") says nothing about the files.
-            let text = if file.tag.album.trim().is_empty() {
+            let text = if album_tag(file).is_empty() {
                 file.path
                     .parent()
                     .and_then(|dir| dir.file_name())
                     .map(|name| words(&name.to_string_lossy()))
                     .unwrap_or_default()
             } else {
-                words(&file.tag.album)
+                words(album_tag(file))
             };
             if let Some(marker) = EDITION_MARKERS
                 .iter()
@@ -575,7 +575,7 @@ impl ImportSpec for WrongAlbum {
             .landing
             .audio
             .iter()
-            .filter(|file| !file.tag.album.trim().is_empty())
+            .filter(|file| !album_tag(file).is_empty())
             .collect();
         if tagged.is_empty() {
             return Verdict::accept();
@@ -592,7 +592,7 @@ impl ImportSpec for WrongAlbum {
                 let same_artist = artist.trim().is_empty()
                     || words(artist).iter().any(|word| artist_words.contains(word));
                 same_artist
-                    && content_words(&file.tag.album, &artist_words)
+                    && content_words(album_tag(file), &artist_words)
                         .iter()
                         .any(|word| !wanted.contains(word))
             })

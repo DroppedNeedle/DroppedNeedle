@@ -105,11 +105,11 @@ droppedneedle_kernel::sql! {
         FROM library_album_takeovers WHERE local_album_id = ?1 \
         AND NOT EXISTS (SELECT 1 FROM library_management_exclusions \
         WHERE local_album_id = ?1) LIMIT 1";
-    /// The live copy one release group names: the oldest with files, else
-    /// the oldest.
+    /// The live copy one release group names: one with files first, then
+    /// one picked by hand, then the oldest.
     pub(crate) ALBUM_BY_GROUP = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS
         + " WHERE ae.release_group_mbid = ? AND " + (live_album!("a"))
-        + " GROUP BY a.id ORDER BY " + (copy_order!("a")) + " LIMIT 1";
+        + " GROUP BY a.id ORDER BY " + (copy_order!("a", "ae")) + " LIMIT 1";
     /// Other live albums of an album's release group, oldest first.
     pub(crate) ALBUM_COPIES = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS
         + " WHERE ae.release_group_mbid = \
@@ -467,11 +467,11 @@ droppedneedle_kernel::sql! {
     /// lowercase release.
     family OWNERS_BY_RELEASE = owners_by_release;
     /// The live copy of one release group (`?1`, lowercase) when no copy is
-    /// owned: the oldest copy with files, else the oldest copy.
+    /// owned: one with files first, then one picked by hand, then the oldest.
     pub(crate) LIVE_COPY_BY_GROUP = "SELECT b.id FROM local_album_external_identities e \
         JOIN local_albums b ON b.id = e.local_album_id \
         WHERE lower(e.release_group_mbid) = ?1 AND " + (musicbrainz!("e")) + " AND "
-        + (live_album!("b")) + " ORDER BY " + (copy_order!("b")) + " LIMIT 1";
+        + (live_album!("b")) + " ORDER BY " + (copy_order!("b", "e")) + " LIMIT 1";
 
     /// Every identified artist credited on an owned album: lowercase MBID
     /// and display name, by name.
@@ -542,7 +542,7 @@ droppedneedle_kernel::sql! {
         FROM local_album_external_identities e \
         JOIN local_albums b ON b.id = e.local_album_id \
         WHERE lower(e.release_group_mbid) = ? AND " + (musicbrainz!("e")) + " AND "
-        + (live_album!("b")) + " ORDER BY " + (copy_order!("b")) + " LIMIT 1";
+        + (live_album!("b")) + " ORDER BY " + (copy_order!("b", "e")) + " LIMIT 1";
     /// The catalog pages' tracks of one album: disc, track and title order.
     pub(crate) LOCAL_ALBUM_TRACKS = "SELECT " + TRACK_COLUMNS + " " + TRACK_JOINS
         + " WHERE t.local_album_id = ? AND t.availability = 'indexed' \

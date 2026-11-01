@@ -12,7 +12,7 @@
 
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_library::identity::DecisionSource;
-use droppedneedle_library::identity::reads::{Pick, copy_for_group};
+use droppedneedle_library::identity::reads::copy_for_group;
 use serde::{Deserialize, Serialize};
 
 use crate::requests::sql;
@@ -58,10 +58,10 @@ pub struct ChosenEdition {
     pub basis: EditionBasis,
 }
 
-/// The chosen edition of the library's copy of one release group, or
-/// `None` when the library holds no copy with a known release. Several
-/// copies of one group read as a chosen copy first, then the oldest one,
-/// as the album page does.
+/// The chosen edition of the library's copy of one release group: the copy
+/// the album page shows ([`copy_for_group`]), so a download joins the copy a
+/// person sees. `None` when the library holds no copy, or that copy names no
+/// release (left unmanaged); another copy's release does not stand in.
 pub async fn chosen_edition(
     db: &Db,
     release_group_mbid: &str,
@@ -69,7 +69,7 @@ pub async fn chosen_edition(
     let release_group_mbid = release_group_mbid.trim().to_owned();
     let copy = db
         .read("acquire.edition.chosen", move |conn| {
-            copy_for_group(conn, &release_group_mbid, Pick::WithRelease).map_err(DbError::from)
+            copy_for_group(conn, &release_group_mbid).map_err(DbError::from)
         })
         .await?;
     Ok(copy.and_then(|copy| pick(copy.release_mbid.as_deref(), copy.source)))

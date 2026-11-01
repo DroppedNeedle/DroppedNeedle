@@ -413,17 +413,15 @@ droppedneedle_kernel::sql! {
     /// Users with a live ListenBrainz link.
     pub(crate) LISTENBRAINZ_USERS = "SELECT user_id FROM user_connections \
          WHERE service = 'listenbrainz' AND enabled = 1 ORDER BY user_id";
-    /// The library copy of group `?1` a fetch with no plan is for: album
-    /// `?2` followed to the album it was merged into, else the group's copy
-    /// with an edition, a person's first, then the oldest.
+    /// The copy of group `?1` a fetch for album `?2` is for: that album,
+    /// followed to the album it was merged into, with the release it names.
     pub(crate) PLANNED_COPY = "SELECT e.local_album_id, e.release_mbid \
          FROM local_album_external_identities e \
          JOIN local_albums b ON b.id = e.local_album_id \
          WHERE b.retired_into_album_id IS NULL AND e.provider = 'musicbrainz' \
            AND lower(e.release_group_mbid) = ?1 AND trim(e.release_mbid) <> '' \
-           AND (?2 IS NULL OR e.local_album_id = (SELECT COALESCE(retired_into_album_id, id) \
-             FROM local_albums WHERE id = ?2)) \
-         ORDER BY e.decision_source <> 'manual', b.created_at LIMIT 1";
+           AND e.local_album_id = (SELECT COALESCE(retired_into_album_id, id) \
+             FROM local_albums WHERE id = ?2)";
     /// Whether the app leaves album `?1`'s files as they are.
     pub(crate) COPY_IS_HELD = "SELECT EXISTS(SELECT 1 FROM library_management_exclusions \
          WHERE local_album_id = ?1) \

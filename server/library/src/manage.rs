@@ -1141,6 +1141,7 @@ pub(crate) fn publish_error(error: PublishError) -> ServiceError {
     match error {
         PublishError::Collision(detail)
         | PublishError::Validation(detail)
+        | PublishError::JoinChanged(detail)
         | PublishError::Snapshot(detail)
         | PublishError::Journal(detail)
         | PublishError::Catalog(detail)

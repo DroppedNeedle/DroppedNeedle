@@ -487,6 +487,9 @@ impl LandingLibrary for LibraryLanding {
                 }),
                 Err(ImportError::LocalFault(detail)) => Err(ImportFailure::LocalFault(detail)),
                 Err(ImportError::Occupied(detail)) => Err(ImportFailure::Occupied(detail)),
+                Err(ImportError::LibraryChanged(detail)) => {
+                    Err(ImportFailure::LibraryChanged(detail))
+                }
                 Err(ImportError::NamingScript(detail)) => Err(ImportFailure::NamingScript(detail)),
                 Err(ImportError::FolderMissing(folder)) => {
                     Err(ImportFailure::FolderMissing(folder))

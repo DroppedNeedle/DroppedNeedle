@@ -81,10 +81,10 @@ use super::publish::import_staging::{
 };
 use super::publish::paths::{ResolvedRoot, left_out};
 use super::publish::planner::{
-    AlbumJoin, Capability, JoinedTrack, PlanBundle, PlanItem, PlanKind, ReleaseIdentity, Removal,
-    RemoveItem, SealRecheck, SealedPreview,
+    AlbumJoin, Capability, CopySeal, JoinedTrack, PlanBundle, PlanItem, PlanKind, ReleaseIdentity,
+    Removal, RemoveItem, SealRecheck, SealedPreview,
 };
-use super::publish::publisher::{JoinedAlbum, joined_album};
+use super::publish::publisher::{JoinedAlbum, copy_folder, joined_album};
 use super::publish::remove::{self, Probe, Refusal, Target};
 use super::publish::snapshots::sha256_hex;
 use super::publish::{PublishError, TagUpdates};
@@ -198,6 +198,9 @@ pub enum ImportError {
     LocalFault(String),
     /// A file already sits where an imported file would go.
     Occupied(String),
+    /// The album the files join, or the folder its copy sits in, is no
+    /// longer as the import planned. Nothing landed; plan it again.
+    LibraryChanged(String),
     /// The import naming script gave no usable path for a file.
     NamingScript(String),
     /// The library folder the files go to is not there (the folder).
@@ -237,6 +240,9 @@ struct Placement {
     /// The tracks this file replaces, read before the publish lock, or
     /// why one of them cannot be taken away.
     replaces: Result<Vec<Target>, String>,
+    /// The folder of the joined album's copy that the placement went by,
+    /// which the commit checks again.
+    copy_folder: Option<(String, String)>,
 }
 
 /// Finished downloads brought into the library, and the MusicBrainz and
@@ -435,24 +441,26 @@ impl Imports {
                 .unwrap_or_else(|| dest.to_owned())
         };
         // A join's folders are judged by where its files land, beside
-        // their copy; the publish lock reads the copy again.
-        let early_folders: Vec<Option<(String, String)>> = match &join {
-            Some(join) => self
-                .db
-                .read_blocking("import.join_folders", |conn| {
-                    let joined = joined_album(conn, join)?;
-                    let mut folders = Vec::with_capacity(sources.len());
-                    for (_, track, _) in &sources {
-                        folders.push(match &joined {
-                            Some(joined) => copy_folder(conn, &joined.album_id, track.disc)?,
-                            None => None,
-                        });
-                    }
-                    Ok::<_, PublishError>(folders)
-                })
-                .map_err(store_fault)?,
-            None => vec![None; sources.len()],
-        };
+        // their copy; the publish lock reads the copy again and refuses a
+        // plan it no longer holds.
+        let (early_joined, early_folders): (Option<JoinedAlbum>, Vec<Option<(String, String)>>) =
+            match &join {
+                Some(join) => self
+                    .db
+                    .read_blocking("import.join_folders", |conn| {
+                        let joined = joined_album(conn, join)?;
+                        let mut folders = Vec::with_capacity(sources.len());
+                        for (_, track, _) in &sources {
+                            folders.push(match &joined {
+                                Some(joined) => copy_folder(conn, &joined.album_id, track.disc)?,
+                                None => None,
+                            });
+                        }
+                        Ok::<_, PublishError>((joined, folders))
+                    })
+                    .map_err(store_fault)?,
+                None => (None, vec![None; sources.len()]),
+            };
         let (root, dests) = match tagged {
             Some(chosen) => chosen,
             None => {
@@ -515,6 +523,7 @@ impl Imports {
                 policy: root.policy,
                 track_id: String::new(),
                 replaces,
+                copy_folder: None,
             });
         }
 
@@ -594,6 +603,18 @@ impl Imports {
                 Ok::<_, PublishError>((joined, folders))
             })
             .map_err(store_fault)?;
+        if joined != early_joined || folders != early_folders {
+            tracing::info!(
+                task_dir,
+                "a landing is planned again: the album it joins changed"
+            );
+            return Err(ImportError::LibraryChanged(
+                "the album these files join changed".to_owned(),
+            ));
+        }
+        for (placement, folder) in placements.iter_mut().zip(&folders) {
+            placement.copy_folder.clone_from(folder);
+        }
         // When the copy sits in another library folder, the files go
         // there, staged there too, if that folder is there, takes managed
         // writes and leaves none of them excluded; else they stay in the
@@ -829,6 +850,7 @@ impl Imports {
             ingest_source: import.origin.as_str().to_owned(),
             join: join.clone(),
             track: None,
+            copy_seal: None,
         };
         let result = (|| {
             let mut items = Vec::with_capacity(placements.len());
@@ -871,6 +893,10 @@ impl Imports {
                     adopt: Some(super::publish::planner::Adoption {
                         source_path: Some(placement.source.to_string_lossy().into_owned()),
                         track: joined_track(track),
+                        copy_seal: join.is_some().then(|| CopySeal {
+                            disc: track.disc,
+                            folder: placement.copy_folder.clone(),
+                        }),
                         ..dest_policy(placement.policy)
                     }),
                     replaces: None,
@@ -931,6 +957,9 @@ impl Imports {
                 .publish(&sealed, &live, &BTreeMap::new())
                 .map_err(|error| match error {
                     PublishError::Collision(detail) => ImportError::Occupied(detail.message),
+                    PublishError::JoinChanged(detail) => {
+                        ImportError::LibraryChanged(detail.message)
+                    }
                     other => store_fault(other),
                 })?;
             Ok(sealed.bundle)
@@ -1356,44 +1385,4 @@ fn group_held(conn: &rusqlite::Connection, group: &str) -> rusqlite::Result<bool
         rusqlite::params![group.to_ascii_lowercase()],
         |row| row.get(0),
     )
-}
-
-/// The library folder and the one folder in it that hold the album's
-/// indexed files on `disc` (all of its indexed files when none is on that
-/// disc). `None` when they sit in several folders or at the top of a
-/// library folder.
-fn copy_folder(
-    conn: &rusqlite::Connection,
-    album_id: &str,
-    disc: u32,
-) -> rusqlite::Result<Option<(String, String)>> {
-    let rows: Vec<(String, String, i64)> = conn
-        .prepare(
-            "SELECT root_id, relative_path, disc_number FROM local_tracks \
-             WHERE local_album_id = ?1 AND availability = 'indexed'",
-        )?
-        .query_map(rusqlite::params![album_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?
-        .collect::<rusqlite::Result<_>>()?;
-    let disc = i64::from(disc.max(1));
-    let on_disc: Vec<&(String, String, i64)> =
-        rows.iter().filter(|row| row.2.max(1) == disc).collect();
-    let files = if on_disc.is_empty() {
-        rows.iter().collect()
-    } else {
-        on_disc
-    };
-    let mut folders = files.iter().map(|(root, rel, _)| {
-        let folder = Path::new(rel)
-            .parent()
-            .map(|parent| parent.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        (root.as_str(), folder)
-    });
-    let Some(first) = folders.next() else {
-        return Ok(None);
-    };
-    let one = folders.all(|folder| folder == first);
-    Ok((one && !first.1.is_empty()).then(|| (first.0.to_owned(), first.1)))
 }

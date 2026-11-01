@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use super::extract::LOOSE_UNIT_NAME;
 use crate::landing::matching::{
-    FoundRelease, MatchState, MatchSummary, choose, find, local_album, merged_recordings,
+    FoundRelease, MatchState, MatchSummary, album_tag, choose, find, local_album, merged_recordings,
 };
 use crate::landing::ports::LandingLibrary;
 use crate::landing::probe::Landing;
@@ -145,7 +145,7 @@ fn names(landing: &Landing, folder: &str) -> (String, String) {
             .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(a.0)))
             .map(|(value, _)| value.to_owned())
     };
-    let album = common(landing.audio.iter().map(|f| f.tag.album.trim()).collect());
+    let album = common(landing.audio.iter().map(album_tag).collect());
     let artist = common(
         landing
             .audio
