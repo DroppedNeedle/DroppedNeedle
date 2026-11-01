@@ -1,5 +1,5 @@
 import { page } from 'vitest/browser';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, onTestFinished } from 'vitest';
 import { fakeApi, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
@@ -119,18 +119,28 @@ const withAlbums: SearchResponse = {
 
 describe('search page album covers', () => {
 	it('asks for no cover the server says is missing and shows the placeholder', async () => {
-		const api = fakeApi({ 'GET /api/v3/search': withAlbums });
+		fakeApi({ 'GET /api/v3/search': withAlbums });
+		// The cover has no file here, so its image can fail and leave the page
+		// before a locator sees it: note each image as it arrives.
+		const asked: string[] = [];
+		const images = new MutationObserver((records) => {
+			for (const node of records.flatMap((record) => [...record.addedNodes])) {
+				if (!(node instanceof Element)) continue;
+				const found = node instanceof HTMLImageElement ? [node] : node.getElementsByTagName('img');
+				for (const image of found) asked.push(image.src);
+			}
+		});
+		images.observe(document.body, { childList: true, subtree: true });
+		onTestFinished(() => images.disconnect());
 		await renderWithQuery(SearchPage, { data: { query: 'someone' } });
 
-		await expect
-			.element(page.getByRole('img', { name: 'Kitchen Tapes' }))
-			.toHaveAttribute('src', expect.stringContaining('/library/albums/album-art/artwork'));
 		const bare = page.getByRole('link', { name: 'Open Home Demos' });
 		await expect.element(bare.getByTestId('cover-placeholder')).toBeInTheDocument();
 		await expect.element(page.getByRole('img', { name: 'Home Demos' })).not.toBeInTheDocument();
-		expect(api.calls().map((call) => call.url.pathname)).not.toContainEqual(
-			expect.stringContaining('/artwork')
-		);
+		await expect
+			.poll(() => asked)
+			.toContainEqual(expect.stringContaining('/library/albums/album-art/artwork'));
+		expect(asked).not.toContainEqual(expect.stringContaining('/library/albums/album-bare/'));
 	});
 });
 
