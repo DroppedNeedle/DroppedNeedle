@@ -185,10 +185,22 @@ impl LibraryManagementService {
     }
 
     /// What a first read would seed, stored nowhere: the base of the repair
-    /// view and of the save that replaces an unreadable row.
+    /// view and of the save that replaces an unreadable row. A retention
+    /// the row still holds in range stays, so that save cannot shorten it
+    /// and delete bin copies early.
     fn seeded(&self) -> Result<LibraryManagement, SettingsError> {
+        let defaults = LibraryManagement::default();
+        let recycle_retention_days = self
+            .store
+            .stored_field("library_management", "recycle_retention_days")
+            .and_then(|days| days.as_i64())
+            .filter(|days| (1..=3650).contains(days))
+            .unwrap_or(defaults.recycle_retention_days);
         migrated(
-            &LibraryManagement::default(),
+            &LibraryManagement {
+                recycle_retention_days,
+                ..defaults
+            },
             &self.library()?.naming_script,
         )
     }
@@ -630,9 +642,11 @@ fn migrated(
     naming_template: &str,
 ) -> Result<LibraryManagement, SettingsError> {
     let mut settings = if stored.profiles.is_empty() {
-        // Seeding keeps a recycle bin moved in before the first read.
+        // Seeding keeps a recycle bin and retention moved in before the
+        // first read.
         LibraryManagement {
             recycle_bin_path: stored.recycle_bin_path.clone(),
+            recycle_retention_days: stored.recycle_retention_days,
             ..initial_settings(naming_template)
         }
     } else {

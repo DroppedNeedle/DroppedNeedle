@@ -1915,18 +1915,6 @@ impl Management {
                 return Ok(());
             };
             if failure.is_none()
-                && let Ok(recycled) = self
-                    .parts
-                    .db
-                    .read_blocking("management.replaced_files", |conn| {
-                        Ok::<_, ManagementError>(store::replaced_files(conn, &bundle_id)?)
-                    })
-                && !recycled.is_empty()
-                && let Some(result) = result.as_object_mut()
-            {
-                result.insert("recycled_to".to_owned(), serde_json::json!(recycled));
-            }
-            if failure.is_none()
                 && let Some(extra) = self.after_album(&snapshot, ordinal)
                 && let (Some(result), serde_json::Value::Object(extra)) =
                     (result.as_object_mut(), extra)

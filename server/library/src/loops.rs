@@ -545,8 +545,8 @@ impl Publishing {
         Ok(purged)
     }
 
-    /// One recycle-bin expiry pass, on the retention the download settings
-    /// give now. Skipped while those or the library settings cannot be
+    /// One recycle-bin expiry pass, on the retention Library Management
+    /// gives now. Skipped while those or the library settings cannot be
     /// read, while the library is switched off, or while an empty of the
     /// bin runs. The deletes wait for the publish lock, so no put-back or
     /// removal is reading a copy while it goes. `go_on` is asked between
@@ -558,11 +558,11 @@ impl Publishing {
         let Some(_one) = self.expiry.try_one_pass() else {
             return Ok(ExpiryReport::default());
         };
-        let Some(policy) = self.settings.download_policy.read() else {
+        let Some(management) = self.settings.management.read() else {
             return Ok(ExpiryReport::default());
         };
         let pass = ExpiryPass {
-            retention_days: policy.recycle_retention_days,
+            retention_days: management.recycle_retention_days,
             now_ms: self.core.clock.now_ms(),
             page: RECYCLE_EXPIRY_PAGE,
             due_before_ms: None,

@@ -309,7 +309,8 @@
 						<div class="min-w-0 flex-1 space-y-2">
 							<p>
 								The saved settings can't be read, so removals, upgrades and automation wait. Saving
-								replaces them with what's shown here.
+								replaces them with what's shown here. Bin files older than {draft.recycle_retention_days}
+								{draft.recycle_retention_days === 1 ? 'day' : 'days'} are deleted after you save.
 							</p>
 							<Button
 								variant="warning"
@@ -376,6 +377,13 @@
 								<p class="min-w-0 flex-1">{settings.query.data.recycle_bin_warning}</p>
 							</div>
 						{/if}
+						<NumberField
+							label="Recycle bin retention (days)"
+							help="Files in the recycle bin are deleted after this long."
+							min={1}
+							max={3650}
+							bind:value={draft.recycle_retention_days}
+						/>
 						<NumberField
 							label="Undo snapshots (days)"
 							min={1}

@@ -336,6 +336,13 @@ impl ConfigStore {
         Ok(section)
     }
 
+    /// One field of a section as stored, whether or not the section decodes.
+    #[must_use]
+    pub fn stored_field(&self, key: &str, field: &str) -> Option<serde_json::Value> {
+        self.entry(key)
+            .and_then(|entry| entry.value.get(field).cloned())
+    }
+
     /// The stored revision of one section, 0 when it has never been stored.
     #[must_use]
     pub fn revision(&self, key: &str) -> i64 {

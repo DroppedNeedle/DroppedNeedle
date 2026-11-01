@@ -30,7 +30,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use droppedneedle_kernel::runtime_config::ingest::{move_recycle_bin, read_legacy};
+use droppedneedle_kernel::runtime_config::ingest::{
+    move_recycle_bin, move_recycle_retention, read_legacy,
+};
 use droppedneedle_kernel::runtime_config::sql as settings_sql;
 use droppedneedle_kernel::runtime_config::store::{decode_text, encode_text};
 use droppedneedle_kernel::runtime_config::{ConfigError, LegacyConfig};
@@ -705,6 +707,15 @@ fn stage_settings(
                 "v2's removals used the download policy's path, which replaces it".to_owned(),
             );
         }
+    }
+
+    if move_recycle_retention(staged_object) {
+        report.note(
+            "settings",
+            "library_management.recycle_retention_days".to_owned(),
+            "imported",
+            "moved from the download policy".to_owned(),
+        );
     }
 
     // The schedule carry fires whenever the export lacks the schedule: idempotent across

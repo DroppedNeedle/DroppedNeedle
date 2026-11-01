@@ -20,7 +20,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     IdentificationPolicy, LibraryRoot as StoredRoot, TypedLibrary,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, FilesystemWatcher, LibraryManagement, LibraryScanSchedule, MusicBrainzSettings,
+    FilesystemWatcher, LibraryManagement, LibraryScanSchedule, MusicBrainzSettings,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, UpdateError};
@@ -38,10 +38,9 @@ pub struct LibrarySettings {
     pub schedule_zone: TimeZone,
     /// The filesystem watcher.
     pub watcher: Live<FilesystemWatcher>,
-    /// Library Management's profiles, undo retention and recycle bin.
+    /// Library Management's profiles, undo retention, recycle bin and its
+    /// retention.
     pub management: Live<LibraryManagement>,
-    /// The recycle bin retention.
-    pub download_policy: Live<DownloadPolicy>,
     /// Edition preferences, for identification and management.
     pub editions: LivePreferences,
     /// The MusicBrainz source identification asks.
@@ -61,7 +60,6 @@ impl LibrarySettings {
             schedule_zone: schedule_zone(timezone),
             watcher: config.live(),
             management: config.live(),
-            download_policy: config.live(),
             editions: LivePreferences::new(config),
             musicbrainz: config.live(),
             store: config.clone(),

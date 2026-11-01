@@ -1267,6 +1267,7 @@ async fn removed_settings_import_and_are_reported() {
         "flac_mp3_only": true,
         "verify_downloads": true,
         "recycle_bin_path": "/srv/bin",
+        "recycle_retention_days": 12,
         "quality_recipe": [
             {"format": "mp3", "quality": "custom", "min_bitrate_kbps": 192,
              "target_bitrate_kbps": 256, "max_bitrate_kbps": 320},
@@ -1321,14 +1322,55 @@ async fn removed_settings_import_and_are_reported() {
         serde_json::from_value(stored["download_policy"].clone()).expect("the policy decodes");
     assert_eq!(policy.quality_recipe[0].max_bitrate_kbps, Some(320));
     assert!(stored["download_policy"].get("recycle_bin_path").is_none());
+    assert!(
+        stored["download_policy"]
+            .get("recycle_retention_days")
+            .is_none()
+    );
     assert_eq!(
         stored["library_management"],
-        json!({"recycle_bin_path": "/srv/bin"})
+        json!({"recycle_bin_path": "/srv/bin", "recycle_retention_days": 12})
     );
 }
 
 /// With a blank download policy path, the path a person set in v2's Library
 /// Management stays.
+#[tokio::test]
+async fn a_null_section_neither_loses_nor_invents_a_retention() {
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    export["settings"]["download_policy"] = json!({"recycle_retention_days": 365});
+    export["settings"]["library_management"] = Value::Null;
+    let pool = migrated_pool().await;
+    let (_dir, config_path, crypto) = scratch_config("null-management");
+    let report = run_import(import_request(&export, pool.clone(), config_path, crypto)).await;
+    assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
+    assert_eq!(
+        stored_settings(&pool).await["library_management"]["recycle_retention_days"],
+        365
+    );
+
+    let mut export = fixture.shell();
+    export["settings"]["download_policy"] = Value::Null;
+    let pool = migrated_pool().await;
+    let (_dir, config_path, crypto) = scratch_config("null-policy");
+    let report = run_import(import_request(&export, pool.clone(), config_path, crypto)).await;
+    assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
+    assert!(
+        !report
+            .to_json()
+            .to_string()
+            .contains("recycle_retention_days"),
+        "{}",
+        report.to_json()
+    );
+    assert!(
+        stored_settings(&pool).await["library_management"]
+            .get("recycle_retention_days")
+            .is_none()
+    );
+}
+
 #[tokio::test]
 async fn a_chosen_bin_stays_when_the_download_policy_names_none() {
     let fixture = Fixture::shared();
@@ -1347,6 +1389,12 @@ async fn a_chosen_bin_stays_when_the_download_policy_names_none() {
         "/srv/chosen"
     );
     assert!(stored["download_policy"].get("recycle_bin_path").is_none());
+    assert!(
+        stored["library_management"]
+            .get("recycle_retention_days")
+            .is_none(),
+        "with none stored, the default holds"
+    );
 }
 
 #[tokio::test]

@@ -42792,7 +42792,7 @@
       },
       "DownloadPolicy": {
         "type": "object",
-        "description": "Download policy: quality tiers, recipe v2, timeouts, retry, retention,\nrecycle bin retention, quotas, and the upgrade scan.",
+        "description": "Download policy: quality tiers, recipe v2, timeouts, retry, retention,\nquotas, and the upgrade scan.",
         "properties": {
           "auto_retry_base_interval_minutes": {
             "type": "integer",
@@ -42935,12 +42935,6 @@
             },
             "description": "Closed v2 quality recipe (empty means a v1 policy).",
             "default": []
-          },
-          "recycle_retention_days": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Recycle retention in days.",
-            "default": 30
           },
           "required_terms": {
             "type": "array",
@@ -49293,6 +49287,12 @@
             "type": "string",
             "description": "The recycle bin folder removed and replaced files go to (\"\" uses\neach library folder's own `.recycle`).",
             "default": ""
+          },
+          "recycle_retention_days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Days a copy stays in the recycle bin, from 1 to 3650. A stored value\noutside that does not decode: expiry deletes on it, so it waits.",
+            "default": 30
           },
           "root_assignments": {
             "type": "array",

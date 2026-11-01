@@ -10,8 +10,9 @@
 //!   decrypted, so every secret stays the ciphertext it was), except that
 //!   each download policy recipe step loses `target_bitrate_kbps`, a field
 //!   that was removed and that the step's strict decode would refuse, and
-//!   the download policy's `recycle_bin_path` moves to Library Management
-//!   ([`move_recycle_bin`]);
+//!   the download policy's `recycle_bin_path` and `recycle_retention_days`
+//!   move to Library Management ([`move_recycle_bin`],
+//!   [`move_recycle_retention`]);
 //! - unknown and dropped keys are not copied, and the record names them;
 //! - the record (`config_ingests`) is written in the same transaction, so a
 //!   crash before the commit repeats the copy and one after it stops it.
@@ -193,6 +194,7 @@ fn parse_file(path: &Path) -> Result<LegacyFile, ConfigError> {
         return Err(refused("it is not a JSON object".to_owned()));
     };
     move_recycle_bin(&mut object);
+    move_recycle_retention(&mut object);
     let mut rows = Vec::new();
     let mut left_behind = Vec::new();
     for (key, mut value) in object {
@@ -267,6 +269,36 @@ pub fn move_recycle_bin(
         .and_then(|old| old.as_str().map(str::to_owned))
         .filter(|old| !old.trim().is_empty() && path.as_str() != Some(old));
     Some(BinMoved { replaced })
+}
+
+/// Move the download policy's `recycle_retention_days` to Library
+/// Management in a settings object keyed by section, as it was stored, so a
+/// value that does not read still does not read there and expiry waits. A
+/// policy that is not an object may have held one, so Library Management
+/// gets a null, which does not read either. True when anything moved. With
+/// no value there, a retention Library Management holds stays. The v2
+/// import uses it too.
+pub fn move_recycle_retention(object: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+    const FIELD: &str = "recycle_retention_days";
+    let days = match object.get_mut(DownloadPolicy::KEY) {
+        None | Some(serde_json::Value::Null) => return false,
+        Some(serde_json::Value::Object(policy)) => match policy.remove(FIELD) {
+            Some(days) => days,
+            None => return false,
+        },
+        Some(_) => serde_json::Value::Null,
+    };
+    let management = object
+        .entry(LibraryManagement::KEY)
+        .or_insert(serde_json::Value::Null);
+    if management.is_null() {
+        *management = serde_json::Value::Object(serde_json::Map::new());
+    }
+    let Some(management) = management.as_object_mut() else {
+        return false;
+    };
+    management.insert(FIELD.to_owned(), days);
+    true
 }
 
 /// Run the one-time copy for a store opening on `db`. See the module doc.

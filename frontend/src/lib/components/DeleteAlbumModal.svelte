@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getDownloadPolicyQuery } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+	import { getLibraryManagementSettingsQuery } from '$lib/queries/library-management/LibraryManagementQueries.svelte';
 	import { removeLibraryAlbum } from '$lib/queries/library/LibraryMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
@@ -18,10 +18,15 @@
 	let removing = $state(false);
 	let stopWanted = $state(true);
 	const removal = removeLibraryAlbum();
-	// How long the recycle bin keeps the files, from the download settings.
-	const policyQuery = getDownloadPolicyQuery(() => authStore.isAdmin);
+	// How long the recycle bin keeps the files. Settings that cannot be read
+	// open with the starting values, so they say nothing here.
+	const settingsQuery = getLibraryManagementSettingsQuery(
+		() => authStore.user?.id,
+		() => authStore.isAdmin
+	);
 	const keptFor = $derived.by(() => {
-		const days = policyQuery.data?.recycle_retention_days;
+		const settings = settingsQuery.data;
+		const days = settings?.settings_unreadable ? undefined : settings?.recycle_retention_days;
 		return days ? ` for ${days} ${days === 1 ? 'day' : 'days'}` : '';
 	});
 

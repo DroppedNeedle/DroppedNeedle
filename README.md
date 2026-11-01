@@ -309,7 +309,7 @@ Where things live in the UI:
 | Setting | Location |
 |-|-|
 | Library paths, import naming script, scan schedule, folder watching, AcoustID key | Settings > Library |
-| Library Management profiles, previews, recovery, the recycle bin folder | Library Management (admin) |
+| Library Management profiles, previews, recovery, the recycle bin folder and retention | Library Management (admin) |
 | Download clients (slskd, SABnzbd), source priority, quality tiers, picking a copy, wanted watcher | Settings > Download Client |
 | Newznab indexers or Prowlarr | Settings > Indexers / Prowlarr |
 | Edition preferences, managing unconfirmed matches | Settings > Editions |
@@ -341,7 +341,7 @@ Where things live in the UI:
 | Outbound provider calls, rate limits and background jobs | Settings > Diagnostics |
 | Discover queue and top picks tuning | Settings > Advanced |
 | Request history, ignored albums and clean-up interval | Settings > Advanced |
-| Recycle bin retention and Usenet retention days | Settings > Download Client |
+| Usenet retention days | Settings > Download Client |
 
 ---
 

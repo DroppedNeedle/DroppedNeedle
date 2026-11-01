@@ -153,9 +153,9 @@ pub async fn list_recycle_bin(
     let paging = PageRequest::read(query.limit, query.cursor.as_deref(), 50, 100)?;
     let retention_days = state
         .settings
-        .download_policy
+        .management
         .read()
-        .map(|policy| policy.recycle_retention_days.max(0));
+        .map(|management| management.recycle_retention_days);
     let (page, bins_known) = blocking(move || {
         let sandbox = state.expiry_sandbox();
         bin_contents::page(&state.db, sandbox.as_ref(), paging.after, paging.limit)

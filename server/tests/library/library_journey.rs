@@ -4169,7 +4169,10 @@ async fn an_unreadable_section_can_be_repaired_from_the_page() {
     .expect("admin row");
     let store = library.settings.store();
     store
-        .replace_stored_for_test("library_management", r#"{"profiles":"not a list"}"#)
+        .replace_stored_for_test(
+            "library_management",
+            r#"{"profiles":"not a list","recycle_retention_days":365}"#,
+        )
         .expect("row broken");
 
     let refused = Mutations::new(&library).remove_track_now(&track, true, "admin");
@@ -4184,11 +4187,17 @@ async fn an_unreadable_section_can_be_repaired_from_the_page() {
     let view = service.get_settings().expect("the page opens");
     assert!(view.settings_unreadable);
     assert!(!view.settings.profiles.is_empty(), "a seeded view");
+    assert_eq!(
+        view.settings.recycle_retention_days, 365,
+        "a save never shortens a retention it can still read"
+    );
     let saved = service
         .save_settings(view.settings.clone(), &view.settings_revision)
         .expect("the save replaces the row");
     assert!(!saved.settings_unreadable);
-    assert!(!service.get_settings().unwrap().settings_unreadable);
+    let reread = service.get_settings().unwrap();
+    assert!(!reread.settings_unreadable);
+    assert_eq!(reread.settings.recycle_retention_days, 365);
 
     Mutations::new(&library)
         .remove_track_now(&track, true, "admin")
@@ -5035,6 +5044,58 @@ fn left_bin(conn: &rusqlite::Connection, journal_id: &str) -> bool {
         |row| row.get(0),
     )
     .expect("row")
+}
+
+/// Expiry deletes on Library Management's retention, and while that retention
+/// does not read, or is out of range, it deletes nothing rather than use a
+/// default.
+#[tokio::test]
+async fn expiry_waits_on_a_retention_that_does_not_read() {
+    use droppedneedle_library::mutations::Mutations;
+
+    let (scratch, library, music) = bare_library("lib-retention-waits").await;
+    plant(&music, "A/01.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let track = library
+        .scan_store
+        .track_at("music", "A/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    Mutations::new(&library)
+        .remove_track_now(&track, true, "admin")
+        .expect("track removed");
+    let (copy, row) = copy_of(&conn, &track);
+    conn.execute(
+        "UPDATE library_publish_replacements SET recycled_at = recycled_at - 40 * 86400",
+        [],
+    )
+    .expect("the copy is 40 days old");
+    let tick_with = |stored: &str| {
+        library
+            .settings
+            .store()
+            .replace_stored_for_test("library_management", stored)
+            .expect("row stored");
+        library
+            .publishing
+            .recycle_expiry_tick(&|| true)
+            .expect("expiry runs");
+    };
+
+    for stored in [
+        r#"{"recycle_retention_days":"soon"}"#,
+        r#"{"recycle_retention_days":0}"#,
+        r#"{"recycle_retention_days":50}"#,
+    ] {
+        tick_with(stored);
+        assert!(copy.exists(), "{stored} keeps the copy");
+        assert!(!left_bin(&conn, &row), "{stored} keeps the row");
+    }
+    tick_with(r#"{"recycle_retention_days":30}"#);
+    assert!(!copy.exists(), "past the retention it goes");
+    assert!(left_bin(&conn, &row));
 }
 
 /// Emptying the bin deletes, however young, every copy that reached it

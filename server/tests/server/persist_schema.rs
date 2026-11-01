@@ -8006,7 +8006,7 @@ async fn the_recycle_bin_path_moves_to_library_management_on_upgrade() {
     use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, LibraryManagement};
 
     let policy =
-        r#"{"quality_min":"flac","recycle_bin_path":"/srv/bin","recycle_retention_days":12}"#;
+        r#"{"quality_min":"flac","recycle_bin_path":"/srv/bin","usenet_retention_days":12}"#;
     let upgraded = |rows: Vec<(&'static str, &'static str)>| async move {
         let pool = scratch_pool().await;
         run_migrations(&pool, &migrator_through(108)).await.unwrap();
@@ -8021,7 +8021,7 @@ async fn the_recycle_bin_path_moves_to_library_management_on_upgrade() {
             .await
             .unwrap();
         }
-        apply_migrations(&pool).await.unwrap();
+        run_migrations(&pool, &migrator_through(110)).await.unwrap();
         let stored: BTreeMap<String, (String, i64)> = sqlx::query_as::<_, (String, String, i64)>(
             "SELECT key, value_json, revision FROM config_sections",
         )
@@ -8034,7 +8034,7 @@ async fn the_recycle_bin_path_moves_to_library_management_on_upgrade() {
         let (policy, policy_revision) = &stored["download_policy"];
         assert!(!policy.contains("recycle_bin_path"), "{policy}");
         let policy: DownloadPolicy = serde_json::from_str(policy).expect("the policy decodes");
-        assert_eq!(policy.recycle_retention_days, 12);
+        assert_eq!(policy.usenet_retention_days, 12);
         let (text, revision) = &stored["library_management"];
         let management: LibraryManagement =
             serde_json::from_str(text).expect("Library Management decodes");
@@ -8067,7 +8067,7 @@ async fn the_recycle_bin_path_moves_to_library_management_on_upgrade() {
     let (management, revision, text, _) = upgraded(vec![
         (
             "download_policy",
-            r#"{"recycle_bin_path":" ","recycle_retention_days":12}"#,
+            r#"{"recycle_bin_path":" ","usenet_retention_days":12}"#,
         ),
         (
             "library_management",
@@ -8078,6 +8078,101 @@ async fn the_recycle_bin_path_moves_to_library_management_on_upgrade() {
     assert_eq!(management.recycle_bin_path, "", "removals keep .recycle");
     assert!(!text.contains("recycle_bin_path"), "{text}");
     assert_eq!((management.undo_retention_days, revision), (7, 5));
+}
+
+/// Migration 0113 moves the recycle bin retention to Library Management as
+/// it was stored. A value that survives reads there; one that did not read
+/// in the policy does not read there either, so expiry waits rather than
+/// deleting on the default. With no stored value nothing is written and the
+/// default holds.
+#[tokio::test]
+async fn the_recycle_retention_moves_to_library_management_on_upgrade() {
+    use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, LibraryManagement};
+
+    let upgraded = |rows: Vec<(&'static str, &'static str)>| async move {
+        let pool = scratch_pool().await;
+        run_migrations(&pool, &migrator_through(112)).await.unwrap();
+        for (key, value) in rows {
+            sqlx::query(
+                "INSERT INTO config_sections (key, value_json, revision, updated_at) \
+                 VALUES (?, ?, 4, 1700000000000)",
+            )
+            .bind(key)
+            .bind(value)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        apply_migrations(&pool).await.unwrap();
+        sqlx::query_as::<_, (String, String, i64)>(
+            "SELECT key, value_json, revision FROM config_sections",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(key, value, revision)| (key, (value, revision)))
+        .collect::<BTreeMap<String, (String, i64)>>()
+    };
+    let management = |text: &str| serde_json::from_str::<LibraryManagement>(text);
+
+    let policy = r#"{"quality_min":"flac","recycle_retention_days":12}"#;
+    let stored = upgraded(vec![("download_policy", policy)]).await;
+    let added = management(&stored["library_management"].0).expect("decodes");
+    assert_eq!(added.recycle_retention_days, 12);
+    assert_eq!(added.undo_retention_days, 90, "the rest reads as defaults");
+    assert_eq!(stored["library_management"].1, 1);
+    let (kept, revision) = &stored["download_policy"];
+    assert!(!kept.contains("recycle_retention_days"), "{kept}");
+    let kept: DownloadPolicy = serde_json::from_str(kept).expect("the policy decodes");
+    assert_eq!((kept.quality_min.as_str(), *revision), ("flac", 5));
+
+    let stored = upgraded(vec![
+        ("download_policy", policy),
+        ("library_management", r#"{"undo_retention_days":7}"#),
+    ])
+    .await;
+    let joined = management(&stored["library_management"].0).expect("decodes");
+    assert_eq!(
+        (joined.recycle_retention_days, joined.undo_retention_days),
+        (12, 7)
+    );
+    assert_eq!(stored["library_management"].1, 5);
+
+    for bad in [
+        r#"{"recycle_retention_days":"soon"}"#,
+        r#"{"recycle_retention_days":null}"#,
+        r#"{"recycle_retention_days":1.5}"#,
+        r#"{"recycle_retention_days":0}"#,
+        r#"["not an object"]"#,
+    ] {
+        let stored = upgraded(vec![("download_policy", bad)]).await;
+        assert!(
+            management(&stored["library_management"].0).is_err(),
+            "{bad} must not read as a retention"
+        );
+        let stored = upgraded(vec![
+            ("download_policy", bad),
+            ("library_management", r#"{"undo_retention_days":7}"#),
+        ])
+        .await;
+        assert!(
+            management(&stored["library_management"].0).is_err(),
+            "{bad} must not read as a retention over a stored row"
+        );
+    }
+
+    let stored = upgraded(vec![("download_policy", r#"{"quality_min":"flac"}"#)]).await;
+    assert!(!stored.contains_key("library_management"));
+    assert_eq!(stored["download_policy"].1, 4);
+    let stored = upgraded(vec![
+        ("download_policy", r#"{"quality_min":"flac"}"#),
+        ("library_management", r#"{"undo_retention_days":7}"#),
+    ])
+    .await;
+    let blank = management(&stored["library_management"].0).expect("decodes");
+    assert_eq!(blank.recycle_retention_days, 30);
+    assert_eq!(stored["library_management"].1, 4);
 }
 
 /// Migration 0108 makes marking a write handled move the scan fence: the

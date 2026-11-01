@@ -768,6 +768,9 @@ pub struct LibraryManagement {
     /// The recycle bin folder removed and replaced files go to ("" uses
     /// each library folder's own `.recycle`).
     pub recycle_bin_path: String,
+    /// Days a copy stays in the recycle bin, from 1 to 3650. A stored value
+    /// outside that does not decode: expiry deletes on it, so it waits.
+    pub recycle_retention_days: i64,
     /// The document these settings were decoded from, never written: an
     /// activation pinned against options since removed hashed them too,
     /// and a read needs their stored values to carry it.
@@ -802,6 +805,11 @@ impl<'de> Deserialize<'de> for LibraryManagement {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let document = serde_json::Value::deserialize(deserializer)?;
         let mut settings = Self::deserialize(&document).map_err(serde::de::Error::custom)?;
+        if !(1..=3650).contains(&settings.recycle_retention_days) {
+            return Err(serde::de::Error::custom(
+                "recycle_retention_days must be between 1 and 3650",
+            ));
+        }
         settings.as_read = AsRead(Some(std::sync::Arc::new(document)));
         Ok(settings)
     }
@@ -821,6 +829,7 @@ impl Default for LibraryManagement {
             preview_retention_hours: 24,
             external_refresh: ExternalRefreshSettings::default(),
             recycle_bin_path: String::new(),
+            recycle_retention_days: 30,
             as_read: AsRead::default(),
         }
     }

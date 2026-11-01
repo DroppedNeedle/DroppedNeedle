@@ -12831,7 +12831,7 @@ export interface components {
         };
         /**
          * @description Download policy: quality tiers, recipe v2, timeouts, retry, retention,
-         *     recycle bin retention, quotas, and the upgrade scan.
+         *     quotas, and the upgrade scan.
          */
         DownloadPolicy: {
             /**
@@ -12972,12 +12972,6 @@ export interface components {
              * @default []
              */
             quality_recipe: components["schemas"]["QualityRecipeEntry"][];
-            /**
-             * Format: int64
-             * @description Recycle retention in days.
-             * @default 30
-             */
-            recycle_retention_days: number;
             /**
              * @description Terms a candidate must carry.
              * @default []
@@ -15876,6 +15870,13 @@ export interface components {
              * @default
              */
             recycle_bin_path: string;
+            /**
+             * Format: int64
+             * @description Days a copy stays in the recycle bin, from 1 to 3650. A stored value
+             *     outside that does not decode: expiry deletes on it, so it waits.
+             * @default 30
+             */
+            recycle_retention_days: number;
             /**
              * @description Root assignments.
              * @default []

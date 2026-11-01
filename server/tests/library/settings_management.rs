@@ -547,7 +547,7 @@ fn an_old_download_policy_bin_is_library_managements() {
     std::fs::write(
         dir.join("config.json"),
         serde_json::json!({
-            "download_policy": { "recycle_bin_path": "/srv/bin" },
+            "download_policy": { "recycle_bin_path": "/srv/bin", "recycle_retention_days": 12 },
             "library_management": { "recycle_bin_path": "/srv/stale" },
         })
         .to_string(),
@@ -562,10 +562,50 @@ fn an_old_download_policy_bin_is_library_managements() {
         .expect("the section reads");
     assert!(!read.settings.profiles.is_empty(), "the first read seeds");
     assert_eq!(read.settings.recycle_bin_path, "/srv/bin");
+    assert_eq!(read.settings.recycle_retention_days, 12);
     let policy = store
         .stored_text("download_policy")
         .expect("the policy is stored");
     assert!(!policy.contains("recycle_bin_path"), "{policy}");
+    assert!(!policy.contains("recycle_retention_days"), "{policy}");
+}
+
+/// A null section in `config.json` holds nothing: a null Library Management
+/// still takes the policy's retention, and a null policy loses none, so
+/// nothing waits over a value that never existed.
+#[test]
+fn a_null_section_in_config_json_neither_loses_nor_invents_a_retention() {
+    use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+    use droppedneedle_library::management::settings::service::LibraryManagementService;
+    use std::sync::Arc;
+
+    for (name, document, days) in [
+        (
+            "null-policy",
+            serde_json::json!({ "download_policy": null }),
+            30,
+        ),
+        (
+            "null-management",
+            serde_json::json!({
+                "download_policy": { "recycle_retention_days": 365 },
+                "library_management": null,
+            }),
+            365,
+        ),
+    ] {
+        let dir = common::ScratchDir::new(name);
+        std::fs::write(dir.join("config.json"), document.to_string()).expect("config writes");
+        let store = Arc::new(
+            ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+                .expect("store opens"),
+        );
+        let read = LibraryManagementService::new(store)
+            .get_settings()
+            .expect("the section reads");
+        assert!(!read.settings_unreadable, "{name}");
+        assert_eq!(read.settings.recycle_retention_days, days, "{name}");
+    }
 }
 
 /// Scripts are checked by the compiler management runs them with. A

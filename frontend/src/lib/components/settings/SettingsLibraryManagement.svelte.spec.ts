@@ -200,6 +200,26 @@ describe('SettingsLibraryManagement', () => {
 			.not.toBeInTheDocument();
 	});
 
+	it('takes the recycle bin retention within the server bounds', async () => {
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await page.getByText('Recycle bin, retention and refresh').click();
+		const retention = page.getByRole('spinbutton', { name: 'Recycle bin retention (days)' });
+		await expect.element(retention).toHaveValue(30);
+		await expect.element(retention).toHaveAttribute('min', '1');
+		await expect.element(retention).toHaveAttribute('max', '3650');
+	});
+
+	it('names the retention a save over unreadable settings would apply', async () => {
+		h.settings = {
+			...h.settings,
+			data: { ...baseSettings(), settings_unreadable: true, recycle_retention_days: 365 }
+		};
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await expect
+			.element(page.getByText('Bin files older than 365 days are deleted after you save.'))
+			.toBeVisible();
+	});
+
 	it('surfaces a server-side activation dry run beside the save bar', async () => {
 		h.operations = {
 			data: {

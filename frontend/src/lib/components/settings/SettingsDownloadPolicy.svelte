@@ -201,14 +201,6 @@
 					<h3 class="font-medium">Retention</h3>
 					<div class="mt-3 grid gap-4 sm:grid-cols-2">
 						<NumberField
-							label="Recycle Bin Retention (days)"
-							help="Recycle bin files are deleted after this many days (default: 30)"
-							bind:value={draft.recycle_retention_days}
-							min={1}
-							max={3650}
-							error={section.fieldError('recycle_retention_days')}
-						/>
-						<NumberField
 							label="Usenet Retention (days)"
 							help="Skip Usenet releases older than this; 0 turns the check off (default: 0)"
 							bind:value={draft.usenet_retention_days}

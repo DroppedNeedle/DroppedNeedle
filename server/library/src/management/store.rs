@@ -740,18 +740,6 @@ pub fn results(
     })
 }
 
-/// Where in the recycle bin the files a bundle replaced went (or go,
-/// while its cleanup is pending).
-pub fn replaced_files(conn: &Connection, bundle_id: &str) -> rusqlite::Result<Vec<String>> {
-    let mut statement = conn.prepare(
-        "SELECT r.recycle_to FROM library_publish_replacements r \
-         JOIN library_publish_journal j ON j.id = r.journal_id \
-         WHERE j.bundle_id = ?1 ORDER BY r.journal_id",
-    )?;
-    let rows = statement.query_map(params![bundle_id], |row| row.get(0))?;
-    rows.collect()
-}
-
 /// An album's revision and its indexed files now.
 pub fn album_state(
     conn: &Connection,
