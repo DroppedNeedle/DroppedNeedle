@@ -278,6 +278,8 @@ pub struct Overlap {
     pub to: String,
     /// The real folder of `to`, which `yields` does not walk into.
     pub folder: PathBuf,
+    /// The folders `to` itself yields to other roots.
+    pub onward: Vec<PathBuf>,
 }
 
 impl Overlap {
@@ -344,9 +346,24 @@ pub fn overlaps(roots: &[LibraryRoot]) -> Vec<Overlap> {
                     from: my_folder.clone(),
                     to: other.id.clone(),
                     folder: their_folder.clone(),
+                    onward: Vec::new(),
                 });
             }
         }
+    }
+    let yielded_folders = |root: &str| -> Vec<PathBuf> {
+        found
+            .iter()
+            .filter(|overlap| overlap.yields == root)
+            .map(|overlap| overlap.folder.clone())
+            .collect()
+    };
+    let onward: Vec<Vec<PathBuf>> = found
+        .iter()
+        .map(|overlap| yielded_folders(&overlap.to))
+        .collect();
+    for (overlap, folders) in found.iter_mut().zip(onward) {
+        overlap.onward = folders;
     }
     found
 }
@@ -361,13 +378,23 @@ pub fn yielded_by(roots: &[LibraryRoot], root_id: &str) -> Vec<Overlap> {
 }
 
 /// Where a file of a yielding root at `relative` is indexed instead: the
-/// winning root and the path below it.
+/// winning root and the path below it. Among nested folders that is the
+/// root that does not itself yield the file, as only that root has a row
+/// for it. Should every winner yield it (each root losing a different
+/// shared folder), the first answers, so the file still counts as skipped
+/// and its row stays.
 pub fn yielded_home(yielded: &[Overlap], relative: &str) -> Option<(String, String)> {
-    yielded.iter().find_map(|overlap| {
-        overlap
-            .home(relative)
-            .map(|path| (overlap.to.clone(), path))
-    })
+    let keeps = |overlap: &&Overlap| {
+        let real = overlap.from.join(relative);
+        !overlap.onward.iter().any(|folder| real.starts_with(folder))
+    };
+    let holding = || {
+        yielded
+            .iter()
+            .filter(|overlap| overlap.home(relative).is_some())
+    };
+    let overlap = holding().find(keeps).or_else(|| holding().next())?;
+    Some((overlap.to.clone(), overlap.home(relative)?))
 }
 
 /// Policy resolver over the registry: longest-prefix root match, then the
@@ -595,6 +622,33 @@ mod tests {
                 EffectivePolicy::Excluded
             );
         }
+    }
+
+    /// Three nested folders, where the first saved overlap's winner itself
+    /// yields the file: the file's home is the root that keeps it. The
+    /// middle root is excluded at its own folder but includes `inner`.
+    #[test]
+    fn a_nested_file_goes_home_to_the_root_that_keeps_it() {
+        let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("nested-roots").expect("dir");
+        let outer = dir.path().join("outer");
+        let middle = outer.join("middle");
+        let inner = middle.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        let roots = vec![
+            LibraryRoot::new("middle", middle, EffectivePolicy::Excluded).with_rules(vec![
+                PolicyRule {
+                    id: "rule".to_owned(),
+                    relative_path: "inner".to_owned(),
+                    policy: EffectivePolicy::Automatic,
+                },
+            ]),
+            LibraryRoot::new("outer", outer, EffectivePolicy::Automatic),
+            LibraryRoot::new("inner", inner, EffectivePolicy::Automatic),
+        ];
+        assert_eq!(
+            yielded_home(&yielded_by(&roots, "inner"), "a.flac"),
+            Some(("outer".to_owned(), "middle/inner/a.flac".to_owned()))
+        );
     }
 
     #[test]

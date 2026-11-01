@@ -423,7 +423,11 @@ impl InventoryScanner {
 
     /// Probe one scope path on the pool with the walk deadline. Returns
     /// the probe outcome: directory or not.
-    async fn probe_selected(&self, selected: &Path) -> Result<bool, ProbeOutcome> {
+    async fn probe_selected(
+        &self,
+        root: &Path,
+        selected: &Path,
+    ) -> Result<ScopeFolder, ProbeOutcome> {
         // One probe slot by default. When occupied, give
         // the wedged stat one bounded deadline to finish before failing
         // the run.
@@ -436,17 +440,18 @@ impl InventoryScanner {
         let pending = Arc::clone(&self.pending_probes);
         let released = Arc::new(AtomicBool::new(false));
         let job_released = Arc::clone(&released);
+        let root = root.to_owned();
         let selected = selected.to_owned();
         let pool = self.pool.clone();
         let job = tokio::spawn(async move {
-            let result = pool.run(move || selected.is_dir()).await;
+            let result = pool.run(move || scope_folder(&root, &selected)).await;
             if !job_released.swap(true, Ordering::SeqCst) {
                 pending.fetch_sub(1, Ordering::SeqCst);
             }
             result
         });
         match tokio::time::timeout(self.walk_deadline, job).await {
-            Ok(Ok(Ok(exists))) => Ok(exists),
+            Ok(Ok(Ok(found))) => Ok(found),
             Ok(Ok(Err(_)) | Err(_)) => Err(ProbeOutcome::Wedged),
             Err(_) => {
                 // Tombstone the slot so it is recovered instead of
@@ -534,7 +539,7 @@ impl InventoryScanner {
             } else {
                 root.join(&scope.relative_path)
             };
-            match self.probe_selected(&selected).await {
+            match self.probe_selected(&root, &selected).await {
                 Err(ProbeOutcome::Unavailable) => {
                     self.record_failure(
                         stop,
@@ -581,14 +586,22 @@ impl InventoryScanner {
                     )?;
                     return self.fail_run(&run.id, current.row_revision, FailureCode::WalkTimeout);
                 }
-                Ok(false) => {
+                Ok(found @ (ScopeFolder::Missing | ScopeFolder::Linked)) => {
+                    let detail = if found == ScopeFolder::Linked {
+                        format!(
+                            "This folder is reached through a link, which a scan never follows: {}",
+                            scope.relative_path
+                        )
+                    } else {
+                        format!("The library root path is missing: {}", scope.relative_path)
+                    };
                     self.record_failure(
                         stop,
                         &run.id,
                         scope,
                         scope.relative_path.clone(),
                         FailureCode::RootUnavailable,
-                        format!("The library root path is missing: {}", scope.relative_path),
+                        detail,
                     )?;
                     self.store.complete_scope_discovery(
                         stop,
@@ -601,7 +614,7 @@ impl InventoryScanner {
                     unavailable_scopes += 1;
                     continue;
                 }
-                Ok(true) => {}
+                Ok(ScopeFolder::Walkable) => {}
             }
             let mut restarts = 0u32;
             let (completed, walk_failure_code) = loop {
@@ -1114,6 +1127,33 @@ enum ProbeOutcome {
     Wedged,
 }
 
+/// What a scope's path turned out to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScopeFolder {
+    Walkable,
+    Missing,
+    /// It or a folder on the way to it, below the root, is a link. The
+    /// root's own path is the admin's and may go through links.
+    Linked,
+}
+
+fn scope_folder(root: &Path, selected: &Path) -> ScopeFolder {
+    let mut at = root.to_path_buf();
+    let below = selected.strip_prefix(root).unwrap_or(Path::new(""));
+    let linked = below.components().any(|part| {
+        at.push(part);
+        at.symlink_metadata()
+            .is_ok_and(|meta| meta.file_type().is_symlink())
+    });
+    if linked {
+        ScopeFolder::Linked
+    } else if selected.is_dir() {
+        ScopeFolder::Walkable
+    } else {
+        ScopeFolder::Missing
+    }
+}
+
 struct StopGuard(Arc<AtomicBool>);
 
 impl Drop for StopGuard {
@@ -1412,6 +1452,11 @@ fn produce_inventory(
             // followed into the library).
             let resolved = if file_type.is_symlink() {
                 match std::fs::canonicalize(&path) {
+                    // Its file is indexed under the root that won the
+                    // shared folder.
+                    Ok(target) if yielded.iter().any(|other| target.starts_with(other)) => {
+                        continue;
+                    }
                     Ok(target) => match target.strip_prefix(&canonical_root) {
                         // Re-expressed under the configured root, so its
                         // inventory key matches a plain file's.

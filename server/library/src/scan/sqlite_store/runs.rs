@@ -445,10 +445,31 @@ impl SqliteScanStore {
                         | ScanStoreError::LaneClosed),
                     ) => Err(error),
                     Err(error) => {
-                        self.write(stop, Lane::Background, pass.name, |tx| {
+                        let tidied = self.write(stop, Lane::Background, pass.name, |tx| {
                             Ok(tidy(tx, run_id, ended_at)?)
-                        })?;
-                        Err(error)
+                        });
+                        match tidied {
+                            Ok(()) => Err(error),
+                            // A stop, or a tidy that is worth another try,
+                            // says more than the albums' failure.
+                            Err(tidy_error)
+                                if !tried_again(&error)
+                                    && (tried_again(&tidy_error)
+                                        || matches!(
+                                            tidy_error,
+                                            ScanStoreError::Stopped
+                                                | ScanStoreError::ReadCancelled { .. }
+                                                | ScanStoreError::LaneClosed
+                                        )) =>
+                            {
+                                tracing::error!(run_id, pass = pass.name, %error, "a scan's end pass failed and its tidy did not finish");
+                                Err(tidy_error)
+                            }
+                            Err(tidy_error) => {
+                                tracing::error!(run_id, pass = pass.name, error = %tidy_error, "a scan's end pass could not tidy after a failure");
+                                Err(error)
+                            }
+                        }
                     }
                 }
             }

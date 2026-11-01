@@ -8202,6 +8202,31 @@ async fn marking_a_write_handled_moves_the_fence_only_for_rows_it_stamps() {
     );
 }
 
+/// Migration 0111 records what closing a write found. A write closed before
+/// it found every file as written, and keeps its row.
+#[tokio::test]
+async fn a_closed_write_records_what_it_found() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(109)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO library_publish_resolutions (bundle_id, resolved_by_user_id, \
+         verified_files, resolved_at) VALUES ('earlier', NULL, 3, 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    apply_migrations(&pool).await.unwrap();
+
+    let row: (i64, i64, i64) = sqlx::query_as(
+        "SELECT verified_files, as_before_files, empty_files \
+         FROM library_publish_resolutions WHERE bundle_id = 'earlier'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row, (3, 0, 0));
+}
+
 /// Migration 0107 gives the library switched off its own held reason. A
 /// file, upload, decision and task stored as `library_folder_missing` with
 /// the library-off detail move to `library_off`; one whose folder really

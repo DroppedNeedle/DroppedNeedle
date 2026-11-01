@@ -1129,8 +1129,8 @@ async fn a_put_off_end_pass_holds_new_runs_and_lands_after_its_wait() {
     migrated_db(&path);
     let limits = LaneLimits {
         background: Budget {
-            warn: Duration::from_millis(250),
-            abort: Duration::from_millis(500),
+            warn: Duration::from_secs(1),
+            abort: Duration::from_secs(3),
         },
         ..LaneLimits::default()
     };
@@ -1629,6 +1629,101 @@ async fn a_double_from_overlapping_roots_retires_into_one_row() {
     assert!(
         failures.is_empty(),
         "skipped files are not a vanished share: {failures:?}"
+    );
+    assert_eq!(
+        query(
+            &library,
+            &format!(
+                "SELECT missing_count FROM library_scan_runs WHERE id = '{}'",
+                run.id
+            ),
+        ),
+        0,
+        "a retired double is not a missing file"
+    );
+    let audit: String = library
+        .scan_store
+        .db()
+        .read_blocking("audit", |conn| {
+            Ok::<_, ScanStoreError>(conn.query_row(
+                "SELECT after_json FROM library_catalog_actions \
+                 WHERE action_kind = 'continue_tracks'",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .expect("audit row");
+    let audit: serde_json::Value = serde_json::from_str(&audit).expect("audit json");
+    assert_eq!(audit["new_pairs"], 1, "{audit}");
+    assert_eq!(audit["pairs"][0]["basis"], "same_file", "{audit}");
+}
+
+/// A scope that is a link below its root is never walked, nor one reached
+/// through a link: the failure names it and its rows stay as they are.
+#[tokio::test]
+async fn a_scope_through_a_link_is_refused() {
+    let scratch = ScratchDir::new("scan-scope-link");
+    let root = scratch.join("music");
+    plant(&root, "Real/a.flac", "flac_full_01.flac");
+    plant(
+        &scratch.join("elsewhere"),
+        "Outside/b.flac",
+        "flac_full_01.flac",
+    );
+    std::os::unix::fs::symlink(scratch.join("elsewhere"), root.join("Door")).expect("link");
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    let mut wanted = request(&root);
+    let scope = wanted.scopes[0].clone();
+    wanted.scopes = ["Door", "Door/Outside", "Real"]
+        .map(|path| ScanScope {
+            relative_path: path.to_owned(),
+            ..scope.clone()
+        })
+        .to_vec();
+    coordinator.request_run(&wanted).expect("requested");
+    let run = coordinator.run_once(&paths).await.expect("driven");
+    assert_eq!(count(&run, Counter::Indexed), 1, "only the real folder");
+    let refused: Vec<String> = coordinator
+        .store()
+        .failures(&run.id)
+        .unwrap()
+        .into_iter()
+        .filter(|failure| failure.failure_detail.contains("through a link"))
+        .map(|failure| failure.relative_path)
+        .collect();
+    assert_eq!(refused, vec!["Door".to_owned(), "Door/Outside".to_owned()]);
+}
+
+/// A file link in the losing folder pointing at a file in the winner's
+/// folder adds no second row: the file stays the winner's.
+#[tokio::test]
+async fn a_file_link_in_the_losing_folder_is_not_indexed_there() {
+    let scratch = ScratchDir::new("scan-overlap-file-link");
+    plant(&scratch.join("loose"), "b.flac", "flac_full_01.flac");
+    plant(&scratch.join("music"), "Band/a.flac", "flac_full_01.flac");
+    std::os::unix::fs::symlink(
+        scratch.join("music/Band/a.flac"),
+        scratch.join("loose/link.flac"),
+    )
+    .expect("file link");
+    let library = outer_library(&scratch).await;
+    add_root(&library, "music", &scratch.join("music"));
+    scan(&library).await;
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE relative_path LIKE '%a.flac' \
+             AND availability = 'indexed'"
+        ),
+        1,
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE root_id = 'music' \
+             AND relative_path = 'Band/a.flac' AND availability = 'indexed'"
+        ),
+        1,
     );
 }
 

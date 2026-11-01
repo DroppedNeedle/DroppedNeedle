@@ -6124,6 +6124,87 @@ async fn an_admin_closes_a_write_that_placed_nothing() {
     assert_eq!(resolved.verified_files, 1);
 }
 
+/// An admin closes a write whose files are back as they were or gone:
+/// closing checks each destination, records what it found, writes no file
+/// and has a scan look at the folder. A destination holding anything else
+/// still refuses.
+#[tokio::test]
+async fn an_admin_closes_a_write_put_back_by_hand_and_writes_nothing() {
+    use droppedneedle_library::management::models::ManagementError;
+    use droppedneedle_library::management::service::Management;
+
+    let (scratch, library, music) = bare_library("lib-resolve-put-back").await;
+    let original = plant(&music, "Stuck/01.flac", "flac_no_tags.flac");
+    plant(&music, "Other/01.flac", "flac_full_01.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let before = droppedneedle_library::publish::paths::hash_regular_file(&original)
+        .expect("hashed")
+        .sha256;
+    let row = |bundle: &str, rel: &str, source_sha: &str| {
+        format!(
+            "INSERT INTO library_publish_journal (id, bundle_id, kind, source_root, source_rel, \
+             dest_root, dest_rel, staged, source_sha256, staged_sha256, state) VALUES \
+             ('{bundle}-000', '{bundle}', 'audio', 'music', '{rel}', 'music', '{rel}', \
+             '.droppedneedle-management-{bundle}', '{source_sha}', 'written', 'needs_attention');"
+        )
+    };
+    let db = scratch_db(&scratch);
+    db.execute_batch(&format!(
+        "{}{}{}",
+        row("back", "Stuck/01.flac", &before),
+        row("gone", "Deleted/01.flac", &before),
+        row("other", "Other/01.flac", &before),
+    ))
+    .expect("journal rows");
+    let files = || {
+        walk_files(&music)
+            .into_iter()
+            .map(|path| {
+                let bytes = std::fs::read(&path).expect("read");
+                (path, bytes)
+            })
+            .collect::<Vec<_>>()
+    };
+    let on_disk = files();
+    library.dirty.clear(&library.dirty.list());
+    let management = Management::new(&library);
+
+    let refused = management.resolve_bundle("other", "admin");
+    assert!(
+        matches!(&refused, Err(ManagementError::Conflict(reason)) if reason.contains("different bytes")),
+        "{refused:?}"
+    );
+    assert!(library.dirty.is_empty(), "a refused close starts no scan");
+
+    let back = management.resolve_bundle("back", "admin").expect("closed");
+    assert_eq!(back.verified_files, 1);
+    assert_eq!(library.dirty.list(), vec!["music".to_owned()]);
+    let gone = management.resolve_bundle("gone", "admin").expect("closed");
+    assert_eq!(gone.verified_files, 1);
+    assert_eq!(files(), on_disk, "closing writes no file");
+
+    let found = |bundle: &str| -> (i64, i64) {
+        db.query_row(
+            "SELECT as_before_files, empty_files FROM library_publish_resolutions \
+             WHERE bundle_id = ?1",
+            [bundle],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("resolution")
+    };
+    assert_eq!(found("back"), (1, 0));
+    assert_eq!(found("gone"), (0, 1));
+    assert_eq!(
+        management
+            .resolve_bundle("gone", "admin")
+            .expect("closed")
+            .note,
+        gone.note,
+        "closing again says the same"
+    );
+}
+
 /// A library folder configured through a symlinked parent takes managed
 /// writes like any other: a tag edit writes the file, and a removal moves
 /// it into the folder's recycle bin and lists the track as missing. A

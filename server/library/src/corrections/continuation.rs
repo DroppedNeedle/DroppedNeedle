@@ -60,6 +60,10 @@ pub const CURRENT_TRACK: &str = "SELECT id FROM ( \
 /// Audit kind and reason of a continuation.
 const KIND: &str = "continue_tracks";
 const REASON: &str = "TRACK_CONTINUED";
+/// The basis an audit row gives for a pair the scan proved itself: two
+/// rows for one file on disk, or one file moved to another folder.
+const SAME_FILE: &str = "same_file";
+const MOVED_FILE: &str = "moved_file";
 
 /// Which albums a pass looks at for new pairs. Aliases are kept current
 /// and swept over the whole library whatever the scope.
@@ -131,7 +135,7 @@ pub(crate) fn continue_tracks(
     scope: Scope<'_>,
     now: f64,
 ) -> rusqlite::Result<()> {
-    run(tx, scope, &[], true, WRITE_BOUND, now).map(|_| ())
+    run(tx, scope, &[], None, true, WRITE_BOUND, now).map(|_| ())
 }
 
 /// One turn of working off aliases that still hold what people made:
@@ -143,7 +147,7 @@ pub(crate) fn drain_continuations(
     limit: usize,
     now: f64,
 ) -> rusqlite::Result<bool> {
-    run(tx, Scope::Library, &[], false, limit, now)
+    run(tx, Scope::Library, &[], None, false, limit, now)
 }
 
 /// [`continue_tracks`] on one album, after an import whose files replaced
@@ -158,7 +162,16 @@ pub(crate) fn continue_replaced(
     replaced: &[(String, String)],
     now: f64,
 ) -> rusqlite::Result<()> {
-    run(tx, Scope::Album(album), replaced, true, WRITE_BOUND, now).map(|_| ())
+    run(
+        tx,
+        Scope::Album(album),
+        replaced,
+        None,
+        true,
+        WRITE_BOUND,
+        now,
+    )
+    .map(|_| ())
 }
 
 /// Continue each `(old, new)` pair of rows for one file that two library
@@ -173,7 +186,7 @@ pub(crate) fn continue_same_files(
     pairs: &[(String, String)],
     now: f64,
 ) -> rusqlite::Result<()> {
-    continue_given(tx, "continue_same_files", pairs, now)
+    continue_given(tx, "continue_same_files", SAME_FILE, pairs, now)
 }
 
 /// Continue each `(old, new)` pair the scan proved to be one file moved to
@@ -184,17 +197,19 @@ pub(crate) fn continue_moved(
     pairs: &[(String, String)],
     now: f64,
 ) -> rusqlite::Result<()> {
-    continue_given(tx, "continue_moved", pairs, now)
+    continue_given(tx, "continue_moved", MOVED_FILE, pairs, now)
 }
 
 fn continue_given(
     tx: &Transaction<'_>,
     name: &'static str,
+    basis: &'static str,
     pairs: &[(String, String)],
     now: f64,
 ) -> rusqlite::Result<()> {
     let created_ms = (now * 1000.0) as i64;
-    savepoint(tx, name, || {
+    let made = savepoint(tx, name, || {
+        let mut made = BTreeSet::new();
         for (old, new) in pairs {
             let fits: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM local_tracks o JOIN local_tracks n \
@@ -206,11 +221,21 @@ fn continue_given(
             )?;
             if old != new && fits {
                 add_alias(tx, old, new, true, created_ms)?;
+                made.insert((old.clone(), new.clone()));
             }
         }
-        Ok::<_, rusqlite::Error>(())
+        Ok::<_, rusqlite::Error>(made)
     })??;
-    run(tx, Scope::Library, &[], false, WRITE_BOUND, now).map(|_| ())
+    run(
+        tx,
+        Scope::Library,
+        &[],
+        Some(Proven { pairs: made, basis }),
+        false,
+        WRITE_BOUND,
+        now,
+    )
+    .map(|_| ())
 }
 
 /// Make `old` an alias of `new`, and move every alias naming `old` on to
@@ -242,13 +267,23 @@ fn run(
     tx: &Transaction<'_>,
     scope: Scope<'_>,
     replaced: &[(String, String)],
+    proven: Option<Proven>,
     discover: bool,
     limit: usize,
     now: f64,
 ) -> rusqlite::Result<bool> {
     let mut at = Context::default();
     match savepoint(tx, "continue_tracks", || {
-        pass(tx, scope, replaced, discover, limit, now, &mut at)
+        pass(
+            tx,
+            scope,
+            replaced,
+            proven.as_ref(),
+            discover,
+            limit,
+            now,
+            &mut at,
+        )
     })? {
         Ok(more) => Ok(more),
         Err(error) => {
@@ -262,6 +297,12 @@ fn run(
             Ok(false)
         }
     }
+}
+
+/// Pairs the scan already aliased on its own proof, for the audit.
+struct Proven {
+    pairs: BTreeSet<(String, String)>,
+    basis: &'static str,
 }
 
 /// Where a pass was when it failed, for the warning.
@@ -280,10 +321,12 @@ struct AlbumLog {
     moved: BTreeMap<&'static str, usize>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pass(
     tx: &Transaction<'_>,
     scope: Scope<'_>,
     given: &[(String, String)],
+    proven: Option<&Proven>,
     discover: bool,
     limit: usize,
     now: f64,
@@ -300,7 +343,9 @@ fn pass(
         Scope::Album(album) => Some(album),
         Scope::Library => None,
     };
-    let mut new_pairs: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut new_pairs: BTreeSet<(String, String)> = proven
+        .map(|proven| proven.pairs.clone())
+        .unwrap_or_default();
     let mut replaced: BTreeSet<String> = BTreeSet::new();
     let created_ms = (now * 1000.0) as i64;
     // The alias, and every alias naming the old row moved on to the new
@@ -380,6 +425,12 @@ fn pass(
             && let Some(fields) = pair.as_object_mut()
         {
             fields.insert("replaced".to_owned(), Value::Bool(true));
+        }
+        if let Some(proven) = proven
+            && proven.pairs.contains(&(old.to_owned(), new.to_owned()))
+            && let Some(fields) = pair.as_object_mut()
+        {
+            fields.insert("basis".to_owned(), Value::from(proven.basis));
         }
         pair
     };

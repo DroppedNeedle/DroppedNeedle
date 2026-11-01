@@ -286,9 +286,10 @@ impl SqliteScanStore {
             if marked == 0 {
                 return Ok(0);
             }
+            // A retired double's file is still there, under its home row.
             tx.execute(
                 "UPDATE library_scan_runs SET missing_count = missing_count + ?1 WHERE id = ?2",
-                params![marked as i64, run_id],
+                params![gone as i64, run_id],
             )?;
             crate::catalog_revision::bump_catalog(tx)?;
             crate::corrections::continuation::continue_same_files(tx, &pairs, now)?;

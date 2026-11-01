@@ -35,11 +35,7 @@ pub struct SupervisorInputs {
 /// `_scopes_for_dirty_ids`). Ids that no longer resolve are dropped:
 /// dirty marks are hints only, and removals converge through
 /// policy reconciliation instead.
-pub fn scopes_for_dirty_ids(
-    registry: &RootRegistry,
-    rules: &[InclusionRule],
-    scope_ids: &[String],
-) -> Vec<ScanScope> {
+pub fn scopes_for_dirty_ids(registry: &RootRegistry, scope_ids: &[String]) -> Vec<ScanScope> {
     let wanted: std::collections::HashSet<&str> = scope_ids.iter().map(String::as_str).collect();
     let mut scopes = Vec::new();
     for root in registry.roots() {
@@ -53,28 +49,11 @@ pub fn scopes_for_dirty_ids(
             scopes.push(scope);
         }
     }
-    for rule in rules {
-        if !wanted.contains(rule.rule_id.as_str()) {
-            continue;
-        }
-        let Some(root) = registry.resolve(&rule.root_id) else {
-            continue;
-        };
-        scopes.push(ScanScope {
-            root_id: rule.root_id.clone(),
-            scope_id: Some(rule.rule_id.clone()),
-            relative_path: rule.relative_path.clone(),
-            root_path: Some(root.path.to_string_lossy().into_owned()),
-            effective_policy: root.policy,
-            policy_revision: registry.fingerprint().to_owned(),
-            estimated_count: None,
-        });
-    }
     scopes
 }
 
-/// Hook B consumer: ask for a scan of the scopes marked dirty (new or
-/// changed roots and rules), whatever the schedule, while the library is
+/// Hook B consumer: ask for a scan of the roots marked dirty (new or
+/// changed, their rules included), whatever the schedule, while the library is
 /// on. Marks clear only on a non-conflict request; ids that no longer
 /// resolve clear at once as hints. Callers take turns, so two never ask
 /// for the same marks. Blocking.
@@ -91,8 +70,7 @@ where
     if dirty_ids.is_empty() {
         return;
     }
-    let rules = (inputs.inclusion_rules)();
-    let dirty_scopes = scopes_for_dirty_ids(&registry, &rules, &dirty_ids);
+    let dirty_scopes = scopes_for_dirty_ids(&registry, &dirty_ids);
     if dirty_scopes.is_empty() {
         inputs.dirty.clear(&dirty_ids);
         return;

@@ -2,9 +2,10 @@
 //! holds (unfinished writes recovery will settle, cleanups to retry,
 //! writes it has been retrying for more than a day, and writes it could
 //! not decide about), the hidden files no journal row names, and closing
-//! a write of the undecided kind once its files are verified where the
-//! write put them. Closing changes no file and keeps the journal's
-//! evidence; it records that someone looked and everything was in place.
+//! a write of the undecided kind once each of its destinations holds what
+//! the write placed, what was there before it, or nothing. Closing changes
+//! no file and keeps the journal's evidence; it records that someone looked
+//! and what was found.
 
 use droppedneedle_kernel::db::Lane;
 use std::collections::BTreeMap;
@@ -14,6 +15,8 @@ use rusqlite::{OptionalExtension as _, params};
 use super::models::ManagementError;
 use super::service::Management;
 use crate::clock::LibraryClock as _;
+use crate::publish::journal::{FileJournal, JournalKind, JournalState, JournalStore};
+use crate::publish::paths::Sandbox;
 use crate::publish::recovery::Leftover;
 
 /// One write that needs an administrator.
@@ -92,11 +95,15 @@ fn source_folders(paths: Option<&str>) -> Vec<String> {
     folders.into_iter().take(5).map(str::to_owned).collect()
 }
 
-/// What closing a write does, said plainly: it records that the files
-/// were checked, and changes nothing else.
-const RESOLVED_NOTE: &str = "Marked as handled: every file was checked in place. Nothing on disk \
-     or in the library catalog was changed. If the library does not list these files, rescan \
-     their folder; leftover temporary copies stay where they are until you remove them.";
+/// What closing a write does, said plainly: it records what it found and
+/// changes nothing else.
+fn resolved_note(as_before: i64, empty: i64) -> String {
+    format!(
+        "Marked as handled: {as_before} back as before, {empty} gone, the rest as written. \
+         No file was changed. A scan now updates the library. Leftover temporary copies stay \
+         until you remove them."
+    )
+}
 
 /// Writes recorded at least [`RETRYING_AFTER_MS`] before `now_ms` (unix
 /// milliseconds) that recovery has still neither finished nor undone.
@@ -197,54 +204,55 @@ impl Management {
         })
     }
 
-    /// Close a write that needs an administrator, once every file it was
-    /// putting in place is there with the bytes it wrote. Nothing on disk
-    /// changes. A file that is missing or different refuses with which
-    /// one, so it can be put right first. Blocking.
+    /// Close a write that needs an administrator, once each destination
+    /// holds the bytes it wrote, the bytes from before it, or nothing.
+    /// Nothing on disk changes, and a scan is asked to look. A file holding
+    /// anything else, or that cannot be checked, refuses with which one, so
+    /// it can be put right first. Blocking.
     pub fn resolve_bundle(
         &self,
         bundle_id: &str,
         actor: &str,
     ) -> Result<Resolved, ManagementError> {
-        let journals: Vec<(String, String, String, String, String)> = self.parts.db.read_blocking("management.bundle_journals", |conn| {
-            let mut statement = conn.prepare(
-                "SELECT state, kind, dest_root, dest_rel, staged_sha256 FROM library_publish_journal \
-                 WHERE bundle_id = ?1 ORDER BY id",
-            )?;
-            let rows = statement.query_map(params![bundle_id], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        let journals = self
+            .parts
+            .db
+            .read_blocking("management.bundle_journals", |conn| {
+                JournalStore::new(conn)
+                    .bundle(bundle_id)
+                    .map_err(|error| ManagementError::Store(error.to_string()))
             })?;
-            Ok::<_, ManagementError>(rows.collect::<rusqlite::Result<_>>()?)
-        })?;
         if journals.is_empty() {
             return Err(ManagementError::NotFound(
                 "This write is not in the journal.",
             ));
         }
-        let earlier: Option<i64> =
+        let earlier: Option<(i64, i64, i64)> =
             self.parts
                 .db
                 .read_blocking("management.resolution", |conn| {
-                    Ok::<_, ManagementError>(conn
-                .query_row(
-                    "SELECT verified_files FROM library_publish_resolutions WHERE bundle_id = ?1",
-                    params![bundle_id],
-                    |row| row.get(0),
-                )
-                .optional()?)
+                    Ok::<_, ManagementError>(
+                        conn.query_row(
+                            "SELECT verified_files, as_before_files, empty_files \
+                     FROM library_publish_resolutions WHERE bundle_id = ?1",
+                            params![bundle_id],
+                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                        )
+                        .optional()?,
+                    )
                 })?;
-        if let Some(verified) = earlier {
+        if let Some((verified, as_before, empty)) = earlier {
             return Ok(Resolved {
                 bundle_id: bundle_id.to_owned(),
                 state: "resolved".to_owned(),
                 verified_files: verified,
                 total_files: verified,
-                note: RESOLVED_NOTE.to_owned(),
+                note: resolved_note(as_before, empty),
             });
         }
-        let pending: Vec<_> = journals
+        let pending: Vec<&FileJournal> = journals
             .iter()
-            .filter(|(state, ..)| state == "needs_attention")
+            .filter(|journal| journal.state == JournalState::NeedsAttention)
             .collect();
         if pending.is_empty() {
             return Err(ManagementError::Conflict(
@@ -259,27 +267,19 @@ impl Management {
             )
         })?;
         let mut problems = Vec::new();
-        for (_, kind, root, rel, staged) in &pending {
+        let (mut as_before, mut empty) = (0i64, 0i64);
+        for journal in &pending {
             // A delete's staged copy is a safety backup, never a live file,
             // and a row with no staged bytes never placed anything.
-            if kind == "delete" || staged.is_empty() {
+            if journal.kind == JournalKind::Delete || journal.staged_sha256.is_empty() {
                 continue;
             }
-            // A removal's and a put-back's files may sit under a folder
-            // that only takes removals.
-            let resolved = if kind == "remove" || kind == "put_back" {
-                sandbox.resolve_removal(root, rel)
-            } else {
-                sandbox.resolve_no_symlink(root, rel)
-            };
-            let found = resolved
-                .map_err(|_| "could not be checked")
-                .and_then(|path| {
-                    crate::publish::paths::hash_regular_file(&path).map_err(|_| "is missing")
-                });
-            match found {
-                Ok(hashed) if &hashed.sha256 == staged => {}
-                Ok(_) => problems.push(format!("{rel} holds different bytes")),
+            let rel = &journal.dest_rel;
+            match destination_holds(&sandbox, journal) {
+                Ok(Found::AsWritten) => {}
+                Ok(Found::AsBefore) => as_before += 1,
+                Ok(Found::Nothing) => empty += 1,
+                Ok(Found::Other) => problems.push(format!("{rel} holds different bytes")),
                 Err(problem) => problems.push(format!("{rel} {problem}")),
             }
         }
@@ -293,14 +293,32 @@ impl Management {
         self.parts.db.write_blocking(Lane::Foreground, "management.resolve_bundle", |conn| {
             conn.execute(
                 "INSERT OR IGNORE INTO library_publish_resolutions (bundle_id, resolved_by_user_id, \
-                 verified_files, resolved_at) VALUES (?1, ?2, ?3, ?4)",
-                params![bundle_id, actor, verified, self.parts.clock.now_secs()],
+                 verified_files, resolved_at, as_before_files, empty_files) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    bundle_id,
+                    actor,
+                    verified,
+                    self.parts.clock.now_secs(),
+                    as_before,
+                    empty
+                ],
             )?;
             Ok::<_, ManagementError>(())
         })?;
+        // The fence is lifted, so a scan can now settle these tracks.
+        for journal in &pending {
+            self.parts.core.dirty.mark(&journal.dest_root);
+            if let Some((root, _)) = &journal.source {
+                self.parts.core.dirty.mark(root);
+            }
+        }
+        self.parts.wakeups.notify("scan");
         tracing::info!(
             bundle_id,
             verified,
+            as_before,
+            empty,
             "write needing attention closed after checking its files"
         );
         Ok(Resolved {
@@ -308,7 +326,54 @@ impl Management {
             state: "resolved".to_owned(),
             verified_files: verified,
             total_files: verified,
-            note: RESOLVED_NOTE.to_owned(),
+            note: resolved_note(as_before, empty),
         })
     }
+}
+
+/// What a closed write's destination holds.
+enum Found {
+    /// The bytes the write placed.
+    AsWritten,
+    /// The bytes from before the write: the file it replaced, or the source
+    /// of a write to the same path.
+    AsBefore,
+    /// Nothing: the filesystem says so, never a failed read.
+    Nothing,
+    Other,
+}
+
+fn destination_holds(sandbox: &Sandbox, journal: &FileJournal) -> Result<Found, &'static str> {
+    // A removal's and a put-back's files may sit under a folder that only
+    // takes removals.
+    let resolved = if matches!(journal.kind, JournalKind::Remove | JournalKind::PutBack) {
+        sandbox.resolve_removal(&journal.dest_root, &journal.dest_rel)
+    } else {
+        sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)
+    };
+    let path = resolved.map_err(|_| "could not be checked")?;
+    match path.symlink_metadata() {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Found::Nothing),
+        Err(_) => return Err("could not be checked"),
+        Ok(_) => {}
+    }
+    let hashed = crate::publish::paths::hash_regular_file(&path)
+        .map_err(|_| "could not be read")?
+        .sha256;
+    let same_path = journal
+        .source
+        .as_ref()
+        .is_some_and(|(root, rel)| *root == journal.dest_root && *rel == journal.dest_rel);
+    let before = match &journal.replaces {
+        Some(replaced) => Some(replaced.sha256.as_str()),
+        None if same_path => journal.source_sha256.as_deref(),
+        None => None,
+    };
+    Ok(if hashed == journal.staged_sha256 {
+        Found::AsWritten
+    } else if before == Some(hashed.as_str()) {
+        Found::AsBefore
+    } else {
+        Found::Other
+    })
 }

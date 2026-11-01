@@ -735,7 +735,9 @@ impl From<droppedneedle_kernel::db::DbError> for ManagementError {
     fn from(error: droppedneedle_kernel::db::DbError) -> Self {
         use droppedneedle_kernel::db::DbError;
         match error {
-            DbError::Busy { .. } | DbError::LaneClosed => Self::Busy(error.to_string()),
+            DbError::Busy { .. } | DbError::TxTimeout { .. } | DbError::LaneClosed => {
+                Self::Busy(error.to_string())
+            }
             other => Self::Store(other.to_string()),
         }
     }
