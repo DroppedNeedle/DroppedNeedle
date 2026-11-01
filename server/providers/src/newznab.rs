@@ -1,5 +1,5 @@
-//! Newznab indexers: caps and search, each indexer on an executor of its
-//! own.
+//! Newznab indexers: caps, search and NZB grabs, each indexer on an
+//! executor of its own.
 //!
 //! An indexer is a service on the internet the user signed up to, so
 //! every call goes through the executor: paced on the `newznab` row,
@@ -17,7 +17,8 @@
 //! the oldest counted call (`apiOldestTime`, `grabOldestTime`). An indexer
 //! that names a cap but no oldest time is asked again an hour after it was
 //! seen full. A search also stops while grabs are spent, since none of
-//! its releases could be fetched.
+//! its releases could be fetched. A grab counts against the grab cap
+//! before it is sent, and is refused while that cap is reached.
 //!
 //! The key is an `apikey` query parameter. It never reaches a log line or
 //! an error: the executor shows only the host, and a failure carries only
@@ -37,8 +38,8 @@ use thiserror::Error;
 use crate::client::{parse_base, unusable_base};
 use crate::error::{PayloadKind, ProviderError};
 use crate::executor::{
-    Answer, Backoff, Executor, RedirectRule, Redirects, Request, Spec, Url, Wire, never_foreign,
-    short, standard_classify,
+    Answer, Backoff, Executor, RedirectRule, Redirects, Request, Spec, USER_COOLDOWN_WAIT, Url,
+    Wire, never_foreign, short, standard_classify,
 };
 use crate::health::ServiceHealth;
 use crate::limiter::{RateLimiter, RatePolicy, RequestPriority};
@@ -58,6 +59,12 @@ pub const SOURCE: &str = "newznab";
 /// 3 KB an item with extended attributes), and a caps document is tens of
 /// kilobytes, so 10 MB refuses nothing real.
 pub const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
+/// The most an NZB may weigh. An NZB lists one segment per posted article:
+/// a 2 GB lossless box in 700 KB articles is about 3,000 segments at 200
+/// bytes each, under 1 MB, so 50 MB refuses nothing real. It still bounds
+/// what one grab holds in memory, since the NZB is handed to SABnzbd from
+/// memory.
+pub const MAX_NZB_BYTES: usize = 50 * 1024 * 1024;
 /// The window an indexer's daily counters cover.
 const DAY_SECS: i64 = 86_400;
 /// How long a full counter that names no oldest time waits before the
@@ -82,6 +89,13 @@ pub static SPEC: Spec = Spec {
     },
     retry_after_cap: Duration::from_secs(86_400),
     classify,
+};
+
+/// An NZB grab: the same rules as the API, with the room an NZB needs.
+static GRAB_SPEC: Spec = Spec {
+    timeout: Duration::from_secs(60),
+    max_body: MAX_NZB_BYTES,
+    ..SPEC
 };
 
 /// The status rules, then the `<error>` an indexer sends under 200.
@@ -112,6 +126,26 @@ static HOPS: RedirectRule = RedirectRule {
     next: same_host,
     foreign: never_foreign,
 };
+
+/// An indexer may serve its NZBs from another host, so a grab's redirects
+/// may leave the indexer's. Still web addresses, never carrying credentials.
+static GRAB_HOPS: RedirectRule = RedirectRule {
+    max_hops: 5,
+    next: web_hop,
+    foreign: never_foreign,
+};
+
+fn web_hop(_from: &Url, to: &Url) -> Option<Url> {
+    if !to.username().is_empty() || to.password().is_some() {
+        return None;
+    }
+    if !matches!(to.scheme(), "http" | "https") {
+        return None;
+    }
+    let mut next = to.clone();
+    next.set_fragment(None);
+    Some(next)
+}
 
 fn same_host(from: &Url, to: &Url) -> Option<Url> {
     if !to.username().is_empty() || to.password().is_some() {
@@ -225,6 +259,7 @@ struct Allowance {
 struct Indexer {
     url: String,
     executor: Executor,
+    grabs: Executor,
     allowance: Mutex<Allowance>,
 }
 
@@ -318,13 +353,20 @@ impl NewznabIndexers {
 
     fn indexer(&self, url: &str) -> Indexer {
         let limiter = match &self.row {
-            Some(row) => Arc::new(RateLimiter::from_row(row)),
+            Some(row) => Arc::new(RateLimiter::from_row(row).counting_on(&self.shared)),
             None => Arc::clone(&self.shared),
         };
         Indexer {
             url: url.to_owned(),
             executor: Executor::new(
                 &SPEC,
+                Arc::clone(&limiter),
+                Arc::clone(&self.wire),
+                Arc::clone(&self.health),
+                Arc::clone(&self.clock),
+            ),
+            grabs: Executor::new(
+                &GRAB_SPEC,
                 limiter,
                 Arc::clone(&self.wire),
                 Arc::clone(&self.health),
@@ -444,6 +486,45 @@ impl NewznabClient {
         let (root, url) = self.get(&refs, true, priority).await?;
         let releases = parse_items(&root, &self.id, &self.name, &url);
         Ok((releases, parse_apilimits(&root)))
+    }
+
+    /// Fetch the NZB at `url`, a release's enclosure from this indexer's
+    /// answer. Counted on the indexer's bucket and its grab cap. Turned down
+    /// at once while the cap is reached or the indexer is resting, so a
+    /// download worker never sits out a long wait here.
+    ///
+    /// # Errors
+    ///
+    /// The executor's typed failure, or a rate limit with the wait.
+    pub async fn fetch_nzb(
+        &self,
+        url: &str,
+        priority: RequestPriority,
+    ) -> Result<Vec<u8>, ProviderError> {
+        let now = self.clock.now_unix();
+        let capped = self.indexer.allowance().grab.wait(now);
+        let wait = capped
+            .map(|wait| Duration::from_secs(u64::try_from(wait).unwrap_or(0)))
+            .or_else(|| {
+                let cooling = self.indexer.grabs.limiter().cooling_for();
+                (cooling > USER_COOLDOWN_WAIT).then_some(cooling)
+            });
+        if let Some(wait) = wait {
+            tracing::debug!(
+                indexer = self.name.as_str(),
+                wait_secs = wait.as_secs(),
+                "newznab grab held; not called"
+            );
+            return Err(ProviderError::RateLimited {
+                provider: SOURCE,
+                retry_after: Some(wait),
+            });
+        }
+        let address = Url::parse(url).map_err(|_| unusable_base(SOURCE))?;
+        let request = Request::get_url(address).redirects(Redirects::Follow(&GRAB_HOPS));
+        self.indexer.allowance().grab.spend(now);
+        let reply = self.indexer.grabs.send(request, priority).await?;
+        Ok(reply.bytes().to_vec())
     }
 
     /// The wait before the indexer may be called, while a cap it reported

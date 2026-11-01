@@ -42,6 +42,11 @@ pub enum ImportsError {
         /// What failed, for the log only.
         cause: String,
     },
+    /// Spotify is rate limiting this server (503 with the wait).
+    SpotifyPaced {
+        /// Whole seconds Spotify asked for, when it said.
+        retry_after: Option<u64>,
+    },
     /// The database was too busy, or stopping, to take a write (503
     /// `SERVER_BUSY`).
     Busy {
@@ -76,6 +81,13 @@ impl From<ImportsError> for ApiError {
             ImportsError::AuthFailed { cause } | ImportsError::Unavailable { cause } => {
                 ApiError::fault(StatusCode::BAD_GATEWAY, cause)
             }
+            ImportsError::SpotifyPaced { retry_after } => ApiError::unavailable(
+                droppedneedle_kernel::error::Unavailable::Provider {
+                    provider: droppedneedle_providers::spotify::SOURCE,
+                    retry_after,
+                },
+                "spotify is rate limiting this server",
+            ),
             ImportsError::Busy { cause } => {
                 ApiError::unavailable(droppedneedle_kernel::error::Unavailable::ServerBusy, cause)
             }

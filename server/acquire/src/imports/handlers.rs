@@ -519,7 +519,10 @@ pub async fn disconnect_spotify(
 /// The caller's owned Spotify playlists. Unlinked reads as a 400,
 /// upstream failures as a 502.
 #[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/playlists",
-    responses((status = 200, description = "Owned playlists", body = SpotifyPlaylistListResponse)))]
+    responses(
+        (status = 200, description = "Owned playlists", body = SpotifyPlaylistListResponse),
+        (status = 503, description = "Spotify is rate limiting this server")
+    ))]
 pub async fn list_spotify_playlists(
     State(deps): State<ImportsDeps>,
     User(principal): User,
@@ -545,6 +548,7 @@ fn spotify_failed(error: SpotifyError) -> ImportsError {
         SpotifyError::Unavailable(detail) => ImportsError::Unavailable {
             cause: format!("spotify playlist list failed: {detail}"),
         },
+        SpotifyError::RateLimited { retry_after } => ImportsError::SpotifyPaced { retry_after },
         SpotifyError::Store(cause) => ImportsError::internal(&cause),
         SpotifyError::Busy => ImportsError::Busy {
             cause: "spotify store busy".to_owned(),

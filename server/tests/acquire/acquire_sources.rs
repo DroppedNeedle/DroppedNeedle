@@ -244,6 +244,85 @@ async fn sabnzbd_conforms() {
     .await;
 }
 
+/// A native indexer's release is fetched through that indexer's client, so
+/// the source's grab reaches the cap its answers report.
+#[tokio::test]
+async fn a_usenet_pick_grabs_through_its_indexer() {
+    let mock = SabnzbdMock::new();
+    let (sab, _sab_server) = serve_loopback(mock.router()).await.expect("mock serves");
+    let body = format!(
+        r#"<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+ <channel>
+  <newznab:apilimits apiCurrent="1" apiMax="100" grabCurrent="0" grabMax="1"/>
+  <item>
+   <title>Portishead - Dummy (1994) [FLAC]</title>
+   <guid>dummy-flac</guid>
+   <enclosure url="{sab}/nzb/good" length="314572800" type="application/x-nzb"/>
+   <newznab:attr name="category" value="3040"/>
+   <newznab:attr name="size" value="314572800"/>
+   <newznab:attr name="files" value="12"/>
+  </item>
+ </channel>
+</rss>"#
+    );
+    let (indexer, _indexer_server) = serve_loopback(Router::new().route(
+        "/api",
+        get(move || {
+            let body = body.clone();
+            async move { body }
+        }),
+    ))
+    .await
+    .expect("feed serves");
+    let dir = ScratchDir::new("source-grab");
+    let policy = UsenetPolicy::v2_defaults();
+    let queue = SabnzbdQueue::new(
+        SabnzbdClient::new(
+            reqwest::Client::new(),
+            &sab,
+            "SABKEY",
+            3,
+            Duration::from_millis(1),
+        ),
+        &sab,
+        "SABKEY",
+        dir.join("complete"),
+        policy.clone(),
+    );
+    let client = newznab_indexers().client("dummy", "Dummy", &format!("{indexer}/api"), "NZKEY");
+    let source = SabnzbdSource::new(
+        Arc::new(queue),
+        vec![Arc::new(NewznabIndexer::new(
+            vec![NewznabIndexerEntry {
+                client: client.clone(),
+                id: "dummy".to_owned(),
+                name: "Dummy".to_owned(),
+                categories: vec![3040],
+                enabled: true,
+                priority: 1,
+                limit: 100,
+            }],
+            WAIT,
+            WAIT,
+        ))],
+        policy,
+        journal_with_task("t-grab", "Portishead", "Dummy").await,
+        None,
+    );
+    source.enqueue("t-grab", 0).await.expect("enqueues");
+    assert_eq!(mock.state().add_file_requests.len(), 1);
+    let next = client.search("Portishead", &[], 0, 100, USER).await;
+    assert!(
+        matches!(
+            next,
+            Err(droppedneedle_providers::newznab::NewznabError::Provider(
+                droppedneedle_providers::ProviderError::RateLimited { .. }
+            ))
+        ),
+        "the grab counted against the cap: {next:?}"
+    );
+}
+
 /// The indexers are asked as a person's search would ask them.
 const USER: RequestPriority = RequestPriority::UserInitiated;
 

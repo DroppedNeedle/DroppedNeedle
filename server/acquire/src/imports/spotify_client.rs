@@ -59,7 +59,7 @@ pub fn best_image_url(images: Option<&[Image]>, min_size: i64) -> Option<String>
 }
 
 /// Classified Spotify failure. Wire detail stays out; handlers map it to
-/// 400 not-linked or 502 fetch failure.
+/// 400 not-linked, 503 with the wait for a rate limit, or 502 fetch failure.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpotifyError {
     /// No link row, or the token flow cannot proceed.
@@ -67,6 +67,11 @@ pub enum SpotifyError {
     /// Upstream or network failure, or an answer that does not decode. The
     /// detail reaches the log only.
     Unavailable(String),
+    /// Spotify asked us to slow down.
+    RateLimited {
+        /// Whole seconds Spotify asked for, when it said.
+        retry_after: Option<u64>,
+    },
     /// A local store read or write failed. The detail reaches the log only.
     Store(String),
     /// The database was too busy to take a write; try again later.
@@ -75,7 +80,12 @@ pub enum SpotifyError {
 
 /// A provider failure as the import sees it.
 fn unavailable(what: &str, error: &ProviderError) -> SpotifyError {
-    SpotifyError::Unavailable(format!("{what}: {error}"))
+    match error {
+        ProviderError::RateLimited { .. } => SpotifyError::RateLimited {
+            retry_after: error.retry_after_secs(),
+        },
+        _ => SpotifyError::Unavailable(format!("{what}: {error}")),
+    }
 }
 
 /// The import's view of Spotify: the providers' Spotify client and the

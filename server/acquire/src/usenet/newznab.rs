@@ -94,6 +94,10 @@ pub fn normalize_newznab_query(query: &str) -> String {
 const UNKNOWN_FUNCTION: i32 = 202;
 /// Cap on cached search entries before opportunistic eviction.
 const SEARCH_CACHE_CAP: usize = 256;
+/// How long an indexer's answer stands in for a health probe. The probe runs
+/// every five minutes, which at one caps call each is about 288 of a daily
+/// API cap that can be as small as 100 on a free tier.
+const HEALTH_REUSE: Duration = Duration::from_secs(6 * 3600);
 /// `(indexer id, query)` → expiry + pooled releases.
 pub(crate) type SearchCache = Mutex<HashMap<(String, String), (Instant, Vec<UsenetRelease>)>>;
 
@@ -142,6 +146,7 @@ pub struct NewznabIndexer {
     caps_cache_ttl: Duration,
     caps_cache: Mutex<HashMap<String, (Instant, NewznabCaps)>>,
     search_cache: SearchCache,
+    health_seen: Mutex<HashMap<String, (Instant, Option<String>)>>,
 }
 
 impl NewznabIndexer {
@@ -159,6 +164,7 @@ impl NewznabIndexer {
             caps_cache_ttl,
             caps_cache: Mutex::new(HashMap::new()),
             search_cache: Mutex::new(HashMap::new()),
+            health_seen: Mutex::new(HashMap::new()),
         }
     }
 
@@ -169,6 +175,10 @@ impl NewznabIndexer {
 
     /// Health never raises: unreachable indexers are skipped with a warning.
     /// An indexer that is rate limiting, or at its daily cap, is reachable.
+    /// An indexer that answered within [`HEALTH_REUSE`] is not asked again,
+    /// so the probe spends a few of its daily API calls, not hundreds; one
+    /// that did not answer, or whose last search or caps call failed, is
+    /// asked every time.
     pub async fn health_check(&self, priority: RequestPriority) -> IndexerHealth {
         let enabled: Vec<&NewznabIndexerEntry> =
             self.entries.iter().filter(|entry| entry.enabled).collect();
@@ -182,9 +192,15 @@ impl NewznabIndexer {
         let mut reachable = 0;
         let mut version: Option<String> = None;
         for entry in &enabled {
+            if let Some(seen) = self.recent_health(&entry.id) {
+                reachable += 1;
+                version = version.or(seen);
+                continue;
+            }
             match entry.client.caps(priority).await {
                 Ok(caps) => {
                     reachable += 1;
+                    self.remember_health(&entry.id, caps.server_version.clone());
                     if version.is_none() {
                         version = caps.server_version;
                     }
@@ -401,6 +417,9 @@ impl NewznabIndexer {
                 .await
                 .map(|(releases, _)| releases)
         };
+        if let Err(err) = &outcome {
+            self.forget_health_on(entry, err);
+        }
         let releases = match outcome {
             Ok(releases) => releases,
             Err(NewznabError::Provider(ProviderError::RateLimited { retry_after, .. })) => {
@@ -466,6 +485,39 @@ impl NewznabIndexer {
         }
     }
 
+    fn recent_health(&self, id: &str) -> Option<Option<String>> {
+        let guard = self.health_seen.lock().ok()?;
+        guard
+            .get(id)
+            .filter(|(at, _)| at.elapsed() < HEALTH_REUSE)
+            .map(|(_, version)| version.clone())
+    }
+
+    /// A call that says the indexer is down or refuses its key ends the
+    /// reuse of its last answer, so the next probe asks. A rate limit does
+    /// not: the indexer is there.
+    fn forget_health_on(&self, entry: &NewznabIndexerEntry, error: &NewznabError) {
+        if matches!(
+            error,
+            NewznabError::Provider(
+                ProviderError::Transport { .. }
+                    | ProviderError::Server { .. }
+                    | ProviderError::Unavailable { .. }
+                    | ProviderError::Unauthorized { .. }
+                    | ProviderError::Forbidden { .. }
+            )
+        ) && let Ok(mut guard) = self.health_seen.lock()
+        {
+            guard.remove(&entry.id);
+        }
+    }
+
+    fn remember_health(&self, id: &str, version: Option<String>) {
+        if let Ok(mut guard) = self.health_seen.lock() {
+            guard.insert(id.to_owned(), (Instant::now(), version));
+        }
+    }
+
     /// Cached caps with the permissive default: a fetch failure keeps the
     /// indexer enabled on working-indexer defaults.
     async fn caps_for(
@@ -488,6 +540,7 @@ impl NewznabIndexer {
                 caps
             }
             Err(err) => {
+                self.forget_health_on(entry, &err);
                 tracing::warn!(
                     indexer = entry.name.as_str(),
                     error = err.to_string().as_str(),
@@ -500,6 +553,13 @@ impl NewznabIndexer {
 }
 
 impl Indexer for NewznabIndexer {
+    fn grab_client(&self, indexer_id: &str) -> Option<NewznabClient> {
+        self.entries
+            .iter()
+            .find(|entry| entry.id == indexer_id)
+            .map(|entry| entry.client.clone())
+    }
+
     fn search<'a>(
         &'a self,
         query: &'a IndexerQuery<'a>,

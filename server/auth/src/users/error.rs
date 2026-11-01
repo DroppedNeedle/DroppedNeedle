@@ -37,6 +37,13 @@ pub enum UsersError {
         /// What went wrong, for the log only.
         cause: String,
     },
+    /// The directory's rate row has no room yet (503 with the wait).
+    Paced {
+        /// The rate row's name.
+        provider: &'static str,
+        /// Whole seconds until it has room, when known.
+        retry_after: Option<u64>,
+    },
     /// Downstream failure (502).
     Upstream {
         /// What went wrong, for the log only.

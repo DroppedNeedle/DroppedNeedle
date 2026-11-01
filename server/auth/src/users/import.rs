@@ -22,8 +22,21 @@ use super::models::{
 };
 use super::roles::{Admin, Role};
 use super::services::{self, MAX_DISPLAY_NAME_LEN, store_internal, user_response as render_user};
-use super::stores::{DirectoryUser, StoreError, UserDirectory};
+use super::stores::{DirectoryError, DirectoryUser, StoreError, UserDirectory};
 use super::{UsersDeps, clock_now};
+
+fn directory_failed(error: DirectoryError) -> UsersError {
+    match error {
+        DirectoryError::Paced {
+            provider,
+            retry_after,
+        } => UsersError::Paced {
+            provider,
+            retry_after,
+        },
+        other => UsersError::unavailable(&other),
+    }
+}
 
 /// GET /admin/import/{jellyfin,plex}: every importable account with its
 /// already-imported flag.
@@ -32,10 +45,7 @@ pub async fn list_import_candidates(
     _admin: &Admin,
     directory: &dyn UserDirectory,
 ) -> Result<ImportCandidateListResponse, UsersError> {
-    let users = directory
-        .list_users()
-        .await
-        .map_err(|error| UsersError::unavailable(&error))?;
+    let users = directory.list_users().await.map_err(directory_failed)?;
     let mut candidates = Vec::with_capacity(users.len());
     for user in &users {
         let binding = deps
@@ -63,10 +73,7 @@ pub async fn import_users(
     directory: &dyn UserDirectory,
     provider_uids: &[String],
 ) -> Result<ImportUsersResponse, UsersError> {
-    let users = directory
-        .list_users()
-        .await
-        .map_err(|error| UsersError::unavailable(&error))?;
+    let users = directory.list_users().await.map_err(directory_failed)?;
     let catalog: HashMap<&str, &DirectoryUser> = users
         .iter()
         .map(|user| (user.provider_uid.as_str(), user))

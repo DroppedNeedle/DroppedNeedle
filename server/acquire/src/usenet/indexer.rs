@@ -16,6 +16,7 @@ use crate::downloads::source_tag::SourceTag;
 use crate::target::SearchTarget;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::newznab::NewznabClient;
 
 /// What one Usenet search asks for.
 pub enum IndexerQuery<'a> {
@@ -40,6 +41,13 @@ pub trait Indexer: Send + Sync {
         query: &'a IndexerQuery<'a>,
         priority: RequestPriority,
     ) -> BoxFuture<'a, Vec<IndexerResult>>;
+
+    /// The client an NZB from indexer `indexer_id` is fetched through, when
+    /// this seam calls that indexer itself. `None` leaves the fetch direct:
+    /// Prowlarr is a service the user runs, and a plugin paces its own.
+    fn grab_client(&self, _indexer_id: &str) -> Option<NewznabClient> {
+        None
+    }
 }
 
 /// Every enabled plugin indexer whose target is Usenet.

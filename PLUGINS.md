@@ -23,8 +23,8 @@ What DroppedNeedle does to keep a plugin in its lane:
   enables it in Settings > Plugins.
 - **Installs are pinned.** DroppedNeedle installs an exact commit and records
   it. The install screen shows that commit, the plugin's version, and what it
-  asks to do, before anything is written. If the repository changes between
-  the preview and the install, the install stops and asks you to look again.
+  asks to do, before anything is written. The install takes exactly the commit
+  you previewed, even if the branch or release has moved on since.
   An update stays the kind of install you chose, and stops if the
   repository at that address was deleted and created again.
 - **Each plugin is its own process.** If it crashes, only that plugin stops;
@@ -65,10 +65,10 @@ In **Settings > Plugins**, paste the repository URL and press **Preview**.
 DroppedNeedle keeps its GitHub requests under GitHub's limit for servers
 without an account: 10 at once, then about 50 an hour, shared by installs,
 updates and DroppedNeedle's own update check. A preview uses 4 requests
-from a plain repository URL and 3 from the other kinds. An install uses
-4 from a plain URL and 2 from the others, and an update 3 or 4. So
-after the first preview and install, about six plain-URL installs fit in
-an hour. When a preview, install or update would not fit, it stops before
+from a plain repository URL and 3 from the other kinds. An install from
+the preview uses 2, and an update 2 or 3, plus 1 when there is a new
+commit to download. So after the first preview and install, about eight
+installs fit in an hour. When a preview, install or update would not fit, it stops before
 sending anything and says how long to wait, for example "GitHub requests
 are paced. Try again in 3 minutes." That wait covers the whole operation,
 and it is usually DroppedNeedle's own pacing, not a limit from GitHub.

@@ -79,6 +79,7 @@ fn sab_error(error: SabnzbdError) -> SourceError {
         }
         SabnzbdError::Api(_)
         | SabnzbdError::NzbRefused { .. }
+        | SabnzbdError::NzbPaced { .. }
         | SabnzbdError::AmbiguousIdentity => SourceError::Unavailable(error.to_string()),
     }
 }
@@ -760,6 +761,10 @@ impl SabnzbdSource {
             }
         };
         let category = self.category.as_deref().filter(|cat| *cat != "*");
+        let grab = self
+            .indexers
+            .iter()
+            .find_map(|indexer| indexer.grab_client(&pick.usenet.indexer_id));
         // Worker-built job name: the counter keeps failover
         // attempts distinct on the client and matches the orphan shape.
         let handle = if task.download_type == "track" {
@@ -768,6 +773,7 @@ impl SabnzbdSource {
                     task_id,
                     &job_name,
                     Some(pick.usenet.nzb_url.as_str()),
+                    grab.as_ref(),
                     category,
                     None,
                     None,
@@ -779,6 +785,7 @@ impl SabnzbdSource {
                     task_id,
                     &job_name,
                     Some(pick.usenet.nzb_url.as_str()),
+                    grab.as_ref(),
                     category,
                     None,
                     None,

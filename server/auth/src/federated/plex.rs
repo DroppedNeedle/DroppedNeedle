@@ -304,9 +304,12 @@ impl PlexJourney {
         self.pins.has_room(Instant::now())?;
         let pin = self.client.create_pin().await.map_err(|error| {
             tracing::warn!(%error, "could not create a Plex PIN");
-            PlexStartDenied::StartFailed(FederatedError::ProviderUnavailable(
-                "Could not start Plex authentication".to_owned(),
-            ))
+            PlexStartDenied::StartFailed(match error {
+                FederatedError::Paced { .. } => error,
+                _ => FederatedError::ProviderUnavailable(
+                    "Could not start Plex authentication".to_owned(),
+                ),
+            })
         })?;
         let pin_secret = mint_token()
             .map_err(|_| PlexStartDenied::StartFailed(FederatedError::RngUnavailable))?;

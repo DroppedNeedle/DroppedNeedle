@@ -1,4 +1,5 @@
 import { api } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
 
 import { PLEX_ENDPOINTS } from './endpoints';
 import type { PlexPollResult, PlexPurpose, PlexStartBody } from './types';
@@ -25,10 +26,17 @@ export async function pollPlexFlow<P extends PlexPurpose>(
 	// The poll route is one literal per purpose; the union result narrows to
 	// the caller's purpose at runtime, so the cast only recovers the static
 	// link the generic erases.
-	const result = await api.v3.POST(PLEX_ENDPOINTS.poll(purpose), {
-		pin_id: pinId,
-		pin_secret: pinSecrets.get(pinId) ?? ''
-	});
+	// A limited poll says nothing about the PIN: it is still pending, as the
+	// server treats a poll while plex.tv is paced, and the next tick asks again.
+	const result = await api.v3
+		.POST(PLEX_ENDPOINTS.poll(purpose), {
+			pin_id: pinId,
+			pin_secret: pinSecrets.get(pinId) ?? ''
+		})
+		.catch((error: unknown) => {
+			if (error instanceof ApiError && error.status === 429) return { completed: false };
+			throw error;
+		});
 	if (result.completed) pinSecrets.delete(pinId);
 	return result as PlexPollResult<P>;
 }

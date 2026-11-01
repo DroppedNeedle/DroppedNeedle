@@ -45,6 +45,8 @@ pub const SPEC: KindSpec = KindSpec::new(KIND)
 pub const NOT_LINKED: &str = "SPOTIFY_NOT_LINKED";
 /// Spotify did not answer, or answered something the import cannot read.
 pub const UNAVAILABLE: &str = "SPOTIFY_UNAVAILABLE";
+/// Spotify kept asking us to slow down.
+pub const RATE_LIMITED: &str = "SPOTIFY_RATE_LIMITED";
 /// The playlist could not be saved.
 pub const SAVE_FAILED: &str = "SPOTIFY_SAVE_FAILED";
 /// What the status route shows for an import waiting on Spotify app
@@ -87,6 +89,7 @@ pub fn failure_message(code: Option<&str>) -> &'static str {
     match code {
         Some(NOT_LINKED) => "Spotify account not linked",
         Some(UNAVAILABLE) => "Failed to fetch playlist from Spotify",
+        Some(RATE_LIMITED) => "Spotify is limiting requests. Try again later",
         Some(SAVE_FAILED) => "Failed to save the imported playlist",
         _ => "The import did not finish",
     }
@@ -231,6 +234,17 @@ impl JobHandler for SpotifyImportJobs {
                 Err(ImportFailure::Spotify(SpotifyError::Unavailable(cause))) => {
                     tracing::warn!(%cause, "spotify import fetch failed");
                     UNAVAILABLE
+                }
+                // The wait Spotify named decides the next try.
+                Err(ImportFailure::Spotify(SpotifyError::RateLimited { retry_after })) => {
+                    return Outcome::Retry {
+                        code: RATE_LIMITED,
+                        at: retry_after.map(|secs| {
+                            service
+                                .now_ms()
+                                .saturating_add_unsigned(secs.saturating_mul(1000))
+                        }),
+                    };
                 }
                 Err(ImportFailure::Spotify(SpotifyError::Store(cause))) => {
                     tracing::error!(%cause, "spotify import write failed");

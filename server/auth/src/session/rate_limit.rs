@@ -13,6 +13,12 @@
 //! The numbers keep v2's (default 30/s burst 60, login 2/s burst 5, setup
 //! 1/s burst 3, search and discover 10/s burst 20).
 //!
+//! The OIDC and Plex sign-in routes spend the `oidc` and `plextv` provider
+//! rows, which every client shares, so each class stays well below its row:
+//! one unauthenticated client cannot keep a row dry and turn real sign-ins
+//! away. Plex's refill sits under the row's 1/s and over the browser's one
+//! PIN poll every two seconds.
+//!
 //! Login is also limited per username inside the login handler, across all
 //! clients: the wall a password guesser rotating addresses meets. That
 //! budget sits well above what the per-client login bucket lets one client
@@ -198,6 +204,8 @@ impl PathMatch {
 
 /// Class for all `/api/v3/*` traffic without an override.
 pub const DEFAULT_CLASS: RateClass = class("default", 30.0, 60);
+/// The OIDC sign-in steps, per client, at either callback path.
+pub const OIDC_CLASS: RateClass = class("oidc", 2.0, 5);
 /// Local login, per client.
 pub const LOGIN_CLASS: RateClass = class("login", 2.0, 5);
 /// Local login for one username across all clients: five clients' worth of
@@ -228,16 +236,14 @@ pub const RATE_CLASSES: &[(PathMatch, RateClass)] = &[
     ),
     (
         PathMatch::Prefix("/api/v3/auth/plex"),
-        class("plex", 5.0, 10),
+        class("plex", 0.75, 5),
     ),
     (
         PathMatch::Exact("/api/v3/auth/password-recovery/reset"),
         class("recovery-reset", 2.0, 5),
     ),
-    (
-        PathMatch::Exact("/api/v3/auth/oidc/exchange"),
-        class("oidc-exchange", 2.0, 5),
-    ),
+    (PathMatch::Prefix("/api/v3/auth/oidc"), OIDC_CLASS),
+    (PathMatch::Exact("/api/v1/auth/oidc/callback"), OIDC_CLASS),
     (
         PathMatch::Exact("/api/v3/auth/device-sessions"),
         class("device-sessions", 2.0, 5),
@@ -448,15 +454,16 @@ fn username_key(username: &str) -> String {
     format!("username:{}", kept.to_lowercase())
 }
 
-/// Axum middleware over `/api/v3/*`. Mounted inside the session gate so a
-/// signed-in caller is keyed by user; non-v3 paths pass through.
+/// Axum middleware over `/api/v3/*` and the `/api/v1/*` callbacks kept for
+/// migrated apps, each of which reaches a write. Mounted inside the session
+/// gate so a signed-in caller is keyed by user; other paths pass through.
 pub async fn rate_limit(
     State(limits): State<std::sync::Arc<RateLimiter>>,
     request: Request,
     next: Next,
 ) -> Response {
     let path = request.uri().path();
-    if !path.starts_with("/api/v3") {
+    if !path.starts_with("/api/v3") && !path.starts_with("/api/v1/") {
         return next.run(request).await;
     }
     let class = classify(path);
@@ -499,9 +506,49 @@ mod tests {
         assert_eq!(classify("/api/v3/auth/login").name, "login");
         assert_eq!(classify("/api/v3/auth/plex/poll").name, "plex");
         assert_eq!(classify("/api/v3/auth/plexx").name, "default");
+        assert_eq!(classify("/api/v3/auth/oidc/exchange").name, "oidc");
         assert_eq!(classify("/api/v3/covers/release/x").name, "covers");
         assert_eq!(classify("/api/v3/stream/local/x").name, "stream");
         assert_eq!(classify("/api/v3/me").name, "default");
+    }
+
+    #[test]
+    fn a_sign_in_class_stays_under_the_provider_row_it_spends() {
+        use droppedneedle_providers::rates::{self, Rate};
+
+        for (path, source) in [
+            ("/api/v3/auth/oidc/authorize", "oidc"),
+            ("/api/v3/auth/oidc/callback", "oidc"),
+            ("/api/v3/auth/plex/start", "plextv"),
+            ("/api/v3/auth/plex/poll/login", "plextv"),
+        ] {
+            let row = rates::row(source).unwrap();
+            let Rate::Fixed(refill) = row.per_second else {
+                panic!("{source} has a fixed rate");
+            };
+            let client = classify(path);
+            assert!(client.rate_per_sec < refill, "{path} refill");
+            assert!(client.capacity <= row.burst, "{path} burst");
+        }
+    }
+
+    #[test]
+    fn a_browser_polling_a_plex_pin_is_never_limited() {
+        let client = classify("/api/v3/auth/plex/poll/login");
+        let limiter = RateLimiter::new();
+        assert!(
+            limiter
+                .check_at(classify("/api/v3/auth/plex/start"), "ip:a", 0.0)
+                .allowed
+        );
+        for poll in 1..=600 {
+            assert!(
+                limiter
+                    .check_at(client, "ip:a", f64::from(poll) * 2.0)
+                    .allowed,
+                "poll {poll}"
+            );
+        }
     }
 
     #[test]

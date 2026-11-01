@@ -50,7 +50,9 @@ export const installPreviewedPluginMutation = () =>
 		mutationFn: (preview: PluginInstallPreview & { repository_url: string }) =>
 			api.v3.POST(PLUGIN_ENDPOINTS.install(), {
 				repository_url: preview.repository_url,
-				commit: preview.commit
+				commit: preview.commit,
+				reference: preview.reference,
+				ref_kind: preview.ref_kind
 			}),
 		onSuccess: (plugin) => {
 			toastStore.show({

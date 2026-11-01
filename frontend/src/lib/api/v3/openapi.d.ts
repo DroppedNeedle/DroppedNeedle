@@ -19248,7 +19248,11 @@ export interface components {
              *     installs, whatever the ref points at by now.
              */
             commit?: string | null;
-            /** @description A release tag, tag, branch or commit; overrides any in the URL. */
+            ref_kind?: null | components["schemas"]["PluginRefKind"];
+            /**
+             * @description A release tag, tag, branch or commit; overrides any in the URL.
+             *     With `ref_kind`, the reference a preview showed for this URL.
+             */
             reference?: string | null;
             /**
              * @description Repository URL, e.g. `https://github.com/owner/repo` (latest
@@ -24507,6 +24511,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpotifyPlaylistListResponse"];
+                };
+            };
+            /** @description Spotify is rate limiting this server */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

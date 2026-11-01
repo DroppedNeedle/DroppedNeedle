@@ -121,3 +121,7 @@ A proxy in front of DroppedNeedle has its own upload limits, and a large zip can
 
 - nginx accepts 1 MB by default. Set `client_max_body_size 8g;` (or `0` for no limit) in the DroppedNeedle `location`, and raise `client_body_timeout`, `proxy_send_timeout` and `proxy_read_timeout` if your uplink is slow. `proxy_request_buffering off;` passes the upload straight through instead of storing it on the proxy first.
 - Cloudflare's proxy takes at most 100 MB per request on the Free and Pro plans. Upload larger zips from your own network, at DroppedNeedle's own address, or split the album into smaller zips.
+
+## Indexer limits
+
+DroppedNeedle holds each Newznab indexer to the daily limits it reports. An NZB fetched for a download counts against the indexer's grab limit, and at that limit the download waits instead of failing. The health check asks each indexer once every six hours, so it does not spend a free account's daily API calls. An indexer that stops answering in between shows as down after a search or caps call to it fails, or at that six-hour check.

@@ -46,6 +46,16 @@ impl From<UsersError> for ApiError {
             UsersError::Unavailable { cause } => {
                 ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, cause)
             }
+            UsersError::Paced {
+                provider,
+                retry_after,
+            } => ApiError::unavailable(
+                Unavailable::Provider {
+                    provider,
+                    retry_after,
+                },
+                format!("{provider} is paced"),
+            ),
             UsersError::Upstream { cause } => ApiError::fault(StatusCode::BAD_GATEWAY, cause),
             UsersError::Busy => ApiError::unavailable(Unavailable::ServerBusy, "users store busy"),
             UsersError::HashingBusy => {

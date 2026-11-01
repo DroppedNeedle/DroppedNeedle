@@ -88,6 +88,7 @@ pub const SPOTIFY_REGISTERED_REDIRECT: &str =
 pub struct MockRecorder {
     inner: Arc<Mutex<RecordedCalls>>,
     registered_redirect: Arc<Mutex<Option<String>>>,
+    limit_playlists: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MockRecorder {
@@ -98,6 +99,12 @@ impl MockRecorder {
         if let Ok(mut guard) = self.registered_redirect.lock() {
             *guard = Some(uri.to_owned());
         }
+    }
+
+    /// Answer `/me/playlists` with a 429 asking for seven seconds from now on.
+    pub fn limit_playlists(&self) {
+        self.limit_playlists
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// The redirect URI the mock app lists.
@@ -311,6 +318,13 @@ async fn spotify_playlists(
     state
         .recorder
         .record(|calls| calls.spotify_paths.push("/me/playlists".to_owned()));
+    if state
+        .recorder
+        .limit_playlists
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "7")]).into_response();
+    }
     if !spotify_authed(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }

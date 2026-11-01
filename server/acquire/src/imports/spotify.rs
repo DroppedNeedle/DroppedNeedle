@@ -81,6 +81,11 @@ pub enum CoverOutcome {
 }
 
 impl SpotifyImportService {
+    /// Wall time in milliseconds, for a job's next try.
+    pub fn now_ms(&self) -> i64 {
+        self.connections.clock().now_ms()
+    }
+
     /// Wire the service from its parts.
     pub fn new(
         client: SpotifyClient,

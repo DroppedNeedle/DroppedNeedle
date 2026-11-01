@@ -412,6 +412,57 @@ async fn install_previews_permissions_then_pins_the_previewed_commit() {
     assert_eq!(update["updated"], false);
 }
 
+/// A pinned install reads only the repository and the archive: from a URL
+/// naming its ref, and from a plain URL that brings its preview's reference.
+/// The record says what the preview said, and an update of the same commit
+/// downloads nothing.
+#[tokio::test]
+async fn a_pinned_install_makes_two_github_reads() {
+    let rig = rig("pinned-reads").await;
+    let remote = FakeGitHub::new();
+    github(&remote);
+    let deps = deps_for(&rig, &remote);
+    let admin = with_test_principal(
+        plugin_routes().with_state(deps).into_router(),
+        session("admin-1"),
+    );
+    let archive = format!("https://codeload.github.com/acme/toy/zip/{SHA}");
+    let two_reads = vec![REPOSITORY.to_owned(), archive.clone()];
+
+    for (body, kind, reference) in [
+        (
+            json!({"repository_url": "https://github.com/acme/toy/tree/main", "commit": SHA}),
+            "branch",
+            "main",
+        ),
+        (
+            json!({
+                "repository_url": "https://github.com/acme/toy",
+                "commit": SHA,
+                "reference": "v1.0.0",
+                "ref_kind": "release",
+            }),
+            "release",
+            "v1.0.0",
+        ),
+    ] {
+        remote.requested.lock().unwrap().clear();
+        let (status, installed) =
+            send(admin.clone(), "POST", "/api/v3/plugins/install", Some(body)).await;
+        assert_eq!(status, StatusCode::CREATED, "{installed}");
+        assert_eq!(installed["install"]["commit"], SHA);
+        assert_eq!(installed["install"]["ref_kind"], kind);
+        assert_eq!(installed["install"]["reference"], reference);
+        assert_eq!(*remote.requested.lock().unwrap(), two_reads);
+    }
+
+    remote.requested.lock().unwrap().clear();
+    let (status, update) = send(admin, "POST", "/api/v3/plugins/toy/update", Some(json!({}))).await;
+    assert_eq!(status, StatusCode::OK, "{update}");
+    assert_eq!(update["updated"], false);
+    assert!(!remote.requested.lock().unwrap().contains(&archive));
+}
+
 const LATEST_RELEASE: &str = "https://api.github.com/repos/acme/toy/releases/latest";
 const DEFAULT_BRANCH: &str = "https://api.github.com/repos/acme/toy/commits/HEAD";
 const BRANCH_SHA: &str = "89abcdef0123456789abcdef0123456789abcdef";

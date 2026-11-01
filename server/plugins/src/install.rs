@@ -555,26 +555,48 @@ pub async fn resolve(
     })
 }
 
+/// What a preview of a plain repository URL resolved it to: a release, or
+/// the default branch. Anything else did not come from such a preview.
+fn previewed_ref(
+    previewed: Option<(PluginRefKind, &str)>,
+) -> Result<Option<(PluginRefKind, String)>, InstallError> {
+    match previewed {
+        None => Ok(None),
+        Some((kind @ (PluginRefKind::Release | PluginRefKind::Branch), reference))
+            if valid_ref(reference.trim()) =>
+        {
+            Ok(Some((kind, reference.trim().to_owned())))
+        }
+        Some(_) => Err(InstallError::PreviewStale),
+    }
+}
+
 /// Resolve an install pinned to `pin`, the commit its preview showed, so
 /// exactly that commit installs. A URL that names its ref (a tag, branch or
-/// commit) already says what the install record holds, so only the
-/// repository is read; the archive is then fetched by the pinned SHA. A
-/// plain repository URL resolves as usual, since the record names the
-/// release tag, and must still land on the pinned commit.
+/// commit) already says what the install record holds, and a plain
+/// repository URL has `previewed`, the ref its preview resolved it to, so
+/// only the repository is read; the archive is then fetched by the pinned
+/// SHA. A plain URL sent without `previewed` resolves as usual and must
+/// still land on the pinned commit.
 pub async fn resolve_pinned(
     github: &GitHubRepos,
     source: InstallSource,
     pin: &str,
+    previewed: Option<(PluginRefKind, &str)>,
 ) -> Result<ResolvedSource, InstallError> {
     let pin = pin.trim().to_ascii_lowercase();
     let (ref_kind, reference) = match &source.wanted {
         Wanted::LatestRelease | Wanted::NewestRelease => {
-            let resolved = resolve(github, source).await?;
-            return if resolved.commit == pin {
-                Ok(resolved)
+            if let Some(known) = previewed_ref(previewed)? {
+                known
             } else {
-                Err(InstallError::PreviewStale)
-            };
+                let resolved = resolve(github, source).await?;
+                return if resolved.commit == pin {
+                    Ok(resolved)
+                } else {
+                    Err(InstallError::PreviewStale)
+                };
+            }
         }
         Wanted::Tag(tag) => (PluginRefKind::Tag, tag.clone()),
         Wanted::Tree(reference) => (PluginRefKind::Branch, reference.clone()),

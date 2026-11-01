@@ -683,6 +683,13 @@ pub async fn plex_poll_connect_handler(
 /// the log.
 fn federated_unavailable(error: &FederatedError) -> AuthRouteError {
     match error {
+        FederatedError::Paced {
+            provider,
+            retry_after,
+        } => AuthRouteError::Paced {
+            provider,
+            retry_after: *retry_after,
+        },
         FederatedError::NotConfigured(_) | FederatedError::ProviderUnavailable(_) => {
             AuthRouteError::unavailable(error)
         }

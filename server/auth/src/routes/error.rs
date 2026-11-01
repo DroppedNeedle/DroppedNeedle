@@ -45,6 +45,13 @@ pub enum AuthRouteError {
         /// What went wrong, for the log only.
         cause: String,
     },
+    /// The sign-in provider's rate row has no room yet (503 with the wait).
+    Paced {
+        /// The rate row's name.
+        provider: &'static str,
+        /// Whole seconds until it has room, when known.
+        retry_after: Option<u64>,
+    },
     /// The database was too busy to answer in time.
     Busy {
         /// What was busy, for the log only.
@@ -108,6 +115,13 @@ impl From<UsersError> for AuthRouteError {
             UsersError::Unavailable { cause } | UsersError::Upstream { cause } => {
                 Self::Unavailable { cause }
             }
+            UsersError::Paced {
+                provider,
+                retry_after,
+            } => Self::Paced {
+                provider,
+                retry_after,
+            },
             UsersError::Busy => Self::busy(&"users store busy"),
             UsersError::HashingBusy => Self::busy(&"password hashing slots busy"),
             UsersError::Internal { cause } => Self::Internal { cause },
@@ -131,6 +145,16 @@ impl From<AuthRouteError> for ApiError {
             AuthRouteError::InvalidInput { message } => ApiError::invalid_input(message),
             AuthRouteError::Conflict { message } => ApiError::conflict(message),
             AuthRouteError::TooLarge => ApiError::too_large(),
+            AuthRouteError::Paced {
+                provider,
+                retry_after,
+            } => ApiError::unavailable(
+                Unavailable::Provider {
+                    provider,
+                    retry_after,
+                },
+                format!("{provider} is paced"),
+            ),
             AuthRouteError::Unavailable { cause } => {
                 ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, cause)
             }

@@ -10,6 +10,7 @@
 		createOidcAuthorizeMutation
 	} from '$lib/queries/auth/AuthMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { providerUnavailableMessage } from '$lib/utils/serviceError';
 	import { outsideLink } from '$lib/components/outsideLink';
 	import { createPlexStartMutation } from '$lib/queries/plex/PlexAuthMutations.svelte';
 	import { pollPlexFlow } from '$lib/queries/plex/PlexFlowApi';
@@ -97,6 +98,14 @@
 		}
 	}
 
+	/** What to say when the server or a provider asked this sign-in to wait. */
+	function waitMessage(error: unknown): string | null {
+		if (error instanceof ApiError && error.status === 429) {
+			return 'Too many attempts. Wait a moment and try again.';
+		}
+		return providerUnavailableMessage(error);
+	}
+
 	async function handlePlexLogin() {
 		plexError = null;
 		plexLoading = true;
@@ -117,11 +126,13 @@
 				} catch (e) {
 					clearInterval(plexPollInterval!);
 					plexLoading = false;
-					plexError = e instanceof ApiError ? 'Plex access denied' : 'Plex login failed';
+					plexError =
+						providerUnavailableMessage(e) ??
+						(e instanceof ApiError ? 'Plex access denied' : 'Plex login failed');
 				}
 			}, 2000);
-		} catch {
-			plexError = 'Plex login unavailable';
+		} catch (e) {
+			plexError = waitMessage(e) ?? 'Plex login unavailable';
 			plexLoading = false;
 		}
 	}
@@ -140,8 +151,8 @@
 				return;
 			}
 			window.location.href = authorizeLink;
-		} catch {
-			oidcError = 'SSO is not configured';
+		} catch (e) {
+			oidcError = waitMessage(e) ?? 'SSO is not configured';
 			oidcLoading = false;
 		}
 	}

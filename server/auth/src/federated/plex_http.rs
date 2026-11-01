@@ -5,7 +5,8 @@
 //! carry the user's own token; the machine id comes from the admin's
 //! configured server, read through [`PlexServerIdentity`]. Settings are
 //! read per call. Failures surface as
-//! [`FederatedError::ProviderUnavailable`] or, for a refused token,
+//! [`FederatedError::ProviderUnavailable`], [`FederatedError::Paced`] with
+//! the wait, or, for a refused token,
 //! [`FederatedError::Authentication`]; the journey maps them to the v2
 //! user-facing messages at each step. Tokens never reach a log line.
 
@@ -95,6 +96,10 @@ pub struct ServerAccess {
 /// only; it never carries a token or an address.
 fn failed(error: ProviderError) -> FederatedError {
     match error {
+        ProviderError::RateLimited { .. } => FederatedError::Paced {
+            provider: plextv::SOURCE,
+            retry_after: error.retry_after_secs(),
+        },
         ProviderError::Unauthorized { .. } | ProviderError::Forbidden { .. } => {
             FederatedError::Authentication("Plex authentication failed".to_owned())
         }
@@ -231,7 +236,10 @@ impl UserDirectory for PlexTv {
             }
             if let Err(error) = self.plextv.room_for(IMPORT_CALLS) {
                 tracing::warn!(%error, "plex.tv is paced; the user import waits");
-                return Err(DirectoryError::Transport);
+                return Err(DirectoryError::Paced {
+                    provider: plextv::SOURCE,
+                    retry_after: error.retry_after_secs(),
+                });
             }
             let client_id = self.client_id();
             let home = self.plextv.home_users(&token, &client_id, PRIORITY).await;

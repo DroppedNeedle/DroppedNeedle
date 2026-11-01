@@ -1161,8 +1161,43 @@ async fn newznab_fanout() {
     assert_eq!(health.status, "ok");
     assert!(health.message.contains("1/1"));
     assert!(indexer.is_configured());
+    // The next probe reuses that answer: it spends no daily API call.
+    let asked = ds_log.statuses().requests();
+    assert_eq!(indexer.health_check(USER).await.status, "ok");
+    assert_eq!(ds_log.statuses().requests(), asked);
     let empty = newznab_indexer(vec![]);
     assert_eq!(empty.health_check(USER).await.status, "error");
+}
+
+/// A search the indexer refuses or fails ends the health probe's reuse of its
+/// last answer, so the next probe finds out.
+#[tokio::test]
+async fn a_failed_search_makes_the_next_health_probe_ask() {
+    let log = NewznabMock::new();
+    let (base, _server) = serve_loopback(log.router(NewznabScenario::DrunkenSlug))
+        .await
+        .expect("mock serves");
+    let indexer = newznab_indexer(vec![entry_for(
+        newznab_client(&base, "ds", "DS"),
+        "ds",
+        "DS",
+        1,
+    )]);
+    assert_eq!(indexer.health_check(USER).await.status, "ok");
+    assert_eq!(indexer.health_check(USER).await.status, "ok");
+    let asked = log.statuses().requests();
+
+    log.statuses().answer_next(401, None);
+    indexer
+        .search_album("Radiohead", "In Rainbows", None, USER)
+        .await;
+    let searched = log.statuses().requests();
+    assert!(searched > asked);
+    indexer.health_check(USER).await;
+    assert!(
+        log.statuses().requests() > searched,
+        "the probe asked again"
+    );
 }
 
 // ---------------------------------------------------------------------------

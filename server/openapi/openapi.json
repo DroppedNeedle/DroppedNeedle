@@ -402,6 +402,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Spotify is rate limiting this server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -57119,12 +57129,23 @@
             ],
             "description": "The exact commit from a preview. When set, exactly that commit\ninstalls, whatever the ref points at by now."
           },
+          "ref_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginRefKind",
+                "description": "What the preview's `reference` is. Sent with `reference` and `commit`,\nso a plain URL need not be resolved a second time."
+              }
+            ]
+          },
           "reference": {
             "type": [
               "string",
               "null"
             ],
-            "description": "A release tag, tag, branch or commit; overrides any in the URL."
+            "description": "A release tag, tag, branch or commit; overrides any in the URL.\nWith `ref_kind`, the reference a preview showed for this URL."
           },
           "repository_url": {
             "type": "string",

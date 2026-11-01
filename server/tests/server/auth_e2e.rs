@@ -124,6 +124,11 @@ impl E2e {
         self
     }
 
+    /// The auth stores over the scratch database.
+    pub(crate) fn bundle(&self) -> &ProdAuth {
+        &self.bundle
+    }
+
     /// The scratch database pool, for assertions on stored rows.
     pub(crate) fn pool(&self) -> &sqlx::SqlitePool {
         self.runtime.db().sqlx()
@@ -165,6 +170,19 @@ impl E2e {
     /// buckets, so multi-pass tests rebuild instead of tripping the limiter.
     pub(crate) fn router(&self) -> Router {
         create_app(self.state())
+    }
+
+    /// [`E2e::router`] with its rate buckets emptied before each request, for
+    /// a journey of many sign-in steps from one client on one app.
+    pub(crate) fn router_with_fresh_buckets(&self) -> Router {
+        let state = self.state();
+        let limits = Arc::clone(&state.auth.limits);
+        create_app(state).layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                limits.reset();
+                next.run(request)
+            },
+        ))
     }
 
     /// A fresh application state over the same database, for tests that
@@ -1949,6 +1967,62 @@ async fn rate_limits_key_by_client_and_username() {
         StatusCode::UNAUTHORIZED,
         "another client can still try the same username"
     );
+}
+
+/// The v1 callbacks kept for migrated apps are limited like their v3 twins:
+/// each reaches a write, and the OIDC one shares the sign-in class.
+#[tokio::test]
+async fn the_legacy_callbacks_meet_the_limiter() {
+    let e2e = E2e::open("legacy-burst").await;
+    let app = held_clock_router(&e2e);
+    let mut limited = 0;
+    for _ in 0..30 {
+        let (status, _, _) = call_raw(
+            app.clone(),
+            "GET",
+            "/api/v1/auth/oidc/callback?code=c&state=s",
+            &[],
+        )
+        .await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            limited += 1;
+        }
+    }
+    assert_eq!(limited, 25, "the v1 OIDC callback");
+    let (status, _, _) = call(
+        app.clone(),
+        "POST",
+        "/api/v3/auth/oidc/authorize",
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "one bucket");
+    for uri in [
+        "/api/v1/me/connections/spotify/auth/callback",
+        "/api/v1/library/contributions/musicbrainz/callback",
+    ] {
+        let (_, headers, _) = call_raw(app.clone(), "GET", uri, &[]).await;
+        assert_eq!(headers["x-ratelimit-limit"], "60", "{uri}");
+    }
+}
+
+/// One unauthenticated client bursting at a sign-in route is limited on its
+/// own class before it can spend the provider row every client shares.
+#[tokio::test]
+async fn a_burst_at_the_sign_in_routes_stops_at_the_clients_own_class() {
+    let e2e = E2e::open("sign-in-burst").await;
+    let app = held_clock_router(&e2e);
+    for uri in ["/api/v3/auth/oidc/authorize", "/api/v3/auth/plex/start"] {
+        let mut limited = 0;
+        for _ in 0..30 {
+            let (status, _, _) = call(app.clone(), "POST", uri, &[], None).await;
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                limited += 1;
+            }
+        }
+        assert_eq!(limited, 25, "{uri}");
+    }
 }
 
 #[tokio::test]

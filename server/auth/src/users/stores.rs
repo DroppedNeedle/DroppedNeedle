@@ -187,7 +187,7 @@ pub struct DirectoryUser {
     pub email: Option<String>,
 }
 
-/// User-directory failures. Both map to the federated 503 posture (fixed
+/// User-directory failures. Each maps to the federated 503 posture (fixed
 /// body plus error id), matching the login flows.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum DirectoryError {
@@ -197,6 +197,14 @@ pub enum DirectoryError {
     /// Transport or server failure upstream.
     #[error("directory unreachable")]
     Transport,
+    /// The provider's rate row cannot cover the listing right now.
+    #[error("{provider} is paced")]
+    Paced {
+        /// The rate row's name.
+        provider: &'static str,
+        /// Whole seconds until it has room, when known.
+        retry_after: Option<u64>,
+    },
 }
 
 /// Network edge for admin user import: enumerate the accounts on one media

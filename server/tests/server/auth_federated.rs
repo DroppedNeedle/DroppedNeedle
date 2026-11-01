@@ -355,7 +355,7 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     assert_eq!(providers(e2e.router()).await["oidc"], true);
 
     // One app throughout: the one-time exchange codes live in its memory.
-    let app = e2e.router();
+    let app = e2e.router_with_fresh_buckets();
     let login = start_oidc(&app, &mock).await;
     // Unmarked: the plain name, then a marked clear of the `__Secure-` one.
     let sent = &login.set_cookies;
@@ -494,6 +494,98 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     );
 }
 
+/// A callback the `oidc` row cannot cover answers "try again" before it
+/// spends the login state, so reloading it still finishes the sign-in.
+#[tokio::test]
+async fn a_paced_oidc_callback_keeps_its_login_state() {
+    use droppedneedle_auth::federated::FederatedError;
+    use droppedneedle_auth::federated::oidc::{OidcConfig, OidcLogin};
+    use droppedneedle_auth::federated::oidc_http::OidcHttp;
+    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::{ProviderEndpoints, Providers, oidc};
+
+    let e2e = E2e::open("oidc-paced").await;
+    let auth = e2e.bundle();
+    let providers = Providers::over_wire(
+        Arc::new(ScriptedWire::new()),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ProviderEndpoints::closed(),
+    );
+    let login = OidcLogin::new(
+        auth.federated.clone(),
+        OidcHttp::new(providers.oidc.clone()),
+        auth.oidc_states.clone(),
+        auth.sessions.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    auth.oidc_states
+        .store_state("state-1", "verifier-1")
+        .await
+        .expect("state stores");
+    providers
+        .limiter(oidc::SOURCE)
+        .expect("oidc has a rate row")
+        .cool_down(std::time::Duration::from_secs(60));
+
+    let refused = login
+        .handle_callback(
+            &OidcConfig {
+                enabled: true,
+                issuer: "https://idp.test".to_owned(),
+                client_id: "client".to_owned(),
+                client_secret: None,
+                redirect_uri: "https://app.test/callback".to_owned(),
+                scopes: "openid".to_owned(),
+            },
+            "code",
+            "state-1",
+            None,
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(FederatedError::Paced { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(
+        auth.oidc_states.consume_state("state-1").await.unwrap(),
+        Some("verifier-1".to_owned()),
+        "the state was not spent"
+    );
+}
+
+/// plex.tv turning a PIN start down answers the wait, not a bare 503.
+#[tokio::test]
+async fn a_declined_plex_start_says_how_long_to_wait() {
+    let mock = serve(|_| {
+        Router::new().route(
+            "/pins",
+            post(|| async {
+                let mut wait = HeaderMap::new();
+                wait.insert("retry-after", "7".parse().unwrap());
+                (StatusCode::TOO_MANY_REQUESTS, wait)
+            }),
+        )
+    })
+    .await;
+    let e2e = E2e::open("plex-paced").await.with_plex_tv(mock.clone());
+    e2e.store
+        .save_secret_blocking(PlexConnection {
+            plex_url: mock,
+            plex_token: Secret::new(PLEX_ADMIN_TOKEN),
+            enabled: true,
+            login_enabled: true,
+            music_library_ids: Vec::new(),
+        })
+        .expect("plex settings save");
+
+    let (status, body, headers) =
+        call(e2e.router(), "POST", "/api/v3/auth/plex/start", &[], None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["error"]["code"], "PROVIDER_UNAVAILABLE");
+    assert_eq!(body["error"]["details"]["provider"], "plextv");
+    assert_eq!(headers["retry-after"], "7");
+}
+
 /// OIDC discovery goes out on the `oidc` rate row at user priority. While
 /// the row is resting it sends nothing and answers "try again", and a
 /// callback is held before it spends its login state.
@@ -530,9 +622,21 @@ async fn oidc_calls_are_paced_by_their_rate_row() {
     let idp = OidcHttp::new(providers.oidc.clone());
 
     row.cool_down(std::time::Duration::from_secs(60));
-    let busy = FederatedError::ProviderUnavailable("OIDC provider is busy; try again".to_owned());
-    assert_eq!(idp.room_for_callback().err(), Some(busy.clone()));
-    assert_eq!(idp.discover("https://idp.test").await.err(), Some(busy));
+    for refused in [
+        idp.room_for_callback().err(),
+        idp.discover("https://idp.test").await.err(),
+    ] {
+        assert!(
+            matches!(
+                refused,
+                Some(FederatedError::Paced {
+                    provider: "oidc",
+                    retry_after: Some(wait),
+                }) if (1..=61).contains(&wait)
+            ),
+            "{refused:?}"
+        );
+    }
     assert!(wire.sent().is_empty(), "a resting row sends nothing");
 
     let fresh = Providers::over_wire(
@@ -801,7 +905,7 @@ async fn plex_pins_are_bound_to_their_starter_and_gate_membership() {
         .expect("plex settings save");
     assert_eq!(providers(e2e.router()).await["plex"], true);
     // One app throughout: started PINs live in its memory.
-    let app = e2e.router();
+    let app = e2e.router_with_fresh_buckets();
     let start = |path: &'static str, auth: Option<String>| {
         let app = app.clone();
         async move {

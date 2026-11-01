@@ -22,6 +22,8 @@ use crate::landing::DownloadsFolder;
 use crate::landing::confine::{Place, place};
 use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
 use droppedneedle_providers::executor::decode_failure;
+use droppedneedle_providers::newznab::NewznabClient;
+use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority};
 
 pub use super::sabnzbd_models::{
     AddResponse, Category, Config, History, HistorySlot, Misc, Queue, QueueSlot,
@@ -30,14 +32,7 @@ use super::sabnzbd_models::{
     CategoriesReply, ConfigReply, HistoryReply, QueueReply, StatusReply, VersionReply,
 };
 
-/// The most an NZB may weigh. An NZB lists one segment per posted article:
-/// about 120 bytes of XML for an article of about 750 KB, so roughly
-/// 1/6000 of the release. That is 2 MB for a 10 GB box set and 17 MB for
-/// 100 GB. 50 MB leaves room for older posts with smaller articles and
-/// still bounds what one enqueue holds in memory, since the NZB is handed
-/// to SABnzbd from memory. The figures are arithmetic, not a measurement
-/// of a live indexer.
-pub const MAX_NZB_BYTES: usize = 50 * 1024 * 1024;
+pub use droppedneedle_providers::newznab::MAX_NZB_BYTES;
 
 /// The most one SABnzbd API answer may weigh. The largest are the queue
 /// and a 50-job history page. At a few kilobytes a job, and tens for one
@@ -70,6 +65,13 @@ pub enum SabnzbdError {
     NzbRefused {
         /// The indexer's status code.
         status: u16,
+    },
+    /// The indexer is at its grab cap or asked us to slow down; the release
+    /// is fine, so nothing is held against it.
+    #[error("the indexer is limiting NZB grabs")]
+    NzbPaced {
+        /// Seconds until it takes grabs again, when known.
+        retry_after: Option<u64>,
     },
     /// The indexer's NZB passed [`MAX_NZB_BYTES`].
     #[error("the NZB is larger than {} MB and was not fetched", MAX_NZB_BYTES / (1024 * 1024))]
@@ -123,6 +125,13 @@ pub enum NzbFetchError {
         content_type: Option<String>,
         /// Body snippet.
         snippet: String,
+    },
+    /// The indexer's cap or pace turned the grab down. Handing the URL to
+    /// SABnzbd would spend a grab the indexer already said no to.
+    #[error("NZB grab is paced")]
+    Paced {
+        /// Seconds until it takes grabs again, when known.
+        retry_after: Option<u64>,
     },
     /// The NZB passed [`MAX_NZB_BYTES`]. The indexer answered, so SABnzbd
     /// is not handed the URL either.
@@ -646,16 +655,7 @@ impl SabnzbdClient {
                 BodyError::TooLarge => NzbFetchError::TooLarge,
                 BodyError::Transport(detail) => NzbFetchError::Transport(detail),
             })?;
-        let head: Vec<u8> = bytes.iter().take(512).copied().collect();
-        if !looks_like_nzb(&head) {
-            let snippet = snippet_of(&bytes);
-            return Err(NzbFetchError::ContentRejection {
-                status,
-                content_type,
-                snippet,
-            });
-        }
-        Ok(bytes)
+        checked_nzb(bytes, status, content_type)
     }
 
     fn api_url(&self) -> String {
@@ -989,10 +989,71 @@ pub struct Health {
     pub message: String,
 }
 
+/// The bytes, when they are a real NZB and not an indexer's error page.
+fn checked_nzb(
+    bytes: Vec<u8>,
+    status: u16,
+    content_type: Option<String>,
+) -> Result<Vec<u8>, NzbFetchError> {
+    let head: Vec<u8> = bytes.iter().take(512).copied().collect();
+    if looks_like_nzb(&head) {
+        return Ok(bytes);
+    }
+    Err(NzbFetchError::ContentRejection {
+        status,
+        content_type,
+        snippet: snippet_of(&bytes),
+    })
+}
+
+/// Fetch a release's NZB through its indexer's client, so the grab is paced
+/// and counted on the indexer. The download worker asks, so it is background.
+async fn grab_nzb(grab: &NewznabClient, url: &str) -> Result<Vec<u8>, NzbFetchError> {
+    let bytes = grab
+        .fetch_nzb(url, RequestPriority::BackgroundSync)
+        .await
+        .map_err(|error| grab_failed(&error))?;
+    checked_nzb(bytes, 200, None)
+}
+
+/// A failed grab in the terms the enqueue path decides on. The error names
+/// only the provider, never the enclosure URL or its key.
+fn grab_failed(error: &ProviderError) -> NzbFetchError {
+    let status = match error {
+        ProviderError::RateLimited { .. } => {
+            return NzbFetchError::Paced {
+                retry_after: error.retry_after_secs(),
+            };
+        }
+        ProviderError::Payload {
+            kind: PayloadKind::TooLarge,
+            ..
+        } => return NzbFetchError::TooLarge,
+        ProviderError::Transport { .. } | ProviderError::Invalid { .. } => {
+            return NzbFetchError::Transport(error.to_string());
+        }
+        ProviderError::Unauthorized { .. } | ProviderError::Rejected { .. } => 401,
+        ProviderError::Forbidden { .. } => 403,
+        ProviderError::NotFound { .. } => 404,
+        ProviderError::Unavailable { .. } => 503,
+        ProviderError::BadRequest { status, .. }
+        | ProviderError::Redirect { status, .. }
+        | ProviderError::Server { status, .. } => *status,
+        _ => 502,
+    };
+    NzbFetchError::Definitive {
+        status,
+        snippet: String::new(),
+    }
+}
+
 /// The download side of Usenet: enqueue, poll, abort, locate.
 ///
 /// Enqueue fetches the NZB, validates it, and `addfile`s it; only a
-/// no-response transport failure falls back to `addurl`. Status walks
+/// no-response transport failure falls back to `addurl`. A release from a
+/// native Newznab indexer is fetched through that indexer's client; one
+/// from Prowlarr (a service the user runs) or a plugin is fetched directly.
+/// Status walks
 /// queue→history, and only the true `Downloading` state sets
 /// `has_active_transfer`, so Grabbing/Queued/Paused/post-processing never
 /// trip the stall/queued watchdogs.
@@ -1096,19 +1157,30 @@ impl SabnzbdQueue {
         priority: Option<i32>,
         post_processing: Option<i32>,
     ) -> Result<TaskHandle, SabnzbdError> {
-        self.enqueue(task_id, None, nzb_url, category, priority, post_processing)
-            .await
+        self.enqueue(
+            task_id,
+            None,
+            nzb_url,
+            None,
+            category,
+            priority,
+            post_processing,
+        )
+        .await
     }
 
     /// Enqueue one album release under a worker-built job name. The worker
     /// passes `droppedneedle-{task_id}-{candidate_index}`:
     /// the counter keeps failover attempts distinct on the client and is
-    /// the shape the orphan reconciler recognises.
+    /// the shape the orphan reconciler recognises. `grab` is the release's
+    /// indexer, when it has one.
+    #[allow(clippy::too_many_arguments)]
     pub async fn enqueue_album_as(
         &self,
         task_id: &str,
         job_name: &str,
         nzb_url: Option<&str>,
+        grab: Option<&NewznabClient>,
         category: Option<&str>,
         priority: Option<i32>,
         post_processing: Option<i32>,
@@ -1117,6 +1189,7 @@ impl SabnzbdQueue {
             task_id,
             Some(job_name),
             nzb_url,
+            grab,
             category,
             priority,
             post_processing,
@@ -1127,11 +1200,13 @@ impl SabnzbdQueue {
     /// Enqueue one track. Usenet has no reliable single-track search: the
     /// track resolved to its album upstream, so this is the same
     /// release enqueue under a track-derived job name.
+    #[allow(clippy::too_many_arguments)]
     pub async fn enqueue_track(
         &self,
         task_id: &str,
         track_job: &str,
         nzb_url: Option<&str>,
+        grab: Option<&NewznabClient>,
         category: Option<&str>,
         priority: Option<i32>,
         post_processing: Option<i32>,
@@ -1140,6 +1215,7 @@ impl SabnzbdQueue {
             task_id,
             Some(track_job),
             nzb_url,
+            grab,
             category,
             priority,
             post_processing,
@@ -1147,11 +1223,13 @@ impl SabnzbdQueue {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn enqueue(
         &self,
         task_id: &str,
         job_name: Option<&str>,
         nzb_url: Option<&str>,
+        grab: Option<&NewznabClient>,
         category: Option<&str>,
         priority: Option<i32>,
         post_processing: Option<i32>,
@@ -1165,17 +1243,22 @@ impl SabnzbdQueue {
         } else {
             job_name
         };
-        let nzb_bytes = match self
-            .client
-            .fetch_nzb(url, self.policy.enqueue_timeout)
-            .await
-        {
+        let fetched = match grab {
+            Some(grab) => grab_nzb(grab, url).await,
+            None => {
+                self.client
+                    .fetch_nzb(url, self.policy.enqueue_timeout)
+                    .await
+            }
+        };
+        let nzb_bytes = match fetched {
             Ok(bytes) => bytes,
             Err(NzbFetchError::Transport(_)) => {
                 // No-response transport failure: this indexer may be
                 // reachable only from the SABnzbd host, so hand SABnzbd
                 // the enclosure URL. The URL is never logged: enclosures
-                // carry the indexer apikey.
+                // carry the indexer apikey. A grab through the indexer's
+                // client already counted this one against its cap.
                 let response = self
                     .client
                     .add_url(
@@ -1198,6 +1281,9 @@ impl SabnzbdQueue {
             }
             Err(NzbFetchError::Definitive { status, .. }) => {
                 return Err(SabnzbdError::NzbRefused { status });
+            }
+            Err(NzbFetchError::Paced { retry_after }) => {
+                return Err(SabnzbdError::NzbPaced { retry_after });
             }
             Err(NzbFetchError::TooLarge) => return Err(SabnzbdError::NzbTooLarge),
             Err(NzbFetchError::ContentRejection { snippet, .. }) => {

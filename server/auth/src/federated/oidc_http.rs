@@ -14,9 +14,10 @@
 //! (a refusal is `ProviderUnavailable`, a document missing an endpoint or
 //! `jwks_uri`, or naming a browser address that is not http or https, is
 //! `NotConfigured`); token POST with a 15s timeout, sent once (no answer
-//! or a rate limit is `ProviderUnavailable`, a refusal is
+//! is `ProviderUnavailable`, a refusal is
 //! `Authentication("OIDC token exchange failed")`, bad JSON is
-//! `ProviderUnavailable`); userinfo answers `None` on any failure so the
+//! `ProviderUnavailable`); a rate limit at any step is `Paced`; userinfo
+//! answers `None` on any failure so the
 //! verified `id_token` claims stand.
 
 use std::collections::HashMap;
@@ -86,13 +87,16 @@ impl OidcHttp {
     pub fn room_for_callback(&self) -> Result<(), FederatedError> {
         self.idp.room_for(CALLBACK_CALLS).map_err(|error| {
             tracing::debug!(%error, "OIDC callback held for pace");
-            busy()
+            paced(&error)
         })
     }
 }
 
-fn busy() -> FederatedError {
-    FederatedError::ProviderUnavailable("OIDC provider is busy; try again".to_owned())
+fn paced(error: &ProviderError) -> FederatedError {
+    FederatedError::Paced {
+        provider: droppedneedle_providers::oidc::SOURCE,
+        retry_after: error.retry_after_secs(),
+    }
 }
 
 /// The sign-in failure for a call that got no usable answer: a redirect,
@@ -110,7 +114,7 @@ fn transport_failure(error: &ProviderError) -> Option<FederatedError> {
             kind: PayloadKind::TooLarge,
             ..
         } => FederatedError::ProviderUnavailable("OIDC provider answer is too large".to_owned()),
-        ProviderError::RateLimited { .. } => busy(),
+        ProviderError::RateLimited { .. } => paced(error),
         ProviderError::Transport { .. } | ProviderError::Invalid { .. } => {
             tracing::debug!(%error, "OIDC provider request failed");
             FederatedError::ProviderUnavailable("Could not reach OIDC provider".to_owned())

@@ -1145,6 +1145,31 @@ async fn unreadable_spotify_settings_refuse_an_import() {
     assert_eq!(after.spotify_grants, before.spotify_grants);
 }
 
+/// A Spotify 429 on the playlist listing reaches the person as the honest
+/// wait, not a generic bad gateway.
+#[tokio::test]
+async fn a_rate_limited_playlist_listing_answers_the_wait() {
+    let (auth, admin_id, user_id) = seed_rig().await;
+    let (api, accounts, _covers, recorder) = serve_spotify().await.expect("mock serves");
+    let bundle = rig_for(&auth, &api.base_url, &accounts.base_url, None);
+    seed_spotify_app(bundle.deps.clone(), &admin_id).await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
+
+    recorder.limit_playlists();
+
+    let response = authed_app(bundle.deps.clone(), &user_id, Role::User)
+        .oneshot(
+            Request::get("/api/v3/acquire/spotify/playlists")
+                .header("host", "app.test")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["retry-after"], "7");
+}
+
 /// An import queued before the Spotify app settings stopped reading waits
 /// for them without spending its attempts, says why, and finishes once
 /// they are saved again.

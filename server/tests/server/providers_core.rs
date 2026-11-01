@@ -1504,3 +1504,52 @@ async fn a_newznab_indexer_at_its_daily_cap_waits_for_the_reset() {
     search().await.expect("the cap freed up");
     assert_eq!(wire.sent().len(), 2);
 }
+
+/// An NZB grab spends the indexer's grab cap and shows on the `newznab`
+/// row, and is not sent once the cap is reached.
+#[tokio::test]
+async fn an_nzb_grab_counts_on_the_indexers_row_and_cap() {
+    use droppedneedle_kernel::clock::ManualClock;
+
+    const NOW: i64 = 1_800_000_000;
+    const NZB: &str = "https://cdn.indexer.test/getnzb/1.nzb";
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        "https://indexer.test/api",
+        200,
+        &[],
+        r#"<rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel>
+<newznab:apilimits apiCurrent="1" apiMax="100" grabCurrent="4" grabMax="5"/>
+</channel></rss>"#,
+    );
+    wire.answer(NZB, 200, &[], "<nzb></nzb>");
+    let providers = Providers::over_wire(
+        wire.clone(),
+        Arc::new(ManualClock::at(NOW * 1000)),
+        ProviderEndpoints::closed(),
+    );
+    let client = providers
+        .newznab
+        .client("idx", "Indexer", "https://indexer.test/api", "KEY");
+    let priority = RequestPriority::BackgroundSync;
+    client
+        .search("Radiohead", &[], 0, 100, priority)
+        .await
+        .expect("the answer that reports the counts");
+
+    let nzb = client.fetch_nzb(NZB, priority).await.expect("the grab");
+    assert_eq!(nzb, b"<nzb></nzb>");
+    let row = providers.limiter("newznab").expect("the newznab row");
+    let sent: u64 = row.calls().iter().map(|count| count.calls).sum();
+    assert_eq!(sent, 2, "the search and the grab show on the row");
+
+    assert!(matches!(
+        client.fetch_nzb(NZB, priority).await,
+        Err(ProviderError::RateLimited { .. })
+    ));
+    assert_eq!(
+        wire.sent().len(),
+        2,
+        "nothing sent while the grab cap holds"
+    );
+}

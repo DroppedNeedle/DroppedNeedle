@@ -58,7 +58,8 @@ use droppedneedle_providers::web_address::web_address;
 
 /// Failure of a federated login or import step. HTTP mapping lives in the
 /// handler layer: `Authentication` is 401 on login routes (403 on the Plex
-/// poll, v2 parity), `NotConfigured` and `ProviderUnavailable` are 503,
+/// poll, v2 parity), `NotConfigured`, `ProviderUnavailable` and `Paced` are
+/// 503,
 /// `StoreUnavailable` and `RngUnavailable` are 500 with a fixed body.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum FederatedError {
@@ -70,6 +71,15 @@ pub enum FederatedError {
     /// `ExternalServiceError`).
     #[error("provider unavailable: {0}")]
     ProviderUnavailable(String),
+    /// The provider's rate row cannot cover this call right now. Nothing was
+    /// lost: the same sign-in works once the wait is over.
+    #[error("{provider} is paced")]
+    Paced {
+        /// The rate row's name.
+        provider: &'static str,
+        /// Whole seconds until it has room, when known.
+        retry_after: Option<u64>,
+    },
     /// The provider is disabled or half-configured (v2
     /// `ConfigurationError`).
     #[error("not configured: {0}")]

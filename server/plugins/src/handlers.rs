@@ -190,17 +190,33 @@ pub async fn list_plugins(
 }
 
 /// Resolve and download one install request without installing it,
-/// pinned to `pin` when a preview named the commit.
+/// pinned to the commit when a preview named it.
 async fn stage_request(
     deps: &PluginsDeps,
-    url: &str,
-    reference: Option<&str>,
-    pin: Option<&str>,
+    request: &PluginInstallRequest,
 ) -> Result<StagedPlugin, PluginError> {
-    let source = parse_source(url, reference).map_err(map_install)?;
-    let resolved = match pin.map(str::trim).filter(|text| !text.is_empty()) {
-        Some(pin) => resolve_pinned(&deps.github, source, pin).await,
-        None => resolve(&deps.github, source).await,
+    let url = &request.repository_url;
+    let reference = request.reference.as_deref();
+    let pin = request
+        .commit
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    let resolved = match (pin, request.ref_kind, reference) {
+        // The reference a preview showed says what the URL resolved to; it
+        // does not override the URL.
+        (Some(pin), Some(kind), Some(reference)) => {
+            let source = parse_source(url, None).map_err(map_install)?;
+            resolve_pinned(&deps.github, source, pin, Some((kind, reference))).await
+        }
+        (Some(pin), ..) => {
+            let source = parse_source(url, reference).map_err(map_install)?;
+            resolve_pinned(&deps.github, source, pin, None).await
+        }
+        (None, ..) => {
+            let source = parse_source(url, reference).map_err(map_install)?;
+            resolve(&deps.github, source).await
+        }
     }
     .map_err(map_install)?;
     stage(&deps.github, resolved).await.map_err(map_install)
@@ -240,8 +256,11 @@ pub async fn preview_plugin_install(
     _admin: Admin,
     ValidJson(body): ValidJson<PluginInstallRequest>,
 ) -> Result<Json<PluginInstallPreview>, ApiError> {
-    let staged =
-        stage_request(&deps, &body.repository_url, body.reference.as_deref(), None).await?;
+    let unpinned = PluginInstallRequest {
+        commit: None,
+        ..body
+    };
+    let staged = stage_request(&deps, &unpinned).await?;
     let manifest = &staged.manifest;
     let installed_version = deps
         .host
@@ -293,13 +312,7 @@ pub async fn install_plugin(
     _admin: Admin,
     ValidJson(body): ValidJson<PluginInstallRequest>,
 ) -> Result<(StatusCode, Json<PluginInfo>), ApiError> {
-    let staged = stage_request(
-        &deps,
-        &body.repository_url,
-        body.reference.as_deref(),
-        body.commit.as_deref(),
-    )
-    .await?;
+    let staged = stage_request(&deps, &body).await?;
     let name = install_staged(&deps, staged).await?;
     let info = plugin_info(deps.host.as_ref(), deps.config.as_ref(), &name)?;
     Ok((StatusCode::CREATED, Json(info)))
@@ -343,27 +356,28 @@ pub async fn update_plugin_from_source(
         .map_err(map_install)?;
     let resolved = resolve(&deps.github, source).await.map_err(map_install)?;
     record.same_repository(&resolved).map_err(map_install)?;
-    let repository_id = resolved.repository_id;
-    let staged = stage(&deps.github, resolved).await.map_err(map_install)?;
-    if staged.manifest.name != name {
-        return Err(ApiError::invalid_input(format!(
-            "That repository now holds a plugin named '{}', not '{name}'",
-            staged.manifest.name
-        )));
-    }
     if let Some(expected) = body
         .commit
         .as_deref()
         .map(str::trim)
         .filter(|text| !text.is_empty())
-        && !expected.eq_ignore_ascii_case(&staged.resolved.commit)
+        && !expected.eq_ignore_ascii_case(&resolved.commit)
     {
         return Err(ApiError::conflict(
             "The repository changed since the preview. Preview it again to see what would be installed",
         ));
     }
-    let updated = staged.resolved.commit != record.commit;
+    let repository_id = resolved.repository_id;
+    let updated = resolved.commit != record.commit;
+    // The same commit holds the same code, so its archive is not fetched.
     if updated {
+        let staged = stage(&deps.github, resolved).await.map_err(map_install)?;
+        if staged.manifest.name != name {
+            return Err(ApiError::invalid_input(format!(
+                "That repository now holds a plugin named '{}', not '{name}'",
+                staged.manifest.name
+            )));
+        }
         install_staged(&deps, staged).await?;
     } else if record.repository_id.is_none() {
         // One small file, read and written in place like the record read above.
