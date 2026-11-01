@@ -693,6 +693,14 @@ pub enum FailureCode {
     MassMissingGuard,
     /// The catalog refused one file's rows; the file is skipped this run.
     CatalogCommitFailed,
+    /// A scope is a link, or reached through one, so it was not walked and
+    /// nothing under it is judged, whatever else the run walked.
+    ScopeThroughLink,
+    /// Internal, on a scope only: the folder is not on the disk under this
+    /// spelling but is under another, so the scope is complete with nothing
+    /// in it. Rows whose file the other spelling holds are excused from the
+    /// mass-missing guard. Never a failure.
+    ScopeRenamed,
     /// Internal: the run has ended and still owes the end passes named by
     /// the row's path. Never listed among the run's failures.
     RunEndPending,
@@ -731,6 +739,8 @@ spelled!(FailureCode {
     UnexpectedWorkerFailure => "UNEXPECTED_WORKER_FAILURE",
     MassMissingGuard => "MASS_MISSING_GUARD",
     CatalogCommitFailed => "CATALOG_COMMIT_FAILED",
+    ScopeThroughLink => "SCOPE_THROUGH_LINK",
+    ScopeRenamed => "SCOPE_RENAMED",
     RunEndPending => "RUN_END_PENDING",
 });
 

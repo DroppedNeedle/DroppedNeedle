@@ -62,7 +62,7 @@ const KIND: &str = "continue_tracks";
 const REASON: &str = "TRACK_CONTINUED";
 /// The basis an audit row gives for a pair the scan proved itself: two
 /// rows for one file on disk, or one file moved to another folder.
-const SAME_FILE: &str = "same_file";
+pub(crate) const SAME_FILE: &str = "same_file";
 const MOVED_FILE: &str = "moved_file";
 
 /// Which albums a pass looks at for new pairs. Aliases are kept current

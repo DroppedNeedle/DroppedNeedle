@@ -6157,6 +6157,14 @@ async fn an_admin_closes_a_write_put_back_by_hand_and_writes_nothing() {
         row("other", "Other/01.flac", &before),
     ))
     .expect("journal rows");
+    plant(&music, "Replaced/01.flac", "flac_no_tags.flac");
+    db.execute_batch(&format!(
+        "{} INSERT INTO library_publish_replacements (journal_id, replaced_rel, \
+         replaced_sha256, recycle_to) VALUES ('replaced-000', 'Replaced/01.flac', '{before}', \
+         '.recycle/x');",
+        row("replaced", "Replaced/01.flac", "another-source"),
+    ))
+    .expect("a write that replaced a file");
     let files = || {
         walk_files(&music)
             .into_iter()
@@ -6195,6 +6203,10 @@ async fn an_admin_closes_a_write_put_back_by_hand_and_writes_nothing() {
     };
     assert_eq!(found("back"), (1, 0));
     assert_eq!(found("gone"), (0, 1));
+    management
+        .resolve_bundle("replaced", "admin")
+        .expect("the replaced file is back");
+    assert_eq!(found("replaced"), (1, 0));
     assert_eq!(
         management
             .resolve_bundle("gone", "admin")

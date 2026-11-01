@@ -254,6 +254,9 @@ enum WalkMessage {
     /// A folder on another filesystem than the folder above it, as its
     /// inventory key.
     Mount(String),
+    /// Links met in one folder, as inventory keys. A link to a folder is never
+    /// followed; one with rows under it keeps them.
+    Links(Vec<String>),
     Done,
 }
 
@@ -497,6 +500,7 @@ impl InventoryScanner {
         // The run fails wholesale only when nothing was discoverable.
         let mut current = run.clone();
         let mut unavailable_scopes = 0usize;
+        let mut linked_scopes = 0usize;
         for scope in scopes {
             if self.store.scope_discovery_state(
                 stop,
@@ -586,15 +590,50 @@ impl InventoryScanner {
                     )?;
                     return self.fail_run(&run.id, current.row_revision, FailureCode::WalkTimeout);
                 }
-                Ok(found @ (ScopeFolder::Missing | ScopeFolder::Linked)) => {
-                    let detail = if found == ScopeFolder::Linked {
+                Ok(ScopeFolder::Renamed) => {
+                    self.store.begin_scope_walk(
+                        stop,
+                        &run.id,
+                        &scope.root_id,
+                        &scope.relative_path,
+                    )?;
+                    self.store.complete_scope_discovery(
+                        stop,
+                        &run.id,
+                        &scope.root_id,
+                        &scope.relative_path,
+                        ScopeDiscoveryState::Completed,
+                        Some(FailureCode::ScopeRenamed),
+                    )?;
+                    continue;
+                }
+                Ok(ScopeFolder::Linked) => {
+                    self.record_failure(
+                        stop,
+                        &run.id,
+                        scope,
+                        scope.relative_path.clone(),
+                        FailureCode::ScopeThroughLink,
                         format!(
-                            "This folder is reached through a link, which a scan never follows: {}",
+                            "This folder is a link, or inside one, and is not read: {}",
                             scope.relative_path
-                        )
-                    } else {
-                        format!("The library root path is missing: {}", scope.relative_path)
-                    };
+                        ),
+                    )?;
+                    self.store.complete_scope_discovery(
+                        stop,
+                        &run.id,
+                        &scope.root_id,
+                        &scope.relative_path,
+                        ScopeDiscoveryState::Unavailable,
+                        Some(FailureCode::ScopeThroughLink),
+                    )?;
+                    unavailable_scopes += 1;
+                    linked_scopes += 1;
+                    continue;
+                }
+                Ok(ScopeFolder::Missing) => {
+                    let detail =
+                        format!("The library root path is missing: {}", scope.relative_path);
                     self.record_failure(
                         stop,
                         &run.id,
@@ -695,7 +734,12 @@ impl InventoryScanner {
             // GH-296: every scope proved unreachable, so the run fails
             // instead of completing silently green.
             tracing::warn!(run_id = %run.id, count = unavailable_scopes, "library_scan event=all_scopes_unavailable");
-            return self.fail_run(&run.id, current.row_revision, FailureCode::RootUnavailable);
+            let code = if linked_scopes == unavailable_scopes {
+                FailureCode::ScopeThroughLink
+            } else {
+                FailureCode::RootUnavailable
+            };
+            return self.fail_run(&run.id, current.row_revision, code);
         }
         Ok(current)
     }
@@ -851,6 +895,23 @@ impl InventoryScanner {
                         .record_mount(stop, &scope.root_id, &relative_path)?;
                 }
                 _ if discard_remaining => continue,
+                WalkMessage::Links(links) => {
+                    for relative_path in links {
+                        if self
+                            .store
+                            .refuse_link(stop, &run.id, scope, &relative_path)?
+                        {
+                            self.record_failure(
+                                stop,
+                                &run.id,
+                                scope,
+                                relative_path.clone(),
+                                FailureCode::ScopeThroughLink,
+                                format!("This folder is a link and is not read: {relative_path}"),
+                            )?;
+                        }
+                    }
+                }
                 WalkMessage::Skips(skips) => {
                     for (relative_path, failure_code) in skips {
                         let failure_detail = match failure_code {
@@ -1135,19 +1196,33 @@ enum ScopeFolder {
     /// It or a folder on the way to it, below the root, is a link. The
     /// root's own path is the admin's and may go through links.
     Linked,
+    /// The exact path is not on the disk, and a folder differing only in case
+    /// is, at full depth, holding files. The scope completes empty; a row here
+    /// is judged gone only as the mass-missing guard allows, and a row whose
+    /// file the twin holds at the same place does not count against it.
+    Renamed,
 }
 
 fn scope_folder(root: &Path, selected: &Path) -> ScopeFolder {
     let mut at = root.to_path_buf();
     let below = selected.strip_prefix(root).unwrap_or(Path::new(""));
-    let linked = below.components().any(|part| {
+    for part in below.components() {
         at.push(part);
-        at.symlink_metadata()
-            .is_ok_and(|meta| meta.file_type().is_symlink())
-    });
-    if linked {
-        ScopeFolder::Linked
-    } else if selected.is_dir() {
+        match at.symlink_metadata() {
+            Ok(meta) if meta.file_type().is_symlink() => return ScopeFolder::Linked,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(_) => return ScopeFolder::Missing,
+        }
+    }
+    if let Some(relative) = below.to_str().filter(|relative| !relative.is_empty()) {
+        match super::roots::renamed_to_a_twin(root, relative) {
+            Ok(false) => {}
+            Ok(true) => return ScopeFolder::Renamed,
+            Err(_) => return ScopeFolder::Missing,
+        }
+    }
+    if selected.is_dir() {
         ScopeFolder::Walkable
     } else {
         ScopeFolder::Missing
@@ -1399,6 +1474,7 @@ fn produce_inventory(
             }
         };
         let mut skips: Vec<(String, FailureCode)> = Vec::new();
+        let mut links: Vec<String> = Vec::new();
         let mut inspected: Vec<Result<DiscoveredFile, WalkErrorInfo>> = Vec::new();
         for entry in entries {
             let entry = match entry {
@@ -1433,6 +1509,13 @@ fn produce_inventory(
                     stack.push((path, own.or(directory_device)));
                 }
                 continue;
+            }
+            if file_type.is_symlink() {
+                links.push(
+                    path.strip_prefix(root)
+                        .map(text_safe_posix)
+                        .unwrap_or_else(|_| text_safe_posix(&path)),
+                );
             }
             if !is_audio_file(&path) || is_management_artifact(&path) {
                 continue;
@@ -1519,6 +1602,9 @@ fn produce_inventory(
                 mtime_secs: mtime_ns as f64 / 1_000_000_000.0,
                 revision: exact_stat_revision(meta.len(), mtime_ns),
             }));
+        }
+        if !links.is_empty() && !send_with_stop(sender, stopped, WalkMessage::Links(links)) {
+            break;
         }
         if !skips.is_empty() && !send_with_stop(sender, stopped, WalkMessage::Skips(skips)) {
             break;

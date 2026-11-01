@@ -159,43 +159,157 @@ pub fn scope_covers(ancestor: &str, path: &str) -> bool {
     rule_covers(ancestor, &parts).is_some()
 }
 
-/// The rule's path spelled the way the disk has it, folder by folder: each
-/// component takes the real folder whose name matches exactly, else the
-/// first (by name) that folds to it. Once a folder is missing, the rest keeps
-/// the rule's spelling, so the walk finds nothing there, as before. Only real
-/// folders are read, so a link below the root is never followed.
-pub fn on_disk_rule_path(root: &Path, rule_path: &str) -> String {
-    let mut at = root.to_path_buf();
-    let mut spelled: Vec<String> = Vec::new();
-    let mut parts = rule_path.split('/').filter(|part| !part.is_empty());
-    for wanted in parts.by_ref() {
-        let key = fold(wanted);
-        let mut exact: Option<String> = None;
-        let mut folded: Option<String> = None;
-        for entry in std::fs::read_dir(&at).into_iter().flatten().flatten() {
-            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                continue;
-            }
-            let Ok(name) = entry.file_name().into_string() else {
-                continue;
+/// How long one folder listing may hold up the thread asking: scopes are
+/// worked out on the scan and watcher threads, and a share can hang.
+const LIST_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+/// Listings that may run at once. One that hangs is left to end, so a hung
+/// share holds these up and later asks fail at once instead of adding a thread.
+const MAX_LISTINGS: usize = 4;
+static LISTINGS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The real folders directly in `at`. A folder that is not there holds none.
+fn list_folders(at: &Path) -> Result<Vec<String>, String> {
+    use std::sync::atomic::Ordering;
+
+    if LISTINGS.fetch_add(1, Ordering::SeqCst) >= MAX_LISTINGS {
+        LISTINGS.fetch_sub(1, Ordering::SeqCst);
+        return Err("earlier listings have not finished".to_owned());
+    }
+    let (send, answer) = std::sync::mpsc::channel();
+    let folder = at.to_path_buf();
+    let started = std::thread::Builder::new()
+        .name("library-rule-listing".to_owned())
+        .spawn(move || {
+            let listed = read_folders(&folder);
+            LISTINGS.fetch_sub(1, Ordering::SeqCst);
+            // The asker may have stopped waiting; nobody needs the answer then.
+            let _ = send.send(listed);
+        });
+    if let Err(error) = started {
+        LISTINGS.fetch_sub(1, Ordering::SeqCst);
+        return Err(error.to_string());
+    }
+    match answer.recv_timeout(LIST_DEADLINE) {
+        Ok(listed) => listed.map_err(|error| error.to_string()),
+        Err(_) => Err("the folder did not answer in time".to_owned()),
+    }
+}
+
+/// Any error, on the folder or on one entry, fails the whole listing: part of
+/// a listing cannot say which spelling exists.
+fn read_folders(at: &Path) -> std::io::Result<Vec<String>> {
+    let entries = match std::fs::read_dir(at) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        other => other?,
+    };
+    let mut folders = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_type()?.is_dir()
+            && let Ok(name) = entry.file_name().into_string()
+        {
+            folders.push(name);
+        }
+    }
+    Ok(folders)
+}
+
+/// Every folder on the disk a rule's path matches, then the rule's own
+/// spelling when the disk does not have it. A rule `Live` matches `Live/` and
+/// `live/` alike ([`rule_covers`]), so each is a scope of its own, and the
+/// rule's spelling stays one while its folder goes by another: rows a
+/// case-only rename left there are judged only by a scope at their path.
+/// Links are never read through. When a folder on the way cannot be listed
+/// only the rule's spelling is given, never a guess at a twin.
+pub fn on_disk_rule_paths(root: &Path, rule_path: &str) -> Vec<String> {
+    let wanted: Vec<&str> = rule_path
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    let as_written = wanted.join("/");
+    let mut found: Vec<(std::path::PathBuf, Vec<String>)> = vec![(root.to_path_buf(), Vec::new())];
+    for part in &wanted {
+        let key = fold(part);
+        let mut next = Vec::new();
+        for (at, spelled) in &found {
+            let names = match list_folders(at) {
+                Ok(names) => names,
+                Err(error) => {
+                    tracing::warn!(
+                        folder = %at.display(),
+                        rule = rule_path,
+                        %error,
+                        "a library rule's folder could not be listed; using the rule as written"
+                    );
+                    return vec![as_written];
+                }
             };
-            if name == wanted {
-                exact = Some(name);
-                break;
-            }
-            if fold(&name) == key && folded.as_ref().is_none_or(|kept| name < *kept) {
-                folded = Some(name);
+            for name in names.into_iter().filter(|name| fold(name) == key) {
+                let mut spelled = spelled.clone();
+                spelled.push(name.clone());
+                next.push((at.join(&name), spelled));
             }
         }
-        let Some(name) = exact.or(folded) else {
-            spelled.push(wanted.to_owned());
-            break;
-        };
-        at.push(&name);
-        spelled.push(name);
+        found = next;
     }
-    spelled.extend(parts.map(str::to_owned));
-    spelled.join("/")
+    let mut paths: Vec<String> = found
+        .into_iter()
+        .map(|(_, spelled)| spelled.join("/"))
+        .collect();
+    paths.sort();
+    if !paths.contains(&as_written) {
+        paths.push(as_written);
+    }
+    paths
+}
+
+/// Whether the scope at `relative` (below `root`) is on the disk only under
+/// another spelling: its exact path is not a chain of real folders, and a real
+/// folder that differs only in case exists at its full depth and holds a file.
+/// A twin that is empty, or that stops short of the full path, says nothing:
+/// the scope's own folder may just be away. The caller bounds the time. Any
+/// error fails it: part of a listing proves nothing.
+pub(super) fn renamed_to_a_twin(root: &Path, relative: &str) -> std::io::Result<bool> {
+    let mut found = vec![(root.to_path_buf(), true)];
+    for part in relative.split('/').filter(|part| !part.is_empty()) {
+        let key = fold(part);
+        let mut next = Vec::new();
+        for (at, exact) in &found {
+            for name in read_folders(at)? {
+                if fold(&name) == key {
+                    next.push((at.join(&name), *exact && name == part));
+                }
+            }
+        }
+        found = next;
+    }
+    if found.iter().any(|(_, exact)| *exact) {
+        return Ok(false);
+    }
+    for (twin, _) in &found {
+        if holds_a_file(twin)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether a regular file lies anywhere below `folder`, links not followed.
+fn holds_a_file(folder: &Path) -> std::io::Result<bool> {
+    let mut stack = vec![folder.to_path_buf()];
+    while let Some(at) = stack.pop() {
+        for entry in std::fs::read_dir(&at)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_file() {
+                return Ok(true);
+            }
+            if kind.is_dir() {
+                stack.push(entry.path());
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// A name folded the way the publisher's collision keys fold it.
@@ -541,6 +655,19 @@ mod tests {
             true,
             "rev-1",
         )
+    }
+
+    /// A rule matches every real folder that differs only in case, then
+    /// keeps its own spelling.
+    #[test]
+    fn a_rule_finds_each_spelling_at_every_depth() {
+        let dir =
+            droppedneedle_kernel::db::scratch::ScratchDir::new("rule-spellings").expect("scratch");
+        std::fs::create_dir_all(dir.path().join("Shut").join("live")).expect("twin");
+        assert_eq!(
+            on_disk_rule_paths(dir.path(), "shut/Live"),
+            ["Shut/live", "shut/Live"]
+        );
     }
 
     #[test]

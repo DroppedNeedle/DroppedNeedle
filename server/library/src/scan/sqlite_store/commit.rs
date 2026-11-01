@@ -134,7 +134,8 @@ pub(super) use awaits_admin;
 /// The one rule for "this run walked past the track" (aliased `t`; the
 /// run id is the parameter `$run`): the walk did not see the file, and a
 /// scope of the run covering its path finished its walk with a recorded
-/// walk revision, while no library write naming the track is still open,
+/// walk revision, no scope of the run covering it was refused as a link, and
+/// no library write naming the track is still open,
 /// needs attention and is not marked handled, or moved after that walk
 /// began. A write names a track by its journal row's `track_id`, or, for
 /// a removal or a replaced file, by the row's replacement. The journal
@@ -151,7 +152,9 @@ macro_rules! walked_past {
               AND s.walk_revision IS NOT NULL \
               AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
                 OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/') \
-              AND NOT EXISTS (SELECT 1 FROM library_publish_journal j \
+              AND NOT ",
+            $crate::scan::sqlite_store::held_scopes::refused_scope!($run, "t"),
+            " AND NOT EXISTS (SELECT 1 FROM library_publish_journal j \
                 WHERE j.track_id = t.id AND (",
             $crate::scan::sqlite_store::commit::fenced_by!(),
             " OR ",

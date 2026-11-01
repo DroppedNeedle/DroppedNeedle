@@ -1,6 +1,7 @@
 //! Track catalog: classification, catalog commits, and missing detection.
 
 use super::commit::walked_past;
+use super::held_scopes::refused_scope;
 use super::*;
 
 /// The `scope_covers_path` rule in SQL for a catalog path column
@@ -311,6 +312,7 @@ impl SqliteScanStore {
     pub fn indexed_count(
         &self,
         stop: &RunStop,
+        run_id: &str,
         root_id: &str,
         scope_relative_path: &str,
     ) -> Result<usize, ScanStoreError> {
@@ -318,10 +320,11 @@ impl SqliteScanStore {
             Ok(conn
                 .query_row(
                     &format!(
-                        "SELECT COUNT(*) FROM local_tracks WHERE root_id = ?1 \
-                         AND availability = 'indexed' AND {IN_SCOPE}"
+                        "SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+                         AND t.availability = 'indexed' AND {IN_SCOPE_T} AND NOT {REFUSED}",
+                        REFUSED = refused_scope!("?3", "t"),
                     ),
-                    params![root_id, scope_relative_path],
+                    params![root_id, scope_relative_path, run_id],
                     |row| row.get::<_, i64>(0),
                 )
                 .map(|count| count.max(0) as usize)?)
@@ -346,11 +349,12 @@ impl SqliteScanStore {
                          (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
                           AND t.availability = 'indexed' AND {IN_SCOPE_T} AND {WALKED}), \
                          (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
-                          AND t.availability = 'indexed' AND {IN_SCOPE_T}) \
+                          AND t.availability = 'indexed' AND {IN_SCOPE_T} AND NOT {REFUSED}) \
                          + (SELECT COUNT(*) FROM library_scan_inventory i WHERE i.run_id = ?3 \
                           AND i.root_id = ?1 AND i.scope_relative_path = ?2 \
                           AND i.comparison_result = 'new')",
                         WALKED = walked_past!("?3"),
+                        REFUSED = refused_scope!("?3", "t"),
                     ),
                     params![root_id, scope_relative_path, run_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
@@ -378,6 +382,104 @@ impl SqliteScanStore {
                     root_id,
                     scope_relative_path,
                     FailureCode::MassMissingGuard
+                ],
+                |row| row.get(0),
+            )?)
+        })
+    }
+
+    /// Rows walked past under the scope whose file this run's inventory holds
+    /// at the same place below one of `twins`.
+    pub fn rows_found_at_twins(
+        &self,
+        stop: &RunStop,
+        run_id: &str,
+        root_id: &str,
+        scope_relative_path: &str,
+        twins: &[&str],
+    ) -> Result<usize, ScanStoreError> {
+        let twins = serde_json::to_string(twins).map_err(|error| ScanStoreError::Internal {
+            message: format!("scan twins did not encode: {error}"),
+        })?;
+        let sql = format!(
+            "SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+             AND t.availability = 'indexed' AND {IN_SCOPE_T} AND {WALKED} \
+             AND EXISTS (SELECT 1 FROM json_each(?4) w CROSS JOIN library_scan_inventory i \
+               ON i.run_id = ?3 AND i.root_id = ?1 \
+               AND i.relative_path = w.value || substr(t.relative_path, length(?2) + 1))",
+            WALKED = walked_past!("?3"),
+        );
+        self.read_long(stop, "scan_rows_found_at_twins", |conn| {
+            Ok(conn
+                .query_row(
+                    &sql,
+                    params![root_id, scope_relative_path, run_id, twins],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|count| count.max(0) as usize)?)
+        })
+    }
+
+    /// Refuse a link a walk passed when indexed rows lie under it: a scope of
+    /// the run, refused like a rule's scope that is a link, so one rule keeps
+    /// them from being judged gone. Answers whether rows lie under it.
+    pub fn refuse_link(
+        &self,
+        stop: &RunStop,
+        run_id: &str,
+        scope: &ScanScope,
+        relative_path: &str,
+    ) -> Result<bool, ScanStoreError> {
+        self.write(stop, Lane::Background, "scan_refuse_link", |tx| {
+            let holds: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM local_tracks WHERE root_id = ?1 \
+                 AND availability = 'indexed' \
+                 AND relative_path > ?2 || '/' AND relative_path < ?2 || '0')",
+                params![scope.root_id, relative_path],
+                |row| row.get(0),
+            )?;
+            if holds {
+                tx.execute(
+                    "INSERT INTO library_scan_run_scopes (run_id, scope_sequence, root_id, \
+                     relative_path, root_path, effective_policy, policy_revision, \
+                     discovery_state, error_code) \
+                     SELECT ?1, COALESCE(MAX(scope_sequence), -1) + 1, ?2, ?3, ?4, ?5, ?6, \
+                     'unavailable', ?7 FROM library_scan_run_scopes WHERE run_id = ?1 \
+                     ON CONFLICT (run_id, root_id, relative_path) DO UPDATE SET \
+                     discovery_state = excluded.discovery_state, error_code = excluded.error_code",
+                    params![
+                        run_id,
+                        scope.root_id,
+                        relative_path,
+                        scope.root_path,
+                        scope.effective_policy.as_str(),
+                        scope.policy_revision,
+                        FailureCode::ScopeThroughLink
+                    ],
+                )?;
+            }
+            Ok(holds)
+        })
+    }
+
+    /// Whether the scope's folder went to another spelling, which the walk
+    /// read from a whole listing: losing all its rows is no vanished share.
+    pub fn scope_renamed(
+        &self,
+        stop: &RunStop,
+        run_id: &str,
+        root_id: &str,
+        scope_relative_path: &str,
+    ) -> Result<bool, ScanStoreError> {
+        self.read_long(stop, "scan_scope_renamed", |conn| {
+            Ok(conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM library_scan_run_scopes WHERE run_id = ?1 \
+                 AND root_id = ?2 AND relative_path = ?3 AND error_code = ?4)",
+                params![
+                    run_id,
+                    root_id,
+                    scope_relative_path,
+                    FailureCode::ScopeRenamed
                 ],
                 |row| row.get(0),
             )?)

@@ -45519,6 +45519,8 @@
           "UNEXPECTED_WORKER_FAILURE",
           "MASS_MISSING_GUARD",
           "CATALOG_COMMIT_FAILED",
+          "SCOPE_THROUGH_LINK",
+          "SCOPE_RENAMED",
           "RUN_END_PENDING"
         ]
       },

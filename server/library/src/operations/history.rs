@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use rusqlite::{Connection, OptionalExtension as _, params, params_from_iter};
 use serde::Deserialize;
 
+use crate::corrections::continuation::SAME_FILE;
 use crate::identify::models::PriorAlbumIdentity;
 use crate::identity;
 use crate::repairs::hygiene;
@@ -100,6 +101,9 @@ struct Pair {
     new_pair: bool,
     #[serde(default)]
     replaced: bool,
+    /// Absent on rows from before the basis was kept.
+    #[serde(default)]
+    basis: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -237,7 +241,11 @@ pub fn album_history(
                 let tracks: BTreeSet<&str> = continued
                     .pairs
                     .iter()
-                    .filter(|pair| pair.new_pair && pair.replaced == replaced)
+                    .filter(|pair| {
+                        pair.new_pair
+                            && pair.replaced == replaced
+                            && pair.basis.as_deref() != Some(SAME_FILE)
+                    })
                     .map(|pair| pair.new_track_id.as_str())
                     .collect();
                 if tracks.is_empty() {

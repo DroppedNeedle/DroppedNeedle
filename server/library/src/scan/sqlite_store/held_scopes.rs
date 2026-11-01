@@ -83,6 +83,27 @@ macro_rules! held_back {
 }
 pub(super) use held_back;
 
+/// Whether run `$run` refused a scope covering the row aliased `$row` because
+/// it is a link or reached through one, asked for or met by a walk
+/// (`refuse_link`). A completed scope around it did not walk there, so nothing
+/// under it counts as walked or counts toward the mass-missing guard.
+macro_rules! refused_scope {
+    ($run:literal, $row:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM library_scan_run_scopes x WHERE x.run_id = ",
+            $run,
+            " AND x.root_id = ",
+            $row,
+            ".root_id AND x.error_code = 'SCOPE_THROUGH_LINK' AND (",
+            $row,
+            ".relative_path = x.relative_path OR substr(",
+            $row,
+            ".relative_path, 1, length(x.relative_path) + 1) = x.relative_path || '/'))"
+        )
+    };
+}
+pub(super) use refused_scope;
+
 /// Whether the track row aliased `track` is held by the held folder
 /// aliased `hold`: indexed, found by a scan, in that folder of its root,
 /// and first indexed at or after the hold began. The looser bound on
@@ -102,8 +123,8 @@ fn held(track: &str, hold: &str) -> String {
 }
 
 /// Whether run `?1` lifts the hold aliased `hold`: the run completed and
-/// walked a folder covering it to the end, held back no folder covering it
-/// or inside it, and no file under it went missing in the run from an album
+/// walked a folder covering it to the end, held back or refused no folder
+/// covering it or inside it, and no file under it went missing in the run from an album
 /// that holds no indexed file and is not merged into another. `?2` is now,
 /// for a run with no start.
 fn lifts(hold: &str) -> String {
@@ -115,8 +136,11 @@ fn lifts(hold: &str) -> String {
                AND s.discovery_state = 'completed' AND {scope_covers_held}) \
              AND NOT ",
             held_back!("?1", "{hold}"),
+            " AND NOT ",
+            refused_scope!("?1", "{hold}"),
             " AND NOT EXISTS (SELECT 1 FROM library_scan_failures g WHERE g.run_id = ?1 \
-               AND g.root_id = {hold}.root_id AND g.failure_code = 'MASS_MISSING_GUARD' \
+               AND g.root_id = {hold}.root_id \
+               AND g.failure_code IN ('MASS_MISSING_GUARD', 'SCOPE_THROUGH_LINK') \
                AND {held_covers_failure}) \
              AND NOT EXISTS (SELECT 1 FROM local_tracks t \
                JOIN local_albums a ON a.id = t.local_album_id \

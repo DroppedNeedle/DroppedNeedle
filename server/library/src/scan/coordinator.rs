@@ -26,7 +26,7 @@ use super::models::{
     ScanRun, ScanScope, ScanState, ScopeDiscoveryState, Verdict,
 };
 use super::pool::BlockingPool;
-use super::roots::{PolicyResolver, RootRegistry, yielded_by, yielded_home};
+use super::roots::{PolicyResolver, RootRegistry, scope_covers, yielded_by, yielded_home};
 use super::seams::{Checkpoint, ScannedTags, TagReadError, TagReader};
 use super::sqlite_store::SqliteScanStore;
 use super::stop::RunStop;
@@ -1492,9 +1492,15 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 .partition(|(_, _, home)| home.is_some());
             let indexed = self
                 .store
-                .indexed_count(stop, &scope.root_id, &scope.relative_path)?
+                .indexed_count(stop, run_id, &scope.root_id, &scope.relative_path)?
                 .saturating_sub(moves.len());
-            if !paths.is_empty() && mass_missing(paths.len(), indexed) {
+            // A renamed scope was judged before indexing, row by row, against
+            // what its twin holds. Indexing has since moved rows off it, so
+            // the few left here are no sign of a vanished share.
+            let renamed =
+                self.store
+                    .scope_renamed(stop, run_id, &scope.root_id, &scope.relative_path)?;
+            if !renamed && !paths.is_empty() && mass_missing(paths.len(), indexed) {
                 self.hold_back_scope(
                     run_id,
                     scope,
@@ -1600,6 +1606,8 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                     ))
                 })
                 .await?;
+            let missing =
+                missing.saturating_sub(self.found_at_a_twin(run_id, scope, &scopes, stop)?);
             if mass_missing(missing, total) {
                 self.hold_back_scope(run_id, scope, missing, total, ScanPhase::Discovering, stop)?;
                 continue;
@@ -1666,6 +1674,36 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             }
         }
         Ok(())
+    }
+
+    /// Rows a renamed scope walked past whose file a twin scope of the run
+    /// holds at the same place. Only these are excused from the mass-missing
+    /// guard: they cannot be a vanished share, since the file was just seen.
+    fn found_at_a_twin(
+        &self,
+        run_id: &str,
+        scope: &ScanScope,
+        scopes: &[ScanScope],
+        stop: &RunStop,
+    ) -> Result<usize, ScanStoreError> {
+        if !self
+            .store
+            .scope_renamed(stop, run_id, &scope.root_id, &scope.relative_path)?
+        {
+            return Ok(0);
+        }
+        let twins: Vec<&str> = scopes
+            .iter()
+            .filter(|other| {
+                other.root_id == scope.root_id
+                    && other.relative_path != scope.relative_path
+                    && scope_covers(&other.relative_path, &scope.relative_path)
+                    && scope_covers(&scope.relative_path, &other.relative_path)
+            })
+            .map(|other| other.relative_path.as_str())
+            .collect();
+        self.store
+            .rows_found_at_twins(stop, run_id, &scope.root_id, &scope.relative_path, &twins)
     }
 
     /// Record that missing detection is held back for one scope.

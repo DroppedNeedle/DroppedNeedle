@@ -18,7 +18,7 @@ use jiff::civil::Date;
 use jiff::tz::TimeZone;
 
 use super::models::{Disposition, EffectivePolicy, ScanKind, ScanRequest, ScanScope, ScanTrigger};
-use super::roots::{RootRegistry, on_disk_rule_path, scope_covers};
+use super::roots::{RootRegistry, on_disk_rule_paths, scope_covers};
 
 /// Schedule settings for automatic scans.
 #[derive(Debug, Clone)]
@@ -161,15 +161,17 @@ pub fn scheduled_scopes(registry: &RootRegistry, rules: &[InclusionRule]) -> Vec
             continue;
         }
         selected.push(rule.relative_path.clone());
-        scopes.push(ScanScope {
-            root_id: rule.root_id.clone(),
-            scope_id: Some(rule.rule_id.clone()),
-            relative_path: on_disk_rule_path(Path::new(root_path), &rule.relative_path),
-            root_path: Some(root_path.clone()),
-            effective_policy: EffectivePolicy::Automatic,
-            policy_revision: registry.fingerprint().to_owned(),
-            estimated_count: None,
-        });
+        for relative_path in on_disk_rule_paths(Path::new(root_path), &rule.relative_path) {
+            scopes.push(ScanScope {
+                root_id: rule.root_id.clone(),
+                scope_id: Some(rule.rule_id.clone()),
+                relative_path,
+                root_path: Some(root_path.clone()),
+                effective_policy: EffectivePolicy::Automatic,
+                policy_revision: registry.fingerprint().to_owned(),
+                estimated_count: None,
+            });
+        }
     }
     scopes
 }
@@ -316,13 +318,15 @@ mod tests {
         assert!(scopes.iter().any(|scope| scope.relative_path == "other"));
     }
 
-    /// An included rule walks the folder the disk has when only the case
-    /// differs, and a rule its folded spelling covers adds nothing.
+    /// An included rule walks every folder the disk has that differs only in
+    /// case, keeps its own spelling for rows a rename left there, and a rule
+    /// its folded spelling covers adds nothing.
     #[test]
     fn included_rules_walk_the_folder_on_disk() {
         let dir =
             droppedneedle_kernel::db::scratch::ScratchDir::new("scheduler-rules").expect("scratch");
         std::fs::create_dir_all(dir.path().join("live").join("90s")).unwrap();
+        std::fs::create_dir_all(dir.path().join("LIVE")).unwrap();
         let registry = RootRegistry::new(
             vec![LibraryRoot::new(
                 "x",
@@ -340,7 +344,7 @@ mod tests {
             .into_iter()
             .map(|scope| scope.relative_path)
             .collect();
-        assert_eq!(paths, vec!["live".to_owned()]);
+        assert_eq!(paths, ["LIVE", "live", "Live"]);
     }
 
     #[test]

@@ -24,8 +24,9 @@ use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService};
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_library::repairs::hygiene;
 use droppedneedle_library::scan::ScanFailureRecord;
+use droppedneedle_library::scan::roots::PolicyRule;
 use droppedneedle_library::scan::{
-    BlockingPool, Counter, EffectivePolicy, Event, FailureCode, LibraryRoot,
+    BlockingPool, Counter, EffectivePolicy, Event, FailureCode, InclusionRule, LibraryRoot,
     LibraryScanCoordinator, NullTagReader, Phase, RootRegistry, RootSeamError, RunState, ScanKind,
     ScanPhase, ScanRequest, ScanRun, ScanScope, ScanState, ScanStoreError, ScanTrigger,
     ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError, TagReader,
@@ -1656,6 +1657,53 @@ async fn a_double_from_overlapping_roots_retires_into_one_row() {
     let audit: serde_json::Value = serde_json::from_str(&audit).expect("audit json");
     assert_eq!(audit["new_pairs"], 1, "{audit}");
     assert_eq!(audit["pairs"][0]["basis"], "same_file", "{audit}");
+    let album: String = library
+        .scan_store
+        .db()
+        .read_blocking("audit album", |conn| {
+            Ok::<_, ScanStoreError>(conn.query_row(
+                "SELECT COALESCE(l.retired_into_album_id, l.id) \
+                 FROM library_catalog_actions a JOIN local_albums l ON l.id = a.local_album_id \
+                 WHERE a.action_kind = 'continue_tracks'",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .expect("the album the audit row is on");
+    let history = droppedneedle_library::http::history::album_history_view(
+        &crate::common::library::operations(&library),
+        &album,
+        "listener",
+    )
+    .expect("history reads");
+    let history = serde_json::to_value(history).expect("history serialises");
+    assert!(
+        !history.to_string().contains("tracks_continued"),
+        "the same file is no new file: {history}"
+    );
+}
+
+/// Whether the store has an indexed row at `path` under the one root.
+fn indexed_at<T: TagReader + 'static>(coordinator: &LibraryScanCoordinator<T>, path: &str) -> bool {
+    let sql = format!(
+        "SELECT COUNT(*) FROM local_tracks WHERE relative_path = '{path}' \
+         AND availability = 'indexed'"
+    );
+    coordinator.store().db().query_i64(&sql).expect("counted") == 1
+}
+
+/// `scopes` of the one root, as a request for them.
+fn request_scopes(root: &Path, scopes: &[&str]) -> ScanRequest {
+    let mut wanted = request(root);
+    let scope = wanted.scopes[0].clone();
+    wanted.scopes = scopes
+        .iter()
+        .map(|path| ScanScope {
+            relative_path: (*path).to_owned(),
+            ..scope.clone()
+        })
+        .collect();
+    wanted
 }
 
 /// A scope that is a link below its root is never walked, nor one reached
@@ -1665,22 +1713,24 @@ async fn a_scope_through_a_link_is_refused() {
     let scratch = ScratchDir::new("scan-scope-link");
     let root = scratch.join("music");
     plant(&root, "Real/a.flac", "flac_full_01.flac");
+    plant(&root, "Door/kept.flac", "flac_full_02.flac");
     plant(
         &scratch.join("elsewhere"),
         "Outside/b.flac",
         "flac_full_01.flac",
     );
-    std::os::unix::fs::symlink(scratch.join("elsewhere"), root.join("Door")).expect("link");
     let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
-    let mut wanted = request(&root);
-    let scope = wanted.scopes[0].clone();
-    wanted.scopes = ["Door", "Door/Outside", "Real"]
-        .map(|path| ScanScope {
-            relative_path: path.to_owned(),
-            ..scope.clone()
-        })
-        .to_vec();
-    coordinator.request_run(&wanted).expect("requested");
+    coordinator
+        .request_run(&request_scopes(&root, &["Door"]))
+        .expect("requested");
+    coordinator.run_once(&paths).await.expect("driven");
+    assert!(indexed_at(&coordinator, "Door/kept.flac"));
+    std::fs::remove_dir_all(root.join("Door")).expect("folder gone");
+    std::os::unix::fs::symlink(scratch.join("elsewhere"), root.join("Door")).expect("link");
+
+    coordinator
+        .request_run(&request_scopes(&root, &["Door", "Door/Outside", "Real"]))
+        .expect("requested");
     let run = coordinator.run_once(&paths).await.expect("driven");
     assert_eq!(count(&run, Counter::Indexed), 1, "only the real folder");
     let refused: Vec<String> = coordinator
@@ -1688,10 +1738,471 @@ async fn a_scope_through_a_link_is_refused() {
         .failures(&run.id)
         .unwrap()
         .into_iter()
-        .filter(|failure| failure.failure_detail.contains("through a link"))
+        .filter(|failure| failure.failure_code == FailureCode::ScopeThroughLink)
         .map(|failure| failure.relative_path)
         .collect();
     assert_eq!(refused, vec!["Door".to_owned(), "Door/Outside".to_owned()]);
+    assert!(
+        indexed_at(&coordinator, "Door/kept.flac"),
+        "the row stays as it is"
+    );
+}
+
+/// Rules saved as `A/Door` then `A` ask for both: `A/Door` is refused as a
+/// link and `A` completes, and `A`'s walk did not go there, so the refused
+/// scope's rows are not judged gone. A row `A` did walk past still is.
+#[tokio::test]
+async fn a_completed_ancestor_leaves_a_refused_scopes_rows() {
+    let scratch = ScratchDir::new("scan-scope-link-ancestor");
+    let root = scratch.join("music");
+    plant(&root, "A/here.flac", "flac_full_01.flac");
+    plant(&root, "A/removed.flac", "flac_no_tags.flac");
+    plant(&root, "A/Door/kept.flac", "flac_full_02.flac");
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    coordinator.request_run(&request(&root)).expect("requested");
+    coordinator.run_once(&paths).await.expect("driven");
+    assert!(indexed_at(&coordinator, "A/Door/kept.flac"));
+    std::fs::remove_dir_all(root.join("A/Door")).expect("folder gone");
+    std::fs::remove_file(root.join("A/removed.flac")).expect("file gone");
+    std::fs::create_dir_all(scratch.join("elsewhere")).expect("target");
+    std::os::unix::fs::symlink(scratch.join("elsewhere"), root.join("A/Door")).expect("link");
+
+    coordinator
+        .request_run(&request_scopes(&root, &["A/Door", "A"]))
+        .expect("requested");
+    coordinator.run_once(&paths).await.expect("driven");
+    assert!(
+        indexed_at(&coordinator, "A/Door/kept.flac"),
+        "not judged gone by the scope around it"
+    );
+    assert!(!indexed_at(&coordinator, "A/removed.flac"));
+}
+
+/// A folder under an included rule renamed so only its capitals change leaves
+/// one row per file, even though every row at the old spelling went at once:
+/// the new spelling is on the disk, so this is no vanished share. Two
+/// spellings on the disk at once are both read.
+#[tokio::test]
+async fn a_rule_walks_every_spelling_and_follows_a_case_only_rename() {
+    use droppedneedle_library::scan::roots::on_disk_rule_paths;
+
+    let scratch = ScratchDir::new("scan-rule-spellings");
+    let root = scratch.join("music");
+    plant(&root, "Live/a.flac", "flac_full_01.flac");
+    plant(&root, "Other/b.flac", "flac_full_02.flac");
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    let scan_rule = async || {
+        let spellings = on_disk_rule_paths(&root, "Live");
+        let scopes: Vec<&str> = spellings.iter().map(String::as_str).collect();
+        coordinator
+            .request_run(&request_scopes(&root, &scopes))
+            .expect("requested");
+        let run = coordinator.run_once(&paths).await.expect("driven");
+        assert!(
+            coordinator.store().failures(&run.id).unwrap().is_empty(),
+            "nothing held back or refused"
+        );
+    };
+    scan_rule().await;
+    assert!(indexed_at(&coordinator, "Live/a.flac"));
+
+    std::fs::rename(root.join("Live"), root.join("live")).expect("renamed");
+    scan_rule().await;
+    assert!(indexed_at(&coordinator, "live/a.flac"));
+    assert!(
+        !indexed_at(&coordinator, "Live/a.flac"),
+        "no second row at the old spelling"
+    );
+
+    plant(&root, "Live/c.flac", "flac_no_tags.flac");
+    scan_rule().await;
+    assert!(indexed_at(&coordinator, "live/a.flac"));
+    assert!(indexed_at(&coordinator, "Live/c.flac"));
+}
+
+/// A favourite on a track under a rule follows a case-only rename of its
+/// folder, with real tags read.
+#[tokio::test]
+async fn a_case_only_rename_under_a_rule_keeps_a_favourite() {
+    use droppedneedle_library::scan::roots::on_disk_rule_paths;
+
+    let scratch = ScratchDir::new("scan-rule-rename-history");
+    let music = scratch.join("music");
+    plant(&music, "Live/a.flac", "flac_full_01.flac");
+    plant(&music, "Other/b.flac", "flac_full_02.flac");
+    migrated_db(&scratch.join("app.db"));
+    let db = Db::open_for_tests(&scratch.join("app.db")).expect("database opens");
+    let platform = TestPlatform::on(&db, &scratch)
+        .settings(config_store(&scratch))
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    add_root(&library, "music", &music);
+    scan(&library).await;
+    library
+        .scan_store
+        .db()
+        .run_sql(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('listener', 'Listener', 'user', 0); \
+             INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             SELECT 'listener', 'track', id, 0 FROM local_tracks \
+             WHERE relative_path = 'Live/a.flac'",
+        )
+        .expect("favourite");
+    std::fs::rename(music.join("Live"), music.join("live")).expect("renamed");
+
+    let registry = library.core.live_registry();
+    let scope = registry.scheduled_root_scopes().remove(0);
+    let scopes = on_disk_rule_paths(&music, "Live")
+        .into_iter()
+        .map(|relative_path| ScanScope {
+            relative_path,
+            ..scope.clone()
+        })
+        .collect();
+    let asked = library
+        .coordinator
+        .request_run(&ScanRequest {
+            kind: ScanKind::Incremental,
+            trigger: ScanTrigger::Manual,
+            scopes,
+            requested_by_user_id: None,
+            policy_revision: registry.fingerprint().to_owned(),
+        })
+        .expect("scan requested");
+    for _ in 0..50 {
+        library.scans.supervisor_tick().await;
+        if library.coordinator.current().is_empty() {
+            break;
+        }
+    }
+    library
+        .coordinator
+        .snapshot(&asked.run_id)
+        .expect("scanned");
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE relative_path LIKE '%a.flac' \
+             AND availability = 'indexed'"
+        ),
+        1,
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM library_user_favorites f JOIN local_tracks t \
+             ON t.id = f.item_id WHERE t.relative_path = 'live/a.flac' \
+             AND t.availability = 'indexed'"
+        ),
+        1,
+        "the favourite is on the row at the new name"
+    );
+}
+
+/// `rules` of an excluded root, as the registry a rule is resolved against.
+fn ruled_registry(root: &Path, rules: &[(&str, &str)]) -> RootRegistry {
+    RootRegistry::new(
+        vec![
+            LibraryRoot::new("music", root.to_owned(), EffectivePolicy::Excluded).with_rules(
+                rules
+                    .iter()
+                    .map(|(id, path)| PolicyRule {
+                        id: (*id).to_owned(),
+                        relative_path: (*path).to_owned(),
+                        policy: EffectivePolicy::Automatic,
+                    })
+                    .collect(),
+            ),
+        ],
+        true,
+        "rev-1",
+    )
+}
+
+/// Replace the folder at `relative` with a link to somewhere else.
+fn swap_for_a_link(scratch: &ScratchDir, root: &Path, relative: &str) {
+    std::fs::remove_dir_all(root.join(relative)).expect("folder gone");
+    std::fs::create_dir_all(scratch.join("elsewhere")).expect("target");
+    std::os::unix::fs::symlink(scratch.join("elsewhere"), root.join(relative)).expect("link");
+}
+
+/// A folder replaced by a link keeps its tracks on every scan: rules saved
+/// either way round, a manual scan of the rules, a rule spelled differently
+/// and a whole-root walk. The failures say it is a link. Putting the folder
+/// back reads it again.
+#[tokio::test]
+async fn a_folder_replaced_by_a_link_keeps_its_tracks_on_every_scan() {
+    use droppedneedle_library::scan::scheduled_scopes;
+    use droppedneedle_library::scan::selection::select_scopes;
+
+    let scratch = ScratchDir::new("scan-link-every-scan");
+    let root = scratch.join("music");
+    plant(&root, "A/here.flac", "flac_full_01.flac");
+    let kept = plant(&root, "A/Door/kept.flac", "flac_full_02.flac");
+    let bytes = std::fs::read(&kept).expect("read");
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    coordinator.request_run(&request(&root)).expect("requested");
+    coordinator.run_once(&paths).await.expect("driven");
+    swap_for_a_link(&scratch, &root, "A/Door");
+
+    let inclusion = |rules: &[(&str, &str)]| -> Vec<InclusionRule> {
+        rules
+            .iter()
+            .map(|(id, path)| InclusionRule::new("music", id, path))
+            .collect()
+    };
+    let inner_first = [("inner", "A/Door"), ("outer", "A")];
+    let outer_first = [("outer", "A"), ("inner", "A/Door")];
+    let other_case = [("outer", "A"), ("inner", "A/door")];
+    let whole = request(&root).scopes;
+    let picked = ["outer".to_owned(), "inner".to_owned()];
+    let ways: Vec<(&str, Vec<ScanScope>)> = vec![
+        (
+            "inner rule saved first",
+            scheduled_scopes(
+                &ruled_registry(&root, &inner_first),
+                &inclusion(&inner_first),
+            ),
+        ),
+        (
+            "outer rule saved first",
+            scheduled_scopes(
+                &ruled_registry(&root, &outer_first),
+                &inclusion(&outer_first),
+            ),
+        ),
+        (
+            "a rule in another case",
+            scheduled_scopes(&ruled_registry(&root, &other_case), &inclusion(&other_case)),
+        ),
+        (
+            "a manual scan",
+            select_scopes(&ruled_registry(&root, &outer_first), &picked).expect("selected"),
+        ),
+        ("a whole-root walk", whole),
+    ];
+    for (way, scopes) in ways {
+        let mut wanted = request(&root);
+        wanted.scopes = scopes;
+        coordinator.request_run(&wanted).expect("requested");
+        let run = coordinator.run_once(&paths).await.expect("driven");
+        assert!(indexed_at(&coordinator, "A/Door/kept.flac"), "{way}");
+        let failures = coordinator.store().failures(&run.id).unwrap();
+        assert!(
+            failures.iter().any(|failure| {
+                failure.failure_code == FailureCode::ScopeThroughLink
+                    && failure.relative_path == "A/Door"
+            }),
+            "{way}: {failures:?}"
+        );
+    }
+
+    std::fs::remove_file(root.join("A/Door")).expect("link gone");
+    std::fs::create_dir_all(root.join("A/Door")).expect("folder back");
+    std::fs::write(root.join("A/Door/new.flac"), &bytes).expect("a file in it");
+    coordinator.request_run(&request(&root)).expect("requested");
+    let run = coordinator.run_once(&paths).await.expect("driven");
+    assert!(indexed_at(&coordinator, "A/Door/new.flac"), "read again");
+    assert!(
+        !indexed_at(&coordinator, "A/Door/kept.flac"),
+        "a file that did not come back is gone"
+    );
+    assert!(coordinator.store().failures(&run.id).unwrap().is_empty());
+}
+
+/// Rows under a link do not dilute the mass-missing guard: with 12 of 20 rows
+/// under a link and the other 8 gone, everything the walk could judge went.
+#[tokio::test]
+async fn rows_under_a_link_do_not_dilute_the_mass_missing_guard() {
+    let scratch = ScratchDir::new("scan-link-guard");
+    let root = scratch.join("music");
+    for at in 0..12 {
+        plant(&root, &format!("Door/{at}.flac"), "flac_full_01.flac");
+    }
+    for at in 0..8 {
+        plant(&root, &format!("Share/{at}.flac"), "flac_full_02.flac");
+    }
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    coordinator.request_run(&request(&root)).expect("requested");
+    coordinator.run_once(&paths).await.expect("driven");
+    swap_for_a_link(&scratch, &root, "Door");
+    std::fs::remove_dir_all(root.join("Share")).expect("share gone");
+
+    coordinator
+        .request_run(&request_scopes(&root, &["Door", "."]))
+        .expect("requested");
+    let run = coordinator.run_once(&paths).await.expect("driven");
+    assert!(
+        coordinator
+            .store()
+            .failures(&run.id)
+            .unwrap()
+            .iter()
+            .any(|failure| failure.failure_code == FailureCode::MassMissingGuard)
+    );
+    assert!(indexed_at(&coordinator, "Share/0.flac"), "held, not gone");
+}
+
+/// A hold stays when the run refused a folder covering it or inside it, since
+/// neither was read to the end. Another folder's hold lifts.
+#[tokio::test]
+async fn a_refused_link_keeps_the_holds_around_and_under_it() {
+    let scratch = ScratchDir::new("scan-link-holds");
+    let root = scratch.join("music");
+    plant(&root, "A/here.flac", "flac_full_01.flac");
+    plant(&root, "A/Door/sub/kept.flac", "flac_full_02.flac");
+    plant(&root, "B/other.flac", "flac_no_tags.flac");
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    coordinator.request_run(&request(&root)).expect("requested");
+    coordinator.run_once(&paths).await.expect("driven");
+    swap_for_a_link(&scratch, &root, "A/Door");
+    let db = coordinator.store().db();
+    db.run_sql(
+        "INSERT INTO library_scan_held_scopes (root_id, relative_path, held_at) VALUES \
+         ('music', 'A', 0), ('music', 'A/Door/sub', 0), ('music', 'B', 0)",
+    )
+    .expect("holds");
+
+    coordinator.request_run(&request(&root)).expect("requested");
+    coordinator.run_once(&paths).await.expect("driven");
+    let held = |folder: &str| {
+        db.query_i64(&format!(
+            "SELECT COUNT(*) FROM library_scan_held_scopes WHERE relative_path = '{folder}'"
+        ))
+        .expect("counted")
+    };
+    assert_eq!(held("A"), 1, "a refused folder inside it");
+    assert_eq!(held("A/Door/sub"), 1, "a refused folder covers it");
+    assert_eq!(held("B"), 0, "walked to the end");
+}
+
+/// Rows at a spelling with a twin go missing only with proof for each: both
+/// files of an ambiguous pair, and a duplicate from before, with the twin
+/// holding them at the same place. A row deleted beside them goes with them
+/// and no hold is recorded.
+#[tokio::test]
+async fn rows_a_twin_holds_go_missing_at_the_old_spelling() {
+    use droppedneedle_library::scan::roots::on_disk_rule_paths;
+
+    let scratch = ScratchDir::new("scan-twin-proof");
+    let root = scratch.join("music");
+    plant(&root, "Live/a.flac", "flac_full_01.flac");
+    plant(&root, "Live/a (1).flac", "flac_full_01.flac");
+    plant(&root, "Live/deleted.flac", "flac_full_02.flac");
+    plant(&root, "Live/dup.flac", "flac_no_tags.flac");
+    plant(&root, "live/dup.flac", "flac_no_tags.flac");
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    coordinator.request_run(&request(&root)).expect("requested");
+    coordinator.run_once(&paths).await.expect("driven");
+    assert!(indexed_at(&coordinator, "Live/dup.flac"));
+    assert!(indexed_at(&coordinator, "live/dup.flac"), "a duplicate");
+
+    std::fs::remove_file(root.join("Live/deleted.flac")).expect("deleted");
+    std::fs::remove_file(root.join("live/dup.flac")).expect("moved over below");
+    for name in ["a.flac", "a (1).flac", "dup.flac"] {
+        std::fs::rename(root.join("Live").join(name), root.join("live").join(name)).expect("moved");
+    }
+    std::fs::remove_dir(root.join("Live")).expect("old spelling gone");
+    let spellings = on_disk_rule_paths(&root, "Live");
+    let scopes: Vec<&str> = spellings.iter().map(String::as_str).collect();
+    coordinator
+        .request_run(&request_scopes(&root, &scopes))
+        .expect("requested");
+    let run = coordinator.run_once(&paths).await.expect("driven");
+    assert!(
+        coordinator.store().failures(&run.id).unwrap().is_empty(),
+        "no hold and no false mount advice"
+    );
+    for name in ["a.flac", "a (1).flac", "dup.flac", "deleted.flac"] {
+        assert!(!indexed_at(&coordinator, &format!("Live/{name}")), "{name}");
+    }
+    for name in ["a.flac", "a (1).flac", "dup.flac"] {
+        assert!(indexed_at(&coordinator, &format!("live/{name}")), "{name}");
+    }
+}
+
+/// A twin only proves a rename at the rule's full depth and holding files, and
+/// only for the rows it holds. A rule that points at nothing stays a failure,
+/// an empty twin holds the rows, and a twin with other files still lets the
+/// guard hold rows it does not have.
+#[tokio::test]
+async fn a_twin_that_proves_nothing_leaves_the_rows_alone() {
+    let scratch = ScratchDir::new("scan-twin-weak");
+    let root = scratch.join("music");
+    plant(&root, "Live/a.flac", "flac_full_01.flac");
+    plant(&root, "Live/b.flac", "flac_full_02.flac");
+    std::fs::create_dir_all(root.join("live")).expect("an empty twin");
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    coordinator.request_run(&request(&root)).expect("requested");
+    coordinator.run_once(&paths).await.expect("driven");
+    std::fs::rename(root.join("Live"), scratch.join("away")).expect("dropped out");
+
+    let codes = async |scopes: &[&str]| -> Vec<FailureCode> {
+        coordinator
+            .request_run(&request_scopes(&root, scopes))
+            .expect("requested");
+        let run = coordinator.run_once(&paths).await.expect("driven");
+        coordinator
+            .store()
+            .failures(&run.id)
+            .unwrap()
+            .into_iter()
+            .map(|failure| failure.failure_code)
+            .collect()
+    };
+    assert_eq!(
+        codes(&["Live", "live"]).await,
+        [FailureCode::RootUnavailable],
+        "an empty twin"
+    );
+    assert!(indexed_at(&coordinator, "Live/a.flac"));
+
+    plant(&root, "live/unrelated.flac", "flac_no_tags.flac");
+    assert_eq!(
+        codes(&["Live/Nope"]).await,
+        [FailureCode::RootUnavailable],
+        "no twin at the rule's depth"
+    );
+    assert_eq!(
+        codes(&["Live", "live"]).await,
+        [FailureCode::MassMissingGuard],
+        "a twin holding other files"
+    );
+    assert!(indexed_at(&coordinator, "Live/a.flac"));
+    assert!(indexed_at(&coordinator, "Live/b.flac"));
+}
+
+/// A scope whose path cannot be checked (a permission error on the folder
+/// above it) is not read, and its rows stay.
+#[tokio::test]
+async fn a_scope_that_cannot_be_checked_keeps_its_rows() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let scratch = ScratchDir::new("scan-scope-eacces");
+    let root = scratch.join("music");
+    plant(&root, "Shut/Door/kept.flac", "flac_full_01.flac");
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    coordinator.request_run(&request(&root)).expect("requested");
+    coordinator.run_once(&paths).await.expect("driven");
+    let shut = root.join("Shut");
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).expect("shut");
+    if std::fs::read_dir(&shut).is_ok() {
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o755)).expect("open");
+        eprintln!("skipped: this user can search a folder at mode 000 (running as root)");
+        return;
+    }
+    coordinator
+        .request_run(&request_scopes(&root, &["Shut/Door"]))
+        .expect("requested");
+    let run = coordinator.run_once(&paths).await.expect("driven");
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o755)).expect("open");
+    assert!(indexed_at(&coordinator, "Shut/Door/kept.flac"));
+    assert_eq!(
+        coordinator.store().failures(&run.id).unwrap()[0].failure_code,
+        FailureCode::RootUnavailable
+    );
 }
 
 /// A file link in the losing folder pointing at a file in the winner's

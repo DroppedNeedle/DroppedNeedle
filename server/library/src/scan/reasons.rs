@@ -32,6 +32,11 @@ fn text(code: Code) -> (&'static str, &'static str) {
             "This library folder could not be reached, so it was skipped.",
             CHECK_MOUNT,
         ),
+        Code::ScopeThroughLink => (
+            "This folder is a link, so it is not read. Its tracks stay as they are.",
+            "Put a real folder back to read it again, or add the link's target as a library \
+             folder.",
+        ),
         Code::RootPermissionDenied | Code::WalkEacces | Code::WalkEperm => (
             "DroppedNeedle is not allowed to read this folder.",
             CHECK_PERMISSIONS,
@@ -130,6 +135,10 @@ fn text(code: Code) -> (&'static str, &'static str) {
         | Code::WalkEunknown => (
             "This folder could not be read completely.",
             "Check that the folder is readable and the disk is healthy, then scan again.",
+        ),
+        Code::ScopeRenamed => (
+            "This folder's name changed only in its capitals.",
+            "Nothing to do: the scan reads it under the new name.",
         ),
         Code::RunEndPending => (
             "The scan could not finish with this path.",

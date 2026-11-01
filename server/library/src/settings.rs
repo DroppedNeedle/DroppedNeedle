@@ -203,13 +203,10 @@ pub fn build_registry(settings: &TypedLibrary) -> (RootRegistry, Vec<String>) {
 
 /// Logs the roots a registry left out, once per settings revision. `latch`
 /// holds the revision last logged and starts at -1; it lives beside the
-/// registry it reports on.
-pub(crate) fn log_root_problems(
-    latch: &AtomicI64,
-    library: &Live<TypedLibrary>,
-    problems: &[String],
-) {
-    let revision = *library.subscribe().borrow();
+/// registry it reports on. `revision` is read before the section the problems
+/// came from: a save between the two logs the newer problems again under its
+/// own revision, and never leaves them unlogged.
+pub(crate) fn log_root_problems(latch: &AtomicI64, revision: i64, problems: &[String]) {
     if latch.swap(revision, Ordering::Relaxed) == revision {
         return;
     }

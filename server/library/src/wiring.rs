@@ -151,13 +151,14 @@ impl LibraryCore {
             LibrarySettings::new(&platform.settings, platform.config.timezone.as_deref());
         // The roots load before anything can scan or stream: a restart
         // comes back with exactly the roots the settings hold.
+        let revision = *settings.library.subscribe().borrow();
         let section = settings
             .library
             .get()
             .map_err(|error| format!("library roots: {error}"))?;
         let (roots, problems) = super::settings::build_registry(&section);
         let root_problems_at = Arc::new(std::sync::atomic::AtomicI64::new(-1));
-        super::settings::log_root_problems(&root_problems_at, &settings.library, &problems);
+        super::settings::log_root_problems(&root_problems_at, revision, &problems);
         let registry: Arc<SharedResolver> = Arc::new(SharedResolver::new(roots));
         let root_dirs: RootDirs = {
             let registry = registry.clone();
@@ -201,13 +202,14 @@ impl LibraryCore {
     /// current registry.
     pub fn refresh_registry(&self) -> RootRegistry {
         let current = self.registry.resolver().registry().clone();
+        let revision = *self.library.subscribe().borrow();
         // An unreadable section keeps the current set; `Live::read` logs it
         // once per revision.
         let Some(section) = self.library.read() else {
             return current;
         };
         let (fresh, problems) = super::settings::build_registry(&section);
-        super::settings::log_root_problems(&self.root_problems_at, &self.library, &problems);
+        super::settings::log_root_problems(&self.root_problems_at, revision, &problems);
         if fresh.fingerprint() == current.fingerprint() {
             return current;
         }

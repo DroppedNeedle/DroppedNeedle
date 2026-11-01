@@ -253,7 +253,7 @@
 					{/each}
 				</ul>
 			{/if}
-			{#if detailRun.state === 'failed' || (detailRun.counters['errored_count'] ?? 0) > 0}
+			{#if detailRun.state === 'failed' || (detailRun.counters['errored_count'] ?? 0) > 0 || failureItems.length > 0}
 				<h3 class="mt-4 text-sm font-semibold">Failed paths</h3>
 				{#if failuresQuery.isLoading}
 					<p class="mt-2 text-sm text-base-content/55">Loading failed paths…</p>

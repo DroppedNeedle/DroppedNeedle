@@ -6,9 +6,10 @@
 //! selected rule, adds nothing: the wider scope already walks it.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use super::models::ScanScope;
-use super::roots::{RootRegistry, on_disk_rule_path, scope_covers};
+use super::roots::{RootRegistry, on_disk_rule_paths, scope_covers};
 
 /// Some selected ids name no root or rule the scan engine knows. Holds
 /// those ids, sorted.
@@ -41,7 +42,7 @@ pub fn select_scopes(
             candidates.push(ScanScope {
                 root_id: root.id.clone(),
                 scope_id: Some(rule.id.clone()),
-                relative_path: on_disk_rule_path(&root.path, &rule.relative_path),
+                relative_path: rule.relative_path.clone(),
                 root_path: Some(root_path.clone().into_owned()),
                 effective_policy: rule.policy,
                 policy_revision: registry.fingerprint().to_owned(),
@@ -79,7 +80,23 @@ pub fn select_scopes(
             scopes.push(candidate);
         }
     }
-    Ok(scopes)
+    Ok(scopes.into_iter().flat_map(on_disk_scopes).collect())
+}
+
+/// One scope for each folder a rule's scope matches on the disk. A root's
+/// scope stays as it is.
+fn on_disk_scopes(scope: ScanScope) -> Vec<ScanScope> {
+    let root = match scope.root_path.as_deref() {
+        Some(root) if scope.relative_path != "." => root,
+        _ => return vec![scope],
+    };
+    on_disk_rule_paths(Path::new(root), &scope.relative_path)
+        .into_iter()
+        .map(|relative_path| ScanScope {
+            relative_path,
+            ..scope.clone()
+        })
+        .collect()
 }
 
 /// Path depth in components; the root scope `.` sorts first.

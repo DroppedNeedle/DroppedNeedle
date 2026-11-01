@@ -405,7 +405,11 @@ Run from the repo root. `make help` lists every target.
   landed in the bin (device, inode, size, mtime, ctime) still matches, or its
   bytes match the plan hash. Anything else is kept.
 - A scan judges a track gone (walked past) in one place, `walked_past!`
-  in `library/src/scan/sqlite_store/`, and never while a publish journal
+  in `library/src/scan/sqlite_store/`, and never under a folder the run
+  refused as a link (`refused_scope!`, a rule's scope or a link the walk
+  met with rows under it: a folder replaced by a link keeps its tracks and
+  they do not count toward the mass-missing guard), and never while a
+  publish journal
   row naming it is open, needs attention and is not marked handled, or
   was written after its scope's walk began (marking one handled counts as
   a write). A scan writes no row for a file whose track such a row names
