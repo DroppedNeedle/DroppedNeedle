@@ -1,6 +1,7 @@
 //! Scan runs: requests, claims, transitions, control, counters, recovery.
 
 use super::*;
+use crate::clock::LibraryClock as _;
 use crate::scan::models::transition;
 use crate::scan::sql;
 use droppedneedle_kernel::db::statement::Statement;
@@ -295,82 +296,54 @@ impl SqliteScanStore {
     /// own background turn after the run's state changed, so no pass keeps
     /// a run from ending. Each turn moves the run's note on to the next
     /// pass, so a stop or a crash resumes where it left off and no pass
-    /// runs twice. A pass that fails or runs out of time is logged and
+    /// runs twice.
+    ///
+    /// A pass that runs out of time or finds the database busy is tried
+    /// again at once; if that fails too it is put off by the clock
+    /// ([`PUT_OFF_WAITS_SECS`]), and this call answers `false`, leaving it
+    /// and every later run's passes until its wait is over. A pass that
+    /// has used every wait, or that fails any other way, is logged and
     /// passed over: the library-wide passes (`join_replaced`,
-    /// `place_scanned`, `continue_tracks`, `converge_artists`) run again at
-    /// the end of every later run, and the run-keyed ones keep their own
-    /// "next scan tries again" records where they have them.
-    pub fn settle_ended_runs(&self, stop: &RunStop) -> Result<(), ScanStoreError> {
-        use super::commit::{END_PASSES, EndWork};
-        let owed: Vec<(String, String, f64)> = self.read_long(stop, "scan_end_owed", |conn| {
-            let rows = conn
-                .prepare(sql::OWED_END_PASSES.text())?
-                .query_map(params![FailureCode::RunEndPending], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
-        })?;
-        for (run_id, next, ended_at) in owed {
-            let start = END_PASSES
-                .iter()
-                .position(|pass| pass.name == next)
-                .unwrap_or(0);
+    /// `place_scanned`, `continue_tracks`, `converge_artists`) run again
+    /// at the end of every later run, and the run-keyed ones keep their
+    /// own "next scan tries again" records where they have them.
+    ///
+    /// Answers whether every owed pass is settled.
+    pub fn settle_ended_runs(&self, stop: &RunStop) -> Result<bool, ScanStoreError> {
+        use super::commit::END_PASSES;
+        let owed: Vec<(String, String, f64, Option<String>)> =
+            self.read_long(stop, "scan_end_owed", |conn| {
+                let rows = conn
+                    .prepare(sql::OWED_END_PASSES.text())?
+                    .query_map(params![FailureCode::RunEndPending], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })?;
+        for (run_id, note, ended_at, detail) in owed {
+            let mut waits_used = 0;
+            if let Some((used, retry_at)) = detail.as_deref().and_then(read_put_off) {
+                if still_waiting(self.clock.now_secs(), retry_at) {
+                    return Ok(false);
+                }
+                waits_used = used;
+            }
+            let Some(start) = resume_at(&run_id, &note) else {
+                self.write(stop, Lane::Background, "scan_end_passes_done", |tx| {
+                    advance(tx, &run_id, END_PASSES.len())
+                })?;
+                continue;
+            };
             for (at, pass) in END_PASSES.iter().enumerate().skip(start) {
-                let following = END_PASSES.get(at + 1).map(|pass| pass.name);
-                let advance = |tx: &Transaction<'_>| -> Result<(), ScanStoreError> {
-                    match following {
-                        Some(name) => tx.execute(
-                            sql::NEXT_END_PASS.text(),
-                            params![run_id, name, FailureCode::RunEndPending],
-                        )?,
-                        None => tx.execute(
-                            sql::END_PASSES_DONE.text(),
-                            params![run_id, FailureCode::RunEndPending],
-                        )?,
-                    };
-                    Ok(())
-                };
-                let ran = match &pass.work {
-                    EndWork::Whole(run) => self.write(stop, Lane::Background, pass.name, |tx| {
-                        let enqueued = run(tx, &run_id, ended_at)?;
-                        if enqueued > 0 {
-                            let column = Counter::IdentificationEnqueued.column();
-                            tx.execute(
-                                &format!(
-                                    "UPDATE library_scan_runs SET {column} = {column} + ?1 \
-                                     WHERE id = ?2"
-                                ),
-                                params![enqueued, run_id],
-                            )?;
-                        }
-                        advance(tx)
-                    }),
-                    EndWork::ByAlbum { each, tidy } => self
-                        .read_long(stop, pass.name, |conn| {
-                            Ok(super::commit::albums_left(conn, &run_id)?)
-                        })
-                        .and_then(|albums| {
-                            self.write_chunked_by(
-                                stop,
-                                pass.name,
-                                &albums,
-                                END_PASS_ALBUMS,
-                                |chunk, tx| {
-                                    for album_id in chunk {
-                                        each(tx, &run_id, album_id, ended_at)?;
-                                    }
-                                    Ok(chunk.len())
-                                },
-                            )
-                        })
-                        .and_then(|_| {
-                            self.write(stop, Lane::Background, pass.name, |tx| {
-                                tidy(tx, &run_id, ended_at)?;
-                                advance(tx)
-                            })
-                        }),
-                };
+                let mut ran = self.end_pass(stop, &run_id, ended_at, at, END_PASS_ALBUMS);
+                if let Err(error) = &ran
+                    && tried_again(error)
+                {
+                    tracing::warn!(run_id, pass = pass.name, %error, "a scan's end pass is tried again");
+                    Backoff::new().pause(stop, pass.name)?;
+                    ran = self.end_pass(stop, &run_id, ended_at, at, 1);
+                }
                 match ran {
                     Ok(()) => {}
                     Err(
@@ -378,6 +351,25 @@ impl SqliteScanStore {
                         | ScanStoreError::ReadCancelled { .. }
                         | ScanStoreError::LaneClosed),
                     ) => return Err(error),
+                    Err(error) if tried_again(&error) && waits_used < PUT_OFF_WAITS_SECS.len() => {
+                        let wait = PUT_OFF_WAITS_SECS[waits_used];
+                        tracing::warn!(
+                            run_id,
+                            pass = pass.name,
+                            %error,
+                            wait_secs = wait,
+                            "a scan's end pass is put off; no new scan starts until it settles"
+                        );
+                        let detail = put_off_detail(waits_used + 1, self.clock.now_secs() + wait);
+                        self.write(stop, Lane::Background, "scan_end_pass_put_off", |tx| {
+                            tx.execute(
+                                sql::PUT_OFF_END_PASS.text(),
+                                params![run_id, FailureCode::RunEndPending, detail],
+                            )?;
+                            Ok(())
+                        })?;
+                        return Ok(false);
+                    }
                     Err(error) => {
                         tracing::error!(
                             run_id,
@@ -386,13 +378,81 @@ impl SqliteScanStore {
                             "a scan's end pass failed and was passed over"
                         );
                         self.write(stop, Lane::Background, "scan_end_pass_over", |tx| {
-                            advance(tx)
+                            advance(tx, &run_id, at + 1)
                         })?;
+                    }
+                }
+                // The waits are the pass's own, and moving on cleared the
+                // note's record of them.
+                waits_used = 0;
+            }
+        }
+        Ok(true)
+    }
+
+    /// Run end pass `at` of `run_id` once, a chunk of `albums` albums a
+    /// turn where it works album by album, and move the note on past it.
+    /// A pass whose albums fail still tidies what the albums done so far
+    /// left, and answers the failure.
+    fn end_pass(
+        &self,
+        stop: &RunStop,
+        run_id: &str,
+        ended_at: f64,
+        at: usize,
+        albums: usize,
+    ) -> Result<(), ScanStoreError> {
+        use super::commit::{END_PASSES, EndWork};
+        let Some(pass) = END_PASSES.get(at) else {
+            return Ok(());
+        };
+        match &pass.work {
+            EndWork::Whole(run) => self.write(stop, Lane::Background, pass.name, |tx| {
+                let enqueued = run(tx, run_id, ended_at)?;
+                if enqueued > 0 {
+                    let column = Counter::IdentificationEnqueued.column();
+                    tx.execute(
+                        &format!(
+                            "UPDATE library_scan_runs SET {column} = {column} + ?1 \
+                             WHERE id = ?2"
+                        ),
+                        params![enqueued, run_id],
+                    )?;
+                }
+                advance(tx, run_id, at + 1)
+            }),
+            EndWork::ByAlbum { each, tidy } => {
+                let kept = self
+                    .read_long(stop, pass.name, |conn| {
+                        Ok(super::commit::albums_left(conn, run_id)?)
+                    })
+                    .and_then(|left| {
+                        self.write_chunked_by(stop, pass.name, &left, albums, |chunk, tx| {
+                            for album_id in chunk {
+                                each(tx, run_id, album_id, ended_at)?;
+                            }
+                            Ok(chunk.len())
+                        })
+                    });
+                match kept {
+                    Ok(_) => self.write(stop, Lane::Background, pass.name, |tx| {
+                        tidy(tx, run_id, ended_at)?;
+                        advance(tx, run_id, at + 1)
+                    }),
+                    Err(
+                        error @ (ScanStoreError::Stopped
+                        | ScanStoreError::ReadCancelled { .. }
+                        | ScanStoreError::LaneClosed),
+                    ) => Err(error),
+                    Err(error) => {
+                        self.write(stop, Lane::Background, pass.name, |tx| {
+                            Ok(tidy(tx, run_id, ended_at)?)
+                        })?;
+                        Err(error)
                     }
                 }
             }
         }
-        Ok(())
     }
 
     /// Clear finished runs' inventory and album moves, then prune history
@@ -458,8 +518,90 @@ impl SqliteScanStore {
 }
 
 /// Albums an end pass works through in one turn. One album's work reads
-/// every move of the run, so a turn holds far fewer albums than rows.
+/// every move of the run, so a turn holds far fewer albums than rows. A
+/// pass tried again after it ran out of time takes one album a turn.
 const END_PASS_ALBUMS: usize = 50;
+
+/// How long an end pass that keeps failing on time or a busy database
+/// waits before each later try: about half an hour in all. A checkpoint, a
+/// backup or swap pressure can hold the database for minutes, and passing
+/// over a run-keyed pass can lose a hands-off mark, so the tries are spread
+/// well past that. They end because new scans wait meanwhile, and a pass
+/// that can never finish must not hold them for good.
+const PUT_OFF_WAITS_SECS: [f64; 5] = [60.0, 120.0, 240.0, 480.0, 900.0];
+
+/// The start of a note's detail while its next pass is put off. The note
+/// is never listed as a failure; its recorded time is the run's end, which
+/// the passes read, so the retry time is kept here.
+const PUT_OFF_PREFIX: &str = "put off ";
+
+/// A note's detail for a pass that has used `used` waits and is tried again
+/// at `retry_at`, in seconds.
+fn put_off_detail(used: usize, retry_at: f64) -> String {
+    format!("{PUT_OFF_PREFIX}{used} {retry_at}")
+}
+
+/// The waits used and the retry time of a put-off note, or `None` for
+/// any other detail.
+fn read_put_off(detail: &str) -> Option<(usize, f64)> {
+    let (used, retry_at) = detail.strip_prefix(PUT_OFF_PREFIX)?.split_once(' ')?;
+    Some((used.parse().ok()?, retry_at.parse().ok()?))
+}
+
+/// Whether a pass put off until `retry_at` still waits at `now`. A retry
+/// time further off than the longest wait means the clock moved back, and
+/// the pass is due rather than holding new scans until the clock catches up.
+fn still_waiting(now: f64, retry_at: f64) -> bool {
+    let longest = PUT_OFF_WAITS_SECS.iter().copied().fold(0.0, f64::max);
+    retry_at > now && retry_at - now <= longest
+}
+
+/// An end pass failure worth one more try: the database was busy, or the
+/// turn ran out of time.
+fn tried_again(error: &ScanStoreError) -> bool {
+    matches!(
+        error,
+        ScanStoreError::Busy { .. } | ScanStoreError::TxTimeout { .. }
+    )
+}
+
+/// Move run `run_id`'s note on to the passes from `at`, or clear it once
+/// none is left.
+fn advance(tx: &Transaction<'_>, run_id: &str, at: usize) -> Result<(), ScanStoreError> {
+    let owed = super::commit::owed_from(at);
+    if owed.is_empty() {
+        tx.execute(
+            sql::END_PASSES_DONE.text(),
+            params![run_id, FailureCode::RunEndPending],
+        )?;
+    } else {
+        tx.execute(
+            sql::NEXT_END_PASS.text(),
+            params![run_id, owed, FailureCode::RunEndPending],
+        )?;
+    }
+    Ok(())
+}
+
+/// Where run `run_id` resumes: the first pass its note names that this
+/// build knows. A name it does not know (a pass another release had) is
+/// logged and skipped. `None` when the note names no pass this build has.
+fn resume_at(run_id: &str, note: &str) -> Option<usize> {
+    use super::commit::END_PASSES;
+    note.split(' ')
+        .filter(|name| !name.is_empty())
+        .find_map(|name| {
+            let at = END_PASSES.iter().position(|pass| pass.name == name);
+            if at.is_none() {
+                tracing::warn!(
+                    run_id,
+                    pass = name,
+                    "a scan's note names an end pass this release does not have; skipped"
+                );
+            }
+            at
+        })
+}
 
 /// Delete one chunk of a run's rows by rowid.
 pub(super) fn delete_rowids(

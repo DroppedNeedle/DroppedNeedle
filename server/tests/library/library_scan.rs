@@ -1111,6 +1111,115 @@ async fn a_run_whose_end_passes_fail_still_ends() {
     );
 }
 
+/// An end pass that keeps running out of time waits by the clock before
+/// it is tried again: a drive right after it spends no try, and a queued
+/// run stays unclaimed so no old pass lands after its windows. Once the
+/// wait is over the pass lands, then the queued run starts. Every file
+/// vanishes, so the mass-missing guard holds the scope back, and recording
+/// the held folder outlasts the write budget until the test lets it through.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_put_off_end_pass_holds_new_runs_and_lands_after_its_wait() {
+    let scratch = ScratchDir::new("scan-end-wait");
+    let root = scratch.join("music");
+    std::fs::create_dir_all(&root).expect("root");
+    for n in 0..25 {
+        std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
+    }
+    let path = scratch.join("scan.db");
+    migrated_db(&path);
+    let limits = LaneLimits {
+        background: Budget {
+            warn: Duration::from_millis(250),
+            abort: Duration::from_millis(500),
+        },
+        ..LaneLimits::default()
+    };
+    let db = Db::open_for_tests_with(&path, limits).expect("database opens");
+    let clock = Arc::new(droppedneedle_kernel::clock::ManualClock::at(
+        1_800_000_000_000,
+    ));
+    let registry = RootRegistry::new(
+        vec![LibraryRoot::new(
+            "music",
+            root.clone(),
+            EffectivePolicy::Automatic,
+        )],
+        true,
+        "rev-1",
+    );
+    let coordinator = LibraryScanCoordinator::new(
+        Arc::new(SqliteScanStore::new(db, clock.clone())),
+        BlockingPool::new(4),
+        Arc::new(NullTagReader::new()),
+        Arc::new(StaticResolver::new(registry)),
+        clock.clone(),
+    )
+    .with_wakeups(WorkWakeups::new());
+    let paths = HashMap::from([("music".to_owned(), root.clone())]);
+    coordinator.request_run(&request(&root)).expect("requested");
+    let first = coordinator.run_once(&paths).await.expect("driven");
+    assert_eq!(first.state.scan_state(), ScanState::Completed);
+    for n in 0..25 {
+        std::fs::remove_file(root.join(format!("t{n:04}.flac"))).expect("remove");
+    }
+    let held = || {
+        coordinator
+            .store()
+            .db()
+            .query_i64("SELECT COUNT(*) FROM library_scan_held_scopes")
+            .expect("count")
+    };
+    coordinator
+        .store()
+        .db()
+        .run_sql(
+            "CREATE TABLE spin (v INTEGER); \
+             INSERT INTO spin WITH RECURSIVE n(i) AS \
+             (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1000) SELECT i FROM n; \
+             CREATE TRIGGER slow_hold BEFORE INSERT ON library_scan_held_scopes \
+             BEGIN SELECT (SELECT COUNT(*) FROM spin a, spin b, spin c); END;",
+        )
+        .expect("trigger");
+    coordinator.request_run(&request(&root)).expect("requested");
+    let ended = coordinator.run_once(&paths).await.expect("driven");
+    assert_eq!(ended.state.scan_state(), ScanState::Completed);
+    assert_eq!(held(), 0, "the slow pass has not landed");
+
+    let queued = coordinator.request_run(&request(&root)).expect("queued");
+    assert!(
+        coordinator.run_once(&paths).await.is_none(),
+        "a drive at once claims nothing"
+    );
+    clock.advance(30_000);
+    assert!(
+        coordinator.run_once(&paths).await.is_none(),
+        "nor does one before the wait is over"
+    );
+    assert_eq!(
+        coordinator
+            .snapshot(&queued.run_id)
+            .expect("run")
+            .0
+            .state
+            .scan_state(),
+        ScanState::Queued,
+        "the new run stays queued"
+    );
+
+    coordinator
+        .store()
+        .db()
+        .run_sql("DROP TRIGGER slow_hold;")
+        .expect("trigger dropped");
+    clock.advance(31_000);
+    let next = coordinator
+        .run_once(&paths)
+        .await
+        .expect("the new run starts");
+    assert_eq!(next.id, queued.run_id);
+    assert!(held() > 0, "the pass landed after its wait");
+}
+
 /// One inventory row the store refuses costs that file only: the rest of
 /// its page lands, the failure names the store error, and the scope is
 /// not trusted for missing detection.

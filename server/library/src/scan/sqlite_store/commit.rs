@@ -119,8 +119,10 @@ macro_rules! fenced_by {
 pub(super) use fenced_by;
 
 /// Journal row `j` needs attention and no administrator has marked its
-/// write handled. It holds its track back from being judged gone only: a
-/// scan still indexes a file it finds at the track's path.
+/// write handled. It holds its track back from being judged gone, and a
+/// move's destination back from being listed (`FENCED_PATHS`). A scan
+/// still indexes a file it finds at the track's path, unless that path is
+/// such a destination.
 macro_rules! awaits_admin {
     () => {
         "(j.state = 'needs_attention' \
@@ -2212,13 +2214,26 @@ pub(super) const END_PASSES: [EndPass; 11] = [
     },
 ];
 
-/// Mark a run that just ended as owing its end passes, starting with the
-/// first. Written in the same transaction as the run's terminal state.
+/// The names of the end passes from `at` on, in order, as a run's note
+/// holds them. A build that does not know the first resumes at the first
+/// one it knows.
+pub(super) fn owed_from(at: usize) -> String {
+    END_PASSES
+        .get(at..)
+        .unwrap_or_default()
+        .iter()
+        .map(|pass| pass.name)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Mark a run that just ended as owing every end pass. Written in the
+/// same transaction as the run's terminal state.
 pub(super) fn owe_end_passes(tx: &Connection, run_id: &str, now: f64) -> rusqlite::Result<()> {
     tx.prepare_cached(crate::scan::sql::OWE_END_PASSES.text())?
         .execute(params![
             run_id,
-            END_PASSES[0].name,
+            owed_from(0),
             FailureCode::RunEndPending,
             now
         ])?;
@@ -3126,9 +3141,13 @@ fn record_new_copies(
 /// The (root, path) pairs a scan of run `?1` writes no row for: where a
 /// track lies that a write fencing it names (`fenced_by!`: still open, or
 /// moved after the walk of the scope covering it began), the path a
-/// fencing write moved a file away from, and where an open write is
-/// placing a file. One read: the open rows by the state
-/// index (the states listed are every state `fenced_by!` does not call
+/// fencing write moved a file away from, where an open write is placing a
+/// file, and where a fencing move or one that awaits an administrator
+/// (`awaits_admin!`) took a track's file. The last keeps a move that needs
+/// attention from listing its file as a second track: once it is marked
+/// handled, the next scan finds the old path gone and continues the track
+/// at the new one. One read: the open and waiting rows by the state index
+/// (the open states listed are every state `fenced_by!` does not call
 /// terminal), the rows moved since the run's earliest walk by their
 /// revision.
 const FENCED_PATHS: &str = concat!(
@@ -3158,7 +3177,14 @@ const FENCED_PATHS: &str = concat!(
      SELECT source_root, source_rel FROM fencing WHERE source_root IS NOT NULL \
      UNION \
      SELECT dest_root, dest_rel FROM fencing \
-      WHERE state IN ('prepared', 'staged', 'published', 'committed', 'cleanup_pending')"
+      WHERE state IN ('prepared', 'staged', 'published', 'committed', 'cleanup_pending') \
+        OR (track_id IS NOT NULL AND source_root IS NOT NULL \
+          AND (source_root IS NOT dest_root OR source_rel IS NOT dest_rel)) \
+     UNION \
+     SELECT j.dest_root, j.dest_rel FROM library_publish_journal j \
+      WHERE j.track_id IS NOT NULL AND j.source_root IS NOT NULL \
+        AND (j.source_root IS NOT j.dest_root OR j.source_rel IS NOT j.dest_rel) AND ",
+    awaits_admin!(),
 );
 
 fn fenced_paths(tx: &Connection, run_id: &str) -> rusqlite::Result<HashSet<(String, String)>> {

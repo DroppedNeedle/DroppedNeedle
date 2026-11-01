@@ -770,19 +770,34 @@ impl Management {
         } else {
             Lane::Foreground
         };
+        // Read on the pool, outside the write. Plan items change only while
+        // the job's row revision moves, so the bundles stand when the
+        // revision read with them and the one checked inside the write are
+        // both the one the caller saw.
+        let bundles = self
+            .parts
+            .db
+            .read_blocking("management.writable_bundles", |conn| {
+                let revision = jobs::job(conn, job_id)?.map(|job| job.row_revision);
+                Ok::<_, ManagementError>(
+                    (revision == Some(expected_row_revision))
+                        .then(|| store::writable_bundles(conn, job_id))
+                        .transpose()?,
+                )
+            })?;
         let job = self.parts.db.write_blocking(lane, "management.begin", |tx| {
             let current = jobs::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                 "This management job does not exist.",
             ))?;
-            if current.row_revision != expected_row_revision {
+            let Some(bundles) = bundles.filter(|_| current.row_revision == expected_row_revision)
+            else {
                 return Err(stale(
                     "This preview changed since the page loaded. Reload the page and try again.",
                 ));
-            }
+            };
             if let Some(snapshot) = store::snapshot(tx, job_id)? {
                 refuse_activation(&snapshot)?;
             }
-            let bundles = store::writable_bundles(tx, job_id)?;
             if bundles.is_empty() && mode == JobMode::DuplicateResolution {
                 // Keeping both files: the decision is the whole job.
                 store::complete_without_work(tx, job_id, "DUPLICATE_KEPT", now)?;

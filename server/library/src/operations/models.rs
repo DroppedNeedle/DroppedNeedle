@@ -153,8 +153,8 @@ pub enum OperationError {
     Unavailable(String),
     /// A store fault; the cause is for the log.
     Store(String),
-    /// The database was too busy to answer, or is shutting down; the
-    /// cause is for the log.
+    /// The database was too busy to answer, a write ran past its time
+    /// budget, or the database is shutting down; the cause is for the log.
     Busy(String),
 }
 
@@ -177,7 +177,9 @@ impl From<droppedneedle_kernel::db::DbError> for OperationError {
     fn from(error: droppedneedle_kernel::db::DbError) -> Self {
         use droppedneedle_kernel::db::DbError;
         match error {
-            DbError::Busy { .. } | DbError::LaneClosed => Self::Busy(error.to_string()),
+            DbError::Busy { .. } | DbError::TxTimeout { .. } | DbError::LaneClosed => {
+                Self::Busy(error.to_string())
+            }
             other => Self::Store(other.to_string()),
         }
     }

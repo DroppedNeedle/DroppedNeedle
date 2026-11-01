@@ -8060,6 +8060,64 @@ async fn marking_a_write_handled_moves_the_scan_fence() {
     );
 }
 
+/// Migration 0109 moves the scan fence only for a write it stamps: a
+/// removal is stamped though it names no track, and a write of added
+/// files alone moves nothing.
+#[tokio::test]
+async fn marking_a_write_handled_moves_the_fence_only_for_rows_it_stamps() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(108)).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+         staged, staged_sha256, track_id, state) VALUES \
+         ('r-remove', 'r', 'remove', 'music', 'a.flac', 's', 'h', NULL, 'needs_attention'), \
+         ('a-add', 'a', 'add', 'music', 'b.flac', 's', 'h', NULL, 'needs_attention');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    apply_migrations(&pool).await.unwrap();
+
+    let stamps = |pool: SqlitePool| async move {
+        let rows: Vec<(String, Option<i64>)> =
+            sqlx::query_as("SELECT id, fence_revision FROM library_publish_journal ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let counter: i64 = sqlx::query_scalar("SELECT revision FROM library_scan_fences")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        (rows, counter)
+    };
+    let resolve = |bundle: &str| {
+        format!(
+            "INSERT INTO library_publish_resolutions (bundle_id, resolved_by_user_id, \
+             verified_files, resolved_at) VALUES ('{bundle}', NULL, 1, 1)"
+        )
+    };
+    let before = stamps(pool.clone()).await;
+    sqlx::raw_sql(&resolve("a")).execute(&pool).await.unwrap();
+    assert_eq!(
+        stamps(pool.clone()).await,
+        before,
+        "added files alone move nothing"
+    );
+    sqlx::raw_sql(&resolve("r")).execute(&pool).await.unwrap();
+    let counter = before.1 + 1;
+    assert_eq!(
+        stamps(pool.clone()).await,
+        (
+            vec![
+                ("a-add".to_owned(), None),
+                ("r-remove".to_owned(), Some(counter))
+            ],
+            counter
+        ),
+        "the removal is stamped"
+    );
+}
+
 /// Migration 0107 gives the library switched off its own held reason. A
 /// file, upload, decision and task stored as `library_folder_missing` with
 /// the library-off detail move to `library_off`; one whose folder really

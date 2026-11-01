@@ -9,21 +9,27 @@ droppedneedle_kernel::sql! {
     pub(super) RECORD_FAILURE = "INSERT OR IGNORE INTO library_scan_failures \
              (run_id, root_id, relative_path, failure_code, failure_detail, phase, recorded_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
-    /// Note that run `?1` owes its end passes from pass `?2` (code `?3`, at `?4`).
+    /// Note that run `?1` owes the end passes `?2` names (code `?3`, at `?4`).
     pub(super) OWE_END_PASSES = "INSERT OR IGNORE INTO library_scan_failures \
              (run_id, root_id, relative_path, failure_code, failure_detail, phase, recorded_at) \
              VALUES (?1, '', ?2, ?3, 'The scan is settling what it found.', 'reconciling', ?4)";
-    /// The ended runs that owe end passes (code `?1`): run, next pass, end time.
-    pub(super) OWED_END_PASSES = "SELECT run_id, relative_path, recorded_at FROM library_scan_failures \
-             WHERE failure_code = ?1 ORDER BY recorded_at, run_id";
+    /// The ended runs that owe end passes (code `?1`): run, the passes
+    /// owed, end time, and the note's detail, which says when a pass put
+    /// off is tried again.
+    pub(super) OWED_END_PASSES = "SELECT run_id, relative_path, recorded_at, failure_detail \
+             FROM library_scan_failures WHERE failure_code = ?1 ORDER BY recorded_at, run_id";
     /// The ended runs that still owe end passes (code `?1`), oldest first.
     pub(super) RUNS_OWING_END_PASSES = "SELECT " + RUN_COLUMNS + " FROM library_scan_runs r \
              WHERE terminal_at IS NOT NULL AND EXISTS (SELECT 1 FROM library_scan_failures f \
                WHERE f.run_id = r.id AND f.failure_code = ?1) \
              ORDER BY terminal_at, id";
-    /// Move run `?1`'s note on to pass `?2` (code `?3`).
-    pub(super) NEXT_END_PASS = "UPDATE library_scan_failures SET relative_path = ?2 \
+    /// Move run `?1`'s note on to the passes `?2` names (code `?3`).
+    pub(super) NEXT_END_PASS = "UPDATE library_scan_failures SET relative_path = ?2, \
+             failure_detail = 'The scan is settling what it found.' \
              WHERE run_id = ?1 AND failure_code = ?3";
+    /// Note that run `?1`'s next pass is put off (code `?2`, detail `?3`).
+    pub(super) PUT_OFF_END_PASS = "UPDATE library_scan_failures SET failure_detail = ?3 \
+             WHERE run_id = ?1 AND failure_code = ?2";
     /// Run `?1` owes no more end passes (code `?2`).
     pub(super) END_PASSES_DONE = "DELETE FROM library_scan_failures WHERE run_id = ?1 AND failure_code = ?2";
     /// The oldest finished run whose inventory waits for clean-up and that

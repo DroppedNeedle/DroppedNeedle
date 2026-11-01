@@ -739,10 +739,12 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     ) -> Option<ScanRun> {
         // Runs that ended without their end passes (a stop request, boot
         // recovery, a crash) settle first; their inventory waits for it.
-        // Finished runs' inventory goes even while the library is off.
-        self.settle_ended_runs(stop).await;
+        // Finished runs' inventory goes even while the library is off. A
+        // drive whose settling failed claims no run, so old passes never
+        // land after a new run's windows.
+        let settled = self.settle_ended_runs(stop).await;
         self.cleanup_terminal_inventory(stop).await;
-        if !self.resolvers.resolver().enabled() {
+        if !settled || !self.resolvers.resolver().enabled() {
             return None;
         }
         let claimed = match self.store.resumable(stop) {
@@ -1054,14 +1056,19 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     }
 
     /// Run the end passes ended runs still owe, on a blocking thread. A
-    /// failure is logged; the next drive resumes where it stopped.
-    async fn settle_ended_runs(&self, stop: &RunStop) {
+    /// failure is logged; the next drive resumes where it stopped. False
+    /// when a pass is put off, or they failed on anything but a stop.
+    async fn settle_ended_runs(&self, stop: &RunStop) -> bool {
         let settled = self
             .on_store(stop, |store, stop| store.settle_ended_runs(stop))
             .await;
         match settled {
-            Ok(()) | Err(ScanStoreError::Stopped | ScanStoreError::ReadCancelled { .. }) => {}
-            Err(error) => tracing::warn!(%error, "scan end passes did not finish"),
+            Ok(settled) => settled,
+            Err(ScanStoreError::Stopped | ScanStoreError::ReadCancelled { .. }) => true,
+            Err(error) => {
+                tracing::warn!(%error, "scan end passes did not finish");
+                false
+            }
         }
     }
 

@@ -410,8 +410,9 @@ Run from the repo root. `make help` lists every target.
   was written after its scope's walk began (marking one handled counts as
   a write). A scan writes no row for a file whose track such a row names
   (open or written after the walk began), whose path such a row moved a
-  file away from, or whose path an open row is placing a file at. A
-  trigger on the journal stamps that revision, so no write can skip it.
+  file away from, or whose path an open row, or a move that needs
+  attention and is not marked handled, is placing a file at. A trigger on
+  the journal stamps that revision, so no write can skip it.
 - A track a scan judged gone continues into a track an earlier scan read
   only in the run end's late pass (`scan_end_continue_moved`): the match
   `find_moved_track` makes, unambiguous both ways and timed by

@@ -18967,6 +18967,82 @@ async fn a_scan_leaves_the_rows_of_open_writes_alone() {
     }
 }
 
+/// A move left needing attention with its file only at the new path lists
+/// no second track there: the track stays as it was, history and all.
+/// Once an administrator marks the write handled, the next scan continues
+/// the track at the new path, its history with it.
+#[tokio::test]
+async fn a_move_needing_attention_continues_its_track_once_handled() {
+    use droppedneedle_library::publish::planner::PlanKind;
+
+    let (scratch, library, music, album, old) = album_at_rest("lib-fence-attention-move", 3).await;
+    let db = scratch_db(&scratch);
+    scratch
+        .identify
+        .set_recall(fitting_release(&library, &album));
+    while library.identification.identify_tick().await > 0 {}
+    plant_filler(&library, &music, 20).await;
+    let track = old[1].clone();
+    give_history(&db, &album, &track);
+    let bundle = publish_stopped(
+        &library,
+        &db,
+        &track,
+        PlanKind::Move,
+        &album,
+        Some("moved/02.flac"),
+        &[],
+    );
+    assert!(music.join("moved/02.flac").exists(), "the file was placed");
+    if music.join("album/02.flac").exists() {
+        std::fs::remove_file(music.join("album/02.flac")).expect("old path emptied");
+    }
+    db.execute(
+        "UPDATE library_publish_journal SET state = 'needs_attention' WHERE bundle_id = ?1",
+        [&bundle],
+    )
+    .expect("the write needs attention");
+    let at_new_path = || -> Vec<String> {
+        db.prepare(
+            "SELECT id FROM local_tracks WHERE root_id = 'music' \
+             AND relative_path = 'moved/02.flac'",
+        )
+        .expect("prepared")
+        .query_map([], |row| row.get(0))
+        .expect("rows read")
+        .collect::<Result<_, _>>()
+        .expect("ids")
+    };
+
+    rescan(&library).await;
+    let (_, path, availability, _, _) = old_row(&db, &track);
+    assert_eq!(
+        (path.as_str(), availability.as_str()),
+        ("album/02.flac", "indexed"),
+        "the track stays as it was"
+    );
+    assert_eq!(holdings(&db, &track)[..3], [1, 1, 1], "its history stays");
+    assert!(
+        at_new_path().is_empty(),
+        "nothing is listed at the new path"
+    );
+
+    db.execute(
+        "INSERT INTO library_publish_resolutions (bundle_id, resolved_by_user_id, \
+         verified_files, resolved_at) VALUES (?1, NULL, 1, 1)",
+        [&bundle],
+    )
+    .expect("the write is marked handled");
+    rescan(&library).await;
+    let moved = at_new_path();
+    assert_eq!(moved.len(), 1, "one track at the new path: {moved:?}");
+    assert_eq!(
+        holdings(&db, &moved[0])[..3],
+        [1, 1, 1],
+        "the history went with it"
+    );
+}
+
 /// Reads tags, and after reading the file whose path ends with `target`
 /// holds that read once until released.
 struct HoldAfterRead {
