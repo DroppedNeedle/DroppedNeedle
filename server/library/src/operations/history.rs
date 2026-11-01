@@ -154,7 +154,7 @@ const ROWS: &str = "SELECT a.id, a.actor_user_id, a.action_kind, a.reason_code, 
       OR a.action_kind IN ('automatic_exact_edition', 'automatic_match_sealed', \
         'automatic_match_withdrawn', 'undo_automatic_edition', 'fold_undone', \
         'management_hand_back_given_up')) \
-    ORDER BY a.created_at DESC, a.rowid DESC LIMIT 10";
+    ORDER BY a.created_at DESC, a.rowid DESC LIMIT 50";
 
 struct Row {
     id: String,

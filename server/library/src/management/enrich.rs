@@ -111,6 +111,8 @@ pub enum AcoustIdAnswer {
     KeyRefused,
     /// No usable answer now, and why: the work waits.
     Unavailable(droppedneedle_providers::acoustid::Unanswered),
+    /// The library settings holding the key do not read: the work waits.
+    SettingsUnreadable,
     /// The results for each print, in the order asked.
     Answered(Vec<Vec<droppedneedle_providers::acoustid::BatchResult>>),
 }

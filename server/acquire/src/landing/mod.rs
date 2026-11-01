@@ -60,6 +60,24 @@ use crate::intake;
 use crate::reason::Reason;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
+use droppedneedle_library::identify::sources::AcoustIdUnavailable;
+use droppedneedle_library::matching::score::MERGE_LOOKUPS;
+use droppedneedle_providers::RequestPriority;
+
+/// The rejection a landing answers when AcoustID could not be reached: the
+/// files wait and land by themselves once it answers.
+fn acoustid_unavailable(unavailable: AcoustIdUnavailable) -> Rejection {
+    Rejection {
+        code: Reason::AcoustidUnavailable,
+        disposition: if unavailable.may_never_end() {
+            Disposition::Temporary
+        } else {
+            Disposition::Outage
+        },
+        quarantine: None,
+        detail: unavailable.to_string(),
+    }
+}
 
 /// The rejection a landing answers when its task records cannot be read.
 fn journal_unreadable() -> Rejection {
@@ -384,8 +402,15 @@ impl LandingService {
                 target.album_copy_proven =
                     matching::album_copy_proven(library.as_ref(), &target, &landing, &matched)
                         .await;
-                let heard = hear_untagged(&target, &landing, &matched, library.as_ref()).await;
-                let decision = decide(&target, &landing, &policy, &matched, heard.as_ref(), checks);
+                let (decision, heard) = decide_hearing(
+                    &target,
+                    &landing,
+                    &policy,
+                    &matched,
+                    checks,
+                    library.as_ref(),
+                )
+                .await;
                 match &decision.outcome {
                     Outcome::Import(plan) => {
                         let plan = plan.clone();
@@ -597,8 +622,21 @@ impl LandingService {
         let Some(found) = matched.best() else {
             return Acted::decided(decision, 0);
         };
-        let heard =
-            own_album_recording_agrees(landing, matched, &plan, heard, library.as_ref()).await;
+        let heard = match own_album_recording_agrees(
+            landing,
+            matched,
+            &plan,
+            heard,
+            library.as_ref(),
+        )
+        .await
+        {
+            Ok(heard) => heard,
+            Err(unavailable) => {
+                decision.outcome = Outcome::Reject(acoustid_unavailable(unavailable));
+                return Acted::decided(decision, 0);
+            }
+        };
         let held: Vec<intake::Hold> = plan
             .held
             .iter()
@@ -668,6 +706,16 @@ impl LandingService {
                     Reason::JournalUnreadable => Rejection {
                         detail: deferred.detail,
                         ..journal_unreadable()
+                    },
+                    Reason::AcoustidUnavailable => Rejection {
+                        code: Reason::AcoustidUnavailable,
+                        disposition: if deferred.outage {
+                            Disposition::Outage
+                        } else {
+                            Disposition::Temporary
+                        },
+                        quarantine: None,
+                        detail: deferred.detail,
                     },
                     code => Rejection {
                         code,
@@ -946,7 +994,10 @@ impl LandingService {
             }
             LandingResult::Held { code, detail } => ("held", Some(*code), Some(detail.clone())),
             LandingResult::Rejected(rejection) => (
-                if rejection.disposition == Disposition::Temporary {
+                if matches!(
+                    rejection.disposition,
+                    Disposition::Temporary | Disposition::Outage
+                ) {
                     "deferred"
                 } else {
                     "rejected"
@@ -970,12 +1021,35 @@ impl LandingService {
             missing_positions: serde_json::to_string(&missing).unwrap_or_else(|_| "[]".into()),
             decided_at: self.journal.db().now_unix_f64(),
         };
-        if let Err(error) = self
-            .journal
-            .run("downloads.landing.decision", move |store| {
-                store.record_import_decision(&row)
-            })
-            .await
+        // A long outage lands every pass: it records the wait once.
+        let waiting = matches!(
+            &result,
+            LandingResult::Rejected(rejection) if rejection.disposition == Disposition::Outage
+        );
+        let repeated = waiting && {
+            let task_id = task.id.clone();
+            self.journal
+                .read("downloads.landing.latest", move |store| {
+                    store.latest_import_decision(&task_id)
+                })
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|last| {
+                    last.attempt_id == row.attempt_id
+                        && last.outcome == row.outcome
+                        && last.reason_code == row.reason_code
+                        && last.detail == row.detail
+                        && last.release_mbid == row.release_mbid
+                })
+        };
+        if !repeated
+            && let Err(error) = self
+                .journal
+                .run("downloads.landing.decision", move |store| {
+                    store.record_import_decision(&row)
+                })
+                .await
         {
             tracing::warn!(task_id = %task.id, %error, "import decision not recorded");
         }
@@ -1157,23 +1231,23 @@ fn remote_names(task_id: &str, handle: Option<&str>) -> Vec<String> {
 /// counts as hearing the requested one. Every file about to import is
 /// asked, once; another recording still holds a file unless its measured
 /// length vouches for the track. `heard` unchanged when no file is such a
-/// copy.
+/// copy. An error when AcoustID could not be reached.
 async fn own_album_recording_agrees(
     landing: &Landing,
     matched: &MatchSummary,
     plan: &FilePlan,
     heard: Option<HashMap<String, Vec<String>>>,
     library: &dyn LandingLibrary,
-) -> Option<HashMap<String, Vec<String>>> {
+) -> Result<Option<HashMap<String, Vec<String>>>, AcoustIdUnavailable> {
     let Some(found) = matched.best() else {
-        return heard;
+        return Ok(heard);
     };
     if !plan
         .import
         .iter()
         .any(|(file, _)| matched.album_copies.contains_key(file))
     {
-        return heard;
+        return Ok(heard);
     }
     let mut heard = match heard {
         Some(heard) => heard,
@@ -1183,7 +1257,9 @@ async fn own_album_recording_agrees(
                 .iter()
                 .map(|(file, _)| (file.to_string(), landing.audio[*file].path.clone()))
                 .collect();
-            library.fingerprints(files).await
+            library
+                .fingerprints(files, RequestPriority::BackgroundSync)
+                .await?
         }
     };
     for (file, track) in &plan.import {
@@ -1195,23 +1271,33 @@ async fn own_album_recording_agrees(
             recordings.push(found.release.tracks[*track].recording_id.clone());
         }
     }
-    Some(heard)
+    Ok(Some(heard))
 }
 
-/// AcoustID's answer for every paired file, asked only when the files are
-/// untagged and nothing else shows who they are by: then a fingerprint is
-/// the last evidence that can let them import. `None` when not asked.
-async fn hear_untagged(
+/// The decision, and AcoustID's answer when it was asked. Audio is decoded
+/// only when it can change the decision: the files are untagged, nothing else
+/// shows who they are by, and no other check holds them. Then a fingerprint is
+/// the last evidence that can let them import, and an outage waits.
+async fn decide_hearing(
     target: &Target,
     landing: &Landing,
+    policy: &QualityPolicy,
     matched: &MatchSummary,
+    checks: Vec<Check>,
     library: &dyn LandingLibrary,
-) -> Option<HashMap<String, Vec<String>>> {
-    let found = matched.best()?;
-    if found.scored.pairs.is_empty() || specs::artist_proof(target, landing, found, None).is_some()
-    {
-        return None;
-    }
+) -> (Decision, Option<HashMap<String, Vec<String>>>) {
+    let mut unheard = decide(target, landing, policy, matched, None, checks.clone());
+    let mut holding = unheard
+        .checks
+        .iter()
+        .filter(|check| !matches!(check.verdict, Verdict::Accept { .. }));
+    let only_artist_evidence = holding
+        .next()
+        .is_some_and(|check| check.spec == "artist_evidence")
+        && holding.next().is_none();
+    let Some(found) = matched.best().filter(|_| only_artist_evidence) else {
+        return (unheard, None);
+    };
     let files = found
         .scored
         .pairs
@@ -1223,7 +1309,80 @@ async fn hear_untagged(
             )
         })
         .collect();
-    Some(library.fingerprints(files).await)
+    let heard = match library
+        .fingerprints(files, RequestPriority::BackgroundSync)
+        .await
+    {
+        Ok(heard) => heard,
+        Err(unavailable) => {
+            unheard.outcome = Outcome::Reject(acoustid_unavailable(unavailable));
+            return (unheard, None);
+        }
+    };
+    let Some(proof) = heard_through_merges(target, landing, found, &heard, library).await else {
+        unheard.outcome = Outcome::Reject(Rejection {
+            code: Reason::MusicbrainzUnavailable,
+            disposition: Disposition::Temporary,
+            quarantine: None,
+            detail: "MusicBrainz could not be reached to follow a merged recording".to_owned(),
+        });
+        return (unheard, None);
+    };
+    let decision = decide(target, landing, policy, matched, Some(&proof), checks);
+    (decision, Some(heard))
+}
+
+/// `heard` for the artist proof alone: a heard id MusicBrainz merged into the
+/// paired track's recording counts as that recording. At most
+/// [`MERGE_LOOKUPS`], each id once; a lookup that fails agrees with nothing.
+/// Nowhere else: a merged id says nothing to the check that a file is the
+/// track it would land as. `None` when a lookup failed and the proof still
+/// falls short: an outage is not evidence against the files, so they wait.
+async fn heard_through_merges(
+    target: &Target,
+    landing: &Landing,
+    found: &FoundRelease,
+    heard: &HashMap<String, Vec<String>>,
+    library: &dyn LandingLibrary,
+) -> Option<HashMap<String, Vec<String>>> {
+    let mut proof = heard.clone();
+    if specs::artist_proof(target, landing, found, Some(&proof)).is_some() {
+        return Some(proof);
+    }
+    let mut failed = false;
+    let mut canonical: HashMap<String, Option<String>> = HashMap::new();
+    for pair in &found.scored.pairs {
+        let wanted = &found.release.tracks[pair.track].recording_id;
+        let Some(recordings) = proof.get_mut(&pair.local.to_string()) else {
+            continue;
+        };
+        for recording in recordings.clone() {
+            let id = recording.to_ascii_lowercase();
+            if !canonical.contains_key(&id) {
+                if canonical.len() >= MERGE_LOOKUPS {
+                    break;
+                }
+                let answer = library
+                    .canonical_recording(&id, RequestPriority::BackgroundSync)
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::info!(error = %error.0, recording = id, "merged recording not looked up");
+                        failed = true;
+                        None
+                    });
+                canonical.insert(id.clone(), answer);
+            }
+            if canonical[&id]
+                .as_deref()
+                .is_some_and(|merged| merged.eq_ignore_ascii_case(wanted))
+            {
+                recordings.push(wanted.clone());
+                break;
+            }
+        }
+    }
+    (!failed || specs::artist_proof(target, landing, found, Some(&proof)).is_some())
+        .then_some(proof)
 }
 
 /// Library folders as the filesystem resolves them.

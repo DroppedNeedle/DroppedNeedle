@@ -371,6 +371,7 @@ impl DropImports {
                         tracing::warn!(item_id, %detail, "drop match: MusicBrainz unavailable");
                         Reason::MusicbrainzUnavailable
                     }
+                    Outcome::AcoustidUnavailable => Reason::AcoustidUnavailable,
                     Outcome::Review { reason, .. } => reason,
                     Outcome::Matched(_) | Outcome::Busy | Outcome::Closed => Reason::ImportFailed,
                 };
@@ -694,6 +695,11 @@ impl DropImports {
                 self.wait_whole(job, item, Reason::MusicbrainzUnavailable, None)
                     .await;
             }
+            Outcome::AcoustidUnavailable => {
+                tracing::info!(item_id, "drop import: AcoustID unavailable");
+                self.wait_whole(job, item, Reason::AcoustidUnavailable, None)
+                    .await;
+            }
             // Background identification reads a busy edition until it
             // answers, so busy should never reach here.
             Outcome::Busy => {
@@ -832,11 +838,13 @@ impl DropImports {
                         (Reason::LibraryFolderMissing, Some(deferred.detail))
                     }
                     Reason::LibraryOff => (Reason::LibraryOff, None),
+                    Reason::AcoustidUnavailable => (Reason::AcoustidUnavailable, None),
                     _ => (Reason::LibraryUnavailable, None),
                 };
                 // An automatic upload is held paired, so the held list retries
-                // it by itself; a person's Match answers busy and changes
-                // nothing.
+                // it by itself, a wait for AcoustID included (checked as an
+                // automatic import is); a person's Match answers busy and
+                // changes nothing.
                 let put_off = match deferred.reason {
                     Reason::JournalUnreadable => Reason::JournalUnreadable,
                     _ => reason,

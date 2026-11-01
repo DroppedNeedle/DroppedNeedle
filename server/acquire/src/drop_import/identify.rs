@@ -59,6 +59,9 @@ pub enum Outcome {
     },
     /// MusicBrainz could not answer; worth another try later.
     Unavailable(String),
+    /// The audio was the only way left to tell and AcoustID could not be
+    /// reached; worth another try later.
+    AcoustidUnavailable,
     /// The database stayed busy while a person waited on the album's
     /// chosen edition: nothing was decided.
     Busy,
@@ -199,8 +202,15 @@ pub async fn identify(library: &dyn LandingLibrary, landing: &Landing, folder: &
     match by_fingerprint(library, landing, &target).await {
         Ok(Some(summary)) => chosen_edition(library, landing, summary, &target, UNTIL_FREE).await,
         Ok(None) => review(Reason::NoAlbumMatch),
-        Err(detail) => Outcome::Unavailable(detail),
+        Err(FingerprintFailure::MusicBrainz(detail)) => Outcome::Unavailable(detail),
+        Err(FingerprintFailure::AcoustId) => Outcome::AcoustidUnavailable,
     }
+}
+
+/// Why the fingerprint tier could not answer.
+enum FingerprintFailure {
+    AcoustId,
+    MusicBrainz(String),
 }
 
 /// Files a person assigned to one release group: the library's edition of
@@ -281,14 +291,17 @@ async fn by_fingerprint(
     library: &dyn LandingLibrary,
     landing: &Landing,
     target: &Target,
-) -> Result<Option<MatchSummary>, String> {
+) -> Result<Option<MatchSummary>, FingerprintFailure> {
     let files: Vec<(String, std::path::PathBuf)> = landing
         .audio
         .iter()
         .enumerate()
         .map(|(index, file)| (index.to_string(), file.path.clone()))
         .collect();
-    let heard = library.fingerprint_releases(files).await;
+    let heard = library
+        .fingerprint_releases(files, RequestPriority::BackgroundSync)
+        .await
+        .map_err(|_| FingerprintFailure::AcoustId)?;
     if heard.is_empty() {
         return Ok(None);
     }
@@ -305,14 +318,15 @@ async fn by_fingerprint(
         if let Some(release) = library
             .release(&id, RequestPriority::BackgroundSync)
             .await
-            .map_err(|error| error.0)?
+            .map_err(|error| FingerprintFailure::MusicBrainz(error.0))?
         {
             releases.push(release);
         }
     }
     let local = local_album(&landing.audio, target);
-    let aliases =
-        merged_recordings(library, &local, &releases, RequestPriority::BackgroundSync).await?;
+    let aliases = merged_recordings(library, &local, &releases, RequestPriority::BackgroundSync)
+        .await
+        .map_err(FingerprintFailure::MusicBrainz)?;
     let summary = choose(&local, releases, &aliases, target);
     Ok(summary.best().is_some_and(close).then_some(summary))
 }

@@ -254,7 +254,8 @@ async fn acoustid_batch_posts_twenty_per_request() {
     let found = providers
         .acoustid
         .lookup_batch("api-key", &queries, PRIORITY)
-        .await;
+        .await
+        .expect("answered");
 
     let sent = wire.sent();
     assert_eq!(sent.len(), 2);
@@ -279,9 +280,48 @@ async fn acoustid_batch_posts_twenty_per_request() {
             .acoustid
             .lookup_batch("", &queries, PRIORITY)
             .await
+            .expect("no key hears nothing")
             .is_empty()
     );
     assert_eq!(wire.sent().len(), 2);
+}
+
+/// One request AcoustID does not serve fails the whole lookup. A print it
+/// cannot read is steady, not an outage: left out of an answer or refused
+/// with its code, it is absent and the other files still answer. A refused
+/// key reads as no key.
+#[tokio::test(start_paused = true)]
+async fn acoustid_batch_tells_an_unreadable_print_from_an_outage() {
+    use acoustid::Unanswered;
+    let prints: Vec<String> = (0..25).map(|index| format!("print-{index}")).collect();
+    let queries: Vec<acoustid::BatchQuery<'_>> = prints
+        .iter()
+        .map(|print| acoustid::BatchQuery {
+            fingerprint: print,
+            duration_secs: 200,
+        })
+        .collect();
+    let error = |code: i64| {
+        json_answer(
+            400,
+            &serde_json::json!({"status": "error", "error": {"code": code, "message": "x"}}),
+        )
+    };
+    let mut outcomes = Vec::new();
+    for second in [
+        error(2),
+        error(3),
+        json_answer(200, &batch_payload(4)),
+        error(4),
+    ] {
+        let (_, providers) = acoustid_providers([json_answer(200, &batch_payload(20)), second]);
+        let found = providers
+            .acoustid
+            .lookup_batch("key", &queries, PRIORITY)
+            .await;
+        outcomes.push(found.map(|found| found.len()));
+    }
+    assert_eq!(outcomes, [Err(Unanswered::Code(2)), Ok(20), Ok(24), Ok(0)]);
 }
 
 fn acoustid_fixture(name: &str) -> Vec<u8> {
@@ -327,7 +367,8 @@ async fn acoustid_recorded_batch_answer_decodes() {
     let found = providers
         .acoustid
         .lookup_batch("key", &one_query("print"), PRIORITY)
-        .await;
+        .await
+        .expect("answered");
     assert_eq!(
         found[&0].recording_ids,
         vec!["fe000616-c72c-43d4-8cba-a4083e99636b"]

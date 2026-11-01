@@ -59,6 +59,11 @@ pub static SPEC: Spec = Spec {
 
 /// AcoustID's error code for a client over its request rate.
 const TOO_MANY_REQUESTS: i64 = 14;
+/// AcoustID's error code for a print it cannot read. Probed on 2026-11-01
+/// against api.acoustid.org: a batch whose only print is garbage answers 400
+/// with this code; with a readable print beside it, the garbage one is left
+/// out of a 200 and the other keeps its own index.
+const INVALID_FINGERPRINT: i64 = 3;
 
 /// The AcoustID hook over the standard rules.
 pub fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
@@ -176,25 +181,33 @@ impl AcoustIdClient {
     /// it, keyed by the query's index. One fingerprint often maps to
     /// several duplicate MusicBrainz recordings (single and album
     /// versions), so keeping only the best would read as "unsupported"
-    /// for the others (Lidarr keeps them all the same way). A request
-    /// that fails contributes nothing; the other requests still count.
-    /// An empty key never touches the wire.
+    /// for the others (Lidarr keeps them all the same way).
+    ///
+    /// All or nothing: a request that went unanswered fails the lookup, so
+    /// nothing is worked out from part of the files. A print AcoustID cannot
+    /// read is steady, not an outage: it is absent, like a file that could
+    /// not be printed. An empty or refused key answers nothing heard, and an
+    /// empty key never touches the wire.
+    ///
+    /// # Errors
+    ///
+    /// Why a request went unanswered.
     pub async fn lookup_batch(
         &self,
         api_key: &str,
         queries: &[BatchQuery<'_>],
         priority: RequestPriority,
-    ) -> std::collections::HashMap<usize, BatchMatch> {
+    ) -> Result<std::collections::HashMap<usize, BatchMatch>, Unanswered> {
         let mut found = std::collections::HashMap::new();
-        if api_key.is_empty() {
-            return found;
-        }
         for (chunk_index, chunk) in queries.chunks(MAX_BATCH).enumerate() {
             let offset = chunk_index * MAX_BATCH;
-            let BatchOutcome::Answered(entries) =
-                self.lookup_batch_request(api_key, chunk, priority).await
-            else {
-                continue;
+            let entries = match self.lookup_batch_request(api_key, chunk, priority).await {
+                BatchOutcome::Answered(entries) => entries,
+                BatchOutcome::NoKey | BatchOutcome::KeyRefused => {
+                    return Ok(std::collections::HashMap::new());
+                }
+                BatchOutcome::Unavailable(Unanswered::Code(INVALID_FINGERPRINT)) => continue,
+                BatchOutcome::Unavailable(why) => return Err(why),
             };
             for (index, results) in entries {
                 if index < chunk.len() {
@@ -202,7 +215,14 @@ impl AcoustIdClient {
                 }
             }
         }
-        found
+        Ok(found)
+    }
+
+    /// Whether AcoustID is resting after a run of failed calls: a lookup
+    /// now would not be sent.
+    #[must_use]
+    pub fn resting_after_failures(&self) -> bool {
+        self.executor.resting_after_failures()
     }
 
     /// One batch request of at most [`MAX_BATCH`] prints (any past that

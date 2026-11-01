@@ -328,6 +328,11 @@ impl DownloadWorker {
                     tracing::info!(task_id = %task.id, detail = %rejection.detail, "landing waits for the library");
                     self.touch_poll(&task.id, now).await;
                 }
+                (Disposition::Outage, Origin::Poll) => {
+                    // The landing lands by itself once the service answers.
+                    tracing::info!(task_id = %task.id, code = %rejection.code, detail = %rejection.detail, "landing waits out an outage");
+                    self.touch_poll(&task.id, now).await;
+                }
                 (Disposition::Temporary, _) if rejection.code == Reason::JournalUnreadable => {
                     // A busy database never uses up the landing's waits, so
                     // it can never fail the task: the next pass lands again,

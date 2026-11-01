@@ -142,6 +142,9 @@ pub const RELEASE_UNREADABLE: &str = "release_unreadable";
 /// readable candidate left the recall defers; otherwise it goes on, and
 /// an attempt that would end matching nothing defers with this code.
 pub const RELEASES_UNREADABLE: &str = "releases_unreadable";
+/// The files want their audio heard and AcoustID could not be reached: the
+/// job waits, since deciding without audio would not be the same decision.
+pub const ACOUSTID_UNAVAILABLE: &str = "acoustid_unavailable";
 
 /// The failure code of a recall that went on without the release the
 /// files' tags name, because MusicBrainz refused it. Nothing can be
@@ -234,6 +237,7 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
             store: &self.store,
             audio: &self.audio,
             cpu: &self.cpu,
+            priority,
             refused: Mutex::new(HashSet::new()),
         }
     }
@@ -247,6 +251,7 @@ struct Recall<'a, R, F> {
     store: &'a Arc<SqliteIdentifyStore>,
     audio: &'a F,
     cpu: &'a BlockingPool,
+    priority: RequestPriority,
     /// Release ids (lowercase) MusicBrainz refused in this recall.
     refused: Mutex<HashSet<String>>,
 }
@@ -327,7 +332,20 @@ impl<R: ReleaseSource, F: FingerprintSource> Recall<'_, R, F> {
             .await?;
         let mut fingerprint_support = HashMap::new();
         if should_fingerprint(&local, &scored) {
-            let heard = self.audio.identify(&facts.tracks).await;
+            let Ok(heard) = self.audio.identify(&facts.tracks, self.priority).await else {
+                tracing::info!(
+                    album = self.album,
+                    "AcoustID could not be reached; identification waits"
+                );
+                return Ok(RecallOutcome {
+                    result: RecallResult {
+                        provider_deferred: true,
+                        failure_code: Some(ACOUSTID_UNAVAILABLE.to_owned()),
+                        ..RecallResult::default()
+                    },
+                    scored: Scored::default(),
+                });
+            };
             for id in common_releases(&heard.releases, heard.recordings.len().max(1)) {
                 if releases.iter().any(|release| release.answers_to(&id)) {
                     continue;

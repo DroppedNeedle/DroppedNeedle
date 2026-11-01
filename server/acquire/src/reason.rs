@@ -85,6 +85,7 @@ pub enum Reason {
     SettingsUnreadable,
     JournalUnreadable,
     MusicbrainzUnavailable,
+    AcoustidUnavailable,
     HeldForReview,
     TracksMissing,
     // Settled: a final word that needs nothing.
@@ -111,7 +112,7 @@ pub enum ReasonKind {
 
 impl Reason {
     /// Every reason, in declaration order.
-    pub const ALL: [Reason; 67] = [
+    pub const ALL: [Reason; 68] = [
         Self::WeakMatch,
         Self::NoArtistEvidence,
         Self::MostlyUnmatched,
@@ -174,6 +175,7 @@ impl Reason {
         Self::SettingsUnreadable,
         Self::JournalUnreadable,
         Self::MusicbrainzUnavailable,
+        Self::AcoustidUnavailable,
         Self::HeldForReview,
         Self::TracksMissing,
         Self::AlreadyOwned,
@@ -246,6 +248,7 @@ impl Reason {
             Self::SettingsUnreadable => "settings_unreadable",
             Self::JournalUnreadable => "journal_unreadable",
             Self::MusicbrainzUnavailable => "musicbrainz_unavailable",
+            Self::AcoustidUnavailable => "acoustid_unavailable",
             Self::HeldForReview => "held_for_review",
             Self::TracksMissing => "tracks_missing",
             Self::AlreadyOwned => "already_owned",
@@ -402,6 +405,7 @@ impl Reason {
                 "The download's records could not be read just now, so the files wait where they are."
             }
             Self::MusicbrainzUnavailable => "MusicBrainz could not be reached to check the files.",
+            Self::AcoustidUnavailable => "AcoustID could not be reached to check the files.",
             Self::HeldForReview => {
                 "Some files of this download are held for you to check before they reach the library."
             }
@@ -551,6 +555,9 @@ impl Reason {
             Self::MusicbrainzUnavailable => {
                 "Downloads try again by themselves. For an upload, try Match again in a few minutes."
             }
+            Self::AcoustidUnavailable => {
+                "DroppedNeedle tries again by itself. An upload with no album yet needs Match, and a file that would replace your copy needs Re-check."
+            }
             Self::HeldForReview => "Open the held list and import or discard them.",
             Self::TracksMissing => {
                 "DroppedNeedle looks for the missing tracks again later. You can also search for them yourself."
@@ -627,6 +634,7 @@ impl Reason {
             | Self::SettingsUnreadable
             | Self::JournalUnreadable
             | Self::MusicbrainzUnavailable
+            | Self::AcoustidUnavailable
             | Self::HeldForReview
             | Self::TracksMissing => ReasonKind::Wait,
             Self::AlreadyOwned | Self::Cancelled | Self::MovedOn => ReasonKind::Settled,
@@ -703,6 +711,7 @@ impl Reason {
             | Self::SettingsUnreadable
             | Self::JournalUnreadable
             | Self::MusicbrainzUnavailable
+            | Self::AcoustidUnavailable
             | Self::HeldForReview
             | Self::AlreadyOwned
             | Self::Cancelled
@@ -860,6 +869,7 @@ mod tests {
             (Reason::NotAnUpgrade, Rejected(Permanent)),
             (Reason::WrongTrack, Rejected(Permanent)),
             (Reason::MusicbrainzUnavailable, Rejected(Temporary)),
+            (Reason::AcoustidUnavailable, Rejected(Temporary)),
             (Reason::JournalUnreadable, Rejected(Temporary)),
             (Reason::SettingsUnreadable, Rejected(Temporary)),
             (Reason::LibraryChanged, Rejected(Temporary)),

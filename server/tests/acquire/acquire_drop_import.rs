@@ -841,6 +841,68 @@ async fn an_upload_deferred_with_the_library_off_is_retried_by_itself() {
     assert_eq!(files_under(&music).len(), 1, "the held loop placed it");
 }
 
+/// An upload matched by itself during an AcoustID outage stays held while
+/// it lasts, and the held loop places it once AcoustID answers.
+#[tokio::test]
+async fn an_upload_held_in_an_acoustid_outage_is_retried_by_itself() {
+    use droppedneedle_library::identify::sources::AcoustIdUnavailable;
+
+    let (_db, mut library, dir, auth) = bundles().await;
+    let outage = crate::acquire_landing::Outage::new(AcoustIdUnavailable::Unreachable);
+    library.imports.fingerprints = outage.clone();
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).expect("work dir");
+    let bytes = tagged(&work, "flac_full_01.flac", "Dummy", "Mysterons", 1);
+    let lengths = [length_ms(&bytes, &work)];
+    let acquire = acquire_over(
+        &auth,
+        &library,
+        Arc::new(LibraryLanding::new(
+            &library,
+            every_priority(Arc::new(OneRelease(release(&["Mysterons"], &lengths)))),
+        )),
+    );
+    let curator = Viewer {
+        user_id: "u-curator".to_owned(),
+        admin: false,
+    };
+    let job = drop_zip(
+        &acquire,
+        &curator,
+        "acoustid-down",
+        &[("Dummy/01 - Mysterons.flac", &bytes)],
+    )
+    .await;
+    assert_eq!(job.items[0].status, DropItemStatus::NeedsReview);
+    let music = dir.join("music");
+    let reason = || async {
+        sqlx::query_scalar::<_, String>("SELECT reason FROM acquire_held_files")
+            .fetch_one(acquire.db.db().sqlx())
+            .await
+            .expect("held file")
+    };
+    let due_now = || async {
+        acquire
+            .db
+            .write("test.due", |tx| {
+                tx.execute("UPDATE acquire_held_entries SET retry_at = NULL", [])?;
+                Ok(())
+            })
+            .await
+            .expect("due now");
+    };
+    assert_eq!(reason().await, "acoustid_unavailable");
+
+    acquire.held.tend().await;
+    assert_eq!(reason().await, "acoustid_unavailable", "still waiting");
+    assert!(files_under(&music).is_empty(), "nothing lands while down");
+
+    outage.end();
+    due_now().await;
+    acquire.held.tend().await;
+    assert_eq!(files_under(&music).len(), 1, "the held loop placed it");
+}
+
 /// A bonus track of an upload a curator matched, which the library could
 /// not take because its place was taken, loses the pairing the app had
 /// guessed for it: the held loop's retry never places it on that album.

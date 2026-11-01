@@ -463,6 +463,8 @@ Run from the repo root. `make help` lists every target.
   evidence: identification waits and retries rather than marking an
   album unmatched, and an unreadable tagged release leaves only an
   unconfirmed guess.
+- An AcoustID answer that could not be had is never "heard nothing":
+  identification and landings wait.
 - Album and track identities, match state and their undo rows are written
   only through `library/src/identity/`; a source gate holds it.
 

@@ -17,7 +17,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use super::service::{Acted, HeldError, HeldService, is_retry, retries_by_itself};
+use super::service::{Acted, HeldError, HeldService, is_retry, rechecks, retries_by_itself};
 use super::store::{Entry, EntryOrigin, EntryState, HeldFile};
 use crate::downloads::queue_rows::Viewer;
 use crate::reason::{Reason, ReasonKind};
@@ -64,10 +64,7 @@ fn actions_for(file: &HeldFile) -> Vec<HeldFileAction> {
         reason if is_retry(reason) => actions.push(HeldFileAction::Retry),
         _ => actions.push(HeldFileAction::Import),
     }
-    if matches!(
-        file.reason,
-        Reason::FingerprintMismatch | Reason::FingerprintUnconfirmed
-    ) {
+    if rechecks(file) {
         actions.push(HeldFileAction::Recheck);
     }
     actions

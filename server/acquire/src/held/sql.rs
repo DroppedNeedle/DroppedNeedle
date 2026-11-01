@@ -122,9 +122,10 @@ droppedneedle_kernel::sql! {
     pub fragment LIBRARY_REASONS = "('target_occupied', 'upgrade_blocked', 'library_changed', \
              'library_unavailable', 'naming_script_failed', 'library_folder_missing', \
              'library_off', 'local_fault')";
-    /// Held file `f` is retried by itself: held for a library reason and
-    /// paired with a track, as the Retry button needs.
-    pub(super) fragment RETRIES = "(f.state = 'held' AND f.reason IN " + LIBRARY_REASONS + " \
+    /// Held file `f` is retried by itself: held for a library reason, or
+    /// an upload waiting for AcoustID, and paired with a track.
+    pub(super) fragment RETRIES = "(f.state = 'held' AND (f.reason IN " + LIBRARY_REASONS + " \
+             OR (f.reason = 'acoustid_unavailable' AND f.root = 'drop')) \
              AND (COALESCE(f.release_track_mbid, '') != '' \
                   OR COALESCE(f.recording_mbid, '') != ''))";
     /// Entries waiting for a person with a file retried by itself, due at

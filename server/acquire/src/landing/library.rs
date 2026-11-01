@@ -2,7 +2,7 @@
 //! MusicBrainz release source, what the catalog already holds (read over
 //! the shared database), and the library's import seam for publishing.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ use super::sql;
 use crate::downloads::plan::PlannedAlbum;
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_library::identify::sources::{
-    Prioritised, ReleaseHit, ReleaseSource, SourceError, group_editions,
+    HeardFiles, Prioritised, ReleaseHit, ReleaseSource, SourceError, group_editions,
 };
 use droppedneedle_library::import::{DownloadImport, ImportError, ImportSource, Imports};
 use droppedneedle_library::management::service::Management;
@@ -371,8 +371,14 @@ impl LandingLibrary for LibraryLanding {
     fn fingerprints(
         &self,
         files: Vec<(String, PathBuf)>,
-    ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
-        Box::pin(async move { self.library.fingerprints.identify_files(&files).await })
+        priority: RequestPriority,
+    ) -> BoxFuture<'_, HeardFiles> {
+        Box::pin(async move {
+            self.library
+                .fingerprints
+                .identify_files(&files, priority)
+                .await
+        })
     }
 
     fn group_releases<'a>(
@@ -400,11 +406,12 @@ impl LandingLibrary for LibraryLanding {
     fn fingerprint_releases(
         &self,
         files: Vec<(String, PathBuf)>,
-    ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
+        priority: RequestPriority,
+    ) -> BoxFuture<'_, HeardFiles> {
         Box::pin(async move {
             self.library
                 .fingerprints
-                .identify_file_releases(&files)
+                .identify_file_releases(&files, priority)
                 .await
         })
     }

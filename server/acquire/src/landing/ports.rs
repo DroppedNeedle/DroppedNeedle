@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use futures_util::future::BoxFuture;
 
 use droppedneedle_kernel::db::DbError;
-use droppedneedle_library::identify::sources::{ReleaseHit, SourceError};
+use droppedneedle_library::identify::sources::{HeardFiles, ReleaseHit, SourceError};
 use droppedneedle_library::matching::Release;
 use droppedneedle_providers::RequestPriority;
 
@@ -223,11 +223,13 @@ pub trait LandingLibrary: Send + Sync {
     ) -> BoxFuture<'a, Option<VersionRow>>;
 
     /// AcoustID recordings heard in each file, by the caller's key. Empty
-    /// when no AcoustID key is set or nothing could be looked up.
+    /// when no AcoustID key is set; an error when AcoustID could not be
+    /// reached, which is never the same as hearing nothing.
     fn fingerprints(
         &self,
         files: Vec<(String, PathBuf)>,
-    ) -> BoxFuture<'_, HashMap<String, Vec<String>>>;
+        priority: RequestPriority,
+    ) -> BoxFuture<'_, HeardFiles>;
 
     /// Releases of one release group, best known first, for matching
     /// files a person assigned to that album by hand. Empty when the
@@ -241,12 +243,13 @@ pub trait LandingLibrary: Send + Sync {
     }
 
     /// AcoustID releases each file's audio appears on, by the caller's
-    /// key. Empty when no AcoustID key is set or nothing was heard.
+    /// key. Answers as [`Self::fingerprints`] does.
     fn fingerprint_releases(
         &self,
         _files: Vec<(String, PathBuf)>,
-    ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
-        Box::pin(async { HashMap::new() })
+        _priority: RequestPriority,
+    ) -> BoxFuture<'_, HeardFiles> {
+        Box::pin(async { Ok(HashMap::new()) })
     }
 
     /// The library root folders; landed paths inside them are refused.

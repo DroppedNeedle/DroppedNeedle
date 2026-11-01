@@ -58927,6 +58927,7 @@
           "settings_unreadable",
           "journal_unreadable",
           "musicbrainz_unavailable",
+          "acoustid_unavailable",
           "held_for_review",
           "tracks_missing",
           "already_owned",

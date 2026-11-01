@@ -1565,6 +1565,7 @@ pub(crate) fn acoustid_values(
     }
     let mut unanswered: Option<Unanswered> = None;
     let mut refused = false;
+    let mut settings_unreadable = false;
     if let Some(port) = port {
         for (index, chunk) in lookups.chunks(MAX_BATCH).enumerate() {
             let prints: Vec<AcoustIdPrint> =
@@ -1584,8 +1585,11 @@ pub(crate) fn acoustid_values(
                     outcome = AcoustIdLookup::NoKey;
                     break;
                 }
-                AcoustIdAnswer::Unavailable(why) => {
-                    unanswered = Some(why);
+                answer @ (AcoustIdAnswer::Unavailable(_) | AcoustIdAnswer::SettingsUnreadable) => {
+                    match answer {
+                        AcoustIdAnswer::Unavailable(why) => unanswered = Some(why),
+                        _ => settings_unreadable = true,
+                    }
                     outcome = AcoustIdLookup::Unavailable;
                     // The files whose ids wait, this chunk's and every
                     // later one's.
@@ -1623,6 +1627,9 @@ pub(crate) fn acoustid_values(
         }
     }
     let note = match (outcome, unanswered) {
+        (AcoustIdLookup::Unavailable, _) if settings_unreadable => Some(
+            "The library settings could not be read; the files keep their AcoustID IDs.".to_owned(),
+        ),
         (AcoustIdLookup::NoKey, _) if refused => Some(
             "AcoustID refused the key in Settings > Library; the files keep their AcoustID IDs."
                 .to_owned(),

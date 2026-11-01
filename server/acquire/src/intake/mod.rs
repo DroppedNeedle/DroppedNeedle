@@ -44,7 +44,8 @@ pub enum Gate {
     /// as [`Gate::PersonChoseFile`], except that a track the library
     /// already holds, on another copy of the album or now on this one, is
     /// held for a person: never placed beside it, and never replaced unless
-    /// the file was held because the recycle bin refused the old copy.
+    /// the file was held because the recycle bin refused the old copy. A
+    /// file held waiting for AcoustID is checked as [`Gate::Automatic`] does.
     HeldRetry,
 }
 
@@ -190,4 +191,6 @@ pub struct Deferred {
     /// `naming_script_failed` or `local_fault`.
     pub reason: Reason,
     pub detail: String,
+    /// An outage that ends by itself, so the wait has no limit.
+    pub outage: bool,
 }

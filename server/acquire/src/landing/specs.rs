@@ -43,6 +43,9 @@ pub enum Disposition {
     Permanent,
     /// It could pass later (files still settling, MusicBrainz down).
     Temporary,
+    /// A service outage says nothing about the files and can outlast every
+    /// wait: it never uses them up.
+    Outage,
     /// Our side failed (mount, disk): never blame or blocklist the source.
     LocalFault,
 }

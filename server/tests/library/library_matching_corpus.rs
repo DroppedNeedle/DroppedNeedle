@@ -26,7 +26,9 @@ use droppedneedle_library::identify::evidence::named_group;
 use droppedneedle_library::identify::models::{LocalAlbumFacts, LocalTrackFacts};
 use droppedneedle_library::identify::providers::{IdentifyProviders, LiveProviders};
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService, Ranking};
-use droppedneedle_library::identify::sources::{AudioMatches, FingerprintSource, NoFingerprints};
+use droppedneedle_library::identify::sources::{
+    AcoustIdUnavailable, AudioMatches, FingerprintSource, NoFingerprints,
+};
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_library::matching::decide::COMPLETE_TRACK;
 use droppedneedle_library::matching::score::LENGTH_GRACE_SECS;
@@ -387,7 +389,11 @@ impl RecordedPrints {
 impl FingerprintSource for RecordedPrints {
     /// What the app does with the answer for these tracks: each track's
     /// recordings and releases, when it heard any.
-    fn identify<'a>(&'a self, tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches> {
+    fn identify<'a>(
+        &'a self,
+        tracks: &'a [LocalTrackFacts],
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<AudioMatches, AcoustIdUnavailable>> {
         Box::pin(async move {
             let sent: Vec<&Print> = tracks
                 .iter()
@@ -411,7 +417,8 @@ impl FingerprintSource for RecordedPrints {
                     &queries,
                     RequestPriority::BackgroundSync,
                 )
-                .await;
+                .await
+                .map_err(AcoustIdUnavailable::from)?;
             let mut matches = AudioMatches::default();
             for (index, heard) in found {
                 let Some(print) = sent.get(index) else {
@@ -428,7 +435,7 @@ impl FingerprintSource for RecordedPrints {
                         .insert(print.track.clone(), heard.release_ids);
                 }
             }
-            matches
+            Ok(matches)
         })
     }
 }

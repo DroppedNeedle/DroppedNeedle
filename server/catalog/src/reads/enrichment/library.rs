@@ -301,7 +301,7 @@ impl EnrichmentPort for LiveEnrichment {
         Box::pin(async move {
             // Settings that do not read make the work wait.
             let Some(key) = self.acoustid_key() else {
-                return AcoustIdAnswer::Unavailable(Unanswered::Failed);
+                return AcoustIdAnswer::SettingsUnreadable;
             };
             if key.is_empty() {
                 return AcoustIdAnswer::NoKey;

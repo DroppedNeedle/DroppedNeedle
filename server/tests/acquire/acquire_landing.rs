@@ -35,8 +35,8 @@ use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::models::LocalTrackFacts;
 use droppedneedle_library::identify::sources::{
-    AudioMatches, Edition, EditionPage, EditionQuery, FingerprintSource, ReleaseHit, ReleaseSource,
-    SourceError,
+    AcoustIdUnavailable, AudioMatches, Edition, EditionPage, EditionQuery, FingerprintSource,
+    HeardFiles, ReleaseHit, ReleaseSource, SourceError,
 };
 use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
 use droppedneedle_library::scan::EffectivePolicy;
@@ -1096,21 +1096,305 @@ async fn a_file_whose_artist_tag_names_someone_else_is_held() {
 struct HearsEverywhere(&'static str);
 
 impl FingerprintSource for HearsEverywhere {
-    fn identify<'a>(&'a self, _tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches> {
-        Box::pin(async { AudioMatches::default() })
+    fn identify<'a>(
+        &'a self,
+        _tracks: &'a [LocalTrackFacts],
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<AudioMatches, AcoustIdUnavailable>> {
+        Box::pin(async { Ok(AudioMatches::default()) })
     }
 
     fn identify_files<'a>(
         &'a self,
         files: &'a [(String, PathBuf)],
-    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, HeardFiles> {
         Box::pin(async move {
-            files
+            Ok(files
                 .iter()
                 .map(|(id, _)| (id.clone(), vec![self.0.to_owned()]))
-                .collect()
+                .collect())
         })
     }
+}
+
+/// AcoustID failing as `down` says until that is cleared, then hearing one
+/// recording in every file.
+pub(crate) struct Outage {
+    pub(crate) down: std::sync::Mutex<Option<AcoustIdUnavailable>>,
+    pub(crate) heard: String,
+}
+
+impl Outage {
+    pub(crate) fn new(down: AcoustIdUnavailable) -> Arc<Self> {
+        Arc::new(Self {
+            down: Some(down).into(),
+            heard: "fe000616-c72c-43d4-8cba-a4083e99636b".to_owned(),
+        })
+    }
+
+    pub(crate) fn end(&self) {
+        *self.down.lock().expect("outage") = None;
+    }
+}
+
+impl FingerprintSource for Outage {
+    fn identify<'a>(
+        &'a self,
+        _tracks: &'a [LocalTrackFacts],
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<AudioMatches, AcoustIdUnavailable>> {
+        Box::pin(async { Ok(AudioMatches::default()) })
+    }
+
+    fn identify_files<'a>(
+        &'a self,
+        files: &'a [(String, PathBuf)],
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, HeardFiles> {
+        Box::pin(async move {
+            if let Some(down) = *self.down.lock().expect("outage") {
+                return Err(down);
+            }
+            Ok(files
+                .iter()
+                .map(|(id, _)| (id.clone(), vec![self.heard.clone()]))
+                .collect())
+        })
+    }
+}
+
+/// A worker holding one finished download of one tagged track, with AcoustID
+/// as `outage` says.
+async fn landing_during(
+    outage: Arc<Outage>,
+) -> (
+    droppedneedle_acquire::AcquireSetup,
+    Arc<DownloadWorker>,
+    PathBuf,
+    Grounds,
+) {
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (mut library, _) = library_at(&platform);
+    library.imports.fingerprints = outage;
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .scans
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let downloads = dir.join("downloads");
+    let files = vec![land_file(
+        &downloads.join("job"),
+        "01 - Mysterons.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    )];
+    let lengths: Vec<Option<u64>> = files.iter().map(|path| length_ms(path)).collect();
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons"],
+        &lengths,
+    )]));
+    let acquire = acquire_over(
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(&library, every_priority(releases))),
+    );
+    let worker = Arc::new(
+        DownloadWorker::fixed(
+            acquire.journal.clone(),
+            vec![crate::as_source(Arc::new(FixedSource::new(
+                downloads,
+                files.clone(),
+            )))],
+            WorkerConfig::default(),
+            droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
+        )
+        .with_landing(acquire.landing.clone()),
+    );
+    let handle = serde_json::to_string(&SourceHandle {
+        filenames: files
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+        job_name: "fixed-landing-0".to_owned(),
+        ..SourceHandle::new(SourceTag::Plugin("fixed".to_owned()))
+    })
+    .expect("handle");
+    acquire
+        .journal
+        .run("test.seed", move |store| {
+            store.insert_task(&new_task("landing", GOOD_GROUP), 1.0)?;
+            store.insert_attempt(
+                "landing-a0",
+                "landing",
+                "plugin:fixed",
+                0,
+                "fixed-landing-0",
+                &handle,
+                AttemptState::InUse,
+                1.0,
+            )?;
+            store.transition_task("landing", TaskStatus::Downloading, 1.0, None)
+        })
+        .await
+        .expect("seed");
+    (acquire, worker, music, (platform, db))
+}
+
+/// During an AcoustID outage a tagged download neither imports unchecked nor
+/// is held. However long it lasts it uses up no waits, records the wait once
+/// and counts nothing against the source, and it lands by itself once AcoustID
+/// answers.
+#[tokio::test]
+async fn an_acoustid_outage_makes_a_landing_wait_and_it_lands_after() {
+    let outage = Outage::new(AcoustIdUnavailable::Unreachable);
+    let (acquire, worker, music, _grounds) = landing_during(outage.clone()).await;
+    for pass in 1..=12 {
+        worker.run_once(pass).await;
+        worker.wait_for_landings().await;
+    }
+    assert_eq!(
+        decisions(&acquire, "landing").await,
+        vec![(
+            "deferred".to_owned(),
+            Some("acoustid_unavailable".to_owned())
+        )]
+    );
+    assert!(files_under(&music, "flac").is_empty(), "nothing imported");
+    let task = acquire.journal.read_task("landing").await.unwrap().unwrap();
+    assert_eq!(task.status, TaskStatus::Processing, "it waits");
+
+    outage.end();
+    worker.run_once(13).await;
+    worker.wait_for_landings().await;
+    let task = acquire.journal.read_task("landing").await.unwrap().unwrap();
+    assert_eq!(task.status, TaskStatus::Completed);
+    assert_eq!(files_under(&music, "flac").len(), 1, "it landed");
+}
+
+/// An error AcoustID keeps answering may never end, so it spends the
+/// landing's waits and cannot hold a download slot for ever.
+#[tokio::test]
+async fn a_steady_acoustid_error_uses_up_the_landings_waits() {
+    let outage = Outage::new(AcoustIdUnavailable::Refused);
+    let (acquire, worker, music, _grounds) = landing_during(outage).await;
+    for pass in 1..=12 {
+        worker.run_once(pass).await;
+        worker.wait_for_landings().await;
+    }
+    let task = acquire.journal.read_task("landing").await.unwrap().unwrap();
+    assert_eq!(task.status, TaskStatus::Failed);
+    assert!(files_under(&music, "flac").is_empty(), "nothing imported");
+}
+
+/// A merge lookup that failed while nothing else proves the files is an
+/// outage, not evidence: the landing waits instead of holding them.
+#[tokio::test]
+async fn an_untagged_file_waits_when_its_merge_lookup_fails() {
+    let task = NewTask {
+        artist_name: "Yan Qing".to_owned(),
+        album_title: "The Arrival".to_owned(),
+        ..new_task("t-merge-down", GOOD_GROUP)
+    };
+    let (acquire, music, _platform) = land_heard(
+        task,
+        &[],
+        |downloads| {
+            let path = land_file(
+                &downloads.join("Some Other Folder"),
+                "01 - The Arrival.flac",
+                "flac_full_01.flac",
+                "The Arrival",
+                1,
+            );
+            untag(&path);
+            vec![path]
+        },
+        |lengths| {
+            let mut single = release(GOOD_RELEASE, GOOD_GROUP, &["The Arrival"], lengths);
+            single.title = "The Arrival".to_owned();
+            single.artists[0].name = "Yan Qing".to_owned();
+            Arc::new(Merged {
+                releases: Releases(vec![single]),
+                retired: RETIRED,
+                kept: String::new(),
+            })
+        },
+        // The fake refuses this id, as MusicBrainz down would.
+        Some(Arc::new(HearsEverywhere("not-a-musicbrainz-id"))),
+    )
+    .await;
+    assert_eq!(
+        decisions(&acquire, "t-merge-down").await,
+        vec![(
+            "deferred".to_owned(),
+            Some("musicbrainz_unavailable".to_owned())
+        )]
+    );
+    assert!(files_under(&music, "flac").is_empty(), "nothing imported");
+}
+
+/// An untagged file AcoustID hears under an id MusicBrainz merged into the
+/// paired track's recording has audio proof of who it is by.
+#[tokio::test]
+async fn an_untagged_file_heard_under_a_merged_id_has_audio_proof() {
+    let task = NewTask {
+        artist_name: "Yan Qing".to_owned(),
+        album_title: "The Arrival".to_owned(),
+        ..new_task("t-untagged-merged", GOOD_GROUP)
+    };
+    let (acquire, music, _platform) = land_heard(
+        task,
+        &[],
+        |downloads| {
+            let path = land_file(
+                &downloads.join("Some Other Folder"),
+                "01 - The Arrival.flac",
+                "flac_full_01.flac",
+                "The Arrival",
+                1,
+            );
+            untag(&path);
+            vec![path]
+        },
+        |lengths| {
+            let mut single = release(GOOD_RELEASE, GOOD_GROUP, &["The Arrival"], lengths);
+            single.title = "The Arrival".to_owned();
+            single.artists[0].name = "Yan Qing".to_owned();
+            let kept = single.tracks[0].recording_id.clone();
+            Arc::new(Merged {
+                releases: Releases(vec![single]),
+                retired: RETIRED,
+                kept,
+            })
+        },
+        Some(Arc::new(HearsEverywhere(RETIRED))),
+    )
+    .await;
+    assert_eq!(
+        decisions(&acquire, "t-untagged-merged").await,
+        vec![("imported".to_owned(), None)]
+    );
+    assert_eq!(files_under(&music, "flac").len(), 1);
 }
 
 /// A file AcoustID hears as another recording imports only when its
@@ -6500,22 +6784,27 @@ impl ReleaseSource for GroupListing {
 struct Hears(Option<String>);
 
 impl FingerprintSource for Hears {
-    fn identify<'a>(&'a self, _tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches> {
-        Box::pin(async { AudioMatches::default() })
+    fn identify<'a>(
+        &'a self,
+        _tracks: &'a [LocalTrackFacts],
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<AudioMatches, AcoustIdUnavailable>> {
+        Box::pin(async { Ok(AudioMatches::default()) })
     }
 
     fn identify_files<'a>(
         &'a self,
         files: &'a [(String, PathBuf)],
-    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, HeardFiles> {
         Box::pin(async move {
-            match &self.0 {
+            Ok(match &self.0 {
                 Some(recording) => files
                     .iter()
                     .map(|(id, _)| (id.clone(), vec![recording.clone()]))
                     .collect(),
                 None => HashMap::new(),
-            }
+            })
         })
     }
 }
@@ -6610,8 +6899,9 @@ impl LandingLibrary for Shaky {
     fn fingerprints(
         &self,
         files: Vec<(String, PathBuf)>,
-    ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
-        self.inner.fingerprints(files)
+        priority: RequestPriority,
+    ) -> BoxFuture<'_, HeardFiles> {
+        self.inner.fingerprints(files, priority)
     }
 
     fn group_releases<'a>(
@@ -6625,8 +6915,9 @@ impl LandingLibrary for Shaky {
     fn fingerprint_releases(
         &self,
         files: Vec<(String, PathBuf)>,
-    ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
-        self.inner.fingerprint_releases(files)
+        priority: RequestPriority,
+    ) -> BoxFuture<'_, HeardFiles> {
+        self.inner.fingerprint_releases(files, priority)
     }
 
     fn library_dirs(&self) -> Vec<PathBuf> {
@@ -6718,6 +7009,8 @@ struct Row {
     /// `Some(true)`: AcoustID hears the track's recording; `Some(false)`:
     /// another one; `None`: no answer.
     heard: Option<bool>,
+    /// AcoustID cannot be reached.
+    down: bool,
     /// The release's track lengths agree with the file's, so a length
     /// vouches for it whatever AcoustID hears.
     length_agrees: bool,
@@ -6786,10 +7079,14 @@ impl IntakeCase {
             .await;
         let (mut library, _) = library_at(&platform);
         let recording = e.new.tracks[0].recording_id.clone();
-        library.imports.fingerprints = Arc::new(Hears(
-            row.heard
-                .map(|right| if right { recording } else { mb(s, 3, 9) }),
-        ));
+        library.imports.fingerprints = if row.down {
+            Outage::new(AcoustIdUnavailable::Unreachable)
+        } else {
+            Arc::new(Hears(
+                row.heard
+                    .map(|right| if right { recording } else { mb(s, 3, 9) }),
+            ))
+        };
         let music = dir.join("music");
         std::fs::create_dir_all(&music).expect("music root");
         library
@@ -7262,6 +7559,7 @@ async fn one_plan_and_gate_give_one_outcome_through_every_door() {
         file: FLAC,
         upgrade: false,
         heard: None,
+        down: false,
         length_agrees: false,
         taken: false,
         changes: 0,
@@ -7345,6 +7643,20 @@ async fn one_plan_and_gate_give_one_outcome_through_every_door() {
             ..owned(MP3, None)
         },
         [joined, Seen::Held(Reason::FingerprintUnconfirmed), joined],
+    ));
+    // A person's Match keeps your copy and holds the file saying why.
+    rows.extend(by_gate(
+        "AcoustID cannot be reached",
+        Row {
+            held_for: Reason::FingerprintMismatch,
+            down: true,
+            ..owned(MP3, None)
+        },
+        [
+            Seen::Deferred(Reason::AcoustidUnavailable),
+            Seen::Held(Reason::AcoustidUnavailable),
+            joined,
+        ],
     ));
     rows.extend(by_gate(
         "AcoustID hears another recording",
@@ -7456,6 +7768,7 @@ async fn an_estimated_length_never_outranks_a_fingerprint() {
         file: "mp3_vbr_no_xing.mp3",
         upgrade: false,
         heard: Some(false),
+        down: false,
         length_agrees: true,
         taken: false,
         changes: 0,

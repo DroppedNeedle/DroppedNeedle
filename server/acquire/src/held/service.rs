@@ -22,7 +22,7 @@ use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervi
 use droppedneedle_providers::RequestPriority;
 
 use super::HeldFolders;
-use super::store::{Entry, EntryOrigin, FileState, HeldFile, HeldRows, Pairing};
+use super::store::{Entry, EntryOrigin, FileState, HeldFile, HeldRoot, HeldRows, Pairing};
 use crate::db::AcquireDb;
 use crate::downloads::journal::Journal;
 use crate::downloads::plan::PlannedAlbum;
@@ -516,7 +516,7 @@ impl HeldService {
         &self,
         entry: &Entry,
         files: Vec<HeldFile>,
-    ) -> Vec<(HeldFile, Result<bool, String>)> {
+    ) -> Vec<(HeldFile, Result<Checked, String>)> {
         let library = match self.library() {
             Ok(library) => library,
             Err(error) => {
@@ -528,6 +528,10 @@ impl HeldService {
         };
         let mut out = Vec::with_capacity(files.len());
         for file in files {
+            if settles_as_automatic(&file) {
+                out.push((file, Ok(Checked::AsAutomatic)));
+                continue;
+            }
             let path = match self.on_disk(entry, &file).await {
                 Ok(Some(path)) => path,
                 Ok(None) => {
@@ -546,7 +550,17 @@ impl HeldService {
                     .duration_seconds
                     .filter(|_| read.header.duration_measured)
             });
-            let heard = library.fingerprints(vec![(String::new(), path)]).await;
+            let heard = library
+                .fingerprints(vec![(String::new(), path)], RequestPriority::UserInitiated)
+                .await;
+            // An outage says nothing about the file: it stays held as it is.
+            let heard = match heard {
+                Ok(heard) => heard,
+                Err(unavailable) => {
+                    out.push((file, Err(format!("{unavailable}."))));
+                    continue;
+                }
+            };
             let heard = heard.get("").map(Vec::as_slice).unwrap_or(&[]);
             // No AcoustID answer is no confirmation: the file stays held.
             let confirmed = !heard.is_empty()
@@ -556,7 +570,14 @@ impl HeldService {
                     measured,
                     file.pairing.expected_duration_seconds,
                 );
-            out.push((file, Ok(confirmed)));
+            out.push((
+                file,
+                Ok(if confirmed {
+                    Checked::Confirmed
+                } else {
+                    Checked::NotConfirmed
+                }),
+            ));
         }
         out
     }
@@ -565,22 +586,39 @@ impl HeldService {
     async fn import_confirmed(
         &self,
         entry: &Entry,
-        checked: Vec<(HeldFile, Result<bool, String>)>,
+        checked: Vec<(HeldFile, Result<Checked, String>)>,
         actor: &str,
     ) -> Vec<(i64, Result<bool, String>)> {
         let mut confirmed = Vec::new();
+        let mut automatic = Vec::new();
         let mut results = Vec::new();
         for (file, outcome) in checked {
             match outcome {
-                Ok(true) => confirmed.push(file),
-                other => results.push((file.id, other)),
+                Ok(Checked::Confirmed) => confirmed.push(file),
+                Ok(Checked::AsAutomatic) => automatic.push(file),
+                Ok(Checked::NotConfirmed) => results.push((file.id, Ok(false))),
+                Err(message) => results.push((file.id, Err(message))),
             }
         }
-        if confirmed.is_empty() {
-            return results;
+        for (files, asker) in [(confirmed, Asker::Person), (automatic, Asker::Loop)] {
+            if !files.is_empty() {
+                results.extend(self.place_checked(entry, files, actor, asker).await);
+            }
         }
-        let ids: Vec<i64> = confirmed.iter().map(|file| file.id).collect();
-        match self.place(entry, confirmed, actor, Asker::Person).await {
+        results
+    }
+
+    /// Place files a Re-check settled; answers each file's outcome.
+    async fn place_checked(
+        &self,
+        entry: &Entry,
+        files: Vec<HeldFile>,
+        actor: &str,
+        asker: Asker,
+    ) -> Vec<(i64, Result<bool, String>)> {
+        let mut results = Vec::new();
+        let ids: Vec<i64> = files.iter().map(|file| file.id).collect();
+        match self.place(entry, files, actor, asker).await {
             Ok(_) => {
                 let still: HashSet<i64> = self
                     .read("held.recheck_left", {
@@ -1116,6 +1154,9 @@ impl HeldService {
                 identify::Outcome::Unavailable(detail) => {
                     tracing::warn!(entry_id = entry.id, %detail, "held match: MusicBrainz unavailable");
                     return Err(refused(Reason::MusicbrainzUnavailable));
+                }
+                identify::Outcome::AcoustidUnavailable => {
+                    return Err(refused(Reason::AcoustidUnavailable));
                 }
             };
             let Some((found, _, pairing)) =
@@ -1664,11 +1705,21 @@ async fn read_release(
 }
 
 /// Whether a file's hold is one AcoustID can settle on a second ask.
-fn rechecks(file: &HeldFile) -> bool {
-    matches!(
-        file.reason,
-        Reason::FingerprintMismatch | Reason::FingerprintUnconfirmed
-    )
+pub fn rechecks(file: &HeldFile) -> bool {
+    match file.reason {
+        Reason::FingerprintMismatch | Reason::FingerprintUnconfirmed => true,
+        // With no track to check against, only Match can settle it.
+        Reason::AcoustidUnavailable => file.is_paired(),
+        _ => false,
+    }
+}
+
+/// What a Re-check found out about one file.
+enum Checked {
+    Confirmed,
+    NotConfirmed,
+    /// Placed as an automatic import is, which asks AcoustID itself.
+    AsAutomatic,
 }
 
 /// The answer for a file that stays held.
@@ -1725,10 +1776,17 @@ pub fn is_retry(reason: Reason) -> bool {
     reason.kind() == ReasonKind::Library
 }
 
-/// Whether a held file offers Retry, and so is retried by itself: held
-/// for a library reason and paired with a track.
+/// An upload waiting for AcoustID with a track to go to: it settles as an
+/// automatic import does, through [`Gate::HeldRetry`], which never replaces a
+/// library copy.
+fn settles_as_automatic(file: &HeldFile) -> bool {
+    file.reason == Reason::AcoustidUnavailable && file.root == HeldRoot::Drop && file.is_paired()
+}
+
+/// Whether a held file is retried by itself: paired with a track, and held
+/// for a library reason or waiting for AcoustID as an upload.
 pub fn retries_by_itself(file: &HeldFile) -> bool {
-    is_retry(file.reason) && file.is_paired()
+    file.is_paired() && (is_retry(file.reason) || settles_as_automatic(file))
 }
 
 /// The held list's loop runs every five minutes, the first pass a minute

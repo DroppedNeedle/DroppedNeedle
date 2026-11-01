@@ -30,7 +30,7 @@ use identify::models::{
 };
 use identify::providers::{FakeProviders, LiveProviders};
 use identify::service::{IdentifyDeps, IdentifyService};
-use identify::sources::NoFingerprints;
+use identify::sources::{AcoustIdUnavailable, AudioMatches, FingerprintSource, NoFingerprints};
 use identify::sqlite::SqliteIdentifyStore;
 use rusqlite::params;
 
@@ -143,6 +143,15 @@ enum Source {
 }
 
 fn rig_on(routes: HashMap<String, RawResponse>, down: bool, source: Source) -> Rig {
+    rig_hearing(routes, down, source, NoFingerprints)
+}
+
+fn rig_hearing<F: FingerprintSource + 'static>(
+    routes: HashMap<String, RawResponse>,
+    down: bool,
+    source: Source,
+    audio: F,
+) -> Rig {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let transport = FakeMb {
         routes,
@@ -178,7 +187,7 @@ fn rig_on(routes: HashMap<String, RawResponse>, down: bool, source: Source) -> R
                 musicbrainz,
             ),
             store.clone(),
-            NoFingerprints,
+            audio,
             droppedneedle_library::scan::BlockingPool::new(2),
         )),
     });
@@ -599,6 +608,42 @@ async fn musicbrainz_outage_defers_the_job() {
     let report = identify(&rig, album(&[("Lamplight", 214, None)])).await;
     assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
     assert!(rig.store.album_identity("album-1").unwrap().is_none());
+}
+
+/// AcoustID during an outage.
+struct AcoustIdDown;
+
+impl FingerprintSource for AcoustIdDown {
+    fn identify<'a>(
+        &'a self,
+        _tracks: &'a [LocalTrackFacts],
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> futures_util::future::BoxFuture<'a, Result<AudioMatches, AcoustIdUnavailable>> {
+        Box::pin(async { Err(AcoustIdUnavailable::Unreachable) })
+    }
+}
+
+/// Tags too weak to decide on want the audio heard. With AcoustID down that
+/// answer could not be had, which is not hearing nothing: the job waits under
+/// its own code, and nothing is matched or marked unmatched.
+#[tokio::test]
+async fn an_acoustid_outage_defers_an_album_that_wants_audio() {
+    let rig = rig_hearing(routes(), false, Source::Official, AcoustIdDown);
+
+    let report = identify(
+        &rig,
+        album(&[("Nothing Like It", 100, None), ("Nor This One", 120, None)]),
+    )
+    .await;
+
+    assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
+    assert_eq!(report.job.state, identify::models::JobState::Deferred);
+    assert_eq!(
+        report.job.failure_code.as_deref(),
+        Some("acoustid_unavailable")
+    );
+    assert!(rig.store.album_identity("album-1").unwrap().is_none());
+    assert!(rig.store.match_flag("album-1").unwrap().is_none());
 }
 
 /// A release document MusicBrainz answers in a form that does not read:

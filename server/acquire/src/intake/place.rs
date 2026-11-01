@@ -12,7 +12,9 @@ use crate::landing::quality;
 use crate::landing::specs::{self, Check, Verdict};
 use crate::reason::Reason;
 use droppedneedle_kernel::runtime_config::sections::tier_rank;
+use droppedneedle_library::identify::sources::AcoustIdUnavailable;
 use droppedneedle_library::import::ImportJoin;
+use droppedneedle_providers::RequestPriority;
 
 /// Place a batch in the library: replace the versions its plan names,
 /// compare owned tracks for an upgrade, choose the copy the files join,
@@ -34,12 +36,18 @@ pub async fn place(
     let mut answers = Answers::new(heard);
     let mut retried = false;
     loop {
-        let planned = plan(library, batch, &pairing, &mut answers).await;
+        let planned = plan(library, batch, &pairing, &mut answers).await?;
         let failure = match import(library, batch, &pairing, planned).await {
             Ok(placement) => return Ok(placement),
             Err(failure) => failure,
         };
-        let deferred = |reason, detail| Err(Deferred { reason, detail });
+        let deferred = |reason, detail| {
+            Err(Deferred {
+                reason,
+                detail,
+                outage: false,
+            })
+        };
         match failure {
             ImportFailure::Occupied(detail) | ImportFailure::LibraryChanged(detail) if !retried => {
                 tracing::info!(%detail, "the library changed under an import; planning it again");
@@ -85,13 +93,14 @@ impl Answers {
     }
 
     /// The answers for `files`, keyed by file index as text. Empty when no
-    /// AcoustID key is set or nothing could be looked up.
+    /// AcoustID key is set; an error when AcoustID could not be reached, and
+    /// those files are asked about again on the next try.
     async fn of(
         &mut self,
         library: &dyn LandingLibrary,
         batch: &IntakeBatch,
         files: &[(usize, usize)],
-    ) -> HashMap<String, Vec<String>> {
+    ) -> Result<HashMap<String, Vec<String>>, AcoustIdUnavailable> {
         if !self.complete {
             let missing: Vec<(String, PathBuf)> = files
                 .iter()
@@ -99,16 +108,30 @@ impl Answers {
                 .map(|(file, _)| (file.to_string(), batch.files[*file].file.path.clone()))
                 .collect();
             if !missing.is_empty() {
-                self.known.extend(library.fingerprints(missing).await);
+                // A person waits on a Match, not on an automatic landing.
+                let priority = match batch.gate {
+                    Gate::Automatic | Gate::HeldRetry => RequestPriority::BackgroundSync,
+                    Gate::PersonChoseAlbum | Gate::PersonChoseFile => {
+                        RequestPriority::UserInitiated
+                    }
+                };
+                match library.fingerprints(missing, priority).await {
+                    Ok(heard) => self.known.extend(heard),
+                    Err(unavailable) => {
+                        self.asked
+                            .retain(|asked| !files.iter().any(|(file, _)| file == asked));
+                        return Err(unavailable);
+                    }
+                }
             }
         }
-        files
+        Ok(files
             .iter()
             .filter_map(|(file, _)| {
                 let key = file.to_string();
                 self.known.get(&key).map(|heard| (key, heard.clone()))
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -155,7 +178,7 @@ async fn plan(
     batch: &IntakeBatch,
     pairing: &Pairing,
     answers: &mut Answers,
-) -> Planned {
+) -> Result<Planned, Deferred> {
     let release = &batch.target.release;
     let gate = batch.gate;
     let held_for = |file: usize| batch.files[file].held_for;
@@ -396,16 +419,45 @@ async fn plan(
             .filter(|(file, _)| replaces.get(file).is_some_and(|old| !old.is_empty()))
             .copied()
             .collect(),
-        Gate::PersonChoseFile | Gate::HeldRetry => Vec::new(),
+        // A retry never replaces a copy, so it only asks about files that
+        // were waiting for this very answer.
+        Gate::HeldRetry => import
+            .iter()
+            .filter(|(file, _)| held_for(*file) == Some(Reason::AcoustidUnavailable))
+            .copied()
+            .collect(),
+        Gate::PersonChoseFile => Vec::new(),
     };
     if !checked.is_empty() {
         let heard = answers.of(library, batch, &checked).await;
         let mut refused: HashSet<usize> = HashSet::new();
-        match gate {
+        match (gate, heard) {
+            // AcoustID could not be reached for an automatic import: nothing
+            // moves until it can, and the whole batch waits.
+            (Gate::Automatic | Gate::HeldRetry, Err(unavailable)) => {
+                return Err(Deferred {
+                    reason: Reason::AcoustidUnavailable,
+                    detail: unavailable.to_string(),
+                    outage: !unavailable.may_never_end(),
+                });
+            }
+            // A person's choice still places what replaces nothing. A file
+            // that would replace a copy stays held, and the copy stays.
+            (Gate::PersonChoseAlbum, Err(unavailable)) => {
+                for (file, track) in &checked {
+                    refused.insert(*file);
+                    planned.hold(
+                        *file,
+                        Some(*track),
+                        Reason::AcoustidUnavailable,
+                        unavailable.to_string(),
+                    );
+                }
+            }
             // A file whose audio AcoustID confidently names other
             // recordings, and whose length does not vouch for the track,
-            // is held. No answer holds nothing.
-            Gate::Automatic if !heard.is_empty() => {
+            // is held. AcoustID knowing none of the files holds nothing.
+            (Gate::Automatic | Gate::HeldRetry, Ok(heard)) if !heard.is_empty() => {
                 for (file, track) in &checked {
                     let release_track = &release.tracks[*track];
                     if specs::fingerprint_disagrees(
@@ -435,13 +487,13 @@ async fn plan(
                     },
                 });
             }
-            Gate::Automatic => {}
+            (Gate::Automatic | Gate::HeldRetry, Ok(_)) => {}
             // A person picked the album, so nothing vetted the pairing: a
             // file replaces a library copy only when AcoustID names its
             // recording. Audio that is clearly another recording is held
             // for review; another recording whose length vouches for the
             // track leaves the copy as it is; no answer keeps the file held.
-            Gate::PersonChoseAlbum => {
+            (Gate::PersonChoseAlbum, Ok(heard)) => {
                 for (file, track) in &checked {
                     let release_track = &release.tracks[*track];
                     let recordings = heard.get(&file.to_string()).map_or(&[][..], Vec::as_slice);
@@ -475,7 +527,7 @@ async fn plan(
                     }
                 }
             }
-            Gate::PersonChoseFile | Gate::HeldRetry => {}
+            (Gate::PersonChoseFile, _) => {}
         }
         import.retain(|(file, _)| !refused.contains(file));
     }
@@ -483,7 +535,7 @@ async fn plan(
         .into_iter()
         .map(|(file, track)| (file, track, replaces.remove(&file).unwrap_or_default()))
         .collect();
-    planned
+    Ok(planned)
 }
 
 /// Steps 5 and 6: the one library import, and each file's outcome.

@@ -1211,19 +1211,70 @@ pub struct AudioMatches {
     pub releases: HashMap<String, Vec<String>>,
 }
 
+/// AcoustID's answer could not be had. Never the same as hearing nothing:
+/// the work that asked waits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcoustIdUnavailable {
+    /// It was down, resting or asked for a pause: it ends by itself.
+    Unreachable,
+    /// It answered with an error code other than a refused key or an
+    /// unreadable print, which may never change.
+    Refused,
+    /// The library settings holding its key do not read.
+    SettingsUnreadable,
+}
+
+impl AcoustIdUnavailable {
+    /// Whether waiting has a limit: an answer that may never change must
+    /// not hold a download's slot for ever.
+    #[must_use]
+    pub fn may_never_end(self) -> bool {
+        self == Self::Refused
+    }
+}
+
+impl std::fmt::Display for AcoustIdUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Unreachable => "AcoustID could not be reached",
+            Self::Refused => "AcoustID answered with an error",
+            Self::SettingsUnreadable => "The library settings could not be read",
+        })
+    }
+}
+
+impl From<droppedneedle_providers::acoustid::Unanswered> for AcoustIdUnavailable {
+    fn from(why: droppedneedle_providers::acoustid::Unanswered) -> Self {
+        use droppedneedle_providers::acoustid::Unanswered;
+        match why {
+            Unanswered::Code(_) => Self::Refused,
+            Unanswered::Paused | Unanswered::Failed => Self::Unreachable,
+        }
+    }
+}
+
+/// What AcoustID heard in each file, by the caller's id.
+pub type HeardFiles = Result<HashMap<String, Vec<String>>, AcoustIdUnavailable>;
+
 pub trait FingerprintSource: Send + Sync {
-    /// Print and look up the given tracks. Fails soft: tracks it could
-    /// not print or look up are simply absent.
-    fn identify<'a>(&'a self, tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches>;
+    /// Print and look up the given tracks. A track it could not print, or
+    /// that AcoustID does not know, is simply absent. No key, or one
+    /// AcoustID refuses, hears nothing.
+    fn identify<'a>(
+        &'a self,
+        tracks: &'a [LocalTrackFacts],
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<AudioMatches, AcoustIdUnavailable>>;
 
     /// Print and look up files outside the library (a download being
     /// imported), keyed by the caller's ids: the recordings heard in each.
-    /// Nothing is kept. Fails soft like [`Self::identify`].
+    /// Nothing is kept. Answers as [`Self::identify`] does.
     fn identify_files<'a>(
         &'a self,
         _files: &'a [(String, PathBuf)],
-    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
-        Box::pin(async { HashMap::new() })
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, HeardFiles> {
+        Box::pin(async { Ok(HashMap::new()) })
     }
 
     /// Like [`Self::identify_files`], but the releases the heard
@@ -1231,8 +1282,9 @@ pub trait FingerprintSource: Send + Sync {
     fn identify_file_releases<'a>(
         &'a self,
         _files: &'a [(String, PathBuf)],
-    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
-        Box::pin(async { HashMap::new() })
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, HeardFiles> {
+        Box::pin(async { Ok(HashMap::new()) })
     }
 }
 
@@ -1241,14 +1293,17 @@ pub trait FingerprintSource: Send + Sync {
 pub struct NoFingerprints;
 
 impl FingerprintSource for NoFingerprints {
-    fn identify<'a>(&'a self, _tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches> {
-        Box::pin(async { AudioMatches::default() })
+    fn identify<'a>(
+        &'a self,
+        _tracks: &'a [LocalTrackFacts],
+        _priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<AudioMatches, AcoustIdUnavailable>> {
+        Box::pin(async { Ok(AudioMatches::default()) })
     }
 }
 
-/// Chromaprint on the CPU pool plus batched AcoustID lookups, at
-/// background priority: identification and imports are background work.
-/// Prints are kept per track and file revision, so a file is decoded once.
+/// Chromaprint on the CPU pool plus batched AcoustID lookups, at the
+/// caller's priority. Prints are kept per track and file revision, so a file is decoded once.
 pub struct AcoustIdFingerprints {
     client: AcoustIdClient,
     library: Live<TypedLibrary>,
@@ -1276,23 +1331,33 @@ impl AcoustIdFingerprints {
         }
     }
 
-    /// The AcoustID key from the settings, read per job so a change
-    /// applies without a restart. Blank means fingerprinting is off.
-    fn api_key(&self) -> String {
-        match self.library.get() {
-            Ok(settings) => settings.acoustid_api_key.expose().trim().to_owned(),
-            Err(error) => {
-                tracing::warn!(%error, "cannot read the AcoustID key; fingerprints skipped");
-                String::new()
-            }
+    /// The AcoustID key to look up with, read per job so a change applies
+    /// without a restart. `None` means fingerprinting is off. Settings that
+    /// do not read, or AcoustID resting after an outage, wait before any
+    /// audio is decoded.
+    fn lookup_key(&self) -> Result<Option<String>, AcoustIdUnavailable> {
+        let settings = self
+            .library
+            .read()
+            .ok_or(AcoustIdUnavailable::SettingsUnreadable)?;
+        let key = settings.acoustid_api_key.expose().trim().to_owned();
+        if key.is_empty() {
+            return Ok(None);
         }
+        if self.client.resting_after_failures() {
+            return Err(AcoustIdUnavailable::Unreachable);
+        }
+        Ok(Some(key))
     }
 
-    async fn identify_tracks(&self, tracks: &[LocalTrackFacts]) -> AudioMatches {
-        let key = self.api_key();
-        if key.is_empty() {
-            return AudioMatches::default();
-        }
+    async fn identify_tracks(
+        &self,
+        tracks: &[LocalTrackFacts],
+        priority: RequestPriority,
+    ) -> Result<AudioMatches, AcoustIdUnavailable> {
+        let Some(key) = self.lookup_key()? else {
+            return Ok(AudioMatches::default());
+        };
         // Prints already taken for these exact files come from the store.
         let wanted: Vec<(String, String)> = tracks
             .iter()
@@ -1334,6 +1399,7 @@ impl AcoustIdFingerprints {
             .into_iter()
             .map(|(id, (print, seconds))| (id, print, seconds))
             .collect();
+        let already_kept = prints.len();
         prints.extend(self.print(jobs).await);
         let queries: Vec<BatchQuery<'_>> = prints
             .iter()
@@ -1342,10 +1408,19 @@ impl AcoustIdFingerprints {
                 duration_secs: u64::from(*seconds),
             })
             .collect();
-        let found = self
-            .client
-            .lookup_batch(&key, &queries, RequestPriority::BackgroundSync)
-            .await;
+        let lookup = self.client.lookup_batch(&key, &queries, priority).await;
+        let revisions: HashMap<String, String> = tracks
+            .iter()
+            .map(|track| (track.local_track_id.clone(), track.stat_revision.clone()))
+            .collect();
+        let found = match lookup {
+            Ok(found) => found,
+            Err(why) => {
+                tracing::info!(?why, "AcoustID did not answer; the lookup waits");
+                self.keep_unasked(&prints[already_kept..], &revisions).await;
+                return Err(why.into());
+            }
+        };
         let mut matches = AudioMatches::default();
         for (index, heard) in &found {
             let Some((id, _, _)) = prints.get(*index) else {
@@ -1363,10 +1438,6 @@ impl AcoustIdFingerprints {
             }
         }
         // Keep every print the lookup answered for, matched or not.
-        let revisions: HashMap<String, String> = tracks
-            .iter()
-            .map(|track| (track.local_track_id.clone(), track.stat_revision.clone()))
-            .collect();
         let keep: Vec<(String, String, String, u32, bool)> = found
             .keys()
             .filter_map(|index| {
@@ -1389,7 +1460,35 @@ impl AcoustIdFingerprints {
         if let Err(error) = kept {
             tracing::warn!(%error, "keeping fingerprints failed");
         }
-        matches
+        Ok(matches)
+    }
+
+    /// Keep prints AcoustID did not answer for, so the retry does not
+    /// decode the audio again.
+    async fn keep_unasked(
+        &self,
+        prints: &[(String, String, u32)],
+        revisions: &HashMap<String, String>,
+    ) {
+        let keep: Vec<(String, String, String, u32)> = prints
+            .iter()
+            .filter_map(|(id, print, seconds)| {
+                let revision = revisions.get(id)?.clone();
+                Some((id.clone(), revision, print.clone(), *seconds))
+            })
+            .collect();
+        let store = self.store.clone();
+        let kept = tokio::task::spawn_blocking(move || {
+            for (id, revision, print, seconds) in keep {
+                if let Err(error) = store.keep_fingerprint(&id, &revision, &print, seconds) {
+                    tracing::warn!(%error, track_id = id, "fingerprint not kept");
+                }
+            }
+        })
+        .await;
+        if let Err(error) = kept {
+            tracing::warn!(%error, "keeping fingerprints failed");
+        }
     }
 }
 
@@ -1409,10 +1508,11 @@ impl AcoustIdFingerprints {
         let mut prints = Vec::new();
         for (id, result) in printed {
             match result {
-                Ok(Ok(print)) if print.duration_seconds > 0 => {
+                // AcoustID cannot read a print of no items, whatever the wait.
+                Ok(Ok(print)) if print.duration_seconds > 0 && print.raw_items > 0 => {
                     prints.push((id, print.fingerprint, print.duration_seconds));
                 }
-                Ok(Ok(_)) => tracing::debug!(track = id, "zero-length audio not fingerprinted"),
+                Ok(Ok(_)) => tracing::debug!(track = id, "audio too short to fingerprint"),
                 Ok(Err(error)) => tracing::info!(track = id, %error, "fingerprint failed"),
                 Err(error) => tracing::warn!(track = id, %error, "fingerprint job failed"),
             }
@@ -1420,25 +1520,34 @@ impl AcoustIdFingerprints {
         prints
     }
 
-    async fn identify_paths(&self, files: &[(String, PathBuf)]) -> HashMap<String, Vec<String>> {
-        self.heard_in_paths(files)
-            .await
+    async fn identify_paths(
+        &self,
+        files: &[(String, PathBuf)],
+        priority: RequestPriority,
+    ) -> HeardFiles {
+        Ok(self
+            .heard_in_paths(files, priority)
+            .await?
             .into_iter()
             .filter_map(|(id, heard)| {
                 (!heard.recording_ids.is_empty()).then_some((id, heard.recording_ids))
             })
-            .collect()
+            .collect())
     }
 
     /// Print files outside the library and look them up, by caller id.
     async fn heard_in_paths(
         &self,
         files: &[(String, PathBuf)],
-    ) -> HashMap<String, droppedneedle_providers::acoustid::BatchMatch> {
-        let key = self.api_key();
-        if key.is_empty() || files.is_empty() {
-            return HashMap::new();
+        priority: RequestPriority,
+    ) -> Result<HashMap<String, droppedneedle_providers::acoustid::BatchMatch>, AcoustIdUnavailable>
+    {
+        if files.is_empty() {
+            return Ok(HashMap::new());
         }
+        let Some(key) = self.lookup_key()? else {
+            return Ok(HashMap::new());
+        };
         let prints = self.print(files.to_vec()).await;
         let queries: Vec<BatchQuery<'_>> = prints
             .iter()
@@ -1449,42 +1558,53 @@ impl AcoustIdFingerprints {
             .collect();
         let found = self
             .client
-            .lookup_batch(&key, &queries, RequestPriority::BackgroundSync)
-            .await;
-        found
+            .lookup_batch(&key, &queries, priority)
+            .await
+            .map_err(|why| {
+                tracing::info!(?why, "AcoustID did not answer; the lookup waits");
+                AcoustIdUnavailable::from(why)
+            })?;
+        Ok(found
             .into_iter()
             .filter_map(|(index, heard)| {
                 let (id, _, _) = prints.get(index)?;
                 Some((id.clone(), heard))
             })
-            .collect()
+            .collect())
     }
 }
 
 impl FingerprintSource for AcoustIdFingerprints {
-    fn identify<'a>(&'a self, tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches> {
-        Box::pin(self.identify_tracks(tracks))
+    fn identify<'a>(
+        &'a self,
+        tracks: &'a [LocalTrackFacts],
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<AudioMatches, AcoustIdUnavailable>> {
+        Box::pin(self.identify_tracks(tracks, priority))
     }
 
     fn identify_files<'a>(
         &'a self,
         files: &'a [(String, PathBuf)],
-    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
-        Box::pin(self.identify_paths(files))
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, HeardFiles> {
+        Box::pin(self.identify_paths(files, priority))
     }
 
     fn identify_file_releases<'a>(
         &'a self,
         files: &'a [(String, PathBuf)],
-    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, HeardFiles> {
         Box::pin(async move {
-            self.heard_in_paths(files)
-                .await
+            Ok(self
+                .heard_in_paths(files, priority)
+                .await?
                 .into_iter()
                 .filter_map(|(id, heard)| {
                     (!heard.release_ids.is_empty()).then_some((id, heard.release_ids))
                 })
-                .collect()
+                .collect())
         })
     }
 }
