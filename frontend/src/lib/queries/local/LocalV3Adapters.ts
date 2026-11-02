@@ -1,16 +1,17 @@
 import { getApiUrl } from '$lib/api/api-utils';
-import { coverPath } from '$lib/api/covers';
+import { albumArtworkPath, coverPath } from '$lib/api/covers';
 import type { QueueItem, SourceType } from '$lib/player/types';
 import type { components } from '$lib/api/v3/openapi';
-import type { CrateReason, CrateTrack, LocalAlbumSummary } from '$lib/types';
+import type { CrateReason, CrateTrack } from '$lib/types';
 import type { AlbumCardV3, LocalTrackV3, SuggestionTrackV3 } from './LocalV3Queries.svelte';
 
 type SearchItemV3 = components['schemas']['SearchResultItem'];
 
-// What playing or queueing a library album needs.
+// What playing or queueing a library album needs. Every library album has a
+// local id; only a linked one has a release group.
 export type SpinAlbum = Pick<
-	LocalAlbumSummary,
-	'musicbrainz_id' | 'name' | 'artist_name' | 'year' | 'cover_url'
+	AlbumCardV3,
+	'id' | 'title' | 'artist_name' | 'release_group_mbid' | 'year' | 'art_missing'
 >;
 
 // Adapters from v3 local-library views to the listening room's track and
@@ -26,63 +27,37 @@ function toCrateReason(reason: string): CrateReason {
 		: 'surprise';
 }
 
-// v3 cover URL for one release-group mbid, or null when the album is
-// unidentified. Callers wrap it with getApiUrl at render time.
-function localCoverUrl(
+// A library album's cover path: its release group's when linked, its own art
+// otherwise, null when the server knows there is none.
+export function libraryCoverPath(
+	albumId: string,
 	releaseGroupMbid: string | null | undefined,
-	size: 250 | 500 | 1200 = 250
+	artMissing: boolean
 ): string | null {
-	if (!releaseGroupMbid) return null;
-	return coverPath('release-group', releaseGroupMbid, size);
+	if (artMissing) return null;
+	if (releaseGroupMbid) return coverPath('release-group', releaseGroupMbid, 250);
+	return albumArtworkPath(albumId, undefined, 250);
 }
 
-// Absolute cover URL for a crate track: the adapted v3 path first, then
-// the mbid-derived fallback, else null for the placeholder art.
-export function crateCoverUrl(track: Pick<CrateTrack, 'cover_url' | 'album_mbid'>): string | null {
-	if (track.cover_url) return getApiUrl(track.cover_url);
-	const fallback = localCoverUrl(track.album_mbid);
-	return fallback ? getApiUrl(fallback) : null;
+export function crateCoverUrl(track: Pick<CrateTrack, 'cover_url'>): string | null {
+	return track.cover_url ? getApiUrl(track.cover_url) : null;
 }
 
-// Absolute cover URL for an album summary, same fallback order as tracks.
-export function albumCoverUrl(
-	album: Pick<LocalAlbumSummary, 'cover_url' | 'musicbrainz_id'>
-): string | null {
-	if (album.cover_url) return getApiUrl(album.cover_url);
-	const fallback = localCoverUrl(album.musicbrainz_id);
-	return fallback ? getApiUrl(fallback) : null;
+export function albumCoverUrl(album: SpinAlbum): string | null {
+	const path = libraryCoverPath(album.id, album.release_group_mbid, album.art_missing);
+	return path ? getApiUrl(path) : null;
 }
 
-function unixToIso(seconds: number | null | undefined): string | null {
-	if (!seconds) return null;
-	return new Date(seconds * 1000).toISOString();
-}
-
-export function albumCardToSummary(card: AlbumCardV3): LocalAlbumSummary {
+// A library album hit from search, or null for a hit without its library id.
+export function searchAlbumToSpin(item: SearchItemV3): SpinAlbum | null {
+	if (!item.id) return null;
 	return {
-		musicbrainz_id: card.release_group_mbid ?? card.id,
-		name: card.title,
-		artist_name: card.artist_name,
-		artist_mbid: card.artist_mbid,
-		year: card.year,
-		track_count: card.track_count,
-		total_size_bytes: card.total_size_bytes,
-		primary_format: card.format,
-		cover_url: card.art_missing ? null : localCoverUrl(card.release_group_mbid),
-		date_added: unixToIso(card.date_added)
-	};
-}
-
-// A library album hit from search. The release group keys the cover and
-// the album's tracks; an unidentified album goes by its library id.
-export function searchAlbumToSpin(item: SearchItemV3): SpinAlbum {
-	const mbid = item.musicbrainz_id ?? null;
-	return {
-		musicbrainz_id: mbid ?? item.id ?? '',
-		name: item.title,
+		id: item.id,
+		title: item.title,
 		artist_name: item.artist ?? '',
+		release_group_mbid: item.musicbrainz_id,
 		year: item.year,
-		cover_url: localCoverUrl(mbid)
+		art_missing: item.art_missing
 	};
 }
 
@@ -97,8 +72,13 @@ export function searchTrackToCrateTrack(item: SearchItemV3): CrateTrack | null {
 		title: item.title,
 		album_name: detail.album_title,
 		artist_name: item.artist ?? '',
+		album_id: detail.album_id,
 		album_mbid: albumMbid,
-		cover_url: localCoverUrl(albumMbid),
+		cover_url: libraryCoverPath(
+			detail.album_id,
+			albumMbid,
+			item.art_missing || (!albumMbid && !detail.cover_available)
+		),
 		format: detail.format,
 		year: item.year,
 		duration_seconds: detail.duration_seconds,
@@ -117,8 +97,13 @@ export function suggestionToCrateTrack(
 		title: suggestion.title,
 		album_name: suggestion.album_title,
 		artist_name: suggestion.artist_name,
+		album_id: suggestion.album_id,
 		album_mbid: albumMbid,
-		cover_url: localCoverUrl(albumMbid),
+		cover_url: libraryCoverPath(
+			suggestion.album_id,
+			albumMbid,
+			!albumMbid && !suggestion.cover_available
+		),
 		format: suggestion.format,
 		year: suggestion.year,
 		duration_seconds: suggestion.duration_seconds,
@@ -128,18 +113,14 @@ export function suggestionToCrateTrack(
 
 // Queue item for one matched album track. The v3 track id is the stream
 // key, matching the discovery queue builder for local tracks.
-export function matchTrackToQueueItem(
-	track: LocalTrackV3,
-	coverUrl: string | null,
-	albumMbid: string
-): QueueItem {
+export function matchTrackToQueueItem(track: LocalTrackV3, coverUrl: string | null): QueueItem {
 	return {
 		trackSourceId: track.id,
 		trackName: track.title,
 		artistName: track.artist_name,
 		trackNumber: track.track_number,
 		discNumber: track.disc_number,
-		albumId: albumMbid,
+		albumId: track.release_group_mbid ?? track.album_id,
 		albumName: track.album_title,
 		coverUrl,
 		coverRemoteUrl: null,

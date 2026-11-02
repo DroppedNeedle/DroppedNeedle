@@ -18,12 +18,6 @@ export type Artist = {
 	local_id?: string | null;
 };
 
-/**
- * Provider-lane edition pick basis (mirrors AlbumService._effective_release_id):
- * pin > owned identity > unanimous embedded tags > file count > ranked.
- */
-export type EditionPickBasis = 'pin' | 'owned' | 'embedded_tags' | 'file_count' | 'ranked';
-
 export type Album = {
 	title: string;
 	artist: string | null;
@@ -33,20 +27,11 @@ export type Album = {
 	requested?: boolean;
 	cover_url?: string | null;
 	album_thumb_url?: string | null;
-	album_back_url?: string | null;
-	album_cdart_url?: string | null;
-	album_spine_url?: string | null;
-	album_3d_case_url?: string | null;
-	album_3d_flat_url?: string | null;
-	album_3d_face_url?: string | null;
-	album_3d_thumb_url?: string | null;
 	type_info?: string | null;
 	disambiguation?: string | null;
 	track_count?: number | null;
 	listen_count?: number | null;
 	score?: number;
-	selected_release_mbid?: string | null;
-	pick_basis?: EditionPickBasis | null;
 	local_id?: string | null;
 	art_missing?: boolean;
 };
@@ -66,35 +51,10 @@ export type SuggestResult = {
 	local_id?: string | null;
 };
 
-export type SearchRemoteStatus = 'ok' | 'partial' | 'timeout' | 'error' | 'stale';
-
-export type SearchBucketResponse<T extends Artist | Album> = {
-	bucket: 'artists' | 'albums';
-	limit: number;
-	offset: number;
-	results: T[];
-	top_result?: T | null;
-	status: SearchRemoteStatus;
-};
-
-export type SearchSuggestResponse = {
-	results: SuggestResult[];
-	remote_status: SearchRemoteStatus;
-};
+export type SearchRemoteStatus = Schemas['SearchRemoteStatus'];
 
 /** The provider behind an enrichment batch; `null` when none answered. */
 export type EnrichmentSource = components['schemas']['ListenSource'] | null;
-
-export type ArtistEnrichment = components['schemas']['ArtistEnrichment'];
-
-export type AlbumEnrichment = components['schemas']['AlbumEnrichment'];
-
-export type ArtistEnrichmentRequest = {
-	musicbrainz_id: string;
-	name: string;
-};
-
-export type AlbumEnrichmentRequest = components['schemas']['AlbumEnrichmentRequest'];
 
 export type TopSong = components['schemas']['TopSong'];
 
@@ -102,86 +62,31 @@ export type SimilarAlbumsResponse = components['schemas']['SimilarAlbumsResponse
 
 export type MoreByArtistResponse = components['schemas']['MoreByArtistResponse'];
 
-export type ReleaseGroup = {
-	id: string;
-	title: string;
-	type?: string;
-	year?: number;
-	first_release_date?: string;
-	in_library: boolean;
-	requested?: boolean;
-};
+export type ReleaseGroup = Omit<Schemas['ReleaseItem'], 'title'> & { title: string };
 
-export type ExternalLink = {
-	type: string;
-	url: string;
-	label: string;
-	category?: string;
-};
+export type ExternalLink = Schemas['ExternalLink'];
 
-/** TheAudioDB artist images, flat as the artist page reads them. */
-export type ArtistImageFields = {
-	fanart_url?: string | null;
-	banner_url?: string | null;
-	thumb_url?: string | null;
-	fanart_url_2?: string | null;
-	fanart_url_3?: string | null;
-	fanart_url_4?: string | null;
-	wide_thumb_url?: string | null;
-	logo_url?: string | null;
-	clearart_url?: string | null;
-	cutout_url?: string | null;
-};
+export type ArtistInfoBasic = Omit<
+	Schemas['ArtistInfo'],
+	'albums' | 'singles' | 'eps' | 'source' | 'images'
+> &
+	Schemas['ArtistImages'];
 
-export type ArtistInfoBasic = ArtistImageFields & {
-	name: string;
-	musicbrainz_id: string;
-	disambiguation?: string | null;
-	type?: string | null;
-	country?: string | null;
-	life_span?: {
-		begin?: string | null;
-		end?: string | null;
-		ended?: boolean | null;
-	} | null;
-	tags: string[];
-	aliases: string[];
-	external_links: ExternalLink[];
-	in_library: boolean;
-	appears_in_library: boolean;
-	// per-user follow state; artist page reads it from the dedicated /follow query
-	followed?: boolean;
-	auto_download?: boolean;
-	auto_download_state?: components['schemas']['AutoDownloadState'];
-	release_group_count?: number;
-	service_status?: Record<string, string> | null;
-};
-
-export type ArtistInfoExtended = {
+export type ArtistInfo = ArtistInfoBasic & {
 	description?: string | null;
 	image?: string | null;
 };
 
-export type ArtistInfo = ArtistInfoBasic & ArtistInfoExtended;
-
-export type ArtistReleases = {
+export type ArtistReleases = Omit<
+	Schemas['ArtistReleases'],
+	'albums' | 'singles' | 'eps' | 'source'
+> & {
 	albums: ReleaseGroup[];
 	singles: ReleaseGroup[];
 	eps: ReleaseGroup[];
-	offset: number;
-	limit: number;
-	returned_count: number;
-	next_offset: number | null;
-	has_more: boolean;
-	source_total_count?: number | null;
-	warming?: boolean;
-	service_status?: Record<string, string> | null;
 };
 
-export type UserPreferences = {
-	primary_types: string[];
-	secondary_types: string[];
-};
+export type UserPreferences = Schemas['UserPreferences'];
 
 export type ReleaseTypeOption = {
 	id: string;
@@ -189,41 +94,17 @@ export type ReleaseTypeOption = {
 	description: string;
 };
 
-export type Track = {
-	position: number;
-	disc_number?: number | null;
-	title: string;
-	length?: number | null;
-	recording_id?: string | null;
-	release_track_id?: string | null;
-	media_format?: string | null;
-};
+export type Track = Schemas['AlbumTrack'];
 
-export type AlbumBasicInfo = {
-	title: string;
-	musicbrainz_id: string;
-	artist_name: string;
-	artist_id: string;
-	release_date?: string | null;
-	year?: number | null;
-	type?: string | null;
-	disambiguation?: string | null;
-	in_library: boolean;
-	requested?: boolean;
-	cover_url?: string | null;
-	album_thumb_url?: string | null;
-	service_status?: Record<string, string> | null;
-};
+// The library's own album pages build one from a local album, which has no
+// provider source or request state.
+export type AlbumBasicInfo = Omit<
+	Schemas['AlbumBasicInfo'],
+	'requested' | 'service_status' | 'source'
+> &
+	Partial<Pick<Schemas['AlbumBasicInfo'], 'requested' | 'service_status'>>;
 
-export type AlbumTracksInfo = {
-	tracks: Track[];
-	total_tracks: number;
-	total_length?: number | null;
-	label?: string | null;
-	barcode?: string | null;
-	country?: string | null;
-	selected_release_mbid?: string | null;
-};
+export type AlbumTracksInfo = Schemas['AlbumTracksInfo'];
 
 export type OIDCConnectionSettings = components['schemas']['OidcConnection'];
 
@@ -246,21 +127,9 @@ export type DiscoverActivity = components['schemas']['DiscoverActivityRequest'];
 
 export type YouTubeQuotaStatus = components['schemas']['YouTubeQuotaStatus'];
 
-export type TrackCacheCheckItem = {
-	artist: string;
-	track: string;
-	cached: boolean;
-};
-
 export type YouTubeLink = components['schemas']['YouTubeLink'];
 
-export type YouTubeLinkResponse = components['schemas']['YouTubeLinkResponse'];
-
 export type YouTubeTrackLink = components['schemas']['YouTubeTrackLink'];
-
-export type YouTubeTrackLinkResponse = components['schemas']['YouTubeTrackLinkResponse'];
-
-export type YouTubeTrackLinkBatchResponse = components['schemas']['YouTubeTrackLinkBatchResponse'];
 
 export type NavidromePlaylistSyncResult = components['schemas']['PlaylistSyncResult'];
 
@@ -297,7 +166,6 @@ export type LocalTrackInfo = {
 	size_bytes: number;
 	format: string;
 	bitrate?: number | null;
-	date_added?: string | null;
 };
 
 export type LocalAlbumMatch = {
@@ -309,20 +177,6 @@ export type LocalAlbumMatch = {
 	download_allowed?: boolean;
 };
 
-export type LocalAlbumSummary = {
-	musicbrainz_id: string;
-	name: string;
-	artist_name: string;
-	artist_mbid?: string | null;
-	year?: number | null;
-	track_count: number;
-	total_size_bytes: number;
-	primary_format?: string | null;
-	cover_url?: string | null;
-	date_added?: string | null;
-	download_allowed?: boolean;
-};
-
 export type CrateReason = 'recent' | 'rediscover' | 'surprise' | 'same_era';
 
 export type CrateTrack = {
@@ -330,6 +184,7 @@ export type CrateTrack = {
 	title: string;
 	album_name: string;
 	artist_name: string;
+	album_id: string;
 	album_mbid?: string | null;
 	cover_url?: string | null;
 	format?: string;
@@ -458,7 +313,7 @@ export type AlbumIdentityState = 'local_only' | 'release_group_linked' | 'releas
 
 export type ArtistIdentityState = 'local_only' | 'musicbrainz_linked';
 
-export interface TargetNativeTrack {
+export interface NativeTrackListItem {
 	/** What removing this file sends back. Only the album status view carries it. */
 	row_revision?: number;
 	id: string;
@@ -493,8 +348,6 @@ export interface TargetNativeTrack {
 	/** Whether the caller favorited it, where the read says. */
 	favorite?: boolean;
 }
-
-export type NativeTrackListItem = TargetNativeTrack;
 
 export interface LibraryAlbumSummary {
 	id: string;
@@ -535,10 +388,6 @@ export type ReleaseTextField = Schemas['ReleaseTextField'];
 export type ReleaseDraft = Schemas['ReleaseDraft'];
 export type ContributionDuplicateCandidate = Schemas['DuplicateCandidate'];
 
-export type DiscogsReleaseCandidate = components['schemas']['DiscogsReleaseCandidate'];
-
-export type MusicBrainzSeedField = components['schemas']['MusicBrainzSeedField'];
-
 export type MusicBrainzSeed = components['schemas']['MusicBrainzSeed'];
 
 export type LibraryContribution = Schemas['ContributionRecord'];
@@ -576,27 +425,21 @@ export interface NativeArtistsResponse {
 	contributor_total: number;
 }
 
-export interface LibraryArtistAppearance {
-	album: LibraryAlbumSummary;
-	tracks: NativeTrackListItem[];
-}
-
 export interface LibraryArtistAppearancesResponse {
-	items: LibraryArtistAppearance[];
+	items: { album: LibraryAlbumSummary; tracks: NativeTrackListItem[] }[];
 	total: number;
 	total_tracks: number;
 	/** The cursor of the page after this one; null on the last page. */
 	next: string | null;
 }
 
-export type LibraryFileMeta = TargetNativeTrack;
+export type LibraryFileMeta = NativeTrackListItem;
 
 // The contract's status, its tracks in the native track model.
 export type LibraryAlbumStatus = Omit<Schemas['LibraryAlbumStatus'], 'tracks'> & {
-	tracks: TargetNativeTrack[];
+	tracks: NativeTrackListItem[];
 };
 
-export type AlbumEditionItem = components['schemas']['AlbumEditionItem'];
 export type AlbumEditionsResponse = components['schemas']['AlbumEditionsResponse'];
 
 export type LibraryStats = Schemas['StatsView'];

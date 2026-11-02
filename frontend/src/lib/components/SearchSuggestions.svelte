@@ -6,7 +6,7 @@
 	import Input from '$lib/ui/Input.svelte';
 	import type { SearchRemoteStatus, SuggestResult } from '$lib/types';
 	import { getSearchSuggestionsV3Query } from '$lib/queries/search/SearchV3Queries.svelte';
-	import { toSearchRemoteStatus, toSuggestResultsV1 } from '$lib/queries/search/SearchV3Adapters';
+	import { toSuggestResultsV1 } from '$lib/queries/search/SearchV3Adapters';
 
 	interface Props {
 		query: string;
@@ -54,7 +54,7 @@
 		toSuggestResultsV1(suggestQuery.data?.results ?? []).slice(0, SUGGEST_DISPLAY_LIMIT)
 	);
 	let remoteStatus: SearchRemoteStatus = $derived(
-		suggestQuery.isError ? 'error' : toSearchRemoteStatus(suggestQuery.data?.status ?? 'ok')
+		suggestQuery.isError ? 'error' : (suggestQuery.data?.status ?? 'ok')
 	);
 	let waitingForDebounce = $derived(
 		showDropdown && query.trim().length >= 2 && debouncedQuery !== query.trim()

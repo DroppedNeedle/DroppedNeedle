@@ -19,12 +19,7 @@
 		type EnrichmentResponseV3
 	} from '$lib/queries/search/SearchV3Queries.svelte';
 	import { SearchEnrichCollector } from '$lib/queries/search/SearchV3Enrichment.svelte';
-	import {
-		toSearchRemoteStatus,
-		toSearchSongs,
-		toV1Album,
-		toV1Artist
-	} from '$lib/queries/search/SearchV3Adapters';
+	import { toSearchSongs, toV1Album, toV1Artist } from '$lib/queries/search/SearchV3Adapters';
 	import { ArrowRight, RefreshCw } from 'lucide-svelte';
 	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -76,10 +71,10 @@
 		return albums.find((album) => album.musicbrainz_id === id) ?? null;
 	});
 	let artistStatus: SearchRemoteStatus = $derived(
-		searchQuery.isError ? 'error' : toSearchRemoteStatus(searchQuery.data?.artist_status ?? 'ok')
+		searchQuery.isError ? 'error' : (searchQuery.data?.artist_status ?? 'ok')
 	);
 	let albumStatus: SearchRemoteStatus = $derived(
-		searchQuery.isError ? 'error' : toSearchRemoteStatus(searchQuery.data?.album_status ?? 'ok')
+		searchQuery.isError ? 'error' : (searchQuery.data?.album_status ?? 'ok')
 	);
 	let artistNotice = $derived(getSearchStatusNotice(artistStatus, 'artists'));
 	let albumNotice = $derived(getSearchStatusNotice(albumStatus, 'albums'));

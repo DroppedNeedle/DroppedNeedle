@@ -5,7 +5,7 @@ import type { ArtistReleases, ReleaseGroup } from '$lib/types';
 import { mergeArtistReleasePages } from './artistReleasePages';
 
 function release(id: string, year?: number): ReleaseGroup {
-	return { id, title: id, type: 'Album', year, in_library: false };
+	return { id, title: id, type: 'Album', year, in_library: false, requested: false };
 }
 
 function page(
@@ -21,7 +21,9 @@ function page(
 		returned_count: 0,
 		next_offset: offset + 100,
 		has_more: true,
-		source_total_count: 300
+		source_total_count: 300,
+		service_status: null,
+		warming: false
 	};
 }
 

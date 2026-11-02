@@ -1,12 +1,12 @@
 import type { components } from '$lib/api/v3/openapi';
 import { normalizeDiscNumber } from '$lib/player/queueHelpers';
 import type { QueueItem } from '$lib/player/types';
-import type { Album, Artist, SearchRemoteStatus, SuggestResult } from '$lib/types';
-import { getCoverUrl } from '$lib/utils/errorHandling';
+import type { Album, Artist, SuggestResult } from '$lib/types';
+import { getApiUrl } from '$lib/api/api-utils';
+import { libraryCoverPath } from '$lib/queries/local/LocalV3Adapters';
 
 export type SearchResultItemV3 = components['schemas']['SearchResultItem'];
 export type SearchTrackDetailV3 = components['schemas']['SearchTrackDetail'];
-export type SearchRemoteStatusV3 = components['schemas']['SearchRemoteStatus'];
 export type SuggestResultV3 = components['schemas']['SuggestResult'];
 
 // Transitional bridge: the search routes read through the v3 hooks while the
@@ -88,13 +88,6 @@ export function toMusicBrainzAlbums(rows: SearchResultItemV3[]): Album[] {
 	return rows.filter((row) => !!row.musicbrainz_id).map(toV1Album);
 }
 
-// The v3 contract mirrors the v1 status values exactly, so statuses pass
-// straight into getSearchStatusNotice and the stale-time helpers. Typed as
-// a function so the build fails if the two unions ever drift apart.
-export function toSearchRemoteStatus(status: SearchRemoteStatusV3): SearchRemoteStatus {
-	return status;
-}
-
 // Typeahead rows keep the v1 shape the shell handlers route on, while the
 // data comes from the v3 suggest endpoint (the local catalog and
 // MusicBrainz, merged across buckets, best first, with library and request
@@ -129,6 +122,11 @@ export function toSearchSongs(rows: SearchResultItemV3[]): SearchSong[] {
 /** The queue item that plays one library song. */
 export function searchSongQueueItem(song: SearchSong): QueueItem {
 	const detail = song.track;
+	const cover = libraryCoverPath(
+		detail.album_id,
+		detail.release_group_mbid,
+		song.art_missing || (!detail.release_group_mbid && !detail.cover_available)
+	);
 	return {
 		trackSourceId: song.id,
 		trackName: song.title,
@@ -137,7 +135,7 @@ export function searchSongQueueItem(song: SearchSong): QueueItem {
 		discNumber: normalizeDiscNumber(detail.disc_number),
 		albumId: detail.album_id,
 		albumName: detail.album_title,
-		coverUrl: getCoverUrl(null, detail.album_id),
+		coverUrl: cover ? getApiUrl(cover) : null,
 		coverRemoteUrl: null,
 		sourceType: 'local',
 		artistId: detail.artist_id ?? undefined,

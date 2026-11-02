@@ -1,9 +1,9 @@
 <script lang="ts">
 	import '$lib/components/now-playing.css';
 	import '$lib/components/local/deck.css';
-	import type { CrateTrack, CrateReason, LocalAlbumSummary } from '$lib/types';
+	import type { CrateTrack, CrateReason } from '$lib/types';
 	import { flip, fly } from '$lib/ui/motion';
-	import { crateCoverUrl } from '$lib/queries/local/LocalV3Adapters';
+	import { crateCoverUrl, type SpinAlbum } from '$lib/queries/local/LocalV3Adapters';
 	import {
 		Sparkles,
 		RotateCcw,
@@ -33,7 +33,7 @@
 		onRefresh: () => void;
 		onPlay: (t: CrateTrack) => void;
 		onQueue: (t: CrateTrack) => void;
-		onQueueAlbum?: (a: LocalAlbumSummary) => void;
+		onQueueAlbum?: (a: SpinAlbum) => void;
 	}
 
 	let {
@@ -158,11 +158,11 @@
 		}
 	}
 
-	function readAlbum(e: DragEvent): LocalAlbumSummary | null {
+	function readAlbum(e: DragEvent): SpinAlbum | null {
 		const raw = e.dataTransfer?.getData('application/x-crate-album');
 		if (!raw) return null;
 		try {
-			return JSON.parse(raw) as LocalAlbumSummary;
+			return JSON.parse(raw) as SpinAlbum;
 		} catch {
 			return null;
 		}

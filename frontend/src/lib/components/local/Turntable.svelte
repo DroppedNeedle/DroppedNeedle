@@ -14,7 +14,9 @@
 	import { getLyricsQuery } from '$lib/queries/lyrics.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { navidromeFolderScope } from '$lib/queries/remotes/RemoteQueries.svelte';
-	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
+	import type { CrateTrack } from '$lib/types';
+	import type { SpinAlbum } from '$lib/queries/local/LocalV3Adapters';
+	import { isValidMbid } from '$lib/utils/formatting';
 	import {
 		Play,
 		Pause,
@@ -36,7 +38,7 @@
 
 	interface Props {
 		onDropPlay: (track: CrateTrack) => void;
-		onDropAlbum: (album: LocalAlbumSummary) => void;
+		onDropAlbum: (album: SpinAlbum) => void;
 		onPlayAll: () => void;
 		onShuffleAll: () => void;
 		onSurprise: () => void;
@@ -99,11 +101,11 @@
 		}
 	}
 
-	function readAlbum(e: DragEvent): LocalAlbumSummary | null {
+	function readAlbum(e: DragEvent): SpinAlbum | null {
 		const raw = e.dataTransfer?.getData('application/x-crate-album');
 		if (!raw) return null;
 		try {
-			return JSON.parse(raw) as LocalAlbumSummary;
+			return JSON.parse(raw) as SpinAlbum;
 		} catch {
 			return null;
 		}
@@ -170,7 +172,7 @@
 			>
 				{#if np}
 					<AlbumImage
-						mbid={np.albumId}
+						mbid={isValidMbid(np.albumId) ? np.albumId : ''}
 						remoteUrl={np.coverRemoteUrl?.startsWith('http') ? np.coverRemoteUrl : null}
 						customUrl={np.coverUrl}
 						alt={np.albumName ?? 'Album'}

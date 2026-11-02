@@ -8,7 +8,7 @@
 	import { deckFocus } from '$lib/stores/deckFocus.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { formatBytes } from '$lib/utils/formatting';
-	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
+	import type { CrateTrack } from '$lib/types';
 	import type { QueueItem } from '$lib/player/types';
 	import { slide } from '$lib/ui/motion';
 	import Turntable from '$lib/components/local/Turntable.svelte';
@@ -26,10 +26,10 @@
 		getLocalDecadesV3Query,
 		getLocalStatsV3Query,
 		fetchLocalAlbumTracksV3,
-		fetchLocalSuggestionBatchV3
+		fetchLocalSuggestionBatchV3,
+		type AlbumCardV3
 	} from '$lib/queries/local/LocalV3Queries.svelte';
 	import {
-		albumCardToSummary,
 		albumCoverUrl,
 		crateCoverUrl,
 		matchTrackToQueueItem,
@@ -76,11 +76,11 @@
 		() => openDecade !== null
 	);
 
-	const recentAlbums = $derived((recentQuery.data ?? []).map(albumCardToSummary));
-	const rediscoverAlbums = $derived((rediscoverQuery.data?.items ?? []).map(albumCardToSummary));
+	const recentAlbums = $derived(recentQuery.data ?? []);
+	const rediscoverAlbums = $derived(rediscoverQuery.data?.items ?? []);
 	const decades = $derived(decadesQuery.data?.items ?? []);
 	const stats = $derived(statsQuery.data ?? null);
-	const shelfAlbums = $derived((shelfQuery.data?.items ?? []).map(albumCardToSummary));
+	const shelfAlbums = $derived(shelfQuery.data?.items ?? []);
 	const openShelf = $derived.by(() => {
 		const shelf = decades.find((d) => d.decade === openDecade) ?? null;
 		if (!shelf) return null;
@@ -91,11 +91,11 @@
 	// screen. Decades with no card in either shelf render without art until
 	// opened, when the browse query supplies the face.
 	const faceByDecade = $derived.by(() => {
-		const faces = new SvelteMap<number, LocalAlbumSummary>();
+		const faces = new SvelteMap<number, AlbumCardV3>();
 		for (const card of [...(recentQuery.data ?? []), ...(rediscoverQuery.data?.items ?? [])]) {
 			if (card.year == null) continue;
 			const decade = Math.floor(card.year / 10) * 10;
-			if (!faces.has(decade)) faces.set(decade, albumCardToSummary(card));
+			if (!faces.has(decade)) faces.set(decade, card);
 		}
 		return faces;
 	});
@@ -133,10 +133,9 @@
 			artistName: t.artist_name,
 			trackNumber: 0,
 			discNumber: 1,
-			albumId: t.album_mbid ?? '',
+			albumId: t.album_mbid ?? t.album_id,
 			albumName: t.album_name,
 			coverUrl: crateCoverUrl(t),
-			coverRemoteUrl: t.cover_url?.startsWith('http') ? t.cover_url : null,
 			sourceType: 'local',
 			format: (t.format ?? '').toLowerCase()
 		};
@@ -159,14 +158,14 @@
 
 	async function playAlbum(album: SpinAlbum, shuffle = false) {
 		try {
-			const match = await fetchLocalAlbumTracksV3(album.musicbrainz_id);
+			const match = await fetchLocalAlbumTracksV3(album.id);
 			const tracks = [...match.items].sort(
 				(a, b) => a.disc_number - b.disc_number || a.track_number - b.track_number
 			);
 			if (!tracks.length) return;
 			const cover = albumCoverUrl(album);
 			playerStore.playQueue(
-				tracks.map((t) => matchTrackToQueueItem(t, cover, album.musicbrainz_id)),
+				tracks.map((t) => matchTrackToQueueItem(t, cover)),
 				0,
 				shuffle
 			);
@@ -187,15 +186,13 @@
 
 	async function queueAlbum(album: SpinAlbum) {
 		try {
-			const match = await fetchLocalAlbumTracksV3(album.musicbrainz_id);
+			const match = await fetchLocalAlbumTracksV3(album.id);
 			const tracks = [...match.items].sort(
 				(a, b) => a.disc_number - b.disc_number || a.track_number - b.track_number
 			);
 			if (!tracks.length) return;
 			const cover = albumCoverUrl(album);
-			playerStore.addMultipleToQueue(
-				tracks.map((t) => matchTrackToQueueItem(t, cover, album.musicbrainz_id))
-			);
+			playerStore.addMultipleToQueue(tracks.map((t) => matchTrackToQueueItem(t, cover)));
 		} catch {
 			toastStore.notify("Couldn't queue that album", 'error');
 		}
@@ -375,7 +372,7 @@
 			? 'opacity-60'
 			: 'opacity-100'}"
 	>
-		{#snippet shelf(title: string, icon: typeof Play, albums: LocalAlbumSummary[])}
+		{#snippet shelf(title: string, icon: typeof Play, albums: AlbumCardV3[])}
 			{#if albums.length}
 				{@const Icon = icon}
 				<div>
@@ -384,7 +381,7 @@
 						<h2 class="text-lg font-bold">{title}</h2>
 					</div>
 					<HorizontalCarousel>
-						{#each albums as album, i (`${album.musicbrainz_id}:${i}`)}
+						{#each albums as album, i (`${album.id}:${i}`)}
 							{@render albumTile(album)}
 						{/each}
 					</HorizontalCarousel>
@@ -392,7 +389,7 @@
 			{/if}
 		{/snippet}
 
-		{#snippet albumTile(album: LocalAlbumSummary)}
+		{#snippet albumTile(album: AlbumCardV3)}
 			<div class="group w-36 shrink-0 sm:w-40">
 				{#if album.track_count === 0}
 					<div
@@ -400,7 +397,7 @@
 					>
 						<AlbumImage
 							customUrl={albumCoverUrl(album)}
-							alt={album.name}
+							alt={album.title}
 							size="full"
 							requestSize={250}
 							rounded="none"
@@ -412,11 +409,11 @@
 					<button
 						class="relative block aspect-square w-full overflow-hidden rounded-xl ring-1 ring-base-content/10 transition-transform group-hover:scale-[1.03]"
 						onclick={() => playAlbum(album)}
-						title="Play {album.name}"
+						title="Play {album.title}"
 					>
 						<AlbumImage
 							customUrl={albumCoverUrl(album)}
-							alt={album.name}
+							alt={album.title}
 							size="full"
 							requestSize={250}
 							rounded="none"
@@ -432,14 +429,14 @@
 						</div>
 					</button>
 				{/if}
-				{#if isMbid(album.musicbrainz_id)}
+				{#if isMbid(album.release_group_mbid)}
 					<a
-						href={withBasePath(`/album/${album.musicbrainz_id}`)}
+						href={withBasePath(`/album/${album.release_group_mbid}`)}
 						class="mt-2 block truncate text-sm font-semibold transition-colors hover:text-accent hover:underline"
-						title={album.name}>{album.name}</a
+						title={album.title}>{album.title}</a
 					>
 				{:else}
-					<p class="mt-2 truncate text-sm font-semibold">{album.name}</p>
+					<p class="mt-2 truncate text-sm font-semibold">{album.title}</p>
 				{/if}
 				{#if isMbid(album.artist_mbid)}
 					<a
@@ -526,7 +523,7 @@
 							</div>
 						{:else}
 							<HorizontalCarousel>
-								{#each openShelf.albums as album, i (`${album.musicbrainz_id}:${i}`)}
+								{#each openShelf.albums as album, i (`${album.id}:${i}`)}
 									{@render albumTile(album)}
 								{/each}
 							</HorizontalCarousel>

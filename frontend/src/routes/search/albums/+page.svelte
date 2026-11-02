@@ -16,11 +16,7 @@
 		type EnrichmentResponseV3
 	} from '$lib/queries/search/SearchV3Queries.svelte';
 	import { SearchEnrichCollector } from '$lib/queries/search/SearchV3Enrichment.svelte';
-	import {
-		dedupeByMbid,
-		toSearchRemoteStatus,
-		toV1Album
-	} from '$lib/queries/search/SearchV3Adapters';
+	import { dedupeByMbid, toV1Album } from '$lib/queries/search/SearchV3Adapters';
 	import { RefreshCw } from 'lucide-svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import Button from '$lib/ui/Button.svelte';
@@ -129,7 +125,7 @@
 		pages.set(page.offset, {
 			items: page.results.map(toV1Album),
 			top: page.top_result ? toV1Album(page.top_result) : null,
-			status: toSearchRemoteStatus(page.status),
+			status: page.status,
 			source: page
 		});
 	});

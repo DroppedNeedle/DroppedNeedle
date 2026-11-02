@@ -157,12 +157,12 @@ export const getLocalStatsV3Query = (getEnabled: Getter<boolean> = () => true) =
 		})
 	);
 
-/** Every library track of one MusicBrainz album, to play or queue it whole. */
-export const fetchLocalAlbumTracksV3 = (mbid: string) =>
-	readNow(LOCAL_KEYS.albumMatch(mbid, { limit: 1000 }), (signal) =>
+/** Every track of one library album, by its local id, to play or queue it whole. */
+export const fetchLocalAlbumTracksV3 = (albumId: string) =>
+	readNow(LOCAL_KEYS.albumMatch(albumId, { limit: 1000 }), (signal) =>
 		api.v3.GET(
 			v3('/api/v3/library/albums/match/{mbid}', {
-				path: { mbid },
+				path: { mbid: albumId },
 				query: pageQuery({ limit: 1000 })
 			}),
 			{ signal }

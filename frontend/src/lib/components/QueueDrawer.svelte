@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { isValidMbid } from '$lib/utils/formatting';
 	import { tick } from 'svelte';
 	import { fly, fade } from '$lib/ui/motion';
 	import { playerStore } from '$lib/stores/player.svelte';
@@ -284,7 +285,7 @@
 							{/if}
 
 							<AlbumImage
-								mbid={item.albumId}
+								mbid={isValidMbid(item.albumId) ? item.albumId : ''}
 								customUrl={item.coverUrl ?? null}
 								alt={item.albumName}
 								size="full"

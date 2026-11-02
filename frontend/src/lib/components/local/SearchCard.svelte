@@ -44,7 +44,9 @@
 
 	const searchQuery = getLibrarySearchV3Query(() => debounced);
 
-	const albums = $derived((searchQuery.data?.albums ?? []).map(searchAlbumToSpin));
+	const albums = $derived(
+		(searchQuery.data?.albums ?? []).flatMap((a) => searchAlbumToSpin(a) ?? [])
+	);
 	const tracks = $derived(
 		(searchQuery.data?.tracks ?? []).flatMap((t) => searchTrackToCrateTrack(t) ?? [])
 	);
@@ -55,7 +57,7 @@
 	const rows = $derived<Row[]>([
 		...albums.map((a, i) => ({
 			kind: 'album' as const,
-			key: `album:${a.musicbrainz_id}:${i}`,
+			key: `album:${a.id}:${i}`,
 			album: a
 		})),
 		...tracks.map((t) => ({ kind: 'track' as const, key: `track:${t.track_file_id}`, track: t }))
@@ -77,7 +79,7 @@
 		if (!e.dataTransfer) return;
 		e.dataTransfer.setData('application/x-crate-album', JSON.stringify(a));
 		e.dataTransfer.effectAllowed = 'copy';
-		draggingId = `album:${a.musicbrainz_id}`;
+		draggingId = `album:${a.id}`;
 	}
 </script>
 
@@ -87,19 +89,19 @@
 		{#if cover}
 			<AlbumImage
 				customUrl={cover}
-				alt={a.name}
+				alt={a.title}
 				size="full"
 				rounded="none"
 				className="h-full w-full"
 			/>
 		{:else}
 			<div class="relative h-full w-full overflow-hidden">
-				<CoverPlaceholder id={a.musicbrainz_id} name={a.name} />
+				<CoverPlaceholder id={a.id} name={a.title} />
 			</div>
 		{/if}
 	</div>
 	<div class="min-w-0 flex-1">
-		<p class="truncate text-sm font-semibold text-base-content">{a.name}</p>
+		<p class="truncate text-sm font-semibold text-base-content">{a.title}</p>
 		<p class="truncate text-xs text-base-content/55">{a.artist_name}</p>
 		<span class="badge badge-xs badge-primary mt-1 gap-1 border-none">
 			<Disc3 class="h-2.5 w-2.5" /> Album
@@ -230,7 +232,7 @@
 								/>
 							{:else}
 								<div class="relative h-full w-full overflow-hidden">
-									<CoverPlaceholder id={t.album_mbid} name={t.album_name} />
+									<CoverPlaceholder id={t.album_id} name={t.album_name} />
 								</div>
 							{/if}
 						</div>

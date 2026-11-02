@@ -26,6 +26,6 @@ export const LOCAL_KEYS = {
 	search: (term: string) => key(SHARED, 'local', 'search', term),
 	decades: () => key(SHARED, 'local', 'decades'),
 	stats: (userId: UserId) => key(userScope(userId), 'local', 'stats'),
-	albumMatch: (mbid: string, page: LocalV3PageParams) =>
-		key(SHARED, 'local', 'album-match', mbid, page)
+	albumMatch: (albumId: string, page: LocalV3PageParams) =>
+		key(SHARED, 'local', 'album-match', albumId, page)
 };

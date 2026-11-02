@@ -1,13 +1,9 @@
 <script lang="ts">
-	import { v3 } from '$lib/api/v3/endpoint';
 	import { readRemoteAlbumTracks } from '$lib/queries/remotes/RemoteQueries.svelte';
 	import { fetchRemoteAlbumInfo, fetchRemoteMix } from '$lib/queries/remotes/RemoteQueries.svelte';
-	import { fetchLocalAlbumMatch } from '$lib/queries/albumMatch.svelte';
-	import { Shuffle, Play, ListPlus, ListStart, ListMusic, Info, Download } from 'lucide-svelte';
+	import { Shuffle, Play, ListPlus, ListStart, ListMusic, Info } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
-	import { downloadAlbumArchive, downloadTrackFile } from '$lib/utils/downloadActions';
 	import { playerStore } from '$lib/stores/player.svelte';
-	import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
 	import { launchRemotePlayback } from '$lib/player/launchRemotePlayback';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
@@ -18,7 +14,6 @@
 	import Modal from '$lib/ui/Modal.svelte';
 	import {
 		buildQueueItem,
-		buildQueueItemsFromLocal,
 		buildRemoteQueueItems,
 		compareDiscTrack,
 		normalizeDiscNumber,
@@ -33,22 +28,18 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import { Radio } from 'lucide-svelte';
-	import type { LocalTrackInfo, LocalAlbumSummary } from '$lib/types';
 	import type { RemoteAlbum, RemoteSource, RemoteTrack } from '$lib/queries/remotes/types';
 
 	interface Props {
 		open: boolean;
-		sourceType: RemoteSource | 'local';
-		album: RemoteAlbum | LocalAlbumSummary | null;
+		sourceType: RemoteSource;
+		album: RemoteAlbum | null;
 		onclose: () => void;
 	}
 
 	let { open = $bindable(), sourceType, album, onclose }: Props = $props();
 
-	let remoteAlbum = $derived(album && 'source' in album ? album : null);
-	let localAlbum = $derived(album && !('source' in album) ? album : null);
 	let remoteTracks = $state<RemoteTrack[]>([]);
-	let localTracks = $state<LocalTrackInfo[]>([]);
 	let loadingTracks = $state(false);
 	let trackError = $state('');
 	let fetchId = 0;
@@ -61,17 +52,13 @@
 	let infoImageUrl = $state('');
 	let infoLoading = $state(false);
 
-	let albumName = $derived(remoteAlbum?.title ?? localAlbum?.name ?? '');
+	let albumName = $derived(album?.title ?? '');
 	let artistName = $derived(album?.artist_name ?? '');
 	let year = $derived(album?.year);
-	let albumId = $derived(remoteAlbum?.id ?? localAlbum?.musicbrainz_id ?? '');
-	let mbid = $derived(
-		remoteAlbum ? (remoteAlbum.release_group_mbid ?? null) : (localAlbum?.musicbrainz_id ?? null)
-	);
-	let artistMbid = $derived(
-		remoteAlbum ? (remoteAlbum.artist_mbid ?? null) : (localAlbum?.artist_mbid ?? null)
-	);
-	let albumCoverUrl = $derived(remoteAlbum?.image_url ?? localAlbum?.cover_url ?? '');
+	let albumId = $derived(album?.id ?? '');
+	let mbid = $derived(album?.release_group_mbid ?? null);
+	let artistMbid = $derived(album?.artist_mbid ?? null);
+	let albumCoverUrl = $derived(album?.image_url ?? '');
 	let coverUrl = $derived(getCoverUrl(albumCoverUrl || null, mbid ?? albumId));
 	let canNavigate = $derived(!!mbid || !!albumName);
 	let albumHref = $derived(
@@ -82,10 +69,7 @@
 				: undefined
 	);
 	let canNavigateArtist = $derived(!!artistMbid);
-	let trackCount = $derived(remoteAlbum ? remoteTracks.length : localTracks.length);
-	// Album-level viewer permission gates both the bulk and per-track Download
-	// items (mirrors the album-page menus); fail-open on a missing bit.
-	let localDownloadAllowed = $derived(localAlbum?.download_allowed !== false);
+	let trackCount = $derived(remoteTracks.length);
 
 	$effect(() => {
 		if (open && album) {
@@ -93,7 +77,6 @@
 		}
 		if (!open) {
 			remoteTracks = [];
-			localTracks = [];
 			trackError = '';
 		}
 	});
@@ -103,14 +86,10 @@
 		loadingTracks = true;
 		trackError = '';
 		try {
-			if (remoteAlbum) {
-				const page = await readRemoteAlbumTracks(remoteAlbum.source, remoteAlbum.id);
+			if (album) {
+				const page = await readRemoteAlbumTracks(album.source, album.id);
 				if (id !== fetchId) return;
 				remoteTracks = page.items;
-			} else if (localAlbum) {
-				const match = await fetchLocalAlbumMatch(localAlbum.musicbrainz_id);
-				if (id !== fetchId) return;
-				localTracks = match.tracks;
 			}
 		} catch (e) {
 			if (id === fetchId)
@@ -140,7 +119,7 @@
 	}
 
 	async function launchInstantMix() {
-		const seed = remoteAlbum;
+		const seed = album;
 		if (seed?.source !== 'jellyfin') return;
 		mixLoading = true;
 		try {
@@ -169,7 +148,7 @@
 	}
 
 	async function openAlbumInfo() {
-		const target = remoteAlbum;
+		const target = album;
 		if (target?.source !== 'navidrome') return;
 		infoLoading = true;
 		infoOpen = true;
@@ -195,10 +174,8 @@
 			coverUrl
 		};
 
-		if (remoteAlbum && remoteTracks.length > 0) {
+		if (remoteTracks.length > 0) {
 			launchRemotePlayback([...remoteTracks].sort(compareDiscTrack), 0, shuffle, meta);
-		} else if (localAlbum && localTracks.length > 0) {
-			launchLocalPlayback([...localTracks].sort(compareDiscTrack), 0, shuffle, meta);
 		}
 	}
 
@@ -211,18 +188,11 @@
 			coverUrl
 		};
 
-		if (remoteAlbum) {
-			const track = remoteTracks[index];
-			if (track && remoteStreamKey(track) === null) return;
-			const sorted = [...remoteTracks].sort(compareDiscTrack);
-			const sortedIdx = track ? sorted.indexOf(track) : -1;
-			launchRemotePlayback(sorted, Math.max(sortedIdx, 0), false, meta);
-		} else {
-			const sorted = [...localTracks].sort(compareDiscTrack);
-			const track = localTracks[index];
-			const sortedIdx = track ? sorted.indexOf(track) : index;
-			launchLocalPlayback(sorted, sortedIdx >= 0 ? sortedIdx : index, false, meta);
-		}
+		const track = remoteTracks[index];
+		if (track && remoteStreamKey(track) === null) return;
+		const sorted = [...remoteTracks].sort(compareDiscTrack);
+		const sortedIdx = track ? sorted.indexOf(track) : -1;
+		launchRemotePlayback(sorted, Math.max(sortedIdx, 0), false, meta);
 	}
 
 	function getTrackMeta(): TrackMeta {
@@ -244,38 +214,20 @@
 	}
 
 	function buildTrackQueueItem(index: number): QueueItem | null {
-		const meta = getTrackMeta();
-		if (remoteAlbum) {
-			const track = remoteTracks[index];
-			if (!track) return null;
-			const sourceData: TrackSourceData = {
-				trackPosition: track.track_number ?? 0,
-				discNumber: normalizeDiscNumber(track.disc_number),
-				trackTitle: track.title,
-				trackLength: track.duration_secs ?? 0,
-				...remoteTrackSlot(track)
-			};
-			return buildQueueItem(meta, sourceData);
-		}
-
-		const track = localTracks[index];
+		const track = remoteTracks[index];
 		if (!track) return null;
 		const sourceData: TrackSourceData = {
-			trackPosition: track.track_number,
+			trackPosition: track.track_number ?? 0,
 			discNumber: normalizeDiscNumber(track.disc_number),
 			trackTitle: track.title,
-			trackLength: track.duration_seconds ?? undefined,
-			localTrack: track
+			trackLength: track.duration_secs ?? 0,
+			...remoteTrackSlot(track)
 		};
-		return buildQueueItem(meta, sourceData);
+		return buildQueueItem(getTrackMeta(), sourceData);
 	}
 
 	function buildAlbumQueueItems(): QueueItem[] {
-		const meta = getTrackMeta();
-		if (remoteAlbum) {
-			return buildRemoteQueueItems([...remoteTracks].sort(compareDiscTrack), meta);
-		}
-		return buildQueueItemsFromLocal([...localTracks].sort(compareDiscTrack), meta);
+		return buildRemoteQueueItems([...remoteTracks].sort(compareDiscTrack), getTrackMeta());
 	}
 
 	function addAllToQueue(): void {
@@ -303,29 +255,17 @@
 	}
 
 	function getBulkMenuItems(): MenuItem[] {
-		const items: MenuItem[] = [
+		return [
 			{ label: 'Add All to Queue', icon: ListPlus, onclick: addAllToQueue },
 			{ label: 'Play All Next', icon: ListStart, onclick: playAllNext },
 			{ label: 'Add All to Playlist', icon: ListMusic, onclick: addAllToPlaylist }
 		];
-		if (localAlbum && localAlbum.download_allowed !== false) {
-			const albumMbid = localAlbum.musicbrainz_id;
-			items.push({
-				label: 'Download Album',
-				icon: Download,
-				onclick: () =>
-					void downloadAlbumArchive(
-						v3('/api/v3/download/local/album/mbid/{mbid}', { path: { mbid: albumMbid } })
-					)
-			});
-		}
-		return items;
 	}
 
 	function getTrackContextMenuItems(index: number): MenuItem[] {
 		const queueItem = buildTrackQueueItem(index);
 		const hasQueueItem = queueItem !== null;
-		const items: MenuItem[] = [
+		return [
 			{
 				label: 'Add to Queue',
 				icon: ListPlus,
@@ -349,36 +289,18 @@
 				disabled: !hasQueueItem
 			}
 		];
-		if (localAlbum && localDownloadAllowed) {
-			const track = localTracks[index];
-			if (track) {
-				items.push({
-					label: 'Download',
-					icon: Download,
-					onclick: () =>
-						void downloadTrackFile(
-							v3('/api/v3/download/local/track/{id}', { path: { id: track.track_file_id } }),
-							track.title
-						)
-				});
-			}
-		}
-		return items;
 	}
 
 	function getTrackName(index: number): string {
-		if (remoteAlbum) return remoteTracks[index]?.title ?? '';
-		return localTracks[index]?.title ?? '';
+		return remoteTracks[index]?.title ?? '';
 	}
 
 	function getTrackNumber(index: number): number {
-		if (remoteAlbum) return remoteTracks[index]?.track_number ?? 0;
-		return localTracks[index]?.track_number ?? 0;
+		return remoteTracks[index]?.track_number ?? 0;
 	}
 
 	function getTrackDiscNumber(index: number): number {
-		if (remoteAlbum) return normalizeDiscNumber(remoteTracks[index]?.disc_number);
-		return normalizeDiscNumber(localTracks[index]?.disc_number);
+		return normalizeDiscNumber(remoteTracks[index]?.disc_number);
 	}
 
 	function formatDuration(seconds?: number | null): string {
@@ -386,11 +308,6 @@
 		const m = Math.floor(seconds / 60);
 		const s = Math.floor(seconds % 60);
 		return `${m}:${s.toString().padStart(2, '0')}`;
-	}
-
-	function formatSize(bytes: number): string {
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 	}
 
 	function isTrackPlaying(trackNum: number, discNumber: number = 1): boolean {
@@ -461,16 +378,6 @@
 						<span class="badge badge-sm badge-primary">Navidrome</span>
 					{:else if sourceType === 'plex'}
 						<span class="badge badge-sm badge-warning">Plex</span>
-					{:else if localAlbum}
-						<span class="badge badge-sm badge-accent">Local</span>
-						{#if localAlbum.primary_format}
-							<span class="badge badge-sm badge-ghost">{localAlbum.primary_format}</span>
-						{/if}
-						{#if localAlbum.total_size_bytes > 0}
-							<span class="badge badge-sm badge-ghost"
-								>{formatSize(localAlbum.total_size_bytes)}</span
-							>
-						{/if}
 					{/if}
 					{#if !mbid && albumName}
 						<span class="badge badge-sm badge-info badge-outline">Search result</span>
@@ -552,18 +459,10 @@
 								<span class="text-sm truncate flex-1 {playing ? 'text-accent' : ''}"
 									>{getTrackName(i)}</span
 								>
-								{#if remoteAlbum}
-									{@const dur = remoteTracks[i]?.duration_secs}
-									{#if dur}
-										<span class="text-xs opacity-40 shrink-0">{formatDuration(dur)}</span>
-									{/if}
-								{:else}
-									{@const lt = localTracks[i]}
-									{#if lt?.duration_seconds}
-										<span class="text-xs opacity-40 shrink-0"
-											>{formatDuration(lt.duration_seconds)}</span
-										>
-									{/if}
+								{#if remoteTracks[i]?.duration_secs}
+									<span class="text-xs opacity-40 shrink-0"
+										>{formatDuration(remoteTracks[i].duration_secs)}</span
+									>
 								{/if}
 								<span class={playing ? 'text-accent' : ''}>
 									<Play
