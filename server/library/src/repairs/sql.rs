@@ -1,8 +1,10 @@
 //! The SQL of the repairs module.
 
 use droppedneedle_kernel::db::statement::ListLen;
+use droppedneedle_kernel::db::time::Millis;
 
-use super::models::{FindingCode, FindingState};
+use super::models::{ApplyResult, Confidence, FindingCode, FindingState};
+use crate::identity::DecisionSource;
 use crate::identity::sql::REVISABLE;
 use crate::jobs::sql::live_job;
 
@@ -48,8 +50,8 @@ droppedneedle_kernel::sql! {
          FROM library_scan_failures WHERE run_id = ?1 ORDER BY recorded_at, root_id, relative_path";
     pub(super) EXPORT_JOB_COUNTS = "SELECT json_group_object(state, n) FROM \
              (SELECT state, COUNT(*) AS n FROM library_identify_jobs GROUP BY state)";
-    pub(super) ALBUM = "SELECT id, root_id, title_folded, COALESCE(album_artist_name, ''), \
-         COALESCE(album_artist_name_folded, ''), grouping_source, grouping_locked \
+    pub(super) ALBUM = "SELECT id, root_id, title_folded, COALESCE(album_artist_name, '') AS artist_name, \
+         COALESCE(album_artist_name_folded, '') AS artist_folded, grouping_source, grouping_locked \
          FROM local_albums \
          WHERE id = ?1 AND retired_into_album_id IS NULL";
     pub(super) IDENTITY = "SELECT release_group_mbid, release_mbid, decision_source \
@@ -60,10 +62,12 @@ droppedneedle_kernel::sql! {
          AND target.title_folded = ?3 AND COALESCE(target.album_artist_name_folded, '') = ?4 \
          AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = target.id \
          AND t.availability = 'indexed') ORDER BY target.id LIMIT 2";
-    pub(super) TRACKS = "SELECT t.id, t.relative_path, COALESCE(t.disc_number, 0), COALESCE(t.track_number, 0), \
-         t.tag_album_title, t.tag_album_artist_name, t.embedded_release_group_mbid, \
-         ti.release_track_mbid, ti.release_mbid, ti.decision_source, \
-         t.availability = 'indexed' FROM local_tracks t \
+    pub(super) TRACKS = "SELECT t.id, t.relative_path, COALESCE(t.disc_number, 0) AS disc, \
+         COALESCE(t.track_number, 0) AS number, t.tag_album_title AS tag_title, \
+         t.tag_album_artist_name AS tag_artist, t.embedded_release_group_mbid AS embedded_group, \
+         ti.release_track_mbid AS release_track, ti.release_mbid AS identity_release, \
+         ti.decision_source AS identity_source, \
+         t.availability = 'indexed' AS indexed FROM local_tracks t \
          LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
          AND ti.provider = ?2 WHERE t.local_album_id = ?1 ORDER BY t.id";
     pub(super) LEGACY_SPLIT_TARGET = "SELECT target.id FROM local_albums target JOIN local_album_external_identities ti \
@@ -76,8 +80,9 @@ droppedneedle_kernel::sql! {
          ORDER BY target.id LIMIT 2";
     pub(super) BUMP_ALBUM_REVISION = "UPDATE local_albums SET updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1";
     pub(super) WRITE_ALBUM_CREDITS = "DELETE FROM local_album_artists WHERE local_album_id = ?1";
-    pub(super) TRACK_ARTIST_TAGS = "SELECT id, COALESCE(album_artist_name, ''), album_artist_provenance = 'tag', \
-             album_artist_sort, COALESCE(artist_name, '') FROM local_tracks \
+    pub(super) TRACK_ARTIST_TAGS = "SELECT id, COALESCE(album_artist_name, '') AS album_artist, \
+             album_artist_provenance = 'tag' AS album_artist_from_tag, \
+             album_artist_sort, COALESCE(artist_name, '') AS artist FROM local_tracks \
              WHERE local_album_id = ?1 AND availability = 'indexed' \
              ORDER BY disc_number, track_number, id";
     pub(super) ALBUM_HAS_PERSON_CHOICE = "SELECT EXISTS(SELECT 1 FROM library_catalog_actions \
@@ -100,14 +105,15 @@ droppedneedle_kernel::sql! {
     pub(super) DROP_REPAIR_IDENTIFY_JOB = "DELETE FROM library_identify_jobs WHERE local_album_id = ?1 \
                  AND state = 'queued' AND kind = 'historical' \
                  AND requested_by_user_id IS NULL AND created_at = ?2";
-    pub(super) BY_RECORDING = "SELECT t.id, COALESCE(ti.recording_mbid, t.embedded_recording_mbid) = ?1 \
+    pub(super) BY_RECORDING = "SELECT t.id, COALESCE(ti.recording_mbid, t.embedded_recording_mbid) = ?1 AS unchallenged \
          FROM local_tracks t \
          LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
          WHERE t.id IN (SELECT local_track_id FROM local_track_external_identities \
                         WHERE recording_mbid = ?1 \
                         UNION SELECT id FROM local_tracks WHERE embedded_recording_mbid = ?1) \
          AND t.availability = 'indexed' ORDER BY t.id";
-    pub(super) NAME_FITS = "SELECT t.id, t.duration_seconds, ti.recording_mbid, t.embedded_recording_mbid \
+    pub(super) NAME_FITS = "SELECT t.id, t.duration_seconds AS seconds, ti.recording_mbid AS accepted, \
+         t.embedded_recording_mbid AS tag \
          FROM local_tracks t \
          LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
          WHERE t.title_folded = ?1 AND t.artist_name_folded = ?2 \
@@ -115,12 +121,12 @@ droppedneedle_kernel::sql! {
          ORDER BY t.id LIMIT 2";
     pub(super) REPAIR_ALREADY_ACTIVE = "SELECT EXISTS(SELECT 1 FROM library_operation_jobs j \
          JOIN library_repair_snapshots s ON s.job_id = j.id \
-         WHERE j.kind = 'repair' AND j.state IN ('queued','running','paused') \
+         WHERE j.kind = ?2 AND j.state IN (?3, ?4, ?5) \
          AND s.purpose = ?1)";
     pub(super) CATALOG_REVISION = "SELECT value FROM library_catalog_revision WHERE singleton = 1";
     pub(super) QUEUE_REPAIR_JOB = "INSERT INTO library_operation_jobs (id, kind, state, input_catalog_revision, \
          expected_work_count, idempotency_key, created_at, updated_at) \
-         VALUES (?1, 'repair', 'queued', ?2, ?3, ?4, ?5, ?5) \
+         VALUES (?1, ?6, ?7, ?2, ?3, ?4, ?5, ?5) \
          ON CONFLICT (idempotency_key) DO NOTHING";
     pub(super) QUEUE_REPAIR_SNAPSHOT = "INSERT INTO library_repair_snapshots (job_id, purpose, scope_json, \
          target_matcher_version, created_at) VALUES (?1, ?2, ?3, ?4, ?5)";
@@ -158,7 +164,7 @@ droppedneedle_kernel::sql! {
          created_at, updated_at) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, 1, ?7, ?7)";
     pub(super) SET_EXPECTED_WORK_COUNT = "UPDATE library_operation_jobs SET expected_work_count = ?2 WHERE id = ?1";
     pub(super) QUEUED = "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE idempotency_key = ?1)";
-    pub(super) IDENTIFIED_WATERMARK = "SELECT identified_at, identified_job_id FROM library_repair_watermarks \
+    pub(super) IDENTIFIED_WATERMARK = "SELECT identified_at AS at_ms, identified_job_id AS job_id FROM library_repair_watermarks \
              WHERE singleton = 1";
     pub(super) SET_IDENTIFIED_WATERMARK = "INSERT INTO library_repair_watermarks (singleton, identified_at, identified_job_id) \
          VALUES (1, ?1, ?2) ON CONFLICT (singleton) DO UPDATE SET \
@@ -184,7 +190,7 @@ droppedneedle_kernel::sql! {
          ORDER BY j.created_at DESC, j.id DESC LIMIT ?4";
     pub(super) SUBJECT_ALBUM_IDENTITY = "SELECT release_group_mbid, release_mbid, decision_source, row_revision \
              FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2";
-    pub(super) SUBJECT_TRACK_IDENTITIES = "SELECT t.id, ti.recording_mbid, ti.release_mbid, ti.release_track_mbid, \
+    pub(super) SUBJECT_TRACK_IDENTITIES = "SELECT t.id AS local_track_id, ti.recording_mbid, ti.release_mbid, ti.release_track_mbid, \
          ti.medium_position, ti.release_track_position FROM local_tracks t \
          LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
          AND ti.provider = ?2 WHERE t.local_album_id = ?1 AND +t.availability = 'indexed' \
@@ -211,9 +217,9 @@ droppedneedle_kernel::sql! {
          reason_code = 'EXACT_EDITION_AUTO_ACCEPTED', apply_eligible = 0, state = ?5, \
          apply_result = ?6, updated_at = ?3, row_revision = row_revision + 1 \
          WHERE job_id = ?1 AND local_album_id = ?2 AND finding_code = ?7";
-    pub(super) FINDING_COUNTS = "SELECT finding_code, reason_code, COUNT(*) FROM library_identity_repair_findings \
+    pub(super) FINDING_COUNTS = "SELECT finding_code, reason_code, COUNT(*) AS finding_count FROM library_identity_repair_findings \
          WHERE job_id = ?1 GROUP BY finding_code, reason_code";
-    pub(super) FINDING_ALBUMS_BY_ROOT = "SELECT a.root_id, COUNT(DISTINCT f.local_album_id) FROM library_identity_repair_findings f \
+    pub(super) FINDING_ALBUMS_BY_ROOT = "SELECT a.root_id, COUNT(DISTINCT f.local_album_id) AS album_count FROM library_identity_repair_findings f \
          JOIN local_albums a ON a.id = f.local_album_id WHERE f.job_id = ?1 \
          GROUP BY a.root_id ORDER BY a.root_id";
     pub(super) FINDING_TRACK_COUNT = "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed' AND local_album_id IN \
@@ -237,9 +243,9 @@ droppedneedle_kernel::sql! {
     pub(super) INSERT_ALBUM_CREDIT = "INSERT INTO local_album_artists (local_album_id, position, \
      local_artist_id, role, credited_name, join_phrase, artist_mbid) \
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
-    pub(super) TRACK_CREDITS = "SELECT local_artist_id, credited_name, join_phrase, artist_mbid, \
-     'main' FROM local_track_artists WHERE local_track_id = ?1 ORDER BY position";
-    pub(super) ALBUM_CREDITS = "SELECT local_artist_id, credited_name, join_phrase, artist_mbid, \
+    pub(super) TRACK_CREDITS = "SELECT local_artist_id AS artist_id, credited_name, join_phrase, artist_mbid, \
+     'main' AS role FROM local_track_artists WHERE local_track_id = ?1 ORDER BY position";
+    pub(super) ALBUM_CREDITS = "SELECT local_artist_id AS artist_id, credited_name, join_phrase, artist_mbid, \
      role FROM local_album_artists WHERE local_album_id = ?1 ORDER BY position";
     /// A row no repair has filed: it names no track, album or artist.
     pub(super) fragment UNFILED = "local_track_id IS NULL AND local_album_id IS NULL AND local_artist_id IS NULL";
@@ -273,17 +279,18 @@ droppedneedle_kernel::sql! {
    FROM library_custom_edition_active ac JOIN library_custom_edition_manifests m \
    ON m.id = ac.manifest_id WHERE ac.local_album_id = a.id), 0)";
     pub(super) UNFILED_COUNT = "SELECT COUNT(*) FROM library_play_history WHERE " + UNFILED;
-    pub(super) STEP = "SELECT rowid, CAST(track_name AS TEXT), CAST(artist_name AS TEXT), \
-             CAST(album_name AS TEXT), CAST(recording_mbid AS TEXT), \
-             CAST(release_group_mbid AS TEXT), CAST(duration_ms AS INTEGER), \
-             CAST(source AS TEXT) FROM library_play_history \
+    pub(super) STEP = "SELECT rowid AS play_rowid, CAST(track_name AS TEXT) AS track_name, \
+             CAST(artist_name AS TEXT) AS artist_name, CAST(album_name AS TEXT) AS album_name, \
+             CAST(recording_mbid AS TEXT) AS recording_mbid, \
+             CAST(release_group_mbid AS TEXT) AS release_group_mbid, \
+             CAST(duration_ms AS INTEGER) AS duration_ms, CAST(source AS TEXT) AS source FROM library_play_history \
              WHERE " + UNFILED + " AND rowid > ?1 ORDER BY rowid LIMIT ?2";
     pub(super) HYGIENE_CANDIDATES_EXIST = "SELECT EXISTS(SELECT 1 FROM local_albums a \
              WHERE a.retired_into_album_id IS NULL AND " + HYGIENE_CANDIDATE + ")";
-    pub(super) NEWEST_IDENTIFIED = "SELECT updated_at, id FROM library_identify_jobs \
+    pub(super) NEWEST_IDENTIFIED = "SELECT updated_at AS at_ms, id AS job_id FROM library_identify_jobs \
                  WHERE state IN " + IDENTIFY_FINISHED + " ORDER BY updated_at DESC, id DESC LIMIT 1";
-    pub(super) IDENTIFIED_AFTER = "SELECT j.updated_at, j.id, a.id, \
-         a.retired_into_album_id IS NULL AND " + HYGIENE_CANDIDATE + " \
+    pub(super) IDENTIFIED_AFTER = "SELECT j.updated_at AS at_ms, j.id AS job_id, a.id AS album_id, \
+         a.retired_into_album_id IS NULL AND " + HYGIENE_CANDIDATE + " AS candidate \
          FROM library_identify_jobs j JOIN local_albums a ON a.id = j.local_album_id \
          WHERE j.state IN " + IDENTIFY_FINISHED + " \
          AND (j.updated_at > ?1 OR (j.updated_at = ?1 AND j.id > ?2)) \
@@ -357,16 +364,16 @@ droppedneedle_kernel::sql! {
          ORDER BY a.id";
     pub(super) EDITION_ID_ALBUMS = "SELECT a.id, i.release_mbid, EXISTS (SELECT 1 FROM library_artist_reconciliation_state s \
              WHERE s.local_album_id = a.id AND s.state = 'waiting_for_identity' \
-             AND s.reason_code = ?2), \
+             AND s.reason_code = ?2) AS fetching, \
          EXISTS (SELECT 1 FROM local_tracks t \
              WHERE t.local_album_id = a.id AND +t.availability = 'indexed' \
              AND NOT EXISTS (SELECT 1 FROM local_track_edition_tags h \
-                 WHERE h.local_track_id = t.id)), \
+                 WHERE h.local_track_id = t.id)) AS unread, \
          EXISTS (SELECT 1 FROM local_tracks t \
              JOIN local_track_edition_tags h ON h.local_track_id = t.id \
              WHERE t.local_album_id = a.id AND +t.availability = 'indexed' \
              AND (trim(COALESCE(h.barcode, '')) <> '' \
-                 OR trim(COALESCE(h.catalog_number, '')) <> '')) \
+                 OR trim(COALESCE(h.catalog_number, '')) <> '')) AS tagged \
          FROM local_albums a \
          JOIN local_album_external_identities i \
              ON i.local_album_id = a.id AND i.provider = ?1 \
@@ -389,6 +396,184 @@ droppedneedle_kernel::sql! {
     family ALBUMS_HAVE_LIVE_WORK = albums_have_live_work;
     /// Move a list of tracks to the album bound first.
     family MOVE_TRACKS_TO_ALBUM = move_tracks_to_album;
+
+    pub(super) row SnapshotRow for [SNAPSHOT] {
+        purpose: Option<String>,
+        phase: String,
+        scope_json: String,
+        target_matcher_version: String,
+        result_json: Option<String>,
+    }
+    pub(super) row HistoryRow for [HISTORY] {
+        id: String,
+        purpose: Option<String>,
+        phase: String,
+        scope_json: String,
+        target_matcher_version: String,
+        result_json: Option<String>,
+    }
+    pub(super) row WatermarkRow for [NEWEST_IDENTIFIED, IDENTIFIED_WATERMARK] {
+        at_ms: i64,
+        job_id: String,
+    }
+    pub(super) row IdentifiedRow for [IDENTIFIED_AFTER] {
+        at_ms: i64,
+        job_id: String,
+        album_id: String,
+        candidate: bool,
+    }
+    pub(super) row ConfirmedAlbum for [CONFIRMED_ALBUMS_WITH_GROUP] {
+        id: String,
+        release_group_mbid: String,
+    }
+    pub(super) row EditionCandidate for [EDITION_ID_ALBUMS] {
+        id: String,
+        release_mbid: String,
+        fetching: bool,
+        unread: bool,
+        tagged: bool,
+    }
+    pub(super) row EditionTags for [ALBUM_EDITION_TAGS] {
+        barcode: Option<String>,
+        catalog_number: Option<String>,
+    }
+    pub(super) row PreparationRow for family [preparation_estimate] {
+        release_group_mbid: Option<String>,
+        release_mbid: Option<String>,
+        tracks: i64,
+        mapped: i64,
+        custom_current: bool,
+    }
+    pub(super) row SubjectIdentity for [SUBJECT_ALBUM_IDENTITY] {
+        release_group_mbid: Option<String>,
+        release_mbid: Option<String>,
+        decision_source: DecisionSource,
+        row_revision: i64,
+    }
+    pub(super) row SubjectTrack for [SUBJECT_TRACK_IDENTITIES] {
+        local_track_id: String,
+        recording_mbid: Option<String>,
+        release_mbid: Option<String>,
+        release_track_mbid: Option<String>,
+        medium_position: Option<i64>,
+        release_track_position: Option<i64>,
+    }
+    pub(super) row FindingCount for [FINDING_COUNTS] {
+        finding_code: FindingCode,
+        reason_code: String,
+        finding_count: i64,
+    }
+    pub(super) row RootAlbumCount for [FINDING_ALBUMS_BY_ROOT] {
+        root_id: String,
+        album_count: i64,
+    }
+    pub(super) row OpenFindingRow for [OPEN_FINDING] {
+        id: String,
+        finding_code: FindingCode,
+        suggested_edition_json: String,
+    }
+    pub(super) row FindingPageRow for family [findings_page] {
+        id: String,
+        local_album_id: String,
+        album_title: String,
+        album_artist_name: Option<String>,
+        album_year: Option<i64>,
+        cover_available: bool,
+        review_id: Option<String>,
+        finding_code: FindingCode,
+        reason_code: String,
+        confidence: Confidence,
+        apply_eligible: bool,
+        state: FindingState,
+        apply_result: Option<ApplyResult>,
+        suggested_release_mbid: Option<String>,
+        suggested_release_group_mbid: Option<String>,
+        suggested_edition_json: String,
+        updated_at: Millis,
+        row_revision: i64,
+    }
+    pub(super) row CurrentFindingCount for family [finding_counts] {
+        finding_code: FindingCode,
+        finding_count: i64,
+    }
+    #[derive(Debug, Clone)]
+    pub(super) row HygieneAlbum for [ALBUM] {
+        id: String,
+        root_id: String,
+        title_folded: String,
+        artist_name: String,
+        artist_folded: String,
+        grouping_source: String,
+        grouping_locked: bool,
+    }
+    pub(super) row HygieneIdentity for [IDENTITY] {
+        release_group_mbid: String,
+        release_mbid: Option<String>,
+        decision_source: DecisionSource,
+    }
+    #[derive(Debug, Clone)]
+    pub(super) row HygieneTrack for [TRACKS] {
+        id: String,
+        relative_path: String,
+        disc: i64,
+        number: i64,
+        tag_title: Option<String>,
+        tag_artist: Option<String>,
+        embedded_group: Option<String>,
+        release_track: Option<String>,
+        identity_release: Option<String>,
+        identity_source: Option<DecisionSource>,
+        indexed: bool,
+    }
+    pub(super) row CreditColumns for [TRACK_CREDITS, ALBUM_CREDITS] {
+        artist_id: String,
+        credited_name: Option<String>,
+        join_phrase: String,
+        artist_mbid: Option<String>,
+        role: String,
+    }
+    pub(super) row NamedTrack for [TRACK_ARTIST_TAGS] {
+        id: String,
+        album_artist: String,
+        album_artist_from_tag: bool,
+        album_artist_sort: Option<String>,
+        artist: String,
+    }
+    pub(super) row AlbumArtistAndSort for [ALBUM_ARTIST_ID_AND_SORT] {
+        album_artist_id: String,
+        album_artist_sort_name: Option<String>,
+    }
+    pub(super) row ArtistRepairAction for [ARTIST_REPAIR_ACTION] {
+        local_album_id: Option<String>,
+        before_json: String,
+        after_json: String,
+    }
+    pub(super) row LiveAlbumArtist for [LIVE_ALBUM_ARTIST] {
+        album_artist_id: Option<String>,
+        album_artist_name: Option<String>,
+        album_artist_name_folded: Option<String>,
+        album_artist_sort_name: Option<String>,
+    }
+    pub(super) row RecordingFit for [BY_RECORDING] {
+        id: String,
+        unchallenged: bool,
+    }
+    pub(super) row NameFit for [NAME_FITS] {
+        id: String,
+        seconds: Option<f64>,
+        accepted: Option<String>,
+        tag: Option<String>,
+    }
+    pub(super) row UnfiledPlay for [STEP] {
+        play_rowid: i64,
+        track_name: String,
+        artist_name: String,
+        album_name: Option<String>,
+        recording_mbid: Option<String>,
+        release_group_mbid: Option<String>,
+        duration_ms: Option<i64>,
+        source: Option<String>,
+    }
 }
 
 pub(super) fn albums_have_live_work(albums: ListLen) -> String {
@@ -556,11 +741,12 @@ pub(super) fn findings_page(
         filter.push_str(" AND (f.updated_at < ? OR (f.updated_at = ? AND f.id < ?))");
     }
     format!(
-        "SELECT f.id, f.local_album_id, a.title, a.album_artist_name, a.year, \
+        "SELECT f.id, f.local_album_id, a.title AS album_title, a.album_artist_name, \
+         a.year AS album_year, \
          (EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
-          OR i.release_group_mbid IS NOT NULL), \
+          OR i.release_group_mbid IS NOT NULL) AS cover_available, \
          (SELECT r.id FROM library_identify_reviews r WHERE r.local_album_id = f.local_album_id \
-          ORDER BY r.updated_at DESC, r.id DESC LIMIT 1), \
+          ORDER BY r.updated_at DESC, r.id DESC LIMIT 1) AS review_id, \
          f.finding_code, f.reason_code, f.confidence, f.apply_eligible, f.state, \
          f.apply_result, f.suggested_release_mbid, f.suggested_release_group_mbid, \
          f.suggested_edition_json, f.updated_at, f.row_revision \
@@ -570,7 +756,7 @@ pub(super) fn findings_page(
 
 pub(super) fn finding_counts(current: bool) -> String {
     format!(
-        "SELECT f.finding_code, COUNT(*) {} GROUP BY f.finding_code",
+        "SELECT f.finding_code, COUNT(*) AS finding_count {} GROUP BY f.finding_code",
         findings_from(current)
     )
 }

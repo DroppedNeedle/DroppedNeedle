@@ -241,6 +241,7 @@ Run from the repo root. `make help` lists every target.
   `schema = V2;` and is prepared against the v2 fixture.
 - A statement that answers more than one column is read through a `row` in its
   `sql!` block, whose fields the schema test holds to the statement's columns.
+  A family's row names its builders (`row Name for family [builder]`).
 - Migrations are numbered and forward-only. Never edit or renumber a shipped
   one. Each new one ships an upgrade test. They land on `v3` in number
   order: the runner skips any migration below the database's version, so a

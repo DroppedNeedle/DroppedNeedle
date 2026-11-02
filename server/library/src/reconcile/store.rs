@@ -20,7 +20,11 @@ use super::models::{
 };
 use super::reasons;
 use crate::corrections::artist_convergence::{MOVED_BY_NAME, MOVED_WITH_ID};
-use crate::corrections::sql::{ReferenceKind, references_of};
+use crate::corrections::sql::{ReferenceCount, ReferenceKind, references_of};
+use crate::reconcile::sql::{
+    CandidateRow, DismissalRow, EvidenceRow, MergeActionRow, MergedArtist, MovedPair, OwnedRow,
+    SharedPair,
+};
 use droppedneedle_kernel::db::statement::{Choice, ListLen};
 
 /// Everything the grouping rules read.
@@ -31,11 +35,12 @@ pub fn inputs(conn: &Connection) -> Result<GroupInputs, ReconcileError> {
     let dismissals = conn
         .prepare(crate::reconcile::sql::INPUTS.text())?
         .query_map([], |row| {
+            let row = DismissalRow::read(row)?;
             Ok(Dismissal {
-                left_id: row.get(0)?,
-                right_id: row.get(1)?,
-                left_revision: row.get(2)?,
-                right_revision: row.get(3)?,
+                left_id: row.left_artist_id,
+                right_id: row.right_artist_id,
+                left_revision: row.left_artist_revision,
+                right_revision: row.right_artist_revision,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -63,25 +68,26 @@ pub fn inputs(conn: &Connection) -> Result<GroupInputs, ReconcileError> {
 }
 
 fn candidate_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Candidate> {
+    let row = CandidateRow::read(row)?;
     Ok(Candidate {
         member: Member {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            sort_name: row.get(2)?,
-            row_revision: row.get(3)?,
-            provider_mbid: row.get(4)?,
+            id: row.id,
+            name: row.display_name,
+            sort_name: row.sort_name,
+            row_revision: row.row_revision,
+            provider_mbid: row.provider_artist_id,
             counts: ReferenceCounts {
-                album_credits: row.get(7)?,
-                track_credits: row.get(8)?,
-                primary_albums: row.get(9)?,
-                favorites: row.get(10)?,
-                ratings: row.get(12)?,
-                history: row.get(11)?,
+                album_credits: row.album_credits,
+                track_credits: row.track_credits,
+                primary_albums: row.primary_albums,
+                favorites: row.favorites,
+                ratings: row.ratings,
+                history: row.history,
                 proven_credits: 0,
             },
         },
-        folded_name: row.get(5)?,
-        created_at: row.get(6)?,
+        folded_name: row.folded_name,
+        created_at: row.created_at,
         proof_mbids: Vec::new(),
     })
 }
@@ -108,7 +114,8 @@ fn moved_groups(conn: &Connection) -> Result<Vec<Vec<Candidate>>, ReconcileError
     let pairs: Vec<(String, String)> = conn
         .prepare(crate::reconcile::sql::EMPTIED_MOVED_PAIRS.text())?
         .query_map(params![MOVED_BY_NAME, MOVED_WITH_ID], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            let row = MovedPair::read(row)?;
+            Ok((row.left_artist_id, row.right_artist_id))
         })?
         .collect::<rusqlite::Result<_>>()?;
     let mut ids: Vec<(String, Vec<String>)> = Vec::new();
@@ -138,7 +145,8 @@ fn shared_groups(conn: &Connection) -> Result<Vec<Vec<Candidate>>, ReconcileErro
     let pairs: Vec<(String, String)> = conn
         .prepare(crate::reconcile::sql::SHARED_GROUPS.text())?
         .query_map(params![reasons::SHARED_PROVIDER_IDENTITY.code], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            let row = SharedPair::read(row)?;
+            Ok((row.left_artist_id, row.right_artist_id))
         })?
         .collect::<rusqlite::Result<_>>()?;
     let mut member = conn.prepare(crate::reconcile::sql::CANDIDATE_BY_ID.text())?;
@@ -179,21 +187,21 @@ fn with_proofs(conn: &Connection, rows: &mut [Candidate]) -> Result<(), Reconcil
 /// Automatic merges from the catalog action log, newest first. Rows whose
 /// payload does not name a survivor and retired records are skipped.
 fn merges(conn: &Connection) -> Result<Vec<MergeAction>, ReconcileError> {
-    let rows: Vec<(String, String, Option<String>, f64)> = conn
+    let rows: Vec<MergeActionRow> = conn
         .prepare(crate::reconcile::sql::AUTOMATIC_MERGE_ACTIONS.text())?
-        .query_map([], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                crate::clock::secs_at(row, 3)?,
-            ))
-        })?
+        .query_map([], MergeActionRow::read)?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows
         .into_iter()
-        .filter_map(|(id, after, reason_code, created_at)| {
-            let after: serde_json::Value = match serde_json::from_str(&after) {
+        .filter_map(|row| {
+            let MergeActionRow {
+                id,
+                after_json,
+                reason_code,
+                created_at,
+            } = row;
+            let created_at = crate::clock::at_secs(created_at);
+            let after: serde_json::Value = match serde_json::from_str(&after_json) {
                 Ok(value) => value,
                 Err(error) => {
                     tracing::warn!(action_id = id, %error, "artist merge action has unreadable JSON; not listed");
@@ -243,12 +251,13 @@ fn merged_artists(
         ids.len(),
     )))?;
     let rows = stmt.query_map(params_from_iter(ids.iter()), |row| {
+        let row = MergedArtist::read(row)?;
         Ok(Member {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            sort_name: row.get(2)?,
-            row_revision: row.get(3)?,
-            provider_mbid: row.get(4)?,
+            id: row.id,
+            name: row.display_name,
+            sort_name: row.sort_name,
+            row_revision: row.row_revision,
+            provider_mbid: row.provider_artist_id,
             counts: ReferenceCounts::default(),
         })
     })?;
@@ -258,12 +267,10 @@ fn merged_artists(
     }
     for kind in <ReferenceKind as Choice>::all() {
         let mut stmt = conn.prepare(&references_of(kind, ListLen::new(ids.len())))?;
-        let rows = stmt.query_map(params_from_iter(ids.iter()), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })?;
+        let rows = stmt.query_map(params_from_iter(ids.iter()), ReferenceCount::read)?;
         for row in rows {
-            let (id, count) = row?;
-            *totals.entry(id).or_insert(0) += count;
+            let row = row?;
+            *totals.entry(row.id).or_insert(0) += row.count;
         }
     }
     Ok((artists, totals))
@@ -292,31 +299,33 @@ pub fn references(conn: &Connection, ids: &[String]) -> Result<GroupReferences, 
             unique.len(),
         )))?
         .query_map(params_from_iter(twice()), |row| {
+            let row = EvidenceRow::read(row)?;
             Ok(CreditEvidence {
-                subject_kind: row.get(0)?,
-                subject_id: row.get(1)?,
-                subject_name: row.get(2)?,
-                source_local_artist_id: row.get(3)?,
-                local_artist_id: row.get(4)?,
-                artist_mbid: row.get(5)?,
-                canonical_name: row.get(6)?,
-                credited_name: row.get(7)?,
-                join_phrase: row.get(8)?,
-                release_mbid: row.get(9)?,
-                release_track_mbid: row.get(10)?,
-                album_identity_revision: row.get(11)?,
-                track_identity_revision: row.get(12)?,
-                evidence_hash: row.get(13)?,
+                subject_kind: row.subject_kind,
+                subject_id: row.subject_id,
+                subject_name: row.subject_name,
+                source_local_artist_id: row.source_local_artist_id,
+                local_artist_id: row.local_artist_id,
+                artist_mbid: row.artist_mbid,
+                canonical_name: row.canonical_name,
+                credited_name: row.credited_name,
+                join_phrase: row.join_phrase,
+                release_mbid: row.release_mbid,
+                release_track_mbid: row.release_track_mbid,
+                album_identity_revision: row.album_identity_revision,
+                track_identity_revision: row.track_identity_revision,
+                evidence_hash: row.evidence_hash,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
     let owned = |row: &rusqlite::Row<'_>| {
+        let row = OwnedRow::read(row)?;
         Ok(OwnedReference {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            row_revision: row.get(2)?,
-            identity_ready: row.get(3)?,
-            exact_track_mapping_ready: row.get(4)?,
+            id: row.id,
+            name: row.title,
+            row_revision: row.row_revision,
+            identity_ready: row.identity_ready,
+            exact_track_mapping_ready: row.exact_track_mapping_ready,
         })
     };
     let releases = conn

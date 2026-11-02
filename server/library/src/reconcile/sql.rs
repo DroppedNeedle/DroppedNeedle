@@ -1,6 +1,7 @@
 //! The SQL of the reconcile module.
 
 use droppedneedle_kernel::db::statement::ListLen;
+use droppedneedle_kernel::db::time::Millis;
 
 use crate::corrections::artist_convergence::{MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID};
 use crate::identify::sql::CURRENT_PROOF;
@@ -81,19 +82,19 @@ droppedneedle_kernel::sql! {
            identity.provider_artist_id, artist.folded_name, artist.created_at, \
            (SELECT COUNT(*) FROM local_album_artists credit \
               JOIN local_albums album ON album.id = credit.local_album_id \
-              WHERE credit.local_artist_id = artist.id AND " + ACTIVE_ALBUM + "), \
+              WHERE credit.local_artist_id = artist.id AND " + ACTIVE_ALBUM + ") AS album_credits, \
            (SELECT COUNT(*) FROM local_track_artists credit \
               JOIN local_tracks track ON track.id = credit.local_track_id \
               JOIN local_albums album ON album.id = track.local_album_id \
               WHERE credit.local_artist_id = artist.id \
-                AND album.retired_into_album_id IS NULL AND +track.availability = 'indexed'), \
+                AND album.retired_into_album_id IS NULL AND +track.availability = 'indexed') AS track_credits, \
            (SELECT COUNT(*) FROM local_albums album \
-              WHERE album.album_artist_id = artist.id AND " + ACTIVE_ALBUM + "), \
+              WHERE album.album_artist_id = artist.id AND " + ACTIVE_ALBUM + ") AS primary_albums, \
            (SELECT COUNT(*) FROM library_user_favorites \
-              WHERE item_kind = 'artist' AND item_id = artist.id), \
-           (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = artist.id), \
+              WHERE item_kind = 'artist' AND item_id = artist.id) AS favorites, \
+           (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = artist.id) AS history, \
            (SELECT COUNT(*) FROM library_user_ratings \
-              WHERE item_kind = 'artist' AND item_id = artist.id)";
+              WHERE item_kind = 'artist' AND item_id = artist.id) AS ratings";
     /// Live records that share a folded name with another active one, or that a scan emptied with every credit moved to a row of the same name.
     pub(super) SAME_NAME_CANDIDATES = "WITH active_artists AS ( \
            SELECT credit.local_artist_id id FROM local_album_artists credit \
@@ -135,6 +136,78 @@ droppedneedle_kernel::sql! {
     family GROUP_OWNED_ALBUMS = group_owned_albums;
     family GROUP_OWNED_TRACKS = group_owned_tracks;
     family DISMISS_GROUP_CANDIDATES = dismiss_group_candidates;
+
+    pub(super) row DismissalRow for [INPUTS] {
+        left_artist_id: String,
+        right_artist_id: String,
+        left_artist_revision: i64,
+        right_artist_revision: i64,
+    }
+    pub(super) row CandidateRow for [SAME_NAME_CANDIDATES, CANDIDATE_BY_ID] {
+        id: String,
+        display_name: String,
+        sort_name: Option<String>,
+        row_revision: i64,
+        provider_artist_id: Option<String>,
+        folded_name: String,
+        created_at: f64,
+        album_credits: i64,
+        track_credits: i64,
+        primary_albums: i64,
+        favorites: i64,
+        history: i64,
+        ratings: i64,
+    }
+    /// `created_at` is there for the DISTINCT list's order.
+    #[allow(dead_code)]
+    pub(super) row MovedPair for [EMPTIED_MOVED_PAIRS] {
+        left_artist_id: String,
+        right_artist_id: String,
+        created_at: f64,
+    }
+    pub(super) row SharedPair for [SHARED_GROUPS] {
+        left_artist_id: String,
+        right_artist_id: String,
+    }
+    pub(super) row MergeActionRow for [AUTOMATIC_MERGE_ACTIONS] {
+        id: String,
+        after_json: String,
+        reason_code: Option<String>,
+        created_at: Millis,
+    }
+    pub(super) row MergedArtist for family [merged_artist_rows] {
+        id: String,
+        display_name: String,
+        sort_name: Option<String>,
+        row_revision: i64,
+        provider_artist_id: Option<String>,
+    }
+    pub(super) row EvidenceRow for family [group_credit_evidence] {
+        subject_kind: String,
+        subject_id: String,
+        subject_name: String,
+        source_local_artist_id: Option<String>,
+        local_artist_id: String,
+        artist_mbid: String,
+        canonical_name: String,
+        credited_name: String,
+        join_phrase: String,
+        release_mbid: String,
+        release_track_mbid: Option<String>,
+        album_identity_revision: i64,
+        track_identity_revision: Option<i64>,
+        evidence_hash: String,
+    }
+    /// `title_folded` is there for the DISTINCT list's order.
+    #[allow(dead_code)]
+    pub(super) row OwnedRow for family [group_owned_albums, group_owned_tracks] {
+        id: String,
+        title: String,
+        row_revision: i64,
+        identity_ready: bool,
+        exact_track_mapping_ready: bool,
+        title_folded: String,
+    }
 }
 
 pub(super) fn merged_artist_rows(ids: ListLen) -> String {
@@ -152,7 +225,7 @@ pub(super) fn group_credit_evidence(ids: ListLen) -> String {
     let marks = crate::sql::marks(ids);
     format!(
         "SELECT p.subject_kind, p.subject_id, \
-               COALESCE(subject_album.title, subject_track.title, p.subject_id), \
+               COALESCE(subject_album.title, subject_track.title, p.subject_id) AS subject_name, \
                p.source_local_artist_id, p.local_artist_id, p.artist_mbid, \
                p.canonical_name, p.credited_name, p.join_phrase, p.release_mbid, \
                p.release_track_mbid, p.album_identity_revision, \
@@ -174,14 +247,15 @@ pub(super) fn group_owned_albums(ids: ListLen) -> String {
     let marks = crate::sql::marks(ids);
     format!(
         "SELECT DISTINCT album.id, album.title, album.row_revision, \
-               album_identity.release_mbid IS NOT NULL, \
+               album_identity.release_mbid IS NOT NULL AS identity_ready, \
                NOT EXISTS (SELECT 1 FROM local_tracks child \
                  LEFT JOIN local_track_external_identities track_identity \
                    ON track_identity.local_track_id = child.id \
                   AND track_identity.provider = 'musicbrainz' \
                  WHERE child.local_album_id = album.id AND +child.availability = 'indexed' \
                    AND (track_identity.release_track_mbid IS NULL \
-                    OR track_identity.release_mbid IS NOT album_identity.release_mbid)), \
+                    OR track_identity.release_mbid IS NOT album_identity.release_mbid)) \
+                 AS exact_track_mapping_ready, \
                album.title_folded \
              FROM local_albums album \
              LEFT JOIN local_album_external_identities album_identity \
@@ -197,9 +271,10 @@ pub(super) fn group_owned_tracks(ids: ListLen) -> String {
     let marks = crate::sql::marks(ids);
     format!(
         "SELECT DISTINCT track.id, track.title, track.row_revision, \
-               album_identity.release_mbid IS NOT NULL, \
+               album_identity.release_mbid IS NOT NULL AS identity_ready, \
                track_identity.release_track_mbid IS NOT NULL \
-                 AND track_identity.release_mbid IS album_identity.release_mbid, \
+                 AND track_identity.release_mbid IS album_identity.release_mbid \
+                 AS exact_track_mapping_ready, \
                track.title_folded \
              FROM local_tracks track \
              JOIN local_albums album ON album.id = track.local_album_id \

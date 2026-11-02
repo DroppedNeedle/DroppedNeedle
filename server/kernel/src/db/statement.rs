@@ -51,7 +51,8 @@
 //! statement in its `for` list to the struct: the columns it answers must
 //! be the fields, by name and in order. A column with no name of its own
 //! (`COUNT(*)`) takes an `AS`. A statement with a single column needs no
-//! row.
+//! row. A family's row names its builders, `row Name for family [builder]`,
+//! and the test holds every statement they make to it.
 
 /// One named statement. Pass [`Statement::text`] to rusqlite or sqlx.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,6 +239,7 @@ pub struct RowShape {
     name: &'static str,
     columns: &'static [&'static str],
     statements: &'static [Statement],
+    families: &'static [Family],
 }
 
 impl RowShape {
@@ -246,11 +248,13 @@ impl RowShape {
         name: &'static str,
         columns: &'static [&'static str],
         statements: &'static [Statement],
+        families: &'static [Family],
     ) -> Self {
         Self {
             name,
             columns,
             statements,
+            families,
         }
     }
 
@@ -267,6 +271,11 @@ impl RowShape {
     /// The statements read into it.
     pub const fn statements(&self) -> &'static [Statement] {
         self.statements
+    }
+
+    /// The families read into it.
+    pub const fn families(&self) -> &'static [Family] {
+        self.families
     }
 }
 
@@ -326,32 +335,24 @@ macro_rules! __sql_items {
     };
     (
         $schema:ident [$($done:tt)*]
+        $(#[$meta:meta])* $vis:vis row $name:ident for family [$($builder:ident),+ $(,)?] {
+            $($field:ident : $ty:ty),+ $(,)?
+        }
+        $($rest:tt)*
+    ) => {
+        $crate::__sql_row! { $(#[$meta])* $vis $name { $($field: $ty),+ } }
+        $crate::__sql_items! {
+            $schema [$($done)* (family_row $name [$($builder),+] [$($field),+])] $($rest)*
+        }
+    };
+    (
+        $schema:ident [$($done:tt)*]
         $(#[$meta:meta])* $vis:vis row $name:ident for [$($statement:ident),+ $(,)?] {
             $($field:ident : $ty:ty),+ $(,)?
         }
         $($rest:tt)*
     ) => {
-        $(#[$meta])*
-        $vis struct $name {
-            $($vis $field: $ty),+
-        }
-
-        impl $name {
-            /// One row, its columns in the order of the fields.
-            #[allow(unused_assignments)]
-            $vis fn read(
-                row: &$crate::db::statement::__rusqlite::Row<'_>,
-            ) -> $crate::db::statement::__rusqlite::Result<Self> {
-                let mut at = 0;
-                Ok(Self {
-                    $($field: {
-                        let value = row.get(at)?;
-                        at += 1;
-                        value
-                    }),+
-                })
-            }
-        }
+        $crate::__sql_row! { $(#[$meta])* $vis $name { $($field: $ty),+ } }
         $crate::__sql_items! {
             $schema [$($done)* (row $name [$($statement),+] [$($field),+])] $($rest)*
         }
@@ -383,6 +384,34 @@ macro_rules! __sql_items {
 
 #[doc(hidden)]
 #[macro_export]
+macro_rules! __sql_row {
+    ($(#[$meta:meta])* $vis:vis $name:ident { $($field:ident : $ty:ty),+ }) => {
+        $(#[$meta])*
+        $vis struct $name {
+            $($vis $field: $ty),+
+        }
+
+        impl $name {
+            /// One row, its columns in the order of the fields.
+            #[allow(unused_assignments)]
+            $vis fn read(
+                row: &$crate::db::statement::__rusqlite::Row<'_>,
+            ) -> $crate::db::statement::__rusqlite::Result<Self> {
+                let mut at = 0;
+                Ok(Self {
+                    $($field: {
+                        let value = row.get(at)?;
+                        at += 1;
+                        value
+                    }),+
+                })
+            }
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
 macro_rules! __sql_declared {
     ((fragment $name:ident)) => {
         $crate::db::statement::Declared::Fragment(concat!(module_path!(), "::", stringify!($name)))
@@ -398,6 +427,19 @@ macro_rules! __sql_declared {
             concat!(module_path!(), "::", stringify!($name)),
             &[$(stringify!($field)),+],
             &[$($statement),+],
+            &[],
+        ))
+    };
+    ((family_row $name:ident [$($builder:ident),+] [$($field:ident),+])) => {
+        $crate::db::statement::Declared::Row($crate::db::statement::RowShape::new(
+            concat!(module_path!(), "::", stringify!($name)),
+            &[$(stringify!($field)),+],
+            &[],
+            {
+                const FAMILIES: &[$crate::db::statement::Family] =
+                    &[$($crate::sql_family!($builder, $builder)),+];
+                FAMILIES
+            },
         ))
     };
 }

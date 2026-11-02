@@ -42,7 +42,9 @@ use std::collections::BTreeMap;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::models::{Purpose, Scope, Summary};
+use super::sql::{NameFit, RecordingFit, UnfiledPlay};
 use super::store::Unreadable;
+use crate::jobs::{OperationKind, OperationState};
 use droppedneedle_kernel::db::fold::fold_text;
 
 /// Version of the filing rules, kept on the job.
@@ -109,31 +111,13 @@ fn text(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-struct RecordingFit {
-    id: String,
-    /// The recording is the track's accepted one, or its tag's with none
-    /// accepted: no accepted recording says otherwise.
-    unchallenged: bool,
-}
-
 /// The playable tracks that hold `recording`, as their accepted recording
-/// or in their tags.
+/// or in their tags. A fit is unchallenged when the recording is the track's
+/// accepted one, or its tag's with none accepted.
 fn by_recording(conn: &Connection, recording: &str) -> rusqlite::Result<Vec<RecordingFit>> {
     let mut stmt = conn.prepare_cached(crate::repairs::sql::BY_RECORDING.text())?;
-    stmt.query_map(params![recording], |row| {
-        Ok(RecordingFit {
-            id: row.get(0)?,
-            unchallenged: row.get(1)?,
-        })
-    })?
-    .collect()
-}
-
-struct NameFit {
-    id: String,
-    seconds: Option<f64>,
-    accepted: Option<String>,
-    tag: Option<String>,
+    stmt.query_map(params![recording], RecordingFit::read)?
+        .collect()
 }
 
 /// The playable tracks the row's track, artist and (when it has one) album
@@ -146,15 +130,8 @@ fn name_fits(conn: &Connection, keys: &PlayKeys) -> rusqlite::Result<Vec<NameFit
     }
     let album = text(keys.album_name.as_deref()).map(fold_text);
     let mut stmt = conn.prepare_cached(crate::repairs::sql::NAME_FITS.text())?;
-    stmt.query_map(params![title, artist, album], |row| {
-        Ok(NameFit {
-            id: row.get(0)?,
-            seconds: row.get(1)?,
-            accepted: row.get(2)?,
-            tag: row.get(3)?,
-        })
-    })?
-    .collect()
+    stmt.query_map(params![title, artist, album], NameFit::read)?
+        .collect()
 }
 
 /// The one playable track the row's names fit, checked against the row's
@@ -245,7 +222,13 @@ pub fn queue(
     // since have changed the count the start key is made of.
     let at_work: bool = tx.query_row(
         crate::repairs::sql::REPAIR_ALREADY_ACTIVE.text(),
-        params![Purpose::PlayHistoryFiling],
+        params![
+            Purpose::PlayHistoryFiling,
+            OperationKind::Repair,
+            OperationState::Queued,
+            OperationState::Running,
+            OperationState::Paused,
+        ],
         |row| row.get(0),
     )?;
     if scan_run.is_none() && at_work {
@@ -268,7 +251,9 @@ pub fn queue(
             catalog_revision,
             unfiled,
             key,
-            crate::clock::ms(now)
+            crate::clock::ms(now),
+            OperationKind::Repair,
+            OperationState::Queued,
         ],
     )?;
     if queued == 0 {
@@ -340,16 +325,17 @@ pub fn step(tx: &Transaction<'_>, job_id: &str, limit: usize, now: f64) -> rusql
     let rows = {
         let mut stmt = tx.prepare_cached(crate::repairs::sql::STEP.text())?;
         stmt.query_map(params![cursor, limit as i64], |row| {
+            let play = UnfiledPlay::read(row)?;
             Ok((
-                row.get::<_, i64>(0)?,
+                play.play_rowid,
                 PlayKeys {
-                    track_name: row.get(1)?,
-                    artist_name: row.get(2)?,
-                    album_name: row.get(3)?,
-                    recording_mbid: row.get(4)?,
-                    release_group_mbid: row.get(5)?,
-                    duration_ms: row.get(6)?,
-                    source: row.get(7)?,
+                    track_name: play.track_name,
+                    artist_name: play.artist_name,
+                    album_name: play.album_name,
+                    recording_mbid: play.recording_mbid,
+                    release_group_mbid: play.release_group_mbid,
+                    duration_ms: play.duration_ms,
+                    source: play.source,
                 },
             ))
         })?

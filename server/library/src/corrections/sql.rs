@@ -521,6 +521,11 @@ droppedneedle_kernel::sql! {
     family ARTIST_LINKS_OF = artist_links_of;
     /// References of one kind to each artist of a list: (artist, count).
     family REFERENCES_OF = references_of;
+    /// One artist's count of one kind of reference.
+    pub(crate) row ReferenceCount for family [references_of] {
+        id: String,
+        count: i64,
+    }
     pub(super) REPOINT_TRACK_CREDITS = "UPDATE local_track_artists SET local_artist_id = ?2, row_revision = row_revision + 1 \
          WHERE local_artist_id = ?1";
     pub(super) REPOINT_ALBUM_ARTIST = "UPDATE local_albums SET album_artist_id = ?2, \
@@ -635,27 +640,27 @@ pub(crate) fn references_of(kind: ReferenceKind, ids: ListLen) -> String {
     let marks = marks(ids);
     match kind {
         ReferenceKind::AlbumCredits => format!(
-            "SELECT local_artist_id, COUNT(*) FROM local_album_artists \
+            "SELECT local_artist_id AS id, COUNT(*) AS count FROM local_album_artists \
              WHERE local_artist_id IN ({marks}) GROUP BY 1"
         ),
         ReferenceKind::TrackCredits => format!(
-            "SELECT local_artist_id, COUNT(*) FROM local_track_artists \
+            "SELECT local_artist_id AS id, COUNT(*) AS count FROM local_track_artists \
              WHERE local_artist_id IN ({marks}) GROUP BY 1"
         ),
         ReferenceKind::PrimaryAlbums => format!(
-            "SELECT album_artist_id, COUNT(*) FROM local_albums \
+            "SELECT album_artist_id AS id, COUNT(*) AS count FROM local_albums \
              WHERE album_artist_id IN ({marks}) GROUP BY 1"
         ),
         ReferenceKind::Favorites => format!(
-            "SELECT item_id, COUNT(*) FROM library_user_favorites \
+            "SELECT item_id AS id, COUNT(*) AS count FROM library_user_favorites \
              WHERE item_kind = 'artist' AND item_id IN ({marks}) GROUP BY 1"
         ),
         ReferenceKind::Ratings => format!(
-            "SELECT item_id, COUNT(*) FROM library_user_ratings \
+            "SELECT item_id AS id, COUNT(*) AS count FROM library_user_ratings \
              WHERE item_kind = 'artist' AND item_id IN ({marks}) GROUP BY 1"
         ),
         ReferenceKind::History => format!(
-            "SELECT local_artist_id, COUNT(*) FROM library_play_history \
+            "SELECT local_artist_id AS id, COUNT(*) AS count FROM library_play_history \
              WHERE local_artist_id IN ({marks}) GROUP BY 1"
         ),
     }

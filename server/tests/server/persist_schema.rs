@@ -4011,15 +4011,16 @@ fn prepare_one(connection: &rusqlite::Connection, name: &str, text: &str) -> Opt
 fn row_mismatch(
     connection: &rusqlite::Connection,
     shape: &droppedneedle_kernel::db::statement::RowShape,
-    statement: &droppedneedle_kernel::db::statement::Statement,
+    statement: &str,
+    text: &str,
 ) -> Option<String> {
-    let prepared = connection.prepare(statement.text()).ok()?;
+    let prepared = connection.prepare(text).ok()?;
     let answers = prepared.column_names();
     (answers != shape.columns()).then(|| {
         format!(
             "{} reads {}: the statement answers {answers:?}, the struct has {:?}",
             shape.name(),
-            statement.name(),
+            statement,
             shape.columns()
         )
     })
@@ -4143,7 +4144,17 @@ fn every_registered_statement_prepares() {
             }
             Declared::Row(shape) => {
                 for statement in shape.statements() {
-                    wrong.extend(row_mismatch(connection, shape, statement));
+                    wrong.extend(row_mismatch(
+                        connection,
+                        shape,
+                        statement.name(),
+                        statement.text(),
+                    ));
+                }
+                for family in shape.families() {
+                    for text in family.texts().unwrap_or_default() {
+                        wrong.extend(row_mismatch(connection, shape, family.name(), &text));
+                    }
                 }
             }
             Declared::Fragment(_) => {}

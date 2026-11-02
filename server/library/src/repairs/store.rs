@@ -23,14 +23,17 @@ use super::models::{
 use super::reasons;
 use crate::identify::artist_links::RELEASE_DOCUMENT_MISSING;
 use crate::identify::evidence::edition_ids_of;
-use crate::identity::DecisionSource;
 use crate::identity::reads::stored_release;
 use crate::jobs::{self, NewJob, OperationState, Tally, WorkState};
 use crate::matching::decide::{IdStance, id_stance};
 use crate::operations::decisions::live_automatic_edition_undo;
 use crate::operations::models::{OperationError, OperationJob, OperationKind};
 use crate::operations::store::{album_revisions, job_after};
-use crate::repairs::sql::{RepairScope, RepairScopeKind};
+use crate::repairs::sql::{
+    ConfirmedAlbum, CurrentFindingCount, EditionCandidate, EditionTags, FindingCount,
+    FindingPageRow, HistoryRow, IdentifiedRow, OpenFindingRow, PreparationRow, RepairScope,
+    RepairScopeKind, RootAlbumCount, SnapshotRow, SubjectIdentity, SubjectTrack, WatermarkRow,
+};
 use droppedneedle_kernel::db::statement::ListLen;
 
 const PROVIDER: &str = "musicbrainz";
@@ -93,24 +96,22 @@ pub fn snapshot(
     conn: &Connection,
     job_id: &str,
 ) -> rusqlite::Result<Option<Result<RepairSnapshot, Unreadable>>> {
-    type Row = (Option<String>, String, String, String, Option<String>);
-    let row: Option<Row> = conn
+    let row = conn
         .query_row(
             crate::repairs::sql::SNAPSHOT.text(),
             params![job_id],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
+            SnapshotRow::read,
         )
         .optional()?;
-    Ok(row.map(|(purpose, phase, scope, target, result)| {
-        decode_snapshot(job_id, purpose, &phase, &scope, target, result)
+    Ok(row.map(|row| {
+        decode_snapshot(
+            job_id,
+            row.purpose,
+            &row.phase,
+            &row.scope_json,
+            row.target_matcher_version,
+            row.result_json,
+        )
     }))
 }
 
@@ -359,16 +360,19 @@ pub struct Watermark {
 /// Most finished identification jobs one cleanup covers.
 pub const IDENTIFIED_PAGE: usize = 200;
 
+fn watermark(row: &rusqlite::Row<'_>) -> rusqlite::Result<Watermark> {
+    let row = WatermarkRow::read(row)?;
+    Ok(Watermark {
+        at_ms: row.at_ms,
+        job_id: row.job_id,
+    })
+}
+
 /// The newest finished identification job, or the start of time when
 /// there is none.
 fn newest_identified(conn: &Connection) -> rusqlite::Result<Watermark> {
     Ok(conn
-        .query_row(crate::repairs::sql::NEWEST_IDENTIFIED.text(), [], |row| {
-            Ok(Watermark {
-                at_ms: row.get(0)?,
-                job_id: row.get(1)?,
-            })
-        })
+        .query_row(crate::repairs::sql::NEWEST_IDENTIFIED.text(), [], watermark)
         .optional()?
         .unwrap_or(Watermark {
             at_ms: 0,
@@ -384,12 +388,7 @@ pub fn identified_watermark(conn: &Connection) -> rusqlite::Result<Result<Waterm
         .query_row(
             crate::repairs::sql::IDENTIFIED_WATERMARK.text(),
             [],
-            |row| {
-                Ok(Watermark {
-                    at_ms: row.get(0)?,
-                    job_id: row.get(1)?,
-                })
-            },
+            watermark,
         )
         .optional()?;
     match stored {
@@ -429,16 +428,7 @@ pub fn identified_after(conn: &Connection, after: &Watermark) -> rusqlite::Resul
     let rows = stmt
         .query_map(
             params![after.at_ms, after.job_id, IDENTIFIED_PAGE as i64],
-            |row| {
-                Ok((
-                    Watermark {
-                        at_ms: row.get(0)?,
-                        job_id: row.get(1)?,
-                    },
-                    row.get::<_, String>(2)?,
-                    row.get::<_, bool>(3)?,
-                ))
-            },
+            IdentifiedRow::read,
         )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let full = rows.len() == IDENTIFIED_PAGE;
@@ -447,11 +437,14 @@ pub fn identified_after(conn: &Connection, after: &Watermark) -> rusqlite::Resul
         full,
         ..IdentifiedPage::default()
     };
-    for (mark, album, candidate) in rows {
-        if candidate && seen.insert(album.clone()) {
-            page.albums.push(album);
+    for row in rows {
+        if row.candidate && seen.insert(row.album_id.clone()) {
+            page.albums.push(row.album_id);
         }
-        page.last = Some(mark);
+        page.last = Some(Watermark {
+            at_ms: row.at_ms,
+            job_id: row.job_id,
+        });
     }
     Ok(page)
 }
@@ -540,17 +533,17 @@ pub const OLDER_CONFIRMATIONS_BACKFILL_KEY: &str = "older-confirmations:v1:backf
 /// edition, or one with a file in a folder not identified automatically.
 pub fn older_confirmation_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare(crate::repairs::sql::CONFIRMED_ALBUMS_WITH_GROUP.text())?;
-    let confirmed: Vec<(String, String)> = stmt
-        .query_map(params![PROVIDER], |row| Ok((row.get(0)?, row.get(1)?)))?
+    let confirmed: Vec<ConfirmedAlbum> = stmt
+        .query_map(params![PROVIDER], ConfirmedAlbum::read)?
         .collect::<rusqlite::Result<_>>()?;
     let mut files = conn.prepare(crate::repairs::sql::OLDER_CONFIRMATION_ALBUMS.text())?;
     let mut albums = Vec::new();
-    for (album, group) in confirmed {
+    for album in confirmed {
         let tagged: Vec<Option<String>> = files
-            .query_map(params![album], |row| row.get(0))?
+            .query_map(params![album.id], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
-        if outside_named_group(&tagged, &group) {
-            albums.push(album);
+        if outside_named_group(&tagged, &album.release_group_mbid) {
+            albums.push(album.id);
         }
     }
     Ok(albums)
@@ -590,50 +583,42 @@ impl Backfill {
 /// such album and none of them waited, whether or not one moved.
 pub fn edition_id_albums(conn: &Connection) -> rusqlite::Result<Backfill> {
     let mut stmt = conn.prepare(crate::repairs::sql::EDITION_ID_ALBUMS.text())?;
-    // Album, its release, its document still fetching, a file whose
-    // edition tags are unread, a file with a barcode or catalog number.
-    type Candidate = (String, String, bool, bool, bool);
-    let confirmed: Vec<Candidate> = stmt
-        .query_map(params![PROVIDER, RELEASE_DOCUMENT_MISSING], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
-        })?
+    let confirmed: Vec<EditionCandidate> = stmt
+        .query_map(
+            params![PROVIDER, RELEASE_DOCUMENT_MISSING],
+            EditionCandidate::read,
+        )?
         .collect::<rusqlite::Result<_>>()?;
     let candidates = confirmed.len();
     let mut files = conn.prepare(crate::repairs::sql::ALBUM_EDITION_TAGS.text())?;
     let mut albums = Vec::new();
     let mut waiting = 0usize;
-    for (album, release, fetching, unread, tagged) in confirmed {
-        if unread {
+    for album in confirmed {
+        if album.unread {
             waiting += 1;
             continue;
         }
-        if !tagged {
+        if !album.tagged {
             continue;
         }
-        let tags: Vec<(Option<String>, Option<String>)> = files
-            .query_map(params![album], |row| Ok((row.get(0)?, row.get(1)?)))?
+        let tags: Vec<EditionTags> = files
+            .query_map(params![album.id], EditionTags::read)?
             .collect::<rusqlite::Result<_>>()?;
         let ids = edition_ids_of(
             tags.iter()
-                .map(|(barcode, catalog)| (barcode.as_deref(), catalog.as_deref())),
+                .map(|tag| (tag.barcode.as_deref(), tag.catalog_number.as_deref())),
         );
         if ids.barcode.is_none() && ids.catalog_number.is_none() {
             continue;
         }
-        let Some(held) = stored_release(conn, &release, 0.0)? else {
-            if fetching {
+        let Some(held) = stored_release(conn, &album.release_mbid, 0.0)? else {
+            if album.fetching {
                 waiting += 1;
             }
             continue;
         };
         if id_stance(&held, &ids) == IdStance::Contradicts {
-            albums.push(album);
+            albums.push(album.id);
         }
     }
     if waiting > 0 {
@@ -731,17 +716,13 @@ pub fn estimate_preparation(
     )))?;
     let mut rows = stmt.query(params_from_iter(values))?;
     while let Some(row) = rows.next()? {
-        let group: Option<String> = row.get(0)?;
-        let release: Option<String> = row.get(1)?;
-        let tracks: i64 = row.get(2)?;
-        let mapped: i64 = row.get(3)?;
-        let custom_current: bool = row.get(4)?;
+        let row = PreparationRow::read(row)?;
         estimate.album_count += 1;
-        if custom_current {
+        if row.custom_current {
             estimate.ready_album_count += 1;
-        } else if group.is_none() || release.is_none() {
+        } else if row.release_group_mbid.is_none() || row.release_mbid.is_none() {
             estimate.exact_release_required_count += 1;
-        } else if mapped == tracks {
+        } else if row.mapped == row.tracks {
             estimate.ready_album_count += 1;
         } else {
             estimate.mapping_required_count += 1;
@@ -770,18 +751,16 @@ pub fn history(
             OperationKind::Repair
         ],
         |row| {
-            let job_id: String = row.get(0)?;
-            let phase: String = row.get(2)?;
-            let scope: String = row.get(3)?;
+            let row = HistoryRow::read(row)?;
             let snap = decode_snapshot(
-                &job_id,
-                row.get(1)?,
-                &phase,
-                &scope,
-                row.get(4)?,
-                row.get(5)?,
+                &row.id,
+                row.purpose,
+                &row.phase,
+                &row.scope_json,
+                row.target_matcher_version,
+                row.result_json,
             );
-            Ok((job_id, snap))
+            Ok((row.id, snap))
         },
     )?
     .collect()
@@ -816,13 +795,14 @@ pub fn subject(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Sub
             crate::repairs::sql::SUBJECT_ALBUM_IDENTITY.text(),
             params![album_id, PROVIDER],
             |row| {
+                let row = SubjectIdentity::read(row)?;
                 Ok((
                     IdentityState {
-                        release_group_mbid: row.get(0)?,
-                        release_mbid: row.get(1)?,
-                        manual: row.get::<_, DecisionSource>(2)?.is_persons_choice(),
+                        release_group_mbid: row.release_group_mbid,
+                        release_mbid: row.release_mbid,
+                        manual: row.decision_source.is_persons_choice(),
                     },
-                    row.get(3)?,
+                    row.row_revision,
                 ))
             },
         )
@@ -830,13 +810,14 @@ pub fn subject(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Sub
     let mut stmt = conn.prepare(crate::repairs::sql::SUBJECT_TRACK_IDENTITIES.text())?;
     let tracks = stmt
         .query_map(params![album_id, PROVIDER], |row| {
+            let row = SubjectTrack::read(row)?;
             Ok(TrackState {
-                local_track_id: row.get(0)?,
-                recording_mbid: row.get(1)?,
-                release_mbid: row.get(2)?,
-                release_track_mbid: row.get(3)?,
-                medium_position: row.get(4)?,
-                release_track_position: row.get(5)?,
+                local_track_id: row.local_track_id,
+                recording_mbid: row.recording_mbid,
+                release_mbid: row.release_mbid,
+                release_track_mbid: row.release_track_mbid,
+                medium_position: row.medium_position,
+                release_track_position: row.release_track_position,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1080,18 +1061,20 @@ fn summarize(conn: &Connection, job_id: &str, snap: &RepairSnapshot) -> rusqlite
     let mut stmt = conn.prepare(crate::repairs::sql::FINDING_COUNTS.text())?;
     let mut rows = stmt.query(params![job_id])?;
     while let Some(row) = rows.next()? {
-        let (finding, reason, count): (FindingCode, String, i64) =
-            (row.get(0)?, row.get(1)?, row.get(2)?);
+        let row = FindingCount::read(row)?;
         *summary
             .counts_by_finding
-            .entry(finding.as_str().to_owned())
-            .or_default() += count;
-        *summary.counts_by_reason.entry(reason).or_default() += count;
-        summary.total_identities += count;
+            .entry(row.finding_code.as_str().to_owned())
+            .or_default() += row.finding_count;
+        *summary.counts_by_reason.entry(row.reason_code).or_default() += row.finding_count;
+        summary.total_identities += row.finding_count;
     }
     let mut stmt = conn.prepare(crate::repairs::sql::FINDING_ALBUMS_BY_ROOT.text())?;
     summary.album_counts_by_root = stmt
-        .query_map(params![job_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map(params![job_id], |row| {
+            let row = RootAlbumCount::read(row)?;
+            Ok((row.root_id, row.album_count))
+        })?
         .collect::<rusqlite::Result<BTreeMap<String, i64>>>()?;
     summary.input_track_count = conn.query_row(
         crate::repairs::sql::FINDING_TRACK_COUNT.text(),
@@ -1211,19 +1194,19 @@ pub fn open_finding(
     job_id: &str,
     album_id: &str,
 ) -> rusqlite::Result<Option<Result<OpenFinding, Unreadable>>> {
-    let row: Option<(String, FindingCode, String)> = conn
+    let row = conn
         .query_row(
             crate::repairs::sql::OPEN_FINDING.text(),
             params![job_id, album_id, FindingState::Open],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            OpenFindingRow::read,
         )
         .optional()?;
-    Ok(row.map(|(id, finding_code, raw)| {
-        let payload = serde_json::from_str(&raw)
+    Ok(row.map(|row| {
+        let payload = serde_json::from_str(&row.suggested_edition_json)
             .map_err(|error| Unreadable::new(job_id, "finding payload", error))?;
         Ok(OpenFinding {
-            id,
-            finding_code,
+            id: row.id,
+            finding_code: row.finding_code,
             payload,
         })
     }))
@@ -1310,8 +1293,8 @@ pub fn findings_page(
     let mut stmt = conn.prepare(&page)?;
     let mut items = stmt
         .query_map(params_from_iter(values), |row| {
-            let id: String = row.get(0)?;
-            let raw: String = row.get(15)?;
+            let row = FindingPageRow::read(row)?;
+            let raw = row.suggested_edition_json;
             let mut payload: FindingPayload = serde_json::from_str(&raw)
                 .map_err(|error| Unreadable::new(job_id, "finding payload", error))?;
             if payload.summary.is_none() {
@@ -1321,25 +1304,25 @@ pub fn findings_page(
                     .filter(|summary| !summary.title.is_empty());
             }
             Ok(FindingRow {
-                id,
-                local_album_id: row.get(1)?,
-                album_title: row.get(2)?,
-                album_artist_name: row.get(3)?,
-                album_year: row.get(4)?,
-                cover_available: row.get(5)?,
-                review_id: row.get(6)?,
-                finding_code: row.get(7)?,
-                reason_code: row.get(8)?,
-                confidence: row.get(9)?,
-                apply_eligible: row.get(10)?,
-                state: row.get(11)?,
-                apply_result: row.get(12)?,
-                suggested_release_mbid: row.get(13)?,
-                suggested_release_group_mbid: row.get(14)?,
+                id: row.id,
+                local_album_id: row.local_album_id,
+                album_title: row.album_title,
+                album_artist_name: row.album_artist_name,
+                album_year: row.album_year,
+                cover_available: row.cover_available,
+                review_id: row.review_id,
+                finding_code: row.finding_code,
+                reason_code: row.reason_code,
+                confidence: row.confidence,
+                apply_eligible: row.apply_eligible,
+                state: row.state,
+                apply_result: row.apply_result,
+                suggested_release_mbid: row.suggested_release_mbid,
+                suggested_release_group_mbid: row.suggested_release_group_mbid,
                 payload,
                 automatic_undo: None,
-                updated_at: crate::clock::secs_at(row, 16)?,
-                row_revision: row.get(17)?,
+                updated_at: crate::clock::at_secs(row.updated_at),
+                row_revision: row.row_revision,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1351,10 +1334,8 @@ pub fn findings_page(
     let mut stmt = conn.prepare(&crate::repairs::sql::finding_counts(current))?;
     let current_counts_by_finding = stmt
         .query_map(params![job_id], |row| {
-            Ok((
-                row.get::<_, FindingCode>(0)?.as_str().to_owned(),
-                row.get(1)?,
-            ))
+            let row = CurrentFindingCount::read(row)?;
+            Ok((row.finding_code.as_str().to_owned(), row.finding_count))
         })?
         .collect::<rusqlite::Result<BTreeMap<String, i64>>>()?;
     let next = has_more
