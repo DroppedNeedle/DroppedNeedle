@@ -613,7 +613,8 @@ async fn a_shelf_whose_read_failed_is_built_again_soon() {
         (fresh(&page) == Some(1)).then_some(page)
     })
     .await;
-    assert_eq!(page["refreshing"], false);
+    assert_eq!(fresh(&page), Some(1));
+    settled_page(&rig, &app, "the rebuild finished").await;
 
     rig.clock.advance(301_000);
     let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
