@@ -410,6 +410,11 @@ machine and its data folders can run it.
   every tag keeps its own frame; the preview says so for each file. There
   is no switch to keep ID3v2.3, and a few old players read only ID3v2.3.
   Undo and "Restore originals" put the values back; the tag stays ID3v2.4.
+- **Other people's public playlists in music apps.** In v2 Subsonic and
+  Jellyfin apps listed them next to your own. In v3 apps list your own
+  playlists only, for every user, until you turn on the switch under
+  Profile > Connect Apps. An app that saved a public playlist's id can still
+  open it, and the web UI lists what it did before.
 
 ### Moved
 

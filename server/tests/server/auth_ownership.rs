@@ -1565,6 +1565,26 @@ async fn another_users_resources_stay_out_of_reach() {
     app.stop().await;
 }
 
+/// Connect Apps holds no secret: any signed-in user reads it, only an admin
+/// saves it.
+#[tokio::test]
+async fn a_plain_user_reads_connect_apps_and_cannot_save_it() {
+    let app = TestApp::start("auth-connect-apps").await;
+    let ada = user(&app, "ada").await;
+    let (status, section) = call(&app, &ada, "GET", "/api/v3/settings/connect-apps", None).await;
+    assert_eq!(status, StatusCode::OK, "{section}");
+    let (status, body) = call(
+        &app,
+        &ada,
+        "PUT",
+        "/api/v3/settings/connect-apps",
+        Some(section),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    app.stop().await;
+}
+
 /// Favourites, ratings, follows, play marks, remote-server links and
 /// Navidrome folder choices belong to their caller: A's never show in B's
 /// reads, and B's writes never touch A's.

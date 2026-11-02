@@ -8,9 +8,10 @@ import {
 	appPasswordRosterChanged,
 	appPasswordsChanged,
 	connectAppsSettingsChanged,
-	createAppMutation
+	createAppMutation,
+	myConnectAppsChanged
 } from '$lib/queries/effects';
-import type { ConnectAppsSettings } from '$lib/types';
+import type { ConnectAppsSettings, MyConnectApps } from '$lib/types';
 
 /** The server refuses a new app-password once a user has this many active. */
 export const APP_PASSWORD_CAP = 25;
@@ -33,6 +34,21 @@ export const getAppPasswordsQuery = () =>
 		queryFn: async ({ signal }) =>
 			(await api.v3.GET(v3('/api/v3/me/app-passwords'), { signal })).app_passwords
 	}));
+
+// The caller's own choices for their apps; keyed per user like app-passwords.
+export const getMyConnectAppsQuery = () =>
+	createQuery(() => ({
+		enabled: !!authStore.user?.id,
+		queryKey: ConnectAppsQueryKeyFactory.mine(authStore.user?.id ?? ''),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/me/connect-apps'), { signal })
+	}));
+
+export function createSaveMyConnectAppsMutation() {
+	return createAppMutation(() => ({
+		mutationFn: (choices: MyConnectApps) => api.v3.PUT(v3('/api/v3/me/connect-apps'), choices),
+		effects: () => [myConnectAppsChanged(authStore.user?.id ?? '')]
+	}));
+}
 
 // admin oversight: every user's active app-passwords (metadata only, no secrets)
 export const getAdminAppPasswordsQuery = () =>

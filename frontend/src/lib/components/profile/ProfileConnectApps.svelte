@@ -7,11 +7,13 @@
 	import { toastStore } from '$lib/stores/toast';
 	import {
 		getAppPasswordsQuery,
-		getConnectAppsSettingsQuery
+		getConnectAppsSettingsQuery,
+		getMyConnectAppsQuery
 	} from '$lib/queries/connect-apps.svelte';
 	import {
 		createAppPasswordMutation,
-		createRevokeAppPasswordMutation
+		createRevokeAppPasswordMutation,
+		createSaveMyConnectAppsMutation
 	} from '$lib/queries/connect-apps.svelte';
 	import type { AppPasswordView } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
@@ -21,10 +23,13 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	const settingsQuery = getConnectAppsSettingsQuery();
 	const passwordsQuery = getAppPasswordsQuery();
+	const myChoicesQuery = getMyConnectAppsQuery();
+	const saveChoices = createSaveMyConnectAppsMutation();
 	const create = createAppPasswordMutation();
 	const revoke = createRevokeAppPasswordMutation();
 
@@ -91,6 +96,14 @@
 		}
 	}
 
+	async function setIncludePublic(include: boolean) {
+		try {
+			await saveChoices.mutateAsync({ include_public_playlists: include });
+		} catch {
+			toastStore.show({ message: 'Could not save', type: 'error' });
+		}
+	}
+
 	async function copy(text: string) {
 		try {
 			await navigator.clipboard.writeText(text);
@@ -123,12 +136,12 @@
 		<span class="cx-core"><span class="cx-core-dot"></span>DN</span>
 	</div>
 
-	{#if settingsQuery.isLoading || passwordsQuery.isLoading}
+	{#if settingsQuery.isLoading || passwordsQuery.isLoading || myChoicesQuery.isLoading}
 		<div class="space-y-4">
 			<div class="skeleton h-40 w-full rounded-xl"></div>
 			<div class="skeleton h-32 w-full rounded-xl"></div>
 		</div>
-	{:else if settingsQuery.isError || passwordsQuery.isError}
+	{:else if settingsQuery.isError || passwordsQuery.isError || myChoicesQuery.isError}
 		<div class="alert alert-error" role="alert">
 			<TriangleAlert class="h-5 w-5" aria-hidden="true" />
 			<span>Couldn't load Connect Apps.</span>
@@ -137,6 +150,7 @@
 				onclick={() => {
 					void settingsQuery.refetch();
 					void passwordsQuery.refetch();
+					void myChoicesQuery.refetch();
 				}}
 			>
 				Try again
@@ -255,6 +269,18 @@
 						</Button>
 					</div>
 				</div>
+			</Card>
+
+			<Card variant="bordered">
+				<ToggleRow
+					label="Show other people's public playlists"
+					description="Your apps list only your own unless this is on."
+					disabled={saveChoices.isPending}
+					bind:checked={
+						() => myChoicesQuery.data?.include_public_playlists ?? false,
+						(include) => void setIncludePublic(include)
+					}
+				/>
 			</Card>
 
 			<!-- how to connect -->

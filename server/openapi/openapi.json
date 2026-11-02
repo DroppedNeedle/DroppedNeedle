@@ -21352,6 +21352,70 @@
         ]
       }
     },
+    "/api/v3/me/connect-apps": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read your own Connect Apps choices.",
+        "operationId": "get_my_connect_apps",
+        "responses": {
+          "200": {
+            "description": "Own Connect Apps choices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyConnectApps"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Save your own Connect Apps choices.",
+        "operationId": "put_my_connect_apps",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MyConnectApps"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved choices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyConnectApps"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/me/connections": {
       "get": {
         "tags": [
@@ -50422,6 +50486,19 @@
           "name": {
             "type": "string",
             "description": "Folder name."
+          }
+        }
+      },
+      "MyConnectApps": {
+        "type": "object",
+        "description": "The caller's choices for their music apps.",
+        "required": [
+          "include_public_playlists"
+        ],
+        "properties": {
+          "include_public_playlists": {
+            "type": "boolean",
+            "description": "Apps list other people's public playlists as well as the caller's."
           }
         }
       },

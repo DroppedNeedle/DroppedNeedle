@@ -186,6 +186,10 @@ export const EFFECTS = {
 	],
 	/** The connect-apps settings. */
 	connectAppsSettingsChanged: (): Sweep[] => [{ key: ConnectAppsQueryKeyFactory.settings() }],
+	/** The caller's own Connect Apps choices. */
+	myConnectAppsChanged: (userId: string): Sweep[] => [
+		{ key: ConnectAppsQueryKeyFactory.mine(userId) }
+	],
 	/** The caller's linked accounts. */
 	connectionsChanged: (userId: UserId): Sweep[] => [
 		{ key: ConnectionsQueryKeyFactory.list(userId) }
@@ -474,6 +478,7 @@ export const albumHeaderChanged = fact('albumHeaderChanged');
 export const appPasswordsChanged = fact('appPasswordsChanged');
 export const appPasswordRosterChanged = fact('appPasswordRosterChanged');
 export const connectAppsSettingsChanged = fact('connectAppsSettingsChanged');
+export const myConnectAppsChanged = fact('myConnectAppsChanged');
 export const connectionsChanged = fact('connectionsChanged');
 export const sourcePlaylistsChanged = fact('sourcePlaylistsChanged');
 export const spotifyPlaylistsChanged = fact('spotifyPlaylistsChanged');

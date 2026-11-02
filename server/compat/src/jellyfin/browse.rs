@@ -78,18 +78,10 @@ pub(super) async fn fetch_item(
             Some(a) => Some(b.artist(&a).await),
             None => None,
         },
-        "playlist" => {
-            let found = state
-                .library
-                .playlists(user_id)
-                .await?
-                .into_iter()
-                .find(|p| p.id == internal);
-            match found {
-                Some(found) => Some(b.playlist(&found).await),
-                None => None,
-            }
-        }
+        "playlist" => match state.library.playlist_item(user_id, internal).await? {
+            Some(found) => Some(b.playlist(&found).await),
+            None => None,
+        },
         _ => None,
     })
 }
@@ -137,18 +129,10 @@ async fn fetch_full_item(
             }
             None => None,
         },
-        "playlist" => {
-            let found = state
-                .library
-                .playlists(&user.id)
-                .await?
-                .into_iter()
-                .find(|p| p.id == internal);
-            match found {
-                Some(found) => Some(b.playlist_full(&found).await),
-                None => None,
-            }
-        }
+        "playlist" => match state.library.playlist_item(&user.id, internal).await? {
+            Some(found) => Some(b.playlist_full(&found).await),
+            None => None,
+        },
         _ => None,
     })
 }

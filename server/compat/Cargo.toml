@@ -28,6 +28,7 @@ time.workspace = true
 tokio.workspace = true
 tower.workspace = true
 tracing.workspace = true
+utoipa.workspace = true
 uuid.workspace = true
 
 [features]

@@ -56,6 +56,7 @@ pub mod settings;
 pub mod setup;
 pub mod shared;
 pub mod subsonic;
+pub mod user_settings;
 
 pub use setup::CompatSetup;
 
@@ -65,5 +66,8 @@ pub const LOOPS: &[&str] = &[adapters::jellyfin_ids::JOB_NAME];
 /// Every `sql.rs` of this crate, one line each, for the schema test.
 #[cfg(any(test, feature = "test-support"))]
 pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![adapters::jellyfin_ids::sql::registered()]
+    vec![
+        adapters::jellyfin_ids::sql::registered(),
+        user_settings::sql::registered(),
+    ]
 }

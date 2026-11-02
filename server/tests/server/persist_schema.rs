@@ -70,7 +70,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 172);
+    assert_eq!(table_names(&pool).await.len(), 173);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -10350,6 +10350,37 @@ async fn the_primary_source_section_goes_on_upgrade() {
             4
         )]
     );
+}
+
+/// Migration 0120 adds the per-user switch: nobody has a row, so everyone
+/// starts off, only 0 and 1 are stored, and a row goes with its user.
+#[tokio::test]
+async fn compat_user_settings_start_off_and_go_with_their_user() {
+    let pool = scratch_pool().await;
+    run_migrations(&pool, &migrator_through(119)).await.unwrap();
+    sqlx::query(
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'U', 'user', 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    apply_migrations(&pool).await.unwrap();
+    let count = |pool: SqlitePool| async move {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM compat_user_settings")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    assert_eq!(count(pool.clone()).await, 0);
+    let insert =
+        "INSERT INTO compat_user_settings (user_id, include_public_playlists) VALUES ('u1', ?)";
+    assert!(sqlx::query(insert).bind(2).execute(&pool).await.is_err());
+    sqlx::query(insert).bind(1).execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM auth_users WHERE id = 'u1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count(pool.clone()).await, 0);
 }
 
 /// Migration 0117 rebuilds the rest of the library's tables, except the catalog

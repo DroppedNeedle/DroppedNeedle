@@ -87,6 +87,7 @@ compat_bookmarks
 compat_jellyfin_ids
 compat_play_queue_items
 compat_play_queues
+compat_user_settings
 
 [media]
 library_play_history

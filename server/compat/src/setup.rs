@@ -30,6 +30,7 @@ use crate::http::{CompatLimits, SubsonicState, cors_layer, limits_layer, subsoni
 use crate::jellyfin::{JellyfinState, routes as jellyfin_routes};
 use crate::settings::LiveSettings;
 use crate::shared::address::ListenerConfig;
+use crate::user_settings::UserSettings;
 use droppedneedle_auth::compat_auth::prod::CompatPasswords;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::ReadsSetup;
@@ -89,7 +90,7 @@ impl CompatDeps {
             playback,
             engine,
             scan,
-            library: CompatLibrary::from_reads(reads),
+            library: CompatLibrary::from_reads(reads, platform.db.clone()),
             queues: CompatQueues::new(reads.collections.db.clone()),
             settings,
             listener: ListenerConfig {
@@ -106,6 +107,7 @@ impl CompatDeps {
 pub struct CompatSetup {
     ids: JellyfinIds,
     settings: LiveSettings,
+    user_settings: UserSettings,
     router: Router,
     templates: Arc<[&'static str]>,
 }
@@ -113,6 +115,7 @@ pub struct CompatSetup {
 impl CompatSetup {
     /// Build the adapters and mount both routers.
     pub fn build(deps: CompatDeps) -> Self {
+        let user_settings = deps.library.user_settings.clone();
         let passwords = CompatPasswords::new(deps.users.clone(), Arc::clone(&deps.crypto));
         let playback = CompatPlayback::new(deps.playback);
         let store = SubsonicStore::new(
@@ -151,6 +154,7 @@ impl CompatSetup {
         Self {
             ids,
             settings: deps.settings,
+            user_settings,
             router,
             templates,
         }
@@ -160,6 +164,11 @@ impl CompatSetup {
     /// the stored Jellyfin ids.
     pub fn start_loops(&self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
         self.ids.start(supervisor)
+    }
+
+    /// Each person's choices for their apps, for the route that saves them.
+    pub fn user_settings(&self) -> UserSettings {
+        self.user_settings.clone()
     }
 
     /// The stored Jellyfin ids, for a caller that waits for the fill.

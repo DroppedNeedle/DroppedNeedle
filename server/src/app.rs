@@ -209,6 +209,9 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
             )
         })
         .area(droppedneedle_media::routes(), |state| state.media.clone())
+        .area(droppedneedle_compat::user_settings::routes(), |state| {
+            state.compat.user_settings()
+        })
         .area(
             droppedneedle_media::remotes::playlist_sync::routes(),
             |state| state.jobs.playlist_sync(),

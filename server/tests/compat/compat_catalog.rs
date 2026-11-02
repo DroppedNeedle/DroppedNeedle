@@ -1068,7 +1068,7 @@ fn jellyfin_router(rig: &Rig, ids: &JellyfinIds) -> axum::Router {
         &rig.reads,
         &acquire,
     );
-    let library = CompatLibrary::from_reads(&rig.reads);
+    let library = CompatLibrary::from_reads(&rig.reads, rig.platform.db.clone());
     rig.platform
         .settings
         .save_blocking(ConnectApps {

@@ -108,6 +108,7 @@ export const ConnectAppsQueryKeyFactory = {
 	feature: 'connect-apps',
 	settings: () => key(SHARED, 'connect-apps', 'settings'),
 	appPasswords: (userId: string) => key(userScope(userId), 'connect-apps', 'app-passwords'),
+	mine: (userId: string) => key(userScope(userId), 'connect-apps', 'mine'),
 	// The oversight roster is the same for every admin.
 	adminAppPasswords: () => key(ADMIN, 'connect-apps', 'app-passwords')
 };

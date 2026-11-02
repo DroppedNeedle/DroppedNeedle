@@ -5488,6 +5488,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/me/connect-apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read your own Connect Apps choices. */
+        get: operations["get_my_connect_apps"];
+        /** Save your own Connect Apps choices. */
+        put: operations["put_my_connect_apps"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/me/connections": {
         parameters: {
             query?: never;
@@ -16646,6 +16664,11 @@ export interface components {
             id: string;
             /** @description Folder name. */
             name: string;
+        };
+        /** @description The caller's choices for their music apps. */
+        MyConnectApps: {
+            /** @description Apps list other people's public playlists as well as the caller's. */
+            include_public_playlists: boolean;
         };
         /** @description One naming script. */
         NamingScript: {
@@ -38047,6 +38070,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    get_my_connect_apps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Own Connect Apps choices */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyConnectApps"];
+                };
+            };
+        };
+    };
+    put_my_connect_apps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MyConnectApps"];
+            };
+        };
+        responses: {
+            /** @description Saved choices */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyConnectApps"];
                 };
             };
         };

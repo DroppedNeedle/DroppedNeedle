@@ -23,6 +23,7 @@ use crate::jellyfin::seams::{
     WriteRefusal,
 };
 use crate::subsonic::views::song_path;
+use droppedneedle_catalog::reads::collections::service::Visible;
 use droppedneedle_catalog::reads::collections::store::play_marks::MarkScope;
 use droppedneedle_catalog::reads::library::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
@@ -159,6 +160,15 @@ fn tag_for(key: &str) -> String {
 #[derive(Clone)]
 pub struct JellyfinLibrary {
     library: CompatLibrary,
+}
+
+fn playlist_view(visible: Visible) -> PlaylistView {
+    PlaylistView {
+        id: visible.row.id,
+        name: visible.row.name,
+        track_count: visible.row.streamable_count,
+        total_duration_seconds: Some(visible.row.streamable_duration),
+    }
 }
 
 impl JellyfinLibrary {
@@ -621,13 +631,17 @@ impl JellyfinLibrary {
             .playlists(user_id)
             .await?
             .into_iter()
-            .map(|visible| PlaylistView {
-                id: visible.row.id,
-                name: visible.row.name,
-                track_count: visible.row.streamable_count,
-                total_duration_seconds: Some(visible.row.streamable_duration),
-            })
+            .map(playlist_view)
             .collect())
+    }
+
+    /// One readable playlist by id, whether or not the user's list shows it.
+    pub async fn playlist_item(
+        &self,
+        user_id: &str,
+        id: &str,
+    ) -> Result<Option<PlaylistView>, ReadFailed> {
+        Ok(self.library.playlist(user_id, id).await?.map(playlist_view))
     }
 
     pub async fn playlist(

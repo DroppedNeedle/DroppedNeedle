@@ -23,6 +23,8 @@ const h = vi.hoisted(() => ({
 			last_client: null
 		}
 	] as Array<Record<string, unknown>>,
+	includePublic: false,
+	saveChoices: vi.fn().mockResolvedValue(undefined),
 	createMutate: vi.fn().mockResolvedValue({
 		id: 'ap-2',
 		name: 'Finamp (tablet)',
@@ -36,6 +38,13 @@ vi.mock('$lib/queries/connect-apps.svelte', () => ({
 	APP_PASSWORD_CAP: 25,
 	createAppPasswordMutation: () => ({ mutateAsync: h.createMutate, isPending: false }),
 	createRevokeAppPasswordMutation: () => ({ mutateAsync: h.revokeMutate, isPending: false }),
+	createSaveMyConnectAppsMutation: () => ({ mutateAsync: h.saveChoices, isPending: false }),
+	getMyConnectAppsQuery: () => ({
+		data: { include_public_playlists: h.includePublic },
+		isLoading: false,
+		isError: false,
+		refetch: vi.fn()
+	}),
 	getConnectAppsSettingsQuery: () => ({
 		data: h.settings,
 		isLoading: false,
@@ -66,6 +75,7 @@ import ProfileConnectApps from './ProfileConnectApps.svelte';
 beforeEach(() => {
 	h.isAdmin = false;
 	h.isError = false;
+	h.includePublic = false;
 	h.settings = {
 		subsonic_enabled: true,
 		jellyfin_enabled: true,
@@ -140,6 +150,14 @@ describe('ProfileConnectApps.svelte', () => {
 		// the dialog's confirm button (accessible name exactly "Revoke") does the deed
 		await page.getByRole('button', { name: 'Revoke', exact: true }).click();
 		expect(h.revokeMutate).toHaveBeenCalledWith('ap-1');
+	});
+
+	it('saves the public playlists switch, off by default', async () => {
+		await render(ProfileConnectApps);
+		const toggle = page.getByLabelText("Show other people's public playlists");
+		await expect.element(toggle).not.toBeChecked();
+		await toggle.click();
+		expect(h.saveChoices).toHaveBeenCalledWith({ include_public_playlists: true });
 	});
 
 	it('tells a non-admin to wait for the admin when both protocols are off', async () => {

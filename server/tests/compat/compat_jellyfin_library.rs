@@ -1540,8 +1540,8 @@ async fn playlists_create_add_move_remove() {
     let detail = json(&rig, &format!("/jellyfin/Playlists/{pid2}"), &auth).await;
     assert_eq!(detail["Name"], "Playlist");
 
-    // Another user's public playlist is listed beside the caller's own;
-    // their private one is not.
+    // Other users' playlists stay off the caller's list; the two-user
+    // journey covers the switch that adds the public ones.
     let bob = rig.app.login_user("bob").await;
     let bob = [("authorization", bob.authorization.as_str())];
     for (name, public) in [("Bob Public", true), ("Bob Private", false)] {
@@ -1575,7 +1575,7 @@ async fn playlists_create_add_move_remove() {
         .filter_map(|item| item["Name"].as_str())
         .collect();
     listed.sort_unstable();
-    assert_eq!(listed, ["Bob Public", "Playlist", "Road"]);
+    assert_eq!(listed, ["Playlist", "Road"]);
 
     // A playlist id on a track route is a bare 404, never a native envelope.
     let reply = get(&rig, &format!("/jellyfin/Audio/{pid}/stream"), Some(&auth)).await;

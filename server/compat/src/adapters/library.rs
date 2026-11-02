@@ -29,6 +29,9 @@ use droppedneedle_catalog::reads::library::stores::{
 };
 use droppedneedle_catalog::reads::platform::artwork::ArtworkService;
 use droppedneedle_catalog::reads::platform::covers::{CoverArt, CoverLookup};
+use droppedneedle_kernel::db::{Db, DbError};
+
+use crate::user_settings::UserSettings;
 
 /// A compat read or write failed. Client faults keep their kind so each
 /// protocol answers its own code (Subsonic 70/50/10/0, Jellyfin
@@ -61,6 +64,15 @@ impl std::fmt::Display for CompatError {
             | Self::Conflict(message)
             | Self::Busy(message)
             | Self::Internal(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<DbError> for CompatError {
+    fn from(error: DbError) -> Self {
+        match error {
+            DbError::Busy { .. } => Self::Busy(error.to_string()),
+            other => Self::Internal(other.to_string()),
         }
     }
 }
@@ -172,6 +184,8 @@ pub struct CompatLibrary {
     pub artwork: Option<ArtworkService>,
     /// Per-caller seeds for paged random lists, shared by both protocols.
     pub shuffles: Arc<ShuffleSeeds>,
+    /// Each person's choices for their apps.
+    pub user_settings: UserSettings,
 }
 
 /// Covers in a made playlist picture: a two by two grid.
@@ -251,7 +265,7 @@ pub fn whole(seconds: Option<f64>) -> Option<i64> {
 impl CompatLibrary {
     /// Everything compat reads, from the native reads bundle: the same
     /// catalog, collections, lyrics and cover art the web UI uses.
-    pub fn from_reads(reads: &droppedneedle_catalog::reads::ReadsSetup) -> Self {
+    pub fn from_reads(reads: &droppedneedle_catalog::reads::ReadsSetup, db: Db) -> Self {
         Self {
             catalog: reads.library.catalog.clone(),
             collections: reads.collections.clone(),
@@ -259,6 +273,7 @@ impl CompatLibrary {
             covers: reads.platform.covers.covers.clone(),
             artwork: reads.artwork.clone(),
             shuffles: Arc::new(ShuffleSeeds::default()),
+            user_settings: UserSettings::new(db),
         }
     }
 
@@ -542,9 +557,14 @@ impl CompatLibrary {
         Ok(self.catalog.playable_counts().await?)
     }
 
-    /// Every playlist the user may read.
+    /// The playlists the user's apps list: their own, and other people's
+    /// public ones when they asked for those. Opening one by id does not
+    /// pass through here, so an app keeps a public playlist it already holds.
     pub async fn playlists(&self, user_id: &str) -> Result<Vec<Visible>, CompatError> {
-        Ok(self.service().visible_playlists(user_id).await?)
+        let include_public = self.user_settings.include_public_playlists(user_id).await?;
+        let mut playlists = self.service().visible_playlists(user_id).await?;
+        playlists.retain(|playlist| playlist.is_owner || include_public);
+        Ok(playlists)
     }
 
     /// A readable playlist, or None.
@@ -732,7 +752,7 @@ impl CompatLibrary {
                 format: Some(track.format),
                 track_number: i32::try_from(track.track_number).ok(),
                 disc_number: i32::try_from(track.disc_number).ok(),
-                duration: track.duration_seconds.map(f64::round),
+                duration: track.duration_seconds,
                 plex_rating_key: None,
                 library_file_id: Some(track.id),
             })
