@@ -1,0 +1,597 @@
+//! Domain logic over the discover features: clamping, validation, and
+//! assembly. Services return typed domain failures; handlers map them to
+//! HTTP. Provider failures stay typed; other causes are log-only strings.
+
+use std::sync::Arc;
+
+use droppedneedle_providers::ProviderError;
+
+use crate::discover::{
+    content::LiveContent,
+    genre::WithGenrePages,
+    models::{
+        AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
+        DiscoverActivityResponse, DiscoverQueuePreview, DiscoverQueueResponse,
+        DiscoverQueueStatusResponse, DiscoverResponse, GenreDetailResponse, HomeResponse,
+        IgnoredReleasesResponse, IntegrationStatus, ListenSource, PlaylistSuggestionsRequest,
+        PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
+        QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse, RadioPlanRequest,
+        RadioPlanResponse, RadioRequest, RadioSeedKind, RefreshResponse, StatsRange,
+        TrackPreviewResponse, YouTubeSearchResponse,
+    },
+    ports::{ProviderFailure, QueueTrigger, RadioFailure},
+    previews::LivePreviews,
+    queue::LiveQueue,
+    radio::LiveRadio,
+    scheduler::{ArtistDetail, Feature},
+    youtube::LiveYouTube,
+};
+
+/// Max cards served from one queue read.
+pub const QUEUE_COUNT_MAX: i64 = 20;
+/// Max rows on a chart page.
+pub const CHART_RANGE_LIMIT_MAX: i64 = 100;
+/// Max album-preview samples.
+pub const ALBUM_PREVIEW_MAX: i64 = 8;
+/// Max pairs per cache-check call.
+pub const CACHE_CHECK_MAX_ITEMS: usize = 100;
+/// Max artist/track string length accepted anywhere in discover.
+pub const NAME_MAX_LEN: usize = 200;
+/// Fewest radio plan tracks (v2 plans at least five).
+pub const RADIO_PLAN_MIN: i64 = 5;
+/// Max radio plan tracks (v2 caps plans at fifty).
+pub const RADIO_PLAN_MAX: i64 = 50;
+/// Max seed rows in one radio plan.
+pub const RADIO_ITEMS_MAX: usize = 50;
+/// Max recordings one radio plan may leave out.
+pub const RADIO_EXCLUDE_MAX: usize = 500;
+/// Max radio shelf rows.
+pub const RADIO_SHELF_MAX: i64 = 50;
+
+/// Domain failures. `From<ServiceError> for ApiError` in `super::error` is
+/// the only place HTTP statuses are chosen.
+#[derive(Debug, Clone)]
+pub enum ServiceError {
+    /// Unknown or foreign id.
+    NotFound,
+    /// Bad input with a user-facing reason.
+    InvalidInput(String),
+    /// An outside service failed, answered by its kind.
+    Provider(ProviderError),
+    /// Another source failed; the cause is log-only.
+    Upstream(String),
+    /// The store failed; the cause is log-only.
+    Internal(String),
+    /// The feature needs setup first; the sentence is shown.
+    NotConfigured(String),
+    /// The feature is not built yet; the sentence is shown.
+    NotBuilt(String),
+    /// A usage limit is spent for now; the sentence is shown.
+    Exhausted(String),
+}
+
+impl From<ProviderFailure> for ServiceError {
+    fn from(failure: ProviderFailure) -> Self {
+        match failure {
+            ProviderFailure::Provider(error) => Self::Provider(error),
+            ProviderFailure::Failed(cause) => Self::Upstream(cause),
+            other => owned_store_failure(other),
+        }
+    }
+}
+
+/// Map a failure of a store this server owns: a failed read is an internal
+/// fault (500), not a source being down (503).
+fn owned_store_failure(failure: ProviderFailure) -> ServiceError {
+    match failure {
+        ProviderFailure::Provider(error) => ServiceError::Provider(error),
+        ProviderFailure::Failed(cause) => ServiceError::Internal(cause),
+        ProviderFailure::NotConfigured(sentence) => ServiceError::NotConfigured(sentence),
+        ProviderFailure::NotBuilt(sentence) => ServiceError::NotBuilt(sentence),
+        ProviderFailure::Exhausted(sentence) => ServiceError::Exhausted(sentence),
+    }
+}
+
+/// All dependencies behind discover, injected by constructor.
+#[derive(Clone)]
+pub struct DiscoverDeps {
+    /// Shelf content.
+    pub content: Arc<LiveContent>,
+    /// Queue builds and ignore ledger.
+    pub queues: Arc<LiveQueue>,
+    /// Chart pages and genre detail.
+    pub charts: Arc<WithGenrePages>,
+    /// 30-second previews.
+    pub previews: Arc<LivePreviews>,
+    /// YouTube lookups.
+    pub youtube: Arc<LiveYouTube>,
+    /// Radio plans and suggestions.
+    pub radio: Arc<LiveRadio>,
+}
+
+/// Clamp a limit into `1..=max`, defaulting when missing.
+fn clamp_limit(value: Option<i64>, default: i64, max: i64) -> i64 {
+    value.unwrap_or(default).clamp(1, max)
+}
+
+/// Reject blank or overlong names with a user-facing reason.
+fn check_name(value: &str, what: &str) -> Result<(), ServiceError> {
+    if value.trim().is_empty() {
+        return Err(ServiceError::InvalidInput(format!(
+            "{what} must not be blank"
+        )));
+    }
+    if value.len() > NAME_MAX_LEN {
+        return Err(ServiceError::InvalidInput(format!(
+            "{what} must be at most {NAME_MAX_LEN} characters"
+        )));
+    }
+    Ok(())
+}
+
+/// Cached discover shelves for the user. The cache is ours, so a failed
+/// read is an internal fault (500), not a source being down (503).
+pub async fn discover(
+    deps: &DiscoverDeps,
+    user_id: &str,
+) -> Result<DiscoverResponse, ServiceError> {
+    deps.content
+        .discover(user_id)
+        .await
+        .map_err(owned_store_failure)
+}
+
+/// Trigger a background discover rebuild for the user.
+pub async fn refresh_discover(
+    deps: &DiscoverDeps,
+    user_id: &str,
+) -> Result<RefreshResponse, ServiceError> {
+    deps.content.trigger_refresh(user_id).await?;
+    Ok(RefreshResponse {
+        status: "ok".to_owned(),
+        message: "Discover refresh triggered".to_owned(),
+    })
+}
+
+/// Record one discover interaction.
+pub async fn record_activity(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    body: &crate::discover::models::DiscoverActivityRequest,
+) -> Result<DiscoverActivityResponse, ServiceError> {
+    let Some(feature) = Feature::parse(&body.feature) else {
+        return Err(ServiceError::InvalidInput(format!(
+            "Unknown feature '{}'; want home, discover, queue, or artist",
+            body.feature
+        )));
+    };
+    if let Some(section) = body.section.as_deref()
+        && !matches!(section, "similar" | "top_songs" | "top_albums")
+    {
+        return Err(ServiceError::InvalidInput(format!(
+            "Unknown section '{section}'; want similar, top_songs, or top_albums"
+        )));
+    }
+    if feature == Feature::Artist {
+        let valid_artist = body
+            .artist_mbid
+            .as_deref()
+            .is_some_and(droppedneedle_providers::musicbrainz::is_valid_mbid);
+        if !valid_artist || body.section.is_none() || body.provider.is_none() {
+            return Err(ServiceError::InvalidInput(
+                "Artist activity needs an artist MBID, a section and a provider".to_owned(),
+            ));
+        }
+    } else if body.artist_mbid.is_some() || body.section.is_some() || body.provider.is_some() {
+        return Err(ServiceError::InvalidInput(
+            "Artist, section and provider only go with the artist feature".to_owned(),
+        ));
+    }
+    Ok(deps
+        .content
+        .record_activity(
+            user_id,
+            feature,
+            ArtistDetail {
+                artist_mbid: body.artist_mbid.as_deref(),
+                section: body.section.as_deref(),
+                provider: body.provider.map(ListenSource::as_str),
+            },
+        )
+        .await?)
+}
+
+/// One radio shelf.
+pub async fn radio_shelf(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    body: &RadioRequest,
+) -> Result<ChartSection, ServiceError> {
+    if body.seed_type == RadioSeedKind::Items {
+        return Err(ServiceError::InvalidInput(
+            "A radio shelf starts from an artist, an album or a genre".to_owned(),
+        ));
+    }
+    if body.seed_id.trim().is_empty() {
+        return Err(ServiceError::InvalidInput(
+            "seed_id must not be blank".to_owned(),
+        ));
+    }
+    let request = RadioRequest {
+        count: body.count.clamp(1, RADIO_SHELF_MAX),
+        ..body.clone()
+    };
+    deps.radio
+        .shelf(user_id, &request)
+        .await
+        .map_err(radio_failure)
+}
+
+/// One complete radio plan.
+pub async fn radio_plan(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    body: &RadioPlanRequest,
+) -> Result<RadioPlanResponse, ServiceError> {
+    if body.seed_type != RadioSeedKind::Items
+        && body.seed_id.as_deref().unwrap_or("").trim().is_empty()
+    {
+        return Err(ServiceError::InvalidInput(
+            "seed_id must not be blank for artist, album, and genre plans".to_owned(),
+        ));
+    }
+    if body.items.len() > RADIO_ITEMS_MAX {
+        return Err(ServiceError::InvalidInput(format!(
+            "A radio plan takes at most {RADIO_ITEMS_MAX} seed items"
+        )));
+    }
+    if body.exclude_recording_mbids.len() > RADIO_EXCLUDE_MAX {
+        return Err(ServiceError::InvalidInput(format!(
+            "A radio plan can leave out at most {RADIO_EXCLUDE_MAX} recordings"
+        )));
+    }
+    let request = RadioPlanRequest {
+        count: body.count.clamp(RADIO_PLAN_MIN, RADIO_PLAN_MAX),
+        ..body.clone()
+    };
+    deps.radio
+        .plan(user_id, &request)
+        .await
+        .map_err(radio_failure)
+}
+
+/// Suggestions extending one playlist.
+pub async fn playlist_suggestions(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    body: &PlaylistSuggestionsRequest,
+) -> Result<PlaylistSuggestionsResponse, ServiceError> {
+    if body.playlist_id.trim().is_empty() {
+        return Err(ServiceError::InvalidInput(
+            "playlist_id must not be blank".to_owned(),
+        ));
+    }
+    let request = PlaylistSuggestionsRequest {
+        count: body.count.clamp(1, RADIO_SHELF_MAX),
+        ..body.clone()
+    };
+    deps.radio
+        .playlist_suggestions(user_id, &request)
+        .await
+        .map_err(radio_failure)
+}
+
+fn radio_failure(failure: RadioFailure) -> ServiceError {
+    match failure {
+        RadioFailure::NotFound => ServiceError::NotFound,
+        RadioFailure::Invalid(message) => ServiceError::InvalidInput(message),
+        RadioFailure::Provider(failure) => failure.into(),
+    }
+}
+
+/// The queue deck: the user's last built deck when there is one (stale
+/// or not, like v2; the page asks for a fresh build through `generate`),
+/// else a deck built now and not kept.
+pub async fn queue(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    count: Option<i64>,
+) -> Result<DiscoverQueueResponse, ServiceError> {
+    if let Some(deck) = deps.queues.current(user_id).await {
+        let items = match count {
+            Some(wanted) => {
+                let take = wanted.clamp(1, QUEUE_COUNT_MAX) as usize;
+                deck.items.into_iter().take(take).collect()
+            }
+            None => deck.items,
+        };
+        return Ok(DiscoverQueueResponse {
+            items,
+            queue_id: deck.queue_id,
+        });
+    }
+    let clamped = count.map(|wanted| wanted.clamp(1, QUEUE_COUNT_MAX) as usize);
+    let deck = deps
+        .queues
+        .build_now(user_id, clamped)
+        .await
+        .map_err(owned_store_failure)?;
+    Ok(DiscoverQueueResponse {
+        items: deck.items,
+        queue_id: deck.queue_id,
+    })
+}
+
+/// Where the user's background queue build stands.
+pub async fn queue_status(deps: &DiscoverDeps, user_id: &str) -> DiscoverQueueStatusResponse {
+    deps.queues.status(user_id).await
+}
+
+/// Start a background queue build, or say why none started.
+pub async fn queue_generate(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    body: &QueueGenerateRequest,
+) -> QueueGenerateResponse {
+    deps.queues
+        .start_build(user_id, QueueTrigger::Request { force: body.force })
+        .await
+}
+
+/// A release-group id from a path or body, lowercased; anything that is
+/// not a MusicBrainz id is a bad request.
+fn checked_release_group(value: &str) -> Result<String, ServiceError> {
+    let trimmed = value.trim();
+    if !droppedneedle_providers::musicbrainz::is_valid_mbid(trimmed) {
+        return Err(ServiceError::InvalidInput(
+            "release_group_mbid must be a MusicBrainz id".to_owned(),
+        ));
+    }
+    Ok(trimmed.to_ascii_lowercase())
+}
+
+/// Details behind one queue card.
+pub async fn enrich_queue_item(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    release_group_mbid: &str,
+) -> Result<QueueEnrichment, ServiceError> {
+    let mbid = checked_release_group(release_group_mbid)?;
+    Ok(deps.queues.enrich(user_id, &mbid).await?)
+}
+
+/// An on-demand video preview behind one queue card.
+pub async fn preview_queue_item(
+    deps: &DiscoverDeps,
+    release_group_mbid: &str,
+) -> Result<DiscoverQueuePreview, ServiceError> {
+    let mbid = checked_release_group(release_group_mbid)?;
+    Ok(deps.queues.preview(&mbid).await?)
+}
+
+/// Ignore one release: record it, rebuild the queue without it, and ask
+/// discover to refresh.
+pub async fn ignore_queue_item(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    body: &QueueIgnoreRequest,
+) -> Result<(), ServiceError> {
+    checked_release_group(&body.release_group_mbid)?;
+    deps.queues
+        .ignore_release(user_id, body)
+        .await
+        .map_err(owned_store_failure)?;
+    deps.queues
+        .start_build(user_id, QueueTrigger::Request { force: true })
+        .await;
+    deps.content.trigger_refresh(user_id).await?;
+    Ok(())
+}
+
+/// Take one release off the user's ignore ledger. The current deck stays
+/// as it is: the album can come up in a later one.
+pub async fn unignore_queue_item(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    release_group_mbid: &str,
+) -> Result<(), ServiceError> {
+    let release_group = checked_release_group(release_group_mbid)?;
+    deps.queues
+        .unignore_release(user_id, &release_group)
+        .await
+        .map_err(owned_store_failure)
+}
+
+/// The user's ignore ledger, newest first.
+pub async fn ignored_releases(
+    deps: &DiscoverDeps,
+    user_id: &str,
+) -> Result<IgnoredReleasesResponse, ServiceError> {
+    let items = deps
+        .queues
+        .ignored(user_id)
+        .await
+        .map_err(owned_store_failure)?;
+    Ok(IgnoredReleasesResponse { items })
+}
+
+/// The given cards whose albums the library already holds.
+pub async fn validate_queue(
+    deps: &DiscoverDeps,
+    body: &QueueValidateRequest,
+) -> Result<QueueValidateResponse, ServiceError> {
+    if body.release_group_mbids.len() > CACHE_CHECK_MAX_ITEMS {
+        return Err(ServiceError::InvalidInput(format!(
+            "At most {CACHE_CHECK_MAX_ITEMS} ids per call"
+        )));
+    }
+    Ok(QueueValidateResponse {
+        in_library: deps
+            .queues
+            .validate(&body.release_group_mbids)
+            .await
+            .map_err(owned_store_failure)?,
+    })
+}
+
+/// Track video lookup with the cached flag.
+pub async fn youtube_track_search(
+    deps: &DiscoverDeps,
+    artist: &str,
+    track: &str,
+) -> Result<YouTubeSearchResponse, ServiceError> {
+    check_name(artist, "artist")?;
+    check_name(track, "track")?;
+    let cached = deps.youtube.is_cached(artist, track, true).await;
+    match deps.youtube.search_track(artist, track).await? {
+        Some(video_id) => Ok(YouTubeSearchResponse {
+            video_id: Some(video_id.clone()),
+            embed_url: Some(format!("https://www.youtube.com/embed/{video_id}")),
+            error: None,
+            cached,
+        }),
+        None => Ok(YouTubeSearchResponse {
+            video_id: None,
+            embed_url: None,
+            error: Some("not_found".to_owned()),
+            cached,
+        }),
+    }
+}
+
+/// A 30-second track preview. Empty means no provider had one.
+pub async fn track_preview(
+    deps: &DiscoverDeps,
+    artist: &str,
+    track: &str,
+) -> Result<TrackPreviewResponse, ServiceError> {
+    check_name(artist, "artist")?;
+    check_name(track, "track")?;
+    let artist: String = artist.chars().take(NAME_MAX_LEN).collect();
+    let track: String = track.chars().take(NAME_MAX_LEN).collect();
+    Ok(deps.previews.track_preview(&artist, &track).await?)
+}
+
+/// Ordered 30-second album samples.
+pub async fn album_preview(
+    deps: &DiscoverDeps,
+    artist: &str,
+    album: &str,
+    count: Option<i64>,
+) -> Result<AlbumPreviewResponse, ServiceError> {
+    check_name(artist, "artist")?;
+    check_name(album, "album")?;
+    let artist: String = artist.chars().take(NAME_MAX_LEN).collect();
+    let album: String = album.chars().take(NAME_MAX_LEN).collect();
+    let count = clamp_limit(count, 4, ALBUM_PREVIEW_MAX);
+    let (tracks, provider) = deps.previews.album_preview(&artist, &album, count).await?;
+    Ok(AlbumPreviewResponse { tracks, provider })
+}
+
+/// Cached home shelves for the user. Same ownership rule as discover:
+/// failed cache reads are internal faults.
+pub async fn home(deps: &DiscoverDeps, user_id: &str) -> Result<HomeResponse, ServiceError> {
+    deps.content
+        .home(user_id)
+        .await
+        .map_err(owned_store_failure)
+}
+
+/// Integration availability, refined by a live local-files check that
+/// never blanks the row on failure (the cached value wins on error).
+pub async fn integration_status(deps: &DiscoverDeps) -> Result<IntegrationStatus, ServiceError> {
+    let mut status = deps.content.integration_status().await?;
+    if let Ok(has_local) = deps.content.has_local_files().await {
+        status.localfiles = has_local;
+    }
+    Ok(status)
+}
+
+/// Genre detail with owned and popular rows.
+pub async fn genre_detail(
+    deps: &DiscoverDeps,
+    genre: &str,
+    limit: Option<i64>,
+    artist_offset: Option<i64>,
+    album_offset: Option<i64>,
+) -> Result<GenreDetailResponse, ServiceError> {
+    check_name(genre, "genre")?;
+    let limit = clamp_limit(limit, 50, 200);
+    let artist_offset = artist_offset.unwrap_or(0).max(0);
+    let album_offset = album_offset.unwrap_or(0).max(0);
+    Ok(deps
+        .charts
+        .genre_detail(genre, limit, artist_offset, album_offset)
+        .await?)
+}
+
+/// One trending-artists page. This is the range-pair redesign: one route
+/// with `?range=` replaces the v2 base route (four embedded ranges) plus
+/// the `/{range_key}` route. No `range` means this week; the home root
+/// still carries teasers for the overview use case.
+pub async fn trending_artists(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    range: Option<StatsRange>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    source: Option<ListenSource>,
+) -> Result<ChartPage<ArtistRef>, ServiceError> {
+    let range = range.unwrap_or_default();
+    let source = source.unwrap_or_default();
+    let limit = clamp_limit(limit, 25, CHART_RANGE_LIMIT_MAX);
+    let offset = offset.unwrap_or(0).max(0);
+    Ok(deps
+        .charts
+        .trending_artists(user_id, range, limit, offset, source)
+        .await?)
+}
+
+/// One popular-albums page (same redesign as trending artists).
+pub async fn popular_albums(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    range: Option<StatsRange>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    source: Option<ListenSource>,
+) -> Result<ChartPage<AlbumRef>, ServiceError> {
+    let range = range.unwrap_or_default();
+    let source = source.unwrap_or_default();
+    let limit = clamp_limit(limit, 25, CHART_RANGE_LIMIT_MAX);
+    let offset = offset.unwrap_or(0).max(0);
+    Ok(deps
+        .charts
+        .popular_albums(user_id, range, limit, offset, source)
+        .await?)
+}
+
+/// One your-top-albums page for the user (same redesign, per-user).
+pub async fn your_top_albums(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    range: Option<StatsRange>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    source: Option<ListenSource>,
+) -> Result<ChartPage<AlbumRef>, ServiceError> {
+    let range = range.unwrap_or_default();
+    let source = source.unwrap_or_default();
+    let limit = clamp_limit(limit, 25, CHART_RANGE_LIMIT_MAX);
+    let offset = offset.unwrap_or(0).max(0);
+    Ok(deps
+        .charts
+        .your_top_albums(user_id, range, limit, offset, source)
+        .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blank_names_fail() {
+        assert!(check_name("  ", "artist").is_err());
+        assert!(check_name("Portishead", "artist").is_ok());
+    }
+}

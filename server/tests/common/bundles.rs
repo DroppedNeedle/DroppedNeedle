@@ -1,4 +1,4 @@
-//! Acquisition and reads bundles built the way the app builds them, for
+//! Acquisition and catalog bundles built the way the app builds them, for
 //! rigs that need production-shaped bundles without the whole app. Every
 //! outside address is closed, and the plugin host launches nothing.
 
@@ -11,16 +11,14 @@ use droppedneedle_acquire::landing::ports::LandingLibrary;
 use droppedneedle_acquire::plugin_events::FlowTicks;
 use droppedneedle_acquire::wiring::{AcquirePorts, AcquireStores};
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_catalog::reads::catalog::{
+use droppedneedle_catalog::collections::{CollectionsState, db::CollectionsDb, store::Stores};
+use droppedneedle_catalog::discover::content::DownloadReadiness;
+use droppedneedle_catalog::metadata::{
     Catalog,
     library::LocalCatalog,
     upstream::{LiveCatalogSettings, Upstream},
 };
-use droppedneedle_catalog::reads::collections::{
-    CollectionsState, db::CollectionsDb, store::Stores,
-};
-use droppedneedle_catalog::reads::discover::content::DownloadReadiness;
-use droppedneedle_catalog::reads::{ReadsInputs, ReadsPorts, ReadsSetup};
+use droppedneedle_catalog::wiring::{CatalogInputs, CatalogPorts, CatalogSetup};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_library::wiring::{LibraryCore, LibrarySetup};
 use droppedneedle_media::stream::local_files::LibraryFiles;
@@ -151,18 +149,18 @@ pub fn acquire_landing_at(
     .expect("acquire bundle builds")
 }
 
-/// The production reads bundle over `platform`, with no provider pair:
+/// The production catalog bundle over `platform`, with no provider pair:
 /// collections in `collections`, the catalog and artwork on closed
 /// upstreams, files read through `library`, and download readiness from
 /// `acquire` when there is one.
-pub fn reads_at(
+pub fn catalog_setup_at(
     platform: &Platform,
     users: UsersDeps,
-    inputs: ReadsInputs,
+    inputs: CatalogInputs,
     library: &LibrarySetup,
     collections: CollectionsState,
     acquire: Option<&AcquireSetup>,
-) -> ReadsSetup {
+) -> CatalogSetup {
     let catalog = Catalog::new(
         Upstream::new(
             Arc::new(Providers::unpaced(Arc::new(
@@ -173,17 +171,17 @@ pub fn reads_at(
         ),
         LocalCatalog::new(platform.db.clone()),
     );
-    let artwork = droppedneedle_catalog::reads::artwork(platform, &inputs, catalog.clone());
+    let artwork = droppedneedle_catalog::wiring::artwork(platform, &inputs, catalog.clone());
     let download_readiness: Arc<dyn DownloadReadiness> = match acquire {
         Some(acquire) => Arc::new(acquire.readiness.clone()),
         None => Arc::new(NoDownloadSource),
     };
-    ReadsSetup::build(
+    CatalogSetup::build(
         platform,
         users,
         inputs,
         None,
-        ReadsPorts {
+        CatalogPorts {
             remotes: Arc::new(remotes_resolver(platform)),
             collections,
             catalog,
@@ -262,14 +260,14 @@ pub fn media_jobs(platform: &Platform) -> droppedneedle_media::remotes::presence
 }
 
 /// The production media bundle over `platform`, with no ffmpeg: files read
-/// through `library`, remote playlist imports landing in `reads`'
+/// through `library`, remote playlist imports landing in `catalog_setup`'
 /// collections and the personal mix granted through `acquire`. Its workers
 /// are not started.
 pub fn media_at(
     platform: &Platform,
     users: UsersDeps,
     library: &LibrarySetup,
-    reads: &ReadsSetup,
+    catalog_setup: &CatalogSetup,
     acquire: &AcquireSetup,
 ) -> droppedneedle_media::MediaSetup {
     let outbound = super::closed_outbound();
@@ -283,8 +281,8 @@ pub fn media_at(
         users,
         library.core.root_source(),
         Arc::new(
-            droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink::new(
-                reads.collections.clone(),
+            droppedneedle_catalog::collections::remote_import::PlaylistImportSink::new(
+                catalog_setup.collections.clone(),
             ),
         ),
         idle_host(platform, library.core.clone()),

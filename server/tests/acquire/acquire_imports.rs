@@ -30,9 +30,9 @@ use droppedneedle_acquire::settings::{ConfigLidarrSettings, ConfigSpotifySetting
 use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::wiring::ClientLives;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
-use droppedneedle_catalog::reads::collections::db::CollectionsDb;
-use droppedneedle_catalog::reads::collections::models::PlaylistTrack;
-use droppedneedle_catalog::reads::collections::store::PlaylistStore;
+use droppedneedle_catalog::collections::db::CollectionsDb;
+use droppedneedle_catalog::collections::models::PlaylistTrack;
+use droppedneedle_catalog::collections::store::PlaylistStore;
 use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, State, start_runners};
 use droppedneedle_kernel::runtime_config::secret_sections::SpotifySettings as SpotifySection;
 use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -1641,12 +1641,12 @@ async fn spotify_sqlite_stores_persist_and_expire() {
     );
     assert_eq!(links.get("u1").await.expect("store reads"), None);
 
-    let collections = droppedneedle_catalog::reads::collections::db::CollectionsDb::new(
+    let collections = droppedneedle_catalog::collections::db::CollectionsDb::new(
         db.db().clone(),
         db.clock().clone(),
     );
     let bridge = CollectionsPlaylistBridge::new(
-        droppedneedle_catalog::reads::collections::store::PlaylistStore::new(collections),
+        droppedneedle_catalog::collections::store::PlaylistStore::new(collections),
         db.clone(),
     );
     let id = bridge
@@ -1850,7 +1850,7 @@ async fn readiness_answers(setup: SourceSetup) -> Vec<bool> {
     use droppedneedle_acquire::requests::quota::QuotaLedger;
     use droppedneedle_acquire::search_jobs::store::JobStore;
     use droppedneedle_acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs};
-    use droppedneedle_catalog::reads::discover::content::IntegrationSettings;
+    use droppedneedle_catalog::discover::content::IntegrationSettings;
 
     let (auth, _, user_id) = seed_rig().await;
     let scratch = crate::common::ScratchDir::new("readiness-table");

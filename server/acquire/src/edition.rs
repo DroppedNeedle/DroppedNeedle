@@ -119,8 +119,8 @@ pub async fn library_holds(db: &Db, release_group_mbid: &str) -> Result<bool, Db
 pub async fn local_names(
     db: &droppedneedle_kernel::db::Db,
     release_group_mbid: &str,
-) -> Result<Option<(String, String)>, droppedneedle_catalog::reads::library::stores::StoreError> {
-    let album = droppedneedle_catalog::reads::catalog::library::LocalCatalog::new(db.clone())
+) -> Result<Option<(String, String)>, droppedneedle_catalog::local::stores::StoreError> {
+    let album = droppedneedle_catalog::metadata::library::LocalCatalog::new(db.clone())
         .album(release_group_mbid)
         .await?;
     Ok(album

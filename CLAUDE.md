@@ -627,7 +627,7 @@ Run from the repo root. `make help` lists every target.
 - Navigation destinations live in `lib/components/shell/navItems.ts`; the
   sidebar, the bottom bar and the More sheet all render from it.
 - A Discover or Home section is one entry in the registry in
-  `catalog/src/reads/discover/sections.rs` (its page, zone, settings
+  `catalog/src/discover/sections.rs` (its page, zone, settings
   title, the reads it needs, its dedupe); the page build, the section
   settings and the web UI's lookups all read it, and nothing else lists
   sections.

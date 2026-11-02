@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, State},
 };
 use droppedneedle_auth::{Admin, User};
-use droppedneedle_catalog::reads::collections::models::FollowStatusResponse;
+use droppedneedle_catalog::collections::models::FollowStatusResponse;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::mount::{Routes, routes};

@@ -35,7 +35,7 @@
 //!
 //! [`routes`] puts every route in the user group, inside the session gate.
 //! `GET /now-playing` serves the live presence registry here, not the
-//! static snapshot in `reads::discover`. [`listening_routes`] serves each
+//! static snapshot in `discover`. [`listening_routes`] serves each
 //! user's scrobble preferences and ListenBrainz link, kept by
 //! [`listening::ListeningStore`].
 //!

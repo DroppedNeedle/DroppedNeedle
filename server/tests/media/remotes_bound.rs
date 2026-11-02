@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::http::Uri;
-use droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink;
+use droppedneedle_catalog::collections::remote_import::PlaylistImportSink;
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::JellyfinConnection;
 use droppedneedle_media::remotes::adapter::USER_READS_PER_SOURCE;

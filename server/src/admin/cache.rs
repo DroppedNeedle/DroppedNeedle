@@ -20,8 +20,8 @@ use super::{
         ProviderSourceStats,
     },
 };
-use droppedneedle_catalog::reads::discover::cache as discover_pages;
-use droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache;
+use droppedneedle_catalog::artwork::cache::ArtworkCache;
+use droppedneedle_catalog::discover::cache as discover_pages;
 use droppedneedle_providers::ProviderCacheStore;
 
 /// Rows and bytes per provider, whether the cache file is working, the

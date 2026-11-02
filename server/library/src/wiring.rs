@@ -335,7 +335,7 @@ pub struct LibrarySetup {
     /// each other.
     pub management_settings: Arc<LibraryManagementService>,
     /// Genres, lyrics and covers Library Management plans with (the
-    /// artwork cache lives with the reads). `None` in a test bundle with
+    /// artwork cache lives with the catalog). `None` in a test bundle with
     /// no outside sources.
     pub enrichment: Option<Arc<dyn EnrichmentPort>>,
     /// The write side the fields above share, which the plugin host holds

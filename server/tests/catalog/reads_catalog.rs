@@ -15,12 +15,12 @@ use droppedneedle_auth::session::middleware::require_session;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::models::LastFmConnection;
 use droppedneedle_auth::users::roles::Role;
-use droppedneedle_catalog::reads::catalog::{
+use droppedneedle_catalog::metadata::{
     self, Catalog, CatalogDeps,
     library::LocalCatalog,
     upstream::{CatalogSettings, Upstream},
 };
-use droppedneedle_catalog::reads::search::{self, SearchDeps, service::SearchService};
+use droppedneedle_catalog::search::{self, SearchDeps, service::SearchService};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_kernel::runtime_config::sections::{
     MbSourceMode, MusicBrainzSettings, UserPreferences,
@@ -423,7 +423,7 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRi
     let scope = TestApp::start("reads-catalog").await;
     let app = scope
         .request_scope(
-            catalog::routes()
+            metadata::routes()
                 .with_state(CatalogDeps { catalog })
                 .into_router()
                 .merge(search::routes().with_state(search).into_router())
@@ -987,12 +987,12 @@ async fn auth_matrix_rejects_anonymous_callers_and_bad_ids() {
 /// again after the short outage wait, never held blank for hours.
 #[tokio::test]
 async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
-    use droppedneedle_catalog::reads::catalog::precache::CatalogArtistImages;
-    use droppedneedle_catalog::reads::platform::artwork::{
+    use droppedneedle_catalog::artwork::{
         ArtworkService, OUTAGE_TTL_SECS,
         cache::{ArtworkCache, KeyEntry},
         local::LocalArtwork,
     };
+    use droppedneedle_catalog::metadata::precache::CatalogArtistImages;
 
     let mut routes = routes();
     for route in &mut routes {
@@ -1064,10 +1064,10 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
 /// for.
 #[tokio::test]
 async fn an_audiodb_picture_named_over_http_is_fetched_over_https() {
-    use droppedneedle_catalog::reads::catalog::precache::CatalogArtistImages;
-    use droppedneedle_catalog::reads::platform::artwork::{
+    use droppedneedle_catalog::artwork::{
         ArtworkService, cache::ArtworkCache, local::LocalArtwork,
     };
+    use droppedneedle_catalog::metadata::precache::CatalogArtistImages;
     use droppedneedle_providers::executor::ScriptedWire;
     use droppedneedle_providers::{ProviderEndpoints, audiodb, musicbrainz};
 
@@ -1156,8 +1156,8 @@ async fn an_audiodb_picture_named_over_http_is_fetched_over_https() {
 /// TheAudioDB, with nothing cached, is left to the background fill.
 #[tokio::test]
 async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
-    use droppedneedle_catalog::reads::catalog::precache::CatalogArtistImages;
-    use droppedneedle_catalog::reads::platform::artwork::ArtistImageSource as _;
+    use droppedneedle_catalog::artwork::ArtistImageSource as _;
+    use droppedneedle_catalog::metadata::precache::CatalogArtistImages;
     use droppedneedle_providers::executor::ScriptedWire;
     use droppedneedle_providers::{
         ProviderEndpoints, RequestPriority, audiodb, musicbrainz, wikidata,
@@ -1257,11 +1257,11 @@ async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
 /// text, and a link to the file page.
 #[tokio::test]
 async fn a_commons_portrait_answers_its_credit_as_plain_text() {
-    use droppedneedle_catalog::reads::catalog::precache::CatalogArtistImages;
-    use droppedneedle_catalog::reads::platform::artwork::{
+    use droppedneedle_catalog::artwork::covers::{self, CoversState};
+    use droppedneedle_catalog::artwork::{
         ArtworkService, cache::ArtworkCache, local::LocalArtwork,
     };
-    use droppedneedle_catalog::reads::platform::covers::{self, CoversState};
+    use droppedneedle_catalog::metadata::precache::CatalogArtistImages;
     use droppedneedle_providers::executor::ScriptedWire;
     use droppedneedle_providers::{ProviderEndpoints, wikidata};
 
@@ -1381,7 +1381,7 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
 /// while the read behind them fails.
 #[tokio::test]
 async fn a_passing_failure_is_not_cached_as_a_short_section() {
-    use droppedneedle_catalog::reads::catalog::models::AlbumRef;
+    use droppedneedle_catalog::metadata::models::AlbumRef;
     use droppedneedle_kernel::runtime_config::sections::ListenSource;
     use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
     use droppedneedle_providers::{

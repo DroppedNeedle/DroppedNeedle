@@ -22,8 +22,8 @@ pub(crate) mod store;
 use std::collections::HashSet;
 
 use droppedneedle_auth::{Admin, Principal, Role};
-use droppedneedle_catalog::reads::catalog::library::LocalCatalog;
-use droppedneedle_catalog::reads::library::stores::StoreError;
+use droppedneedle_catalog::local::stores::StoreError;
+use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_library::removal::{LIBRARY_OFF, MutationError, RECYCLE_BIN_UNKNOWN};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 

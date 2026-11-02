@@ -79,7 +79,9 @@ use crate::{
 use droppedneedle_auth::session::{
     event_stream, middleware::require_session, rate_limit::rate_limit,
 };
-use droppedneedle_catalog::reads;
+use droppedneedle_catalog::{
+    artwork, collections, discover, local, metadata, search, version, wrapped, youtube,
+};
 use droppedneedle_compat::{
     http::{canonicalize_case, preflight, stamp_cors},
     shared::path_case::is_compat_path,
@@ -219,31 +221,19 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
         .area(droppedneedle_library::wiring::routes(), |state| {
             state.library_services.clone()
         })
-        .area(reads::library::routes(), |state| {
-            state.reads.library.clone()
+        .area(local::routes(), |state| state.catalog.local.clone())
+        .area(discover::routes(), |state| state.catalog.discover.clone())
+        .area(collections::routes(), |state| {
+            state.catalog.collections.clone()
         })
-        .area(reads::discover::routes(), |state| {
-            state.reads.discover.clone()
+        .area(artwork::covers::routes(), |state| {
+            state.catalog.covers.clone()
         })
-        .area(reads::collections::routes(), |state| {
-            state.reads.collections.clone()
-        })
-        .area(reads::platform::covers::routes(), |state| {
-            state.reads.platform.covers.clone()
-        })
-        .area(reads::platform::version::routes(), |state| {
-            state.reads.platform.version.clone()
-        })
-        .area(reads::platform::wrapped::routes(), |state| {
-            state.reads.platform.wrapped.clone()
-        })
-        .area(reads::youtube::routes(), |state| {
-            state.reads.youtube.clone()
-        })
-        .area(reads::search::routes(), |state| state.reads.search.clone())
-        .optional_area(reads::catalog::routes(), |state| {
-            state.reads.catalog.clone()
-        })
+        .area(version::routes(), |state| state.catalog.version.clone())
+        .area(wrapped::routes(), |state| state.catalog.wrapped.clone())
+        .area(youtube::routes(), |state| state.catalog.youtube.clone())
+        .area(search::routes(), |state| state.catalog.search.clone())
+        .optional_area(metadata::routes(), |state| state.catalog.metadata.clone())
         .area(
             droppedneedle_catalog::concerts::handlers::routes(),
             |state| state.concerts.service(),
@@ -404,14 +394,11 @@ fn routes(state: &AppState, web: Option<WebUi>) -> Router {
     // compiles this mount out of release binaries entirely, so no
     // production process can serve tooling however it was configured.
     #[cfg(debug_assertions)]
-    let app = if droppedneedle_catalog::reads::platform::covers_debug::tooling_routes_enabled(
-        &state.config,
-    ) {
-        app.merge(
-            droppedneedle_catalog::reads::platform::covers_debug::router(
-                state.reads.platform.covers.clone(),
-            ),
-        )
+    let app = if droppedneedle_catalog::artwork::covers_debug::tooling_routes_enabled(&state.config)
+    {
+        app.merge(droppedneedle_catalog::artwork::covers_debug::router(
+            state.catalog.covers.clone(),
+        ))
     } else {
         app
     };

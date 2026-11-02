@@ -23,13 +23,13 @@ use crate::jellyfin::seams::{
     WriteRefusal,
 };
 use crate::subsonic::views::song_path;
-use droppedneedle_catalog::reads::collections::service::Visible;
-use droppedneedle_catalog::reads::collections::store::play_marks::MarkScope;
-use droppedneedle_catalog::reads::library::player::{
+use droppedneedle_catalog::collections::service::Visible;
+use droppedneedle_catalog::collections::store::play_marks::MarkScope;
+use droppedneedle_catalog::local::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
-use droppedneedle_catalog::reads::library::store::LocalCatalog;
-use droppedneedle_catalog::reads::library::stores::{ArtistRecord, ArtistScope as CatalogScope};
+use droppedneedle_catalog::local::store::LocalCatalog;
+use droppedneedle_catalog::local::stores::{ArtistRecord, ArtistScope as CatalogScope};
 
 fn to_u32(value: Option<i64>) -> Option<u32> {
     value.and_then(|value| u32::try_from(value).ok())

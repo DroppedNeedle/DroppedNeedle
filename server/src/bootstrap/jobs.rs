@@ -414,17 +414,17 @@ impl JobsSetup {
         self
     }
 
-    /// Library precache over the reads' catalog and artwork service, when
+    /// Library precache over the catalog bundle's pages and artwork service, when
     /// both are wired; otherwise runs stay unwired and fail with a reason.
     pub fn with_precache_sources_from(
         self,
-        reads: &droppedneedle_catalog::reads::ReadsSetup,
+        catalog_setup: &droppedneedle_catalog::wiring::CatalogSetup,
         config: &Arc<ConfigStore>,
         listening: droppedneedle_media::playback::listening::ListeningStore,
     ) -> Self {
-        match (&reads.catalog, &reads.artwork) {
+        match (&catalog_setup.metadata, &catalog_setup.artwork) {
             (Some(catalog), Some(artwork)) => self.with_precache_sources(Arc::new(
-                droppedneedle_catalog::reads::catalog::precache::CatalogPrecache::new(
+                droppedneedle_catalog::metadata::precache::CatalogPrecache::new(
                     catalog.catalog.clone(),
                     artwork.clone(),
                     config.live(),
@@ -440,12 +440,15 @@ impl JobsSetup {
         }
     }
 
-    /// Run the page image warm jobs through the reads' artwork service.
+    /// Run the page image warm jobs through the catalog bundle's artwork service.
     /// Without one the kind is not registered, and the start-up check
     /// warns about any rows left queued.
-    pub fn with_cover_warm_jobs(self, reads: &droppedneedle_catalog::reads::ReadsSetup) -> Self {
-        use droppedneedle_catalog::reads::platform::artwork::warm::{self, CoverWarmJobs};
-        match &reads.artwork {
+    pub fn with_cover_warm_jobs(
+        self,
+        catalog_setup: &droppedneedle_catalog::wiring::CatalogSetup,
+    ) -> Self {
+        use droppedneedle_catalog::artwork::warm::{self, CoverWarmJobs};
+        match &catalog_setup.artwork {
             Some(artwork) => {
                 self.with_job(warm::SPEC, Arc::new(CoverWarmJobs::new(artwork.clone())))
             }

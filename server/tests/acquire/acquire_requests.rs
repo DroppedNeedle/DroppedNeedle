@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use droppedneedle_acquire::requests::mix::{
     MixGrantHooks, MixSources, PersonalMixBuilder, SkipReason,
 };
-use droppedneedle_catalog::reads::collections::db::CollectionsDb;
-use droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore;
+use droppedneedle_catalog::collections::db::CollectionsDb;
+use droppedneedle_catalog::collections::store::playlists::PlaylistStore;
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
@@ -1739,7 +1739,7 @@ async fn a_fetch_follows_the_copy_the_album_page_shows() {
     })
     .await
     .unwrap();
-    let page = droppedneedle_catalog::reads::catalog::library::LocalCatalog::new(db.db().clone())
+    let page = droppedneedle_catalog::metadata::library::LocalCatalog::new(db.db().clone())
         .album(&group)
         .await
         .unwrap()
@@ -1810,7 +1810,7 @@ async fn a_fetch_and_the_album_page_agree_on_a_picked_copy() {
     })
     .await
     .unwrap();
-    let page = droppedneedle_catalog::reads::catalog::library::LocalCatalog::new(db.db().clone())
+    let page = droppedneedle_catalog::metadata::library::LocalCatalog::new(db.db().clone())
         .album(&group)
         .await
         .unwrap()

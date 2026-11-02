@@ -18,7 +18,7 @@ use sqlx::{Row as _, SqlitePool};
 use super::models::{SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
 use droppedneedle_auth::sqlite::LastFmLinks;
 use droppedneedle_auth::users::stores::StoreError;
-use droppedneedle_catalog::reads::discover::sections::{self, Page};
+use droppedneedle_catalog::discover::sections::{self, Page};
 use droppedneedle_kernel::db::{Db, DbError, Lane, sqlx_is_busy};
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 

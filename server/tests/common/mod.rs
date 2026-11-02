@@ -275,12 +275,12 @@ pub fn listening_store(
 /// Reads inputs for production-shaped rigs over `platform`: covers and the
 /// YouTube quota under its app folder and the listening store on its
 /// database. Nothing dials out unless a test asks for a cover or a chart.
-pub fn reads_inputs(
+pub fn catalog_inputs(
     platform: &droppedneedle_kernel::platform::Platform,
-) -> droppedneedle_catalog::reads::ReadsInputs {
+) -> droppedneedle_catalog::wiring::CatalogInputs {
     let http = test_http();
     let dir = &platform.config.root_app_dir;
-    droppedneedle_catalog::reads::ReadsInputs {
+    droppedneedle_catalog::wiring::CatalogInputs {
         covers_dir: dir.join("covers"),
         cover_cache_max_bytes: 16 * 1024 * 1024,
         http: http.shared().clone(),

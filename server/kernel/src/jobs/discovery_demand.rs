@@ -2,7 +2,7 @@
 //! recent activity says is due (v2 `warm_discover_home_periodically`).
 //!
 //! The decisions (who is due, what to rebuild, when to try again) live in
-//! `reads::discover`; this module only owns the loop on the supervisor.
+//! `discover`; this module only owns the loop on the supervisor.
 //! Activity recorded by the page also starts a pass for that user right
 //! away, so the loop is the backstop, not the only trigger.
 

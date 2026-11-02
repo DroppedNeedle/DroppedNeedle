@@ -27,12 +27,10 @@ use super::models::AlbumIntake;
 use super::service::RequestsService;
 
 use droppedneedle_auth::{Principal, Role};
-use droppedneedle_catalog::reads::catalog::library::LocalCatalog;
-use droppedneedle_catalog::reads::collections::store::playlists::{
-    NewEntry, PlaylistStore, Written,
-};
-use droppedneedle_catalog::reads::discover::models::QueueItemLight;
-use droppedneedle_catalog::reads::discover::queue::select::{self, Shuffler};
+use droppedneedle_catalog::collections::store::playlists::{NewEntry, PlaylistStore, Written};
+use droppedneedle_catalog::discover::models::QueueItemLight;
+use droppedneedle_catalog::discover::queue::select::{self, Shuffler};
+use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::events::{
@@ -820,7 +818,7 @@ fn entry_for(track: &MixTrack) -> NewEntry {
     }
 }
 
-fn store_fault(error: droppedneedle_catalog::reads::collections::db::StoreError) -> RequestsError {
+fn store_fault(error: droppedneedle_catalog::collections::db::StoreError) -> RequestsError {
     RequestsError::internal(&error)
 }
 

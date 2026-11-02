@@ -62,7 +62,7 @@ impl SourceReadiness {
     }
 }
 
-impl droppedneedle_catalog::reads::discover::content::DownloadReadiness for SourceReadiness {
+impl droppedneedle_catalog::discover::content::DownloadReadiness for SourceReadiness {
     fn can_acquire(&self) -> bool {
         SourceReadiness::can_acquire(self)
     }

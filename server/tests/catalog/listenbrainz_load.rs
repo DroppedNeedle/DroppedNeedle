@@ -18,15 +18,15 @@ use axum::http::{Method, Request, Uri};
 use axum::response::{IntoResponse, Response};
 use droppedneedle_acquire::requests::{RequestsState, mix_sources};
 use droppedneedle_auth::users::models::LastFmConnection;
-use droppedneedle_catalog::reads::catalog::Catalog;
-use droppedneedle_catalog::reads::catalog::library::LocalCatalog;
-use droppedneedle_catalog::reads::catalog::upstream::{LiveCatalogSettings, Upstream};
-use droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore;
-use droppedneedle_catalog::reads::discover::scheduler::Feature;
-use droppedneedle_catalog::reads::discover::scheduler::activity::{Activity, ActivityDb};
-use droppedneedle_catalog::reads::discover::wiring::{deps_over, live_network};
-use droppedneedle_catalog::reads::search::enrichment::{SearchCounts, enrich_with_degradation};
-use droppedneedle_catalog::reads::search::models::{
+use droppedneedle_catalog::collections::store::playlists::PlaylistStore;
+use droppedneedle_catalog::discover::scheduler::Feature;
+use droppedneedle_catalog::discover::scheduler::activity::{Activity, ActivityDb};
+use droppedneedle_catalog::discover::wiring::{deps_over, live_network};
+use droppedneedle_catalog::metadata::Catalog;
+use droppedneedle_catalog::metadata::library::LocalCatalog;
+use droppedneedle_catalog::metadata::upstream::{LiveCatalogSettings, Upstream};
+use droppedneedle_catalog::search::enrichment::{SearchCounts, enrich_with_degradation};
+use droppedneedle_catalog::search::models::{
     AlbumEnrichmentRequest, ArtistEnrichmentRequest, EnrichmentBatchRequest,
 };
 use droppedneedle_kernel::clock::Clock as _;

@@ -41,11 +41,11 @@ use crate::requests::ledger::{ApprovalState, FollowApproval, validate_mbid};
 use crate::requests::models::ActionResponse;
 use crate::requests::sqlite::{lane_error, ms_from_secs, read};
 use droppedneedle_auth::{Admin, Principal, Role};
-use droppedneedle_catalog::reads::collections::db::CollectionsDb;
-use droppedneedle_catalog::reads::collections::error::CollectionsError;
-use droppedneedle_catalog::reads::collections::models::FollowStatusResponse;
-use droppedneedle_catalog::reads::collections::service::follow_status;
-use droppedneedle_catalog::reads::collections::store::FollowStore;
+use droppedneedle_catalog::collections::db::CollectionsDb;
+use droppedneedle_catalog::collections::error::CollectionsError;
+use droppedneedle_catalog::collections::models::FollowStatusResponse;
+use droppedneedle_catalog::collections::service::follow_status;
+use droppedneedle_catalog::collections::store::FollowStore;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::statement::ListLen;
 

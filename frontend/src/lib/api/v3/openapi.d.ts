@@ -16878,7 +16878,7 @@ export interface components {
         };
         /**
          * @description One live session, already privacy-projected (same JSON as the
-         *     `reads::discover` now-playing shape, so clients see no difference).
+         *     `discover` now-playing shape, so clients see no difference).
          */
         NowPlayingEntry: {
             /** @description Album title (none when redacted or unknown). */

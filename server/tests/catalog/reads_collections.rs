@@ -8,7 +8,7 @@ use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::follows::{self, Follows};
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_catalog::reads::collections::{self, CollectionsState, db::CollectionsDb};
+use droppedneedle_catalog::collections::{self, CollectionsState, db::CollectionsDb};
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, LaneLimits, TEST_PATIENCE, open_runtime};
 
 use axum::{
@@ -128,9 +128,7 @@ impl Rig {
                 self.runtime.db().clone(),
                 std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
             ),
-            droppedneedle_catalog::reads::library::store::LocalCatalog::new(
-                self.runtime.db().clone(),
-            ),
+            droppedneedle_catalog::local::store::LocalCatalog::new(self.runtime.db().clone()),
         )
     }
 
@@ -286,7 +284,7 @@ async fn playlist_auth_matrix() {
 /// uncovers, empties and deletes Ada's playlist, and nothing changes.
 #[tokio::test]
 async fn cross_user_writes_are_refused_by_the_store() {
-    use droppedneedle_catalog::reads::collections::store::playlists::{
+    use droppedneedle_catalog::collections::store::playlists::{
         CoverImage, NewEntry, PlaylistStore, Written,
     };
 
@@ -702,7 +700,7 @@ async fn follow_auto_download_states_and_admin_reads() {
 
 #[tokio::test]
 async fn remote_playlist_import_lands_in_the_users_playlists() {
-    use droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink;
+    use droppedneedle_catalog::collections::remote_import::PlaylistImportSink;
     use droppedneedle_media::remotes::adapter::ImportSink as _;
     use droppedneedle_media::remotes::models::{SourceName, TrackView};
 

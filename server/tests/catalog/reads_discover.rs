@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex};
 
 use axum::{Json, Router, extract::Query, http::StatusCode, routing::get};
 use droppedneedle_auth::Role;
-use droppedneedle_catalog::reads::discover::models::{ListenSource, StatsRange};
-use droppedneedle_catalog::reads::discover::services::ReadsDeps;
-use droppedneedle_catalog::reads::discover::wiring::{deps_over, live_network};
+use droppedneedle_catalog::discover::models::{ListenSource, StatsRange};
+use droppedneedle_catalog::discover::services::DiscoverDeps;
+use droppedneedle_catalog::discover::wiring::{deps_over, live_network};
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_providers::{ProviderEndpoints, Providers, ReqwestWire};
 use serde_json::{Value, json};
@@ -236,7 +236,7 @@ async fn failures_answer_the_fixed_body_and_an_outage_names_its_service() {
 
 /// Discover over the live listening reads of `providers`, with the users'
 /// ListenBrainz links as the rig's database holds them.
-fn live_deps(auth: &AuthRig, dir: &std::path::Path, providers: Providers) -> ReadsDeps {
+fn live_deps(auth: &AuthRig, dir: &std::path::Path, providers: Providers) -> DiscoverDeps {
     let inputs = crate::discover_queue::discover_inputs(auth, dir, providers);
     let network = live_network(&inputs, &auth.config);
     deps_over(inputs, &auth.config, network)
@@ -309,7 +309,7 @@ async fn your_top_reads_the_callers_own_link() {
 /// ListenBrainz is down, the ListenBrainz chart falls back to it.
 #[tokio::test]
 async fn lastfm_charts_read_the_instance_key_per_call() {
-    use droppedneedle_catalog::reads::discover::ports::ProviderFailure;
+    use droppedneedle_catalog::discover::ports::ProviderFailure;
 
     let seen: Arc<Mutex<Vec<String>>> = Arc::default();
     let record = seen.clone();

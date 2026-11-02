@@ -30,7 +30,7 @@ use droppedneedle_kernel::{
         droppedneedle_kernel::error::ErrorBody,
         // The value type of the `service_status` maps; no operation refers
         // to it by name.
-        droppedneedle_catalog::reads::catalog::models::SourceStatus,
+        droppedneedle_catalog::metadata::models::SourceStatus,
     )),
     info(
         title = "DroppedNeedle v3",

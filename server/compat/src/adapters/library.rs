@@ -12,23 +12,23 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use droppedneedle_catalog::reads::collections::service::{
+use droppedneedle_catalog::artwork::ArtworkService;
+use droppedneedle_catalog::artwork::covers::{CoverArt, CoverLookup};
+use droppedneedle_catalog::collections::service::{
     CollectionsService, LOCAL_SOURCE, SavedPlaylist, Visible,
 };
-use droppedneedle_catalog::reads::collections::store::play_marks::MarkScope;
-use droppedneedle_catalog::reads::collections::store::playlists::NewEntry;
-use droppedneedle_catalog::reads::collections::store::ratings::{ItemRating, RatedKind};
-use droppedneedle_catalog::reads::collections::{CollectionsState, error::CollectionsError};
-use droppedneedle_catalog::reads::library::player::{
+use droppedneedle_catalog::collections::store::play_marks::MarkScope;
+use droppedneedle_catalog::collections::store::playlists::NewEntry;
+use droppedneedle_catalog::collections::store::ratings::{ItemRating, RatedKind};
+use droppedneedle_catalog::collections::{CollectionsState, error::CollectionsError};
+use droppedneedle_catalog::local::player::{
     AlbumOrder, AlbumQuery, PlayStat, PlayedValues, PlayerAlbum, PlayerIds, PlayerTrack,
     ShuffleSeeds, TrackOrder, TrackQuery,
 };
-use droppedneedle_catalog::reads::library::store::LocalCatalog;
-use droppedneedle_catalog::reads::library::stores::{
+use droppedneedle_catalog::local::store::LocalCatalog;
+use droppedneedle_catalog::local::stores::{
     ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LyricDoc, LyricsPort, StoreError,
 };
-use droppedneedle_catalog::reads::platform::artwork::ArtworkService;
-use droppedneedle_catalog::reads::platform::covers::{CoverArt, CoverLookup};
 use droppedneedle_kernel::db::{Db, DbError};
 
 use crate::user_settings::UserSettings;
@@ -86,9 +86,9 @@ impl From<StoreError> for CompatError {
     }
 }
 
-impl From<droppedneedle_catalog::reads::collections::db::StoreError> for CompatError {
-    fn from(error: droppedneedle_catalog::reads::collections::db::StoreError) -> Self {
-        use droppedneedle_catalog::reads::collections::db::StoreError as CollectionsStoreError;
+impl From<droppedneedle_catalog::collections::db::StoreError> for CompatError {
+    fn from(error: droppedneedle_catalog::collections::db::StoreError) -> Self {
+        use droppedneedle_catalog::collections::db::StoreError as CollectionsStoreError;
         match error {
             CollectionsStoreError::Busy(_) => Self::Busy(error.to_string()),
             CollectionsStoreError::Internal(_) => Self::Internal(error.to_string()),
@@ -263,15 +263,18 @@ pub fn whole(seconds: Option<f64>) -> Option<i64> {
 }
 
 impl CompatLibrary {
-    /// Everything compat reads, from the native reads bundle: the same
+    /// Everything compat reads, from the native catalog bundle: the same
     /// catalog, collections, lyrics and cover art the web UI uses.
-    pub fn from_reads(reads: &droppedneedle_catalog::reads::ReadsSetup, db: Db) -> Self {
+    pub fn from_catalog(
+        catalog_setup: &droppedneedle_catalog::wiring::CatalogSetup,
+        db: Db,
+    ) -> Self {
         Self {
-            catalog: reads.library.catalog.clone(),
-            collections: reads.collections.clone(),
-            lyrics: reads.library.lyrics.clone(),
-            covers: reads.platform.covers.covers.clone(),
-            artwork: reads.artwork.clone(),
+            catalog: catalog_setup.local.catalog.clone(),
+            collections: catalog_setup.collections.clone(),
+            lyrics: catalog_setup.local.lyrics.clone(),
+            covers: catalog_setup.covers.covers.clone(),
+            artwork: catalog_setup.artwork.clone(),
             shuffles: Arc::new(ShuffleSeeds::default()),
             user_settings: UserSettings::new(db),
         }
@@ -896,7 +899,7 @@ impl CompatLibrary {
         .fetch_all(self.collections.db.db().sqlx())
         .await
         .map_err(|error| {
-            droppedneedle_catalog::reads::collections::db::StoreError::from(
+            droppedneedle_catalog::collections::db::StoreError::from(
                 droppedneedle_kernel::db::map_sqlx_busy("compat.artist_art", error),
             )
         })?;

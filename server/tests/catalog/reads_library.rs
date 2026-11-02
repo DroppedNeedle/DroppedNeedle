@@ -5,8 +5,8 @@
 
 use crate::common::auth::{test_principal, with_test_principal};
 use crate::common::{ScratchDir, TestApp};
-use droppedneedle_catalog::reads::library;
-use droppedneedle_catalog::reads::lyrics::LyricsService;
+use droppedneedle_catalog::local;
+use droppedneedle_catalog::lyrics::LyricsService;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,9 +18,9 @@ use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::db::Db;
 use droppedneedle_library::scan::coordinator::SharedResolver;
 use droppedneedle_media::stream::local_files::LibraryFiles;
-use library::LibraryDeps;
-use library::store::LocalCatalog;
-use library::stores::{
+use local::LibraryDeps;
+use local::store::LocalCatalog;
+use local::stores::{
     After, AlbumFilter, AlbumSort, ArtistScope, ArtistSort, BoxFuture, LyricDoc, LyricsPort,
     StoreError, TrackFilter, TrackSort,
 };
@@ -68,7 +68,7 @@ const ADA: (&str, Role) = ("user-ada", Role::User);
 
 /// Router signed in as `caller`, or anonymous when None.
 fn app(deps: LibraryDeps, caller: Option<(&str, Role)>) -> Router {
-    let router = library::routes().with_state(deps).into_router();
+    let router = local::routes().with_state(deps).into_router();
     match caller {
         Some((user_id, role)) => with_test_principal(
             router,
@@ -832,7 +832,7 @@ fn sorted_ids(items: &Value, key: &str) -> Vec<String> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn one_album_set_everywhere() {
     use crate::common::compat::{CompatApp, PLAYER, named, rest};
-    use droppedneedle_catalog::reads::discover::page::library::LibraryReads;
+    use droppedneedle_catalog::discover::page::library::LibraryReads;
 
     let rig = CompatApp::unscanned("reads-library-album-set").await;
     rig.app.seed(ALBUM_KINDS).await;

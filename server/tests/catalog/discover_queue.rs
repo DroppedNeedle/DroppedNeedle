@@ -16,15 +16,15 @@ use axum::{
 };
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_catalog::reads::discover::listening::{
+use droppedneedle_catalog::discover::listening::{
     AlbumRow, ArtistFacts, ArtistRow, Ask, JellyfinList, LastFmAlbum, LastFmChartAlbum,
     LastFmFacts, ListenedAlbum, ListeningData, ListeningError, ListeningNetwork, LovedTrack,
     PlayedArtist, RankedAlbum, Read, ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange,
     TagAlbum, UserMusic, WeeklyPlaylist,
 };
-use droppedneedle_catalog::reads::discover::ports::BoxFuture;
-use droppedneedle_catalog::reads::discover::services::ReadsDeps;
-use droppedneedle_catalog::reads::discover::wiring::{DiscoverInputs, deps_over, live_network};
+use droppedneedle_catalog::discover::ports::BoxFuture;
+use droppedneedle_catalog::discover::services::DiscoverDeps;
+use droppedneedle_catalog::discover::wiring::{DiscoverInputs, deps_over, live_network};
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
@@ -531,7 +531,7 @@ pub(crate) fn discover_deps(
     dir: &Path,
     providers: Providers,
     script: impl FnOnce(&mut Arc<dyn ListeningNetwork>),
-) -> ReadsDeps {
+) -> DiscoverDeps {
     let inputs = discover_inputs(rig, dir, providers);
     let mut network = live_network(&inputs, &rig.config);
     script(&mut network);
@@ -539,8 +539,8 @@ pub(crate) fn discover_deps(
 }
 
 /// Discover's routes over `deps`, signed in as `user-1`.
-pub(crate) fn discover_routes(deps: ReadsDeps) -> Router {
-    let router = droppedneedle_catalog::reads::discover::routes()
+pub(crate) fn discover_routes(deps: DiscoverDeps) -> Router {
+    let router = droppedneedle_catalog::discover::routes()
         .with_state(deps)
         .into_router();
     with_test_principal(

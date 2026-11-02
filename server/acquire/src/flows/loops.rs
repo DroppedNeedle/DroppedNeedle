@@ -36,7 +36,7 @@ use crate::requests::settle::announce_fulfilled;
 use crate::requests::sqlite::{RequestStore, WantedStore, WatchCheck};
 use crate::search_jobs::store::JobStore;
 use crate::target::Targets;
-use droppedneedle_catalog::reads::catalog::mapping::{should_include_release, type_set};
+use droppedneedle_catalog::metadata::mapping::{should_include_release, type_set};
 use droppedneedle_kernel::events::{AutoDownloadEnqueued, UserNotice, WantedNotice};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;

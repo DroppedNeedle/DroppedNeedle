@@ -2244,7 +2244,7 @@ async fn plant_artist_picture(rig: &CompatApp, mbid: &str) {
     image::RgbImage::from_pixel(4, 4, image::Rgb([10, 200, 10]))
         .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
         .expect("picture encodes");
-    droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache::new(
+    droppedneedle_catalog::artwork::cache::ArtworkCache::new(
         rig.app.config.cache_dir.join("covers"),
         64 * 1024 * 1024,
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),

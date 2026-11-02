@@ -1081,7 +1081,7 @@ async fn covered(rig: &CompatApp, client: &Client<'_>) -> [String; 3] {
             [artist.trim_start_matches("ar-"), mbid],
         )
         .await;
-    droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache::new(
+    droppedneedle_catalog::artwork::cache::ArtworkCache::new(
         rig.app.config.cache_dir.join("covers"),
         64 * 1024 * 1024,
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
@@ -1801,9 +1801,9 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     use axum::body::Body;
     use axum::extract::ConnectInfo;
     use droppedneedle_auth::users::roles::Role;
-    use droppedneedle_catalog::reads::collections::CollectionsState;
-    use droppedneedle_catalog::reads::collections::db::CollectionsDb;
-    use droppedneedle_catalog::reads::library::store::LocalCatalog;
+    use droppedneedle_catalog::collections::CollectionsState;
+    use droppedneedle_catalog::collections::db::CollectionsDb;
+    use droppedneedle_catalog::local::store::LocalCatalog;
     use droppedneedle_compat::CompatSetup;
     use droppedneedle_compat::setup::CompatDeps;
     use droppedneedle_kernel::db::{DbConfig, LaneLimits, open_runtime};
@@ -1832,10 +1832,10 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
     let user = auth.seed_user("alice", Role::User).await;
     auth.seed_app_password(&user.id, SECRET).await;
     let (library, _) = crate::common::library::library_at(&platform);
-    let reads = crate::common::bundles::reads_at(
+    let catalog_setup = crate::common::bundles::catalog_setup_at(
         &platform,
         auth.deps.clone(),
-        crate::common::reads_inputs(&platform),
+        crate::common::catalog_inputs(&platform),
         &library,
         CollectionsState::new(
             CollectionsDb::new(starved.db().clone(), platform.clock.clone()),
@@ -1850,8 +1850,13 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
         &library,
         &collections.stores,
     );
-    let media =
-        crate::common::bundles::media_at(&platform, auth.deps.clone(), &library, &reads, &acquire);
+    let media = crate::common::bundles::media_at(
+        &platform,
+        auth.deps.clone(),
+        &library,
+        &catalog_setup,
+        &acquire,
+    );
     platform
         .settings
         .save_blocking(ConnectApps {
@@ -1866,7 +1871,7 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
         media.playback.clone(),
         media.stream.engine.clone(),
         library.scans.clone(),
-        &reads,
+        &catalog_setup,
     );
     let compat = CompatSetup::build(deps);
     compat
@@ -1977,9 +1982,9 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
     use axum::body::Body;
     use axum::extract::ConnectInfo;
     use droppedneedle_auth::users::roles::Role;
-    use droppedneedle_catalog::reads::collections::CollectionsState;
-    use droppedneedle_catalog::reads::collections::db::CollectionsDb;
-    use droppedneedle_catalog::reads::library::store::LocalCatalog;
+    use droppedneedle_catalog::collections::CollectionsState;
+    use droppedneedle_catalog::collections::db::CollectionsDb;
+    use droppedneedle_catalog::local::store::LocalCatalog;
     use droppedneedle_compat::CompatSetup;
     use droppedneedle_compat::setup::CompatDeps;
     use droppedneedle_kernel::db::{DbConfig, LaneLimits, open_runtime};
@@ -2010,10 +2015,10 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
         .execute_batch(crate::compat_catalog::LIBRARY)
         .expect("catalog seeds");
     let (library, _) = crate::common::library::library_at(&platform);
-    let reads = crate::common::bundles::reads_at(
+    let catalog_setup = crate::common::bundles::catalog_setup_at(
         &platform,
         auth.deps.clone(),
-        crate::common::reads_inputs(&platform),
+        crate::common::catalog_inputs(&platform),
         &library,
         CollectionsState::new(
             CollectionsDb::new(starved.db().clone(), platform.clock.clone()),
@@ -2028,8 +2033,13 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
         &library,
         &collections.stores,
     );
-    let media =
-        crate::common::bundles::media_at(&platform, auth.deps.clone(), &library, &reads, &acquire);
+    let media = crate::common::bundles::media_at(
+        &platform,
+        auth.deps.clone(),
+        &library,
+        &catalog_setup,
+        &acquire,
+    );
     platform
         .settings
         .save_blocking(ConnectApps {
@@ -2043,7 +2053,7 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
         media.playback.clone(),
         media.stream.engine.clone(),
         library.scans.clone(),
-        &reads,
+        &catalog_setup,
     );
     let router = scope.request_scope(CompatSetup::build(deps).router());
     let create = uri(

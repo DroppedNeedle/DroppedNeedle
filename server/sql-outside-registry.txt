@@ -2,7 +2,7 @@
 # The gate in tests/server/persist_schema.rs skips them. An area that moves
 # its statements into sql.rs deletes its line.
 auth/src/
-catalog/src/reads/library/definitions.rs
+catalog/src/local/definitions.rs
 compat/src/
 kernel/src/events/
 kernel/src/jobs/

@@ -2,8 +2,6 @@
 //! warming, and the wrapped API key gate (exact match, no trimming, no
 //! key material in rejections).
 
-use droppedneedle_catalog::reads::platform;
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -14,11 +12,12 @@ use axum::{
 };
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
-use platform::{
-    covers::{CoverBytes, CoversState, FakeCoverArt},
+use droppedneedle_catalog::{
+    artwork::covers::{self, CoverBytes, CoversState, FakeCoverArt},
+    version,
     wrapped::{
-        FakeWrappedData, ServerWrappedResponse, UserWrappedResponse, WrappedAlbum, WrappedArtist,
-        WrappedGenre, WrappedState, WrappedTrack, WrappedUserSummary,
+        self, FakeWrappedData, ServerWrappedResponse, UserWrappedResponse, WrappedAlbum,
+        WrappedArtist, WrappedGenre, WrappedState, WrappedTrack, WrappedUserSummary,
     },
 };
 use tower::ServiceExt as _;
@@ -38,7 +37,7 @@ const WRAPPED_KEY: &str = "test-secret-key";
 
 fn covers_app(fake: FakeCoverArt) -> Router {
     with_test_principal(
-        platform::covers::routes()
+        covers::routes()
             .with_state(CoversState::new(Arc::new(fake)))
             .into_router(),
         test_principal("u-1", Role::User, "s-1", SessionKind::Standard),
@@ -102,7 +101,7 @@ fn wrapped_app(api_key: &str) -> Router {
             year: 2026,
             total_users_tracked: 1,
             total_listens_estimated: 42,
-            leaderboard: vec![platform::wrapped::WrappedLeaderboardEntry {
+            leaderboard: vec![wrapped::WrappedLeaderboardEntry {
                 display_name: "Ada".to_owned(),
                 listen_count: 42,
             }],
@@ -110,7 +109,7 @@ fn wrapped_app(api_key: &str) -> Router {
             top_album_sitewide: None,
         },
     );
-    platform::wrapped::routes()
+    wrapped::routes()
         .with_state(WrappedState::new(api_key.to_owned(), Arc::new(data)))
         .into_router()
 }
@@ -327,10 +326,11 @@ async fn covers_400_carries_only_caller_input() {
     assert!(!text.contains("cover-art-archive"), "{text}");
 }
 
-/// The covers debug route stays out of the mounted platform router.
+/// The covers debug route stays out of the mounted covers, version and
+/// wrapped routers.
 #[tokio::test]
 async fn covers_debug_route_stays_out() {
-    use platform::version::{FakeReleases, VersionInfo, VersionState};
+    use version::{FakeReleases, VersionInfo, VersionState};
     let releases = FakeReleases::new(
         VersionInfo {
             version: "1.2.0".to_owned(),
@@ -339,14 +339,22 @@ async fn covers_debug_route_stays_out() {
         None,
         Vec::new(),
     );
-    let app = platform::platform_router(platform::PlatformState::new(
-        CoversState::new(Arc::new(covers_fixture())),
-        VersionState::new(Arc::new(releases)),
-        WrappedState::new(
-            WRAPPED_KEY.to_owned(),
-            Arc::new(FakeWrappedData::empty(2026)),
-        ),
-    ));
+    let app = covers::routes()
+        .with_state(CoversState::new(Arc::new(covers_fixture())))
+        .into_router()
+        .merge(
+            version::routes()
+                .with_state(VersionState::new(Arc::new(releases)))
+                .into_router(),
+        )
+        .merge(
+            wrapped::routes()
+                .with_state(WrappedState::new(
+                    WRAPPED_KEY.to_owned(),
+                    Arc::new(FakeWrappedData::empty(2026)),
+                ))
+                .into_router(),
+        );
     let (status, _, _) = get(app, "/api/v3/covers/debug/artist/art-1", &[]).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }

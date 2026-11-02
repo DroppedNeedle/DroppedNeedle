@@ -50865,7 +50865,7 @@
       },
       "NowPlayingEntry": {
         "type": "object",
-        "description": "One live session, already privacy-projected (same JSON as the\n`reads::discover` now-playing shape, so clients see no difference).",
+        "description": "One live session, already privacy-projected (same JSON as the\n`discover` now-playing shape, so clients see no difference).",
         "required": [
           "id",
           "user_name",

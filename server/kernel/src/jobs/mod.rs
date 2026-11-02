@@ -11,7 +11,7 @@
 //! request-status sync, and the new-release poll; `library` owns scan,
 //! identify, publish, the library watcher, the revision poller, and worker
 //! supervision; `remotes` owns the Jellyfin/Navidrome/Plex MBID warmups;
-//! `reads::discover` owns the discover/home cache loops. This module must
+//! `discover` owns the discover/home cache loops. This module must
 //! not grow twins of those.
 //!
 //! Always-on loops spawned at boot:

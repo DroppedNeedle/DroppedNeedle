@@ -8,7 +8,7 @@ use rusqlite::params;
 use sqlx::Row as _;
 
 use crate::subsonic::store::{BookmarkRecord, QueueState};
-use droppedneedle_catalog::reads::collections::db::{CollectionsDb, StoreError};
+use droppedneedle_catalog::collections::db::{CollectionsDb, StoreError};
 use droppedneedle_kernel::db::map_sqlx_busy;
 
 /// A reader-pool error, keeping busy distinct.

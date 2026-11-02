@@ -13,7 +13,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
-use droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink;
+use droppedneedle_catalog::collections::remote_import::PlaylistImportSink;
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::{

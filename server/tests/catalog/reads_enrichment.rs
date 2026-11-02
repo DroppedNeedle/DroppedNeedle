@@ -107,9 +107,9 @@ async fn a_failed_count_stays_on_its_row() {
 /// nothing, so asking again goes out again.
 #[tokio::test]
 async fn acoustid_answers_are_reused_and_failures_are_not() {
-    use droppedneedle_catalog::reads::catalog::upstream::{LiveCatalogSettings, Upstream};
-    use droppedneedle_catalog::reads::enrichment::library::LiveEnrichment;
-    use droppedneedle_catalog::reads::lyrics::OnlineLyrics;
+    use droppedneedle_catalog::enrichment::library::LiveEnrichment;
+    use droppedneedle_catalog::lyrics::OnlineLyrics;
+    use droppedneedle_catalog::metadata::upstream::{LiveCatalogSettings, Upstream};
     use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
     use droppedneedle_library::management::enrich::{
         AcoustIdAnswer, AcoustIdPrint, EnrichmentPort as _,

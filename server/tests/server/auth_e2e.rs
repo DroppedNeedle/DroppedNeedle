@@ -198,17 +198,17 @@ impl E2e {
             &library,
             &collections.stores,
         );
-        let reads = crate::common::bundles::reads_at(
+        let catalog_setup = crate::common::bundles::catalog_setup_at(
             p,
             auth.users.clone(),
-            droppedneedle_catalog::reads::ReadsInputs {
+            droppedneedle_catalog::wiring::CatalogInputs {
                 // Unpaced: no provider answers here, so
                 // pacing would only add whole seconds of waiting to rows
                 // that are bound to answer "provider down" anyway.
                 providers: Arc::new(Providers::unpaced(Arc::new(
                     droppedneedle_providers::executor::ScriptedWire::new(),
                 ))),
-                ..crate::common::reads_inputs(p)
+                ..crate::common::catalog_inputs(p)
             },
             &library,
             collections.wired(),
@@ -222,8 +222,8 @@ impl E2e {
             auth.users.clone(),
             library.core.root_source(),
             Arc::new(
-                droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink::new(
-                    reads.collections.clone(),
+                droppedneedle_catalog::collections::remote_import::PlaylistImportSink::new(
+                    catalog_setup.collections.clone(),
                 ),
             ),
             crate::common::bundles::idle_host(p, library.core.clone()),
@@ -245,7 +245,7 @@ impl E2e {
                 media.playback.clone(),
                 media.stream.engine.clone(),
                 library.scans.clone(),
-                &reads,
+                &catalog_setup,
             ),
         );
         let backup_dir = p.config.root_app_dir.join("backups");
@@ -303,7 +303,7 @@ impl E2e {
             Arc::clone(&p.ids),
             p.config.clone(),
             auth,
-            reads,
+            catalog_setup,
             media,
             acquire,
             droppedneedle_library::wiring::LibraryServices::build(&library),

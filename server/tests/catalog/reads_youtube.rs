@@ -16,8 +16,8 @@ use axum::{
 };
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_catalog::reads::collections::db::CollectionsDb;
-use droppedneedle_catalog::reads::youtube::{self, YouTubeLinks, store::LinkStore};
+use droppedneedle_catalog::collections::db::CollectionsDb;
+use droppedneedle_catalog::youtube::{self, YouTubeLinks, store::LinkStore};
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::YouTubeConnection;

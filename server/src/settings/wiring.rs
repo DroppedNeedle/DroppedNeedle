@@ -23,7 +23,7 @@ use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
 use crate::settings::services::SettingsService;
 use crate::settings::verify::{LiveProbes, VerifyProbes};
-use droppedneedle_catalog::reads::catalog::library::LocalCatalog;
+use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::platform::Platform;

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// One live session, already privacy-projected (same JSON as the
-/// `reads::discover` now-playing shape, so clients see no difference).
+/// `discover` now-playing shape, so clients see no difference).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct NowPlayingEntry {
     /// Session key (`user_id:device`).

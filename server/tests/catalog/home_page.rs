@@ -8,17 +8,17 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use droppedneedle_catalog::reads::discover::genre::GenrePages;
-use droppedneedle_catalog::reads::discover::genre::artwork::GenreArt;
-use droppedneedle_catalog::reads::discover::home::library::HomeLibrary;
-use droppedneedle_catalog::reads::discover::home::{HomeInputs, LiveHome};
-use droppedneedle_catalog::reads::discover::listening::{
+use droppedneedle_catalog::discover::genre::GenrePages;
+use droppedneedle_catalog::discover::genre::artwork::GenreArt;
+use droppedneedle_catalog::discover::home::library::HomeLibrary;
+use droppedneedle_catalog::discover::home::{HomeInputs, LiveHome};
+use droppedneedle_catalog::discover::listening::{
     ArtistRow, ListenedAlbum, ListeningData, LovedTrack, TagAlbum, UserMusic,
 };
-use droppedneedle_catalog::reads::discover::models::{
+use droppedneedle_catalog::discover::models::{
     ArtworkKind, PromptService, SectionItem, SectionKey,
 };
-use droppedneedle_catalog::reads::discover::page::shelves::shelf_of;
+use droppedneedle_catalog::discover::page::shelves::shelf_of;
 use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_kernel::db::{DbError, Lane};
 
@@ -133,7 +133,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
             listening: listening.clone(),
             db: runtime.db().clone(),
             clock: Arc::new(ManualClock::at(1_790_000_000_000)),
-            integrations: droppedneedle_catalog::reads::discover::content::IntegrationSettings::new(
+            integrations: droppedneedle_catalog::discover::content::IntegrationSettings::new(
                 &crate::common::config_store(&dir),
                 Arc::new(crate::common::bundles::NoDownloadSource),
             ),

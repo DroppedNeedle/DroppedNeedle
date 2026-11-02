@@ -7,13 +7,11 @@ use std::time::Duration;
 
 use axum::http::StatusCode;
 use droppedneedle_auth::users::roles::Role;
-use droppedneedle_catalog::reads::ReadsSetup;
-use droppedneedle_catalog::reads::collections::CollectionsState;
-use droppedneedle_catalog::reads::collections::db::CollectionsDb;
-use droppedneedle_catalog::reads::collections::models::{
-    AddTracksBody, CreatePlaylistBody, TrackInput,
-};
-use droppedneedle_catalog::reads::collections::service::CollectionsService;
+use droppedneedle_catalog::collections::CollectionsState;
+use droppedneedle_catalog::collections::db::CollectionsDb;
+use droppedneedle_catalog::collections::models::{AddTracksBody, CreatePlaylistBody, TrackInput};
+use droppedneedle_catalog::collections::service::CollectionsService;
+use droppedneedle_catalog::wiring::CatalogSetup;
 use droppedneedle_compat::adapters::audio::GatewayAudio;
 use droppedneedle_compat::adapters::jellyfin_ids::JellyfinIds;
 use droppedneedle_compat::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary};
@@ -614,17 +612,17 @@ async fn playlist_refusals_keep_their_codes_and_repeats_stay() {
     rig.stop().await;
 }
 
-/// The user the reads rig seeds.
+/// The user the catalog rig seeds.
 const USER_ID: &str = "u1";
 
-/// The seeded catalog read through the native reads bundle alone, for the
+/// The seeded catalog read through the native catalog bundle alone, for the
 /// export and the Jellyfin id map.
 struct Rig {
     _dir: ScratchDir,
     runtime: DbRuntime,
     platform: Platform,
     library: LibrarySetup,
-    reads: ReadsSetup,
+    catalog_setup: CatalogSetup,
     auth: AuthRig,
 }
 
@@ -678,16 +676,14 @@ impl Rig {
             .await;
         let auth = AuthRig::on(&platform);
         let (library, _) = crate::common::library::library_at(&platform);
-        let reads = crate::common::bundles::reads_at(
+        let catalog_setup = crate::common::bundles::catalog_setup_at(
             &platform,
             auth.deps.clone(),
-            crate::common::reads_inputs(&platform),
+            crate::common::catalog_inputs(&platform),
             &library,
             CollectionsState::new(
                 CollectionsDb::new(runtime.db().clone(), platform.clock.clone()),
-                droppedneedle_catalog::reads::library::store::LocalCatalog::new(
-                    runtime.db().clone(),
-                ),
+                droppedneedle_catalog::local::store::LocalCatalog::new(runtime.db().clone()),
             ),
             None,
         );
@@ -696,7 +692,7 @@ impl Rig {
             runtime,
             platform,
             library,
-            reads,
+            catalog_setup,
             auth,
         }
     }
@@ -711,7 +707,7 @@ async fn native_playlists_export_to_m3u_with_their_files() {
     use droppedneedle_kernel::jobs::playlist_sync::{PlaylistExporter as _, PlaylistSyncConfig};
 
     let rig = Rig::open().await;
-    let native = CollectionsService::new(&rig.reads.collections);
+    let native = CollectionsService::new(&rig.catalog_setup.collections);
     let made = native
         .create_playlist(
             USER_ID,
@@ -816,7 +812,7 @@ async fn booted(rig: &Rig, key: u8) -> (CatalogIds, JellyfinIds) {
     let ids = jellyfin_ids(rig, key, Duration::from_secs(1));
     ids.fill().pass().await.unwrap();
     (
-        CatalogIds::new(ids.clone(), rig.reads.library.catalog.clone()),
+        CatalogIds::new(ids.clone(), rig.catalog_setup.local.catalog.clone()),
         ids,
     )
 }
@@ -854,7 +850,7 @@ async fn jellyfin_ids_resolve_after_a_restart_without_reading_the_catalog() {
     let wait = Duration::from_secs(2);
     let ids = CatalogIds::new(
         jellyfin_ids(&rig, 7, wait),
-        rig.reads.library.catalog.clone(),
+        rig.catalog_setup.local.catalog.clone(),
     );
     assert_eq!(
         ids.from_jf_anonymous(&handed[0]).await,
@@ -1042,7 +1038,7 @@ async fn a_busy_fill_pass_runs_again_without_backing_off() {
     for holder in holders {
         holder.await.unwrap().unwrap();
     }
-    let catalog = CatalogIds::new(ids.clone(), rig.reads.library.catalog.clone());
+    let catalog = CatalogIds::new(ids.clone(), rig.catalog_setup.local.catalog.clone());
     let added = ids.computed("album", "alb-2");
     eventually("the added album's id resolves", || async {
         catalog.from_jf(&added).await == Ok(named("album", "alb-2"))
@@ -1065,10 +1061,10 @@ fn jellyfin_router(rig: &Rig, ids: &JellyfinIds) -> axum::Router {
         &rig.platform,
         rig.auth.deps.clone(),
         &rig.library,
-        &rig.reads,
+        &rig.catalog_setup,
         &acquire,
     );
-    let library = CompatLibrary::from_reads(&rig.reads, rig.platform.db.clone());
+    let library = CompatLibrary::from_catalog(&rig.catalog_setup, rig.platform.db.clone());
     rig.platform
         .settings
         .save_blocking(ConnectApps {

@@ -56,7 +56,7 @@ use crate::usenet::newznab::NewznabIndexer;
 use crate::usenet::prowlarr::ProwlarrIndexer;
 use axum::Router;
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_catalog::reads::collections::store::Stores as CollectionsStores;
+use droppedneedle_catalog::collections::store::Stores as CollectionsStores;
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::ids::IdGenerator;
@@ -328,7 +328,7 @@ pub struct AcquirePorts {
 struct MixInputs {
     providers: Arc<Providers>,
     listening: ListeningStore,
-    playlists: droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore,
+    playlists: droppedneedle_catalog::collections::store::playlists::PlaylistStore,
 }
 
 /// What the durable core reaches outside acquisition. The test bundle

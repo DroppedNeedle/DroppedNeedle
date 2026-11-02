@@ -14,7 +14,7 @@ use futures_util::future::BoxFuture;
 
 use super::mix::MixSources;
 use super::sql;
-use droppedneedle_catalog::reads::discover::listening::shared;
+use droppedneedle_catalog::discover::listening::shared;
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::listenbrainz::playlists::{
@@ -215,7 +215,7 @@ pub fn live_builder(
     requests: &super::RequestsState,
     providers: &droppedneedle_providers::Providers,
     listening: ListeningStore,
-    playlists: droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore,
+    playlists: droppedneedle_catalog::collections::store::playlists::PlaylistStore,
     events: droppedneedle_kernel::events::EventHub,
 ) -> Arc<super::mix::PersonalMixBuilder> {
     let sources = Arc::new(LiveMixSources::new(

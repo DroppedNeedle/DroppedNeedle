@@ -19,8 +19,8 @@
 //! for discovery and AudioDB. The provider clients add their own rate
 //! limits on top, so a run never outpaces what an upstream allows.
 //!
-//! The lookups themselves sit behind [`PrecacheSources`]; the reads layer
-//! implements it over the catalog and the artwork service.
+//! The lookups themselves sit behind [`PrecacheSources`]; the catalog crate
+//! implements it over its pages and the artwork service.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};

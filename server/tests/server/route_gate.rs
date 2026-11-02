@@ -27,7 +27,7 @@ const ALLOWED: &[Allowed] = &[
         why: "the `/__test__` hooks: built only with test-support and served only when the test config asks",
     },
     Allowed {
-        path: "catalog/src/reads/platform/covers_debug.rs",
+        path: "catalog/src/artwork/covers_debug.rs",
         calls: 1,
         why: "the covers debug tooling: mounted only under cfg(debug_assertions), never documented",
     },

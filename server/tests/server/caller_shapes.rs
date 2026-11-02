@@ -40,7 +40,7 @@ const EXTRACTORS: &[(&str, &str, &str)] = &[
     ("kernel/src/extract.rs", "ValidJson", "a request body"),
     ("kernel/src/extract.rs", "ValidQuery", "a query string"),
     (
-        "catalog/src/reads/platform/wrapped.rs",
+        "catalog/src/wrapped/mod.rs",
         "WrappedKey",
         "a Wrapped share link's own key, not a session",
     ),
@@ -56,7 +56,7 @@ const EXTRACTORS: &[(&str, &str, &str)] = &[
 const USER_ROW_READS: &[(&str, &str)] = &[
     ("src/admin/quota.rs", "the quota's target user"),
     (
-        "catalog/src/reads/platform/listenbrainz_wrapped.rs",
+        "catalog/src/wrapped/listenbrainz.rs",
         "display names for Wrapped",
     ),
 ];

@@ -23,12 +23,12 @@ use crate::subsonic::store::{
 };
 use crate::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewRating, ViewTrack};
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_catalog::reads::collections::service::{SavedPlaylist, Visible};
-use droppedneedle_catalog::reads::collections::store::ratings::{ItemRating, RatedKind};
-use droppedneedle_catalog::reads::library::player::{
+use droppedneedle_catalog::collections::service::{SavedPlaylist, Visible};
+use droppedneedle_catalog::collections::store::ratings::{ItemRating, RatedKind};
+use droppedneedle_catalog::local::player::{
     AlbumIds, AlbumOrder, AlbumQuery, PlayerAlbum, PlayerIds, PlayerTrack, TrackOrder, TrackQuery,
 };
-use droppedneedle_catalog::reads::library::stores::ArtistRecord;
+use droppedneedle_catalog::local::stores::ArtistRecord;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::scan::Counter;
 use droppedneedle_library::scan::models::{ScanKind, ScanRequest, ScanTrigger};

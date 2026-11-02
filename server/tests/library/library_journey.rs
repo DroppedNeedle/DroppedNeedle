@@ -21,8 +21,8 @@ use crate::common::library::{ScriptedContrib, ScriptedIdentify, library_asking, 
 use crate::common::{ScratchDir, TestApp, closed_outbound};
 use axum::http::StatusCode;
 use droppedneedle::bootstrap::Port;
-use droppedneedle_catalog::reads::collections::db::CollectionsDb;
-use droppedneedle_catalog::reads::collections::store::play_marks::{MarkScope, PlayMarkStore};
+use droppedneedle_catalog::collections::db::CollectionsDb;
+use droppedneedle_catalog::collections::store::play_marks::{MarkScope, PlayMarkStore};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
 use droppedneedle_library::identify::providers::FakeProviders;
@@ -22972,7 +22972,7 @@ async fn automatic_acoustid_without_a_key_goes_ahead() {
 
 /// The production AcoustID lookup beside the scripted other sources.
 struct LiveAcoustId {
-    live: droppedneedle_catalog::reads::enrichment::library::LiveEnrichment,
+    live: droppedneedle_catalog::enrichment::library::LiveEnrichment,
     scripted: Arc<droppedneedle_library::management::enrich::ScriptedEnrichment>,
 }
 
@@ -23054,9 +23054,9 @@ impl droppedneedle_library::management::enrich::EnrichmentPort for LiveAcoustId 
 /// look waits for them and writes nothing, and AcoustID is not called.
 #[tokio::test]
 async fn automatic_acoustid_waits_while_library_settings_do_not_read() {
-    use droppedneedle_catalog::reads::catalog::upstream::{LiveCatalogSettings, Upstream};
-    use droppedneedle_catalog::reads::enrichment::library::LiveEnrichment;
-    use droppedneedle_catalog::reads::lyrics::OnlineLyrics;
+    use droppedneedle_catalog::enrichment::library::LiveEnrichment;
+    use droppedneedle_catalog::lyrics::OnlineLyrics;
+    use droppedneedle_catalog::metadata::upstream::{LiveCatalogSettings, Upstream};
     use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_providers::Providers;
     use droppedneedle_providers::executor::ScriptedWire;
@@ -23919,7 +23919,7 @@ fn texts(db: &rusqlite::Connection, sql: &str) -> Vec<String> {
 /// the artist is the same record, with its favorite and play.
 #[tokio::test]
 async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
-    use droppedneedle_catalog::reads::library::store::LocalCatalog;
+    use droppedneedle_catalog::local::store::LocalCatalog;
     use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::tags::{TagEdit, TagField, save_tags};

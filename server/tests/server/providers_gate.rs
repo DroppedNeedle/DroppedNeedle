@@ -130,12 +130,12 @@ const RATE: Rule = Rule {
             why: "the scripted job kind's gate, which holds a run until a test releases it",
         },
         Allow {
-            path: "catalog/src/reads/platform/artwork/mod.rs",
+            path: "catalog/src/artwork/mod.rs",
             shapes: &["semaphore"],
             why: LOCAL,
         },
         Allow {
-            path: "catalog/src/reads/discover/listening/mod.rs",
+            path: "catalog/src/discover/listening/mod.rs",
             shapes: &["semaphore"],
             why: LOCAL,
         },
@@ -237,17 +237,17 @@ const HTTP: Rule = Rule {
             why: "passes the factory's client to the user's Jellyfin for sign-in",
         },
         Allow {
-            path: "catalog/src/reads/mod.rs",
+            path: "catalog/src/wiring.rs",
             shapes: &["client"],
             why: TO_MEDIA_SERVERS,
         },
         Allow {
-            path: "catalog/src/reads/discover/wiring.rs",
+            path: "catalog/src/discover/wiring.rs",
             shapes: &["client"],
             why: TO_MEDIA_SERVERS,
         },
         Allow {
-            path: "catalog/src/reads/discover/listening/live.rs",
+            path: "catalog/src/discover/listening/live.rs",
             shapes: &["client"],
             why: TO_MEDIA_SERVERS,
         },
@@ -351,7 +351,7 @@ const PRIORITY: Rule = Rule {
         },
     ],
     allowed: &[Allow {
-        path: "catalog/src/reads/discover/listening/mod.rs",
+        path: "catalog/src/discover/listening/mod.rs",
         shapes: &["constructor"],
         why: "the constructor's name states the caller's choice: a person waiting",
     }],
@@ -559,7 +559,7 @@ fn dodges_fail_the_gate() {
         ),
     ];
     for (rule, code) in cases {
-        let (wrong, _) = check(rule, &[("catalog/src/reads/fetch.rs", code)]);
+        let (wrong, _) = check(rule, &[("catalog/src/fetch.rs", code)]);
         assert!(!wrong.is_empty(), "the gate let through: {code}");
     }
 }
@@ -610,7 +610,7 @@ fn chosen_shapes_pass() {
         ),
     ];
     for (rule, code) in cases {
-        let (wrong, _) = check(rule, &[("catalog/src/reads/fetch.rs", code)]);
+        let (wrong, _) = check(rule, &[("catalog/src/fetch.rs", code)]);
         assert!(wrong.is_empty(), "refused {code}: {wrong:?}");
     }
 }

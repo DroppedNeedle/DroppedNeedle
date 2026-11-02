@@ -22,8 +22,8 @@ use axum::http::{Request, StatusCode};
 use droppedneedle_auth::Principal;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
-use droppedneedle_catalog::reads::catalog::plugin_sources::PluginDetailsSource;
-use droppedneedle_catalog::reads::catalog::{
+use droppedneedle_catalog::metadata::plugin_sources::PluginDetailsSource;
+use droppedneedle_catalog::metadata::{
     Catalog,
     library::LocalCatalog,
     upstream::{CatalogSettings, Upstream},

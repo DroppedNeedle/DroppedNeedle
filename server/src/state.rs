@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::{admin::AdminSetup, bootstrap::jobs::JobsSetup, settings::wiring::SettingsSetup};
 use droppedneedle_acquire::AcquireSetup;
 use droppedneedle_auth::wiring::AuthSetup;
-use droppedneedle_catalog::{concerts::ConcertsSetup, reads::ReadsSetup};
+use droppedneedle_catalog::{concerts::ConcertsSetup, wiring::CatalogSetup};
 use droppedneedle_compat::CompatSetup;
 use droppedneedle_kernel::{config::AppConfig, events::EventHub, ids::IdGenerator};
 use droppedneedle_library::wiring::{LibraryServices, LibrarySetup};
@@ -26,8 +26,9 @@ pub struct AppState {
     pub config: AppConfig,
     /// Auth bundle: stores, gates, and route states for `/api/v3`.
     pub auth: AuthSetup,
-    /// Reads bundle: library, search, discover, collections, platform.
-    pub reads: ReadsSetup,
+    /// Catalog bundle: library, search, discover, collections, artwork,
+    /// version, wrapped.
+    pub catalog: CatalogSetup,
     /// Remote sources, stream gateway, playback reporting.
     pub media: MediaSetup,
     /// Acquisition: requests, downloads, flows, imports.
@@ -63,7 +64,7 @@ impl AppState {
         ids: Arc<dyn IdGenerator>,
         config: AppConfig,
         auth: AuthSetup,
-        reads: ReadsSetup,
+        catalog: CatalogSetup,
         media: MediaSetup,
         acquire: AcquireSetup,
         library: LibraryServices,
@@ -79,7 +80,7 @@ impl AppState {
             ids,
             config,
             auth,
-            reads,
+            catalog,
             media,
             acquire,
             library: library.setup.clone(),

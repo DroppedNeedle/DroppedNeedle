@@ -8,7 +8,7 @@
 //! `inventory` the discovery inventory, `catalog` the track catalog.
 //! The catalog lives in `local_tracks` (keyed by `root_id, relative_path`),
 //! so [`commit_window`](SqliteScanStore::commit_window) also writes the
-//! `local_*` rows the reads layer shows (`availability = 'indexed'`).
+//! `local_*` rows the catalog shows (`availability = 'indexed'`).
 //!
 //! The store holds the shared [`Db`] and no connection. The request path
 //! reads through the request pool and writes in the foreground class; the

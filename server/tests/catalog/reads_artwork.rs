@@ -11,12 +11,12 @@ use axum::{
 };
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
-use droppedneedle_catalog::reads::platform::artwork::{
+use droppedneedle_catalog::artwork::covers::{self, CoversState};
+use droppedneedle_catalog::artwork::{
     ArtworkService, MISS_TTL_SECS, UNUSABLE_TTL_SECS,
     cache::{ArtworkCache, KeyEntry},
     local::LocalArtwork,
 };
-use droppedneedle_catalog::reads::platform::covers::{self, CoversState};
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{DbError, DbRuntime, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
@@ -341,7 +341,7 @@ async fn a_cover_the_archive_cannot_give_yet_is_warming_until_it_can() {
 /// page's poll is answered at once.
 #[tokio::test]
 async fn a_compat_cover_joins_a_running_fetch() {
-    use droppedneedle_catalog::reads::platform::covers::CoverArt as _;
+    use droppedneedle_catalog::artwork::covers::CoverArt as _;
 
     let rig = rig(None).await;
     let service = rig.service(true);
@@ -604,7 +604,7 @@ async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
 /// one busy moment.
 #[tokio::test]
 async fn a_failed_album_read_is_not_answered_as_no_art() {
-    use droppedneedle_catalog::reads::platform::covers::CoverArt as _;
+    use droppedneedle_catalog::artwork::covers::CoverArt as _;
 
     let rig = rig(None).await;
     let service = rig.service(true);

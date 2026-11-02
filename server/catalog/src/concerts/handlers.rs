@@ -9,7 +9,7 @@ use super::models::{
     CitySearchQuery, CitySearchResponse, ConcertsResponse, EventCitiesResponse, EventCitiesUpdate,
 };
 use super::service::{ConcertsError, ConcertsService};
-use crate::reads::collections::models::UnseenCountResponse;
+use crate::collections::models::UnseenCountResponse;
 use droppedneedle_auth::User;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
