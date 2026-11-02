@@ -215,9 +215,11 @@ Run from the repo root. `make help` lists every target.
   `CACHE_DIR`, or beside `library.db` when that folder is refused), a
   throwaway file opened in `kernel/src/db/cache/` under a lock of its own,
   with its own writer and readers that only the providers' cache store
-  holds. It has no migrations (a file of another schema or release, or one
-  that does not read, is deleted and rebuilt at start), is never backed up
-  or exported, keeps its rows under 512 MB, and holds nothing that cannot be
+  holds. It has no migrations (a file of another schema or cache version, or
+  one that does not read, is deleted and rebuilt at start; rows otherwise
+  carry across releases, and a release that must clear stale answers bumps
+  `CACHE_VERSION`), a row that does not decode reads as a miss, it is never
+  backed up or exported, keeps its rows under 512 MB, and holds nothing that cannot be
   fetched again. A cache key starts with its source and carries every value
   that changes the answer, so no settings save clears it, and a lookup that
   met any failure stores nothing.

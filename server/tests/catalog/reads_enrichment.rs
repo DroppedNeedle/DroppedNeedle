@@ -45,6 +45,24 @@ async fn a_failed_count_stays_on_its_row() {
             .await;
     let admin = app.login_admin().await;
     let auth = [("authorization", admin.as_str())];
+
+    // With neither service on, the ids echo back with no counts.
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/search/enrich/batch",
+            &auth,
+            Some(serde_json::json!({
+                "artists": [{"musicbrainz_id": "artist-mbid-1", "name": "Portishead"}],
+                "albums": [],
+            })),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {body}");
+    assert!(body["source"].is_null(), "{body}");
+    assert!(body["artists"][0]["listen_count"].is_null(), "{body}");
+    assert_eq!(body["degradations"], serde_json::json!([]), "{body}");
+
     let (status, body) = app
         .call(
             "PUT",

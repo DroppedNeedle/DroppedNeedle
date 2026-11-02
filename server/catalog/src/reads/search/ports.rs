@@ -50,11 +50,12 @@ impl std::fmt::Display for EnrichmentPortError {
 /// implements it over ListenBrainz and Last.fm; [`UnconfiguredEnrichment`]
 /// serves when no provider is wired.
 pub trait EnrichmentPort: Send + Sync {
-    /// Enrich one mixed batch of artists and albums.
-    fn enrich_batch(
-        &self,
+    /// Enrich one mixed batch of artists and albums for `user_id`.
+    fn enrich_batch<'a>(
+        &'a self,
+        user_id: &'a str,
         request: EnrichmentBatchRequest,
-    ) -> BoxFuture<'_, Result<EnrichmentResponse, EnrichmentPortError>>;
+    ) -> BoxFuture<'a, Result<EnrichmentResponse, EnrichmentPortError>>;
 }
 
 /// Enrichment with no provider wired: every id echoes back with absent
@@ -64,10 +65,11 @@ pub trait EnrichmentPort: Send + Sync {
 pub struct UnconfiguredEnrichment;
 
 impl EnrichmentPort for UnconfiguredEnrichment {
-    fn enrich_batch(
-        &self,
+    fn enrich_batch<'a>(
+        &'a self,
+        _user_id: &'a str,
         request: EnrichmentBatchRequest,
-    ) -> BoxFuture<'_, Result<EnrichmentResponse, EnrichmentPortError>> {
+    ) -> BoxFuture<'a, Result<EnrichmentResponse, EnrichmentPortError>> {
         Box::pin(async move {
             Ok(EnrichmentResponse {
                 artists: request

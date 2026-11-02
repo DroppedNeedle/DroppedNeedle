@@ -353,17 +353,7 @@ impl ListeningNetwork for LiveNetwork {
                     .similar_artists(artist_mbid, limit, &creds, priority)
                     .await,
             )?;
-            Ok(rows
-                .into_iter()
-                .map(|row| ScoredArtist {
-                    score: row.listen_count as f64,
-                    artist: ArtistRow {
-                        name: row.artist_name,
-                        mbid: Some(row.artist_mbid),
-                        listen_count: Some(row.listen_count),
-                    },
-                })
-                .collect())
+            Ok(super::shared::scored_artists(rows))
         })
     }
 
@@ -381,19 +371,7 @@ impl ListeningNetwork for LiveNetwork {
                     .artist_top_release_groups(artist_mbid, count, &creds, priority)
                     .await,
             )?;
-            Ok(rows
-                .into_iter()
-                .filter(|row| !row.name.is_empty())
-                .map(|row| RankedAlbum {
-                    album: AlbumRow {
-                        release_group_mbid: row.release_group_mbid,
-                        title: row.name,
-                        artist_name: row.artist_name,
-                        artist_mbid: Some(artist_mbid.to_lowercase()),
-                    },
-                    listen_count: row.listen_count,
-                })
-                .collect())
+            Ok(super::shared::ranked_albums(rows, artist_mbid))
         })
     }
 

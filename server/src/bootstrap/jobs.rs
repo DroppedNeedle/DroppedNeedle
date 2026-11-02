@@ -420,6 +420,7 @@ impl JobsSetup {
         self,
         reads: &droppedneedle_catalog::reads::ReadsSetup,
         config: &Arc<ConfigStore>,
+        listening: droppedneedle_media::playback::listening::ListeningStore,
     ) -> Self {
         match (&reads.catalog, &reads.artwork) {
             (Some(catalog), Some(artwork)) => self.with_precache_sources(Arc::new(
@@ -427,6 +428,7 @@ impl JobsSetup {
                     catalog.catalog.clone(),
                     artwork.clone(),
                     config.live(),
+                    listening,
                 ),
             )),
             _ => {

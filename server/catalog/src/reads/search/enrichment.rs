@@ -1,28 +1,35 @@
 //! Listen counts for search results.
 //!
-//! ListenBrainz answers while it is switched on; otherwise Last.fm answers
-//! with the instance API key, while Last.fm is switched on and a key is
-//! saved; otherwise the ids echo back with no counts. A person is waiting,
-//! so every call goes at user priority. A failed call leaves its rows
-//! without counts and adds one degradation note for its source: counts
-//! are optional, so they never fail a search.
+//! Last.fm answers for a user who follows it and has a key to read with
+//! (their own, else the instance's). Otherwise ListenBrainz answers while
+//! it is switched on, and then Last.fm while it is switched on and a key
+//! is saved; otherwise the ids echo back with no counts. ListenBrainz's
+//! answers come from the rows Discover keeps, so a search asks only for
+//! what no kept row holds. A person is waiting, so every call goes at
+//! user priority. A failed call leaves its rows without counts and adds
+//! one degradation note for its source: counts are optional, so they
+//! never fail a search.
 
 use futures_util::stream::{self, StreamExt as _};
 
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::error::PROVIDER_UNAVAILABLE;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     LastFmSettings, ListenBrainzConnection,
 };
+use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
-use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
-use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
+use droppedneedle_providers::listenbrainz::ListenBrainzClient;
+use droppedneedle_providers::{ProviderCacheStore, ProviderError, Providers, RequestPriority};
 
 use super::models::{
     AlbumEnrichment, AlbumEnrichmentRequest, ArtistEnrichment, ArtistEnrichmentRequest,
     Degradation, EnrichmentBatchRequest, EnrichmentResponse,
 };
 use super::ports::{BoxFuture, EnrichmentPort, EnrichmentPortError, MAX_ENRICHMENT_PER_BUCKET};
+use crate::reads::catalog::upstream::user_lastfm;
+use crate::reads::discover::listening::shared;
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
 
 /// Per-row lookups in flight at once, kept from v2: one small batch never
@@ -42,6 +49,9 @@ pub struct SearchCounts {
     listenbrainz_settings: Live<ListenBrainzConnection>,
     lastfm: LastFmClient,
     lastfm_settings: Live<LastFmSettings>,
+    cache: ProviderCacheStore,
+    listening: ListeningStore,
+    users: UsersDeps,
 }
 
 impl std::fmt::Debug for SearchCounts {
@@ -58,49 +68,83 @@ enum Source {
 }
 
 impl SearchCounts {
-    /// Counts through the providers' ListenBrainz and Last.fm clients.
+    /// Counts through the providers' ListenBrainz and Last.fm clients, for
+    /// the service each user follows in `listening`.
     pub fn new(
         providers: &Providers,
         listenbrainz: Live<ListenBrainzConnection>,
         lastfm: Live<LastFmSettings>,
+        listening: ListeningStore,
+        users: UsersDeps,
     ) -> Self {
         Self {
             listenbrainz: providers.listenbrainz.clone(),
             listenbrainz_settings: listenbrainz,
             lastfm: providers.lastfm.clone(),
             lastfm_settings: lastfm,
+            cache: providers.cache.clone(),
+            listening,
+            users,
         }
     }
 
     /// The source for this batch. A section that does not read answers
     /// none rather than standing in its defaults, so an unreadable
     /// ListenBrainz section never sends the batch to Last.fm.
-    fn source(&self) -> Source {
+    async fn source(&self, user_id: &str) -> Source {
         let Some(listenbrainz) = self.listenbrainz_settings.read() else {
             return Source::None;
         };
+        let instance_key = self.lastfm_settings.read().and_then(|lastfm| {
+            let key = lastfm.api_key.expose().trim();
+            (lastfm.enabled && !key.is_empty()).then(|| key.to_owned())
+        });
+        let follows_lastfm = self.listening.prefs(user_id).await.primary_music_source == "lastfm";
+        if follows_lastfm && let Some(creds) = self.lastfm_for(user_id, &instance_key).await {
+            return Source::LastFm(creds);
+        }
         if listenbrainz.enabled {
             return Source::ListenBrainz;
         }
-        let Some(lastfm) = self.lastfm_settings.read() else {
-            return Source::None;
-        };
-        let api_key = lastfm.api_key.expose().trim();
-        if !lastfm.enabled || api_key.is_empty() {
-            return Source::None;
+        match instance_key {
+            Some(api_key) => Source::LastFm(LastFmCredentials {
+                api_key,
+                ..LastFmCredentials::default()
+            }),
+            None => Source::None,
         }
-        Source::LastFm(LastFmCredentials {
-            api_key: api_key.to_owned(),
+    }
+
+    /// The key a user who follows Last.fm reads with: their own, else the
+    /// instance's. `None` while Last.fm is switched off.
+    async fn lastfm_for(
+        &self,
+        user_id: &str,
+        instance_key: &Option<String>,
+    ) -> Option<LastFmCredentials> {
+        if !self.users.lastfm_switch.enabled() {
+            return None;
+        }
+        let api_key = match user_lastfm(&self.users, user_id).await.api_key {
+            Some(key) => key,
+            None => instance_key.clone()?,
+        };
+        Some(LastFmCredentials {
+            api_key,
             ..LastFmCredentials::default()
         })
     }
 
     /// Counts for one batch. Blank ids are skipped and each bucket keeps
     /// its first [`MAX_ENRICHMENT_PER_BUCKET`] rows.
-    pub async fn enrich(&self, request: EnrichmentBatchRequest) -> EnrichmentResponse {
+    pub async fn enrich(
+        &self,
+        user_id: &str,
+        request: EnrichmentBatchRequest,
+    ) -> EnrichmentResponse {
         let (artists, albums) = trimmed(request);
         let mut notes = Notes::default();
-        let (source, artists, albums) = match self.source() {
+        let (source, artists, albums) = match self.source(user_id).await {
             Source::ListenBrainz => (
                 Some(ListenSource::Listenbrainz),
                 self.listenbrainz_artists(artists, &mut notes).await,
@@ -125,26 +169,25 @@ impl SearchCounts {
         }
     }
 
-    /// Each artist's count is the sum of its top release groups.
+    /// Each artist's count is the sum of its top release groups, from the
+    /// artist's kept rows.
     async fn listenbrainz_artists(
         &self,
         artists: Vec<ArtistEnrichmentRequest>,
         notes: &mut Notes,
     ) -> Vec<ArtistEnrichment> {
-        let creds = ListenBrainzCredentials::default();
-        let creds = &creds;
         let outcomes: Vec<_> = stream::iter(
             artists
                 .iter()
                 .map(|item| async move {
-                    self.listenbrainz
-                        .artist_top_release_groups(
-                            &item.musicbrainz_id,
-                            ARTIST_TOP_RELEASES,
-                            creds,
-                            RequestPriority::UserInitiated,
-                        )
-                        .await
+                    shared::artist_albums(
+                        &self.cache,
+                        &self.listenbrainz,
+                        &item.musicbrainz_id,
+                        ARTIST_TOP_RELEASES,
+                        RequestPriority::UserInitiated,
+                    )
+                    .await
                 })
                 .collect::<Vec<_>>(),
         )
@@ -169,7 +212,7 @@ impl SearchCounts {
             .collect()
     }
 
-    /// One call answers the whole album bucket.
+    /// One call answers whatever of the album bucket no kept row holds.
     async fn listenbrainz_albums(
         &self,
         albums: Vec<AlbumEnrichmentRequest>,
@@ -179,14 +222,13 @@ impl SearchCounts {
             .iter()
             .map(|item| item.musicbrainz_id.clone())
             .collect();
-        let outcome = self
-            .listenbrainz
-            .release_group_popularity(
-                &mbids,
-                &ListenBrainzCredentials::default(),
-                RequestPriority::UserInitiated,
-            )
-            .await;
+        let outcome = shared::listen_counts(
+            &self.cache,
+            &self.listenbrainz,
+            &mbids,
+            RequestPriority::UserInitiated,
+        )
+        .await;
         let counts = notes.keep(outcome).unwrap_or_default();
         albums
             .into_iter()
@@ -282,11 +324,12 @@ impl SearchCounts {
 }
 
 impl EnrichmentPort for SearchCounts {
-    fn enrich_batch(
-        &self,
+    fn enrich_batch<'a>(
+        &'a self,
+        user_id: &'a str,
         request: EnrichmentBatchRequest,
-    ) -> BoxFuture<'_, Result<EnrichmentResponse, EnrichmentPortError>> {
-        Box::pin(async move { Ok(self.enrich(request).await) })
+    ) -> BoxFuture<'a, Result<EnrichmentResponse, EnrichmentPortError>> {
+        Box::pin(async move { Ok(self.enrich(user_id, request).await) })
     }
 }
 
@@ -362,6 +405,7 @@ fn bare_album(item: AlbumEnrichmentRequest) -> AlbumEnrichment {
 /// `none`. The cause goes to the log only.
 pub async fn enrich_with_degradation(
     port: &dyn EnrichmentPort,
+    user_id: &str,
     request: EnrichmentBatchRequest,
 ) -> EnrichmentResponse {
     let (artists, albums) = trimmed(request);
@@ -369,7 +413,7 @@ pub async fn enrich_with_degradation(
         artists: artists.clone(),
         albums: albums.clone(),
     };
-    match port.enrich_batch(request).await {
+    match port.enrich_batch(user_id, request).await {
         Ok(response) => response,
         Err(error) => {
             tracing::error!(source = %error.source, cause = %error.message, "search enrichment degraded");

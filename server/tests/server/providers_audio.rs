@@ -859,8 +859,8 @@ async fn listenbrainz_user_listens_found_with_mbid_mapping() {
 
 #[tokio::test]
 async fn listenbrainz_popularity_malformed_never_reads_as_zeros() {
-    // v2's poisoning guard: a malformed answer returns partial results with
-    // nothing written, never an authoritative empty map from an outage.
+    // A malformed answer is a failure, so nothing is kept from it; only a
+    // clean empty list is an answer.
     let popularity = lb_url("/1/popularity/release-group");
     let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
     wire.on(
@@ -883,15 +883,18 @@ async fn listenbrainz_popularity_malformed_never_reads_as_zeros() {
     );
     let providers = listenbrainz_providers(&wire);
 
-    for answer in [
-        "malformed popularity stays soft",
-        "empty list is legitimate",
-    ] {
-        let counts = providers
-            .listenbrainz
-            .release_group_popularity(&["a".to_owned()], &lb_anonymous(), LB_PRIORITY)
-            .await
-            .expect(answer);
-        assert!(counts.is_empty(), "{answer}");
-    }
+    let malformed = providers
+        .listenbrainz
+        .release_group_popularity(&["a".to_owned()], &lb_anonymous(), LB_PRIORITY)
+        .await;
+    assert!(
+        matches!(malformed, Err(ProviderError::Payload { .. })),
+        "{malformed:?}"
+    );
+    let counts = providers
+        .listenbrainz
+        .release_group_popularity(&["a".to_owned()], &lb_anonymous(), LB_PRIORITY)
+        .await
+        .expect("empty list is legitimate");
+    assert!(counts.is_empty());
 }

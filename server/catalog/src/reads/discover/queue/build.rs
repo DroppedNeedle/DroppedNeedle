@@ -860,10 +860,13 @@ async fn lastfm_cards(
 }
 
 /// Match Last.fm album ids to release groups: remembered answers first,
-/// then at most `lastfm_mbid_max_lookups` MusicBrainz lookups, whose
-/// answers (misses included) are remembered one by one, so a caller's
-/// bound cutting the lookups off keeps the ones made. An id that is not a
-/// release is tried as a release group itself.
+/// then at most `lastfm_mbid_max_lookups` MusicBrainz lookups, within what
+/// the build has left of its budget, whose answers (misses included) are
+/// remembered one by one, so a caller's bound cutting the lookups off keeps
+/// the ones made. An id that is not a release is tried as a release group
+/// itself, which costs a second call. Matching runs on an ask of its own: a
+/// lookup that failed or was cut short is simply tried by a later build, and
+/// does not mark the page incomplete.
 pub async fn resolve_release_groups(
     ctx: &BuildContext<'_>,
     release_mbids: &[String],
@@ -878,6 +881,7 @@ pub async fn resolve_release_groups(
     if wanted.is_empty() {
         return resolved;
     }
+    let ask = ctx.ask.watched();
     let known = ctx.db.resolutions(&wanted).await.unwrap_or_else(|cause| {
         tracing::warn!(%cause, "release group answers unreadable; looking them up again");
         HashMap::new()
@@ -896,10 +900,16 @@ pub async fn resolve_release_groups(
         .into_iter()
         .take(ctx.settings.lastfm_mbid_max_lookups)
     {
-        let group = match ctx.listening.release_group_of(&release, &ctx.ask).await {
+        if !ask.take_lookup() {
+            break;
+        }
+        let group = match ctx.listening.release_group_of(&release, &ask).await {
             Ok(Some(group)) => Some(group.to_ascii_lowercase()),
             Ok(None) if is_valid_mbid(&release) => {
-                match ctx.listening.release_group(&release, &ctx.ask).await {
+                if !ask.take_lookup() {
+                    break;
+                }
+                match ctx.listening.release_group(&release, &ask).await {
                     Ok(Some(_)) => Some(release.clone()),
                     Ok(None) => None,
                     Err(cause) => {

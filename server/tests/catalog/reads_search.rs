@@ -33,10 +33,11 @@ const TEST_TOKEN: &str = "dn-search-test-token-0000000000001";
 struct FailingEnrichment;
 
 impl EnrichmentPort for FailingEnrichment {
-    fn enrich_batch(
-        &self,
+    fn enrich_batch<'a>(
+        &'a self,
+        _user_id: &'a str,
         _request: EnrichmentBatchRequest,
-    ) -> search::ports::BoxFuture<'_, Result<EnrichmentResponse, EnrichmentPortError>> {
+    ) -> search::ports::BoxFuture<'a, Result<EnrichmentResponse, EnrichmentPortError>> {
         Box::pin(async move {
             Err(EnrichmentPortError::new(
                 "listenbrainz",

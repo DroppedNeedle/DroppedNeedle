@@ -9,9 +9,9 @@
 //! warning.
 //!
 //! The file holds nothing that cannot be fetched again, so it has no
-//! migrations: its version stamp is a hash of the schema, layout and build,
-//! and a file with another stamp, or one that is not a database, is deleted
-//! and made fresh at start. It is never backed up or exported. A file found
+//! migrations: its version stamp is a hash of the schema, layout and
+//! [`CACHE_VERSION`], so rows survive a release. A file with another stamp,
+//! or one that is not a database, is deleted and made fresh at start. It is never backed up or exported. A file found
 //! corrupt while running turns the cache off for the run and is deleted, so
 //! the next start makes a new one.
 //!
@@ -296,18 +296,11 @@ fn is_corrupt(error: &rusqlite::Error) -> bool {
 impl CacheDb {
     /// Open the cache in `cache_dir`, or beside `library_db_path` when the
     /// cache folder is refused. Never fails: a cache that cannot open is
-    /// off for the run, with one warning. `build` names the running build;
-    /// a file another build made is replaced.
-    pub async fn open(cache_dir: &Path, library_db_path: &Path, build: &str) -> Self {
-        let (cache_dir, library_db_path, build) = (
-            cache_dir.to_owned(),
-            library_db_path.to_owned(),
-            build.to_owned(),
-        );
-        match tokio::task::spawn_blocking(move || {
-            Self::open_blocking(&cache_dir, &library_db_path, &build)
-        })
-        .await
+    /// off for the run, with one warning.
+    pub async fn open(cache_dir: &Path, library_db_path: &Path) -> Self {
+        let (cache_dir, library_db_path) = (cache_dir.to_owned(), library_db_path.to_owned());
+        match tokio::task::spawn_blocking(move || Self::open_blocking(&cache_dir, &library_db_path))
+            .await
         {
             Ok(cache) => cache,
             Err(error) => {
@@ -318,8 +311,8 @@ impl CacheDb {
     }
 
     /// [`open`](Self::open), on the calling thread.
-    pub fn open_blocking(cache_dir: &Path, library_db_path: &Path, build: &str) -> Self {
-        match Self::try_open(cache_dir, library_db_path, build) {
+    pub fn open_blocking(cache_dir: &Path, library_db_path: &Path) -> Self {
+        match Self::try_open(cache_dir, library_db_path) {
             Ok(cache) => cache,
             Err(reason) => {
                 tracing::warn!(
@@ -341,7 +334,7 @@ impl CacheDb {
                 return Self::off(PathBuf::new());
             }
         };
-        let mut cache = Self::open_blocking(dir.path(), &dir.path().join("library.db"), "test");
+        let mut cache = Self::open_blocking(dir.path(), &dir.path().join("library.db"));
         if let Some(inner) = Arc::get_mut(&mut cache.inner) {
             inner._scratch = Some(dir);
         }
@@ -369,7 +362,7 @@ impl CacheDb {
         }
     }
 
-    fn try_open(cache_dir: &Path, library_db_path: &Path, build: &str) -> Result<Self, String> {
+    fn try_open(cache_dir: &Path, library_db_path: &Path) -> Result<Self, String> {
         let preferred = cache_dir.join(FILE_NAME);
         let path = match checked(&preferred) {
             Ok(()) => preferred,
@@ -391,7 +384,7 @@ impl CacheDb {
             return Err("the provider cache path is the database's own".to_owned());
         }
         let data_lock = DataLock::server(&path).map_err(|error| error.to_string())?;
-        let (connection, total) = prepare_file(&path, library_db_path, build)?;
+        let (connection, total) = prepare_file(&path, library_db_path)?;
         let shared = Arc::new(Shared {
             path,
             off: AtomicBool::new(false),
@@ -641,18 +634,22 @@ fn remove_regular(path: &Path) -> Result<(), String> {
 /// file made another way is made fresh.
 const LAYOUT: &str = "auto_vacuum=incremental";
 
-/// The file's version stamp: the schema, the layout and the build (the
-/// image's tag, which each release and each dev image has its own of), so
-/// any change starts a new file. Never 0, which a new or half-made file
+/// Bump by hand when a release must not read the answers an earlier one
+/// kept. Rows otherwise carry across releases; one that no longer decodes
+/// reads as a miss.
+const CACHE_VERSION: &str = "1";
+
+/// The file's version stamp: the schema, the layout and [`CACHE_VERSION`],
+/// so any change starts a new file. Never 0, which a new or half-made file
 /// reads.
-fn version(build: &str) -> i32 {
+fn version() -> i32 {
     let mut hash: u32 = 0x811c_9dc5;
     for byte in SCHEMA
         .bytes()
         .chain(":".bytes())
         .chain(LAYOUT.bytes())
         .chain(":".bytes())
-        .chain(build.bytes())
+        .chain(CACHE_VERSION.bytes())
     {
         hash ^= u32::from(byte);
         hash = hash.wrapping_mul(0x0100_0193);
@@ -662,11 +659,7 @@ fn version(build: &str) -> i32 {
 
 /// Open the file as the writer, making it fresh when it is missing, of
 /// another version or not a database.
-fn prepare_file(
-    path: &Path,
-    library_db_path: &Path,
-    build: &str,
-) -> Result<(Connection, i64), String> {
+fn prepare_file(path: &Path, library_db_path: &Path) -> Result<(Connection, i64), String> {
     refuse_shared_inode(path, library_db_path)?;
     let files = companions(path);
     for file in &files {
@@ -685,7 +678,7 @@ fn prepare_file(
         }
     }
     if path.exists() {
-        match open_current(path, build) {
+        match open_current(path) {
             Ok(Some(opened)) => return Ok(opened),
             Ok(None) => {
                 tracing::info!("provider cache file is from another version; starting it fresh")
@@ -698,7 +691,7 @@ fn prepare_file(
             remove_regular(file)?;
         }
     }
-    create(path, build)
+    create(path)
         .map(|connection| (connection, 0))
         .map_err(|error| error.to_string())
 }
@@ -759,12 +752,12 @@ fn writer_pragmas(connection: &Connection) -> rusqlite::Result<()> {
 }
 
 /// The open file and the bytes its rows hold, or `None` when its stamp
-/// is not this build's. The total is read from every table page, so a
+/// is not the current one. The total is read from every table page, so a
 /// damaged table fails here and the file is made fresh.
-fn open_current(path: &Path, build: &str) -> rusqlite::Result<Option<(Connection, i64)>> {
+fn open_current(path: &Path) -> rusqlite::Result<Option<(Connection, i64)>> {
     let connection = Connection::open_with_flags(path, open_flags(false))?;
     let found: i32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if found != version(build) {
+    if found != version() {
         return Ok(None);
     }
     writer_pragmas(&connection)?;
@@ -772,14 +765,14 @@ fn open_current(path: &Path, build: &str) -> rusqlite::Result<Option<(Connection
     Ok(Some((connection, total)))
 }
 
-fn create(path: &Path, build: &str) -> rusqlite::Result<Connection> {
+fn create(path: &Path) -> rusqlite::Result<Connection> {
     let mut connection = Connection::open_with_flags(path, open_flags(true))?;
     // Set before any table exists, so freed pages can go back to the disk.
     connection.execute_batch("PRAGMA auto_vacuum = INCREMENTAL")?;
     writer_pragmas(&connection)?;
     let transaction = connection.transaction()?;
     transaction.execute_batch(SCHEMA)?;
-    transaction.execute_batch(&format!("PRAGMA user_version = {}", version(build)))?;
+    transaction.execute_batch(&format!("PRAGMA user_version = {}", version()))?;
     transaction.commit()?;
     Ok(connection)
 }
@@ -1109,17 +1102,25 @@ mod tests {
         let dir = crate::db::scratch::ScratchDir::new("cache-foreign").unwrap();
         let path = dir.path().join(FILE_NAME);
         std::fs::write(&path, b"not a database at all, just bytes").unwrap();
-        let cache = CacheDb::open(dir.path(), &dir.path().join("library.db"), "test").await;
+        let cache = CacheDb::open(dir.path(), &dir.path().join("library.db")).await;
         assert!(cache.is_on());
         assert!(cache.put(row("musicbrainz:a", b"1")));
         assert!(settled(&cache, "musicbrainz:a").await.is_some());
         cache.shutdown_within(Duration::from_secs(5)).await;
         drop(cache);
 
+        let cache = CacheDb::open(dir.path(), &dir.path().join("library.db")).await;
+        assert!(
+            cache.get("musicbrainz:a").await.is_some(),
+            "a file of this version keeps its rows, whichever build made it"
+        );
+        cache.shutdown_within(Duration::from_secs(5)).await;
+        drop(cache);
+
         let old = Connection::open(&path).unwrap();
         old.execute_batch("PRAGMA user_version = 7").unwrap();
         drop(old);
-        let cache = CacheDb::open(dir.path(), &dir.path().join("library.db"), "test").await;
+        let cache = CacheDb::open(dir.path(), &dir.path().join("library.db")).await;
         assert!(cache.is_on());
         assert!(
             cache.get("musicbrainz:a").await.is_none(),
@@ -1133,7 +1134,7 @@ mod tests {
         cache.shutdown_within(Duration::from_secs(5)).await;
         drop(cache);
 
-        // Fold the journal in, then keep this build's stamp on page one and
+        // Fold the journal in, then keep the current stamp on page one and
         // put garbage on every page after it.
         let fold = Connection::open(&path).unwrap();
         fold.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -1146,7 +1147,7 @@ mod tests {
         for file in &companions(&path)[1..] {
             remove_regular(file).unwrap();
         }
-        let cache = CacheDb::open(dir.path(), &dir.path().join("library.db"), "test").await;
+        let cache = CacheDb::open(dir.path(), &dir.path().join("library.db")).await;
         assert!(cache.is_on(), "a damaged file is made fresh");
         assert!(cache.put(row("musicbrainz:b", b"2")));
         assert!(settled(&cache, "musicbrainz:b").await.is_some());

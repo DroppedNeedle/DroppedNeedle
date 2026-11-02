@@ -28,6 +28,7 @@ use super::models::{
 };
 use super::{Catalog, is_mbid, mb_error, record_mb_down};
 use crate::reads::cache_hold::CacheHold;
+use crate::reads::discover::listening::shared;
 use crate::reads::platform::artwork::warm::WarmTargets;
 
 /// Releases whose tracklists top songs look up, at most.
@@ -191,7 +192,7 @@ impl Catalog {
                 let mbid = mbid.to_owned();
                 self.cached(
                     &key,
-                    Policy::DISCOVERY,
+                    Policy::LISTENBRAINZ_ARTIST,
                     priority,
                     move |priority| async move {
                         let mut hold = CacheHold::default();
@@ -265,10 +266,12 @@ impl Catalog {
     /// these counts, are all held, fresh or stale, for a user who can
     /// (`lastfm`) or cannot read Last.fm. A section ListenBrainz has
     /// nothing for counts once Last.fm's answer, which then fills in, is
-    /// held too.
+    /// held too. A user who follows Last.fm (`lastfm_first`) reads only
+    /// Last.fm's.
     pub(super) async fn artist_sections_held(
         &self,
         lastfm: bool,
+        lastfm_first: bool,
         mbid: &str,
         (similar, songs, albums): (u32, u32, u32),
     ) -> bool {
@@ -278,7 +281,7 @@ impl Catalog {
             (Section::TopSongs, songs),
             (Section::TopAlbums, albums),
         ] {
-            if listenbrainz {
+            if listenbrainz && !lastfm_first {
                 let key = self.section_key(ListenSource::Listenbrainz, mbid, count, section);
                 match self.upstream().cache().peek::<SectionRows>(&key).await {
                     None => return false,
@@ -343,7 +346,7 @@ impl Catalog {
                     .filter_map(|recording| recording.recording_mbid.clone())
                     .collect();
                 let groups = client
-                    .recording_release_groups(&ids, creds, priority)
+                    .cached_recording_groups(self.upstream().cache(), &ids, creds, priority)
                     .await
                     .unwrap_or_else(|error| {
                         hold.provider(&error);
@@ -384,6 +387,7 @@ impl Catalog {
                         }
                         return Some(SectionRows {
                             albums: albums_from_recordings(
+                                self.upstream().cache(),
                                 client,
                                 creds,
                                 (mbid, count, priority),
@@ -612,7 +616,7 @@ impl Catalog {
     ) -> Result<SimilarAlbumsResponse, CatalogError> {
         let album = checked_mbid(raw_album, "album")?;
         let artist = checked_mbid(raw_artist, "artist")?;
-        let Some((client, creds)) = self.upstream().listenbrainz() else {
+        let Some((client, _)) = self.upstream().listenbrainz() else {
             return Ok(SimilarAlbumsResponse {
                 albums: Vec::new(),
                 source: ListenSource::Listenbrainz,
@@ -624,35 +628,41 @@ impl Catalog {
             &["similar_albums", &album, &artist, &count.to_string()],
         );
         let (lb_album, lb_artist) = (album.clone(), artist.clone());
+        let shared_rows = self.upstream().cache().clone();
         // Album pages and radio wait on this.
         let priority = RequestPriority::UserInitiated;
         let rows = self
             .cached(
                 &key,
-                Policy::DISCOVERY,
+                Policy::LISTENBRAINZ_ARTIST,
                 priority,
                 move |priority| async move {
-                    let similar = client
-                        .similar_artists(&lb_artist, SIMILAR_ALBUM_ARTISTS, &creds, priority)
-                        .await
-                        .map_err(CatalogError::Unavailable)?;
+                    let similar = shared::similar_artists(
+                        &shared_rows,
+                        &client,
+                        &lb_artist,
+                        SIMILAR_ALBUM_ARTISTS,
+                        priority,
+                    )
+                    .await
+                    .map_err(CatalogError::Unavailable)?;
                     let similar: Vec<(String, String)> = similar
                         .into_iter()
-                        .filter(|artist| is_mbid(&artist.artist_mbid))
+                        .filter_map(|row| Some((row.artist.mbid?, row.artist.name)))
+                        .filter(|(mbid, _)| is_mbid(mbid))
                         .take(SIMILAR_ALBUM_ARTISTS)
-                        .map(|artist| (artist.artist_mbid, artist.artist_name))
                         .collect();
                     let mut albums = Vec::new();
                     let mut hold = CacheHold::default();
                     for (similar_mbid, similar_name) in &similar {
-                        let groups = match client
-                            .artist_top_release_groups(
-                                similar_mbid,
-                                ALBUMS_PER_SIMILAR_ARTIST,
-                                &creds,
-                                priority,
-                            )
-                            .await
+                        let groups = match shared::artist_albums(
+                            &shared_rows,
+                            &client,
+                            similar_mbid,
+                            ALBUMS_PER_SIMILAR_ARTIST,
+                            priority,
+                        )
+                        .await
                         {
                             Ok(groups) => groups,
                             Err(error) => {
@@ -660,7 +670,7 @@ impl Catalog {
                                 continue;
                             }
                         };
-                        for group in groups {
+                        for group in groups.into_iter().map(|row| row.album) {
                             if group.release_group_mbid.eq_ignore_ascii_case(&lb_album) {
                                 continue;
                             }
@@ -672,7 +682,7 @@ impl Catalog {
                                     group.artist_name
                                 }),
                                 artist_id: Some(similar_mbid.clone()),
-                                ..AlbumRef::titled(group.name)
+                                ..AlbumRef::titled(group.title)
                             });
                         }
                         if albums.len() >= count as usize {
@@ -998,6 +1008,7 @@ async fn lastfm_rows(
 /// first. `None` when ListenBrainz failed; a failed release group lookup
 /// is noted in `hold`.
 async fn albums_from_recordings(
+    cache: &droppedneedle_providers::ProviderCacheStore,
     client: &super::upstream::CatalogListenBrainz,
     creds: &listenbrainz::ListenBrainzCredentials,
     (mbid, count, priority): (&str, usize, RequestPriority),
@@ -1012,7 +1023,7 @@ async fn albums_from_recordings(
         .filter_map(|recording| recording.recording_mbid.clone())
         .collect();
     let groups = client
-        .recording_release_groups(&ids, creds, priority)
+        .cached_recording_groups(cache, &ids, creds, priority)
         .await
         .unwrap_or_else(|error| {
             hold.provider(&error);

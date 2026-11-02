@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::RequestPriority;
+use crate::cache::{CacheKey, Policy, ProviderCacheStore, Source};
 use crate::degradation::{IntegrationStatus, record_current};
 use crate::error::{ProviderError, TransportKind, retry_delay_from_headers};
 use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
@@ -217,7 +218,7 @@ pub struct TopReleaseGroup {
 /// One of an artist's most played recordings.
 /// The display fields tolerate absence; a row without a usable title is
 /// skipped rather than shown as "Unknown".
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TopRecording {
     /// Recording title.
     pub title: String,
@@ -243,6 +244,15 @@ pub struct SimilarArtist {
     pub artist_name: String,
     /// Summed listen count of the sampled recordings.
     pub listen_count: i64,
+}
+
+/// The cache key of one recording's release group.
+#[must_use]
+pub fn recording_group_key(recording_mbid: &str) -> CacheKey {
+    CacheKey::new(
+        Source::ListenBrainz,
+        &["recording_group", &recording_mbid.trim().to_lowercase()],
+    )
 }
 
 /// ListenBrainz client over the ListenBrainz executor. Built once with the
@@ -359,6 +369,33 @@ impl ListenBrainzClient {
         Ok(resolved)
     }
 
+    /// [`recording_release_groups`](Self::recording_release_groups) through
+    /// `cache`, each recording kept on its own under
+    /// [`recording_group_key`], so only recordings never seen go out.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the first batch that failed.
+    pub async fn cached_recording_groups(
+        &self,
+        cache: &ProviderCacheStore,
+        recording_mbids: &[String],
+        creds: &ListenBrainzCredentials,
+        priority: RequestPriority,
+    ) -> Result<HashMap<String, String>, ProviderError> {
+        cache
+            .fetch_each(
+                recording_mbids,
+                recording_group_key,
+                Policy::RECORDING_TO_GROUP,
+                |missing| async move {
+                    self.recording_release_groups(&missing, creds, priority)
+                        .await
+                },
+            )
+            .await
+    }
+
     /// Genre tags for release-group MBIDs from the live-verified GET-only
     /// endpoint (`GET /1/metadata/release_group/` with comma-separated ids
     /// and `inc=artist tag release`; verified against production on
@@ -456,12 +493,10 @@ impl ListenBrainzClient {
             .post(&["1", "popularity", "release-group"], &body, creds)?
             .idempotent(true);
         let mut counts: HashMap<String, i64> = HashMap::new();
-        let Some(items) = self
-            .read(request, priority)
-            .await?
-            .and_then(|payload| payload.as_array().cloned())
-        else {
-            return Ok(counts);
+        let items = match self.read_unconfirmed(request, priority).await? {
+            Some(serde_json::Value::Array(items)) => items,
+            Some(_) => return Err(wrong_shape("an array")),
+            None => return Ok(counts),
         };
         for item in &items {
             let mbid = item
@@ -482,8 +517,9 @@ impl ListenBrainzClient {
 
     /// Top release groups behind one artist's popularity sum (`GET
     /// /1/popularity/top-release-groups-for-artist/{mbid}`, v2
-    /// `get_artist_top_release_groups`). Malformed items are skipped and a
-    /// malformed payload reads as empty, mirroring the popularity batch.
+    /// `get_artist_top_release_groups`). Malformed items are skipped; a
+    /// payload of the wrong shape is a failure, and a 204 reads as empty
+    /// with a note, so neither is kept as "nothing there".
     ///
     /// # Errors
     ///
@@ -520,8 +556,8 @@ impl ListenBrainzClient {
 
     /// An artist's most played recordings
     /// (`GET /1/popularity/top-recordings-for-artist/{mbid}`), most played
-    /// first. Malformed rows are skipped; a malformed payload reads as an
-    /// empty answer, never as "zero listens" rows.
+    /// first. Malformed rows are skipped; a payload of the wrong shape is a
+    /// failure, never "zero listens" rows.
     ///
     /// # Errors
     ///
@@ -582,11 +618,11 @@ impl ListenBrainzClient {
             ],
             creds,
         )?;
-        let Some(payload) = self.read(request, priority).await? else {
+        let Some(payload) = self.read_unconfirmed(request, priority).await? else {
             return Ok(Vec::new());
         };
         let Some(entries) = payload.as_object() else {
-            return Ok(Vec::new());
+            return Err(wrong_shape("an object"));
         };
         let mut similar: Vec<SimilarArtist> = entries
             .iter()
@@ -805,17 +841,37 @@ impl ListenBrainzClient {
         }
     }
 
-    /// Send one read whose answer is a JSON array. Anything else reads as
-    /// an empty array.
+    /// Send one read whose emptiness gets kept. A 204 ("still computing")
+    /// reads as `None` with a note, so nothing is stored; an answer that is
+    /// not JSON is a failure.
+    async fn read_unconfirmed(
+        &self,
+        request: Request,
+        priority: RequestPriority,
+    ) -> Result<Option<serde_json::Value>, ProviderError> {
+        let reply = self.send(request, priority).await?;
+        if reply.status() == 204 {
+            record_current(SOURCE, IntegrationStatus::Degraded, false);
+            return Ok(None);
+        }
+        reply
+            .json::<serde_json::Value>()
+            .map(Some)
+            .inspect_err(|error| note_shape(&error.to_string()))
+    }
+
+    /// Send one read whose answer is a JSON array. A 204 reads as empty
+    /// and is not kept; any other shape is a failure.
     async fn read_array(
         &self,
         request: Request,
         priority: RequestPriority,
     ) -> Result<Vec<serde_json::Value>, ProviderError> {
-        Ok(match self.read(request, priority).await? {
-            Some(serde_json::Value::Array(items)) => items,
-            _ => Vec::new(),
-        })
+        match self.read_unconfirmed(request, priority).await? {
+            Some(serde_json::Value::Array(items)) => Ok(items),
+            Some(_) => Err(wrong_shape("an array")),
+            None => Ok(Vec::new()),
+        }
     }
 
     fn base(&self) -> Result<&Url, ProviderError> {
@@ -844,6 +900,17 @@ fn note_shape(cause: &str) {
         "ListenBrainz answer had no usable shape"
     );
     record_current(SOURCE, IntegrationStatus::Error, true);
+}
+
+/// The failure of a 200 that is not the shape `wanted`, noted.
+fn wrong_shape(wanted: &str) -> ProviderError {
+    let message = format!("the answer is not {wanted}");
+    note_shape(&message);
+    ProviderError::Payload {
+        provider: SOURCE,
+        kind: crate::error::PayloadKind::Decode,
+        message,
+    }
 }
 
 fn invalid(reason: &'static str) -> ProviderError {

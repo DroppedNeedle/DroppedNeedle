@@ -29,7 +29,7 @@ use droppedneedle_kernel::db::Db;
 use crate::reads::discover::cache::Variant;
 use crate::reads::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData,
-    PlayedArtist, ScoredArtist, StatsRange, TAG_PAGE, UserMusic, blend_similar,
+    PlayedArtist, RankedAlbum, ScoredArtist, StatsRange, TAG_PAGE, UserMusic, blend_similar,
 };
 use crate::reads::discover::models::{
     AlbumRef, BecauseYouListenTo, ChartSection, DiscoverResponse, RadioSeedKind, SectionContent,
@@ -281,6 +281,16 @@ fn title_case(text: &str) -> String {
         .join(" ")
 }
 
+/// The week (Monday to Sunday, UTC) `today` (`YYYY-MM-DD`) falls in, as a
+/// key for a shuffler that holds for that week.
+fn week_of(today: &str) -> String {
+    let format = time::macros::format_description!("[year]-[month]-[day]");
+    match time::Date::parse(today, &format) {
+        Ok(date) => format!("week-{}", date.to_julian_day().div_euclid(7)),
+        Err(_) => today.to_owned(),
+    }
+}
+
 /// A shuffler fixed for one day and one purpose, so a rebuild the same
 /// day reproduces the same shelves instead of reshuffling them.
 pub(in crate::reads::discover) fn daily_shuffler(today: &str, parts: &[&str]) -> Shuffler {
@@ -316,11 +326,10 @@ impl Builder<'_> {
         }
     }
 
-    /// Whether Last.fm stands in for ListenBrainz popularity: only while
-    /// ListenBrainz refuses popularity reads, and only when the user has
-    /// Last.fm.
+    /// Whether album popularity comes from Last.fm: the user follows it, or
+    /// ListenBrainz refuses popularity reads, and the user can read it.
     fn lastfm_for_popularity(&self, user: &UserMusic) -> bool {
-        self.listening.policy_for(user).lastfm_stands_in()
+        self.listening.policy_for(user).popularity() == ListenSource::Lastfm
     }
 
     /// Whether this build blends both services' seed and similar artists
@@ -491,7 +500,9 @@ impl Builder<'_> {
             }),
             SectionKey::FreshReleases => one(fresh_releases(&shared.fresh)),
             SectionKey::NewFromFollowed => one(self.new_from_followed(user_id).await),
-            SectionKey::MissingEssentials => one(self.missing_essentials(user_id, shared).await),
+            SectionKey::MissingEssentials => {
+                one(self.missing_essentials(user_id, ctx.user, shared).await)
+            }
             SectionKey::Rediscover => one(rediscover(&shared.jellyfin, self.now)),
             SectionKey::Anniversaries => one(self.anniversaries().await),
             SectionKey::LastfmRecentScrobbles => one(self
@@ -785,7 +796,12 @@ impl Builder<'_> {
 
     /// Albums missing from the artists the library holds most of: up to
     /// three of each one's most played albums (v2 Missing Essentials).
-    async fn missing_essentials(&self, user_id: &str, shared: &Shared) -> Option<ChartSection> {
+    async fn missing_essentials(
+        &self,
+        user_id: &str,
+        user: &UserMusic,
+        shared: &Shared,
+    ) -> Option<ChartSection> {
         let mut per_artist: HashMap<String, usize> = HashMap::new();
         for album in &shared.library_albums {
             if let Some(artist) = &album.artist_mbid {
@@ -803,15 +819,20 @@ impl Builder<'_> {
             .collect();
         artists.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         artists.truncate(10);
-        let found = join_all(artists.iter().map(|(artist_mbid, _)| async move {
-            or_empty(
-                "listenbrainz artist albums",
-                self.listening
-                    .artist_albums(user_id, artist_mbid, 10, &self.ask)
-                    .await,
-            )
-        }))
-        .await;
+        let found = if self.lastfm_for_popularity(user) {
+            let mbids: Vec<String> = artists.iter().map(|(mbid, _)| mbid.clone()).collect();
+            self.lastfm_ranked_albums(user_id, &mbids).await
+        } else {
+            join_all(artists.iter().map(|(artist_mbid, _)| async move {
+                or_empty(
+                    "listenbrainz artist albums",
+                    self.listening
+                        .artist_albums(user_id, artist_mbid, 10, &self.ask)
+                        .await,
+                )
+            }))
+            .await
+        };
         let mut missing: Vec<(i64, AlbumRef)> = Vec::new();
         for albums in found {
             let mut taken = 0;
@@ -830,7 +851,7 @@ impl Builder<'_> {
                         &ranked.album.title,
                         Some(&ranked.album.artist_name),
                         ranked.album.artist_mbid.as_deref(),
-                        Some(ranked.listen_count),
+                        (ranked.listen_count > 0).then_some(ranked.listen_count),
                     ),
                 ));
                 taken += 1;
@@ -847,6 +868,78 @@ impl Builder<'_> {
                 .collect(),
             Some(ShelfSource::Library),
         )
+    }
+
+    /// Library artists' top albums from Last.fm, matched to release groups,
+    /// in Last.fm's order. Last.fm sends no count here, so each row's listen
+    /// count is zero; albums that do not match in time are left out and
+    /// come with a later build.
+    async fn lastfm_ranked_albums(
+        &self,
+        user_id: &str,
+        artist_mbids: &[String],
+    ) -> Vec<Vec<RankedAlbum>> {
+        let names = noted(
+            &self.ask,
+            "artist names",
+            self.library.artist_names(artist_mbids).await,
+        );
+        let rows: Vec<ArtistRow> = artist_mbids
+            .iter()
+            .map(|mbid| ArtistRow {
+                name: names.get(mbid).cloned().unwrap_or_default(),
+                mbid: Some(mbid.clone()),
+                listen_count: None,
+            })
+            .collect();
+        let albums = join_all(rows.iter().map(|artist| async move {
+            or_empty(
+                "lastfm artist albums",
+                self.listening
+                    .lastfm_artist_albums(user_id, artist, 10, &self.ask)
+                    .await,
+            )
+        }))
+        .await;
+        let releases: Vec<String> = albums
+            .iter()
+            .flatten()
+            .filter_map(|album| album.mbid.clone())
+            .collect();
+        let settings = self.settings.queue.clone();
+        let groups = tokio::time::timeout(
+            RESOLVE_BUDGET,
+            resolve_release_groups(&self.queue_ctx(&settings), &releases),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            tracing::warn!("release group matching ran out of time; Missing Essentials is short");
+            HashMap::new()
+        });
+        rows.iter()
+            .zip(albums)
+            .map(|(artist, albums)| {
+                albums
+                    .into_iter()
+                    .filter_map(|row| {
+                        let group = groups.get(&normalize(row.mbid.as_deref())?)?.clone();
+                        Some(RankedAlbum {
+                            album: AlbumRow {
+                                release_group_mbid: group,
+                                title: row.name,
+                                artist_name: if row.artist_name.is_empty() {
+                                    artist.name.clone()
+                                } else {
+                                    row.artist_name
+                                },
+                                artist_mbid: artist.mbid.clone(),
+                            },
+                            listen_count: 0,
+                        })
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     /// A Last.fm album chart as a shelf. Last.fm names releases, so each id
@@ -908,8 +1001,7 @@ impl Builder<'_> {
     }
 
     /// Candidate albums from artists similar to `seeds`, one pool per
-    /// seed: ListenBrainz normally, Last.fm while ListenBrainz popularity
-    /// is down.
+    /// seed: Last.fm when album popularity comes from it, else ListenBrainz.
     #[allow(clippy::too_many_arguments)]
     async fn similar_pools(
         &self,
@@ -1097,29 +1189,23 @@ impl Builder<'_> {
         library_groups: &HashSet<String>,
     ) -> Option<ChartSection> {
         let label = title_case(genre);
-        daily_shuffler(&self.today, &["daily-mix", user_id, genre]).shuffle(&mut artists);
+        // The seeds rotate weekly, so a week of mixes reads one set of
+        // similar artists; the picks from them are shuffled daily below.
+        daily_shuffler(&week_of(&self.today), &["daily-mix", user_id, genre]).shuffle(&mut artists);
         artists.truncate(3);
-        let names = if self.listening.popularity_down() {
-            // Names stand in as "<genre> artist" until popularity is back.
-            ask.note_failure();
-            vec![None; artists.len()]
-        } else {
-            join_all(artists.iter().map(|mbid| async move {
-                self.listening
-                    .artist_albums(user_id, mbid, 1, ask)
-                    .await
-                    .ok()
-                    .and_then(|rows| rows.into_iter().next())
-                    .map(|row| row.album.artist_name)
-                    .filter(|name| !name.is_empty())
-            }))
-            .await
-        };
+        let names = noted(
+            ask,
+            "artist names",
+            self.library.artist_names(&artists).await,
+        );
         let seeds: Vec<ArtistRow> = artists
             .iter()
-            .zip(names)
-            .map(|(mbid, name)| ArtistRow {
-                name: name.unwrap_or_else(|| format!("{label} artist")),
+            .map(|mbid| ArtistRow {
+                name: names
+                    .get(mbid)
+                    .filter(|name| !name.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| format!("{label} artist")),
                 mbid: Some(mbid.clone()),
                 listen_count: None,
             })
@@ -1128,7 +1214,8 @@ impl Builder<'_> {
             .similar_pools(user_id, user, &seeds, library_groups, 10, 3, ask)
             .await;
         let mut seen = HashSet::new();
-        let fresh: Vec<AlbumRef> = pools
+        let mut picks = daily_shuffler(&self.today, &["daily-mix-picks", user_id, genre]);
+        let mut fresh: Vec<AlbumRef> = pools
             .into_iter()
             .flatten()
             .filter(|item| seen.insert(item.musicbrainz_id.to_lowercase()))
@@ -1147,7 +1234,7 @@ impl Builder<'_> {
             "genre albums",
             self.library.albums_by_genre(genre, 20).await,
         );
-        let familiar: Vec<AlbumRef> = owned
+        let mut familiar: Vec<AlbumRef> = owned
             .into_iter()
             .filter(|row| {
                 let key = row
@@ -1170,6 +1257,8 @@ impl Builder<'_> {
                 item
             })
             .collect();
+        picks.shuffle(&mut fresh);
+        picks.shuffle(&mut familiar);
         let (new_count, familiar_count) = mix_split(fresh.len(), familiar.len());
         let items: Vec<SectionItem> = fresh
             .into_iter()
@@ -1492,8 +1581,8 @@ impl Builder<'_> {
     }
 
     /// Top Picks candidates from Last.fm's top albums of each similar
-    /// artist, matched to release groups (used only while ListenBrainz
-    /// popularity is down). Last.fm play counts are not on ListenBrainz's
+    /// artist, matched to release groups (when album popularity comes from
+    /// Last.fm). Last.fm play counts are not on ListenBrainz's
     /// scale, so the popularity signal stays neutral.
     async fn lastfm_pick_candidates(
         &self,

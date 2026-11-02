@@ -221,6 +221,28 @@ impl LibraryReads {
         Ok(found)
     }
 
+    /// Display names of library artists, keyed by lowercased MBID.
+    pub async fn artist_names(
+        &self,
+        artist_mbids: &[String],
+    ) -> Result<HashMap<String, String>, String> {
+        let mut names = HashMap::new();
+        for chunk in artist_mbids.chunks(400) {
+            let wanted: Vec<String> = chunk.iter().map(|mbid| mbid.to_lowercase()).collect();
+            let rows = read_all(
+                &self.db,
+                "discover.library.artist_names",
+                sql::library_artist_names(ListLen::new(wanted.len())),
+                rusqlite::params_from_iter(wanted),
+                sql::LibraryArtistName::read,
+            )
+            .await
+            .map_err(|error| format!("artist names read: {error}"))?;
+            names.extend(rows.into_iter().map(|row| (row.mbid, row.name)));
+        }
+        Ok(names)
+    }
+
     /// Library albums tagged with one genre, recently changed first.
     pub async fn albums_by_genre(
         &self,

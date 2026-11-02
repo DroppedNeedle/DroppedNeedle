@@ -204,6 +204,10 @@ pub struct Policy {
 }
 
 const HOUR: u64 = 3_600;
+/// A row fresh this long or longer has its fresh time cut by up to
+/// [`SPREAD`], so rows read together are not all asked for again together.
+const SPREAD_FROM: Duration = Duration::from_secs(14 * 24 * HOUR);
+const SPREAD: Duration = Duration::from_secs(3 * 24 * HOUR);
 const MB_MISS: Duration = Duration::from_secs(600);
 
 impl Policy {
@@ -231,6 +235,19 @@ impl Policy {
     pub const DISCOVERY: Self = Self {
         fresh: Duration::from_secs(6 * HOUR),
         miss: MB_MISS,
+    };
+    /// ListenBrainz's lists about one artist (similar artists, top albums
+    /// and recordings, popularity): they move over weeks, and every install
+    /// reading them daily adds up at MetaBrainz. A "nothing there" is asked
+    /// again sooner, since a new artist may gain listens.
+    pub const LISTENBRAINZ_ARTIST: Self = Self {
+        fresh: Duration::from_secs(14 * 24 * HOUR),
+        miss: Duration::from_secs(24 * HOUR),
+    };
+    /// The release group of a recording: it barely changes.
+    pub const RECORDING_TO_GROUP: Self = Self {
+        fresh: Duration::from_secs(30 * 24 * HOUR),
+        miss: Duration::from_secs(24 * HOUR),
     };
     /// TheAudioDB art.
     pub const AUDIODB: Self = Self {
@@ -303,6 +320,9 @@ pub struct ProviderCacheStore {
     clock: Arc<dyn Clock>,
     flights: Arc<Mutex<Flights>>,
     next: Arc<AtomicU64>,
+    /// Differs per start, so installs that upgrade together do not spread
+    /// their rows the same way.
+    salt: i64,
 }
 
 impl std::fmt::Debug for ProviderCacheStore {
@@ -362,6 +382,7 @@ impl ProviderCacheStore {
     pub fn new(db: CacheDb, clock: Arc<dyn Clock>) -> Self {
         Self {
             db,
+            salt: clock.now_ms(),
             clock,
             flights: Arc::new(Mutex::new(HashMap::new())),
             next: Arc::new(AtomicU64::new(0)),
@@ -573,6 +594,7 @@ impl ProviderCacheStore {
     fn store(&self, key: &CacheKey, kind: CacheKind, value: Option<Vec<u8>>, fresh: Duration) {
         let now = self.clock.now_ms();
         let keep_until = now.saturating_add(duration_ms(key.keep()));
+        let fresh = self.spread(key, fresh);
         let fresh_until = now.saturating_add(duration_ms(fresh)).min(keep_until);
         self.db.put(CacheRow {
             key: key.as_str().to_owned(),
@@ -583,6 +605,104 @@ impl ProviderCacheStore {
             keep_until,
             value,
         });
+    }
+
+    /// The fresh answers held for `ids`, each under `key_of(id)`, and the
+    /// ids that need asking. An id with a fresh "nothing there" is in
+    /// neither. Never dials out.
+    pub async fn held_each<T: DeserializeOwned>(
+        &self,
+        ids: &[String],
+        key_of: impl Fn(&str) -> CacheKey,
+    ) -> (HashMap<String, T>, Vec<String>) {
+        let now = self.clock.now_ms();
+        let mut held = HashMap::new();
+        let mut missing = Vec::new();
+        for id in ids {
+            let row = self
+                .kept(&key_of(id))
+                .await
+                .filter(|row| row.fresh_until > now);
+            match row.as_ref().and_then(decode::<T>) {
+                Some(Some(value)) => {
+                    held.insert(id.clone(), value);
+                }
+                Some(None) => {}
+                None => missing.push(id.clone()),
+            }
+        }
+        (held, missing)
+    }
+
+    /// One answer per id, for a read that takes many ids at once: fresh
+    /// rows as they are, and the rest fetched in one call and kept row by
+    /// row under `key_of(id)`. An id the answer leaves out is kept as
+    /// "nothing there", unless a provider call behind the answer failed.
+    /// The map is keyed by the ids as given; an answer's ids match ignoring
+    /// case.
+    ///
+    /// # Errors
+    ///
+    /// The fetch's own failure, which stores nothing.
+    pub async fn fetch_each<T, E, F, Fut>(
+        &self,
+        ids: &[String],
+        key_of: impl Fn(&str) -> CacheKey,
+        policy: Policy,
+        fetch: F,
+    ) -> Result<HashMap<String, T>, E>
+    where
+        T: Serialize + DeserializeOwned + Clone,
+        F: FnOnce(Vec<String>) -> Fut,
+        Fut: Future<Output = Result<HashMap<String, T>, E>>,
+    {
+        let (mut found, mut missing) = self.held_each(ids, &key_of).await;
+        missing.sort();
+        missing.dedup();
+        if missing.is_empty() {
+            return Ok(found);
+        }
+        let (answer, context) = degradation::scoped(fetch(missing.clone())).await;
+        let notes = notes_of(&context);
+        relay(&notes, false);
+        let clean = notes
+            .iter()
+            .all(|note| note.status == IntegrationStatus::Ok);
+        let answer: HashMap<String, T> = answer?
+            .into_iter()
+            .map(|(id, value)| (id.to_lowercase(), value))
+            .collect();
+        for id in missing {
+            let key = key_of(&id);
+            match answer.get(&id.to_lowercase()) {
+                Some(value) => {
+                    if let Ok(bytes) = serde_json::to_vec(value) {
+                        self.store(&key, CacheKind::Found, Some(bytes), policy.fresh);
+                    }
+                    found.insert(id, value.clone());
+                }
+                None if clean => self.store(&key, CacheKind::Missing, None, policy.miss),
+                None => {}
+            }
+        }
+        Ok(found)
+    }
+
+    /// `fresh`, less a part of [`SPREAD`] fixed by the key and this start,
+    /// when it is long enough to be spread.
+    fn spread(&self, key: &CacheKey, fresh: Duration) -> Duration {
+        if fresh < SPREAD_FROM {
+            return fresh;
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(self.salt.to_le_bytes());
+        hasher.update(key.as_str().as_bytes());
+        let digest = hasher.finalize();
+        let mut bytes = [0_u8; 8];
+        bytes.copy_from_slice(&digest[..8]);
+        fresh.saturating_sub(Duration::from_secs(
+            u64::from_le_bytes(bytes) % SPREAD.as_secs(),
+        ))
     }
 
     /// Any answer held for `key` inside its keep time, fresh or stale.
@@ -673,6 +793,26 @@ mod tests {
 
     fn key() -> CacheKey {
         CacheKey::new(Source::MusicBrainz, &["ns", "artist", "a"])
+    }
+
+    /// The same id twice, in any case, is kept as found: its second turn
+    /// never writes "nothing there" over the first.
+    #[tokio::test]
+    async fn a_repeated_id_keeps_its_answer() {
+        let (store, _) = store();
+        let key_of = |id: &str| CacheKey::new(Source::ListenBrainz, &[&id.to_lowercase()]);
+        let ids = ["AB".to_owned(), "ab".to_owned(), "ab".to_owned()];
+        let found = store
+            .fetch_each(&ids, key_of, Policy::SEARCH, |_| async {
+                Ok::<_, String>(HashMap::from([("ab".to_owned(), 7_i64)]))
+            })
+            .await
+            .unwrap();
+        assert_eq!(found.get("ab"), Some(&7));
+        settle(&store).await;
+        let (held, missing) = store.held_each::<i64>(&ids, key_of).await;
+        assert_eq!(held.get("ab"), Some(&7));
+        assert!(missing.is_empty());
     }
 
     /// A fetch during which a provider call failed stores nothing, so an

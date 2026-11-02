@@ -24,6 +24,7 @@ mod live;
 mod network;
 mod policy;
 mod rows;
+pub mod shared;
 
 pub use live::LiveNetwork;
 pub use network::{ListeningNetwork, Read};
@@ -32,7 +33,7 @@ pub use rows::*;
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -50,12 +51,17 @@ use crate::reads::discover::ports::ProviderFailure;
 /// one build never fills the shared waiter queues on its own.
 pub const BUILD_CAP: usize = 4;
 
+/// MusicBrainz calls one build may spend matching Last.fm albums to release
+/// groups: 30 seconds of its pace. A miss costs two calls. Answers are
+/// remembered for good, so the rest are matched by the next builds.
+pub const BUILD_LOOKUPS: usize = 30;
+
 /// Rows per ListenBrainz statistics page (the most the endpoints serve).
 const PAGE: u32 = droppedneedle_providers::listenbrainz::stats::MAX_STATS_COUNT;
 /// Similar artists read per artist; a caller asking for more reads more.
-const SIMILAR_FLOOR: usize = 25;
+const SIMILAR_FLOOR: usize = shared::SIMILAR_ROWS;
 /// An artist's top albums read per artist.
-const ARTIST_ALBUMS_FLOOR: usize = 25;
+const ARTIST_ALBUMS_FLOOR: usize = shared::ARTIST_ALBUM_ROWS;
 /// Rows of the Last.fm sitewide chart read at once (the charts page up to
 /// this many rows).
 const LASTFM_CHART_ROWS: u32 = 200;
@@ -67,26 +73,25 @@ const LASTFM_SIMILAR_FLOOR: u32 = 25;
 const LASTFM_USER_FLOOR: u32 = 25;
 /// Rows of a MusicBrainz tag search page (the most it serves).
 pub(in crate::reads::discover) const TAG_PAGE: u32 = 100;
+/// How long a Last.fm key that was refused leaves a user on ListenBrainz.
+const LASTFM_DOWN_FOR: Duration = Duration::from_secs(3_600);
 /// How long a popularity refusal, or a rate limit that names no wait,
 /// keeps Last.fm standing in.
 const POPULARITY_DOWN_FOR: Duration = Duration::from_secs(10 * 60);
 
 const HOUR: Duration = Duration::from_secs(3_600);
-// The warm cycle rebuilds every six hours, and background reads never take
-// a stale row, so what a build reads is kept at least that long: a warm
-// build then finds the last one's answers instead of paying every paced
-// read again.
+// Background reads never take a stale row, so what a build reads is kept
+// for hours: a warm build, or the rebuild behind a visit, then finds the
+// last one's answers instead of paying every paced read again.
 /// Sitewide charts.
 const SITEWIDE: Policy = Policy {
     fresh: Duration::from_secs(12 * 3_600),
     miss: HOUR,
 };
 /// Artist-level lists (similar artists, an artist's albums, tags,
-/// popularity): they move over weeks.
-const ARTIST: Policy = Policy {
-    fresh: Duration::from_secs(24 * 3_600),
-    miss: Duration::from_secs(24 * 3_600),
-};
+/// popularity): they move over weeks, so a warm build reads them from the
+/// rows it finds.
+const ARTIST: Policy = Policy::LISTENBRAINZ_ARTIST;
 /// A user's statistics (top artists and albums, weekly charts and
 /// playlists): ListenBrainz recomputes them about once a day, so each warm
 /// build reads them once.
@@ -149,6 +154,7 @@ pub struct Ask {
     priority: RequestPriority,
     permits: Option<Arc<Semaphore>>,
     failed: Arc<AtomicBool>,
+    lookups_left: Option<Arc<AtomicUsize>>,
 }
 
 impl Ask {
@@ -158,6 +164,7 @@ impl Ask {
             priority: RequestPriority::UserInitiated,
             permits: None,
             failed: Arc::default(),
+            lookups_left: None,
         }
     }
 
@@ -168,6 +175,7 @@ impl Ask {
             priority,
             permits: Some(Arc::new(Semaphore::new(BUILD_CAP))),
             failed: Arc::default(),
+            lookups_left: Some(Arc::new(AtomicUsize::new(BUILD_LOOKUPS))),
         }
     }
 
@@ -178,7 +186,19 @@ impl Ask {
             priority: self.priority,
             permits: self.permits.clone(),
             failed: Arc::default(),
+            lookups_left: self.lookups_left.clone(),
         }
+    }
+
+    /// Spend one of the build's album lookups; false when none are left.
+    /// A person's read has no such budget.
+    pub fn take_lookup(&self) -> bool {
+        self.lookups_left.as_ref().is_none_or(|left| {
+            left.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        })
     }
 
     /// Whether a read made through this ask failed, or was dropped before
@@ -210,6 +230,7 @@ impl Ask {
 #[derive(Default)]
 struct Health {
     popularity_down_until: Mutex<Option<Instant>>,
+    lastfm_down_until: Mutex<HashMap<String, Instant>>,
 }
 
 impl Health {
@@ -232,6 +253,35 @@ impl Health {
             let end = Instant::now() + down_for;
             *until = Some(until.map_or(end, |current| current.max(end)));
         }
+    }
+
+    /// Note a Last.fm read made with `user_id`'s key: a refusal means the
+    /// key stopped working, for that user alone.
+    fn note_lastfm<T>(&self, user_id: &str, result: &ListeningResult<T>) {
+        let refused = matches!(
+            result,
+            Err(ListeningError::Provider(
+                ProviderError::Unauthorized { .. }
+                    | ProviderError::Forbidden { .. }
+                    | ProviderError::Rejected { .. }
+            ))
+        );
+        if refused && let Ok(mut down) = self.lastfm_down_until.lock() {
+            let now = Instant::now();
+            down.retain(|_, until| *until > now);
+            down.insert(user_id.to_owned(), now + LASTFM_DOWN_FOR);
+        }
+    }
+
+    /// Whether `user_id`'s Last.fm key was refused a short while ago.
+    fn lastfm_down(&self, user_id: &str) -> bool {
+        self.lastfm_down_until
+            .lock()
+            .map(|down| {
+                down.get(user_id)
+                    .is_some_and(|until| Instant::now() < *until)
+            })
+            .unwrap_or(false)
     }
 
     fn popularity_down(&self) -> bool {
@@ -333,7 +383,8 @@ impl ListeningData {
         found
     }
 
-    /// A list under `key`, fetched through the cache.
+    /// A list under `key`, fetched through the cache. A clean empty answer
+    /// is kept for the policy's "nothing there" time.
     async fn list<T, F, Fut>(
         &self,
         key: CacheKey,
@@ -348,7 +399,13 @@ impl ListeningData {
     {
         let found = self
             .lookup(key, policy, ask, move |network, priority| async move {
-                fetch(network, priority).await.map(Fetched::Found)
+                fetch(network, priority).await.map(|rows| {
+                    if rows.is_empty() {
+                        Fetched::Missing
+                    } else {
+                        Fetched::Found(rows)
+                    }
+                })
             })
             .await?;
         Ok(found.unwrap_or_default())
@@ -425,8 +482,12 @@ impl ListeningData {
     }
 
     /// The user's accounts with the services' health: which one answers.
+    /// While the user's Last.fm key is being refused they read as having
+    /// no Last.fm, so shelves fill from ListenBrainz instead of failing.
     pub async fn policy(&self, user_id: &str) -> SourcePolicy {
-        SourcePolicy::new(self.accounts(user_id).await, self.popularity_down())
+        let mut user = self.accounts(user_id).await;
+        user.lastfm &= !self.health.lastfm_down(user_id);
+        SourcePolicy::new(user, self.popularity_down())
     }
 
     /// The policy for accounts already read, with the services' health.
@@ -559,10 +620,7 @@ impl ListeningData {
         ask: &Ask,
     ) -> ListeningResult<Vec<ScoredArtist>> {
         let read = limit.max(SIMILAR_FLOOR);
-        let key = CacheKey::new(
-            Source::ListenBrainz,
-            &["similar_artists", &lower(artist_mbid), &read.to_string()],
-        );
+        let key = shared::similar_key(artist_mbid, read);
         let (user, mbid) = (user_id.to_owned(), artist_mbid.to_owned());
         let rows = self
             .list(key, ARTIST, ask, move |network, priority| async move {
@@ -585,10 +643,7 @@ impl ListeningData {
             return Ok(Vec::new());
         }
         let read = count.max(ARTIST_ALBUMS_FLOOR);
-        let key = CacheKey::new(
-            Source::ListenBrainz,
-            &["artist_albums", &lower(artist_mbid), &read.to_string()],
-        );
+        let key = shared::artist_albums_key(artist_mbid, read);
         let (user, mbid, health) = (
             user_id.to_owned(),
             artist_mbid.to_owned(),
@@ -601,7 +656,11 @@ impl ListeningData {
                 found
             })
             .await?;
-        Ok(cut(rows, count))
+        let titled: Vec<RankedAlbum> = rows
+            .into_iter()
+            .filter(|row: &RankedAlbum| !row.album.title.is_empty())
+            .collect();
+        Ok(cut(titled, count))
     }
 
     /// A ListenBrainz user's genres with their listens, most listened
@@ -694,12 +753,26 @@ impl ListeningData {
         recording_mbids: &[String],
         ask: &Ask,
     ) -> ListeningResult<HashMap<String, String>> {
-        self.call(
-            ask,
-            self.network
-                .recording_groups(user_id, recording_mbids, ask.priority),
-        )
-        .await
+        let watch = Watch::new(ask);
+        let found = self
+            .cache
+            .fetch_each(
+                recording_mbids,
+                droppedneedle_providers::listenbrainz::recording_group_key,
+                Policy::RECORDING_TO_GROUP,
+                |missing| async move {
+                    let _permit = Ask::permit(ask.permits.clone()).await;
+                    self.network
+                        .recording_groups(user_id, &missing, ask.priority)
+                        .await
+                },
+            )
+            .await;
+        watch.settle(found.is_ok());
+        Ok(found?
+            .into_iter()
+            .map(|(recording, group)| (lower(&recording), group))
+            .collect())
     }
 
     /// Listen counts per release group, each cached on its own; empty
@@ -710,45 +783,30 @@ impl ListeningData {
         release_group_mbids: &[String],
         ask: &Ask,
     ) -> ListeningResult<HashMap<String, i64>> {
-        let key_of =
-            |mbid: &str| CacheKey::new(Source::ListenBrainz, &["rg_popularity", &lower(mbid)]);
-        let mut counts = HashMap::new();
-        let mut missing = Vec::new();
-        for mbid in release_group_mbids {
-            let hit = self
+        if self.popularity_down() {
+            let (counts, _) = self
                 .cache
-                .get_bytes(&key_of(mbid))
-                .await
-                .and_then(|bytes| serde_json::from_slice::<i64>(&bytes).ok());
-            match hit {
-                Some(count) => {
-                    counts.insert(mbid.clone(), count);
-                }
-                None => missing.push(mbid.clone()),
-            }
-        }
-        if missing.is_empty() || self.popularity_down() {
+                .held_each(release_group_mbids, shared::listen_count_key)
+                .await;
             return Ok(counts);
         }
-        let fetched = self
-            .call(
-                ask,
-                self.network.listen_counts(user_id, &missing, ask.priority),
+        self.cache
+            .fetch_each(
+                release_group_mbids,
+                shared::listen_count_key,
+                ARTIST,
+                |missing| async move {
+                    let fetched = self
+                        .call(
+                            ask,
+                            self.network.listen_counts(user_id, &missing, ask.priority),
+                        )
+                        .await;
+                    self.health.note(&fetched, ask.priority);
+                    fetched
+                },
             )
-            .await;
-        self.health.note(&fetched, ask.priority);
-        for (mbid, count) in fetched? {
-            if let Ok(bytes) = serde_json::to_vec(&count) {
-                self.cache.set_bytes(&key_of(&mbid), bytes, ARTIST.fresh);
-            }
-            if let Some(asked) = missing
-                .iter()
-                .find(|asked| asked.eq_ignore_ascii_case(&mbid))
-            {
-                counts.insert(asked.clone(), count);
-            }
-        }
-        Ok(counts)
+            .await
     }
 
     /// A Last.fm user's top artists over three months.
@@ -773,12 +831,18 @@ impl ListeningData {
             ],
         )
         .personal();
-        let (user, name) = (user_id.to_owned(), username.to_owned());
+        let (user, name, health) = (
+            user_id.to_owned(),
+            username.to_owned(),
+            Arc::clone(&self.health),
+        );
         let rows = self
             .list(key, STATS, ask, move |network, priority| async move {
-                network
+                let found = network
                     .lastfm_user_artists(&user, &name, "3month", read, priority)
-                    .await
+                    .await;
+                health.note_lastfm(&user, &found);
+                found
             })
             .await?;
         Ok(cut(rows, limit as usize))
@@ -826,10 +890,12 @@ impl ListeningData {
             Source::LastFm,
             &["similar_artists", &artist_key(artist), &read.to_string()],
         );
-        let (user, artist) = (user_id.to_owned(), artist.clone());
+        let (user, artist, health) = (user_id.to_owned(), artist.clone(), Arc::clone(&self.health));
         let rows = self
             .list(key, ARTIST, ask, move |network, priority| async move {
-                network.lastfm_similar(&user, &artist, read, priority).await
+                let found = network.lastfm_similar(&user, &artist, read, priority).await;
+                health.note_lastfm(&user, &found);
+                found
             })
             .await?;
         Ok(cut(rows, limit as usize))
@@ -851,12 +917,14 @@ impl ListeningData {
             Source::LastFm,
             &["artist_albums", &artist_key(artist), &read.to_string()],
         );
-        let (user, artist) = (user_id.to_owned(), artist.clone());
+        let (user, artist, health) = (user_id.to_owned(), artist.clone(), Arc::clone(&self.health));
         let rows = self
             .list(key, ARTIST, ask, move |network, priority| async move {
-                network
+                let found = network
                     .lastfm_artist_albums(&user, &artist, read, priority)
-                    .await
+                    .await;
+                health.note_lastfm(&user, &found);
+                found
             })
             .await?;
         Ok(cut(rows, limit as usize))
@@ -1221,6 +1289,38 @@ impl ListeningData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refused Last.fm key sends that user's popularity back to
+    /// ListenBrainz and leaves every other user alone.
+    #[test]
+    fn a_refused_lastfm_key_goes_back_to_listenbrainz() {
+        let refused: ListeningResult<()> =
+            Err(ListeningError::Provider(ProviderError::Unauthorized {
+                provider: "lastfm",
+            }));
+        let health = Health::default();
+        health.note_lastfm("ada", &refused);
+        assert!(health.lastfm_down("ada"));
+        assert!(!health.lastfm_down("bob"));
+
+        let policy = |lastfm: bool| {
+            SourcePolicy::new(
+                UserMusic {
+                    lastfm,
+                    lastfm_username: Some("ada".to_owned()),
+                    primary: ListenSource::Lastfm,
+                    ..UserMusic::default()
+                },
+                false,
+            )
+            .popularity()
+        };
+        assert_eq!(policy(true), ListenSource::Lastfm);
+        assert_eq!(
+            policy(!health.lastfm_down("ada")),
+            ListenSource::Listenbrainz
+        );
+    }
 
     #[test]
     fn a_background_rate_limit_lets_lastfm_stand_in_and_a_person_read_does_not() {

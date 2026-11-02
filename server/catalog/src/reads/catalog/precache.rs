@@ -16,6 +16,8 @@ use droppedneedle_kernel::jobs::precache_phases::{
 };
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::sections::ListenSource;
+use droppedneedle_media::playback::listening::ListeningStore;
 
 use super::Catalog;
 use super::error::CatalogError;
@@ -74,12 +76,13 @@ impl Catalog {
     }
 
     /// Fetch and cache the artist's discovery sections as `user_id` sees
-    /// them.
-    async fn warm_artist_discovery(&self, user_id: &str, mbid: &str) {
+    /// them, from `source`.
+    async fn warm_artist_discovery(&self, user_id: &str, mbid: &str, source: ListenSource) {
+        let source = Some(source);
         let (similar, songs, albums) = tokio::join!(
-            self.similar_artists(user_id, mbid, SIMILAR_COUNT, None, BACKGROUND),
-            self.top_songs(user_id, mbid, TOP_SONGS_COUNT, None, BACKGROUND),
-            self.top_albums(user_id, mbid, TOP_ALBUMS_COUNT, None, BACKGROUND),
+            self.similar_artists(user_id, mbid, SIMILAR_COUNT, source, BACKGROUND),
+            self.top_songs(user_id, mbid, TOP_SONGS_COUNT, source, BACKGROUND),
+            self.top_albums(user_id, mbid, TOP_ALBUMS_COUNT, source, BACKGROUND),
         );
         if let Some(error) = [similar.err(), songs.err(), albums.err()]
             .into_iter()
@@ -91,10 +94,11 @@ impl Catalog {
     }
 
     /// Whether the artist's discovery sections are held, fresh or stale,
-    /// for a user who can (`lastfm`) or cannot read Last.fm.
-    async fn artist_discovery_cached(&self, lastfm: bool, mbid: &str) -> bool {
+    /// as `access` reads them.
+    async fn artist_discovery_cached(&self, access: RunAccess, mbid: &str) -> bool {
         self.artist_sections_held(
-            lastfm,
+            access.lastfm,
+            access.source() == ListenSource::Lastfm,
             mbid,
             (SIMILAR_COUNT, TOP_SONGS_COUNT, TOP_ALBUMS_COUNT),
         )
@@ -349,38 +353,63 @@ pub struct CatalogPrecache {
     catalog: Catalog,
     artwork: ArtworkService,
     settings: Live<AdvancedSettings>,
-    /// Whether the run's user can read Last.fm, found once per run: it
+    listening: ListeningStore,
+    /// What the run's user can read and follows, found once per run: it
     /// decrypts their key.
-    lastfm: tokio::sync::Mutex<Option<(String, bool)>>,
+    access: tokio::sync::Mutex<Option<(String, RunAccess)>>,
+}
+
+/// What a precache run's user can read and follows.
+#[derive(Debug, Clone, Copy)]
+struct RunAccess {
+    lastfm: bool,
+    follows_lastfm: bool,
+}
+
+impl RunAccess {
+    /// The service whose artist sections this user's pages ask for.
+    fn source(self) -> ListenSource {
+        if self.lastfm && self.follows_lastfm {
+            ListenSource::Lastfm
+        } else {
+            ListenSource::Listenbrainz
+        }
+    }
 }
 
 impl CatalogPrecache {
-    /// Bundle the catalog, the artwork service, and the advanced settings
-    /// whose AudioDB switch is read per run.
+    /// Bundle the catalog, the artwork service, the advanced settings
+    /// whose AudioDB switch is read per run, and the store holding which
+    /// service each user follows.
     pub fn new(
         catalog: Catalog,
         artwork: ArtworkService,
         settings: Live<AdvancedSettings>,
+        listening: ListeningStore,
     ) -> Self {
         Self {
             catalog,
             artwork,
             settings,
-            lastfm: tokio::sync::Mutex::new(None),
+            listening,
+            access: tokio::sync::Mutex::new(None),
         }
     }
 
-    /// Whether `user_id` can read Last.fm, asked once per run.
-    async fn lastfm_readable(&self, user_id: &str) -> bool {
-        let mut known = self.lastfm.lock().await;
-        if let Some((user, readable)) = known.as_ref()
+    /// What `user_id` can read and follows, asked once per run.
+    async fn run_access(&self, user_id: &str) -> RunAccess {
+        let mut known = self.access.lock().await;
+        if let Some((user, access)) = known.as_ref()
             && user == user_id
         {
-            return *readable;
+            return *access;
         }
-        let readable = self.catalog.lastfm_readable(user_id).await;
-        *known = Some((user_id.to_owned(), readable));
-        readable
+        let access = RunAccess {
+            lastfm: self.catalog.lastfm_readable(user_id).await,
+            follows_lastfm: self.listening.prefs(user_id).await.primary_music_source == "lastfm",
+        };
+        *known = Some((user_id.to_owned(), access));
+        access
     }
 }
 
@@ -402,8 +431,8 @@ impl PrecacheSources for CatalogPrecache {
 
     fn library(&self) -> BoxFuture<'_, Result<PrecacheLibrary, String>> {
         Box::pin(async move {
-            // A run starts here: the user's Last.fm access is asked again.
-            *self.lastfm.lock().await = None;
+            // A run starts here: the user's access is asked again.
+            *self.access.lock().await = None;
             self.catalog.precache_library().await
         })
     }
@@ -432,15 +461,20 @@ impl PrecacheSources for CatalogPrecache {
         artist_mbid: &'a str,
     ) -> BoxFuture<'a, bool> {
         Box::pin(async move {
-            let lastfm = self.lastfm_readable(user_id).await;
+            let access = self.run_access(user_id).await;
             self.catalog
-                .artist_discovery_cached(lastfm, artist_mbid)
+                .artist_discovery_cached(access, artist_mbid)
                 .await
         })
     }
 
     fn warm_discovery<'a>(&'a self, user_id: &'a str, artist_mbid: &'a str) -> BoxFuture<'a, ()> {
-        Box::pin(self.catalog.warm_artist_discovery(user_id, artist_mbid))
+        Box::pin(async move {
+            let source = self.run_access(user_id).await.source();
+            self.catalog
+                .warm_artist_discovery(user_id, artist_mbid, source)
+                .await;
+        })
     }
 
     fn album_cached<'a>(&'a self, album: &'a LibraryAlbum) -> BoxFuture<'a, bool> {

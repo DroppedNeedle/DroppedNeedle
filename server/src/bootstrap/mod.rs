@@ -262,6 +262,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         sign_in_links(p),
     );
 
+    // The one listening store: discovery, wrapped, the Weekly Mix,
+    // playback reporting and the listening settings all hold it.
+    let listening = ListeningStore::new(db.clone(), crypto.clone(), p.clock.clone());
     // Read live so turning ListenBrainz, Last.fm or lyrics on or off takes effect
     // at once.
     let enrichment = production_enrichment(
@@ -269,10 +272,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         config_store.live(),
         config_store.live(),
         config_store.live(),
+        listening.clone(),
+        auth.users.clone(),
     );
-    // The one listening store: discovery, wrapped, the Weekly Mix,
-    // playback reporting and the listening settings all hold it.
-    let listening = ListeningStore::new(db.clone(), crypto.clone(), p.clock.clone());
     let reads_inputs = ReadsInputs {
         covers_dir: config.cache_dir.join("covers"),
         cover_cache_max_bytes: config.cover_cache_max_bytes,
@@ -383,7 +385,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         outbound.ffmpeg.clone(),
         &providers,
         mix_hooks.clone(),
-        listening,
+        listening.clone(),
         queues.queue().clone(),
         queues.clock(),
     )
@@ -458,7 +460,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         droppedneedle_library::recycle_bin::handler(&library.publishing),
     )
     .with_mixer(mix_hooks)
-    .with_precache_sources_from(&reads, config_store)
+    .with_precache_sources_from(&reads, config_store, listening.clone())
     .with_cover_warm_jobs(&reads)
     .with_job(
         droppedneedle_acquire::imports::jobs::SPEC,

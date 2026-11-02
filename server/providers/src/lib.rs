@@ -303,9 +303,25 @@ impl Providers {
     #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn unpaced_at(wire: Arc<dyn Wire>, endpoints: ProviderEndpoints) -> Self {
-        Self::assemble(
+        Self::unpaced_on(
             wire,
             Arc::new(droppedneedle_kernel::clock::SystemClock),
+            endpoints,
+        )
+    }
+
+    /// [`unpaced_at`](Self::unpaced_at) reading wall time from `clock`, so
+    /// a journey can age the cache.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn unpaced_on(
+        wire: Arc<dyn Wire>,
+        clock: Arc<dyn Clock>,
+        endpoints: ProviderEndpoints,
+    ) -> Self {
+        Self::assemble(
+            wire,
+            clock,
             endpoints,
             LimiterSet::unpaced(),
             CacheDb::scratch(),

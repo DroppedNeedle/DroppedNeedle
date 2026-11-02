@@ -1,6 +1,7 @@
 //! [`MixSources`] over the one ListenBrainz client and the per-user link
 //! store. Popularity and similar-artist reads are public, so they go out
-//! without the user's token; playlist reads lend it.
+//! without the user's token, and share the rows Discover keeps; playlist
+//! reads lend it.
 //!
 //! Every read runs at background priority: the weekly sweep is scheduled,
 //! and a manual refresh runs in a spawned task whose result reaches the
@@ -13,6 +14,7 @@ use futures_util::future::BoxFuture;
 
 use super::mix::MixSources;
 use super::sql;
+use droppedneedle_catalog::reads::discover::listening::shared;
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::listenbrainz::playlists::{
@@ -21,7 +23,9 @@ use droppedneedle_providers::listenbrainz::playlists::{
 use droppedneedle_providers::listenbrainz::{
     ListenBrainzClient, ListenBrainzCredentials, SimilarArtist, TopRecording, TopReleaseGroup,
 };
-use droppedneedle_providers::{ProviderError, RequestPriority};
+use droppedneedle_providers::{
+    CacheKey, Fetched, Policy, ProviderCacheStore, ProviderError, RequestPriority, Source,
+};
 
 /// The priority of every Weekly Mix read.
 const PRIORITY: RequestPriority = RequestPriority::BackgroundSync;
@@ -29,15 +33,26 @@ const PRIORITY: RequestPriority = RequestPriority::BackgroundSync;
 /// Live ListenBrainz reads for the mix builder.
 pub struct LiveMixSources {
     client: ListenBrainzClient,
+    cache: ProviderCacheStore,
     links: ListeningStore,
     db: Db,
 }
 
 impl LiveMixSources {
-    /// Sources over the ListenBrainz client, the link store and the
-    /// database holding `user_connections`.
-    pub fn new(client: ListenBrainzClient, links: ListeningStore, db: Db) -> Self {
-        Self { client, links, db }
+    /// Sources over the ListenBrainz client and answer cache, the link
+    /// store and the database holding `user_connections`.
+    pub fn new(
+        client: ListenBrainzClient,
+        cache: ProviderCacheStore,
+        links: ListeningStore,
+        db: Db,
+    ) -> Self {
+        Self {
+            client,
+            cache,
+            links,
+            db,
+        }
     }
 }
 
@@ -111,7 +126,7 @@ impl MixSources for LiveMixSources {
         Box::pin(async move {
             settle(
                 self.client
-                    .recording_release_groups(recording_mbids, creds, PRIORITY)
+                    .cached_recording_groups(&self.cache, recording_mbids, creds, PRIORITY)
                     .await,
             )
         })
@@ -123,11 +138,20 @@ impl MixSources for LiveMixSources {
         limit: usize,
     ) -> BoxFuture<'a, Result<Vec<SimilarArtist>, String>> {
         Box::pin(async move {
-            settle(
-                self.client
-                    .similar_artists(artist_mbid, limit, &anonymous(), PRIORITY)
+            let rows = settle(
+                shared::similar_artists(&self.cache, &self.client, artist_mbid, limit, PRIORITY)
                     .await,
-            )
+            )?;
+            Ok(rows
+                .into_iter()
+                .filter_map(|row| {
+                    Some(SimilarArtist {
+                        artist_mbid: row.artist.mbid?,
+                        artist_name: row.artist.name,
+                        listen_count: row.artist.listen_count.unwrap_or_default(),
+                    })
+                })
+                .collect())
         })
     }
 
@@ -137,11 +161,19 @@ impl MixSources for LiveMixSources {
         count: usize,
     ) -> BoxFuture<'a, Result<Vec<TopReleaseGroup>, String>> {
         Box::pin(async move {
-            settle(
-                self.client
-                    .artist_top_release_groups(artist_mbid, count, &anonymous(), PRIORITY)
+            let rows = settle(
+                shared::artist_albums(&self.cache, &self.client, artist_mbid, count, PRIORITY)
                     .await,
-            )
+            )?;
+            Ok(rows
+                .into_iter()
+                .map(|row| TopReleaseGroup {
+                    release_group_mbid: row.album.release_group_mbid,
+                    name: row.album.title,
+                    artist_name: row.album.artist_name,
+                    listen_count: row.listen_count,
+                })
+                .collect())
         })
     }
 
@@ -150,12 +182,29 @@ impl MixSources for LiveMixSources {
         artist_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<TopRecording>, String>> {
         Box::pin(async move {
-            settle(
-                self.client
-                    .artist_top_recordings(artist_mbid, 1, &anonymous(), PRIORITY)
-                    .await,
-            )
-            .map(|recordings| recordings.into_iter().next())
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &["top_recording", &artist_mbid.to_lowercase()],
+            );
+            let (client, mbid) = (self.client.clone(), artist_mbid.to_owned());
+            let found = self
+                .cache
+                .get_or_fetch(
+                    &key,
+                    Policy::LISTENBRAINZ_ARTIST,
+                    PRIORITY,
+                    move |priority| async move {
+                        let recordings = client
+                            .artist_top_recordings(&mbid, 1, &anonymous(), priority)
+                            .await?;
+                        Ok(recordings
+                            .into_iter()
+                            .next()
+                            .map_or(Fetched::Missing, Fetched::Found))
+                    },
+                )
+                .await;
+            settle(found)
         })
     }
 }
@@ -171,6 +220,7 @@ pub fn live_builder(
 ) -> Arc<super::mix::PersonalMixBuilder> {
     let sources = Arc::new(LiveMixSources::new(
         providers.listenbrainz.clone(),
+        providers.cache.clone(),
         listening.clone(),
         requests.library.db().clone(),
     ));

@@ -110,6 +110,17 @@ droppedneedle_kernel::sql! {
         genre_folded: String,
         artist_mbid: String,
     }
+    /// Library artists' names by MBID, up to the id list.
+    fragment LIBRARY_ARTIST_NAMES_START = "SELECT lower(aie.provider_artist_id) AS mbid, \
+         a.display_name AS name FROM local_artist_external_identities aie \
+         JOIN local_artists a ON a.id = aie.local_artist_id \
+         WHERE aie.provider = 'musicbrainz' AND lower(aie.provider_artist_id) IN (";
+    /// Library artists' names by MBID.
+    family LIBRARY_ARTIST_NAMES = library_artist_names;
+    pub(super) row LibraryArtistName for family [library_artist_names] {
+        mbid: String,
+        name: String,
+    }
     /// Artists by MBID and the tracks credited to them, up to the id list.
     fragment LIBRARY_ARTIST_GENRES_START = "WITH artists AS (SELECT local_artist_id, \
          lower(provider_artist_id) AS mbid \
@@ -538,6 +549,11 @@ pub(super) fn artists_for_genres(genres: ListLen) -> String {
          ORDER BY gc.genre_folded, artist_mbid",
         genre_filter(genres)
     )
+}
+
+/// `LIBRARY_ARTIST_NAMES`.
+pub(super) fn library_artist_names(artists: ListLen) -> String {
+    format!("{LIBRARY_ARTIST_NAMES_START}{})", marks(artists))
 }
 
 /// `LIBRARY_ARTIST_GENRES`.

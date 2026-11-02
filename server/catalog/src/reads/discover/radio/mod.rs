@@ -286,8 +286,17 @@ impl LiveRadio {
             .collect()
     }
 
-    /// The artist's name from their most played album, else the id.
+    /// The artist's name from the library, else from their most played
+    /// album, else the id.
     async fn artist_name(&self, user_id: &str, mbid: &str) -> String {
+        match self.genres.artist_names(&[mbid.to_owned()]).await {
+            Ok(names) => {
+                if let Some(name) = names.into_values().find(|name| !name.is_empty()) {
+                    return name;
+                }
+            }
+            Err(cause) => tracing::warn!(%cause, "radio artist name read failed"),
+        }
         timed(
             "listenbrainz artist albums",
             self.listening
@@ -337,7 +346,7 @@ impl LiveRadio {
             ));
         }
         let count = usize::try_from(request.count).unwrap_or(10);
-        let lastfm = policy.lastfm_stands_in();
+        let lastfm = source == ListenSource::Lastfm || policy.lastfm_stands_in();
         let (title, seed_id, items) = match request.seed_type {
             RadioSeedKind::Artist => {
                 let mbid = normalize(Some(&request.seed_id))
@@ -507,7 +516,7 @@ impl LiveRadio {
             policy.user(),
             &seed(&base.0, &base.1),
             MAX_SEED_ARTISTS + 1,
-            false,
+            policy.popularity() == ListenSource::Lastfm,
         )
         .await;
         let mut seeds = vec![base];
