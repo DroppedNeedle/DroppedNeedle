@@ -31,6 +31,7 @@ use droppedneedle_catalog::local::stores::{
 };
 use droppedneedle_kernel::db::{Db, DbError};
 
+use super::sql;
 use crate::user_settings::UserSettings;
 
 /// A compat read or write failed. Client faults keep their kind so each
@@ -881,28 +882,17 @@ impl CompatLibrary {
         }
         let ids = serde_json::to_string(artist_ids)
             .map_err(|error| CompatError::Internal(format!("artist ids: {error}")))?;
-        let found: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT credit.artist_id FROM ( \
-               SELECT album_artist_id AS artist_id, id AS album_id FROM local_albums \
-               WHERE album_artist_id IN (SELECT value FROM json_each(?1)) \
-               UNION SELECT local_artist_id, local_album_id FROM local_album_artists \
-               WHERE local_artist_id IN (SELECT value FROM json_each(?1))) credit \
-             JOIN local_albums a ON a.id = credit.album_id \
-               AND a.retired_into_album_id IS NULL AND a.has_indexed_track = 1 \
-             JOIN local_album_artwork w ON w.local_album_id = a.id \
-             LEFT JOIN local_tracks t ON t.id = w.source_locator AND w.source = 'embedded' \
-               AND t.availability = 'indexed' \
-             WHERE (w.source = 'folder' AND w.source_locator IS NOT NULL) \
-               OR (w.source = 'embedded' AND t.file_path IS NOT NULL)",
-        )
-        .bind(ids)
-        .fetch_all(self.collections.db.db().sqlx())
-        .await
-        .map_err(|error| {
-            droppedneedle_catalog::collections::db::StoreError::from(
-                droppedneedle_kernel::db::map_sqlx_busy("compat.artist_art", error),
-            )
-        })?;
-        Ok(found.into_iter().collect())
+        let found = self
+            .collections
+            .db
+            .read("compat.artist_art", move |conn| {
+                let found = conn
+                    .prepare(sql::ARTISTS_WITH_LOCAL_ART.text())?
+                    .query_map([&ids], |row| row.get(0))?
+                    .collect::<rusqlite::Result<HashSet<String>>>()?;
+                Ok(found)
+            })
+            .await?;
+        Ok(found)
     }
 }

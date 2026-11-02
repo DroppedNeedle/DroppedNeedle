@@ -4441,12 +4441,24 @@ struct AllowedLiteral {
     why: &'static str,
 }
 
-const ALLOWED_LITERALS: &[AllowedLiteral] = &[AllowedLiteral {
-    path: "kernel/src/db/analyze.rs",
-    starts_with: "CREATE TABLE db_planner_stats_reload (x); DROP TABLE",
-    why: "bumps the schema cookie so readers reload the planner statistics; the marker \
-          table is never in the schema, so there is nothing to prepare it against",
-}];
+const ALLOWED_LITERALS: &[AllowedLiteral] = &[
+    AllowedLiteral {
+        path: "kernel/src/db/analyze.rs",
+        starts_with: "CREATE TABLE db_planner_stats_reload (x); DROP TABLE",
+        why: "bumps the schema cookie so readers reload the planner statistics; the marker \
+              table is never in the schema, so there is nothing to prepare it against",
+    },
+    AllowedLiteral {
+        path: "compat/src/jellyfin/router.rs",
+        starts_with: "DELETE",
+        why: "the HTTP method's name in the Jellyfin route table, not a statement",
+    },
+    AllowedLiteral {
+        path: "compat/src/shared/ratelimit.rs",
+        starts_with: "DELETE",
+        why: "the HTTP method's name when classing a request as a mutation, not a statement",
+    },
+];
 
 /// Source that may hold raw SQL for good: unit test files and test folders
 /// (a unit test that needs raw SQL lives in one), and the builder of the v2

@@ -4,17 +4,11 @@
 //! Both protocols share these rows per user, so a queue saved from one
 //! client resumes in another, and both survive a restart (v2 parity).
 
-use rusqlite::params;
-use sqlx::Row as _;
+use rusqlite::{OptionalExtension as _, params};
 
+use super::sql;
 use crate::subsonic::store::{BookmarkRecord, QueueState};
 use droppedneedle_catalog::collections::db::{CollectionsDb, StoreError};
-use droppedneedle_kernel::db::map_sqlx_busy;
-
-/// A reader-pool error, keeping busy distinct.
-fn read_failed(operation: &str, error: sqlx::Error) -> StoreError {
-    StoreError::from(map_sqlx_busy(operation, error))
-}
 
 /// Durable per-user play queues and bookmarks.
 #[derive(Debug, Clone)]
@@ -28,36 +22,33 @@ impl CompatQueues {
         Self { db }
     }
 
-    /// Saved queue for a user (empty when never saved).
+    /// Saved queue for a user (empty when never saved). The head and its
+    /// items are one answer, so they share one read.
     pub async fn get_queue(&self, user_id: &str) -> Result<QueueState, StoreError> {
-        let pool = self.db.db().sqlx();
-        let head = sqlx::query(
-            "SELECT current_index, position_ms, updated_at, changed_by_client \
-             FROM compat_play_queues WHERE user_id = ?",
-        )
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| read_failed("compat.queue", error))?;
-        let Some(head) = head else {
-            return Ok(QueueState::default());
-        };
-        let file_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT file_id FROM compat_play_queue_items WHERE user_id = ? ORDER BY item_index",
-        )
-        .bind(user_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|error| read_failed("compat.queue.items", error))?;
-        let read = |error| read_failed("compat.queue", error);
-        let current_index: Option<i64> = head.try_get("current_index").map_err(read)?;
-        Ok(QueueState {
-            file_ids,
-            current_index: current_index.and_then(|index| usize::try_from(index).ok()),
-            position_ms: head.try_get("position_ms").map_err(read)?,
-            updated_at: head.try_get("updated_at").map_err(read)?,
-            changed_by_client: head.try_get("changed_by_client").map_err(read)?,
-        })
+        let user_id = user_id.to_owned();
+        self.db
+            .read("compat.queue", move |conn| {
+                let head = conn
+                    .query_row(sql::QUEUE_HEAD.text(), [&user_id], sql::QueueHead::read)
+                    .optional()?;
+                let Some(head) = head else {
+                    return Ok(QueueState::default());
+                };
+                let file_ids = conn
+                    .prepare(sql::QUEUE_ITEMS.text())?
+                    .query_map([&user_id], |row| row.get(0))?
+                    .collect::<rusqlite::Result<Vec<String>>>()?;
+                Ok(QueueState {
+                    file_ids,
+                    current_index: head
+                        .current_index
+                        .and_then(|index| usize::try_from(index).ok()),
+                    position_ms: head.position_ms,
+                    updated_at: head.updated_at,
+                    changed_by_client: head.changed_by_client,
+                })
+            })
+            .await
     }
 
     /// Replace a user's saved queue in one transaction.
@@ -78,11 +69,7 @@ impl CompatQueues {
         self.db
             .write("compat.queue.replace", move |tx| {
                 tx.execute(
-                    "INSERT INTO compat_play_queues (user_id, current_index, position_ms, \
-                     updated_at, changed_by_client) VALUES (?1, ?2, ?3, ?4, ?5) \
-                     ON CONFLICT (user_id) DO UPDATE SET current_index = excluded.current_index, \
-                     position_ms = excluded.position_ms, updated_at = excluded.updated_at, \
-                     changed_by_client = excluded.changed_by_client",
+                    sql::PUT_QUEUE.text(),
                     params![
                         user_id,
                         current_index.map(|index| index as i64),
@@ -91,14 +78,8 @@ impl CompatQueues {
                         client
                     ],
                 )?;
-                tx.execute(
-                    "DELETE FROM compat_play_queue_items WHERE user_id = ?1",
-                    params![user_id],
-                )?;
-                let mut insert = tx.prepare(
-                    "INSERT INTO compat_play_queue_items (user_id, item_index, file_id) \
-                     VALUES (?1, ?2, ?3)",
-                )?;
+                tx.execute(sql::CLEAR_QUEUE_ITEMS.text(), params![user_id])?;
+                let mut insert = tx.prepare(sql::ADD_QUEUE_ITEM.text())?;
                 for (index, file_id) in file_ids.iter().enumerate() {
                     insert.execute(params![user_id, index as i64, file_id])?;
                 }
@@ -109,27 +90,25 @@ impl CompatQueues {
 
     /// Bookmarks for a user, most recently changed first.
     pub async fn list_bookmarks(&self, user_id: &str) -> Result<Vec<BookmarkRecord>, StoreError> {
-        let pool = self.db.db().sqlx();
-        let rows = sqlx::query(
-            "SELECT file_id, position_ms, comment, created_at, changed_at \
-             FROM compat_bookmarks WHERE user_id = ? ORDER BY changed_at DESC, file_id",
-        )
-        .bind(user_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|error| read_failed("compat.bookmarks", error))?;
-        rows.iter()
-            .map(|row| {
-                Ok(BookmarkRecord {
-                    file_id: row.try_get("file_id")?,
-                    position_ms: row.try_get("position_ms")?,
-                    comment: row.try_get("comment")?,
-                    created_at: row.try_get::<f64, _>("created_at")? as i64,
-                    changed_at: row.try_get::<f64, _>("changed_at")? as i64,
-                })
+        let user_id = user_id.to_owned();
+        self.db
+            .read("compat.bookmarks", move |conn| {
+                let rows = conn
+                    .prepare(sql::BOOKMARKS.text())?
+                    .query_map([&user_id], |row| {
+                        let row = sql::BookmarkColumns::read(row)?;
+                        Ok(BookmarkRecord {
+                            file_id: row.file_id,
+                            position_ms: row.position_ms,
+                            comment: row.comment,
+                            created_at: row.created_at as i64,
+                            changed_at: row.changed_at as i64,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
             })
-            .collect::<Result<Vec<_>, sqlx::Error>>()
-            .map_err(|error| read_failed("compat.bookmarks", error))
+            .await
     }
 
     /// Create or update a bookmark.
@@ -146,11 +125,7 @@ impl CompatQueues {
         self.db
             .write("compat.bookmark.upsert", move |tx| {
                 tx.execute(
-                    "INSERT INTO compat_bookmarks (user_id, file_id, position_ms, comment, \
-                     created_at, changed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5) \
-                     ON CONFLICT (user_id, file_id) DO UPDATE SET \
-                     position_ms = excluded.position_ms, comment = excluded.comment, \
-                     changed_at = excluded.changed_at",
+                    sql::PUT_BOOKMARK.text(),
                     params![user_id, file_id, position_ms, comment, now_unix],
                 )?;
                 Ok(())
@@ -163,10 +138,7 @@ impl CompatQueues {
         let (user_id, file_id) = (user_id.to_owned(), file_id.to_owned());
         self.db
             .write("compat.bookmark.delete", move |tx| {
-                tx.execute(
-                    "DELETE FROM compat_bookmarks WHERE user_id = ?1 AND file_id = ?2",
-                    params![user_id, file_id],
-                )?;
+                tx.execute(sql::DELETE_BOOKMARK.text(), params![user_id, file_id])?;
                 Ok(())
             })
             .await

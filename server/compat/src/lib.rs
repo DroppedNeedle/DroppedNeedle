@@ -68,6 +68,7 @@ pub const LOOPS: &[&str] = &[adapters::jellyfin_ids::JOB_NAME];
 pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
     vec![
         adapters::jellyfin_ids::sql::registered(),
+        adapters::sql::registered(),
         user_settings::sql::registered(),
     ]
 }

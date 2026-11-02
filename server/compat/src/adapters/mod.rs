@@ -8,4 +8,5 @@ pub mod library;
 pub mod playback;
 pub mod principal;
 pub mod queues;
+pub mod sql;
 pub mod subsonic_store;
