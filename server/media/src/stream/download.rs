@@ -39,11 +39,11 @@ use futures_util::{StreamExt as _, stream};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::engine::{ChunkStream, content_type_for_extension};
+use super::error::unsatisfiable;
+use super::framing::{DirectSpan, file_range, range_header};
 use super::gateway::OUTSIDE_MESSAGE;
 use super::local_files::{AlbumFiles, CatalogFile, LibraryFiles, LocateError, PathRefusal};
-use super::routes::{
-    ChunkStream, DirectSpan, content_type_for_extension, file_range, range_header, unsatisfiable,
-};
 use droppedneedle_auth::{Role, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::mount::{Routes, routes};

@@ -11,7 +11,7 @@
 use droppedneedle_kernel::db::DbError;
 use rusqlite::OptionalExtension as _;
 
-use super::adapter::BoxFuture;
+use super::source::BoxFuture;
 use super::sql;
 
 /// Stored folder preference for one user.

@@ -13,7 +13,7 @@ use super::models::{BaseItemDto, BaseItemDtoQueryResult};
 use super::params::{self, CiParams, SortKey};
 use super::query::{page, primary_type};
 use super::router::*;
-use super::seams::{
+use super::views::{
     ALL, AlbumFilter, AlbumView, ArtistScope, ArtistView, ItemSort, ReadFailed, TrackFilter,
     TrackView,
 };
@@ -103,7 +103,7 @@ fn result(items: Vec<BaseItemDto>, total: Option<usize>, start: usize) -> Respon
 /// One item in the long form Jellyfin sends for a fetch by id.
 async fn fetch_full_item(
     state: &JellyfinState,
-    user: &super::seams::Principal,
+    user: &super::views::Principal,
     kind: &str,
     internal: &str,
 ) -> Result<Option<BaseItemDto>, ReadFailed> {

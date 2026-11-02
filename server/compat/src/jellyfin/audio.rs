@@ -11,8 +11,9 @@ use super::builders::{self};
 use super::models::{PlaybackInfoBody, PlaybackInfoResponse};
 use super::params::{self, CiParams};
 use super::router::*;
-use super::seams::{ByteOutcome, Principal, StreamParams, TICKS_PER_SECOND};
+use super::views::{ByteOutcome, Principal, TICKS_PER_SECOND};
 use crate::subsonic::stream::download_filename;
+use droppedneedle_media::stream::engine::StreamParams;
 use droppedneedle_media::stream::transcode::{HLS_SEGMENT_FORMAT, TrackInfo, decide};
 
 // ===== Streaming + PlaybackInfo =====
@@ -349,7 +350,7 @@ fn served_format(outcome: &ByteOutcome) -> &'static str {
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
         .map_or("", |(_, value)| value.as_str());
-    droppedneedle_media::stream::routes::extension_for_content_type(content_type).unwrap_or("")
+    droppedneedle_media::stream::engine::extension_for_content_type(content_type).unwrap_or("")
 }
 
 /// A HEAD outcome as a response: its status and headers, no body.

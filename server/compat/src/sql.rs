@@ -1,4 +1,4 @@
-//! The statements of the compat adapters: saved play queues, bookmarks and
+//! The statements of compat's own tables and reads: saved play queues, bookmarks and
 //! the read of which artists have album art to draw a picture from.
 
 droppedneedle_kernel::sql! {

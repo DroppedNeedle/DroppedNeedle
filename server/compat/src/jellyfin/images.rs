@@ -117,7 +117,7 @@ pub(super) async fn serve_image(
     let q = CiParams::parse(query);
     let size = image_size(&q);
     let found = match kind.as_str() {
-        "library" => Some(super::seams::CoverBytes {
+        "library" => Some(super::views::CoverBytes {
             bytes: library_png(),
             content_type: "image/png".to_owned(),
         }),

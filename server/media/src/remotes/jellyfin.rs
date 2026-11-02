@@ -24,9 +24,8 @@
 
 use serde::de::DeserializeOwned;
 
-use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, RemoteHttp, RemotePage, TrackBrowse, request_id,
-};
+use super::source::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
+
 use super::jellyfin_models::{
     AuthenticatedUser, AuthenticationResult, Item, ItemPage, Lyrics, NamedPage, PlaybackReport,
     QueryFilters, SearchHints, Session, SystemInfo,
@@ -36,6 +35,7 @@ use super::models::{
     InfoView, LyricLine, LyricsView, PlaylistDetail, PlaylistSummary, SearchResults, SessionView,
     SessionsView, SourceName, StatsView, TrackView,
 };
+use super::transport::{RemoteHttp, request_id};
 use super::warmup::{INDEX_MAX_PAGES, IndexedAlbum, indexed};
 
 /// MBID index scan batch size, matching the v2 repository.
@@ -948,7 +948,7 @@ impl JellyfinAdapter {
             .header("Authorization", self.auth_header())
             .query(&query)
             .build()
-            .map_err(super::adapter::transport)
+            .map_err(super::transport::transport)
     }
 
     /// Session report to `/Sessions/Playing`, `/Sessions/Playing/Progress`,
@@ -1092,7 +1092,7 @@ impl JellyfinAdapter {
         if bytes.is_empty() {
             return Ok(None);
         }
-        super::adapter::decode(SourceName::Jellyfin, endpoint, &bytes).map(Some)
+        super::transport::decode(SourceName::Jellyfin, endpoint, &bytes).map(Some)
     }
 
     /// POST a JSON body, discarding the response. Used only for session

@@ -7,10 +7,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use droppedneedle_compat::adapters::audio::GatewayAudio;
+use droppedneedle_compat::audio::GatewayAudio;
 use droppedneedle_compat::body::AudioBody;
 use droppedneedle_compat::subsonic::stream::{ServeError, serve};
-use droppedneedle_media::stream::routes::{
+use droppedneedle_media::stream::engine::{
     MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamParams,
 };
 
@@ -201,11 +201,11 @@ struct NoRemote;
 impl droppedneedle_media::stream::gateway::RemoteReader for NoRemote {
     async fn open_stream(
         &self,
-        _source: droppedneedle_media::stream::routes::AudioSource,
+        _source: droppedneedle_media::stream::engine::AudioSource,
         _key: &str,
         _user_id: &str,
         _head_only: bool,
-    ) -> Result<droppedneedle_media::stream::routes::StreamMedia, StreamFault> {
+    ) -> Result<droppedneedle_media::stream::engine::StreamMedia, StreamFault> {
         let canned: Result<droppedneedle_media::stream::gateway::RemoteMedia, StreamFault> =
             async { Err(StreamFault::NotFound) }.await;
         canned.map(Into::into)

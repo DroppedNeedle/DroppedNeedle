@@ -18,12 +18,12 @@ use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_providers::RequestPriority;
 
-use crate::remotes::adapter::{AdapterError, RemoteHandle};
 use crate::remotes::connections::{ConnectionResolver, Reads, ResolveError, ResolvedConnection};
 use crate::remotes::jellyfin::JellyfinAdapter;
 use crate::remotes::models::SourceName;
 use crate::remotes::navidrome::NavidromeAdapter;
 use crate::remotes::plex::PlexAdapter;
+use crate::remotes::source::{AdapterError, RemoteHandle};
 
 use super::ports::{RemoteReport, RemoteReporters};
 use super::rules::meets_subsonic_threshold;

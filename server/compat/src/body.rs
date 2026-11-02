@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt as _;
 
-use droppedneedle_media::stream::routes::ChunkStream;
+use droppedneedle_media::stream::engine::ChunkStream;
 
 /// A chunk stream that can sit in cloneable protocol values: it is taken
 /// out exactly once, by whoever builds the HTTP response.

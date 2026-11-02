@@ -11,8 +11,8 @@ use super::models::{
     BaseItemDto, EmptyList, ExternalUrl, ItemDetail, MediaSourceInfo, MediaStream, NameGuidPair,
     UserItemDataDto,
 };
-use super::seams::{AlbumView, ArtistView, GenreView, PlaylistView, TICKS_PER_SECOND, TrackView};
-use crate::adapters::jellyfin_library::CatalogIds;
+use super::views::{AlbumView, ArtistView, GenreView, PlaylistView, TICKS_PER_SECOND, TrackView};
+use crate::jellyfin::library::CatalogIds;
 
 /// Internal id of the single music library (v2 `LIBRARY_INTERNAL_ID`).
 pub const LIBRARY_INTERNAL_ID: &str = "music";

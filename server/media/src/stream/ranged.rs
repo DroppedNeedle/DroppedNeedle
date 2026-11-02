@@ -9,7 +9,7 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use futures_util::{StreamExt as _, TryStreamExt as _};
 
-use super::routes::{ChunkStream, SpanOpener};
+use super::engine::{ChunkStream, SpanOpener};
 
 /// How long an upstream may go quiet mid-body before the stream fails.
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(30);

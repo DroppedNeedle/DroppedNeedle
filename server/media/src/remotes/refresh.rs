@@ -12,9 +12,9 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 
-use super::adapter::AdapterError;
 use super::connections::{ConnectionResolver, Reads, ResolveError};
 use super::models::SourceName;
+use super::source::AdapterError;
 use droppedneedle_kernel::jobs::queue::{JobCtx, JobHandler, KindSpec, Outcome, PAYLOAD_INVALID};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;

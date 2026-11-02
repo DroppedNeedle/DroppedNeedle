@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 use futures_util::StreamExt as _;
 
+use super::engine::SpanOpener;
 use super::ranged;
-use super::routes::SpanOpener;
 use droppedneedle_plugins::capabilities::stream::{PROXY_MAX_BYTES, open_url, proxy_chunks};
 
 /// The audio format a plugin URL carries: the URL path's extension, else

@@ -28,9 +28,8 @@
 use std::collections::HashSet;
 use std::sync::RwLock;
 
-use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, RemoteHttp, RemotePage, TrackBrowse, request_id,
-};
+use super::source::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
+
 use super::connections::{
     ConnectionResolver, PlexServerTokens, ResolvedConnection, ServerSettings,
 };
@@ -40,6 +39,7 @@ use super::models::{
     SearchResults, SessionView, SessionsView, SourceName, StatsView, TrackView,
 };
 use super::plex_models::{Container, Envelope, Metadata};
+use super::transport::{RemoteHttp, request_id};
 use super::warmup::{INDEX_MAX_PAGES, INDEX_PAGE, IndexedAlbum, indexed};
 use droppedneedle_auth::federated::FederatedError;
 use droppedneedle_auth::federated::plex::PlexServerIdentity;
@@ -788,7 +788,7 @@ impl PlexAdapter {
             .get(url)
             .headers(self.headers())
             .build()
-            .map_err(super::adapter::transport)
+            .map_err(super::transport::transport)
     }
 
     /// Playback-state report via `/:/timeline`: `state` is `playing`,
@@ -1481,7 +1481,7 @@ impl PlexServerTokens for PlexTokenProbe {
         server: &'a ServerSettings,
         auth_token: &'a str,
         priority: RequestPriority,
-    ) -> super::adapter::BoxFuture<'a, Result<Option<String>, AdapterError>> {
+    ) -> super::source::BoxFuture<'a, Result<Option<String>, AdapterError>> {
         Box::pin(async move {
             let handle = ConnectionResolver::unsaved_client(
                 &self.http,
@@ -1530,7 +1530,7 @@ impl ConfiguredPlexServer {
 }
 
 impl PlexServerIdentity for ConfiguredPlexServer {
-    fn machine_id(&self) -> super::adapter::BoxFuture<'_, Result<Option<String>, FederatedError>> {
+    fn machine_id(&self) -> super::source::BoxFuture<'_, Result<Option<String>, FederatedError>> {
         Box::pin(async move {
             let unreadable = || {
                 FederatedError::ProviderUnavailable(

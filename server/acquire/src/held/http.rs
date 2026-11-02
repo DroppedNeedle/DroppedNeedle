@@ -26,9 +26,8 @@ use droppedneedle_auth::{Curator, Principal, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
-use droppedneedle_media::stream::routes::{
-    DirectSpan, content_type_for_extension, file_range, range_header,
-};
+use droppedneedle_media::stream::engine::content_type_for_extension;
+use droppedneedle_media::stream::framing::{DirectSpan, file_range, range_header};
 
 /// What a person can do with one held file, besides listening and
 /// discarding, which every file offers.

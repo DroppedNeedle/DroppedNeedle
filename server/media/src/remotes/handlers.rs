@@ -21,7 +21,6 @@ use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
 
-use super::adapter::{AlbumBrowse, ArtistBrowse, TrackBrowse};
 use super::error::RemotesError;
 use super::jellyfin::MixSeed;
 use super::models::{
@@ -34,6 +33,7 @@ use super::models::{
     StatsView, TrackBrowseQuery, TrackPage,
 };
 use super::service::{AccountLogin, RemotesFailure, RemotesService};
+use super::source::{AlbumBrowse, ArtistBrowse, TrackBrowse};
 
 /// Every dependency the remotes routes need, injected by constructor.
 #[derive(Clone)]

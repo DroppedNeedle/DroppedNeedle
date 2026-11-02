@@ -1,6 +1,6 @@
 //! Player-app audio over the stream gateway. Both protocols translate
 //! their parameters into [`StreamParams`] and the gateway makes the one
-//! transcode decision; these adapters frame what it opened, by the plan it
+//! transcode decision; this module frames what it opened, by the plan it
 //! ran, and map its faults onto each protocol.
 //!
 //! A file id is tried as a local track first and, on a miss, as a
@@ -14,15 +14,16 @@ use std::sync::Arc;
 use futures_util::StreamExt as _;
 
 use crate::body::{AudioBody, LiveBody};
-use crate::jellyfin::seams::ByteOutcome;
+use crate::jellyfin::views::ByteOutcome;
 use crate::subsonic::stream::{
     AudioFacts, BackendError, OpenedAudio, PlayedAudio, TranscodedAudio,
 };
-use droppedneedle_media::stream::leases::RETRY_AFTER_SECONDS;
-use droppedneedle_media::stream::routes::{
-    AudioSource, FramedBody, StreamEngine, StreamError, StreamFault, StreamMedia, StreamOpen,
-    StreamParams, frame, read_span,
+use droppedneedle_media::stream::engine::{
+    AudioSource, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamParams,
 };
+use droppedneedle_media::stream::error::StreamError;
+use droppedneedle_media::stream::framing::{FramedBody, frame, read_span};
+use droppedneedle_media::stream::leases::RETRY_AFTER_SECONDS;
 
 /// Open `file_id` for `lease_user`: the local library first, then any
 /// plugin that claims the id.

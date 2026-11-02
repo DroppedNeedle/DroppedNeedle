@@ -701,8 +701,8 @@ async fn follow_auto_download_states_and_admin_reads() {
 #[tokio::test]
 async fn remote_playlist_import_lands_in_the_users_playlists() {
     use droppedneedle_catalog::collections::remote_import::PlaylistImportSink;
-    use droppedneedle_media::remotes::adapter::ImportSink as _;
     use droppedneedle_media::remotes::models::{SourceName, TrackView};
+    use droppedneedle_media::remotes::source::ImportSink as _;
 
     let rig = Rig::open().await;
     let sink = PlaylistImportSink::new(rig.state());

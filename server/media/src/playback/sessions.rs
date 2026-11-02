@@ -21,7 +21,7 @@ use super::{
     report::{forward_now_playing, submit_session_scrobble},
     rules::{ServiceError, normalize_client, should_scrobble_native},
 };
-use crate::remotes::adapter::request_id;
+use crate::remotes::transport::request_id;
 
 /// Session time-to-live in seconds (2h).
 pub const SESSION_TTL_SECS: i64 = 2 * 60 * 60;

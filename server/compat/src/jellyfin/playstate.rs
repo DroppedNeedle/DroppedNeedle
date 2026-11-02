@@ -9,7 +9,7 @@ use droppedneedle_kernel::error::ApiError;
 use super::builders::{self};
 use super::models::{PlaybackProgressInfo, PlaybackStartInfo, PlaybackStopInfo, UserItemDataDto};
 use super::router::*;
-use super::seams::{ItemView, ReadFailed, TICKS_PER_SECOND, WriteRefusal, should_scrobble};
+use super::views::{ItemView, ReadFailed, TICKS_PER_SECOND, WriteRefusal, should_scrobble};
 
 // ===== Favorites + played (both dialects, 200 UserItemDataDto) =====
 

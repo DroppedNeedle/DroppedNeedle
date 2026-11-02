@@ -10,10 +10,10 @@ use axum::http::Uri;
 use droppedneedle_catalog::collections::remote_import::PlaylistImportSink;
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::JellyfinConnection;
-use droppedneedle_media::remotes::adapter::USER_READS_PER_SOURCE;
 use droppedneedle_media::remotes::folders::SqliteFolderStore;
 use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_media::remotes::service::RemotesService;
+use droppedneedle_media::remotes::transport::USER_READS_PER_SOURCE;
 use droppedneedle_media::remotes::warmup::MbidIndex;
 use tokio::sync::Semaphore;
 

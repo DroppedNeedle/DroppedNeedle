@@ -277,7 +277,7 @@ pub struct Lease<P: Pool> {
 impl Lease<Direct> {
     /// Keep this slot held until `chunks` ends or is dropped, so the gate
     /// bounds response bodies in flight, not only opens.
-    pub fn hold(self, chunks: super::routes::ChunkStream) -> super::routes::ChunkStream {
+    pub fn hold(self, chunks: super::engine::ChunkStream) -> super::engine::ChunkStream {
         use futures_util::StreamExt as _;
         chunks
             .map(move |chunk| {

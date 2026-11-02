@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Deserializer};
 
-use super::adapter::AdapterError;
+use super::source::AdapterError;
 
 /// The JSON envelope.
 #[derive(Debug, Clone, Deserialize)]

@@ -10,10 +10,6 @@ use std::sync::Arc;
 
 use droppedneedle_kernel::clock::Clock;
 
-use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, ImportSink, RemoteHandle, TrackBrowse, album_page,
-    artist_page, track_page, unsupported,
-};
 use super::connections::{
     ConnectionResolver, LinkSummary, Reads, ResolveError, ResolvedConnection, SaveError, UserLink,
 };
@@ -26,6 +22,10 @@ use super::models::{
     DiscoveryView, FavoritesView, FilterFacetsView, FolderResolutionView, HistoryPage, HubView,
     ImportResult, InfoView, LyricsView, MatchQuery, MatchView, MusicFolderView, PlaylistCollection,
     PlaylistDetail, SearchResults, SourceName, StatsView, TrackPage, TrackView,
+};
+use super::source::{
+    AdapterError, AlbumBrowse, ArtistBrowse, ImportSink, RemoteHandle, TrackBrowse, album_page,
+    artist_page, track_page, unsupported,
 };
 use super::warmup::MbidIndex;
 use droppedneedle_kernel::db::fold::fold_text;

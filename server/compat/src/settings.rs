@@ -7,7 +7,7 @@
 //! request, so a change in Settings takes effect at once instead of at the
 //! next restart.
 
-use crate::jellyfin::seams::JellyfinSettings;
+use crate::jellyfin::settings::JellyfinSettings;
 use crate::subsonic::Settings;
 use droppedneedle_kernel::runtime_config::origin::Origin;
 use droppedneedle_kernel::runtime_config::sections::{

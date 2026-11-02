@@ -12,10 +12,10 @@ use super::models::{
     UnreadAlbumTags, UnreadTags,
 };
 
-/// MIME per extension, from the stream routes' table (unknown ->
+/// MIME per extension, from the stream engine's table (unknown ->
 /// octet-stream).
 pub fn mime_for(file_format: &str) -> &'static str {
-    droppedneedle_media::stream::routes::content_type_for_extension(file_format)
+    droppedneedle_media::stream::engine::content_type_for_extension(file_format)
         .unwrap_or("application/octet-stream")
 }
 

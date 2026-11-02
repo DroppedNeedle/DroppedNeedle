@@ -11,11 +11,11 @@ use super::models::{
 };
 use super::params::SubsonicParameters;
 use super::picture::{INFO_SIZES, PictureKind};
-use super::store::{PlaylistDetail, PlaylistRecord};
+use super::records::{PlaylistDetail, PlaylistRecord};
 use super::views::{ViewTrack, iso};
 use super::{Ctx, Outcome};
-use crate::adapters::library::CompatError;
-use crate::adapters::principal::CompatPrincipal;
+use crate::library::CompatError;
+use crate::subsonic::principal::CompatPrincipal;
 
 /// Max play-queue items (v2 `_MAX_QUEUE_ITEMS`).
 pub const MAX_QUEUE_ITEMS: usize = 500;
@@ -651,7 +651,7 @@ pub async fn queue_entries(
     ctx: &Ctx<'_>,
 ) -> Result<
     (
-        super::store::QueueState,
+        super::records::QueueState,
         Vec<super::models::SChild>,
         Option<usize>,
     ),

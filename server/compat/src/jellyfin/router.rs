@@ -25,9 +25,9 @@ use droppedneedle_kernel::ids::RequestId;
 use droppedneedle_kernel::mount::CompatRoutes;
 use uuid::Uuid;
 
-use crate::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary};
-use crate::adapters::playback::CompatPlayback;
 use crate::body::AudioBody;
+use crate::jellyfin::library::{CatalogIds, JellyfinLibrary};
+use crate::playback::CompatPlayback;
 use crate::settings::LiveSettings;
 use crate::setup::CompatAudio;
 use crate::shared::address::{ListenerConfig, base_address};
@@ -40,8 +40,8 @@ use super::builders::Builder;
 use super::images::*;
 use super::playlists::*;
 use super::playstate::*;
-use super::seams::{ByteOutcome, Principal, WriteRefusal};
 use super::system::*;
+use super::views::{ByteOutcome, Principal, WriteRefusal};
 
 // ===== State + registration =====
 

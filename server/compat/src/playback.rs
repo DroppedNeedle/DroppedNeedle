@@ -16,7 +16,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use crate::subsonic::store::NowPlayingRow;
+use crate::subsonic::records::NowPlayingRow;
 use droppedneedle_media::playback::PlaybackDeps;
 use droppedneedle_media::playback::models::{
     NowPlayingHeartbeat, ScrobbleNowPlayingRequest, ScrobbleSubmitRequest,

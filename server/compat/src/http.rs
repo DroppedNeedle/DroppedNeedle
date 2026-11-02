@@ -23,8 +23,6 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
-use crate::adapters::principal::SubsonicVerifier;
-use crate::adapters::subsonic_store::SubsonicStore;
 use crate::jellyfin::QueryTokens;
 use crate::settings::LiveSettings;
 use crate::setup::CompatAudio;
@@ -33,6 +31,8 @@ use crate::shared::{auth, cors, path_case, ratelimit, redact};
 use crate::subsonic::error::SubsonicError;
 use crate::subsonic::params::{MAX_REQUEST_PARAMETER_BYTES, SubsonicParameters};
 use crate::subsonic::picture;
+use crate::subsonic::principal::SubsonicVerifier;
+use crate::subsonic::store::SubsonicStore;
 use crate::subsonic::value::{
     Rendered, SubsonicFormat, parse_format, render_error, render_unknown_method, sniff_format,
 };

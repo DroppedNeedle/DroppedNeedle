@@ -10,8 +10,10 @@
 //! socket-based sessions are explicitly out of contract.
 //!
 //! Modules: [`models`] (wire DTOs), [`params`] (case-insensitive query +
-//! `SortBy` allowlist), [`builders`] (view → DTO shaping), [`seams`]
-//! (the views and records the adapters answer). The handlers live in `router`
+//! `SortBy` allowlist), [`builders`] (view → DTO shaping), [`views`]
+//! (the views and records the routes trade with what they call), [`settings`]
+//! (what the routes read), [`library`] (the catalog-backed reads) and [`ids`]
+//! (the stored ids and the loop that fills them). The handlers live in `router`
 //! (state, registration, shared helpers), `system`, `browse`, `images`,
 //! `audio`, `lyrics`, `playstate` and `playlists`; `query` holds the item-type and
 //! short-list paging helpers.
@@ -22,9 +24,9 @@
 //! outside the `/api/*` session gate (compat carries its own app-password
 //! auth) behind the shared CORS + limits layers. The routes call the
 //! app-password store, the catalog-backed
-//! [`JellyfinLibrary`](crate::adapters::jellyfin_library::JellyfinLibrary)
-//! and [`CatalogIds`](crate::adapters::jellyfin_library::CatalogIds),
-//! the [`GatewayAudio`](crate::adapters::audio::GatewayAudio) (which
+//! [`JellyfinLibrary`](crate::jellyfin::library::JellyfinLibrary)
+//! and [`CatalogIds`](crate::jellyfin::library::CatalogIds),
+//! the [`GatewayAudio`](crate::audio::GatewayAudio) (which
 //! falls back to `streaming_source` plugins on a local miss), and the
 //! playback adapter. Not in this module, on purpose: rate limiting, CORS,
 //! case-insensitive path handling and access-log redaction (the shared
@@ -33,7 +35,9 @@
 mod audio;
 mod browse;
 pub mod builders;
+pub mod ids;
 mod images;
+pub mod library;
 mod lyrics;
 pub mod models;
 pub mod params;
@@ -41,9 +45,10 @@ mod playlists;
 mod playstate;
 mod query;
 mod router;
-pub mod seams;
+pub mod settings;
 mod system;
+pub mod views;
 
 pub(crate) use router::QueryTokens;
 pub use router::{Access, JellyfinState, ROUTES, Route, Verb, is_public, routes};
-pub use seams::JellyfinSettings;
+pub use settings::JellyfinSettings;

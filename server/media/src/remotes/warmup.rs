@@ -20,9 +20,9 @@ use droppedneedle_kernel::jobs::{
     AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickError, TickResult,
 };
 
-use super::adapter::request_id;
 use super::connections::{ConnectionResolver, Reads, ResolveError};
 use super::models::SourceName;
+use super::transport::request_id;
 
 /// Jellyfin startup delay.
 pub const JELLYFIN_STARTUP_DELAY: Duration = Duration::from_secs(8);

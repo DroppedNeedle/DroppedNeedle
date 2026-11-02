@@ -48,8 +48,8 @@ use thiserror::Error;
 use tokio::io::AsyncReadExt as _;
 use tokio::sync::mpsc;
 
+use super::engine::ChunkStream;
 use super::leases::{OwnedDirectLease, TranscodeGate, TranscodeLease};
-use super::routes::ChunkStream;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;

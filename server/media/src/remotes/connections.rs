@@ -32,12 +32,14 @@ use droppedneedle_kernel::runtime_config::sections::InternalState;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 use droppedneedle_providers::RequestPriority;
 
-use super::adapter::{AdapterError, BoxFuture, RemoteHandle, RemoteHttp, USER_READS_PER_SOURCE};
+use super::source::{AdapterError, BoxFuture, RemoteHandle};
+
 use super::jellyfin::JellyfinAdapter;
 use super::models::SourceName;
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
 use super::sql;
+use super::transport::{RemoteHttp, USER_READS_PER_SOURCE};
 
 // ---------------------------------------------------------------------------
 // Rows

@@ -12,13 +12,13 @@ use droppedneedle_catalog::collections::db::CollectionsDb;
 use droppedneedle_catalog::collections::models::{AddTracksBody, CreatePlaylistBody, TrackInput};
 use droppedneedle_catalog::collections::service::CollectionsService;
 use droppedneedle_catalog::wiring::CatalogSetup;
-use droppedneedle_compat::adapters::audio::GatewayAudio;
-use droppedneedle_compat::adapters::jellyfin_ids::JellyfinIds;
-use droppedneedle_compat::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary};
-use droppedneedle_compat::adapters::library::CompatLibrary;
-use droppedneedle_compat::adapters::playback::CompatPlayback;
+use droppedneedle_compat::audio::GatewayAudio;
 use droppedneedle_compat::jellyfin::builders::LIBRARY_INTERNAL_ID;
+use droppedneedle_compat::jellyfin::ids::JellyfinIds;
+use droppedneedle_compat::jellyfin::library::{CatalogIds, JellyfinLibrary};
 use droppedneedle_compat::jellyfin::{JellyfinState, routes};
+use droppedneedle_compat::library::CompatLibrary;
+use droppedneedle_compat::playback::CompatPlayback;
 use droppedneedle_compat::settings::LiveSettings;
 use droppedneedle_compat::shared::address::ListenerConfig;
 use droppedneedle_kernel::config::TrustedProxies;
@@ -936,7 +936,7 @@ async fn stored_jellyfin_ids_survive_a_new_data_key() {
 async fn fill_row(rig: &Rig) -> Option<(Option<i64>, Option<String>)> {
     use sqlx::Row as _;
     sqlx::query("SELECT last_heartbeat_at, last_error FROM durable_loops WHERE name = ?")
-        .bind(droppedneedle_compat::adapters::jellyfin_ids::JOB_NAME)
+        .bind(droppedneedle_compat::jellyfin::ids::JOB_NAME)
         .fetch_optional(rig.runtime.db().sqlx())
         .await
         .expect("loop row reads")

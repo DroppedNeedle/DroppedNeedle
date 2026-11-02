@@ -10,7 +10,7 @@ use super::models::{
     SArtistID3, SArtistsID3, SChild, SDirectory, SIndex, SIndexID3, SIndexes, SLicense,
     SMusicFolder, SOpenSubsonicExtension, SSearchResult, Wrap,
 };
-use super::store::AlbumSort;
+use super::records::AlbumSort;
 use super::{Ctx, Outcome};
 
 /// Articles stripped for A-Z bucketing (v2 `_IGNORED_ARTICLES`).

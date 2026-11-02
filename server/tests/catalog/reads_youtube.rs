@@ -669,8 +669,8 @@ async fn replacing_a_link_clears_its_recording() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_imported_entry_carries_its_recording_to_a_filed_play() {
     use droppedneedle_catalog::collections::remote_import::PlaylistImportSink;
-    use droppedneedle_media::remotes::adapter::ImportSink as _;
     use droppedneedle_media::remotes::models::{SourceName, TrackView};
+    use droppedneedle_media::remotes::source::ImportSink as _;
 
     let app = TestApp::start("youtube-imported").await;
     let user = app.login_user("listener").await;

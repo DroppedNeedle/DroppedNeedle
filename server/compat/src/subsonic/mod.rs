@@ -88,17 +88,17 @@
 //!   apiKeyAuthentication, formPost, transcodeOffset, songLyrics,
 //!   playbackReport, indexBasedQueue, transcoding.
 //!
-//! # What the handlers call (in `compat::adapters`, built in `compat::setup`)
+//! # What the handlers call (built in `compat::setup`)
 //!
 //! - Auth: [`auth::Credentials`] classification here; secret verification
 //!   lives in `auth::compat_auth::subsonic::authenticate`, and
-//!   [`SubsonicVerifier`](crate::adapters::principal::SubsonicVerifier)
+//!   [`SubsonicVerifier`](crate::subsonic::principal::SubsonicVerifier)
 //!   delegates to it. The HTTP adapter (`compat::http`) gates, verifies
 //!   and runs the method from [`ENDPOINTS`].
 //! - Data: [`SubsonicStore`] (library, playlists, favorites, scrobble,
 //!   queues, bookmarks, lyrics, avatars, scan, cover art, advanced
 //!   transcode).
-//! - Audio bytes: [`GatewayAudio`](crate::adapters::audio::GatewayAudio)
+//! - Audio bytes: [`GatewayAudio`](crate::audio::GatewayAudio)
 //!   on the stream gateway (ranges, HEAD, leases per caller).
 //! - Edge (`compat::shared`): enablement kill-switch default, rate limits,
 //!   CORS, case-insensitive paths, access-log redaction. The enablement
@@ -115,6 +115,8 @@ pub mod media;
 pub mod models;
 pub mod params;
 pub mod picture;
+pub mod principal;
+pub mod records;
 pub mod store;
 pub mod stream;
 pub mod value;
@@ -126,10 +128,10 @@ use std::pin::Pin;
 use droppedneedle_kernel::runtime_config::sections::DownloadAccess;
 use serde::Serialize;
 
-use crate::adapters::library::CompatError;
-use crate::adapters::principal::CompatPrincipal;
-use crate::adapters::subsonic_store::SubsonicStore;
+use crate::library::CompatError;
 use crate::setup::CompatAudio;
+use crate::subsonic::principal::CompatPrincipal;
+use crate::subsonic::store::SubsonicStore;
 
 pub use auth::{Credentials, classify};
 pub use error::{GENERIC, PARAM_MISSING, SubsonicError};

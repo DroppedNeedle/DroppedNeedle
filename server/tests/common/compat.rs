@@ -212,7 +212,7 @@ impl CompatApp {
     /// A pass stores only what is missing, so running one beside the loop
     /// is safe.
     pub async fn jellyfin_ids_caught_up(&self) {
-        use droppedneedle_compat::adapters::jellyfin_ids::IdsError;
+        use droppedneedle_compat::jellyfin::ids::IdsError;
         let ids = self.app.state().compat.jellyfin_ids().clone();
         let deadline = std::time::Instant::now() + super::PATIENCE;
         loop {

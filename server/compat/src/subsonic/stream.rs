@@ -1,4 +1,4 @@
-//! Serving what the stream gateway opened over the stream routes' range
+//! Serving what the stream gateway opened over the stream's range
 //! framing.
 //!
 //! The handlers translate Subsonic's parameters into [`StreamParams`];
@@ -10,11 +10,12 @@
 //! router (`_serve_file`, `_stream`, `_download`, `_cover_size`).
 
 use axum::http::HeaderMap;
-pub use droppedneedle_media::stream::routes::StreamParams;
-use droppedneedle_media::stream::routes::{DirectSpan, StreamEngine};
+use droppedneedle_media::stream::engine::StreamEngine;
+pub use droppedneedle_media::stream::engine::StreamParams;
+use droppedneedle_media::stream::framing::DirectSpan;
 
 use super::error::{GENERIC, NOT_AUTHORIZED, SubsonicError};
-use crate::adapters::audio::GatewayAudio;
+use crate::audio::GatewayAudio;
 pub use crate::body::AudioBody;
 
 /// Max `timeOffset` / transcode `offset` seconds.
@@ -319,7 +320,7 @@ impl From<BackendError> for ServeError {
 /// pipe, minus the lease plumbing, which lives in [`GatewayAudio`]).
 ///
 /// An original takes its ranges, lengths and the 200/206/416 verdict from
-/// the stream routes' [`DirectSpan`], so they match the native and Jellyfin
+/// the stream's [`DirectSpan`], so they match the native and Jellyfin
 /// routes; HEAD honors Range too. A transcode is 200 with
 /// `Accept-Ranges: none` and `Cache-Control: no-store`, sized only by the
 /// estimate the request asked for. HEAD answers the headers GET would,

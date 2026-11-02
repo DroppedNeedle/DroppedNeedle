@@ -24,7 +24,6 @@ use droppedneedle_testkit::remotes::{
     JELLYFIN_KEY, MATCH_MBID, MockAlbum, MockOptions, NAVIDROME_USER, PLEX_TOKEN, serve_jellyfin,
     serve_navidrome, serve_navidrome_with, serve_plex, serve_plex_with,
 };
-use remotes::adapter::{AdapterError, AlbumBrowse, ArtistBrowse, RemoteHandle, TrackBrowse};
 use remotes::connections::{ConnectionResolver, ResolveError, UserLink};
 use remotes::folders::{FolderPreference, SqliteFolderStore, resolve_scope};
 use remotes::handlers::{self as remotes_handlers, RemotesDeps};
@@ -33,6 +32,7 @@ use remotes::models::SourceName;
 use remotes::navidrome::NavidromeAdapter;
 use remotes::plex::PlexAdapter;
 use remotes::service::RemotesService;
+use remotes::source::{AdapterError, AlbumBrowse, ArtistBrowse, RemoteHandle, TrackBrowse};
 use remotes::warmup::{MbidIndex, Warmups};
 use serde_json::Value;
 use tower::ServiceExt as _;
@@ -1698,7 +1698,7 @@ async fn images_over_the_cap_by_declared_length_are_refused() {
         Router::new()
             .fallback(move || async move { ([(CONTENT_TYPE, "image/jpeg")], vec![0u8; bytes]) })
     };
-    let (too_big, big_task) = serve_fake(serve(remotes::adapter::MAX_IMAGE_BYTES + 1)).await;
+    let (too_big, big_task) = serve_fake(serve(remotes::transport::MAX_IMAGE_BYTES + 1)).await;
     for (source, handle) in every_source(&too_big) {
         let outcome = handle.image_bytes("any", 300).await;
         assert!(
@@ -1709,10 +1709,10 @@ async fn images_over_the_cap_by_declared_length_are_refused() {
     }
     big_task.abort();
 
-    let (at_cap, cap_task) = serve_fake(serve(remotes::adapter::MAX_IMAGE_BYTES)).await;
+    let (at_cap, cap_task) = serve_fake(serve(remotes::transport::MAX_IMAGE_BYTES)).await;
     for (_, handle) in every_source(&at_cap) {
         let (bytes, content_type) = handle.image_bytes("any", 300).await.expect("image loads");
-        assert_eq!(bytes.len(), remotes::adapter::MAX_IMAGE_BYTES);
+        assert_eq!(bytes.len(), remotes::transport::MAX_IMAGE_BYTES);
         assert_eq!(content_type, "image/jpeg");
     }
     cap_task.abort();
@@ -1723,7 +1723,7 @@ async fn images_over_the_cap_by_declared_length_are_refused() {
 #[tokio::test]
 async fn images_streaming_past_the_cap_are_cut_off() {
     const CHUNK: usize = 64 * 1024;
-    const TOTAL: usize = remotes::adapter::MAX_IMAGE_BYTES * 4;
+    const TOTAL: usize = remotes::transport::MAX_IMAGE_BYTES * 4;
 
     /// The bytes one answer handed out, reported when its body is dropped:
     /// the server has stopped sending, so the count is final.
@@ -1796,7 +1796,7 @@ async fn api_answers_over_the_cap_are_refused() {
                 let _ = socket.read(&mut request).await;
                 let head = format!(
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{{",
-                    remotes::adapter::MAX_API_BYTES + 1
+                    remotes::transport::MAX_API_BYTES + 1
                 );
                 let _ = socket.write_all(head.as_bytes()).await;
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;

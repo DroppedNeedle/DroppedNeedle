@@ -2,7 +2,7 @@
 //!
 //! The v2 backend carried three parallel browse stacks (~86 endpoints);
 //! v3 collapses them to one adapter surface and one set of native
-//! `/api/v3` routes with unified shapes. [`RemoteHandle`](adapter::RemoteHandle)
+//! `/api/v3` routes with unified shapes. [`RemoteHandle`](source::RemoteHandle)
 //! is the single browse entry point: per-source adapters translate their
 //! server's payloads into the [`models`] views.
 //!
@@ -16,7 +16,9 @@
 //! connection and runs the call; `connections` holds the admin servers
 //! (read from settings per call) and the per-user links (sealed rows in
 //! `user_connections`); `folders` holds the Navidrome folder preferences;
-//! `adapter` holds the unified surface plus the import sink;
+//! `source` holds the unified surface plus the import sink; `transport`
+//! holds the HTTP side the source clients share (capped reads, status
+//! mapping, decoding, the per-source bound);
 //! `jellyfin`/`navidrome`/`plex` hold the source clients; `analytics`
 //! summarizes listening history; `reader` serves the stream gateway;
 //! `presence_feed` feeds the jobs presence loop from the live registry and
@@ -28,7 +30,6 @@
 //! crate.
 //! `MediaSetup` mounts [`handlers::routes`] inside the session gate.
 
-pub mod adapter;
 pub mod analytics;
 pub mod connections;
 pub mod error;
@@ -46,5 +47,7 @@ pub mod presence_feed;
 pub mod reader;
 pub mod refresh;
 pub mod service;
+pub mod source;
 pub(crate) mod sql;
+pub mod transport;
 pub mod warmup;

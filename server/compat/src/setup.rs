@@ -1,4 +1,4 @@
-//! Compat bundle: the adapters both protocols call plus the mounted
+//! Compat bundle: what both protocols call plus the mounted
 //! routers.
 //!
 //! [`CompatSetup`] is the one `AppState` field compat adds. It binds auth
@@ -18,18 +18,18 @@ use std::sync::Arc;
 use axum::Router;
 use axum::middleware::from_fn_with_state;
 
-use crate::adapters::audio::GatewayAudio;
-use crate::adapters::jellyfin_ids::{JellyfinIds, RESOLVE_WAIT};
-use crate::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary};
-use crate::adapters::library::CompatLibrary;
-use crate::adapters::playback::CompatPlayback;
-use crate::adapters::principal::SubsonicVerifier;
-use crate::adapters::queues::CompatQueues;
-use crate::adapters::subsonic_store::SubsonicStore;
+use crate::audio::GatewayAudio;
 use crate::http::{CompatLimits, SubsonicState, cors_layer, limits_layer, subsonic_routes};
+use crate::jellyfin::ids::{JellyfinIds, RESOLVE_WAIT};
+use crate::jellyfin::library::{CatalogIds, JellyfinLibrary};
 use crate::jellyfin::{JellyfinState, routes as jellyfin_routes};
+use crate::library::CompatLibrary;
+use crate::playback::CompatPlayback;
+use crate::queues::CompatQueues;
 use crate::settings::LiveSettings;
 use crate::shared::address::ListenerConfig;
+use crate::subsonic::principal::SubsonicVerifier;
+use crate::subsonic::store::SubsonicStore;
 use crate::user_settings::UserSettings;
 use droppedneedle_auth::compat_auth::prod::CompatPasswords;
 use droppedneedle_auth::users::UsersDeps;
@@ -113,7 +113,7 @@ pub struct CompatSetup {
 }
 
 impl CompatSetup {
-    /// Build the adapters and mount both routers.
+    /// Build what both protocols call and mount both routers.
     pub fn build(deps: CompatDeps) -> Self {
         let user_settings = deps.library.user_settings.clone();
         let passwords = CompatPasswords::new(deps.users.clone(), Arc::clone(&deps.crypto));

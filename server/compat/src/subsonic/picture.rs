@@ -34,7 +34,7 @@ use super::media::library_picture;
 use super::stream::cover_bucket;
 use super::value::Rendered;
 use super::{Outcome, Settings};
-use crate::adapters::subsonic_store::SubsonicStore;
+use crate::subsonic::store::SubsonicStore;
 use droppedneedle_auth::session::tokens::secret_eq;
 use droppedneedle_kernel::runtime_config::Crypto;
 

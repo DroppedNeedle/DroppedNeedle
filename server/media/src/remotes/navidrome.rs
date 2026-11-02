@@ -29,15 +29,15 @@
 //! Payloads decode into the typed shapes in [`super::navidrome_models`]; a
 //! payload missing an item id is an upstream error, not an empty item.
 
-use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, RemoteHttp, RemotePage, TrackBrowse, request_id,
-};
+use super::source::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
+
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, HistoryPage, HubView, InfoView,
     LyricLine, LyricsView, PlaylistDetail, PlaylistSummary, SearchResults, SessionView,
     SessionsView, SourceName, StatsView, TrackView,
 };
 use super::navidrome_models::{Album, Artist, Body, Envelope, Playlist, Song};
+use super::transport::{RemoteHttp, request_id};
 use super::warmup::{INDEX_MAX_PAGES, INDEX_PAGE, IndexedAlbum, indexed};
 
 /// Subsonic API version pinned by the v2 repository.
@@ -780,7 +780,7 @@ impl NavidromeAdapter {
             .get(RemoteHttp::url(&self.base_url, "/rest/stream")?)
             .query(&query)
             .build()
-            .map_err(super::adapter::transport)
+            .map_err(super::transport::transport)
     }
 
     /// Now-playing report via `/rest/scrobble` with `submission=false`

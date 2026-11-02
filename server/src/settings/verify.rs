@@ -21,9 +21,9 @@ use futures_util::future::BoxFuture;
 
 use droppedneedle_auth::federated::settings::InstallIds;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
-use droppedneedle_media::remotes::adapter::RemoteHandle;
 use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolvedConnection};
 use droppedneedle_media::remotes::models::SourceName;
+use droppedneedle_media::remotes::source::RemoteHandle;
 use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzClient};
@@ -429,11 +429,11 @@ fn lastfm_failure(error: &ProviderError) -> String {
 /// Map a media-adapter failure to a v2-shaped verdict message. The URL
 /// is never echoed.
 fn adapter_message(
-    error: &droppedneedle_media::remotes::adapter::AdapterError,
+    error: &droppedneedle_media::remotes::source::AdapterError,
     unconfigured: &str,
     auth: &str,
 ) -> String {
-    use droppedneedle_media::remotes::adapter::AdapterError as Source;
+    use droppedneedle_media::remotes::source::AdapterError as Source;
     match error {
         Source::NotConfigured => unconfigured.to_owned(),
         Source::Auth => auth.to_owned(),

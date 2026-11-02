@@ -9,9 +9,9 @@
 
 use std::sync::Arc;
 
-use super::adapter::RemoteHandle;
 use super::connections::{ConnectionResolver, Reads, ResolvedConnection};
 use super::models::{SessionView, SourceName};
+use super::source::RemoteHandle;
 use super::warmup::{MbidIndex, Warmups};
 use crate::playback::presence::{ExternalSession, PresenceRegistry};
 use droppedneedle_kernel::clock::Clock;

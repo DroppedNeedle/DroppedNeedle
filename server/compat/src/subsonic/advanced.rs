@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::SubsonicError;
 use super::media::client_info::{CodecLimitation, DirectPlayProfile};
-use super::store::{ClientInfo, StreamDetailsData, TranscodeDecisionData};
+use super::records::{ClientInfo, StreamDetailsData, TranscodeDecisionData};
 use super::views::ViewTrack;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_media::stream::transcode::MIN_BITRATE_KBPS;

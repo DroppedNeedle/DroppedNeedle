@@ -171,7 +171,7 @@ const RATE: Rule = Rule {
             why: UNIT,
         },
         Allow {
-            path: "compat/src/jellyfin/seams.rs",
+            path: "compat/src/jellyfin/views.rs",
             shapes: &["constant"],
             why: UNIT,
         },

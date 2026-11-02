@@ -3,10 +3,8 @@
 //!
 //! No live servers: local fixtures are deterministic byte vectors and remote
 //! bodies are scripted per key. The fake resolves local content types through
-//! the real [`gateway::content_type_for_extension`] helper, so the table is
+//! the real [`content_type_for_extension`] helper, so the table is
 //! exercised on the request path, not copied.
-
-use droppedneedle_media::stream::routes as gateway;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -15,10 +13,11 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
-use gateway::{
-    AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamState,
-    content_type_for_extension, stream_routes,
+use droppedneedle_media::stream::engine::{
+    AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen,
+    content_type_for_extension,
 };
+use droppedneedle_media::stream::routes::{StreamState, stream_routes};
 use serde_json::Value;
 use tower::ServiceExt as _;
 

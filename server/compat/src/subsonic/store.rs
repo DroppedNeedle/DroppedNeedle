@@ -1,224 +1,1277 @@
-//! The records the Subsonic handlers read from and hand to the
-//! [`SubsonicStore`](crate::adapters::subsonic_store::SubsonicStore).
+//! The production Subsonic store: the v3 catalog, shared playlists and
+//! favorites, durable queues and bookmarks, real playback reports, scans
+//! and avatars.
 //!
-//! v2: `CompatServices` behind the Subsonic router.
+//! Catalog reads carry the caller's starred dates and play counts once the
+//! dispatcher scopes the store to the authenticated user
+//! ([`SubsonicStore::for_caller`]).
 
-/// Album-list sort keys (v2 `_ALBUMLIST_SORTS` + byYear directions).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AlbumSort {
-    /// Recently added.
-    Recent,
-    /// By title.
-    Title,
-    /// By artist name.
-    Artist,
-    /// Random order.
-    Random,
-    /// Year ascending (byYear with fromYear <= toYear).
-    YearAsc,
-    /// Year descending (byYear with fromYear > toYear).
-    YearDesc,
-    /// Insertion order: the search3 empty-query sync order, stable while
-    /// a scan adds albums.
-    Natural,
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::library::{CompatError, CompatLibrary, ImageBytes, cover_version, whole};
+use crate::playback::CompatPlayback;
+use crate::queues::CompatQueues;
+use crate::settings::LiveSettings;
+use crate::subsonic::advanced;
+use crate::subsonic::ids::{IdKind, without_cover_version};
+use crate::subsonic::picture::PictureSigner;
+use crate::subsonic::records::{
+    AlbumSort, BookmarkRecord, ClientInfo, LastScan, LyricLine, LyricsData, NowPlayingRow,
+    PlaylistDetail, PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, ScanStatusData,
+    TranscodeDecisionData,
+};
+use crate::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewRating, ViewTrack};
+use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_catalog::collections::service::{SavedPlaylist, Visible};
+use droppedneedle_catalog::collections::store::ratings::{ItemRating, RatedKind};
+use droppedneedle_catalog::local::player::{
+    AlbumIds, AlbumOrder, AlbumQuery, PlayerAlbum, PlayerIds, PlayerTrack, TrackOrder, TrackQuery,
+};
+use droppedneedle_catalog::local::stores::ArtistRecord;
+use droppedneedle_kernel::runtime_config::Crypto;
+use droppedneedle_library::scan::Counter;
+use droppedneedle_library::scan::models::{ScanKind, ScanRequest, ScanTrigger};
+use droppedneedle_library::scan::store::ScanStoreError;
+use droppedneedle_library::scans::Scans;
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
+
+/// Unix seconds to the `YYYY-MM-DDTHH:MM:SSZ` form Subsonic shows.
+fn iso_text(unix: u64) -> Option<String> {
+    crate::subsonic::views::iso(Some(unix as i64))
 }
 
-/// One playlist entry: `library_file_id` is None for legacy/outbound
-/// entries, which are skipped as not streamable (#181).
-#[derive(Debug, Clone, Default)]
-pub struct PlaylistEntry {
-    /// Entry id.
-    pub id: String,
-    /// Linked library file id, when streamable.
-    pub library_file_id: Option<String>,
+/// A scan kind as the scan API and `library_scan_runs.kind` spell it.
+fn scan_kind_name(kind: ScanKind) -> &'static str {
+    match kind {
+        ScanKind::Incremental => "incremental",
+        ScanKind::RescanFiles => "rescan_files",
+        ScanKind::PolicyReconcile => "policy_reconcile",
+    }
 }
 
-/// Playlist record facts.
-#[derive(Debug, Clone, Default)]
-pub struct PlaylistRecord {
-    /// Playlist id.
-    pub id: String,
-    /// Playlist name.
-    pub name: String,
-    /// Public flag.
-    pub is_public: bool,
-    /// Created ISO timestamp.
-    pub created_at: Option<String>,
-    /// Updated ISO timestamp.
-    pub changed_at: Option<String>,
+fn view_rating(rating: &ItemRating) -> ViewRating {
+    ViewRating {
+        own: rating.own,
+        average: rating.average,
+    }
 }
 
-/// The last scan run that finished, however it ended.
-#[derive(Debug, Clone, Default)]
-pub struct LastScan {
-    /// When it ended, Unix seconds.
-    pub finished_at: i64,
-    /// Its kind, as the scanner names it.
-    pub kind: String,
-    /// How long it ran, nanoseconds. None when it ended before it started.
-    pub elapsed_nanos: Option<i64>,
+/// The ratings table's kind for an id kind, None for kinds nobody rates.
+fn rated_kind(kind: IdKind) -> Option<RatedKind> {
+    match kind {
+        IdKind::Artist => Some(RatedKind::Artist),
+        IdKind::Album => Some(RatedKind::Album),
+        IdKind::Track => Some(RatedKind::Track),
+        IdKind::Playlist | IdKind::Genre => None,
+    }
 }
 
-/// Scan status facts.
-#[derive(Debug, Clone, Default)]
-pub struct ScanStatusData {
-    /// Whether a scan is running.
-    pub scanning: bool,
-    /// Files looked at so far during a scan; playable tracks at rest.
-    pub count: i64,
-    /// Folders holding at least one playable track.
-    pub folder_count: i64,
-    /// The last finished run, or None before the first.
-    pub last: Option<LastScan>,
+fn kind_name(kind: IdKind) -> &'static str {
+    match kind {
+        IdKind::Artist => "artist",
+        IdKind::Album => "album",
+        IdKind::Track => "track",
+        IdKind::Playlist => "playlist",
+        IdKind::Genre => "genre",
+    }
 }
 
-/// Playlist list row: one playlist the caller may read.
-#[derive(Debug, Clone, Default)]
-pub struct PlaylistSummary {
-    /// Record.
-    pub record: PlaylistRecord,
-    /// True when the caller owns it.
-    pub is_owner: bool,
-    /// Owner display name.
-    pub owner_name: String,
-    /// Entries pointing at a library file (#181).
-    pub song_count: i64,
-    /// Their summed duration, whole seconds.
-    pub duration: i64,
+/// A track as the converters see it. `local_first` is the local-art
+/// setting its cover version is worked out under.
+fn view_track(track: PlayerTrack, local_first: bool) -> ViewTrack {
+    let version = cover_version(
+        track.art_version,
+        track.release_group_mbid.as_deref(),
+        local_first,
+    );
+    ViewTrack {
+        file_id: track.id,
+        title: track.title,
+        rg_mbid: Some(track.album_id),
+        album_title: Some(track.album_title),
+        artist_name: track.artist_name,
+        artist_mbid: track.artist_id,
+        album_artist_name: track.album_artist_name,
+        album_artist_mbid: Some(track.album_artist_id),
+        track_number: track.track_number,
+        disc_number: track.disc_number,
+        year: track.year,
+        genre: (!track.genres.is_empty()).then(|| track.genres.join(";")),
+        file_size_bytes: track.file_size_bytes,
+        file_format: Some(track.format),
+        relative_path: Some(track.relative_path),
+        duration_seconds: track.duration_seconds.unwrap_or(0.0),
+        bitrate: track.bit_rate,
+        created_at: whole(track.date_added),
+        starred_at: None,
+        rating: None,
+        play_count: None,
+        bit_depth: track.bit_depth,
+        sample_rate: track.sample_rate,
+        channels: track.channels,
+        musicbrainz_recording_id: track.recording_mbid.clone().filter(|id| is_valid_mbid(id)),
+        musicbrainz_artist_id: track.artist_mbid,
+        musicbrainz_album_artist_id: track.album_artist_mbid,
+        recording_mbid: track.recording_mbid,
+        provider_identity_projected: true,
+        played_at: None,
+        sort_name: track.sort_name,
+        replaygain_track_gain: track.replaygain_track_gain,
+        replaygain_album_gain: track.replaygain_album_gain,
+        replaygain_track_peak: track.replaygain_track_peak,
+        replaygain_album_peak: track.replaygain_album_peak,
+        cover_version: Some(version),
+    }
 }
 
-/// Playlist detail: record plus entries in order.
-#[derive(Debug, Clone, Default)]
-pub struct PlaylistDetail {
-    /// Record.
-    pub record: PlaylistRecord,
-    /// Entries in order.
-    pub tracks: Vec<PlaylistEntry>,
-    /// True when the caller owns it.
-    pub is_owner: bool,
-    /// Owner display name.
-    pub owner_name: String,
+/// An album's `musicBrainzId`, as Navidrome sends it: the release. An
+/// accepted match with no known release sends its release group; tag ids
+/// count only as a release.
+fn album_musicbrainz_id(ids: Option<&AlbumIds>) -> Option<String> {
+    let ids = ids?;
+    if ids.accepted {
+        ids.release_mbid
+            .clone()
+            .or_else(|| ids.release_group_mbid.clone())
+    } else {
+        ids.release_mbid.clone()
+    }
 }
 
-/// Saved play queue.
-#[derive(Debug, Clone, Default)]
-pub struct QueueState {
-    /// File ids in order.
-    pub file_ids: Vec<String>,
-    /// Current index into `file_ids`.
-    pub current_index: Option<usize>,
-    /// Position ms.
-    pub position_ms: i64,
-    /// Updated unix seconds.
-    pub updated_at: f64,
-    /// Client that last changed it.
-    pub changed_by_client: String,
+/// An album as the converters see it, its cover version worked out under
+/// the local-art setting `local_first`.
+fn view_album(album: PlayerAlbum, ids: &PlayerIds, local_first: bool) -> ViewAlbum {
+    let record = album.record;
+    let musicbrainz_album_id = album_musicbrainz_id(ids.albums.get(&record.id));
+    let version = cover_version(
+        record.art_version,
+        record.release_group_mbid.as_deref(),
+        local_first,
+    );
+    ViewAlbum {
+        rg_mbid: record.id,
+        title: record.title,
+        artist_name: Some(record.artist_name),
+        artist_mbid: Some(record.artist_id),
+        track_count: Some(record.track_count as i64),
+        total_duration_seconds: Some(record.total_duration_seconds),
+        play_count: None,
+        date_added: whole(record.date_added),
+        starred_at: None,
+        rating: None,
+        year: record.year,
+        genre: album.genre,
+        is_compilation: Some(record.is_compilation),
+        musicbrainz_album_id,
+        musicbrainz_artist_id: record.artist_mbid,
+        provider_identity_projected: true,
+        played_at: None,
+        sort_name: album.sort_name,
+        original_release_date: album.original_release_date,
+        release_date: album.release_date,
+        release_types: None,
+        disc_titles: Vec::new(),
+        cover_version: Some(version),
+    }
 }
 
-/// Bookmark record.
-#[derive(Debug, Clone, Default)]
-pub struct BookmarkRecord {
-    /// File id.
-    pub file_id: String,
-    /// Position ms.
-    pub position_ms: i64,
-    /// Comment.
-    pub comment: String,
-    /// Created unix seconds.
-    pub created_at: i64,
-    /// Changed unix seconds.
-    pub changed_at: i64,
+fn view_artist(artist: ArtistRecord, ids: &PlayerIds) -> ViewArtist {
+    let musicbrainz_artist_id = ids.artists.get(&artist.id).cloned();
+    ViewArtist {
+        artist_mbid: artist.id,
+        name: artist.name,
+        album_count: Some(artist.album_count as i64),
+        track_count: Some(artist.track_count as i64),
+        starred_at: None,
+        rating: None,
+        musicbrainz_artist_id,
+        provider_identity_projected: true,
+    }
 }
 
-/// Now-playing presence row.
-#[derive(Debug, Clone, Default)]
-pub struct NowPlayingRow {
-    /// Listener display name.
-    pub user_name: String,
-    /// File id.
-    pub file_id: String,
-    /// Last update unix seconds.
-    pub updated_at: f64,
-    /// Source label (preferred for playerName).
-    pub source: Option<String>,
-    /// Device name (fallback for playerName).
-    pub device_name: Option<String>,
+fn record(visible: &Visible) -> PlaylistRecord {
+    PlaylistRecord {
+        id: visible.row.id.clone(),
+        name: visible.row.name.clone(),
+        is_public: visible.row.is_public,
+        created_at: iso_text(visible.row.created_at),
+        changed_at: iso_text(visible.row.updated_at),
+    }
 }
 
-/// One lyric line.
-#[derive(Debug, Clone, Default)]
-pub struct LyricLine {
-    /// Line text.
-    pub value: String,
-    /// Start ms (synced only).
-    pub start_ms: Option<i64>,
+fn entry((id, library_file_id): (String, Option<String>)) -> PlaylistEntry {
+    PlaylistEntry {
+        id,
+        library_file_id,
+    }
 }
 
-/// Stored lyrics for a track.
-#[derive(Debug, Clone, Default)]
-pub struct LyricsData {
-    /// Language code.
-    pub language: String,
-    /// Whether lines carry timestamps.
-    pub synced: bool,
-    /// Lines.
-    pub lines: Vec<LyricLine>,
+fn saved_record(saved: SavedPlaylist) -> PlaylistRecord {
+    PlaylistRecord {
+        id: saved.id,
+        name: saved.name,
+        is_public: saved.is_public,
+        created_at: iso_text(saved.created_at),
+        changed_at: iso_text(saved.updated_at),
+    }
 }
 
-/// Stream facts inside an advanced transcode decision.
-#[derive(Debug, Clone, Default)]
-pub struct StreamDetailsData {
-    /// Protocol.
-    pub protocol: String,
-    /// Container.
-    pub container: String,
-    /// Codec.
-    pub codec: String,
-    /// Audio channels.
-    pub audio_channels: Option<i64>,
-    /// Audio bitrate.
-    pub audio_bitrate: Option<i64>,
-    /// Sample rate.
-    pub audio_samplerate: Option<i64>,
-    /// Bit depth.
-    pub audio_bitdepth: Option<i64>,
+/// Production Subsonic store (see module docs).
+#[derive(Clone)]
+pub struct SubsonicStore {
+    library: CompatLibrary,
+    queues: CompatQueues,
+    playback: CompatPlayback,
+    users: UsersDeps,
+    scan: Scans,
+    crypto: Arc<Crypto>,
+    pictures: PictureSigner,
+    settings: LiveSettings,
+    caller: Option<String>,
 }
 
-/// Advanced transcode decision (signed params minted inside).
-#[derive(Debug, Clone, Default)]
-pub struct TranscodeDecisionData {
-    /// Direct play possible.
-    pub can_direct_play: bool,
-    /// Transcode possible.
-    pub can_transcode: bool,
-    /// Why a transcode is needed.
-    pub transcode_reason: Vec<String>,
-    /// Why nothing is possible.
-    pub error_reason: Option<String>,
-    /// Signed params for getTranscodeStream.
-    pub transcode_params: Option<String>,
-    /// Source stream facts.
-    pub source_stream: Option<StreamDetailsData>,
-    /// Target stream facts.
-    pub transcode_stream: Option<StreamDetailsData>,
+impl SubsonicStore {
+    /// Bind the live deps; unscoped until [`Self::for_caller`].
+    pub fn new(
+        library: CompatLibrary,
+        queues: CompatQueues,
+        playback: CompatPlayback,
+        users: UsersDeps,
+        scan: Scans,
+        crypto: Arc<Crypto>,
+        settings: LiveSettings,
+    ) -> Self {
+        Self {
+            library,
+            queues,
+            playback,
+            users,
+            scan,
+            pictures: PictureSigner::new(Arc::clone(&crypto)),
+            crypto,
+            settings,
+            caller: None,
+        }
+    }
+
+    /// The platform clock the users deps carry.
+    pub fn clock(&self) -> &Arc<dyn droppedneedle_kernel::clock::Clock> {
+        &self.users.clock
+    }
+
+    fn now(&self) -> f64 {
+        self.users.clock.now_ms() as f64 / 1000.0
+    }
+
+    async fn tracks_for_caller(
+        &self,
+        tracks: Vec<PlayerTrack>,
+    ) -> Result<Vec<ViewTrack>, CompatError> {
+        let local_first = self.library.local_art_first();
+        let mut views = tracks
+            .into_iter()
+            .map(|track| view_track(track, local_first))
+            .collect::<Vec<_>>();
+        if let Some(user_id) = &self.caller {
+            let ids = views
+                .iter()
+                .map(|view| view.file_id.clone())
+                .collect::<Vec<_>>();
+            let starred = self.library.starred(user_id, "track", &ids).await?;
+            let rated = self
+                .library
+                .ratings(user_id, RatedKind::Track, &ids)
+                .await?;
+            let plays = self.library.plays(user_id, "track", &ids).await?;
+            for view in &mut views {
+                view.starred_at = starred.get(&view.file_id).copied();
+                view.rating = rated.get(&view.file_id).map(view_rating);
+                if let Some((count, last)) = plays.get(&view.file_id) {
+                    view.play_count = Some(*count as i64);
+                    view.played_at = whole(*last).and_then(|at| iso_text(at.max(0) as u64));
+                }
+            }
+        }
+        Ok(views)
+    }
+
+    async fn albums_for_caller(
+        &self,
+        albums: Vec<PlayerAlbum>,
+    ) -> Result<Vec<ViewAlbum>, CompatError> {
+        let ids = albums
+            .iter()
+            .map(|album| album.record.id.clone())
+            .collect::<Vec<_>>();
+        let player_ids = self.library.player_ids(&ids, &[]).await?;
+        let local_first = self.library.local_art_first();
+        let mut views = albums
+            .into_iter()
+            .map(|album| view_album(album, &player_ids, local_first))
+            .collect::<Vec<_>>();
+        if let Some(user_id) = &self.caller {
+            let starred = self.library.starred(user_id, "album", &ids).await?;
+            let rated = self
+                .library
+                .ratings(user_id, RatedKind::Album, &ids)
+                .await?;
+            let plays = self.library.plays(user_id, "album", &ids).await?;
+            for view in &mut views {
+                view.starred_at = starred.get(&view.rg_mbid).copied();
+                view.rating = rated.get(&view.rg_mbid).map(view_rating);
+                if let Some((count, last)) = plays.get(&view.rg_mbid) {
+                    view.play_count = Some(*count as i64);
+                    view.played_at = whole(*last).and_then(|at| iso_text(at.max(0) as u64));
+                }
+            }
+        }
+        Ok(views)
+    }
+
+    async fn artists_for_caller(
+        &self,
+        artists: Vec<ArtistRecord>,
+    ) -> Result<Vec<ViewArtist>, CompatError> {
+        let ids = artists
+            .iter()
+            .map(|artist| artist.id.clone())
+            .collect::<Vec<_>>();
+        let player_ids = self.library.player_ids(&[], &ids).await?;
+        let mut views = artists
+            .into_iter()
+            .map(|artist| view_artist(artist, &player_ids))
+            .collect::<Vec<_>>();
+        if let Some(user_id) = &self.caller {
+            let starred = self.library.starred(user_id, "artist", &ids).await?;
+            let rated = self
+                .library
+                .ratings(user_id, RatedKind::Artist, &ids)
+                .await?;
+            for view in &mut views {
+                view.starred_at = starred.get(&view.artist_mbid).copied();
+                view.rating = rated.get(&view.artist_mbid).map(view_rating);
+            }
+        }
+        Ok(views)
+    }
 }
 
-/// Client playback capabilities (getTranscodeDecision JSON body).
-/// Parsed, validated and passed to [`SubsonicStore::advanced_decide`](crate::adapters::subsonic_store::SubsonicStore::advanced_decide).
-#[derive(Debug, Clone, Default)]
-pub struct ClientInfo {
-    /// Client name.
-    pub name: String,
-    /// Client platform.
-    pub platform: String,
-    /// Max audio bitrate (0 = unset, Feishin #464/#468).
-    pub max_audio_bitrate: Option<i64>,
-    /// Max transcoding audio bitrate (0 = unset).
-    pub max_transcoding_audio_bitrate: Option<i64>,
-    /// Formats the client plays as-is.
-    pub direct_play_profiles: Vec<super::media::client_info::DirectPlayProfile>,
-    /// Formats the client accepts from the transcoder.
-    pub transcoding_profiles: Vec<super::media::client_info::TranscodingProfile>,
-    /// Per-codec limits.
-    pub codec_profiles: Vec<super::media::client_info::CodecProfile>,
+impl SubsonicStore {
+    /// The store scoped to one authenticated caller, so catalog reads can
+    /// carry the caller's starred dates and play counts.
+    pub fn for_caller(&self, user_id: &str) -> Self {
+        Self {
+            caller: Some(user_id.to_owned()),
+            ..self.clone()
+        }
+    }
+
+    /// The signer of open picture links, over the data key.
+    pub fn pictures(&self) -> &PictureSigner {
+        &self.pictures
+    }
+
+    /// Artists page in name order, optional match query (None = match-all).
+    /// No caller shows a total, so none is counted.
+    pub async fn get_artists(
+        &self,
+        limit: usize,
+        offset: usize,
+        query: Option<&str>,
+    ) -> Result<Vec<ViewArtist>, CompatError> {
+        let artists = self
+            .library
+            .album_artist_page(query, false, limit as u64, offset as u64)
+            .await?;
+        self.artists_for_caller(artists).await
+    }
+
+    /// Artists page for search2/search3: like [`Self::get_artists`], but an
+    /// empty query pages in insertion order (the sync order).
+    pub async fn search_artists(
+        &self,
+        limit: usize,
+        offset: usize,
+        query: Option<&str>,
+    ) -> Result<Vec<ViewArtist>, CompatError> {
+        // The empty query is the sync: insertion order, stable while a scan
+        // adds artists.
+        let artists = self
+            .library
+            .album_artist_page(query, query.is_none(), limit as u64, offset as u64)
+            .await?;
+        self.artists_for_caller(artists).await
+    }
+
+    /// Tracks whose title equals `title` (case-insensitive), for the legacy
+    /// getLyrics lookup.
+    pub async fn get_tracks_by_title(&self, title: &str) -> Result<Vec<ViewTrack>, CompatError> {
+        let query = TrackQuery {
+            title: Some(title.to_owned()),
+            ..TrackQuery::default()
+        };
+        let tracks = self
+            .library
+            .track_page(&query, TrackOrder::Title, 500, 0)
+            .await?;
+        self.tracks_for_caller(tracks).await
+    }
+
+    /// Library revision for getIndexes freshness.
+    pub async fn get_library_revision(&self) -> Result<i64, CompatError> {
+        self.library.revision().await
+    }
+
+    /// Artist plus its albums, or None.
+    pub async fn get_artist_with_albums(
+        &self,
+        artist_mbid: &str,
+    ) -> Result<Option<(ViewArtist, Vec<ViewAlbum>)>, CompatError> {
+        let Some(artist) = self.library.artist(artist_mbid).await? else {
+            return Ok(None);
+        };
+        let query = AlbumQuery {
+            artist_id: Some(artist_mbid.to_owned()),
+            ..AlbumQuery::default()
+        };
+        let albums = self
+            .library
+            .album_page(&query, AlbumOrder::Title, u64::MAX >> 1, 0)
+            .await?;
+        let Some(artist) = self.artists_for_caller(vec![artist]).await?.pop() else {
+            return Ok(None);
+        };
+        Ok(Some((artist, self.albums_for_caller(albums).await?)))
+    }
+
+    /// Album by release-group mbid, or None.
+    pub async fn get_album(&self, rg_mbid: &str) -> Result<Option<ViewAlbum>, CompatError> {
+        let Some(album) = self.library.album(rg_mbid).await? else {
+            return Ok(None);
+        };
+        if album.record.track_count == 0 {
+            return Ok(None);
+        }
+        let tracks = self.library.album_tracks(rg_mbid).await?;
+        let mut disc_titles: Vec<(i64, String)> = Vec::new();
+        for track in &tracks {
+            if let Some(title) = &track.disc_subtitle
+                && !disc_titles
+                    .iter()
+                    .any(|(disc, _)| *disc == track.disc_number)
+            {
+                disc_titles.push((track.disc_number, title.clone()));
+            }
+        }
+        let release_type = {
+            let mut counts: HashMap<&str, usize> = HashMap::new();
+            for track in &tracks {
+                if let Some(kind) = track.release_type.as_deref().map(str::trim)
+                    && !kind.is_empty()
+                {
+                    *counts.entry(kind).or_default() += 1;
+                }
+            }
+            counts
+                .into_iter()
+                .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(a.0)))
+                .map(|(kind, _)| kind.to_lowercase())
+        };
+        let mut views = self.albums_for_caller(vec![album]).await?;
+        Ok(views.pop().map(|mut view| {
+            view.disc_titles = disc_titles;
+            if let Some(kind) = release_type {
+                let mut types = vec![kind];
+                if view.is_compilation == Some(true) && !types.iter().any(|t| t == "compilation") {
+                    types.push("compilation".to_owned());
+                }
+                view.release_types = Some(types);
+            }
+            view
+        }))
+    }
+
+    /// Tracks of an album.
+    pub async fn get_album_tracks(&self, rg_mbid: &str) -> Result<Vec<ViewTrack>, CompatError> {
+        let tracks = self.library.album_tracks(rg_mbid).await?;
+        self.tracks_for_caller(tracks).await
+    }
+
+    /// Track by file id, or None.
+    pub async fn get_track(&self, file_id: &str) -> Result<Option<ViewTrack>, CompatError> {
+        let Some(track) = self.library.track(file_id).await? else {
+            return Ok(None);
+        };
+        Ok(self.tracks_for_caller(vec![track]).await?.pop())
+    }
+
+    /// Tracks by file ids (missing ids absent from the map).
+    pub async fn get_tracks_by_file_ids(
+        &self,
+        file_ids: &[String],
+    ) -> Result<HashMap<String, ViewTrack>, CompatError> {
+        let tracks = self.library.tracks_by_ids(file_ids).await?;
+        Ok(self
+            .tracks_for_caller(tracks)
+            .await?
+            .into_iter()
+            .map(|view| (view.file_id.clone(), view))
+            .collect())
+    }
+
+    /// Tracks page, optional match query. None matches all, in insertion
+    /// order (the search3 sync order); a query pages in album order.
+    pub async fn get_tracks_page(
+        &self,
+        limit: usize,
+        offset: usize,
+        query: Option<&str>,
+    ) -> Result<Vec<ViewTrack>, CompatError> {
+        let order = if query.is_some() {
+            TrackOrder::Album
+        } else {
+            TrackOrder::Natural
+        };
+        let query = TrackQuery {
+            q: query.map(str::to_owned),
+            ..TrackQuery::default()
+        };
+        let tracks = self
+            .library
+            .track_page(&query, order, limit as u64, offset as u64)
+            .await?;
+        self.tracks_for_caller(tracks).await
+    }
+
+    /// Albums page with sort, year bounds, genre, and match query.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_albums_offset(
+        &self,
+        limit: usize,
+        offset: usize,
+        sort: AlbumSort,
+        from_year: Option<i64>,
+        to_year: Option<i64>,
+        genre: Option<&str>,
+        query: Option<&str>,
+    ) -> Result<Vec<ViewAlbum>, CompatError> {
+        let (low, high) = match (from_year, to_year) {
+            (Some(from), Some(to)) => (Some(from.min(to)), Some(from.max(to))),
+            other => other,
+        };
+        let query = AlbumQuery {
+            q: query.map(str::to_owned),
+            genre: genre.map(str::to_owned),
+            year_from: low,
+            year_to: high,
+            ..AlbumQuery::default()
+        };
+        let order = match sort {
+            AlbumSort::Recent => AlbumOrder::Newest,
+            AlbumSort::Title => AlbumOrder::Title,
+            AlbumSort::Artist => AlbumOrder::Artist,
+            // Random pages share one shuffle per caller and filter, drawn
+            // at offset 0.
+            AlbumSort::Random => AlbumOrder::Shuffle(self.library.album_shuffle(
+                self.caller.as_deref().unwrap_or(""),
+                &query,
+                offset as u64,
+            )),
+            AlbumSort::Natural => AlbumOrder::Natural,
+            AlbumSort::YearAsc => AlbumOrder::YearAsc,
+            AlbumSort::YearDesc => AlbumOrder::YearDesc,
+        };
+        let albums = self
+            .library
+            .album_page(&query, order, limit as u64, offset as u64)
+            .await?;
+        self.albums_for_caller(albums).await
+    }
+
+    /// Random songs with optional filters.
+    pub async fn get_random_songs(
+        &self,
+        count: usize,
+        genre: Option<&str>,
+        from_year: Option<i64>,
+        to_year: Option<i64>,
+    ) -> Result<Vec<ViewTrack>, CompatError> {
+        let query = TrackQuery {
+            genre: genre.map(str::to_owned),
+            year_from: from_year,
+            year_to: to_year,
+            ..TrackQuery::default()
+        };
+        let tracks = self
+            .library
+            .track_page(&query, TrackOrder::Random, count as u64, 0)
+            .await?;
+        self.tracks_for_caller(tracks).await
+    }
+
+    /// Recent (`frequent=false`) or frequent history albums.
+    pub async fn get_history_albums(
+        &self,
+        user_id: &str,
+        frequent: bool,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ViewAlbum>, CompatError> {
+        let ids = self
+            .library
+            .history_albums(user_id, frequent, limit as u64, offset as u64)
+            .await?;
+        let albums = self.library.albums_in_order(&ids).await?;
+        self.albums_for_caller(albums).await
+    }
+
+    /// Starred albums page. A starred album that is gone is dropped
+    /// before paging, so every page but the last is full.
+    pub async fn get_starred_albums(
+        &self,
+        user_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ViewAlbum>, CompatError> {
+        let ids = self
+            .library
+            .favorite_ids(user_id, "album")
+            .await?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        let wanted = offset.saturating_add(limit);
+        let mut found = Vec::new();
+        for chunk in ids.chunks(500) {
+            if found.len() >= wanted {
+                break;
+            }
+            found.extend(self.library.albums_in_order(chunk).await?);
+        }
+        let albums = found.into_iter().skip(offset).take(limit).collect();
+        self.albums_for_caller(albums).await
+    }
+
+    /// Albums the user rated, highest first. A rated album that is gone
+    /// is dropped before paging, so every page but the last is full.
+    pub async fn get_highest_albums(
+        &self,
+        user_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ViewAlbum>, CompatError> {
+        let ids = self.library.rated_ids(user_id, RatedKind::Album).await?;
+        let wanted = offset.saturating_add(limit);
+        let mut albums = Vec::new();
+        for chunk in ids.chunks(500) {
+            if albums.len() >= wanted {
+                break;
+            }
+            albums.extend(self.library.albums_in_order(chunk).await?);
+        }
+        let page = albums.into_iter().skip(offset).take(limit).collect();
+        self.albums_for_caller(page).await
+    }
+
+    /// All genres.
+    pub async fn get_genres(&self) -> Result<Vec<ViewGenre>, CompatError> {
+        Ok(self
+            .library
+            .genres()
+            .await?
+            .into_iter()
+            .map(|genre| ViewGenre {
+                name: genre.name,
+                song_count: genre.track_count as i64,
+                album_count: genre.album_count as i64,
+            })
+            .collect())
+    }
+
+    /// Songs of a genre page.
+    pub async fn get_songs_by_genre(
+        &self,
+        genre: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ViewTrack>, CompatError> {
+        let query = TrackQuery {
+            genre: Some(genre.to_owned()),
+            ..TrackQuery::default()
+        };
+        let tracks = self
+            .library
+            .track_page(&query, TrackOrder::Album, limit as u64, offset as u64)
+            .await?;
+        self.tracks_for_caller(tracks).await
+    }
+
+    /// The id an album, artist or track has now: `id` itself while it is
+    /// live, else the live one a merge or an alias points it at; `None`
+    /// when no live album or artist holds it. An album id nothing holds
+    /// is tried again without a cover version. A track nothing holds
+    /// answers `id`, and other kinds answer `id` unchanged.
+    pub async fn current_id(&self, kind: IdKind, id: &str) -> Result<Option<String>, CompatError> {
+        match kind {
+            IdKind::Album | IdKind::Artist | IdKind::Track => {
+                let name = kind_name(kind);
+                let found = self.library.catalog.current_id(name, id).await?;
+                match (found, kind, without_cover_version(id)) {
+                    (None, IdKind::Album, Some(bare)) => {
+                        Ok(self.library.catalog.current_id(name, bare).await?)
+                    }
+                    (found, _, _) => Ok(found),
+                }
+            }
+            _ => Ok(Some(id.to_owned())),
+        }
+    }
+
+    /// Whether an album, artist or track is in the library under exactly
+    /// `id`, an alias not counted, in one indexed read. Other kinds never
+    /// are.
+    pub async fn exists(&self, kind: IdKind, id: &str) -> Result<bool, CompatError> {
+        if !matches!(kind, IdKind::Album | IdKind::Artist | IdKind::Track) {
+            return Ok(false);
+        }
+        let found = self
+            .library
+            .catalog
+            .existing(kind_name(kind), &[id.to_owned()])
+            .await?;
+        Ok(found.contains(id))
+    }
+
+    /// Subset of (kind, internal id) targets missing from the library.
+    pub async fn missing_targets(
+        &self,
+        targets: &[(IdKind, String)],
+    ) -> Result<Vec<(IdKind, String)>, CompatError> {
+        let mut existing: HashMap<&'static str, std::collections::HashSet<String>> = HashMap::new();
+        for kind in ["artist", "album", "track"] {
+            let ids = targets
+                .iter()
+                .filter(|(target, _)| kind_name(*target) == kind)
+                .map(|(_, id)| id.clone())
+                .collect::<Vec<_>>();
+            if !ids.is_empty() {
+                existing.insert(kind, self.library.catalog.existing(kind, &ids).await?);
+            }
+        }
+        let mut missing = Vec::new();
+        for (kind, id) in targets {
+            let present = match kind {
+                // Never a favourite or rating target: `setRating` refuses
+                // the kind whatever this answers.
+                IdKind::Playlist => false,
+                IdKind::Genre => true,
+                other => existing
+                    .get(kind_name(*other))
+                    .is_some_and(|ids| ids.contains(id)),
+            };
+            if !present {
+                missing.push((*kind, id.clone()));
+            }
+        }
+        Ok(missing)
+    }
+
+    /// Top songs for an exact artist name.
+    pub async fn get_top_songs(
+        &self,
+        artist: &str,
+        user_id: &str,
+        count: usize,
+    ) -> Result<Vec<ViewTrack>, CompatError> {
+        let query = TrackQuery {
+            artist_name: Some(artist.to_owned()),
+            ..TrackQuery::default()
+        };
+        let pool = (count.max(1) * 4) as u64;
+        let tracks = self
+            .library
+            .track_page(&query, TrackOrder::Newest, pool, 0)
+            .await?;
+        let ids = tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>();
+        let plays = self.library.plays(user_id, "track", &ids).await?;
+        let mut ranked = tracks;
+        // Stable: most played first, newest import breaks ties (v2).
+        ranked.sort_by_key(|track| {
+            std::cmp::Reverse(plays.get(&track.id).map(|(count, _)| *count).unwrap_or(0))
+        });
+        ranked.truncate(count);
+        self.tracks_for_caller(ranked).await
+    }
+
+    /// Similar songs for an artist mbid.
+    pub async fn get_similar_songs(
+        &self,
+        artist_mbid: &str,
+        _user_id: &str,
+        count: usize,
+    ) -> Result<Vec<ViewTrack>, CompatError> {
+        let query = TrackQuery {
+            artist_ids: vec![artist_mbid.to_owned()],
+            ..TrackQuery::default()
+        };
+        let tracks = self
+            .library
+            .track_page(&query, TrackOrder::Random, count as u64, 0)
+            .await?;
+        self.tracks_for_caller(tracks).await
+    }
+
+    /// The playlists the user may read, with streamable counts (#181).
+    pub async fn get_all_playlists(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<PlaylistSummary>, CompatError> {
+        Ok(self
+            .library
+            .playlists(user_id)
+            .await?
+            .iter()
+            .map(|visible| PlaylistSummary {
+                record: record(visible),
+                is_owner: visible.is_owner,
+                owner_name: visible.row.owner_name.clone().unwrap_or_default(),
+                song_count: visible.row.streamable_count as i64,
+                duration: visible.row.streamable_duration.round() as i64,
+            })
+            .collect())
+    }
+
+    /// Playlist detail, or None.
+    pub async fn get_playlist_with_tracks(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+    ) -> Result<Option<PlaylistDetail>, CompatError> {
+        let Some(visible) = self.library.playlist(user_id, playlist_id).await? else {
+            return Ok(None);
+        };
+        let tracks = self
+            .library
+            .playlist_entries(user_id, playlist_id)
+            .await?
+            .into_iter()
+            .map(entry)
+            .collect();
+        Ok(Some(PlaylistDetail {
+            record: record(&visible),
+            tracks,
+            is_owner: visible.is_owner,
+            owner_name: visible.row.owner_name.clone().unwrap_or_default(),
+        }))
+    }
+
+    /// Entries of one of the user's own playlists in order; None when it
+    /// is not theirs.
+    pub async fn get_playlist_tracks(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+    ) -> Result<Option<Vec<PlaylistEntry>>, CompatError> {
+        Ok(self
+            .library
+            .owned_entries(user_id, playlist_id)
+            .await?
+            .map(|entries| entries.into_iter().map(entry).collect()))
+    }
+
+    /// Create a playlist holding the library files `file_ids`, as one
+    /// write. Nothing is read back.
+    pub async fn create_playlist(
+        &self,
+        name: &str,
+        user_id: &str,
+        file_ids: &[String],
+    ) -> Result<PlaylistRecord, CompatError> {
+        let saved = self
+            .library
+            .create_playlist(user_id, name, file_ids)
+            .await?;
+        Ok(saved_record(saved))
+    }
+
+    /// Replace a playlist's entries with the library files `file_ids` and,
+    /// when `name` is given, rename it, as one write. Nothing is read back.
+    pub async fn replace_playlist(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+        name: Option<&str>,
+        file_ids: &[String],
+    ) -> Result<PlaylistRecord, CompatError> {
+        let saved = self
+            .library
+            .replace_playlist(user_id, playlist_id, name, file_ids)
+            .await?;
+        Ok(saved_record(saved))
+    }
+
+    /// Rename a playlist.
+    pub async fn update_playlist(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+        name: &str,
+    ) -> Result<(), CompatError> {
+        self.library
+            .rename_playlist(user_id, playlist_id, name)
+            .await
+    }
+
+    /// Flip playlist visibility.
+    pub async fn set_playlist_public(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+        public: bool,
+    ) -> Result<(), CompatError> {
+        self.library
+            .set_playlist_public(user_id, playlist_id, public)
+            .await
+    }
+
+    /// Remove entries by entry id.
+    pub async fn remove_playlist_tracks(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+        entry_ids: &[String],
+    ) -> Result<(), CompatError> {
+        self.library
+            .remove_entries(user_id, playlist_id, entry_ids)
+            .await
+    }
+
+    /// Append library files to a playlist, as one write.
+    pub async fn add_playlist_files(
+        &self,
+        playlist_id: &str,
+        file_ids: &[String],
+        user_id: &str,
+    ) -> Result<(), CompatError> {
+        self.library.add_files(user_id, playlist_id, file_ids).await
+    }
+
+    /// Delete a playlist.
+    pub async fn delete_playlist(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+    ) -> Result<(), CompatError> {
+        self.library.delete_playlist(user_id, playlist_id).await
+    }
+
+    /// Cover bytes + content type of a playlist the user may read: the
+    /// uploaded one, else one made from its tracks. None when there is
+    /// neither or the playlist is not theirs to read.
+    pub async fn playlist_cover(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+    ) -> Result<Option<ImageBytes>, CompatError> {
+        self.library.playlist_cover(user_id, playlist_id).await
+    }
+
+    /// Star or unstar targets.
+    pub async fn apply_favorites(
+        &self,
+        user_id: &str,
+        targets: &[(IdKind, String)],
+        add: bool,
+    ) -> Result<(), CompatError> {
+        let targets = targets
+            .iter()
+            .map(|(kind, id)| (kind_name(*kind).to_owned(), id.clone()))
+            .collect::<Vec<_>>();
+        self.library.set_favorites(user_id, &targets, add).await
+    }
+
+    /// Starred (internal id, starred unix seconds) for a kind.
+    pub async fn list_favorites(
+        &self,
+        user_id: &str,
+        kind: IdKind,
+    ) -> Result<Vec<(String, i64)>, CompatError> {
+        self.library.favorite_ids(user_id, kind_name(kind)).await
+    }
+
+    /// Set the user's rating of an artist, album or track, 1 to 5, or
+    /// clear it with 0.
+    pub async fn set_rating(
+        &self,
+        user_id: &str,
+        kind: IdKind,
+        id: &str,
+        rating: u8,
+    ) -> Result<(), CompatError> {
+        let kind = rated_kind(kind).ok_or(CompatError::NotFound)?;
+        self.library.set_rating(user_id, kind, id, rating).await
+    }
+
+    /// Record a scrobble.
+    pub async fn scrobble(
+        &self,
+        file_id: &str,
+        user_id: &str,
+        _client: Option<&str>,
+        played_at: Option<f64>,
+        _user_name: &str,
+    ) -> Result<(), CompatError> {
+        if !self.playback.scrobble(file_id, user_id, played_at) {
+            tracing::warn!(
+                file_id,
+                "compat scrobble was refused by the playback service"
+            );
+        }
+        Ok(())
+    }
+
+    /// Record now-playing presence.
+    pub async fn now_playing(
+        &self,
+        file_id: &str,
+        user_id: &str,
+        client: Option<&str>,
+        _user_name: &str,
+    ) -> Result<(), CompatError> {
+        self.playback
+            .now_playing(file_id, user_id, client, None, false);
+        Ok(())
+    }
+
+    /// Current presence rows.
+    pub async fn compat_now_playing(&self) -> Result<Vec<NowPlayingRow>, CompatError> {
+        Ok(self.playback.compat_rows())
+    }
+
+    /// Record a playback report (extension playbackReport:1).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn report_playback(
+        &self,
+        file_id: &str,
+        user_id: &str,
+        _user_name: &str,
+        client: &str,
+        position_ms: i64,
+        state: &str,
+        ignore_scrobble: bool,
+    ) -> Result<(), CompatError> {
+        if !self.playback.report_playback(
+            file_id,
+            user_id,
+            client,
+            state,
+            position_ms,
+            ignore_scrobble,
+        ) {
+            tracing::warn!(file_id, state, "compat playback report was refused");
+        }
+        Ok(())
+    }
+
+    /// Saved play queue.
+    pub async fn get_play_queue(&self, user_id: &str) -> Result<QueueState, CompatError> {
+        Ok(self.queues.get_queue(user_id).await?)
+    }
+
+    /// Replace the saved play queue.
+    pub async fn replace_play_queue(
+        &self,
+        user_id: &str,
+        file_ids: &[String],
+        current_index: Option<usize>,
+        position_ms: i64,
+        changed_by_client: &str,
+    ) -> Result<(), CompatError> {
+        Ok(self
+            .queues
+            .replace_queue(
+                user_id,
+                file_ids,
+                current_index,
+                position_ms,
+                changed_by_client,
+                self.users.clock.now_ms(),
+            )
+            .await?)
+    }
+
+    /// Bookmarks for the user.
+    pub async fn list_bookmarks(&self, user_id: &str) -> Result<Vec<BookmarkRecord>, CompatError> {
+        Ok(self.queues.list_bookmarks(user_id).await?)
+    }
+
+    /// Create or update a bookmark.
+    pub async fn upsert_bookmark(
+        &self,
+        user_id: &str,
+        file_id: &str,
+        position_ms: i64,
+        comment: &str,
+    ) -> Result<(), CompatError> {
+        Ok(self
+            .queues
+            .upsert_bookmark(
+                user_id,
+                file_id,
+                position_ms,
+                comment,
+                self.users.clock.now_ms(),
+            )
+            .await?)
+    }
+
+    /// Delete a bookmark.
+    pub async fn delete_bookmark(&self, user_id: &str, file_id: &str) -> Result<(), CompatError> {
+        Ok(self.queues.delete_bookmark(user_id, file_id).await?)
+    }
+
+    /// Lyrics for a track, or None.
+    pub async fn get_lyrics(&self, file_id: &str) -> Result<Option<LyricsData>, CompatError> {
+        Ok(self.library.lyrics(file_id).await?.map(|doc| LyricsData {
+            language: "und".to_owned(),
+            synced: doc.synced,
+            lines: doc
+                .lines
+                .into_iter()
+                .map(|(value, start_ms)| LyricLine { value, start_ms })
+                .collect(),
+        }))
+    }
+
+    /// Avatar bytes + content type, or None.
+    pub async fn resolve_avatar(&self, user_id: &str) -> Result<Option<ImageBytes>, CompatError> {
+        self.users
+            .avatars
+            .load(user_id)
+            .await
+            .map_err(|error| CompatError::Internal(format!("avatar load failed: {error:?}")))
+    }
+
+    /// Whether a scan runs, the library's size and the last finished scan.
+    pub async fn scan_status(&self) -> Result<ScanStatusData, CompatError> {
+        let (tracks, folder_count) = self.library.playable_counts().await?;
+        let current = self.scan.coordinator.current();
+        let scanning = !current.is_empty();
+        let count = if scanning {
+            current
+                .iter()
+                .map(|run| run.counters.get(Counter::Inspected))
+                .sum()
+        } else {
+            tracks
+        };
+        let store = self.scan.scan_store.clone();
+        let last = tokio::task::spawn_blocking(move || store.list_history(1, None))
+            .await
+            .map_err(|error| CompatError::Internal(format!("scan history task: {error}")))?
+            .map_err(|error| match error {
+                ScanStoreError::Busy { .. } => CompatError::Busy(format!("scan history: {error}")),
+                error => CompatError::Internal(format!("scan history: {error}")),
+            })?
+            .into_iter()
+            .next()
+            .and_then(|run| {
+                let finished_at = run.terminal_at?;
+                Some(LastScan {
+                    finished_at: finished_at as i64,
+                    kind: scan_kind_name(run.kind).to_owned(),
+                    elapsed_nanos: run
+                        .started_at
+                        .map(|started_at| ((finished_at - started_at).max(0.0) * 1e9) as i64)
+                        .filter(|nanos| *nanos > 0),
+                })
+            });
+        Ok(ScanStatusData {
+            scanning,
+            count,
+            folder_count,
+            last,
+        })
+    }
+
+    /// Start a scan (admin gate lives in the handler).
+    pub async fn start_scan(&self) -> Result<(), CompatError> {
+        let registry = self.scan.core.live_registry();
+        let outcome = self.scan.coordinator.request_run(&ScanRequest {
+            kind: ScanKind::Incremental,
+            trigger: ScanTrigger::Subsonic,
+            scopes: registry.scheduled_root_scopes(),
+            requested_by_user_id: self.caller.clone(),
+            policy_revision: registry.fingerprint().to_owned(),
+        });
+        if let Err(error) = outcome {
+            tracing::warn!(?error, "subsonic scan request was not admitted");
+        }
+        Ok(())
+    }
+
+    /// Release-group cover bytes + content type for a size bucket, or None.
+    pub async fn release_group_cover(
+        &self,
+        rg_mbid: &str,
+        bucket: &str,
+    ) -> Result<Option<ImageBytes>, CompatError> {
+        self.library.album_cover(rg_mbid, Some(bucket)).await
+    }
+
+    /// Artist image bytes + content type for a pixel size, or None.
+    pub async fn artist_image(
+        &self,
+        artist_mbid: &str,
+        px: Option<i64>,
+    ) -> Result<Option<ImageBytes>, CompatError> {
+        let px = px.and_then(|value| u32::try_from(value).ok());
+        let bucket = px.map_or_else(|| "500".to_owned(), |px| px.to_string());
+        self.library.artist_cover(artist_mbid, px, &bucket).await
+    }
+
+    /// Advanced transcode decision for a client description.
+    pub async fn advanced_decide(
+        &self,
+        track: &ViewTrack,
+        client: &ClientInfo,
+        user_id: &str,
+    ) -> Result<TranscodeDecisionData, CompatError> {
+        let settings = self.settings.subsonic();
+        let policy = advanced::Policy {
+            transcoding_enabled: settings.transcoding_enabled,
+            ffmpeg_available: settings.ffmpeg_available,
+            max_bitrate_kbps: settings.transcode_max_bitrate_kbps,
+        };
+        let decision = advanced::negotiate(track, client, policy);
+        let mut answer = decision.answer;
+        answer.transcode_params = decision.grant.and_then(|grant| {
+            advanced::seal(
+                &self.crypto,
+                user_id,
+                &track.file_id,
+                grant,
+                self.now() as i64,
+            )
+        });
+        Ok(answer)
+    }
+
+    /// Decode signed transcode params: (direct, out format, bitrate kbps).
+    pub async fn decode_transcode_params(
+        &self,
+        params: &str,
+        user_id: &str,
+        file_id: &str,
+    ) -> Result<(bool, Option<String>, Option<i64>), CompatError> {
+        // Forged, expired or foreign parameters grant nothing.
+        Ok(
+            advanced::open(&self.crypto, params, user_id, file_id, self.now() as i64)
+                .unwrap_or((false, None, None)),
+        )
+    }
 }

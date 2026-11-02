@@ -7,21 +7,21 @@
 //! that page only, and image tags come from the rows themselves.
 //!
 //! [`CatalogIds`] answers Jellyfin ids from the stored table
-//! ([`jellyfin_ids`](super::jellyfin_ids)), which a loop fills. Album and
+//! ([`ids`](super::ids)), which a loop fills. Album and
 //! artist ids are made with the data key, so nobody without an account can
 //! work one out, and once stored an id never changes, not even with the
 //! key. An id a client cached before a restart resolves with one read.
 
 use std::collections::HashMap;
 
-use super::jellyfin_ids::{IdKind, IdsError, JellyfinIds};
-use super::library::{CompatError, CompatLibrary, cover_version};
+use super::ids::{IdKind, IdsError, JellyfinIds};
 use crate::jellyfin::params::SortKey;
-use crate::jellyfin::seams::{
+use crate::jellyfin::views::{
     AlbumFilter, AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, ItemSort, ItemView,
     LyricsView, PlaylistDetail, PlaylistEntry, PlaylistView, ReadFailed, TrackFilter, TrackView,
     WriteRefusal,
 };
+use crate::library::{CompatError, CompatLibrary, cover_version};
 use crate::subsonic::views::song_path;
 use droppedneedle_catalog::collections::service::Visible;
 use droppedneedle_catalog::collections::store::play_marks::MarkScope;
@@ -824,7 +824,7 @@ impl JellyfinLibrary {
 }
 
 /// Jellyfin ids over the stored table (see
-/// [`jellyfin_ids`](super::jellyfin_ids)): an id resolves with one read by
+/// [`ids`](super::ids)): an id resolves with one read by
 /// primary key, and an album, artist or track is then followed to the one
 /// that holds it now.
 #[derive(Clone)]

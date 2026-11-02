@@ -6,14 +6,14 @@ use super::ids::{IdKind, decode, decode_expect};
 use super::library::current_id;
 use super::models::{SStreamDetails, STranscodeDecision};
 use super::picture::PictureKind;
-use super::store::ClientInfo;
+use super::records::ClientInfo;
 use super::stream::{
     AudioBody, MAX_OFFSET_SECONDS, ServeError, ServedAudio, StreamParams, cover_bucket,
     download_filename, placeholder_cover, serve,
 };
 use super::{AVATAR_FORBIDDEN_MESSAGE, Ctx, Outcome};
-use crate::adapters::library::CompatError;
-use crate::adapters::subsonic_store::SubsonicStore;
+use crate::library::CompatError;
+use crate::subsonic::store::SubsonicStore;
 use droppedneedle_media::stream::leases::RETRY_AFTER_SECONDS;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
@@ -481,7 +481,7 @@ pub async fn transcode_decision(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError>
         .advanced_decide(&track, &client, &user_id)
         .await
         .map_err(Ctx::store_err)?;
-    let details = |stream: Option<super::store::StreamDetailsData>| {
+    let details = |stream: Option<super::records::StreamDetailsData>| {
         stream.map(|s| SStreamDetails {
             protocol: s.protocol,
             container: s.container,

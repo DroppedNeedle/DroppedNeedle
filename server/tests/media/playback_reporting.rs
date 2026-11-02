@@ -841,7 +841,7 @@ async fn compat_now_playing_serves_full_sessions_only() {
 #[tokio::test]
 async fn subsonic_report_shows_position_and_cover() {
     let rig = rig();
-    let compat = droppedneedle_compat::adapters::playback::CompatPlayback::new(rig.deps.clone());
+    let compat = droppedneedle_compat::playback::CompatPlayback::new(rig.deps.clone());
     let entry = || {
         let sessions = rig.deps.presence.snapshot();
         assert_eq!(sessions.len(), 1, "{sessions:?}");

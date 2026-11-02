@@ -11,7 +11,7 @@ use super::params::{self, CiParams};
 use super::playstate::*;
 use super::query::page;
 use super::router::*;
-use super::seams::ReadFailed;
+use super::views::ReadFailed;
 
 // ===== Playlists =====
 

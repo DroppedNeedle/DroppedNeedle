@@ -4,7 +4,7 @@
 //! owned by `auth::compat_auth::subsonic`. This module only classifies
 //! which scheme the caller attempted and enforces the mutual-exclusion
 //! rules, so the HTTP adapter can hand the extracted [`Credentials`] to
-//! the [`SubsonicVerifier`](crate::adapters::principal::SubsonicVerifier).
+//! the [`SubsonicVerifier`](crate::subsonic::principal::SubsonicVerifier).
 //!
 //! v2: the Subsonic compat auth and the app password service's
 //! `verify_subsonic`.

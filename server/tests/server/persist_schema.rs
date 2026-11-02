@@ -4260,8 +4260,8 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_catalog::local::sql::PLAYER_TRACK_COUNT",
     "droppedneedle_catalog::local::sql::PLAYER_TRACKS_UNPLAYED",
     "droppedneedle_catalog::local::sql::PLAYER_TRACKS_UNPLAYED_COUNT",
-    "droppedneedle_compat::adapters::jellyfin_ids::sql::NEW_TRACKS",
-    "droppedneedle_compat::adapters::jellyfin_ids::sql::GENRE_NAMES",
+    "droppedneedle_compat::jellyfin::ids::sql::NEW_TRACKS",
+    "droppedneedle_compat::jellyfin::ids::sql::GENRE_NAMES",
     "droppedneedle_acquire::flows::sql::IDENTIFIED_TRACKS",
     "droppedneedle_acquire::requests::sql::LIBRARY_BYTES",
     "droppedneedle_catalog::discover::sql::RADIO_TRACKS_BY_ARTISTS",
@@ -6466,7 +6466,7 @@ async fn tracks_gain_a_download_task_index_on_upgrade() {
 /// stores each item's current id and the aliases that still resolve.
 #[tokio::test]
 async fn jellyfin_ids_arrive_empty_and_fill_on_upgrade() {
-    use droppedneedle_compat::adapters::jellyfin_ids::JellyfinIds;
+    use droppedneedle_compat::jellyfin::ids::JellyfinIds;
 
     let dir = crate::common::ScratchDir::new("jellyfin-ids-upgrade");
     let path = dir.join("app.db");

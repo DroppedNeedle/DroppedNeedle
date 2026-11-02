@@ -16,18 +16,18 @@
 //! instead, sandboxed to that root, and knows only the file's extension.
 //! The open hands the routes a file body read by range, or the transcode
 //! output chunk by chunk; HEAD answers from file metadata and never starts
-//! ffmpeg. Range slicing, 206/416 decisions, and headers stay in the routes
-//! file.
+//! ffmpeg. Range slicing, 206/416 decisions, and headers stay in
+//! [`framing`](super::framing).
 //!
 //! The open hands its direct lease back inside [`StreamMedia`], so a caller
 //! that moves it into the response body bounds response concurrency, not
-//! only opens (the compat adapters do). A transcode takes the lease into
+//! only opens (compat's `GatewayAudio` does). A transcode takes the lease into
 //! the transcode instead, which frees it with the ffmpeg slot. Remote reads
 //! stream by range and are direct-only (the ffmpeg service takes a local
 //! path; per-source server-side transcode stays a remotes-adapter concern).
 //!
-//! [`StreamEngine`]: super::routes::StreamEngine
-//! [`StreamParams`]: super::routes::StreamParams
+//! [`StreamEngine`]: super::engine::StreamEngine
+//! [`StreamParams`]: super::engine::StreamParams
 //! [`decide()`]: super::transcode::decide
 
 use std::path::{Path, PathBuf};
@@ -41,11 +41,11 @@ use droppedneedle_kernel::runtime_config::sections::ConnectApps;
 use droppedneedle_plugins::capabilities::stream::{open_url, proxy_chunks};
 use futures_util::StreamExt as _;
 
-use super::leases::OwnedDirectLease;
-use super::routes::{
+use super::engine::{
     AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen,
     content_type_for_extension,
 };
+use super::leases::OwnedDirectLease;
 use super::transcode::{
     StreamPlan, TrackInfo, TranscodeError, TranscodeSettings, Transcoder, decide, estimate_size,
     out_media_type,

@@ -31,7 +31,7 @@ use droppedneedle_catalog::local::stores::{
 };
 use droppedneedle_kernel::db::{Db, DbError};
 
-use super::sql;
+use crate::sql;
 use crate::user_settings::UserSettings;
 
 /// A compat read or write failed. Client faults keep their kind so each
@@ -143,9 +143,9 @@ impl CompatError {
     }
 }
 
-impl From<CompatError> for crate::jellyfin::seams::WriteRefusal {
+impl From<CompatError> for crate::jellyfin::views::WriteRefusal {
     fn from(error: CompatError) -> Self {
-        use crate::jellyfin::seams::WriteRefusal;
+        use crate::jellyfin::views::WriteRefusal;
         match error {
             CompatError::NotFound => WriteRefusal::NotFound,
             CompatError::Forbidden => WriteRefusal::Forbidden,
@@ -157,7 +157,7 @@ impl From<CompatError> for crate::jellyfin::seams::WriteRefusal {
     }
 }
 
-impl From<CompatError> for crate::jellyfin::seams::ReadFailed {
+impl From<CompatError> for crate::jellyfin::views::ReadFailed {
     fn from(error: CompatError) -> Self {
         match error {
             CompatError::Busy(cause) => Self::Busy(cause),

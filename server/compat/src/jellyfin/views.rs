@@ -1,5 +1,4 @@
-//! The settings, views and records the Jellyfin routes exchange with the
-//! adapters they call.
+//! The views and records the Jellyfin routes exchange with what they call.
 //!
 //! - Auth: the routes name the app-password store,
 //!   [`droppedneedle_auth::compat_auth::prod::CompatPasswords`],
@@ -7,94 +6,25 @@
 //!   `JellyfinUser`. Login bodies reuse `compat_auth`'s
 //!   `login_echo_json`, so the Finamp/Manet login contract has one owner.
 //! - Library reads:
-//!   [`JellyfinLibrary`](crate::adapters::jellyfin_library::JellyfinLibrary).
+//!   [`JellyfinLibrary`](crate::jellyfin::library::JellyfinLibrary).
 //!   The routes describe one page ([`TrackFilter`], [`AlbumFilter`],
 //!   [`ItemSort`], start, limit) and the library answers that page plus the
 //!   match total, so it filters, orders and pages in SQL and the routes
 //!   shape only the page.
-//! - Streaming: [`GatewayAudio`](crate::adapters::audio::GatewayAudio)
+//! - Streaming: [`GatewayAudio`](crate::audio::GatewayAudio)
 //!   over the stream gateway, which makes the one transcode decision (byte
 //!   contract, ffmpeg pipe, concurrency leases). The routes only translate
-//!   Jellyfin's parameters into [`StreamParams`].
-//! - Ids: [`CatalogIds`](crate::adapters::jellyfin_library::CatalogIds),
+//!   Jellyfin's parameters into
+//!   [`StreamParams`](droppedneedle_media::stream::engine::StreamParams).
+//! - Ids: [`CatalogIds`](crate::jellyfin::library::CatalogIds),
 //!   the stored ids, album and artist ids made with the data key.
 //! - Playback sessions:
-//!   [`CompatPlayback`](crate::adapters::playback::CompatPlayback)
+//!   [`CompatPlayback`](crate::playback::CompatPlayback)
 //!   (presence and scrobble forwarding).
 
 use droppedneedle_auth::compat_auth::jellyfin::{JellyfinUser, PolicyFacts, effective_name};
 
-use droppedneedle_kernel::runtime_config::sections::DownloadAccess;
-pub use droppedneedle_media::stream::routes::StreamParams;
-use droppedneedle_media::stream::transcode::{OutFormat, TranscodeSettings};
-
 use super::models::UserDto;
-
-// ===== Settings =====
-
-/// The connect-apps settings subset the shim reads (v2
-/// `get_connect_apps_settings`).
-#[derive(Debug, Clone)]
-pub struct JellyfinSettings {
-    /// Kill switch, default off (v2 `jellyfin_enabled`). Disabled → HTTP 404
-    /// on every route, before handler lookup (no method enumeration).
-    pub enabled: bool,
-    /// User-editable advertised name, default "DroppedNeedle".
-    pub server_name: String,
-    /// User-editable advertised version, default "10.10.6".
-    pub server_version: String,
-    /// Transcoding master switch.
-    pub transcoding_enabled: bool,
-    /// Quality ceiling in kbps, default 320: a ceiling, never a trigger.
-    pub transcode_max_bitrate_kbps: u32,
-    /// Default transcode output (`mp3` or `opus`).
-    pub transcode_default_format: String,
-    /// Whether ffmpeg is present (silent direct fallback when absent).
-    pub ffmpeg_available: bool,
-    /// The admin's setting for who may download library files.
-    pub download_access: DownloadAccess,
-}
-
-impl JellyfinSettings {
-    /// The policy values that depend on these settings, for a user with
-    /// `role`.
-    pub fn policy_facts(&self, role: &str) -> PolicyFacts {
-        PolicyFacts {
-            audio_transcoding: self.transcoding_enabled && self.ffmpeg_available,
-            content_downloading: self.download_access.admits(role),
-        }
-    }
-}
-
-impl JellyfinSettings {
-    /// The transcode policy these settings set, for the one decision.
-    pub fn transcode_policy(&self) -> TranscodeSettings {
-        TranscodeSettings {
-            transcoding_enabled: self.transcoding_enabled,
-            default_format: if self.transcode_default_format.eq_ignore_ascii_case("opus") {
-                OutFormat::Opus
-            } else {
-                OutFormat::Mp3
-            },
-            max_bitrate_kbps: i64::from(self.transcode_max_bitrate_kbps),
-        }
-    }
-}
-
-impl Default for JellyfinSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            server_name: "DroppedNeedle".to_owned(),
-            server_version: "10.10.6".to_owned(),
-            transcoding_enabled: true,
-            transcode_max_bitrate_kbps: 320,
-            transcode_default_format: "mp3".to_owned(),
-            ffmpeg_available: true,
-            download_access: DownloadAccess::Everyone,
-        }
-    }
-}
 
 // ===== Auth =====
 
@@ -432,10 +362,10 @@ pub struct ByteOutcome {
     pub body: crate::body::AudioBody,
 }
 
-/// Content-Type per extension, from the stream routes' table (unknown ->
+/// Content-Type per extension, from the stream engine's table (unknown ->
 /// octet-stream).
 pub fn content_type_for_format(format: Option<&str>) -> &'static str {
-    droppedneedle_media::stream::routes::content_type_for_extension(format.unwrap_or(""))
+    droppedneedle_media::stream::engine::content_type_for_extension(format.unwrap_or(""))
         .unwrap_or("application/octet-stream")
 }
 
