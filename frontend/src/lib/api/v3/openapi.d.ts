@@ -10039,6 +10039,13 @@ export interface components {
              * @description Import time, unix seconds.
              */
             date_added?: number | null;
+            /**
+             * Format: int64
+             * @description Tracks the album's edition has: the matched MusicBrainz release's
+             *     tracklist while the catalog holds it, else the totals its files'
+             *     tags give. `None` when neither tells.
+             */
+            expected_track_count?: number | null;
             /** @description True when the caller favorited this album. */
             favorite: boolean;
             /** @description Most common track format, when any track exists. */

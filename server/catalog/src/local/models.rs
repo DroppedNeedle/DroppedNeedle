@@ -38,6 +38,10 @@ pub struct AlbumView {
     pub identity_state: String,
     /// Streamable tracks on this album.
     pub track_count: u64,
+    /// Tracks the album's edition has: the matched MusicBrainz release's
+    /// tracklist while the catalog holds it, else the totals its files'
+    /// tags give. `None` when neither tells.
+    pub expected_track_count: Option<u64>,
     /// Summed streamable-track duration, seconds.
     pub total_duration_seconds: f64,
     /// Summed streamable-track size, bytes.
@@ -81,6 +85,7 @@ impl From<(AlbumRecord, bool, bool)> for AlbumView {
             artist_mbid: album.artist_mbid,
             identity_state: identity_state(album.linked),
             track_count: album.track_count,
+            expected_track_count: None,
             total_duration_seconds: album.total_duration_seconds,
             total_size_bytes: album.total_size_bytes,
             format: album.format,

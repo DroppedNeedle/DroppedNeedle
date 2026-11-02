@@ -7,6 +7,7 @@
 	import SampleButton from './discover/SampleButton.svelte';
 	import LibraryBadge from './LibraryBadge.svelte';
 	import { getLibraryMembershipQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { trackCountLabel, type HeldTracks } from '$lib/utils/trackCount';
 
 	interface Release {
 		id: string;
@@ -27,6 +28,8 @@
 		onToggleCollapse: () => void;
 		onRemoved?: (() => void) | undefined;
 		onDownloadAll?: (() => void) | undefined;
+		/** What the library holds per release group (lowercase id). */
+		libraryTracks?: Map<string, HeldTracks>;
 	}
 
 	let {
@@ -39,7 +42,8 @@
 		onRequest,
 		onToggleCollapse,
 		onRemoved = undefined,
-		onDownloadAll = undefined
+		onDownloadAll = undefined,
+		libraryTracks = undefined
 	}: Props = $props();
 
 	const membershipQuery = getLibraryMembershipQuery(() => releases.map((release) => release.id));
@@ -118,6 +122,7 @@
 		<div class="border border-base-300 border-t-0 rounded-b-box bg-base-200/30">
 			<div class="list" role="list">
 				{#each releases as rg (rg.id)}
+					{@const held = libraryTracks?.get(rg.id.toLowerCase())}
 					<div class="list-row group hover:bg-base-200 transition-colors p-0" role="listitem">
 						<a
 							href={albumHref(rg.id)}
@@ -134,6 +139,12 @@
 								<div class="font-semibold text-sm sm:text-base truncate">{rg.title}</div>
 								<div class="text-xs sm:text-sm text-base-content/60">
 									{#if rg.year}{rg.year}{/if}
+									{#if held}
+										{#if rg.year}<span class="opacity-50 mx-1">•</span>{/if}{trackCountLabel(
+											held.held,
+											held.expected
+										)}
+									{/if}
 								</div>
 							</div>
 						</a>

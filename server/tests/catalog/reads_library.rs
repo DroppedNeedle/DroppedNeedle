@@ -60,6 +60,7 @@ fn deps(db: &Db, lyrics: Option<Arc<dyn LyricsPort>>) -> LibraryDeps {
         catalog,
         upgrade_policy: None,
         covers: None,
+        releases: None,
     }
 }
 
@@ -1128,6 +1129,48 @@ async fn one_album_set_everywhere() {
 }
 
 /// Run `sql` on the fixture's database as one write.
+/// An album shows how many tracks its edition has next to the ones the
+/// library holds: with no MusicBrainz release held, from its files' tags;
+/// an album no tag tells about has none. The list and the album agree.
+#[tokio::test]
+async fn albums_tell_how_many_tracks_their_edition_has() {
+    let fixture = sqlite_fixture().await;
+    seed(
+        &fixture,
+        "INSERT INTO local_track_edition_tags (local_track_id, total_discs, total_tracks) \
+         VALUES ('t1', 1, 12), ('t2', 1, 12)",
+    )
+    .await;
+    let app = || app(deps(fixture.runtime.db(), None), Some(ADA));
+
+    let (status, page) = get(app(), "/api/v3/library/albums?limit=50").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let counts: Vec<(String, u64, Value)> = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|album| {
+            (
+                album["id"].as_str().unwrap().to_owned(),
+                album["track_count"].as_u64().unwrap(),
+                album["expected_track_count"].clone(),
+            )
+        })
+        .filter(|(id, _, _)| id == "al1" || id == "al3")
+        .collect();
+    assert_eq!(
+        counts,
+        [
+            ("al1".to_owned(), 2, serde_json::json!(12)),
+            ("al3".to_owned(), 1, Value::Null)
+        ]
+    );
+
+    let (status, album) = get(app(), "/api/v3/library/albums/al1").await;
+    assert_eq!(status, StatusCode::OK, "{album}");
+    assert_eq!(album["expected_track_count"], serde_json::json!(12));
+}
+
 async fn seed(fixture: &SqliteFixture, sql: &'static str) {
     fixture
         .runtime

@@ -56,6 +56,9 @@ pub struct LibraryDeps {
     /// art and no release group, and unlinked artists with no album art,
     /// read as missing.
     pub covers: Option<crate::artwork::ArtworkService>,
+    /// The MusicBrainz releases the catalog holds, for how many tracks an
+    /// album's edition has. `None` counts from the files' tags alone.
+    pub releases: Option<crate::metadata::Catalog>,
 }
 
 /// The library read routes, at their full `/api/v3` paths. Every handler

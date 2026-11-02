@@ -2,7 +2,7 @@
 //! validate, read through the ports, shape the view. Failures are domain
 //! typed; handlers map them to HTTP in `error`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::LibraryDeps;
 use super::cursor::{Cursor, fresh_seed};
@@ -303,19 +303,8 @@ async fn album_page(
     after: &After,
     page: KeyedPage<AlbumRecord>,
 ) -> Result<AlbumPage, LibraryFailure> {
-    let ids: Vec<String> = page.items.iter().map(|record| record.id.clone()).collect();
-    let favorites = favorites_for(deps, user_id, "album", &ids).await?;
-    let missing = albums_missing_art(deps, &page.items).await?;
     Ok(AlbumPage {
-        items: page
-            .items
-            .into_iter()
-            .map(|record| {
-                let favorite = favorites.contains(&record.id);
-                let art_missing = missing.contains(&record.id);
-                AlbumView::from((record, favorite, art_missing))
-            })
-            .collect(),
+        items: album_views(deps, user_id, page.items).await?,
         total: page.total,
         next: next_cursor(order, after, page.next),
     })
@@ -357,6 +346,73 @@ fn check_decade(decade: Option<i64>) -> Result<Option<i64>, LibraryFailure> {
             "unknown decade '{year}': want a start year like 1990"
         ))),
     }
+}
+
+/// Album records as the pages show them: the caller's favorite flags and
+/// how many tracks each album's edition has.
+async fn album_views(
+    deps: &LibraryDeps,
+    user_id: &str,
+    records: Vec<AlbumRecord>,
+) -> Result<Vec<AlbumView>, LibraryFailure> {
+    let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
+    let favorites = favorites_for(deps, user_id, "album", &ids).await?;
+    let missing = albums_missing_art(deps, &records).await?;
+    let expected = expected_track_counts(deps, &records).await;
+    Ok(records
+        .into_iter()
+        .map(|record| {
+            let favorite = favorites.contains(&record.id);
+            let art_missing = missing.contains(&record.id);
+            let count = expected.get(&record.id).copied();
+            AlbumView {
+                expected_track_count: count,
+                ..AlbumView::from((record, favorite, art_missing))
+            }
+        })
+        .collect())
+}
+
+/// How many tracks each album's edition has, as `releaseSongCount` counts
+/// for the apps: the matched release's tracklist while the catalog holds
+/// it, else the totals the files' tags give. Never asks MusicBrainz. An
+/// album neither tells is absent; a failed read counts none.
+async fn expected_track_counts(
+    deps: &LibraryDeps,
+    records: &[AlbumRecord],
+) -> HashMap<String, u64> {
+    let mut releases: Vec<String> = records
+        .iter()
+        .filter_map(|record| record.release_mbid.clone())
+        .collect();
+    releases.sort_unstable();
+    releases.dedup();
+    let held = match &deps.releases {
+        Some(catalog) if !releases.is_empty() => catalog.held_release_track_counts(&releases).await,
+        _ => HashMap::new(),
+    };
+    let mut counts: HashMap<String, u64> = HashMap::new();
+    let mut untold: Vec<String> = Vec::new();
+    for record in records {
+        match record.release_mbid.as_ref().and_then(|mbid| held.get(mbid)) {
+            Some(count) => {
+                counts.insert(record.id.clone(), u64::from(*count));
+            }
+            None => untold.push(record.id.clone()),
+        }
+    }
+    if !untold.is_empty() {
+        match deps.catalog.tagged_song_counts(&untold).await {
+            Ok(tagged) => counts.extend(
+                tagged
+                    .into_iter()
+                    .filter(|(_, count)| *count > 0)
+                    .map(|(id, count)| (id, u64::from(count))),
+            ),
+            Err(error) => tracing::warn!(%error, "tagged track totals failed; showing none"),
+        }
+    }
+    counts
 }
 
 /// Favorite flags for one page of ids. Empty pages skip the store call.
@@ -448,19 +504,18 @@ pub async fn get_album(
     id: &str,
 ) -> Result<AlbumDetailView, LibraryFailure> {
     let record = album_record(deps, id).await?;
-    let favorites = favorites_for(deps, user_id, "album", std::slice::from_ref(&record.id)).await?;
     let hold = deps.catalog.management_hold(&record.id).await?;
     let state = deps
         .catalog
         .album_page_state(&record.id)
         .await?
         .ok_or(LibraryFailure::NotFound)?;
-    let favorite = favorites.contains(&record.id);
-    let art_missing = albums_missing_art(deps, std::slice::from_ref(&record))
+    let album = album_views(deps, user_id, vec![record])
         .await?
-        .contains(&record.id);
+        .pop()
+        .ok_or(LibraryFailure::NotFound)?;
     Ok(AlbumDetailView {
-        album: AlbumView::from((record, favorite, art_missing)),
+        album,
         management_hold: hold.map(|hold| ManagementHoldView {
             kind: hold.kind,
             held_at: hold.held_at,
@@ -532,19 +587,9 @@ pub async fn album_copies(
 ) -> Result<AlbumPage, LibraryFailure> {
     let album = album_record(deps, album_id).await?;
     let records = deps.catalog.album_copies(&album.id).await?;
-    let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
-    let favorites = favorites_for(deps, user_id, "album", &ids).await?;
-    let missing = albums_missing_art(deps, &records).await?;
     let total = records.len() as u64;
     Ok(AlbumPage {
-        items: records
-            .into_iter()
-            .map(|record| {
-                let favorite = favorites.contains(&record.id);
-                let art_missing = missing.contains(&record.id);
-                AlbumView::from((record, favorite, art_missing))
-            })
-            .collect(),
+        items: album_views(deps, user_id, records).await?,
         total,
         next: None,
     })
@@ -751,19 +796,9 @@ pub async fn recently_added(
 ) -> Result<AlbumPage, LibraryFailure> {
     let (limit, _) = page(query.limit, None, 20, 50)?;
     let records = deps.catalog.recently_added(limit).await?;
-    let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
-    let favorites = favorites_for(deps, user_id, "album", &ids).await?;
-    let missing = albums_missing_art(deps, &records).await?;
     let total = records.len() as u64;
     Ok(AlbumPage {
-        items: records
-            .into_iter()
-            .map(|record| {
-                let favorite = favorites.contains(&record.id);
-                let art_missing = missing.contains(&record.id);
-                AlbumView::from((record, favorite, art_missing))
-            })
-            .collect(),
+        items: album_views(deps, user_id, records).await?,
         total,
         next: None,
     })
