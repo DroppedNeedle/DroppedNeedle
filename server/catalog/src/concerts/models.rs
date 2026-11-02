@@ -179,6 +179,12 @@ impl EventCity {
             country_code,
         })
     }
+
+    /// The match radius, as clamped, in km.
+    #[must_use]
+    pub const fn radius_km(&self) -> f64 {
+        self.radius_km
+    }
 }
 
 /// One city as the picker submits it.

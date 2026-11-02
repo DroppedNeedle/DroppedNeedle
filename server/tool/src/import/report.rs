@@ -30,7 +30,6 @@ pub const ENTITIES: &[&str] = &[
     "user",
     "provider",
     "app_password",
-    "recovery_code",
     "follow",
     "approval",
     "event_city",

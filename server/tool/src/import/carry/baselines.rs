@@ -16,9 +16,9 @@
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 
+use super::sql;
 use super::{CarryError, SectionResult};
 use crate::export::sections::management::{BASELINES, BLOB_BYTES};
-use super::sql;
 use droppedneedle_library::publish::snapshots::sha256_hex;
 use droppedneedle_library::publish::v2_baseline::translate;
 

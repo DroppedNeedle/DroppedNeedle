@@ -7,7 +7,7 @@
 //! Rows already decided have no file left to act on and stay behind.
 
 use super::requests::{real, whole, whole_or};
-use super::{Column, FileSet, Source, TableSection, Target, col};
+use super::{Column, FileSet, SOURCE_RULE, Source, TableSection, Target, col};
 
 /// Held downloads still waiting on a decision.
 pub const HELD_IMPORTS: TableSection = TableSection {
@@ -46,7 +46,7 @@ pub const HELD_IMPORTS: TableSection = TableSection {
         col("evidence_title"),
         col("evidence_artist"),
         Column::new("evidence_score").from_sql_of("evidence_score", real!("evidence_score")),
-        col("source"),
+        Column::new("source").ruled(SOURCE_RULE),
         col("source_task_id"),
         col("origin"),
         col("naming_template"),

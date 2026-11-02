@@ -214,6 +214,9 @@ fn v2_sql(column: &Column, available: &HashSet<String>) -> Option<String> {
         V2Value::Column(name) => available.contains(name).then(|| format!("s.\"{name}\"")),
         V2Value::Expr(expr) => Some(format!("({expr})")),
         V2Value::ExprOf(name, expr) => available.contains(name).then(|| format!("({expr})")),
+        V2Value::Ruled(name, rule) => available
+            .contains(name)
+            .then(|| format!("({})", rule.sql(&format!("s.\"{name}\"")))),
     }
 }
 

@@ -525,19 +525,6 @@ fn approvals_shape_rejected() {
 }
 
 #[test]
-fn duplicate_recovery_hash_rejected() {
-    let fixture = Fixture::shared();
-    let first = fixture.user("u1");
-    let mut second = fixture.user("u2");
-    second["recovery_code"]["code_hash"] = first["recovery_code"]["code_hash"].clone();
-    second["email"] = json!("u2@example.com");
-    second["username"] = json!("u2");
-    let mut export = fixture.shell();
-    export["users"] = json!([first, second]);
-    assert!(codes(&validate_export(&export)).contains(&"DUPLICATE_RECOVERY_HASH"));
-}
-
-#[test]
 fn unknown_settings_section_warns_and_skips() {
     let fixture = Fixture::shared();
     let mut export = fixture.shell();
@@ -581,4 +568,50 @@ fn duplicate_follow_and_approval_rejected() {
     let found = codes(&report);
     assert!(found.contains(&"DUPLICATE_FOLLOW"), "{found:?}");
     assert!(found.contains(&"DUPLICATE_APPROVAL"), "{found:?}");
+}
+
+/// A missing identity field and a field of the wrong type both refuse the
+/// file and name the record, without quoting what the record held.
+#[test]
+fn a_record_that_does_not_decode_is_refused_by_name() {
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    export["users"] = json!([{"id": "u1"}, {"display_name": "No id"}, {"id": "u3"}]);
+    export["users"][2]["app_passwords"] = json!([{"name": "x", "secret": "plain-secret-word"}]);
+    export["follows"] = json!([{"user_id": "u1"}]);
+    let report = validate_export(&export);
+    let named = |code: &str, path: &str| {
+        report
+            .errors
+            .iter()
+            .any(|issue| issue.code == code && issue.path == path)
+    };
+    assert!(
+        named("USER_MISSING_ID", "users[1].id"),
+        "{:?}",
+        report.errors
+    );
+    assert!(
+        named("SECRET_NOT_SEALED", "users[2].app_passwords[0].secret"),
+        "{:?}",
+        report.errors
+    );
+    assert!(
+        named("BAD_MBID", "follows[0].artist_mbid"),
+        "{:?}",
+        report.errors
+    );
+
+    let mut export = fixture.shell();
+    export["users"] = json!([{"id": "u1", "email": 5}]);
+    let report = validate_export(&export);
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|issue| issue.code == "BAD_RECORD" && issue.path == "users[0]"),
+        "{:?}",
+        report.errors
+    );
+    assert!(!format!("{:?}", report.errors).contains("plain-secret-word"));
 }

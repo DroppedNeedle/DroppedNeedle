@@ -497,6 +497,40 @@ impl ConcertsStore {
     }
 }
 
+/// Add one city inside the offline importer's transaction, at the position
+/// its plan chose. Writes the row and nothing else.
+pub fn insert_city_in(
+    tx: &rusqlite::Transaction<'_>,
+    user_id: &str,
+    city: &EventCity,
+    position: i64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        sql::INSERT_CITY.text(),
+        params![
+            user_id,
+            city.city_name,
+            city.country_code,
+            city.latitude,
+            city.longitude,
+            city.radius_km,
+            position,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Set when a user last looked at their concerts, inside the offline
+/// importer's transaction. Writes the row and nothing else.
+pub fn set_seen_in(
+    tx: &rusqlite::Transaction<'_>,
+    user_id: &str,
+    seen_at: f64,
+) -> rusqlite::Result<()> {
+    tx.execute(sql::MARK_SEEN.text(), params![user_id, seen_at])?;
+    Ok(())
+}
+
 fn upsert_cursor(
     tx: &rusqlite::Transaction<'_>,
     artist_mbid_lower: &str,

@@ -20,8 +20,8 @@
 use droppedneedle_kernel::db::statement::Choice as _;
 use rusqlite::Connection;
 
-use super::{CarryError, SectionResult};
 use super::sql::{self, WaitingColumn};
+use super::{CarryError, SectionResult};
 
 /// Report entity name.
 pub(crate) const ENTITY: &str = "library_link";

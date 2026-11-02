@@ -73,8 +73,7 @@ pub struct ExportFile {
 impl ExportFile {
     /// Parse raw export bytes. Structural and semantic checks belong to
     /// the validator; this only proves the JSON parses and the envelope
-    /// block deserializes. This plus `validate_export` is the import path;
-    /// `export::parse_export` is a stricter typed convenience for tests.
+    /// block deserializes. This plus `read_export` is the import path.
     pub fn parse(bytes: &[u8]) -> Result<Self, EnvelopeError> {
         let root: Value =
             serde_json::from_slice(bytes).map_err(|error| EnvelopeError::InvalidJson {

@@ -158,7 +158,7 @@ async fn operator_repair_converges_to_clean_import() {
 async fn imported_counts_match_the_fixture() {
     // Two users in (both emails nulled onto the pre-seeded strangers), two
     // local providers in, the Plex binding kept on its existing owner,
-    // three app passwords, one recovery code, three follows, three
+    // three app passwords, three follows, three
     // approvals with one reviewer nulled.
     let root = scratch_dir("counts");
     let (fixture, text) = repaired_export(&root);
@@ -176,21 +176,12 @@ async fn imported_counts_match_the_fixture() {
             .await
             .expect("alice reads");
     assert_eq!(alice, (1_704_067_200_000, Some(1_767_225_600_000)));
-    let code: (i64, i64) = sqlx::query_as(
-        "SELECT created_at, expires_at FROM auth_password_recovery_codes WHERE user_id = ?",
-    )
-    .bind(&fixture.alice_id)
-    .fetch_one(&pool)
-    .await
-    .expect("alice's code reads");
-    assert_eq!(code, (1_711_929_600_000, 1_806_537_600_000));
     let count = |entity: &str| report.entities.get(entity).expect("entity counted").clone();
     assert_eq!(count("user").imported, 2);
     assert_eq!(count("user").nulled_field, 2);
     assert_eq!(count("provider").imported, 2);
     assert_eq!(count("provider").conflict_kept_existing, 1);
     assert_eq!(count("app_password").imported, 3);
-    assert_eq!(count("recovery_code").imported, 1);
     assert_eq!(count("follow").imported, 3);
     assert_eq!(count("approval").imported, 3);
     assert_eq!(count("approval").nulled_field, 1);
@@ -1032,6 +1023,66 @@ async fn a_visibility_that_is_not_text_carries_as_hidden() {
     )
     .await;
     assert_eq!(landed, (1, 1, "track_hidden".to_owned(), 0));
+}
+
+/// A v2 download with values v3's readers do not know carries with the
+/// safe ones: one stray value must not stop the upgrade.
+#[tokio::test]
+async fn stray_download_labels_carry_as_their_defaults() {
+    let root = scratch_dir("stray-labels");
+    let fixture = build_v2_fixture(&root.join("v2")).expect("fixture builds");
+    let v2_db = root.join("v2").join("cache").join("library.db");
+    delete_orphan_rows(&v2_db).expect("repair runs");
+    let alice = &fixture.alice_id;
+    let v2 = rusqlite::Connection::open(&v2_db).expect("v2 db opens");
+    v2.execute_batch(&format!(
+        "ALTER TABLE download_tasks ADD COLUMN download_type TEXT;
+         ALTER TABLE download_tasks ADD COLUMN download_client TEXT;
+         ALTER TABLE download_tasks ADD COLUMN source TEXT;
+         ALTER TABLE download_tasks ADD COLUMN origin TEXT;
+         INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name,
+             album_title, status, download_type, download_client, source, origin,
+             created_at, updated_at)
+         VALUES ('download-labels', '{alice}', 'dddddddd-0000-4000-8000-000000000005',
+                 'Artist', 'Album', 'completed', 'mixtape', '', 'carrier-pigeon', 'mystery',
+                 1700000000.0, 1700000000.0),
+                ('download-conversion', '{alice}', 'dddddddd-0000-4000-8000-000000000006',
+                 'Artist', 'Album', 'completed', 'album', 'slskd', 'soulseek',
+                 'edition_conversion', 1700000000.0, 1700000000.0);"
+    ))
+    .expect("v2 row seeds");
+    drop(v2);
+    let export_path = root.join("export.json");
+    droppedneedle_tool::export::export_v2_to_file(
+        &export_request(&root.join("v2"), PASSPHRASE),
+        &export_path,
+    )
+    .expect("export writes");
+    let text = std::fs::read_to_string(&export_path).expect("export reads back");
+    let (v3_root, pool) = seeded_target(&root).await;
+    run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    let landed: (String, String, String, String) = sqlx::query_as(
+        "SELECT download_type, download_client, source, origin FROM download_tasks \
+         WHERE id = 'download-labels'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the download carries");
+    assert_eq!(
+        landed,
+        (
+            "album".to_owned(),
+            "slskd".to_owned(),
+            "soulseek".to_owned(),
+            "user".to_owned()
+        )
+    );
+    let origin: String =
+        sqlx::query_scalar("SELECT origin FROM download_tasks WHERE id = 'download-conversion'")
+            .fetch_one(&pool)
+            .await
+            .expect("the conversion carries");
+    assert_eq!(origin, "edition");
 }
 
 /// A v2 download with a text track duration and preflight score, a held

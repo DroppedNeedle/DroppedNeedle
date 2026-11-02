@@ -102,8 +102,9 @@ many. Nothing else in the v2 database is changed.
 ## What moves across
 
 - User accounts and roles. Passwords keep working, no resets.
-- App passwords for Subsonic and Jellyfin clients, linked login providers
-  and recovery codes.
+- App passwords for Subsonic and Jellyfin clients, and linked login
+  providers. A password recovery code from v2 does not move across: it only
+  lasts 15 minutes anyway, so make a new one if you need it.
 - Settings, including saved API keys and secrets.
 - Each user's linked Last.fm, ListenBrainz, Spotify, Navidrome, Jellyfin
   and Plex accounts. Scrobbling, Wrapped and Spotify playlist import keep

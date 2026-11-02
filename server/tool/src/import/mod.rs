@@ -21,7 +21,7 @@
 pub mod apply;
 pub(crate) mod carry;
 pub mod envelope;
-pub mod plan;
+pub(crate) mod plan;
 pub mod report;
 pub mod schedule_carry;
 pub(crate) mod settings;
@@ -32,4 +32,6 @@ pub mod validate;
 pub use apply::{ImportRequest, run_import};
 pub use envelope::{ExportFile, Opener, unseal_value, verify_content_digest};
 pub use report::{ExitCode, ImportReport};
-pub use validate::{ValidationIssue, ValidationReport, check_attachments, validate_export};
+pub use validate::{
+    ValidationIssue, ValidationReport, check_attachments, read_export, validate_export,
+};

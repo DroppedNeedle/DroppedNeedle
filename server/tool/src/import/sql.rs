@@ -14,9 +14,6 @@ droppedneedle_kernel::sql! {
     /// Every app password in the target.
     pub(super) APP_PASSWORDS = "SELECT user_id, name, secret_sha256, created_at, last_used_at, \
              last_client, revoked FROM auth_app_passwords";
-    /// Every recovery code in the target.
-    pub(super) RECOVERY_CODES = "SELECT user_id, code_hash, created_at, expires_at \
-             FROM auth_password_recovery_codes";
     /// Every followed artist in the target.
     pub(super) FOLLOWS = "SELECT user_id, artist_mbid_lower, auto_download, followed_at, \
              updated_at FROM acquire_followed_artists";
@@ -65,14 +62,6 @@ droppedneedle_kernel::sql! {
         last_client: Option<String>,
         revoked: i64,
     }
-    /// A recovery code in the target.
-    #[derive(Debug, Clone)]
-    pub(super) row RecoveryRow for [RECOVERY_CODES] {
-        user_id: String,
-        code_hash: String,
-        created_at: i64,
-        expires_at: i64,
-    }
     /// A followed artist in the target.
     #[derive(Debug, Clone)]
     pub(super) row FollowRow for [FOLLOWS] {
@@ -112,43 +101,6 @@ droppedneedle_kernel::sql! {
         seen_at: f64,
     }
 
-    /// Add an account.
-    pub(super) INSERT_USER = "INSERT INTO auth_users (id, display_name, email, avatar_url, role, \
-             created_at, last_login_at, username, username_display) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-    /// Add a sign-in provider link.
-    pub(super) INSERT_PROVIDER = "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
-             provider_data, password_hash, hash_scheme, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-    /// Add an app password.
-    pub(super) INSERT_APP_PASSWORD = "INSERT INTO auth_app_passwords (id, user_id, name, secret_sha256, \
-             secret_encrypted, created_at, last_used_at, last_client, revoked) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-    /// Add a recovery code.
-    pub(super) INSERT_RECOVERY_CODE = "INSERT INTO auth_password_recovery_codes (user_id, code_hash, \
-             created_at, expires_at) VALUES (?, ?, ?, ?)";
-    /// Add a followed artist.
-    pub(super) INSERT_FOLLOW = "INSERT INTO acquire_followed_artists (user_id, artist_mbid, \
-             artist_mbid_lower, artist_name, auto_download, followed_at, \
-             updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)";
-    /// Write a follow's merged values.
-    pub(super) MERGE_FOLLOW = "UPDATE acquire_followed_artists SET auto_download = ?, followed_at = ?, \
-             updated_at = ? WHERE user_id = ? AND artist_mbid_lower = ?";
-    /// Add a concert city.
-    pub(super) INSERT_EVENT_CITY = "INSERT INTO user_event_cities (user_id, city_name, country_code, latitude, \
-             longitude, radius_km, position) VALUES (?, ?, ?, ?, ?, ?, ?)";
-    /// Set when a user last looked at their concerts.
-    pub(super) SET_EVENT_SEEN = "INSERT INTO user_event_seen (user_id, seen_at) VALUES (?, ?) \
-             ON CONFLICT(user_id) DO UPDATE SET seen_at = excluded.seen_at";
-    /// Add an auto-download approval.
-    pub(super) INSERT_APPROVAL = "INSERT INTO auto_download_approvals (user_id, artist_mbid, \
-             artist_mbid_lower, artist_name, state, requested_at, reviewed_by_id, \
-             reviewed_by_name, reviewed_at, batch_id, source) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-    /// Write an approval's merged values.
-    pub(super) MERGE_APPROVAL = "UPDATE auto_download_approvals SET state = ?, requested_at = ?, \
-             reviewed_by_id = ?, reviewed_by_name = ?, reviewed_at = ?, \
-             batch_id = ?, source = ? WHERE user_id = ? AND artist_mbid_lower = ?";
     /// Add the audit row of an import run.
     pub(super) INSERT_IMPORT_RUN = "INSERT INTO import_runs (id, instance_id, exported_at, exit_code, \
              entity_counts, applied_at) VALUES (?, ?, ?, ?, ?, ?)";

@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Map, Value, json};
 
+use crate::allowlist::{SECRETS, Sealing, advanced_exported, exported_whole, internal_exported};
 use crate::export::envelope::{
     ApprovalRecord, Attachment, BUNDLE_ROLE, ConnectionRecord, EventCityRecord, EventSeenRecord,
     ExportDoc, FollowRecord, LeftBehind, SealedValue, UserRecord, derive_hash_scheme,
@@ -37,124 +38,6 @@ use crate::export::v2dir::V2Dirs;
 use crate::export::{EXPORT_FORMAT, FORMAT_VERSION};
 use droppedneedle_kernel::db::backup::{WalState, wal_path, wal_state};
 use droppedneedle_kernel::runtime_config::Secret;
-
-/// Sections exported verbatim (secret positions sealed where present).
-const KEPT_SECTIONS: &[&str] = &[
-    "user_preferences",
-    "library_scan_schedule",
-    "library_scan_filesystem_watcher",
-    "download_client",
-    "download_clients",
-    "wanted",
-    "source_priority",
-    "usenet_search_backend",
-    "indexers",
-    "prowlarr",
-    "lidarr_import",
-    "jellyfin_settings",
-    "navidrome_settings",
-    "plex_settings",
-    "listenbrainz_settings",
-    "youtube_settings",
-    "lastfm_settings",
-    "spotify_settings",
-    "events",
-    "wrapped_settings",
-    "oidc_settings",
-    "security_settings",
-    "connect_apps",
-    "library_settings",
-    "library_management",
-    "scrobble_settings",
-    "primary_music_source",
-    "get_it",
-];
-
-/// Top-level secret fields per section, resolved through v2 Fernet
-/// semantics (including legacy-plaintext passthrough) and then sealed.
-/// Nested positions (`download_clients.sabnzbd`, `indexers[]`) and
-/// plaintext-at-rest positions (AudioDB, plugins) are handled in code.
-const SECTION_SECRETS: &[(&str, &[&str])] = &[
-    ("download_client", &["api_key"]),
-    ("prowlarr", &["api_key"]),
-    ("lidarr_import", &["api_key"]),
-    ("jellyfin_settings", &["api_key"]),
-    ("navidrome_settings", &["password"]),
-    ("plex_settings", &["plex_token"]),
-    ("listenbrainz_settings", &["user_token"]),
-    ("youtube_settings", &["api_key"]),
-    (
-        "lastfm_settings",
-        &["api_key", "shared_secret", "session_key"],
-    ),
-    ("spotify_settings", &["client_secret"]),
-    ("events", &["ticketmaster_api_key", "skiddle_api_key"]),
-    ("wrapped_settings", &["api_key"]),
-    ("oidc_settings", &["client_secret"]),
-    ("library_settings", &["acoustid_api_key"]),
-];
-
-/// Explicit `advanced_settings` keep-list. `cache_ttl_*` and
-/// `frontend_ttl_*` keep by prefix; [`ADVANCED_DROPPED`] wins over both.
-const ADVANCED_KEPT: &[&str] = &[
-    "http_timeout",
-    "http_connect_timeout",
-    "http_max_connections",
-    "batch_artist_images",
-    "batch_albums",
-    "delay_artist",
-    "delay_albums",
-    "memory_cache_max_entries",
-    "memory_cache_cleanup_interval",
-    "cover_memory_cache_max_entries",
-    "cover_memory_cache_max_size_mb",
-    "disk_cache_cleanup_interval",
-    "recent_metadata_max_size_mb",
-    "recent_covers_max_size_mb",
-    "persistent_metadata_ttl_hours",
-    "discover_queue_size",
-    "discover_queue_ttl",
-    "discover_queue_auto_generate",
-    "discover_queue_polling_interval",
-    "discover_queue_seed_artists",
-    "discover_queue_wildcard_slots",
-    "discover_queue_warm_cycle_build",
-    "discover_queue_similar_artists_limit",
-    "discover_queue_albums_per_similar",
-    "discover_queue_enrich_ttl",
-    "discover_queue_lastfm_mbid_max_lookups",
-    "discover_picks_count",
-    "discover_picks_genre_affinity_weight",
-    "audiodb_enabled",
-    "audiodb_name_search_fallback",
-    "audiodb_api_key",
-    "cache_ttl_audiodb_found",
-    "cache_ttl_audiodb_not_found",
-    "cache_ttl_audiodb_library",
-    "prefer_local_cover_art",
-    "direct_remote_images_enabled",
-    "genre_section_ttl",
-    "request_concurrency",
-    "request_history_retention_days",
-    "ignored_releases_retention_days",
-    "orphan_cover_demote_interval_hours",
-    "store_prune_interval_hours",
-    "sync_stall_timeout_minutes",
-    "sync_max_timeout_hours",
-    "artist_discovery_precache_delay",
-    "artist_discovery_precache_concurrency",
-    "audiodb_prewarm_concurrency",
-    "audiodb_prewarm_delay",
-];
-
-/// `advanced_settings` fields that never survive, even when they match a
-/// keep prefix. Everything outside the keep rules drops too (closed list).
-const ADVANCED_DROPPED: &[&str] = &[
-    "artist_discovery_warm_interval",
-    "artist_discovery_warm_delay",
-    "cache_ttl_recently_viewed_bytes",
-    "cache_ttl_local_files_recently_added",
-];
 
 /// `download_policy` read-only projection metadata. v2 itself strips these
 /// before save; they must not cross into the export.
@@ -178,13 +61,6 @@ const MUSICBRAINZ_KEPT: &[&str] = &[
 pub const UNKNOWN_FLAG_KEY: &str = "flag";
 /// Marker value: nobody knew whether the setting is a secret.
 pub const UNKNOWN_FLAG: &str = "unknown";
-
-/// `_internal` keep-list (device and consent identity only).
-const INTERNAL_KEPT: &[&str] = &[
-    "plex_client_id",
-    "droppedneedle_device_id",
-    "brainzmash_consent_admin",
-];
 
 /// One export run's inputs. Everything is borrowed or owned plainly; the
 /// passphrase stays inside [`Secret`] so a debug print cannot leak it.
@@ -803,15 +679,6 @@ fn seal_plaintext_field(
     Ok(())
 }
 
-fn advanced_kept(field: &str) -> bool {
-    if ADVANCED_DROPPED.contains(&field) {
-        return false;
-    }
-    field.starts_with("cache_ttl_")
-        || field.starts_with("frontend_ttl_")
-        || ADVANCED_KEPT.contains(&field)
-}
-
 fn export_plugins(
     value: &Value,
     sealer: &Sealer,
@@ -879,17 +746,17 @@ fn build_settings(
     plugin_flags: &HashMap<String, HashMap<String, bool>>,
 ) -> Result<Map<String, Value>, ExportError> {
     let mut settings = Map::new();
-    for section in KEPT_SECTIONS {
-        if let Some(value) = config.get(*section) {
-            settings.insert((*section).to_owned(), value.clone());
+    for section in exported_whole() {
+        if let Some(value) = config.get(section) {
+            settings.insert(section.to_owned(), value.clone());
         }
     }
 
-    for (section, fields) in SECTION_SECRETS {
-        if let Some(Value::Object(map)) = settings.get_mut(*section) {
-            for field in *fields {
-                seal_v2_field(map, field, key, sealer)?;
-            }
+    for (section, field, sealing) in SECRETS {
+        if *sealing == Sealing::FieldOfSection
+            && let Some(Value::Object(map)) = settings.get_mut(*section)
+        {
+            seal_v2_field(map, field, key, sealer)?;
         }
     }
 
@@ -910,7 +777,7 @@ fn build_settings(
         let mut filtered = Map::new();
         if let Some(map) = value.as_object() {
             for (field, field_value) in map {
-                if advanced_kept(field) {
+                if advanced_exported(field) {
                     filtered.insert(field.clone(), field_value.clone());
                 }
             }
@@ -954,7 +821,7 @@ fn build_settings(
         if let Some(map) = value.as_object() {
             let mut filtered = Map::new();
             for (field, field_value) in map {
-                if INTERNAL_KEPT.contains(&field.as_str()) {
+                if internal_exported(field) {
                     filtered.insert(field.clone(), field_value.clone());
                 }
             }

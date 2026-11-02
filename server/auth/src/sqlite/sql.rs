@@ -56,6 +56,9 @@ droppedneedle_kernel::sql! {
     /// Insert one sign-in binding, with its sealed token document or none.
     pub(super) INSERT_PROVIDER = "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
         provider_data, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+    /// Insert one sign-in row with its password, its uid given as it is.
+    pub(super) INSERT_PASSWORD_BINDING = "INSERT INTO auth_providers (id, user_id, provider, \
+        provider_uid, password_hash, hash_scheme, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
     /// Insert one local credential.
     pub(super) INSERT_LOCAL_CREDENTIAL = "INSERT INTO auth_providers (id, user_id, provider, \
         provider_uid, password_hash, hash_scheme, created_at) \

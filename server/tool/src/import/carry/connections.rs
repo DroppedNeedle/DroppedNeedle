@@ -17,9 +17,9 @@ use std::collections::HashMap;
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 
+use super::sql;
 use super::{CarryError, SectionResult};
 use crate::export::envelope::ConnectionRecord;
-use super::sql;
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Report entity for this section.
@@ -104,16 +104,11 @@ fn stored_view(service: &str, data: &str, crypto: &Crypto) -> Option<Value> {
 /// Decide and (on a real run) write every link.
 pub(crate) fn apply(
     conn: &Connection,
-    root: &Value,
+    records: &[ConnectionRecord],
     unsealed: &HashMap<String, String>,
     crypto: &Crypto,
     dry_run: bool,
 ) -> Result<SectionResult, CarryError> {
-    let records: Vec<ConnectionRecord> = root
-        .get("user_connections")
-        .cloned()
-        .and_then(|value| serde_json::from_value(value).ok())
-        .unwrap_or_default();
     let stored: HashMap<(String, String), Stored> =
         sql::all_rows(conn, sql::CONNECTIONS, sql::ConnectionRow::read)?
             .into_iter()

@@ -6,7 +6,7 @@
 //! the completed ones.
 
 use super::requests::{flag, millis, now_millis, real, set_or, whole, whole_min, whole_or};
-use super::{Column, Parent, Source, TableSection, Target, col};
+use super::{Column, Parent, SOURCE_RULE, Source, TableSection, Target, ValueRule, col};
 
 /// Finished downloads.
 pub const DOWNLOAD_TASKS: TableSection = TableSection {
@@ -21,7 +21,12 @@ pub const DOWNLOAD_TASKS: TableSection = TableSection {
         col("id"),
         col("user_id"),
         col("request_history_mbid"),
-        col("download_type"),
+        Column::new("download_type").ruled(ValueRule::OneOf {
+            kept: &["album", "track"],
+            prefix: None,
+            renamed: &[],
+            default: "album",
+        }),
         col("release_group_mbid"),
         col("release_mbid"),
         col("release_track_mbid"),
@@ -36,9 +41,18 @@ pub const DOWNLOAD_TASKS: TableSection = TableSection {
         Column::new("track_count").from_sql_of("track_count", whole!("track_count")),
         Column::new("track_duration_seconds")
             .from_sql_of("track_duration_seconds", real!("track_duration_seconds")),
-        col("download_client"),
-        col("source"),
-        col("origin"),
+        // A plugin's client is its name, so the list has no end.
+        Column::new("download_client").ruled(ValueRule::AnyText { default: "slskd" }),
+        Column::new("source").ruled(SOURCE_RULE),
+        // v3's dispatch origins.
+        Column::new("origin").ruled(ValueRule::OneOf {
+            kept: &[
+                "user", "approval", "retry", "wanted", "upgrade", "edition", "follow",
+            ],
+            prefix: None,
+            renamed: &[("edition_conversion", "edition")],
+            default: "user",
+        }),
         col("source_username"),
         col("source_directory"),
         col("search_query"),

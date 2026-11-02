@@ -13,7 +13,9 @@
 use droppedneedle_kernel::db::statement::Choice;
 
 use crate::export::sections::requests::now_millis;
-use crate::export::sections::{ALL, Column, LinkKind, LinkMode, TableSection, Target};
+use crate::export::sections::{
+    ALL, Column, LinkKind, LinkMode, SOURCE_RULE, TableSection, Target, V2Value,
+};
 use droppedneedle_library::edition::choice::RemapOrigin;
 
 pub(super) use crate::import::sql::all_rows;
@@ -160,7 +162,8 @@ droppedneedle_kernel::sql! {
     /// The ids of the held rows in the bundle.
     pub(super) HELD_IDS = "SELECT id FROM bundle.\"held_import\" ORDER BY id";
     /// One held row's owner, time, name and bytes.
-    pub(super) HELD_ROW = "SELECT user_id, created_at, held_path, \"file\" \
+    pub(super) HELD_ROW = "SELECT user_id, COALESCE(CAST(created_at AS REAL), 0) AS created_at, \
+             held_path, \"file\" \
              FROM bundle.\"held_import\" WHERE id = ?1";
     /// One carried held row.
     pub(super) row HeldRow for [HELD_ROW] {
@@ -415,6 +418,9 @@ fn resolved_sql(kind: LinkKind, id: &str) -> String {
 /// The value a column takes in v3 for bundle row `b`.
 fn value_sql(column: &Column) -> String {
     let raw = format!("b.{}", quote(column.name));
+    if let V2Value::Ruled(_, rule) = column.v2 {
+        return rule.sql(&raw);
+    }
     match column.link {
         Some(link) if link.mode == LinkMode::UntilResolved => {
             format!("CASE WHEN {} THEN {raw} END", resolved_sql(link.kind, &raw))
@@ -850,7 +856,7 @@ pub(super) fn held_file_insert(has: &dyn Fn(&str) -> bool) -> String {
          SELECT e.id, 'held', ?2, COALESCE(NULLIF({original}, ''), ?2), {release}, \
              {release_track}, lower({recording}), {disc}, {track}, {title}, {format}, \
              {duration}, {expected}, {evidence_title}, {evidence_artist}, {evidence_score}, \
-             COALESCE({source}, 'soulseek'), {task}, \
+             {source}, {task}, \
              CASE WHEN h.reason LIKE 'management:%' THEN 'target_occupied' \
                  WHEN h.reason IN {KEPT_REASONS} THEN h.reason \
                  ELSE 'held_by_earlier_version' END, \
@@ -873,7 +879,7 @@ pub(super) fn held_file_insert(has: &dyn Fn(&str) -> bool) -> String {
         evidence_title = col("evidence_title"),
         evidence_artist = col("evidence_artist"),
         evidence_score = col("evidence_score"),
-        source = col("source"),
+        source = SOURCE_RULE.sql(&col("source")),
         task = col("source_task_id"),
         detail = col("reason_detail"),
     )

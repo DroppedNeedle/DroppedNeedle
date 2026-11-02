@@ -6,12 +6,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, params};
-use serde_json::Value;
-
-use crate::export::envelope::BUNDLE_ROLE;
-use crate::export::sections::{ALL, Column, TableSection, Target};
 use super::sql::{self, AnySection, UserSection};
+use crate::export::envelope::{BUNDLE_ROLE, ExportDoc};
+use crate::export::sections::{ALL, Column, TableSection, Target};
+use rusqlite::{Connection, params};
 
 /// A bundle the import may read: its path and its declared row counts.
 #[derive(Debug, Clone)]
@@ -34,38 +32,27 @@ pub(crate) enum BundleRejection {
 
 /// Find the bundle the export names beside it and check its hash and
 /// size. `None` when the export carries no bundle (format 1 files).
-pub(crate) fn locate(root: &Value, dir: Option<&Path>) -> Result<Option<Bundle>, BundleRejection> {
-    let Some(attachment) = root
-        .get("attachments")
-        .and_then(Value::as_array)
-        .and_then(|items| {
-            items
-                .iter()
-                .find(|item| item.get("role").and_then(Value::as_str) == Some(BUNDLE_ROLE))
-        })
+pub(crate) fn locate(
+    doc: &ExportDoc,
+    dir: Option<&Path>,
+) -> Result<Option<Bundle>, BundleRejection> {
+    let Some(attachment) = doc
+        .attachments
+        .iter()
+        .find(|attachment| attachment.role == BUNDLE_ROLE)
     else {
         return Ok(None);
     };
-    let name = attachment
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let name = attachment.name.as_str();
     let Some(dir) = dir else {
         return Err(BundleRejection::Invalid(format!(
             "BUNDLE_MISSING: the export comes with {name}; keep it beside the export file"
         )));
     };
     let path = dir.join(name);
-    let expected_sha = attachment
-        .get("sha256")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let expected_bytes = attachment.get("bytes").and_then(Value::as_u64);
-    let declared = attachment
-        .get("sections")
-        .and_then(|sections| serde_json::from_value(sections.clone()).ok())
-        .unwrap_or_default();
+    let expected_sha = attachment.sha256.to_ascii_lowercase();
+    let expected_bytes = Some(attachment.bytes);
+    let declared = attachment.sections.clone();
     match crate::export::bundle::file_sha256(&path) {
         Ok((sha, bytes)) if sha == expected_sha && Some(bytes) == expected_bytes => {
             Ok(Some(Bundle { path, declared }))

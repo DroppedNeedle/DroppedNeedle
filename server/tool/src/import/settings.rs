@@ -22,47 +22,9 @@ use super::apply::ImportError;
 use super::envelope::is_sealed;
 use super::report::{DROPPED_SETTING, ReportBuilder};
 use super::schedule_carry::carry_frequency;
-use super::validate::{REMOVED_SECTIONS, strip_removed};
-
-/// Sections the export may carry (kept whole or in part). Present
-/// sections replace the v3 config wholesale; absent ones reset to v3
-/// defaults. The settings keys outside this set are left untouched: the
-/// export cannot speak for them. A test names those and holds both lists
-/// to the kernel's section list.
-/// Shared with the validator, which warns on anything outside it.
-pub(crate) const REPLACE_UNIVERSE: &[&str] = &[
-    "user_preferences",
-    "library_scan_schedule",
-    "library_scan_filesystem_watcher",
-    "download_client",
-    "download_clients",
-    "wanted",
-    "source_priority",
-    "usenet_search_backend",
-    "indexers",
-    "prowlarr",
-    "lidarr_import",
-    "jellyfin_settings",
-    "navidrome_settings",
-    "plex_settings",
-    "listenbrainz_settings",
-    "youtube_settings",
-    "lastfm_settings",
-    "spotify_settings",
-    "events",
-    "wrapped_settings",
-    "oidc_settings",
-    "security_settings",
-    "connect_apps",
-    "library_settings",
-    "library_management",
-    "get_it",
-    "advanced_settings",
-    "download_policy",
-    "musicbrainz_settings",
-    "plugins",
-    "_internal",
-];
+use super::validate::strip_removed;
+use crate::allowlist::{is_replaced, removed_sections, replaced_sections};
+use crate::export::envelope::ExportDoc;
 
 /// Transient `musicbrainz_settings` fields dropped at import.
 const MUSICBRAINZ_TRANSIENT: &[&str] = &[
@@ -154,7 +116,7 @@ pub(super) fn write_settings(
     // list (the key's check value among them) are not the export's to drop.
     for key in stored
         .keys()
-        .filter(|key| !staged.contains_key(*key) && REPLACE_UNIVERSE.contains(&key.as_str()))
+        .filter(|key| !staged.contains_key(*key) && is_replaced(key))
     {
         tx.execute(settings_sql::DELETE_SECTION.text(), params![key])?;
         changed += 1;
@@ -171,7 +133,7 @@ fn unix_millis() -> i64 {
 }
 
 pub(super) fn stage_settings(
-    root: &Value,
+    doc: &ExportDoc,
     current: &Value,
     unsealed: &HashMap<String, String>,
     crypto: &Crypto,
@@ -182,35 +144,29 @@ pub(super) fn stage_settings(
     let staged_object = staged.as_object_mut().ok_or_else(|| ImportError::Config {
         reason: "v3 settings must be a JSON object".to_owned(),
     })?;
-    if let Some(instance_id) = root.get("instance_id").and_then(Value::as_str) {
-        staged_object.insert(
-            "instance_id".to_owned(),
-            Value::String(instance_id.to_owned()),
-        );
-    }
-    let empty = serde_json::Map::new();
-    let exported = root
-        .get("settings")
-        .and_then(Value::as_object)
-        .unwrap_or(&empty);
+    staged_object.insert(
+        "instance_id".to_owned(),
+        Value::String(doc.instance_id.clone()),
+    );
+    let exported = &doc.settings;
 
-    for section in REMOVED_SECTIONS {
-        if exported.contains_key(*section) {
-            note_dropped_setting(report, (*section).to_owned());
+    for section in removed_sections() {
+        if exported.contains_key(section) {
+            note_dropped_setting(report, section.to_owned());
         }
     }
-    for section in REPLACE_UNIVERSE {
-        match exported.get(*section) {
+    for section in replaced_sections() {
+        match exported.get(section) {
             Some(value) => {
                 let mut filtered = filter_section(section, value);
                 for path in strip_removed(section, &mut filtered) {
                     note_dropped_setting(report, path);
                 }
-                if *section == "plugins" {
+                if section == "plugins" {
                     note_unflagged_plugin_settings(&filtered, report);
                     note_plugins_need_porting(&filtered, report);
                 }
-                if *section == "library_management" {
+                if section == "library_management" {
                     carry_v2_management_fields(&mut filtered);
                 }
                 let applied = rekey_section(
@@ -220,12 +176,12 @@ pub(super) fn stage_settings(
                     crypto,
                     report,
                 )?;
-                staged_object.insert((*section).to_owned(), applied);
-                report.setting_applied((*section).to_owned());
+                staged_object.insert(section.to_owned(), applied);
+                report.setting_applied(section.to_owned());
             }
             None => {
-                staged_object.remove(*section);
-                report.setting_defaulted((*section).to_owned());
+                staged_object.remove(section);
+                report.setting_defaulted(section.to_owned());
             }
         }
     }
@@ -271,10 +227,7 @@ pub(super) fn stage_settings(
     // re-imports, and consistent with whole-config replace (the export,
     // plus the one-shot v2 carry, is the source of truth).
     let schedule_present = exported.contains_key("library_scan_schedule");
-    let export_instance = root
-        .get("instance_id")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let export_instance = doc.instance_id.as_str();
     if let Some(v2_path) = v2_config_path
         && let Some(frequency) = carry_frequency(v2_path, schedule_present, export_instance)?
     {
@@ -566,32 +519,5 @@ fn with_plaintexts(value: &Value, crypto: &Crypto) -> Value {
                 .collect(),
         ),
         _ => value.clone(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Every settings key the server stores is either replaced by an
-    /// import or named as left alone, and nothing else is.
-    #[test]
-    fn replace_list_covers_the_section_list() {
-        use droppedneedle_kernel::runtime_config::KNOWN_TOP_LEVEL_KEYS;
-
-        /// The keys an import leaves as they are.
-        const LEFT_ALONE: &[&str] = &[
-            // v3 only.
-            "lyrics_settings",
-            "public_address",
-            "edition_preferences",
-            // This install's own id.
-            "instance_id",
-        ];
-        let mut named: Vec<&str> = REPLACE_UNIVERSE.iter().chain(LEFT_ALONE).copied().collect();
-        named.sort_unstable();
-        let mut known = KNOWN_TOP_LEVEL_KEYS.to_vec();
-        known.sort_unstable();
-        assert_eq!(named, known);
     }
 }

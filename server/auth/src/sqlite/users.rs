@@ -718,6 +718,34 @@ impl Users {
         .map_err(op_error)?;
         Ok(())
     }
+
+    /// Insert one sign-in row holding a password, its uid given as it is,
+    /// inside the caller's transaction. The importer's form for a local row
+    /// whose uid need not be today's username, on an account that may have
+    /// none. A taken `(provider, provider_uid)` pair is
+    /// [`WriteError::Conflict`].
+    pub fn insert_password_binding_in(
+        tx: &Transaction<'_>,
+        binding: &ProviderBinding,
+        hash: &str,
+        scheme: &str,
+        created_at: i64,
+    ) -> Result<(), WriteError> {
+        tx.execute(
+            sql::INSERT_PASSWORD_BINDING.text(),
+            rusqlite::params![
+                binding.id,
+                binding.user_id,
+                binding.provider,
+                binding.provider_uid,
+                hash,
+                scheme,
+                secs_to_ms(created_at),
+            ],
+        )
+        .map_err(op_error)?;
+        Ok(())
+    }
 }
 
 /// True when the account exists. Used after updates that may legitimately

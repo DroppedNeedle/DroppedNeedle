@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
-use super::{CarryError, SectionResult};
 use super::sql;
+use super::{CarryError, SectionResult};
 
 /// Extensions v3's avatar store serves.
 const EXTENSIONS: &[&str] = &["jpg", "png", "webp", "gif"];

@@ -9,7 +9,9 @@ publish = false
 
 [dependencies]
 droppedneedle = { path = "..", version = "3.0.0" }
+droppedneedle-acquire.workspace = true
 droppedneedle-auth.workspace = true
+droppedneedle-catalog.workspace = true
 droppedneedle-kernel.workspace = true
 droppedneedle-library.workspace = true
 aes.workspace = true
@@ -43,8 +45,6 @@ test-support = [
 [dev-dependencies]
 droppedneedle-tool = { path = ".", features = ["test-support"] }
 droppedneedle-kernel = { workspace = true, features = ["test-support"] }
-droppedneedle-acquire.workspace = true
-droppedneedle-catalog.workspace = true
 droppedneedle-compat.workspace = true
 droppedneedle-media.workspace = true
 droppedneedle-plugins.workspace = true

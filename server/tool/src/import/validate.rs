@@ -1,27 +1,35 @@
 //! Standalone export validator: error/warning taxonomy only, no DB access.
 //!
-//! Errors
-//! refuse the import; warnings ride along in the report. An optional
+//! Errors refuse the import; warnings ride along in the report. An optional
 //! `--v2-root` cross-check is CLI wiring and lives outside this module.
+//!
+//! [`read_export`] gives the typed document the plan reads. The header, the
+//! top-level keys, the settings and the attachment list are checked on the raw
+//! JSON. Every other section decodes record by record: a record that does not
+//! decode gets a look at its JSON only to say what is wrong with it, and
+//! serde's own text is never shown, because it can quote a value, and a bare
+//! secret could be that value.
 //!
 //! Dangling references fail closed: a follow or approval whose `user_id`
 //! has no `users[].id` is a `DANGLING_USER_REF` error, so the whole file is
-//! refused and the operator repairs v2 and re-exports. The drop-and-count
-//! branch survives in the merge planner as defense in depth,
-//! but it cannot fire through `run_import` because validation runs first.
-//! Two rules go beyond the export spec: `DUPLICATE_RECOVERY_HASH` (the `code_hash` column
-//! is UNIQUE, so a mid-import collision would only fail later and ruder)
-//! and the `UNKNOWN_SETTINGS_SECTION` warning (unknown sections are
-//! ignored, never unsealed).
+//! refused and the operator repairs v2 and re-exports. Unknown settings
+//! sections are ignored with a warning, never unsealed.
 
 use std::collections::{HashMap, HashSet};
 
-use serde_json::Value;
+use serde::de::DeserializeOwned;
+use serde_json::{Map, Value};
 
 use super::envelope::{ENVELOPE_NONCE_LEN, ENVELOPE_SALT_LEN, SEALED_KEY, is_sealed};
+use crate::allowlist::{
+    ADVANCED_KEPT, INTERNAL_KEPT, REMOVED_FIELDS, REMOVED_PREFIXES, SECRETS, is_removed_field,
+    is_removed_section, is_replaced,
+};
+use crate::export::envelope::HashScheme;
 use crate::export::envelope::{
-    BUNDLE_ROLE, EXPORT_FORMAT, FORMAT_VERSION, MIN_FORMAT_VERSION, OPTIONAL_KEYS,
-    RESERVED_SECTIONS, required_keys,
+    AppPasswordRecord, ApprovalRecord, BUNDLE_ROLE, ConnectionRecord, EXPORT_FORMAT,
+    EventCityRecord, EventSeenRecord, ExportDoc, FORMAT_VERSION, FollowRecord, MIN_FORMAT_VERSION,
+    OPTIONAL_KEYS, ProviderRecord, REQUIRED_KEYS_V2, RESERVED_SECTIONS, UserRecord, required_keys,
 };
 use crate::export::seal::{KDF_ALGO, M_COST_KIB, P_COST, SCHEME, T_COST};
 use droppedneedle_auth::times::parse_iso;
@@ -36,127 +44,6 @@ const VESTIGIAL_FIELDS: &[&str] = &[
     "cache_ttl_covers",
     "cache_cleanup_interval",
 ];
-
-/// Explicit `advanced_settings` allowlist. Fields v3 removed are accepted
-/// too and reported as dropped ([`REMOVED_FIELDS`], [`REMOVED_PREFIXES`]).
-const ADVANCED_SETTINGS_KEPT: &[&str] = &[
-    "discover_queue_size",
-    "discover_queue_auto_generate",
-    "discover_queue_seed_artists",
-    "discover_queue_wildcard_slots",
-    "discover_queue_warm_cycle_build",
-    "discover_queue_similar_artists_limit",
-    "discover_queue_albums_per_similar",
-    "discover_queue_lastfm_mbid_max_lookups",
-    "discover_picks_count",
-    "discover_picks_genre_affinity_weight",
-    "audiodb_enabled",
-    "audiodb_name_search_fallback",
-    "audiodb_api_key",
-    "prefer_local_cover_art",
-    "direct_remote_images_enabled",
-    "request_history_retention_days",
-    "ignored_releases_retention_days",
-    "store_prune_interval_hours",
-];
-
-/// `_internal` allowlist.
-const INTERNAL_KEPT: &[&str] = &["plex_client_id", "droppedneedle_device_id"];
-
-/// v2 settings sections v3 removed. An export carrying one imports, and
-/// the report lists it as a dropped setting.
-pub(crate) const REMOVED_SECTIONS: &[&str] =
-    &["home_settings", "primary_music_source", "scrobble_settings"];
-
-/// v2 settings fields v3 removed from sections it keeps, as dotted paths
-/// from the section key. `name[]` walks every element of a list. An export
-/// carrying one imports without it, and the report lists each one dropped.
-pub(crate) const REMOVED_FIELDS: &[&str] = &[
-    "advanced_settings.http_timeout",
-    "advanced_settings.http_connect_timeout",
-    "advanced_settings.http_max_connections",
-    "advanced_settings.batch_artist_images",
-    "advanced_settings.batch_albums",
-    "advanced_settings.delay_artist",
-    "advanced_settings.delay_albums",
-    "advanced_settings.memory_cache_max_entries",
-    "advanced_settings.memory_cache_cleanup_interval",
-    "advanced_settings.cover_memory_cache_max_entries",
-    "advanced_settings.cover_memory_cache_max_size_mb",
-    "advanced_settings.disk_cache_cleanup_interval",
-    "advanced_settings.recent_metadata_max_size_mb",
-    "advanced_settings.recent_covers_max_size_mb",
-    "advanced_settings.persistent_metadata_ttl_hours",
-    "advanced_settings.discover_queue_ttl",
-    "advanced_settings.discover_queue_polling_interval",
-    "advanced_settings.discover_queue_enrich_ttl",
-    "advanced_settings.genre_section_ttl",
-    "advanced_settings.request_concurrency",
-    "advanced_settings.orphan_cover_demote_interval_hours",
-    "advanced_settings.sync_stall_timeout_minutes",
-    "advanced_settings.sync_max_timeout_hours",
-    "advanced_settings.artist_discovery_precache_delay",
-    "advanced_settings.artist_discovery_precache_concurrency",
-    "advanced_settings.audiodb_prewarm_concurrency",
-    "advanced_settings.audiodb_prewarm_delay",
-    "connect_apps.exact_track_approval_supported",
-    "connect_apps.discover_mode",
-    "wanted.dormant_after_days",
-    "download_policy.verify_downloads",
-    "download_policy.usenet_min_release_age_minutes",
-    "download_policy.source_selection_mode",
-    "download_policy.quality_preference_order",
-    "download_policy.preferred_lossy_bitrate_kbps",
-    "download_policy.lossy_min_bitrate_kbps",
-    "download_policy.lossy_max_bitrate_kbps",
-    "download_policy.lossless_preference",
-    "download_policy.lossless_max_bit_depth",
-    "download_policy.lossless_max_sample_rate_hz",
-    "download_policy.unknown_quality_behavior",
-    "download_policy.quality_recipe[].target_bitrate_kbps",
-    "download_client.client_type",
-    "download_client.verify_downloads",
-    "download_client.quality_min",
-    "download_client.quality_max",
-    "download_client.flac_mp3_only",
-    "download_client.preflight_score_auto_accept",
-    "download_client.preflight_score_manual_min",
-    "download_client.download_stall_timeout_minutes",
-    "download_client.download_queued_timeout_minutes",
-    "download_client.preferred_quality_wait_minutes",
-    "download_client.max_failover_attempts",
-    "download_client.max_concurrent_downloads",
-    "download_client.auto_retry_enabled",
-    "download_client.auto_retry_max_attempts",
-    "download_client.auto_retry_base_interval_minutes",
-    "download_clients.sabnzbd.client_type",
-    "download_clients.sabnzbd.post_processing",
-    "indexers[].type",
-    "library_scan_schedule.last_scan",
-    "library_scan_schedule.last_scan_success",
-    "musicbrainz_settings.concurrent_searches",
-    "plex_settings.scrobble_to_plex",
-    "_internal.brainzmash_consent_admin",
-];
-
-/// Field families v3 removed whole, as (section, field prefix): every
-/// server and browser cache lifetime is fixed in code now.
-pub(crate) const REMOVED_PREFIXES: &[(&str, &str)] = &[
-    ("advanced_settings", "cache_ttl_"),
-    ("advanced_settings", "frontend_ttl_"),
-];
-
-/// True when `field`, directly under `section`, is a removed setting.
-fn is_removed_field(section: &str, field: &str) -> bool {
-    REMOVED_PREFIXES
-        .iter()
-        .any(|(owner, prefix)| *owner == section && field.starts_with(prefix))
-        || REMOVED_FIELDS.iter().any(|path| {
-            path.strip_prefix(section)
-                .and_then(|rest| rest.strip_prefix('.'))
-                == Some(field)
-        })
-}
 
 /// Take every removed setting out of one exported section, returning the
 /// path of each one taken (`download_policy.quality_recipe[0].target_bitrate_kbps`).
@@ -222,30 +109,6 @@ fn strip_path(value: &mut Value, segments: &[&str], at: String, taken: &mut Vec<
     }
 }
 
-/// Known secret leaves: (section, dotted path inside the section). A
-/// non-empty bare string at one of these is an error; empties mean
-/// absence and pass. Paths ending in `[]` apply to every array element
-/// (`indexers[].api_key`).
-const SECRET_LEAVES: &[(&str, &str)] = &[
-    ("download_client", "api_key"),
-    ("download_clients", "sabnzbd.api_key"),
-    ("indexers", "[].api_key"),
-    ("prowlarr", "api_key"),
-    ("lidarr_import", "api_key"),
-    ("jellyfin_settings", "api_key"),
-    ("navidrome_settings", "password"),
-    ("plex_settings", "plex_token"),
-    ("listenbrainz_settings", "user_token"),
-    ("youtube_settings", "api_key"),
-    ("spotify_settings", "client_secret"),
-    ("events", "ticketmaster_api_key"),
-    ("events", "skiddle_api_key"),
-    ("wrapped_settings", "api_key"),
-    ("oidc_settings", "client_secret"),
-    ("library_settings", "acoustid_api_key"),
-    ("advanced_settings", "audiodb_api_key"),
-];
-
 /// One validator finding. `path` is a dotted JSON path (`users[2].email`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationIssue {
@@ -288,6 +151,13 @@ impl ValidationReport {
 /// passphrase, no filesystem.
 #[must_use]
 pub fn validate_export(root: &Value) -> ValidationReport {
+    read_export(root).0
+}
+
+/// Validate one parsed export document and read it as the typed document,
+/// which is there only when the file may be imported.
+#[must_use]
+pub fn read_export(root: &Value) -> (ValidationReport, Option<ExportDoc>) {
     let mut report = ValidationReport::default();
     let Some(object) = root.as_object() else {
         report.errors.push(ValidationIssue::new(
@@ -295,7 +165,7 @@ pub fn validate_export(root: &Value) -> ValidationReport {
             String::new(),
             "export root must be a JSON object".to_owned(),
         ));
-        return report;
+        return (report, None);
     };
 
     validate_envelope_header(object, &mut report);
@@ -307,12 +177,99 @@ pub fn validate_export(root: &Value) -> ValidationReport {
     validate_approvals(object.get("approvals"), &user_ids, &mut report);
     validate_event_cities(object.get("event_cities"), &user_ids, &mut report);
     validate_event_seen(object.get("event_seen"), &user_ids, &mut report);
-    if object.get("format_version").and_then(Value::as_u64) >= Some(2) {
+    let carries_v2_sections = object.get("format_version").and_then(Value::as_u64) >= Some(2);
+    if carries_v2_sections {
         validate_connections(object.get("user_connections"), &user_ids, &mut report);
         validate_attachments(object.get("attachments"), &mut report);
         validate_left_behind(object.get("left_behind"), &mut report);
     }
-    report
+    if !report.valid() {
+        return (report, None);
+    }
+
+    let mut document = object.clone();
+    if !carries_v2_sections {
+        // A format 1 reader never had them, whatever a file holds there.
+        for key in REQUIRED_KEYS_V2 {
+            document.remove(*key);
+        }
+    }
+    match serde_json::from_value(Value::Object(document)) {
+        Ok(doc) => (report, Some(doc)),
+        Err(_) => {
+            report.errors.push(ValidationIssue::new(
+                "BAD_DOCUMENT",
+                String::new(),
+                "a top-level field of the export has the wrong type".to_owned(),
+            ));
+            (report, None)
+        }
+    }
+}
+
+/// How one section's list is refused: its codes and the record message.
+struct ListShape {
+    name: &'static str,
+    not_array: &'static str,
+    not_object: &'static str,
+    object_message: &'static str,
+}
+
+/// Decode a section's records, each with its JSON path. A record that does
+/// not decode is refused by name: `explain` says why when it can, from the
+/// record's JSON, and otherwise a field has the wrong type.
+fn decode_list<T: DeserializeOwned>(
+    section: Option<&Value>,
+    shape: &ListShape,
+    report: &mut ValidationReport,
+    mut explain: impl FnMut(&Map<String, Value>, &str, &mut ValidationReport),
+) -> Vec<(String, T)> {
+    let Some(list) = section else {
+        return Vec::new();
+    };
+    let Some(items) = list.as_array() else {
+        report.errors.push(ValidationIssue::new(
+            shape.not_array,
+            shape.name.to_owned(),
+            format!("{} must be a JSON array", shape.name),
+        ));
+        return Vec::new();
+    };
+    let mut records = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let path = format!("{}[{index}]", shape.name);
+        let Some(record) = item.as_object() else {
+            report.errors.push(ValidationIssue::new(
+                shape.not_object,
+                path,
+                shape.object_message.to_owned(),
+            ));
+            continue;
+        };
+        match serde_json::from_value::<T>(item.clone()) {
+            Ok(decoded) => records.push((path, decoded)),
+            Err(_) => {
+                let before = report.errors.len();
+                explain(record, &path, report);
+                if report.errors.len() == before {
+                    report.errors.push(ValidationIssue::new(
+                        "BAD_RECORD",
+                        path,
+                        "a field in this record has the wrong type".to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+    records
+}
+
+/// A text field of a record that did not decode, empty when it is not text.
+fn raw_text<'a>(record: &'a Map<String, Value>, field: &str) -> &'a str {
+    record
+        .get(field)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
 }
 
 /// Per-user service links: an owner the file carries, a service name, a
@@ -322,65 +279,69 @@ fn validate_connections(
     user_ids: &HashSet<String>,
     report: &mut ValidationReport,
 ) {
-    let Some(list) = connections else { return };
-    let Some(items) = list.as_array() else {
-        report.errors.push(ValidationIssue::new(
-            "CONNECTIONS_NOT_ARRAY",
-            "user_connections".to_owned(),
-            "user_connections must be a JSON array".to_owned(),
-        ));
-        return;
-    };
+    let records: Vec<(String, ConnectionRecord)> = decode_list(
+        connections,
+        &ListShape {
+            name: "user_connections",
+            not_array: "CONNECTIONS_NOT_ARRAY",
+            not_object: "CONNECTION_NOT_OBJECT",
+            object_message: "connection record must be a JSON object",
+        },
+        report,
+        |record, path, report| {
+            check_connection_owner(raw_text(record, "user_id"), path, user_ids, report);
+            if raw_text(record, "service").is_empty() {
+                missing_service(path, report);
+            }
+            match record.get("data") {
+                Some(data) if is_sealed(data) => {
+                    check_sealed_blob(data, &format!("{path}.data"), report);
+                }
+                _ => report.errors.push(ValidationIssue::new(
+                    "SECRET_NOT_SEALED",
+                    format!("{path}.data"),
+                    "connection data must be a sealed object".to_owned(),
+                )),
+            }
+        },
+    );
     let mut seen = HashSet::new();
-    for (index, item) in items.iter().enumerate() {
-        let path = format!("user_connections[{index}]");
-        let Some(record) = item.as_object() else {
-            report.errors.push(ValidationIssue::new(
-                "CONNECTION_NOT_OBJECT",
-                path,
-                "connection record must be a JSON object".to_owned(),
-            ));
-            continue;
-        };
-        let user_id = record
-            .get("user_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !user_ids.contains(user_id) {
-            report.errors.push(ValidationIssue::new(
-                "DANGLING_USER_REF",
-                format!("{path}.user_id"),
-                format!("user_id {user_id:?} has no matching users[].id"),
-            ));
-        }
-        let service = record
-            .get("service")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if service.is_empty() {
-            report.errors.push(ValidationIssue::new(
-                "CONNECTION_MISSING_SERVICE",
-                format!("{path}.service"),
-                "connection record needs a service name".to_owned(),
-            ));
-        } else if !seen.insert((user_id.to_owned(), service.to_owned())) {
+    for (path, record) in &records {
+        check_connection_owner(&record.user_id, path, user_ids, report);
+        if record.service.is_empty() {
+            missing_service(path, report);
+        } else if !seen.insert((record.user_id.as_str(), record.service.as_str())) {
             report.errors.push(ValidationIssue::new(
                 "DUPLICATE_CONNECTION",
                 path.clone(),
                 "the same user and service appear more than once".to_owned(),
             ));
         }
-        match record.get("data") {
-            Some(data) if is_sealed(data) => {
-                check_sealed_blob(data, &format!("{path}.data"), report);
-            }
-            _ => report.errors.push(ValidationIssue::new(
-                "SECRET_NOT_SEALED",
-                format!("{path}.data"),
-                "connection data must be a sealed object".to_owned(),
-            )),
-        }
+        check_sealed_text(Some(&record.data.sealed), &format!("{path}.data"), report);
     }
+}
+
+fn check_connection_owner(
+    user_id: &str,
+    path: &str,
+    user_ids: &HashSet<String>,
+    report: &mut ValidationReport,
+) {
+    if !user_ids.contains(user_id) {
+        report.errors.push(ValidationIssue::new(
+            "DANGLING_USER_REF",
+            format!("{path}.user_id"),
+            format!("user_id {user_id:?} has no matching users[].id"),
+        ));
+    }
+}
+
+fn missing_service(path: &str, report: &mut ValidationReport) {
+    report.errors.push(ValidationIssue::new(
+        "CONNECTION_MISSING_SERVICE",
+        format!("{path}.service"),
+        "connection record needs a service name".to_owned(),
+    ));
 }
 
 /// Files beside the export: a plain file name (never a path), a known
@@ -502,10 +463,7 @@ fn validate_left_behind(left_behind: Option<&Value>, report: &mut ValidationRepo
     }
 }
 
-fn validate_envelope_header(
-    object: &serde_json::Map<String, Value>,
-    report: &mut ValidationReport,
-) {
+fn validate_envelope_header(object: &Map<String, Value>, report: &mut ValidationReport) {
     match object.get("format").and_then(Value::as_str) {
         Some(EXPORT_FORMAT) => {}
         _ => report.errors.push(ValidationIssue::new(
@@ -626,7 +584,7 @@ fn is_utc_stamp(stamp: &str) -> bool {
     trimmed.ends_with("+00:00") || trimmed.ends_with("+0000") || trimmed.ends_with("+00")
 }
 
-fn validate_top_level_keys(object: &serde_json::Map<String, Value>, report: &mut ValidationReport) {
+fn validate_top_level_keys(object: &Map<String, Value>, report: &mut ValidationReport) {
     let version = object
         .get("format_version")
         .and_then(Value::as_u64)
@@ -705,90 +663,85 @@ fn is_dropped_name(key: &str) -> bool {
 
 fn validate_users(users: Option<&Value>, report: &mut ValidationReport) -> HashSet<String> {
     let mut ids = HashSet::new();
-    let Some(list) = users else { return ids };
-    let Some(items) = list.as_array() else {
-        report.errors.push(ValidationIssue::new(
-            "USERS_NOT_ARRAY",
-            "users".to_owned(),
-            "users must be a JSON array".to_owned(),
-        ));
-        return ids;
-    };
+    let records: Vec<(String, UserRecord)> = decode_list(
+        users,
+        &ListShape {
+            name: "users",
+            not_array: "USERS_NOT_ARRAY",
+            not_object: "USER_NOT_OBJECT",
+            object_message: "user record must be a JSON object",
+        },
+        report,
+        |record, path, report| {
+            // Still a user the file names, so its rows are not called dangling.
+            let id = raw_text(record, "id");
+            if id.is_empty() {
+                missing_user_id(path, report);
+            } else {
+                ids.insert(id.to_owned());
+            }
+            explain_providers(record.get("providers"), path, report);
+            explain_app_passwords(record.get("app_passwords"), path, report);
+        },
+    );
     let mut seen_ids: HashSet<&str> = HashSet::new();
     let mut seen_emails: HashMap<&str, usize> = HashMap::new();
     let mut seen_usernames: HashMap<&str, usize> = HashMap::new();
-    let mut seen_bindings: HashSet<(String, String)> = HashSet::new();
-    let mut seen_hashes: HashSet<&str> = HashSet::new();
-    for (index, user) in items.iter().enumerate() {
-        let path = format!("users[{index}]");
-        let Some(record) = user.as_object() else {
-            report.errors.push(ValidationIssue::new(
-                "USER_NOT_OBJECT",
-                path,
-                "user record must be a JSON object".to_owned(),
-            ));
-            continue;
-        };
-        let id = record.get("id").and_then(Value::as_str).unwrap_or_default();
-        if id.is_empty() {
-            report.errors.push(ValidationIssue::new(
-                "USER_MISSING_ID",
-                format!("{path}.id"),
-                "user record must carry a non-empty id".to_owned(),
-            ));
+    let mut seen_bindings: HashSet<(&str, &str)> = HashSet::new();
+    for (index, (path, user)) in records.iter().enumerate() {
+        if user.id.is_empty() {
+            missing_user_id(path, report);
         } else {
-            if !seen_ids.insert(id) {
+            if !seen_ids.insert(&user.id) {
                 report.errors.push(ValidationIssue::new(
                     "DUPLICATE_USER_ID",
                     format!("{path}.id"),
-                    format!("duplicate users[].id {id:?}"),
+                    format!("duplicate users[].id {:?}", user.id),
                 ));
             }
-            ids.insert(id.to_owned());
+            ids.insert(user.id.clone());
         }
-        check_unique_field(record, "email", index, &path, &mut seen_emails, report);
         check_unique_field(
-            record,
+            user.email.as_deref(),
+            "email",
+            index,
+            path,
+            &mut seen_emails,
+            report,
+        );
+        check_unique_field(
+            user.username.as_deref(),
             "username",
             index,
-            &path,
+            path,
             &mut seen_usernames,
             report,
         );
-        validate_providers(record.get("providers"), &path, &mut seen_bindings, report);
-        validate_app_passwords(record.get("app_passwords"), &path, report);
-        if let Some(hash) = record
-            .get("recovery_code")
-            .and_then(Value::as_object)
-            .and_then(|recovery| recovery.get("code_hash"))
-            .and_then(Value::as_str)
-            && !hash.is_empty()
-            && !seen_hashes.insert(hash)
-        {
-            report.errors.push(ValidationIssue::new(
-                "DUPLICATE_RECOVERY_HASH",
-                format!("{path}.recovery_code.code_hash"),
-                "recovery code_hash is already used by another user".to_owned(),
-            ));
-        }
+        validate_providers(&user.providers, path, &mut seen_bindings, report);
+        validate_app_passwords(&user.app_passwords, path, report);
     }
     ids
 }
 
+fn missing_user_id(path: &str, report: &mut ValidationReport) {
+    report.errors.push(ValidationIssue::new(
+        "USER_MISSING_ID",
+        format!("{path}.id"),
+        "user record must carry a non-empty id".to_owned(),
+    ));
+}
+
 fn check_unique_field<'a>(
-    record: &'a serde_json::Map<String, Value>,
+    value: Option<&'a str>,
     field: &str,
     index: usize,
     path: &str,
     seen: &mut HashMap<&'a str, usize>,
     report: &mut ValidationReport,
 ) {
-    let Some(value) = record.get(field).and_then(Value::as_str) else {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
         return;
     };
-    if value.is_empty() {
-        return;
-    }
     if let Some(first) = seen.insert(value, index) {
         report.errors.push(ValidationIssue::new(
             "USER_FIELD_COLLISION",
@@ -798,13 +751,11 @@ fn check_unique_field<'a>(
     }
 }
 
-fn validate_providers(
-    providers: Option<&Value>,
-    path: &str,
-    seen: &mut HashSet<(String, String)>,
-    report: &mut ValidationReport,
-) {
-    let Some(list) = providers else { return };
+/// Say what is wrong with the provider list of a user that did not decode.
+fn explain_providers(providers: Option<&Value>, path: &str, report: &mut ValidationReport) {
+    let Some(list) = providers.filter(|list| !list.is_null()) else {
+        return;
+    };
     let Some(items) = list.as_array() else {
         report.errors.push(ValidationIssue::new(
             "PROVIDERS_NOT_ARRAY",
@@ -823,68 +774,17 @@ fn validate_providers(
             ));
             continue;
         };
-        let name = record
-            .get("provider")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let uid = record
-            .get("provider_uid")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if name.is_empty() || uid.is_empty() {
-            report.errors.push(ValidationIssue::new(
-                "PROVIDER_MISSING_KEY",
-                item_path,
-                "provider record needs a non-empty provider and provider_uid".to_owned(),
-            ));
-            continue;
-        }
-        if !seen.insert((name.to_owned(), uid.to_owned())) {
-            report.errors.push(ValidationIssue::new(
-                "DUPLICATE_PROVIDER",
-                item_path.clone(),
-                format!("duplicate provider binding ({name:?}, {uid:?})"),
-            ));
-        }
-        if name == "local" {
-            validate_local_provider(record, &item_path, report);
+        if raw_text(record, "provider").is_empty() || raw_text(record, "provider_uid").is_empty() {
+            missing_provider_key(item_path, report);
         }
     }
 }
 
-fn validate_local_provider(
-    record: &serde_json::Map<String, Value>,
-    path: &str,
-    report: &mut ValidationReport,
-) {
-    let scheme = record.get("hash_scheme").and_then(Value::as_str);
-    if scheme != Some("bcrypt") {
-        report.errors.push(ValidationIssue::new(
-            "BAD_LOCAL_HASH",
-            format!("{path}.hash_scheme"),
-            "local providers must declare hash_scheme bcrypt".to_owned(),
-        ));
-    }
-    let data = record.get("provider_data").and_then(Value::as_str);
-    let parsed: Option<Value> = data.and_then(|text| serde_json::from_str(text).ok());
-    let hash = parsed
-        .as_ref()
-        .and_then(|json| json.get("password_hash"))
-        .and_then(Value::as_str);
-    let well_formed = hash.is_some_and(|value| {
-        value.starts_with("$2a$") || value.starts_with("$2b$") || value.starts_with("$2y$")
-    });
-    if !well_formed {
-        report.errors.push(ValidationIssue::new(
-            "BAD_LOCAL_HASH",
-            format!("{path}.provider_data"),
-            "local provider_data must be JSON with a bcrypt password_hash".to_owned(),
-        ));
-    }
-}
-
-fn validate_app_passwords(passwords: Option<&Value>, path: &str, report: &mut ValidationReport) {
-    let Some(list) = passwords else { return };
+/// Say what is wrong with the app password list of a user that did not decode.
+fn explain_app_passwords(passwords: Option<&Value>, path: &str, report: &mut ValidationReport) {
+    let Some(list) = passwords.filter(|list| !list.is_null()) else {
+        return;
+    };
     let Some(items) = list.as_array() else {
         report.errors.push(ValidationIssue::new(
             "APP_PASSWORDS_NOT_ARRAY",
@@ -913,7 +813,84 @@ fn validate_app_passwords(passwords: Option<&Value>, path: &str, report: &mut Va
                 "app password secret must be a sealed object".to_owned(),
             )),
         }
-        if record.get("revoked").and_then(Value::as_bool) == Some(true) {
+    }
+}
+
+fn missing_provider_key(path: String, report: &mut ValidationReport) {
+    report.errors.push(ValidationIssue::new(
+        "PROVIDER_MISSING_KEY",
+        path,
+        "provider record needs a non-empty provider and provider_uid".to_owned(),
+    ));
+}
+
+fn validate_providers<'a>(
+    providers: &'a [ProviderRecord],
+    path: &str,
+    seen: &mut HashSet<(&'a str, &'a str)>,
+    report: &mut ValidationReport,
+) {
+    for (index, record) in providers.iter().enumerate() {
+        let item_path = format!("{path}.providers[{index}]");
+        let (name, uid) = (record.provider.as_str(), record.provider_uid.as_str());
+        if name.is_empty() || uid.is_empty() {
+            missing_provider_key(item_path, report);
+            continue;
+        }
+        if !seen.insert((name, uid)) {
+            report.errors.push(ValidationIssue::new(
+                "DUPLICATE_PROVIDER",
+                item_path.clone(),
+                format!("duplicate provider binding ({name:?}, {uid:?})"),
+            ));
+        }
+        if name == "local" {
+            validate_local_provider(record, &item_path, report);
+        }
+    }
+}
+
+fn validate_local_provider(record: &ProviderRecord, path: &str, report: &mut ValidationReport) {
+    if record.hash_scheme != HashScheme::Bcrypt {
+        report.errors.push(ValidationIssue::new(
+            "BAD_LOCAL_HASH",
+            format!("{path}.hash_scheme"),
+            "local providers must declare hash_scheme bcrypt".to_owned(),
+        ));
+    }
+    let parsed: Option<Value> = record
+        .provider_data
+        .as_deref()
+        .and_then(|text| serde_json::from_str(text).ok());
+    let hash = parsed
+        .as_ref()
+        .and_then(|json| json.get("password_hash"))
+        .and_then(Value::as_str);
+    let well_formed = hash.is_some_and(|value| {
+        value.starts_with("$2a$") || value.starts_with("$2b$") || value.starts_with("$2y$")
+    });
+    if !well_formed {
+        report.errors.push(ValidationIssue::new(
+            "BAD_LOCAL_HASH",
+            format!("{path}.provider_data"),
+            "local provider_data must be JSON with a bcrypt password_hash".to_owned(),
+        ));
+    }
+}
+
+fn validate_app_passwords(
+    passwords: &[AppPasswordRecord],
+    path: &str,
+    report: &mut ValidationReport,
+) {
+    for (index, record) in passwords.iter().enumerate() {
+        let item_path = format!("{path}.app_passwords[{index}]");
+        check_sealed_text(
+            Some(&record.secret.sealed),
+            &format!("{item_path}.secret"),
+            report,
+        );
+        if record.revoked {
             report.warnings.push(ValidationIssue::new(
                 "REVOKED_APP_PASSWORD_KEPT",
                 item_path,
@@ -943,10 +920,10 @@ fn validate_settings(settings: Option<&Value>, report: &mut ValidationReport) {
             ));
             continue;
         }
-        if REMOVED_SECTIONS.contains(&name.as_str()) {
+        if is_removed_section(name) {
             continue;
         }
-        if !super::settings::REPLACE_UNIVERSE.contains(&name.as_str()) {
+        if !is_replaced(name) {
             report.warnings.push(ValidationIssue::new(
                 "UNKNOWN_SETTINGS_SECTION",
                 path,
@@ -955,9 +932,7 @@ fn validate_settings(settings: Option<&Value>, report: &mut ValidationReport) {
             continue;
         }
         match name.as_str() {
-            "advanced_settings" => {
-                validate_allowlist(name, section, &path, ADVANCED_SETTINGS_KEPT, report)
-            }
+            "advanced_settings" => validate_allowlist(name, section, &path, ADVANCED_KEPT, report),
             "_internal" => validate_allowlist(name, section, &path, INTERNAL_KEPT, report),
             "indexers" => {
                 if !section.is_array() {
@@ -1024,8 +999,9 @@ fn check_secret_leaves(
     path: &str,
     report: &mut ValidationReport,
 ) {
-    for (owner, leaf) in SECRET_LEAVES {
-        if *owner != section_name {
+    // Every Last.fm field but its switch must arrive sealed: validate_lastfm.
+    for (owner, leaf, _) in SECRETS {
+        if *owner != section_name || section_name == "lastfm_settings" {
             continue;
         }
         for (leaf_path, value) in resolve_leaf(section, leaf) {
@@ -1090,8 +1066,11 @@ fn check_sealed_blobs(node: &Value, path: &str, report: &mut ValidationReport) {
 }
 
 fn check_sealed_blob(sealed: &Value, path: &str, report: &mut ValidationReport) {
+    check_sealed_text(sealed.get(SEALED_KEY).and_then(Value::as_str), path, report);
+}
+
+fn check_sealed_text(encoded: Option<&str>, path: &str, report: &mut ValidationReport) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
-    let encoded = sealed.get(SEALED_KEY).and_then(Value::as_str);
     let decoded_len = encoded
         .and_then(|text| STANDARD.decode(text).ok())
         .map(|blob| blob.len());
@@ -1115,46 +1094,41 @@ fn validate_follows(
     user_ids: &HashSet<String>,
     report: &mut ValidationReport,
 ) {
-    let Some(list) = follows else { return };
-    let Some(items) = list.as_array() else {
-        report.errors.push(ValidationIssue::new(
-            "FOLLOWS_NOT_ARRAY",
-            "follows".to_owned(),
-            "follows must be a JSON array".to_owned(),
-        ));
-        return;
-    };
+    let records: Vec<(String, FollowRecord)> = decode_list(
+        follows,
+        &ListShape {
+            name: "follows",
+            not_array: "FOLLOWS_NOT_ARRAY",
+            not_object: "FOLLOW_NOT_OBJECT",
+            object_message: "follow record must be a JSON object",
+        },
+        report,
+        explain_member(user_ids),
+    );
     let mut seen = HashSet::new();
-    for (index, follow) in items.iter().enumerate() {
-        let path = format!("follows[{index}]");
-        let Some(record) = follow.as_object() else {
-            report.errors.push(ValidationIssue::new(
-                "FOLLOW_NOT_OBJECT",
-                path,
-                "follow record must be a JSON object".to_owned(),
-            ));
-            continue;
-        };
-        validate_member_ref(record, &path, user_ids, report);
-        check_duplicate(record, &path, "DUPLICATE_FOLLOW", &mut seen, report);
+    for (path, record) in &records {
+        check_member(&record.user_id, &record.artist_mbid, path, user_ids, report);
+        check_duplicate(
+            &record.user_id,
+            &record.artist_mbid,
+            path,
+            "DUPLICATE_FOLLOW",
+            &mut seen,
+            report,
+        );
     }
 }
 
 /// One row per user and artist (MBID compared case-insensitively, as the
 /// table key is): a repeat would abort the import on the primary key.
 fn check_duplicate(
-    record: &serde_json::Map<String, Value>,
+    user_id: &str,
+    mbid: &str,
     path: &str,
     code: &'static str,
     seen: &mut HashSet<(String, String)>,
     report: &mut ValidationReport,
 ) {
-    let (Some(user_id), Some(mbid)) = (
-        record.get("user_id").and_then(Value::as_str),
-        record.get("artist_mbid").and_then(Value::as_str),
-    ) else {
-        return;
-    };
     if !seen.insert((user_id.to_owned(), mbid.trim().to_lowercase())) {
         report.errors.push(ValidationIssue::new(
             code,
@@ -1169,29 +1143,29 @@ fn validate_approvals(
     user_ids: &HashSet<String>,
     report: &mut ValidationReport,
 ) {
-    let Some(list) = approvals else { return };
-    let Some(items) = list.as_array() else {
-        report.errors.push(ValidationIssue::new(
-            "APPROVALS_NOT_ARRAY",
-            "approvals".to_owned(),
-            "approvals must be a JSON array".to_owned(),
-        ));
-        return;
-    };
+    let records: Vec<(String, ApprovalRecord)> = decode_list(
+        approvals,
+        &ListShape {
+            name: "approvals",
+            not_array: "APPROVALS_NOT_ARRAY",
+            not_object: "APPROVAL_NOT_OBJECT",
+            object_message: "approval record must be a JSON object",
+        },
+        report,
+        explain_member(user_ids),
+    );
     let mut seen = HashSet::new();
-    for (index, approval) in items.iter().enumerate() {
-        let path = format!("approvals[{index}]");
-        let Some(record) = approval.as_object() else {
-            report.errors.push(ValidationIssue::new(
-                "APPROVAL_NOT_OBJECT",
-                path,
-                "approval record must be a JSON object".to_owned(),
-            ));
-            continue;
-        };
-        validate_member_ref(record, &path, user_ids, report);
-        check_duplicate(record, &path, "DUPLICATE_APPROVAL", &mut seen, report);
-        if let Some(reviewer) = record.get("reviewed_by_id").and_then(Value::as_str)
+    for (path, record) in &records {
+        check_member(&record.user_id, &record.artist_mbid, path, user_ids, report);
+        check_duplicate(
+            &record.user_id,
+            &record.artist_mbid,
+            path,
+            "DUPLICATE_APPROVAL",
+            &mut seen,
+            report,
+        );
+        if let Some(reviewer) = record.reviewed_by_id.as_deref()
             && !reviewer.is_empty()
             && !user_ids.contains(reviewer)
         {
@@ -1204,17 +1178,29 @@ fn validate_approvals(
     }
 }
 
-fn validate_member_ref(
-    record: &serde_json::Map<String, Value>,
+/// Say what is wrong with a follow or approval that did not decode.
+fn explain_member(
+    user_ids: &HashSet<String>,
+) -> impl FnMut(&Map<String, Value>, &str, &mut ValidationReport) + '_ {
+    move |record, path, report| {
+        check_member(
+            raw_text(record, "user_id"),
+            raw_text(record, "artist_mbid"),
+            path,
+            user_ids,
+            report,
+        );
+    }
+}
+
+fn check_member(
+    user_id: &str,
+    mbid: &str,
     path: &str,
     user_ids: &HashSet<String>,
     report: &mut ValidationReport,
 ) {
-    validate_user_ref(record, path, user_ids, report);
-    let mbid = record
-        .get("artist_mbid")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    check_user_ref(user_id, path, user_ids, report);
     if !is_mbid(mbid) {
         report.errors.push(ValidationIssue::new(
             "BAD_MBID",
@@ -1225,86 +1211,68 @@ fn validate_member_ref(
 }
 
 /// The record names an exported user.
-fn validate_user_ref(
-    record: &serde_json::Map<String, Value>,
+fn check_user_ref(
+    user_id: &str,
     path: &str,
     user_ids: &HashSet<String>,
     report: &mut ValidationReport,
 ) {
-    match record.get("user_id").and_then(Value::as_str) {
-        Some(user_id) if !user_id.is_empty() => {
-            if !user_ids.contains(user_id) {
-                report.errors.push(ValidationIssue::new(
-                    "DANGLING_USER_REF",
-                    format!("{path}.user_id"),
-                    format!("user_id {user_id:?} has no matching users[].id"),
-                ));
-            }
-        }
-        _ => report.errors.push(ValidationIssue::new(
+    if user_id.is_empty() {
+        report.errors.push(ValidationIssue::new(
             "MISSING_USER_ID",
             format!("{path}.user_id"),
             "record must carry a non-empty user_id".to_owned(),
-        )),
-    }
-}
-
-/// The section, when present, as a list of objects; shape errors recorded.
-fn record_list<'a>(
-    section: Option<&'a Value>,
-    name: &str,
-    report: &mut ValidationReport,
-) -> Vec<(String, &'a serde_json::Map<String, Value>)> {
-    let Some(list) = section else {
-        return Vec::new();
-    };
-    let Some(items) = list.as_array() else {
-        report.errors.push(ValidationIssue::new(
-            "SECTION_NOT_ARRAY",
-            name.to_owned(),
-            format!("{name} must be a JSON array"),
         ));
-        return Vec::new();
-    };
-    let mut records = Vec::new();
-    for (index, item) in items.iter().enumerate() {
-        let path = format!("{name}[{index}]");
-        match item.as_object() {
-            Some(record) => records.push((path, record)),
-            None => report.errors.push(ValidationIssue::new(
-                "RECORD_NOT_OBJECT",
-                path,
-                "record must be a JSON object".to_owned(),
-            )),
-        }
+    } else if !user_ids.contains(user_id) {
+        report.errors.push(ValidationIssue::new(
+            "DANGLING_USER_REF",
+            format!("{path}.user_id"),
+            format!("user_id {user_id:?} has no matching users[].id"),
+        ));
     }
-    records
 }
 
 /// A finite number within `range`, else an error at `path.field`.
 fn check_number(
-    record: &serde_json::Map<String, Value>,
+    value: Option<f64>,
     path: &str,
     field: &str,
     range: std::ops::RangeInclusive<f64>,
     report: &mut ValidationReport,
-) -> Option<f64> {
-    let value = record.get(field).and_then(Value::as_f64);
-    match value {
-        Some(number) if range.contains(&number) => Some(number),
-        _ => {
-            report.errors.push(ValidationIssue::new(
-                "BAD_NUMBER",
-                format!("{path}.{field}"),
-                format!(
-                    "{field} must be a number from {} to {}",
-                    range.start(),
-                    range.end()
-                ),
-            ));
-            None
-        }
+) {
+    if !value.is_some_and(|number| range.contains(&number)) {
+        report.errors.push(ValidationIssue::new(
+            "BAD_NUMBER",
+            format!("{path}.{field}"),
+            format!(
+                "{field} must be a number from {} to {}",
+                range.start(),
+                range.end()
+            ),
+        ));
     }
+}
+
+fn check_city(
+    user_id: &str,
+    city_name: &str,
+    numbers: [Option<f64>; 3],
+    path: &str,
+    user_ids: &HashSet<String>,
+    report: &mut ValidationReport,
+) {
+    check_user_ref(user_id, path, user_ids, report);
+    if city_name.trim().is_empty() {
+        report.errors.push(ValidationIssue::new(
+            "MISSING_CITY_NAME",
+            format!("{path}.city_name"),
+            "city_name must be a non-empty string".to_owned(),
+        ));
+    }
+    let [latitude, longitude, radius] = numbers;
+    check_number(latitude, path, "latitude", -90.0..=90.0, report);
+    check_number(longitude, path, "longitude", -180.0..=180.0, report);
+    check_number(radius, path, "radius_km", 0.0..=f64::MAX, report);
 }
 
 /// Concerts cities: a real user, a name, coordinates in range, and one row
@@ -1314,34 +1282,53 @@ fn validate_event_cities(
     user_ids: &HashSet<String>,
     report: &mut ValidationReport,
 ) {
+    let records: Vec<(String, EventCityRecord)> = decode_list(
+        section,
+        &ListShape {
+            name: "event_cities",
+            not_array: "SECTION_NOT_ARRAY",
+            not_object: "RECORD_NOT_OBJECT",
+            object_message: "record must be a JSON object",
+        },
+        report,
+        |record, path, report| {
+            let number = |field: &str| record.get(field).and_then(Value::as_f64);
+            check_city(
+                raw_text(record, "user_id"),
+                raw_text(record, "city_name"),
+                [number("latitude"), number("longitude"), number("radius_km")],
+                path,
+                user_ids,
+                report,
+            );
+        },
+    );
     let mut seen = HashSet::new();
-    for (path, record) in record_list(section, "event_cities", report) {
-        validate_user_ref(record, &path, user_ids, report);
-        if record
-            .get("city_name")
-            .and_then(Value::as_str)
-            .is_none_or(|name| name.trim().is_empty())
-        {
-            report.errors.push(ValidationIssue::new(
-                "MISSING_CITY_NAME",
-                format!("{path}.city_name"),
-                "city_name must be a non-empty string".to_owned(),
-            ));
-        }
-        let latitude = check_number(record, &path, "latitude", -90.0..=90.0, report);
-        let longitude = check_number(record, &path, "longitude", -180.0..=180.0, report);
-        check_number(record, &path, "radius_km", 0.0..=f64::MAX, report);
-        let user_id = record.get("user_id").and_then(Value::as_str);
-        if let (Some(user_id), Some(latitude), Some(longitude)) = (user_id, latitude, longitude)
+    for (path, record) in &records {
+        check_city(
+            &record.user_id,
+            &record.city_name,
+            [
+                Some(record.latitude),
+                Some(record.longitude),
+                Some(record.radius_km),
+            ],
+            path,
+            user_ids,
+            report,
+        );
+        let in_range = (-90.0..=90.0).contains(&record.latitude)
+            && (-180.0..=180.0).contains(&record.longitude);
+        if in_range
             && !seen.insert((
-                user_id.to_owned(),
-                (latitude + 0.0).to_bits(),
-                (longitude + 0.0).to_bits(),
+                record.user_id.as_str(),
+                (record.latitude + 0.0).to_bits(),
+                (record.longitude + 0.0).to_bits(),
             ))
         {
             report.errors.push(ValidationIssue::new(
                 "DUPLICATE_EVENT_CITY",
-                path,
+                path.clone(),
                 "the same user and coordinates appear more than once".to_owned(),
             ));
         }
@@ -1354,16 +1341,40 @@ fn validate_event_seen(
     user_ids: &HashSet<String>,
     report: &mut ValidationReport,
 ) {
+    let records: Vec<(String, EventSeenRecord)> = decode_list(
+        section,
+        &ListShape {
+            name: "event_seen",
+            not_array: "SECTION_NOT_ARRAY",
+            not_object: "RECORD_NOT_OBJECT",
+            object_message: "record must be a JSON object",
+        },
+        report,
+        |record, path, report| {
+            check_user_ref(raw_text(record, "user_id"), path, user_ids, report);
+            check_number(
+                record.get("seen_at").and_then(Value::as_f64),
+                path,
+                "seen_at",
+                0.0..=f64::MAX,
+                report,
+            );
+        },
+    );
     let mut seen = HashSet::new();
-    for (path, record) in record_list(section, "event_seen", report) {
-        validate_user_ref(record, &path, user_ids, report);
-        check_number(record, &path, "seen_at", 0.0..=f64::MAX, report);
-        if let Some(user_id) = record.get("user_id").and_then(Value::as_str)
-            && !seen.insert(user_id.to_owned())
-        {
+    for (path, record) in &records {
+        check_user_ref(&record.user_id, path, user_ids, report);
+        check_number(
+            Some(record.seen_at),
+            path,
+            "seen_at",
+            0.0..=f64::MAX,
+            report,
+        );
+        if !seen.insert(record.user_id.as_str()) {
             report.errors.push(ValidationIssue::new(
                 "DUPLICATE_EVENT_SEEN",
-                path,
+                path.clone(),
                 "the same user appears more than once".to_owned(),
             ));
         }

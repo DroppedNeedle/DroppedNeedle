@@ -11,7 +11,7 @@
 //! due.
 
 use super::library::live_user;
-use super::{Column, Parent, Source, TableSection, Target, col};
+use super::{Column, Parent, Source, TableSection, Target, ValueRule, col};
 
 /// A v2 time column (ISO text, numeric text or REAL seconds) as integer
 /// milliseconds; NULL when it does not read as a time.
@@ -290,10 +290,12 @@ pub const WANTED_WATCHES: TableSection = TableSection {
         col("artist_mbid"),
         Column::new("year").from_sql(whole!("year")),
         col("cover_url"),
-        Column::new("kind").from_sql_of(
-            "kind",
-            set_or!("kind", "missing", "missing" => "missing", "partial" => "partial"),
-        ),
+        Column::new("kind").ruled(ValueRule::OneOf {
+            kept: &["missing", "partial"],
+            prefix: None,
+            renamed: &[],
+            default: "missing",
+        }),
         // Only watching watches are checked, so an unknown state reads as stopped.
         Column::new("state").from_sql_of(
             "state",

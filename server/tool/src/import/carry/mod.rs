@@ -35,9 +35,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, params};
-use serde_json::Value;
 use thiserror::Error;
 
+use crate::export::envelope::ExportDoc;
 use crate::export::sections::{ALL, Column, TableSection, Target};
 use crate::import::report::{EntityCounts, ReportBuilder, utc_now_iso};
 use droppedneedle_kernel::runtime_config::Crypto;
@@ -87,8 +87,8 @@ impl SectionResult {
 
 /// One carry run's inputs.
 pub(crate) struct CarryRun<'a> {
-    /// The parsed export document.
-    pub root: &'a Value,
+    /// The typed export document.
+    pub doc: &'a ExportDoc,
     /// The checked bundle, when the export has one.
     pub bundle: Option<&'a bundle::Bundle>,
     /// Opened sealed values by JSON path.
@@ -133,18 +133,9 @@ impl Work {
 pub(crate) fn check_bundle(
     conn: &Connection,
     found: &bundle::Bundle,
-    root: &Value,
+    doc: &ExportDoc,
 ) -> Result<(), bundle::BundleRejection> {
-    let user_ids: Vec<&str> = root
-        .get("users")
-        .and_then(Value::as_array)
-        .map(|users| {
-            users
-                .iter()
-                .filter_map(|user| user.get("id").and_then(Value::as_str))
-                .collect()
-        })
-        .unwrap_or_default();
+    let user_ids: Vec<&str> = doc.users.iter().map(|user| user.id.as_str()).collect();
     let user_ids_json = serde_json::to_string(&user_ids).unwrap_or_else(|_| "[]".to_owned());
     bundle::attach(conn, &found.path)
         .map_err(|error| bundle::BundleRejection::Invalid(format!("BUNDLE_UNREADABLE: {error}")))?;
@@ -174,19 +165,13 @@ fn run_sections(
     run: &CarryRun<'_>,
     report: &mut ReportBuilder,
 ) -> Result<u64, CarryError> {
-    let text = |key: &str| {
-        run.root
-            .get(key)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
-    };
     let marker = Marker {
-        instance_id: text("instance_id"),
-        digest: text(crate::export::seal::DIGEST_KEY),
+        instance_id: run.doc.instance_id.clone(),
+        digest: run.doc.content_hmac.clone(),
     };
     let mut work = Vec::new();
-    if crate::import::apply::carries_connections(run.root) {
+    // Per-user connections are a format 2 section.
+    if run.doc.format_version >= 2 {
         work.push(Work::Connections);
     }
     if run.bundle.is_some() {
@@ -287,7 +272,13 @@ fn apply_with_marker(
 fn apply(conn: &Connection, run: &CarryRun<'_>, unit: Work) -> Result<SectionResult, CarryError> {
     let section = match unit {
         Work::Connections => {
-            return connections::apply(conn, run.root, run.unsealed, run.crypto, run.dry_run);
+            return connections::apply(
+                conn,
+                &run.doc.user_connections,
+                run.unsealed,
+                run.crypto,
+                run.dry_run,
+            );
         }
         Work::Editions => return editions::apply(conn, run.dry_run),
         Work::Baselines => return baselines::apply(conn, run.dry_run),

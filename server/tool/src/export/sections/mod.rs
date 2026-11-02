@@ -92,7 +92,77 @@ pub enum V2Value {
     /// An SQL expression over one v2 column; when the v2 table lacks that
     /// column, the column stays out of the bundle.
     ExprOf(&'static str, &'static str),
+    /// A v2 column held to a [`ValueRule`], by the exporter and again by the
+    /// importer, so a bundle an older build wrote maps too.
+    Ruled(&'static str, ValueRule),
 }
+
+/// What a text column with no CHECK may hold. Anything else, NULL included,
+/// takes the default: v3's readers branch on these values, and the column
+/// is NOT NULL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueRule {
+    /// One of a closed list, or anything starting with the prefix.
+    OneOf {
+        /// The values kept.
+        kept: &'static [&'static str],
+        /// A prefix that also keeps a value, when the list is open-ended.
+        prefix: Option<&'static str>,
+        /// v2 values that have another name in v3: (v2, v3).
+        renamed: &'static [(&'static str, &'static str)],
+        /// What anything else becomes.
+        default: &'static str,
+    },
+    /// Any non-empty text: the list has no end (a plugin's name, say).
+    AnyText {
+        /// What anything else becomes.
+        default: &'static str,
+    },
+}
+
+impl ValueRule {
+    /// The SQL for this rule over the column or expression `value`.
+    #[must_use]
+    pub fn sql(self, value: &str) -> String {
+        match self {
+            Self::OneOf {
+                kept,
+                prefix,
+                renamed,
+                default,
+            } => {
+                let list = kept
+                    .iter()
+                    .map(|item| format!("'{item}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let by_prefix = prefix
+                    .map(|prefix| format!(" OR {value} LIKE '{prefix}%'"))
+                    .unwrap_or_default();
+                let renames = renamed
+                    .iter()
+                    .map(|(from, to)| format!("WHEN {value} = '{from}' THEN '{to}' "))
+                    .collect::<String>();
+                format!(
+                    "CASE {renames}WHEN {value} IN ({list}){by_prefix} THEN {value} \
+                     ELSE '{default}' END"
+                )
+            }
+            Self::AnyText { default } => format!(
+                "CASE WHEN typeof({value}) = 'text' AND {value} <> '' THEN {value} \
+                 ELSE '{default}' END"
+            ),
+        }
+    }
+}
+
+/// A download source, as v3's source tag reads it.
+pub const SOURCE_RULE: ValueRule = ValueRule::OneOf {
+    kept: &["soulseek", "usenet"],
+    prefix: Some("plugin:"),
+    renamed: &[],
+    default: "soulseek",
+};
 
 /// One carried column: its v3 (and bundle) name, where the value comes
 /// from in v2, and an optional library reference.
@@ -136,6 +206,13 @@ impl Column {
     #[must_use]
     pub const fn from_sql_of(mut self, v2_name: &'static str, expr: &'static str) -> Self {
         self.v2 = V2Value::ExprOf(v2_name, expr);
+        self
+    }
+
+    /// The value comes from the v2 column of the same name, held to `rule`.
+    #[must_use]
+    pub const fn ruled(mut self, rule: ValueRule) -> Self {
+        self.v2 = V2Value::Ruled(self.name, rule);
         self
     }
 
@@ -412,5 +489,32 @@ mod tests {
                 assert!(section.column(user).is_some(), "{}", section.name);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod rule_tests {
+    use super::*;
+
+    fn run(rule: ValueRule, value: Option<&str>) -> String {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.query_row(&format!("SELECT {}", rule.sql("?1")), [value], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    }
+
+    /// A value outside the rule, NULL included, takes the default, so the
+    /// NOT NULL column it lands in never refuses the row.
+    #[test]
+    fn a_rule_keeps_what_it_lists_and_defaults_the_rest() {
+        assert_eq!(run(SOURCE_RULE, Some("usenet")), "usenet");
+        assert_eq!(run(SOURCE_RULE, Some("plugin:x")), "plugin:x");
+        assert_eq!(run(SOURCE_RULE, Some("pigeon")), "soulseek");
+        assert_eq!(run(SOURCE_RULE, None), "soulseek");
+        let any = ValueRule::AnyText { default: "slskd" };
+        assert_eq!(run(any, Some("my plugin")), "my plugin");
+        assert_eq!(run(any, Some("")), "slskd");
+        assert_eq!(run(any, None), "slskd");
     }
 }

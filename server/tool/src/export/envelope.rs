@@ -11,11 +11,15 @@
 //!
 //! [`parse_export`] enforces the envelope contract: known format and
 //! version, every required key present, reserved sections ignored with a
-//! warning. Deeper semantic checks (section shapes, secret positions,
-//! dangling references) belong to the import validator, which builds on
-//! these parsed types.
+//! warning. Deeper semantic checks (secret positions, dangling references)
+//! belong to the import validator, which reads these same types.
+//!
+//! Identity fields are required, so a record missing one does not decode.
+//! Any other field may be absent or null and reads as empty; the importer's
+//! plan says what becomes of that. A field of the wrong JSON type never
+//! decodes: no exporter writes one.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
 use crate::export::error::ExportError;
@@ -134,14 +138,35 @@ pub struct SecretEnvelope {
     pub nonce_b64: String,
 }
 
+/// An absent or null field reads as its empty value.
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// How v3 should verify this provider's credentials.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HashScheme {
     /// A v2 bcrypt hash: verify, then rehash into the native scheme on login.
     Bcrypt,
     /// Anything else: carried verbatim, never interpreted.
+    #[default]
     Opaque,
+}
+
+impl<'de> Deserialize<'de> for HashScheme {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(
+            match Option::<String>::deserialize(deserializer)?.as_deref() {
+                Some("bcrypt") => Self::Bcrypt,
+                _ => Self::Opaque,
+            },
+        )
+    }
 }
 
 /// Derive the v3 verification scheme for one v2 provider row. `bcrypt` only
@@ -181,8 +206,10 @@ pub struct ProviderRecord {
     /// Verbatim v2 blob (bcrypt JSON for local logins).
     pub provider_data: Option<String>,
     /// Exporter-derived verification scheme.
+    #[serde(default)]
     pub hash_scheme: HashScheme,
     /// Verbatim creation timestamp.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub created_at: String,
 }
 
@@ -199,28 +226,34 @@ pub struct SealedValue {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppPasswordRecord {
     /// Display name.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub name: String,
     /// Sealed plaintext secret.
     pub secret: SealedValue,
     /// Verbatim creation timestamp.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub created_at: String,
     /// Verbatim last-use timestamp.
     pub last_used_at: Option<String>,
     /// Verbatim last client label.
     pub last_client: Option<String>,
     /// True for revoked rows, which are still exported.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub revoked: bool,
 }
 
-/// One password-recovery code. Hashes travel verbatim and are stored
-/// verbatim at import, never re-encrypted.
+/// One password-recovery code. The exporter still writes it; the importer
+/// does not carry it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecoveryCode {
     /// Hash of the single-use code.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub code_hash: String,
     /// Verbatim creation timestamp.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub created_at: String,
     /// Verbatim expiry timestamp.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub expires_at: String,
 }
 
@@ -230,24 +263,29 @@ pub struct UserRecord {
     /// Opaque v2 id, verbatim.
     pub id: String,
     /// Display name.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub display_name: String,
     /// Email address, if set.
     pub email: Option<String>,
     /// Avatar URL, if set.
     pub avatar_url: Option<String>,
     /// Role (`user`, `trusted`, `admin`).
+    #[serde(default, deserialize_with = "null_as_default")]
     pub role: String,
     /// Lowercased login name, if set.
     pub username: Option<String>,
     /// Preferred login-name casing, if set.
     pub username_display: Option<String>,
     /// Verbatim creation timestamp.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub created_at: String,
     /// Verbatim last-login timestamp.
     pub last_login_at: Option<String>,
     /// Provider bindings.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub providers: Vec<ProviderRecord>,
     /// App passwords, revoked rows included.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub app_passwords: Vec<AppPasswordRecord>,
     /// Recovery code, if one exists.
     pub recovery_code: Option<RecoveryCode>,
@@ -262,12 +300,16 @@ pub struct FollowRecord {
     /// Artist MBID in original case.
     pub artist_mbid: String,
     /// Display name.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub artist_name: String,
     /// Auto-download switch.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub auto_download: bool,
     /// Follow time as a Unix timestamp.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub followed_at: f64,
     /// Last-change time as a Unix timestamp.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub updated_at: f64,
 }
 
@@ -280,10 +322,13 @@ pub struct ApprovalRecord {
     /// Artist MBID in original case.
     pub artist_mbid: String,
     /// Display name.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub artist_name: String,
-    /// Review state.
+    /// Review state; empty when the record names none.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub state: String,
     /// Request time as a Unix timestamp.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub requested_at: f64,
     /// Reviewer user id, if reviewed.
     pub reviewed_by_id: Option<String>,
@@ -313,6 +358,7 @@ pub struct EventCityRecord {
     /// Match radius in km.
     pub radius_km: f64,
     /// Picker order.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub position: i64,
 }
 
@@ -336,10 +382,13 @@ pub struct ConnectionRecord {
     /// Service tag, verbatim from v2.
     pub service: String,
     /// v2 enabled switch.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub enabled: bool,
     /// Verbatim creation timestamp.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub created_at: String,
     /// Verbatim last-change timestamp.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub updated_at: String,
     /// The sealed plaintext JSON document.
     pub data: SealedValue,
@@ -450,10 +499,9 @@ pub struct ParsedExport {
 /// supported range), then required keys, then typed section shapes. Reserved sections and
 /// unknown top-level keys collect warnings and parse on.
 ///
-/// Typed convenience for tests and tooling, not the import path: the
-/// importer uses `ExportFile::parse` plus the validator, which is
-/// authoritative and differs in strictness on record details (a missing
-/// `display_name` fails here but passes there).
+/// Typed convenience for tests and tooling: the import path is
+/// `validate::read_export`, which reads the same [`ExportDoc`] and names the
+/// record a failure belongs to.
 pub fn parse_export(text: &str) -> Result<ParsedExport, ExportError> {
     let root: Value = serde_json::from_str(text).map_err(|_| ExportError::InvalidEnvelope {
         reason: "file is not valid JSON".to_owned(),

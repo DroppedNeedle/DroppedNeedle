@@ -48,7 +48,6 @@ async fn fresh_import_applies_everything() {
     assert_eq!(counts(&report, "user"), (1, 0, 0, 0));
     assert_eq!(counts(&report, "provider"), (1, 0, 0, 0));
     assert_eq!(counts(&report, "app_password"), (1, 0, 0, 0));
-    assert_eq!(counts(&report, "recovery_code"), (1, 0, 0, 0));
     assert_eq!(counts(&report, "follow"), (1, 0, 0, 0));
     assert_eq!(counts(&report, "approval"), (1, 0, 0, 0));
     assert_eq!(report.secrets_reencrypted, 2);
@@ -85,13 +84,12 @@ async fn fresh_import_applies_everything() {
         stored.starts_with("v3:"),
         "app secret must be v3 ciphertext"
     );
-    let hash: String = sqlx::query_scalar(
-        "SELECT code_hash FROM auth_password_recovery_codes WHERE user_id = 'u1'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(hash, "hash-u1");
+    assert_eq!(count(&pool, "auth_password_recovery_codes").await, 0);
+    assert!(
+        report.items.iter().any(|item| item.outcome == "not_carried"
+            && item.detail == "recovery codes from v2 were not carried; make a new one"),
+        "the report says so"
+    );
     let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_runs")
         .fetch_one(&pool)
         .await
@@ -375,14 +373,7 @@ async fn reimport_is_identical_with_zero_writes() {
     .await;
 
     assert_eq!(second.exit.code, ExitCode::Ok);
-    for entity in [
-        "user",
-        "provider",
-        "app_password",
-        "recovery_code",
-        "follow",
-        "approval",
-    ] {
+    for entity in ["user", "provider", "app_password", "follow", "approval"] {
         let found = &second.entities[entity];
         assert_eq!(found.imported, 0, "{entity} must not re-import");
         assert!(found.skipped_identical > 0, "{entity} must skip identical");
@@ -458,14 +449,7 @@ async fn conflicted_reimport_converges_with_zero_writes() {
         assert_eq!(again.entities["user"].skipped_identical, 0);
         assert_eq!(again.entities["approval"].skipped_identical, 1);
         assert_eq!(again.entities["approval"].nulled_field, 1);
-        for entity in [
-            "user",
-            "provider",
-            "app_password",
-            "recovery_code",
-            "follow",
-            "approval",
-        ] {
+        for entity in ["user", "provider", "app_password", "follow", "approval"] {
             assert_eq!(
                 again.entities[entity].imported, 0,
                 "{entity} wrote nothing twice"
@@ -783,7 +767,6 @@ async fn report_shape_matches_spec() {
         "user",
         "provider",
         "app_password",
-        "recovery_code",
         "follow",
         "approval",
         "connection",
@@ -1481,10 +1464,118 @@ async fn event_cities_import_inside_the_city_limits() {
     );
 }
 
-#[test]
-fn event_city_limits_match_the_concerts_service() {
-    use droppedneedle_catalog::concerts::models::{MAX_CITIES, MAX_RADIUS_KM, MIN_RADIUS_KM};
-    use droppedneedle_tool::import::plan::{EVENT_CITY_RADIUS_KM, MAX_EVENT_CITIES};
-    assert_eq!(MAX_EVENT_CITIES, MAX_CITIES);
-    assert_eq!(EVENT_CITY_RADIUS_KM, MIN_RADIUS_KM..=MAX_RADIUS_KM);
+/// An export is imported with only what identifies each record: anything
+/// else a record lacks takes its empty value with a report line, never a
+/// refused file, and the re-import still writes nothing.
+#[tokio::test]
+async fn a_file_with_only_the_required_fields_imports() {
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    export["users"] = json!([{"id": "u1"}]);
+    export["follows"] = json!([{"user_id": "u1", "artist_mbid": MBID}]);
+    export["approvals"] = json!([{"user_id": "u1", "artist_mbid": MBID}]);
+    let (pool, _target) = migrated_pool().await;
+    let (_dir, config_path, crypto) = scratch_config("minimal");
+    let request = |crypto| import_request(&export, pool.clone(), config_path.clone(), crypto);
+
+    let first = run_import(request(crypto)).await;
+    assert_eq!(first.exit.code, ExitCode::Ok, "{}", first.exit.message);
+    assert_eq!(counts(&first, "user"), (1, 0, 0, 0));
+    let state: String = sqlx::query_scalar("SELECT state FROM auto_download_approvals")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "pending");
+    assert!(
+        first.items.iter().any(|item| item.entity == "approval"
+            && item.outcome == "converted"
+            && item.detail.contains("no state")),
+        "a state the record lacks is reported"
+    );
+
+    let runs = count(&pool, "import_runs").await;
+    let second = run_import(request(test_crypto())).await;
+    assert_eq!(second.exit.code, ExitCode::Ok, "{}", second.exit.message);
+    assert_eq!(counts(&second, "user"), (0, 1, 0, 0));
+    assert_eq!(counts(&second, "follow"), (0, 1, 0, 0));
+    assert_eq!(counts(&second, "approval"), (0, 1, 0, 0));
+    assert_eq!(count(&pool, "import_runs").await, runs, "nothing written");
+}
+
+/// What an area would refuse in a v2 value never fails the import and never
+/// lands as a silent default.
+#[tokio::test]
+async fn values_an_area_would_refuse_are_converted_or_left_behind_with_a_line() {
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    let mut user = fixture.user("u1");
+    user["role"] = json!("owner");
+    user["created_at"] = json!("not a time");
+    user["last_login_at"] = json!("nor this");
+    export["users"] = json!([user]);
+    let mut approval = fixture.approval("u1", MBID);
+    approval["state"] = json!("maybe");
+    export["approvals"] = json!([approval]);
+    export["event_cities"] = json!([{
+        "user_id": "u1", "city_name": "Far", "latitude": 1.0, "longitude": 2.0,
+        "radius_km": 900.0, "position": 0,
+    }]);
+    let (pool, _target) = migrated_pool().await;
+    let (_dir, config_path, crypto) = scratch_config("refused");
+
+    let report = run_import(import_request(&export, pool.clone(), config_path, crypto)).await;
+    assert_eq!(
+        report.exit.code,
+        ExitCode::OkWithDrops,
+        "{}",
+        report.exit.message
+    );
+
+    let (role, created, login): (String, i64, Option<i64>) =
+        sqlx::query_as("SELECT role, created_at, last_login_at FROM auth_users WHERE id = 'u1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((role.as_str(), created, login), ("user", 0, None));
+    let radius: f64 = sqlx::query_scalar("SELECT radius_km FROM user_event_cities")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(radius, 500.0);
+    assert_eq!(report.entities["approval"].dropped_invalid, 1);
+    assert_eq!(count(&pool, "auto_download_approvals").await, 0);
+    let converted = |entity: &str, words: &str| {
+        report.items.iter().any(|item| {
+            item.entity == entity && item.outcome == "converted" && item.detail.contains(words)
+        })
+    };
+    assert!(converted("user", "role"));
+    assert!(converted("user", "created_at"));
+    assert!(converted("user", "last_login_at"));
+    assert!(converted("event_city", "radius"));
+}
+
+/// A local row keeps its uid and its password when the account has no
+/// username, which a username taken by someone else leaves it with.
+#[tokio::test]
+async fn a_local_row_keeps_its_uid_on_an_account_with_no_username() {
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    let mut user = fixture.user("u1");
+    user["username"] = Value::Null;
+    export["users"] = json!([user]);
+    let (pool, _target) = migrated_pool().await;
+    let (_dir, config_path, crypto) = scratch_config("no-username");
+
+    let report = run_import(import_request(&export, pool.clone(), config_path, crypto)).await;
+    assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.exit.message);
+    let (uid, hash, scheme): (String, String, String) = sqlx::query_as(
+        "SELECT provider_uid, password_hash, hash_scheme FROM auth_providers WHERE user_id = 'u1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(uid, "local:u1");
+    assert_eq!(hash, BCRYPT_HASH);
+    assert_eq!(scheme, "bcrypt");
 }

@@ -7,7 +7,7 @@ use rusqlite::Connection;
 
 use super::apply::ImportError;
 use super::sql::{
-    self, AppPasswordRow, ApprovalRow, EventCityRow, FollowRow, ProviderRow, RecoveryRow, UserRow,
+    self, AppPasswordRow, ApprovalRow, EventCityRow, FollowRow, ProviderRow, UserRow,
 };
 
 /// Concerts city key: the table's (user, latitude, longitude) primary key.
@@ -27,7 +27,6 @@ pub(super) struct DatabaseSnapshot {
     pub(super) providers: HashMap<(String, String), ProviderRow>,
     pub(super) app_passwords: HashMap<(String, String), Vec<AppPasswordRow>>,
     pub(super) app_password_shas: HashSet<String>,
-    pub(super) recoveries: HashMap<String, RecoveryRow>,
     pub(super) follows: HashMap<(String, String), FollowRow>,
     pub(super) approvals: HashMap<(String, String), ApprovalRow>,
     pub(super) event_cities: HashMap<CityKey, EventCityRow>,
@@ -39,7 +38,6 @@ impl DatabaseSnapshot {
         let users = sql::all_rows(conn, sql::USERS, UserRow::read)?;
         let providers = sql::all_rows(conn, sql::PROVIDERS, ProviderRow::read)?;
         let app_passwords = sql::all_rows(conn, sql::APP_PASSWORDS, AppPasswordRow::read)?;
-        let recoveries = sql::all_rows(conn, sql::RECOVERY_CODES, RecoveryRow::read)?;
         let follows = sql::all_rows(conn, sql::FOLLOWS, FollowRow::read)?;
         let approvals = sql::all_rows(conn, sql::APPROVALS, ApprovalRow::read)?;
         let event_cities = sql::all_rows(conn, sql::EVENT_CITIES, EventCityRow::read)?;
@@ -52,7 +50,6 @@ impl DatabaseSnapshot {
             providers: HashMap::new(),
             app_passwords: HashMap::new(),
             app_password_shas: HashSet::new(),
-            recoveries: HashMap::new(),
             follows: HashMap::new(),
             approvals: HashMap::new(),
             event_cities: HashMap::new(),
@@ -95,11 +92,6 @@ impl DatabaseSnapshot {
                 .entry((password.user_id.clone(), password.name.clone()))
                 .or_default()
                 .push(password);
-        }
-        for recovery in recoveries {
-            snapshot
-                .recoveries
-                .insert(recovery.user_id.clone(), recovery);
         }
         for follow in follows {
             snapshot.follows.insert(

@@ -12,26 +12,28 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use droppedneedle_acquire::follows::rows;
+use droppedneedle_auth::federated::users::ProviderBinding;
+use droppedneedle_auth::sqlite::{AppPasswords, Users, WriteError};
+use droppedneedle_auth::users::models::AppPasswordRecord;
+use droppedneedle_catalog::concerts::store::{insert_city_in, set_seen_in};
 use droppedneedle_kernel::db::open_connection;
 use droppedneedle_kernel::runtime_config::{Crypto, LegacyConfig};
 
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 use serde_json::Value;
 use thiserror::Error;
 
 use super::carry::bundle::{Bundle, BundleRejection};
 use super::envelope::{ExportFile, Opener, collect_sealed, unseal_value};
-use super::plan::{
-    Plan, Planned, approval_ms, bool_or, num_or, opt_num, opt_str, opt_time_ms, provider_columns,
-    role_of, sha_hex, str_or, time_ms, v3_avatar_url,
-};
+use super::plan::{Plan, Planned, sha_hex};
 use super::report::{ExitCode, ExportProvenance, ImportReport, ReportBuilder, utc_now_iso};
-use super::settings::{
-    REPLACE_UNIVERSE, configs_equivalent, current_settings, stage_settings, write_settings,
-};
+use super::settings::{configs_equivalent, current_settings, stage_settings, write_settings};
 use super::snapshot::DatabaseSnapshot;
 use super::sql;
-use super::validate::{ValidationIssue, validate_export};
+use super::validate::{ValidationIssue, read_export};
+use crate::allowlist::replaced_sections;
+use crate::export::envelope::ExportDoc;
 
 /// Internal import failure. Messages stay secret-free: rusqlite errors echo
 /// SQL text, never bind values; crypto errors are fixed strings.
@@ -40,6 +42,12 @@ pub(super) enum ImportError {
     /// A database read or write failed.
     #[error("database failure: {0}")]
     Db(#[from] rusqlite::Error),
+    /// An area's write failed in the database.
+    #[error("database failure: {0}")]
+    Area(String),
+    /// An area refused a row: one the plan did not expect in the target.
+    #[error("a row already in the target conflicts with one being imported")]
+    Conflict,
     /// The settings cannot be read or staged.
     #[error("settings failure: {reason}")]
     Config {
@@ -61,6 +69,17 @@ pub(super) enum ImportError {
     /// Simulated crash after commit (tests only).
     #[error("simulated crash after commit")]
     FaultAfterCommit,
+}
+
+/// Auth's write errors, with text as free of secrets as the rest:
+/// rusqlite's text holds SQL, never bind values.
+impl From<WriteError> for ImportError {
+    fn from(error: WriteError) -> Self {
+        match error {
+            WriteError::Conflict => Self::Conflict,
+            WriteError::Db(cause) => Self::Area(cause.to_string()),
+        }
+    }
 }
 
 /// One import run: inputs and test-only fault switches.
@@ -139,7 +158,7 @@ fn import_blocking(request: ImportRequest, provenance: ExportProvenance) -> Impo
     {
         return digest_failure(report, &parsed.root, opener);
     }
-    let validation = validate_export(&parsed.root);
+    let (validation, doc) = read_export(&parsed.root);
     for warning in &validation.warnings {
         report.note(
             "export",
@@ -148,7 +167,7 @@ fn import_blocking(request: ImportRequest, provenance: ExportProvenance) -> Impo
             format!("{}: {}", warning.code, warning.message),
         );
     }
-    if !validation.valid() {
+    let Some(doc) = doc else {
         for issue in &validation.errors {
             report.note(
                 "export",
@@ -161,7 +180,7 @@ fn import_blocking(request: ImportRequest, provenance: ExportProvenance) -> Impo
             ExitCode::FailedValidation,
             validation_summary(&validation.errors),
         );
-    }
+    };
 
     let opener = match opener {
         Ok(opener) => opener,
@@ -184,20 +203,8 @@ fn import_blocking(request: ImportRequest, provenance: ExportProvenance) -> Impo
             return report.finish(ExitCode::FailedInternal, reason);
         }
     };
-    if let Some(left_behind) = parsed
-        .root
-        .get("left_behind")
-        .and_then(|list| serde_json::from_value(list.clone()).ok())
-    {
-        report.set_left_behind(left_behind);
-    }
-    if let Some(notes) = parsed
-        .root
-        .get("notes")
-        .and_then(|list| serde_json::from_value(list.clone()).ok())
-    {
-        report.set_notes(notes);
-    }
+    report.set_left_behind(doc.left_behind.clone());
+    report.set_notes(doc.notes.clone());
 
     let mut conn = match open_connection(&request.db_path) {
         Ok(conn) => conn,
@@ -220,7 +227,7 @@ fn import_blocking(request: ImportRequest, provenance: ExportProvenance) -> Impo
 
     // The bundle is checked whole before anything is written: a missing,
     // swapped or inconsistent bundle refuses the import with zero writes.
-    let bundle = match prepare_bundle(&conn, &request, &parsed.root) {
+    let bundle = match prepare_bundle(&conn, &request, &doc) {
         Ok(bundle) => bundle,
         Err(BundleRejection::Invalid(reason)) => {
             report.note("export", "attachments".to_owned(), "error", reason.clone());
@@ -234,7 +241,7 @@ fn import_blocking(request: ImportRequest, provenance: ExportProvenance) -> Impo
     let outcome = run_guarded(
         &mut conn,
         &request,
-        &parsed.root,
+        &doc,
         &unsealed,
         bundle.as_ref(),
         &mut report,
@@ -264,13 +271,12 @@ fn import_blocking(request: ImportRequest, provenance: ExportProvenance) -> Impo
 fn prepare_bundle(
     conn: &Connection,
     request: &ImportRequest,
-    root: &Value,
+    doc: &ExportDoc,
 ) -> Result<Option<Bundle>, BundleRejection> {
-    let Some(found) = super::carry::bundle::locate(root, request.attachments_dir.as_deref())?
-    else {
+    let Some(found) = super::carry::bundle::locate(doc, request.attachments_dir.as_deref())? else {
         return Ok(None);
     };
-    super::carry::check_bundle(conn, &found, root)?;
+    super::carry::check_bundle(conn, &found, doc)?;
     Ok(Some(found))
 }
 
@@ -339,14 +345,15 @@ fn digest_failure(report: ReportBuilder, root: &Value, opener: &Opener) -> Impor
     )
 }
 
-/// Every sealed value the importer consumes, with its path.
+/// Every sealed value the importer consumes, with its path. This walk stays
+/// on the raw JSON: a digest failure reads it before any document exists.
 fn consumed_sealed(root: &Value) -> Vec<(String, Value)> {
     let mut found = Vec::new();
     if let Some(settings) = root.get("settings").and_then(Value::as_object) {
         // Known sections only: unknown ones are ignored with a warning, so a
         // broken blob there must not fail the import.
-        for section in REPLACE_UNIVERSE {
-            if let Some(block) = settings.get(*section) {
+        for section in replaced_sections() {
+            if let Some(block) = settings.get(section) {
                 collect_sealed(block, format!("settings.{section}"), &mut found);
             }
         }
@@ -364,7 +371,7 @@ fn consumed_sealed(root: &Value) -> Vec<(String, Value)> {
 
 /// Per-user connections are a format 2 section; a format 1 reader never
 /// had them.
-pub(crate) fn carries_connections(root: &Value) -> bool {
+fn carries_connections(root: &Value) -> bool {
     root.get("format_version").and_then(Value::as_u64) >= Some(2)
         && root.get("user_connections").is_some()
 }
@@ -399,13 +406,13 @@ fn unseal_consumed(root: &Value, opener: &Opener) -> Result<HashMap<String, Stri
 fn run_guarded(
     conn: &mut Connection,
     request: &ImportRequest,
-    root: &Value,
+    doc: &ExportDoc,
     unsealed: &HashMap<String, String>,
     bundle: Option<&Bundle>,
     report: &mut ReportBuilder,
 ) -> Result<(), ImportError> {
     let carry = |dry_run: bool| super::carry::CarryRun {
-        root,
+        doc,
         bundle,
         unsealed,
         crypto: &request.crypto,
@@ -416,7 +423,7 @@ fn run_guarded(
     let current_config = current_settings(conn, &request.legacy)?;
     let secrets_before = report.secrets_counted();
     let staged_config = stage_settings(
-        root,
+        doc,
         &current_config,
         unsealed,
         &request.crypto,
@@ -436,7 +443,7 @@ fn run_guarded(
         let tx = conn.transaction()?;
         let snapshot = DatabaseSnapshot::load(&tx)?;
         tx.rollback()?;
-        Plan::decide(root, &snapshot, unsealed, report);
+        Plan::decide(doc, &snapshot, unsealed, report);
         super::carry::run(conn, carry(true), report)?;
         return Ok(());
     }
@@ -446,18 +453,13 @@ fn run_guarded(
     // connection keeps foreign keys on.
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let snapshot = DatabaseSnapshot::load(&tx)?;
-    let plan = Plan::decide(root, &snapshot, unsealed, report);
+    let plan = Plan::decide(doc, &snapshot, unsealed, report);
     plan.apply(&tx, &request.crypto, unsealed)?;
     let settings_written = write_settings(&tx, &staged_config, &request.crypto)?;
     // A pure re-import (every record and setting identical) writes nothing
     // at all, not even an audit row: idempotency means zero writes.
     let run_id = if plan.has_writes() || settings_written > 0 {
-        Some(record_import_run(
-            &tx,
-            root,
-            report,
-            completed_exit(report),
-        )?)
+        Some(record_import_run(&tx, doc, report, completed_exit(report))?)
     } else {
         None
     };
@@ -482,7 +484,7 @@ fn run_guarded(
     };
     let audited = match run_id {
         Some(id) => update_import_run(conn, &id, exit, report),
-        None if report.carried_writes() > 0 => insert_import_run(conn, root, exit, report),
+        None if report.carried_writes() > 0 => insert_import_run(conn, doc, exit, report),
         None => Ok(()),
     };
     match (carried, audited) {
@@ -498,290 +500,107 @@ fn run_guarded(
 }
 
 impl Plan {
-    /// Execute the decided writes inside the caller's transaction.
+    /// Execute the decided writes inside the caller's transaction, each
+    /// through the area that owns the table.
     fn apply(
         &self,
-        tx: &Connection,
+        tx: &Transaction<'_>,
         crypto: &Crypto,
         unsealed: &HashMap<String, String>,
     ) -> Result<(), ImportError> {
         for write in &self.writes {
             match write {
-                Planned::InsertUser {
-                    record,
-                    email_nulled,
-                    username_nulled,
-                } => insert_user(tx, record, *email_nulled, *username_nulled)?,
-                Planned::InsertProvider { record, user_id } => {
-                    insert_provider(tx, record, user_id)?;
+                Planned::InsertUser(user) => Users::insert_user_in(tx, user)?,
+                Planned::InsertProvider {
+                    user_id,
+                    provider,
+                    provider_uid,
+                    provider_data,
+                    password,
+                    created_at,
+                } => {
+                    let binding = ProviderBinding {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        user_id: user_id.clone(),
+                        provider: provider.clone(),
+                        provider_uid: provider_uid.clone(),
+                    };
+                    match password {
+                        Some((scheme, hash)) => Users::insert_password_binding_in(
+                            tx,
+                            &binding,
+                            hash,
+                            scheme,
+                            *created_at,
+                        )?,
+                        None => Users::insert_provider_binding_in(
+                            tx,
+                            &binding,
+                            provider_data.as_deref(),
+                            *created_at,
+                        )?,
+                    }
                 }
                 Planned::InsertAppPassword {
-                    record,
                     user_id,
                     name,
                     secret_path,
+                    created_at,
+                    last_used_at,
+                    last_client,
+                    revoked,
                 } => {
                     let plaintext = unsealed.get(secret_path).ok_or(ImportError::Rekey)?;
-                    insert_app_password(tx, crypto, record, user_id, name, plaintext)?;
+                    let row = AppPasswordRecord {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        user_id: user_id.clone(),
+                        name: name.clone(),
+                        secret_sha256: sha_hex(plaintext),
+                        secret_encrypted: crypto
+                            .encrypt(plaintext)
+                            .map_err(|_| ImportError::Rekey)?,
+                        created_at: *created_at,
+                        last_used_at: *last_used_at,
+                        last_client: last_client.clone(),
+                    };
+                    AppPasswords::insert_in(tx, &row, *revoked)?;
                 }
-                Planned::InsertRecovery { record, user_id } => {
-                    insert_recovery(tx, record, user_id)?;
-                }
-                Planned::InsertFollow { record } => insert_follow(tx, record)?,
+                Planned::InsertFollow(follow) => rows::insert_follow_in(tx, follow)?,
                 Planned::MergeFollow {
-                    key,
+                    user_id,
+                    artist_mbid_lower,
                     auto_download,
                     followed_at,
                     updated_at,
-                } => {
-                    merge_follow(tx, key, *auto_download, *followed_at, *updated_at)?;
-                }
+                } => rows::merge_follow_in(
+                    tx,
+                    user_id,
+                    artist_mbid_lower,
+                    *auto_download,
+                    *followed_at,
+                    *updated_at,
+                )?,
                 Planned::InsertApproval {
-                    record,
-                    reviewer_nulled,
-                } => insert_approval(tx, record, *reviewer_nulled)?,
+                    user_id,
+                    artist_mbid,
+                    artist_name,
+                    fields,
+                } => rows::insert_approval_in(tx, user_id, artist_mbid, artist_name, fields)?,
                 Planned::MergeApproval {
-                    key,
-                    state,
-                    requested_at,
-                    reviewed_by_id,
-                    reviewed_by_name,
-                    reviewed_at,
-                    batch_id,
-                    source,
-                } => {
-                    merge_approval(
-                        tx,
-                        key,
-                        state,
-                        *requested_at,
-                        reviewed_by_id.clone(),
-                        reviewed_by_name.clone(),
-                        *reviewed_at,
-                        batch_id.clone(),
-                        source.clone(),
-                    )?;
-                }
+                    user_id,
+                    artist_mbid_lower,
+                    fields,
+                } => rows::merge_approval_in(tx, user_id, artist_mbid_lower, fields)?,
                 Planned::InsertEventCity {
-                    record,
-                    radius_km,
+                    user_id,
+                    city,
                     position,
-                } => insert_event_city(tx, record, *radius_km, *position)?,
-                Planned::SetEventSeen { user_id, seen_at } => {
-                    set_event_seen(tx, user_id, *seen_at)?;
-                }
+                } => insert_city_in(tx, user_id, city, *position)?,
+                Planned::SetEventSeen { user_id, seen_at } => set_seen_in(tx, user_id, *seen_at)?,
             }
         }
         Ok(())
     }
-}
-
-fn insert_user(
-    tx: &Connection,
-    record: &Value,
-    email_nulled: bool,
-    username_nulled: bool,
-) -> Result<(), ImportError> {
-    let email = (!email_nulled).then(|| opt_str(record, "email")).flatten();
-    let username = (!username_nulled)
-        .then(|| opt_str(record, "username"))
-        .flatten();
-    let id = str_or(record, "id", "");
-    let avatar_url = v3_avatar_url(&id, opt_str(record, "avatar_url"));
-    tx.execute(
-        sql::INSERT_USER.text(),
-        params![
-            id,
-            str_or(record, "display_name", ""),
-            email,
-            avatar_url,
-            role_of(record),
-            time_ms(record, "created_at"),
-            opt_time_ms(record, "last_login_at"),
-            username,
-            opt_str(record, "username_display"),
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_provider(tx: &Connection, record: &Value, user_id: &str) -> Result<(), ImportError> {
-    let (provider_data, password) = provider_columns(record);
-    let (scheme, hash) = password.unzip();
-    tx.execute(
-        sql::INSERT_PROVIDER.text(),
-        params![
-            uuid::Uuid::new_v4().to_string(),
-            user_id,
-            str_or(record, "provider", ""),
-            str_or(record, "provider_uid", ""),
-            provider_data,
-            hash,
-            scheme,
-            time_ms(record, "created_at"),
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_app_password(
-    tx: &Connection,
-    crypto: &Crypto,
-    record: &Value,
-    user_id: &str,
-    name: &str,
-    plaintext: &str,
-) -> Result<(), ImportError> {
-    let ciphertext = crypto.encrypt(plaintext).map_err(|_| ImportError::Rekey)?;
-    let sha = sha_hex(plaintext);
-    tx.execute(
-        sql::INSERT_APP_PASSWORD.text(),
-        params![
-            uuid::Uuid::new_v4().to_string(),
-            user_id,
-            name,
-            sha,
-            ciphertext,
-            time_ms(record, "created_at"),
-            opt_time_ms(record, "last_used_at"),
-            opt_str(record, "last_client"),
-            i64::from(bool_or(record, "revoked", false)),
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_recovery(tx: &Connection, record: &Value, user_id: &str) -> Result<(), ImportError> {
-    tx.execute(
-        sql::INSERT_RECOVERY_CODE.text(),
-        params![
-            user_id,
-            str_or(record, "code_hash", ""),
-            time_ms(record, "created_at"),
-            time_ms(record, "expires_at"),
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_follow(tx: &Connection, record: &Value) -> Result<(), ImportError> {
-    let mbid = str_or(record, "artist_mbid", "");
-    tx.execute(
-        sql::INSERT_FOLLOW.text(),
-        params![
-            str_or(record, "user_id", ""),
-            mbid.trim().to_owned(),
-            mbid.trim().to_lowercase(),
-            str_or(record, "artist_name", ""),
-            i64::from(bool_or(record, "auto_download", false)),
-            approval_ms(num_or(record, "followed_at", 0.0)),
-            approval_ms(num_or(record, "updated_at", 0.0)),
-        ],
-    )?;
-    Ok(())
-}
-
-fn merge_follow(
-    tx: &Connection,
-    key: &(String, String),
-    auto_download: bool,
-    followed_at: i64,
-    updated_at: i64,
-) -> Result<(), ImportError> {
-    tx.execute(
-        sql::MERGE_FOLLOW.text(),
-        params![
-            i64::from(auto_download),
-            followed_at,
-            updated_at,
-            key.0,
-            key.1,
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_event_city(
-    tx: &Connection,
-    record: &Value,
-    radius_km: f64,
-    position: i64,
-) -> Result<(), ImportError> {
-    tx.execute(
-        sql::INSERT_EVENT_CITY.text(),
-        params![
-            str_or(record, "user_id", ""),
-            str_or(record, "city_name", "").trim().to_owned(),
-            opt_str(record, "country_code"),
-            num_or(record, "latitude", 0.0),
-            num_or(record, "longitude", 0.0),
-            radius_km,
-            position,
-        ],
-    )?;
-    Ok(())
-}
-
-fn set_event_seen(tx: &Connection, user_id: &str, seen_at: f64) -> Result<(), ImportError> {
-    tx.execute(sql::SET_EVENT_SEEN.text(), params![user_id, seen_at])?;
-    Ok(())
-}
-
-fn insert_approval(
-    tx: &Connection,
-    record: &Value,
-    reviewer_nulled: bool,
-) -> Result<(), ImportError> {
-    let mbid = str_or(record, "artist_mbid", "");
-    let reviewer = (!reviewer_nulled)
-        .then(|| opt_str(record, "reviewed_by_id"))
-        .flatten();
-    tx.execute(
-        sql::INSERT_APPROVAL.text(),
-        params![
-            str_or(record, "user_id", ""),
-            mbid.trim().to_owned(),
-            mbid.trim().to_lowercase(),
-            str_or(record, "artist_name", ""),
-            str_or(record, "state", "pending"),
-            approval_ms(num_or(record, "requested_at", 0.0)),
-            reviewer,
-            opt_str(record, "reviewed_by_name"),
-            opt_num(record, "reviewed_at").map(approval_ms),
-            opt_str(record, "batch_id"),
-            opt_str(record, "source"),
-        ],
-    )?;
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn merge_approval(
-    tx: &Connection,
-    key: &(String, String),
-    state: &str,
-    requested_at: i64,
-    reviewed_by_id: Option<String>,
-    reviewed_by_name: Option<String>,
-    reviewed_at: Option<i64>,
-    batch_id: Option<String>,
-    source: Option<String>,
-) -> Result<(), ImportError> {
-    tx.execute(
-        sql::MERGE_APPROVAL.text(),
-        params![
-            state,
-            requested_at,
-            reviewed_by_id,
-            reviewed_by_name,
-            reviewed_at,
-            batch_id,
-            source,
-            key.0,
-            key.1,
-        ],
-    )?;
-    Ok(())
 }
 
 /// Exit code of a run that completed.
@@ -795,7 +614,7 @@ fn completed_exit(report: &ReportBuilder) -> &'static str {
 
 fn record_import_run(
     tx: &Connection,
-    root: &Value,
+    doc: &ExportDoc,
     report: &ReportBuilder,
     exit: &str,
 ) -> Result<String, ImportError> {
@@ -807,8 +626,8 @@ fn record_import_run(
         sql::INSERT_IMPORT_RUN.text(),
         params![
             id,
-            str_or(root, "instance_id", ""),
-            str_or(root, "exported_at", ""),
+            doc.instance_id,
+            doc.exported_at,
             exit,
             report.counts_json(),
             utc_now_iso(),
@@ -820,12 +639,12 @@ fn record_import_run(
 /// Audit row for a run whose only writes were carried sections.
 fn insert_import_run(
     conn: &mut Connection,
-    root: &Value,
+    doc: &ExportDoc,
     exit: &str,
     report: &ReportBuilder,
 ) -> Result<(), ImportError> {
     let tx = conn.transaction()?;
-    record_import_run(&tx, root, report, exit)?;
+    record_import_run(&tx, doc, report, exit)?;
     tx.commit()?;
     Ok(())
 }

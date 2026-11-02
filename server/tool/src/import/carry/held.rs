@@ -19,9 +19,9 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::avatars::write_atomically;
+use super::sql;
 use super::{CarryError, SectionResult};
 use crate::export::sections::Column;
-use super::sql;
 
 /// Why a held file has nowhere to land, as the plain text the report shows.
 const NO_USABLE_NAME: &str = "the held file has no usable name; import it by hand from \

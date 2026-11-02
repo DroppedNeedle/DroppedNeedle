@@ -14,6 +14,21 @@ droppedneedle_kernel::sql! {
     /// The followed artist `?2` of user `?1`: `(mbid, name)`.
     pub(crate) FOLLOWED_ARTIST = "SELECT artist_mbid, artist_name FROM acquire_followed_artists \
          WHERE user_id = ?1 AND artist_mbid_lower = ?2";
+    /// Add a follow as it stands, with its own times.
+    pub(crate) INSERT_FOLLOW_ROW = "INSERT INTO acquire_followed_artists (user_id, artist_mbid, \
+         artist_mbid_lower, artist_name, auto_download, followed_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+    /// Write a follow's merged values.
+    pub(crate) MERGE_FOLLOW_ROW = "UPDATE acquire_followed_artists SET auto_download = ?3, \
+         followed_at = ?4, updated_at = ?5 WHERE user_id = ?1 AND artist_mbid_lower = ?2";
+    /// Add an approval as it stands.
+    pub(crate) INSERT_APPROVAL_ROW = "INSERT INTO auto_download_approvals (user_id, artist_mbid, \
+         artist_mbid_lower, artist_name, state, requested_at, reviewed_by_id, reviewed_by_name, \
+         reviewed_at, batch_id, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
+    /// Write an approval's merged values.
+    pub(crate) MERGE_APPROVAL_ROW = "UPDATE auto_download_approvals SET state = ?3, requested_at = ?4, \
+         reviewed_by_id = ?5, reviewed_by_name = ?6, reviewed_at = ?7, batch_id = ?8, source = ?9 \
+         WHERE user_id = ?1 AND artist_mbid_lower = ?2";
     /// Unfollow one artist.
     pub(crate) UNFOLLOW = "DELETE FROM acquire_followed_artists \
          WHERE user_id = ?1 AND artist_mbid_lower = ?2";

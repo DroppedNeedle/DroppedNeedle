@@ -23,6 +23,7 @@ pub mod approvals;
 pub mod cursors;
 pub mod http;
 pub mod models;
+pub mod rows;
 pub(crate) mod sql;
 
 use std::collections::HashSet;

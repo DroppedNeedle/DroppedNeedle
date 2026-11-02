@@ -31,9 +31,8 @@ async fn entity_counts(pool: &sqlx::SqlitePool) -> Vec<i64> {
 
 #[tokio::test]
 async fn mid_import_failure_rolls_back_everything() {
-    // A recovery hash colliding with a row already in the target (across
-    // users, so no validator rule can see it) violates the UNIQUE column
-    // mid-transaction, which must roll the whole import back.
+    // The database refuses a row mid-transaction, after earlier rows were
+    // written, which must roll the whole import back.
     let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1"), fixture.user("u2")]);
@@ -41,15 +40,8 @@ async fn mid_import_failure_rolls_back_everything() {
 
     let (pool, _target) = migrated_pool().await;
     sqlx::query(
-        "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('prior', 'Prior', 'user', 0)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO auth_password_recovery_codes (user_id, code_hash, created_at, expires_at) \
-         VALUES ('prior', 'hash-u2', 0, 0)",
+        "CREATE TRIGGER refuse_u2 BEFORE INSERT ON auth_app_passwords \
+         WHEN NEW.user_id = 'u2' BEGIN SELECT RAISE(ABORT, 'refused'); END",
     )
     .execute(&pool)
     .await

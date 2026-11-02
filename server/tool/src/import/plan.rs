@@ -1,6 +1,8 @@
 //! The merge plan: conflict rules, deleted-ID rules and idempotent re-import.
-//! The decisions are pure functions over a snapshot, so dry-run and real
-//! import share them by construction.
+//! The decisions are pure functions over the typed document and a snapshot, so
+//! dry-run and real import share them by construction. The plan decides new,
+//! merged or identical; the areas offer plain row writes, and a re-import
+//! calls none of them.
 //!
 //! Deleted IDs fail closed: the validator refuses the whole file on a
 //! dangling user reference, and the operator repair is dropping the orphan
@@ -9,31 +11,36 @@
 //! follow the export spec exactly: most-permissive state wins (a pending
 //! import reopens a rejected row), `requested_at` takes the min, and a nulled
 //! reviewer keeps its display name as audit residue.
+//!
+//! A v2 value an area would not take is never a failed import and never a
+//! silent default: it is converted or clamped with a report line, or its
+//! record is left behind with one.
+//!
+//! Auth rows store times through typed forms that take whole seconds, and no
+//! auth reader sees finer, so times there are compared at whole seconds.
 
 use std::collections::{HashMap, HashSet};
 
+use droppedneedle_acquire::follows::rows::{ApprovalFields, FollowRow as NewFollow};
+use droppedneedle_acquire::requests::ledger::ApprovalState;
 use droppedneedle_auth::Role;
 use droppedneedle_auth::federated::password_import::HashScheme;
-use droppedneedle_auth::times::parse_iso_ms;
+use droppedneedle_auth::times::{ms_to_secs, parse_iso};
+use droppedneedle_auth::users::models::UserRecord as NewUser;
+use droppedneedle_catalog::concerts::models::{EventCity, MAX_CITIES};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::report::ReportBuilder;
 use super::snapshot::{DatabaseSnapshot, coord_bits};
 use super::sql::UserRow;
+use crate::export::envelope::{
+    AppPasswordRecord, ApprovalRecord, EventCityRecord, EventSeenRecord, ExportDoc, FollowRecord,
+    ProviderRecord, UserRecord,
+};
 
-/// Cities kept per user; the same limit as catalog's `concerts::models::MAX_CITIES`.
-pub const MAX_EVENT_CITIES: usize = 50;
-/// City match radius bounds in km; the same as catalog's `MIN_RADIUS_KM` and `MAX_RADIUS_KM`.
-pub const EVENT_CITY_RADIUS_KM: std::ops::RangeInclusive<f64> = 1.0..=500.0;
-/// Radius a v2 city without one gets, as the picker defaults it.
-const DEFAULT_RADIUS_KM: f64 = 30.0;
-
-/// A city's radius as v3 stores it: the v2 value clamped into range.
-fn event_city_radius(record: &Value) -> f64 {
-    num_or(record, "radius_km", DEFAULT_RADIUS_KM)
-        .clamp(*EVENT_CITY_RADIUS_KM.start(), *EVENT_CITY_RADIUS_KM.end())
-}
+/// Report outcome for a v2 value that was changed so v3 could take it.
+const CONVERTED: &str = "converted";
 
 /// Per user: cities already saved or planned, and the next free position.
 #[derive(Debug, Default, Clone, Copy)]
@@ -48,55 +55,54 @@ pub(super) fn approval_ms(seconds: f64) -> i64 {
     (seconds * 1000.0).round() as i64
 }
 
-// --- merge plan --------------------------------------------------------------
+/// A record's optional REAL epoch seconds as stored milliseconds.
+fn opt_approval_ms(seconds: Option<f64>) -> Option<i64> {
+    seconds.map(approval_ms)
+}
 
 /// One decided record: what to write (real runs) and what to report.
 pub(super) enum Planned {
-    InsertUser {
-        record: Value,
-        email_nulled: bool,
-        username_nulled: bool,
-    },
+    InsertUser(NewUser),
     InsertProvider {
-        record: Value,
         user_id: String,
+        provider: String,
+        provider_uid: String,
+        provider_data: Option<String>,
+        /// `(scheme, hash)` of a local row.
+        password: Option<(String, String)>,
+        created_at: i64,
     },
     InsertAppPassword {
-        record: Value,
         user_id: String,
         name: String,
         secret_path: String,
+        created_at: i64,
+        last_used_at: Option<i64>,
+        last_client: Option<String>,
+        revoked: bool,
     },
-    InsertRecovery {
-        record: Value,
-        user_id: String,
-    },
-    InsertFollow {
-        record: Value,
-    },
+    InsertFollow(NewFollow),
     MergeFollow {
-        key: (String, String),
+        user_id: String,
+        artist_mbid_lower: String,
         auto_download: bool,
         followed_at: i64,
         updated_at: i64,
     },
     InsertApproval {
-        record: Value,
-        reviewer_nulled: bool,
+        user_id: String,
+        artist_mbid: String,
+        artist_name: String,
+        fields: ApprovalFields,
     },
     MergeApproval {
-        key: (String, String),
-        state: String,
-        requested_at: i64,
-        reviewed_by_id: Option<String>,
-        reviewed_by_name: Option<String>,
-        reviewed_at: Option<i64>,
-        batch_id: Option<String>,
-        source: Option<String>,
+        user_id: String,
+        artist_mbid_lower: String,
+        fields: ApprovalFields,
     },
     InsertEventCity {
-        record: Value,
-        radius_km: f64,
+        user_id: String,
+        city: EventCity,
         position: i64,
     },
     SetEventSeen {
@@ -120,23 +126,18 @@ impl Plan {
     /// Decide every record against the snapshot, recording outcomes.
     /// Pure apart from the report: dry-run and real import share it.
     pub(super) fn decide(
-        root: &Value,
+        doc: &ExportDoc,
         snapshot: &DatabaseSnapshot,
         unsealed: &HashMap<String, String>,
         report: &mut ReportBuilder,
     ) -> Self {
         let mut plan = Self { writes: Vec::new() };
-        let empty_list = Vec::new();
-        let users = root
-            .get("users")
-            .and_then(Value::as_array)
-            .unwrap_or(&empty_list);
         let mut known_users: HashSet<String> = snapshot.users.keys().cloned().collect();
         let mut batch_emails: HashMap<String, String> = HashMap::new();
         let mut batch_usernames: HashMap<String, String> = HashMap::new();
         let mut batch_shas: HashSet<String> = HashSet::new();
 
-        for user in users {
+        for user in &doc.users {
             plan.decide_user(
                 user,
                 snapshot,
@@ -144,11 +145,9 @@ impl Plan {
                 &mut batch_usernames,
                 report,
             );
-            if let Some(id) = user.get("id").and_then(Value::as_str) {
-                known_users.insert(id.to_owned());
-            }
+            known_users.insert(user.id.clone());
         }
-        for (user_index, user) in users.iter().enumerate() {
+        for (user_index, user) in doc.users.iter().enumerate() {
             plan.decide_user_children(
                 user,
                 user_index,
@@ -158,40 +157,32 @@ impl Plan {
                 report,
             );
         }
-        let follows = root
-            .get("follows")
-            .and_then(Value::as_array)
-            .unwrap_or(&empty_list);
-        for follow in follows {
+        if doc.users.iter().any(|user| user.recovery_code.is_some()) {
+            report.note(
+                "user",
+                "recovery_code".to_owned(),
+                "not_carried",
+                "recovery codes from v2 were not carried; make a new one".to_owned(),
+            );
+        }
+        for follow in &doc.follows {
             plan.decide_follow(follow, snapshot, &known_users, report);
         }
-        let approvals = root
-            .get("approvals")
-            .and_then(Value::as_array)
-            .unwrap_or(&empty_list);
-        for approval in approvals {
+        for approval in &doc.approvals {
             plan.decide_approval(approval, snapshot, &known_users, report);
         }
-        let event_cities = root
-            .get("event_cities")
-            .and_then(Value::as_array)
-            .unwrap_or(&empty_list);
         let mut slots: HashMap<String, CitySlots> = HashMap::new();
         for city in snapshot.event_cities.values() {
             let slot = slots.entry(city.user_id.clone()).or_default();
             slot.count += 1;
             slot.next_position = slot.next_position.max(city.position + 1);
         }
-        let mut event_cities: Vec<&Value> = event_cities.iter().collect();
-        event_cities.sort_by_key(|city| city.get("position").and_then(Value::as_i64).unwrap_or(0));
+        let mut event_cities: Vec<&EventCityRecord> = doc.event_cities.iter().collect();
+        event_cities.sort_by_key(|city| city.position);
         for city in event_cities {
             plan.decide_event_city(city, snapshot, &known_users, &mut slots, report);
         }
-        let event_seen = root
-            .get("event_seen")
-            .and_then(Value::as_array)
-            .unwrap_or(&empty_list);
-        for seen in event_seen {
+        for seen in &doc.event_seen {
             plan.decide_event_seen(seen, snapshot, &known_users, report);
         }
         plan
@@ -199,22 +190,13 @@ impl Plan {
 
     fn decide_user(
         &mut self,
-        user: &Value,
+        user: &UserRecord,
         snapshot: &DatabaseSnapshot,
         batch_emails: &mut HashMap<String, String>,
         batch_usernames: &mut HashMap<String, String>,
         report: &mut ReportBuilder,
     ) {
-        let id = user.get("id").and_then(Value::as_str).unwrap_or_default();
-        if id.is_empty() {
-            report.record(
-                "user",
-                String::new(),
-                "dropped_invalid",
-                "user record without an id".to_owned(),
-            );
-            return;
-        }
+        let id = user.id.as_str();
         if let Some(existing) = snapshot.users.get(id) {
             if users_identical(existing, user) {
                 report.record("user", id.to_owned(), "skipped_identical", String::new());
@@ -228,13 +210,12 @@ impl Plan {
             }
             return;
         }
-        let mut email_nulled = false;
-        let mut username_nulled = false;
-        if let Some(email) = opt_str(user, "email") {
-            let taken_elsewhere = snapshot.emails.get(&email).is_some_and(|owner| owner != id)
-                || batch_emails.get(&email).is_some_and(|owner| owner != id);
+        let mut email = user.email.clone();
+        if let Some(wanted) = user.email.as_ref() {
+            let taken_elsewhere = snapshot.emails.get(wanted).is_some_and(|owner| owner != id)
+                || batch_emails.get(wanted).is_some_and(|owner| owner != id);
             if taken_elsewhere {
-                email_nulled = true;
+                email = None;
                 report.record(
                     "user",
                     id.to_owned(),
@@ -242,19 +223,18 @@ impl Plan {
                     "email collides across ids; imported nulled".to_owned(),
                 );
             } else {
-                batch_emails.insert(email, id.to_owned());
+                batch_emails.insert(wanted.clone(), id.to_owned());
             }
         }
-        if let Some(username) = opt_str(user, "username") {
+        let mut username = user.username.clone();
+        if let Some(wanted) = user.username.as_ref() {
             let taken_elsewhere = snapshot
                 .usernames
-                .get(&username)
+                .get(wanted)
                 .is_some_and(|owner| owner != id)
-                || batch_usernames
-                    .get(&username)
-                    .is_some_and(|owner| owner != id);
+                || batch_usernames.get(wanted).is_some_and(|owner| owner != id);
             if taken_elsewhere {
-                username_nulled = true;
+                username = None;
                 report.record(
                     "user",
                     id.to_owned(),
@@ -262,47 +242,57 @@ impl Plan {
                     "username collides across ids; imported nulled".to_owned(),
                 );
             } else {
-                batch_usernames.insert(username, id.to_owned());
+                batch_usernames.insert(wanted.clone(), id.to_owned());
             }
         }
+        note_empty_name("user", id, "display_name", &user.display_name, report);
+        if Role::parse(&user.role).is_none() {
+            report.note(
+                "user",
+                id.to_owned(),
+                CONVERTED,
+                "v2's role is not one v3 has; imported as user".to_owned(),
+            );
+        }
+        let created_at = required_secs("user", id, "created_at", &user.created_at, report);
+        let last_login_at = opt_secs(
+            "user",
+            id,
+            "last_login_at",
+            user.last_login_at.as_deref(),
+            report,
+        );
         report.record("user", id.to_owned(), "imported", String::new());
-        self.writes.push(Planned::InsertUser {
-            record: user.clone(),
-            email_nulled,
-            username_nulled,
-        });
+        self.writes.push(Planned::InsertUser(NewUser {
+            id: id.to_owned(),
+            username,
+            username_display: user.username_display.clone(),
+            display_name: user.display_name.clone(),
+            email,
+            avatar_url: v3_avatar_url(id, user.avatar_url.clone()),
+            role: Role::from_stored(&user.role),
+            created_at,
+            last_login_at,
+        }));
     }
 
     fn decide_user_children(
         &mut self,
-        user: &Value,
+        user: &UserRecord,
         user_index: usize,
         snapshot: &DatabaseSnapshot,
         unsealed: &HashMap<String, String>,
         batch_shas: &mut HashSet<String>,
         report: &mut ReportBuilder,
     ) {
-        let user_id = user.get("id").and_then(Value::as_str).unwrap_or_default();
-        if user_id.is_empty() {
-            return;
+        for provider in &user.providers {
+            self.decide_provider(provider, &user.id, snapshot, report);
         }
-        let empty_list = Vec::new();
-        let providers = user
-            .get("providers")
-            .and_then(Value::as_array)
-            .unwrap_or(&empty_list);
-        for provider in providers {
-            self.decide_provider(provider, user_id, snapshot, report);
-        }
-        let passwords = user
-            .get("app_passwords")
-            .and_then(Value::as_array)
-            .unwrap_or(&empty_list);
-        for (index, password) in passwords.iter().enumerate() {
+        for (index, password) in user.app_passwords.iter().enumerate() {
             let secret_path = format!("users[{user_index}].app_passwords[{index}].secret");
             self.decide_app_password(
                 password,
-                user_id,
+                &user.id,
                 &secret_path,
                 snapshot,
                 unsealed,
@@ -310,54 +300,40 @@ impl Plan {
                 report,
             );
         }
-        if let Some(recovery) = user.get("recovery_code")
-            && !recovery.is_null()
-        {
-            self.decide_recovery(recovery, user_id, snapshot, report);
-        }
     }
 
     fn decide_provider(
         &mut self,
-        provider: &Value,
+        provider: &ProviderRecord,
         user_id: &str,
         snapshot: &DatabaseSnapshot,
         report: &mut ReportBuilder,
     ) {
-        let name = provider
-            .get("provider")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let uid = provider
-            .get("provider_uid")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let name = provider.provider.as_str();
+        let uid = provider.provider_uid.as_str();
         let key = format!("{name}|{uid}");
-        if name.is_empty() || uid.is_empty() {
-            report.record(
-                "provider",
-                key,
-                "dropped_invalid",
-                "provider record without a binding".to_owned(),
-            );
-            return;
-        }
+        let (provider_data, password) = provider_columns(provider);
         match snapshot.providers.get(&(name.to_owned(), uid.to_owned())) {
             None => {
+                let created_at =
+                    required_secs("provider", &key, "created_at", &provider.created_at, report);
                 report.record("provider", key, "imported", String::new());
                 self.writes.push(Planned::InsertProvider {
-                    record: provider.clone(),
                     user_id: user_id.to_owned(),
+                    provider: name.to_owned(),
+                    provider_uid: uid.to_owned(),
+                    provider_data,
+                    password,
+                    created_at,
                 });
             }
             Some(existing) => {
-                let (provider_data, password) = provider_columns(provider);
                 let (scheme, hash) = password.unzip();
                 if existing.user_id == user_id
                     && existing.provider_data == provider_data
                     && existing.hash_scheme == scheme
                     && existing.password_hash == hash
-                    && existing.created_at == time_ms(provider, "created_at")
+                    && ms_to_secs(existing.created_at) == secs_or_zero(&provider.created_at)
                 {
                     report.record("provider", key, "skipped_identical", String::new());
                 } else {
@@ -375,7 +351,7 @@ impl Plan {
     #[allow(clippy::too_many_arguments)]
     fn decide_app_password(
         &mut self,
-        password: &Value,
+        password: &AppPasswordRecord,
         user_id: &str,
         secret_path: &str,
         snapshot: &DatabaseSnapshot,
@@ -383,7 +359,7 @@ impl Plan {
         batch_shas: &mut HashSet<String>,
         report: &mut ReportBuilder,
     ) {
-        let name = str_or(password, "name", "");
+        let name = password.name.clone();
         if name.is_empty() {
             report.record(
                 "app_password",
@@ -393,8 +369,8 @@ impl Plan {
             );
             return;
         }
-        let created_at = str_or(password, "created_at", "");
-        let created_ms = time_ms(password, "created_at");
+        let created_at = password.created_at.as_str();
+        let created_secs = secs_or_zero(created_at);
         let key = format!("{user_id}|{name}|{created_at}");
         let secret_sha = unsealed
             .get(secret_path)
@@ -406,9 +382,9 @@ impl Plan {
         // cannot insert twice, so the first registration wins.
         let sha_taken = secret_sha.as_ref().is_some_and(|sha| {
             let same_row = rows.is_some_and(|existing| {
-                existing
-                    .iter()
-                    .any(|row| row.secret_sha256 == *sha && row.created_at == created_ms)
+                existing.iter().any(|row| {
+                    row.secret_sha256 == *sha && ms_to_secs(row.created_at) == created_secs
+                })
             });
             !same_row && (snapshot.app_password_shas.contains(sha) || batch_shas.contains(sha))
         });
@@ -424,32 +400,30 @@ impl Plan {
         if let Some(sha) = secret_sha.clone() {
             batch_shas.insert(sha);
         }
-        match rows {
+        let last_used = password.last_used_at.as_deref();
+        let final_name = match rows {
             None => {
-                report.record("app_password", key, "imported", String::new());
-                report.secret_reencrypted();
-                self.writes.push(Planned::InsertAppPassword {
-                    record: password.clone(),
-                    user_id: user_id.to_owned(),
-                    name,
-                    secret_path: secret_path.to_owned(),
-                });
+                report.record("app_password", key.clone(), "imported", String::new());
+                name
             }
             Some(existing) => {
                 let identical = existing.iter().any(|row| {
-                    row.created_at == created_ms
+                    ms_to_secs(row.created_at) == created_secs
                         && secret_sha
                             .as_ref()
                             .is_some_and(|sha| *sha == row.secret_sha256)
-                        && row.last_used_at == opt_time_ms(password, "last_used_at")
-                        && row.last_client == opt_str(password, "last_client")
-                        && row.revoked == i64::from(bool_or(password, "revoked", false))
+                        && row.last_used_at.map(ms_to_secs) == last_used.and_then(parse_iso)
+                        && row.last_client == password.last_client
+                        && row.revoked == i64::from(password.revoked)
                 });
                 if identical {
                     report.record("app_password", key, "skipped_identical", String::new());
                     return;
                 }
-                if existing.iter().any(|row| row.created_at == created_ms) {
+                if existing
+                    .iter()
+                    .any(|row| ms_to_secs(row.created_at) == created_secs)
+                {
                     report.record(
                         "app_password",
                         key,
@@ -469,81 +443,37 @@ impl Plan {
                 }
                 report.record(
                     "app_password",
-                    key,
+                    key.clone(),
                     "conflict_kept_existing",
                     format!("name collides; imported as {candidate:?}"),
                 );
-                report.secret_reencrypted();
-                self.writes.push(Planned::InsertAppPassword {
-                    record: password.clone(),
-                    user_id: user_id.to_owned(),
-                    name: candidate,
-                    secret_path: secret_path.to_owned(),
-                });
+                candidate
             }
-        }
-    }
-
-    fn decide_recovery(
-        &mut self,
-        recovery: &Value,
-        user_id: &str,
-        snapshot: &DatabaseSnapshot,
-        report: &mut ReportBuilder,
-    ) {
-        match snapshot.recoveries.get(user_id) {
-            None => {
-                report.record(
-                    "recovery_code",
-                    user_id.to_owned(),
-                    "imported",
-                    String::new(),
-                );
-                self.writes.push(Planned::InsertRecovery {
-                    record: recovery.clone(),
-                    user_id: user_id.to_owned(),
-                });
-            }
-            Some(existing) => {
-                if existing.code_hash == str_or(recovery, "code_hash", "")
-                    && existing.created_at == time_ms(recovery, "created_at")
-                    && existing.expires_at == time_ms(recovery, "expires_at")
-                {
-                    report.record(
-                        "recovery_code",
-                        user_id.to_owned(),
-                        "skipped_identical",
-                        String::new(),
-                    );
-                } else {
-                    report.record(
-                        "recovery_code",
-                        user_id.to_owned(),
-                        "conflict_kept_existing",
-                        "recovery code already set; existing kept".to_owned(),
-                    );
-                }
-            }
-        }
+        };
+        report.secret_reencrypted();
+        // No per-user cap here, unlike a new password made in the app: a
+        // client's working password must not be lost at upgrade.
+        self.writes.push(Planned::InsertAppPassword {
+            user_id: user_id.to_owned(),
+            name: final_name,
+            secret_path: secret_path.to_owned(),
+            created_at: required_secs("app_password", &key, "created_at", created_at, report),
+            last_used_at: opt_secs("app_password", &key, "last_used_at", last_used, report),
+            last_client: password.last_client.clone(),
+            revoked: password.revoked,
+        });
     }
 
     fn decide_follow(
         &mut self,
-        follow: &Value,
+        follow: &FollowRecord,
         snapshot: &DatabaseSnapshot,
         known_users: &HashSet<String>,
         report: &mut ReportBuilder,
     ) {
-        let user_id = follow
-            .get("user_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let mbid_lower = follow
-            .get("artist_mbid")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_lowercase();
+        let user_id = follow.user_id.as_str();
+        let mbid = follow.artist_mbid.trim();
+        let mbid_lower = mbid.to_lowercase();
         let key = format!("{user_id}|{mbid_lower}");
         if !known_users.contains(user_id) {
             report.record(
@@ -554,34 +484,30 @@ impl Plan {
             );
             return;
         }
-        if mbid_lower.is_empty() {
-            report.record(
-                "follow",
-                key,
-                "dropped_invalid",
-                "follow without an MBID".to_owned(),
-            );
-            return;
-        }
         let lookup = (user_id.to_owned(), mbid_lower);
         match snapshot.follows.get(&lookup) {
             None => {
+                for (field, value) in [
+                    ("followed_at", follow.followed_at),
+                    ("updated_at", follow.updated_at),
+                ] {
+                    note_missing_time("follow", &key, field, value, report);
+                }
+                note_empty_name("follow", &key, "artist_name", &follow.artist_name, report);
                 report.record("follow", key, "imported", String::new());
-                self.writes.push(Planned::InsertFollow {
-                    record: follow.clone(),
-                });
+                self.writes.push(Planned::InsertFollow(NewFollow {
+                    user_id: user_id.to_owned(),
+                    artist_mbid: mbid.to_owned(),
+                    artist_name: follow.artist_name.clone(),
+                    auto_download: follow.auto_download,
+                    followed_at: approval_ms(follow.followed_at),
+                    updated_at: approval_ms(follow.updated_at),
+                }));
             }
             Some(existing) => {
-                let merged_auto =
-                    existing.auto_download != 0 || bool_or(follow, "auto_download", false);
-                let merged_followed =
-                    existing
-                        .followed_at
-                        .min(approval_ms(num_or(follow, "followed_at", 0.0)));
-                let merged_updated =
-                    existing
-                        .updated_at
-                        .max(approval_ms(num_or(follow, "updated_at", 0.0)));
+                let merged_auto = existing.auto_download != 0 || follow.auto_download;
+                let merged_followed = existing.followed_at.min(approval_ms(follow.followed_at));
+                let merged_updated = existing.updated_at.max(approval_ms(follow.updated_at));
                 if existing.auto_download == i64::from(merged_auto)
                     && existing.followed_at == merged_followed
                     && existing.updated_at == merged_updated
@@ -594,8 +520,10 @@ impl Plan {
                         "conflict_kept_existing",
                         "merged: auto_download OR, followed_at min, updated_at max".to_owned(),
                     );
+                    let (user_id, artist_mbid_lower) = lookup;
                     self.writes.push(Planned::MergeFollow {
-                        key: lookup,
+                        user_id,
+                        artist_mbid_lower,
                         auto_download: merged_auto,
                         followed_at: merged_followed,
                         updated_at: merged_updated,
@@ -611,17 +539,15 @@ impl Plan {
     /// limit it is dropped.
     fn decide_event_city(
         &mut self,
-        city: &Value,
+        city: &EventCityRecord,
         snapshot: &DatabaseSnapshot,
         known_users: &HashSet<String>,
         slots: &mut HashMap<String, CitySlots>,
         report: &mut ReportBuilder,
     ) {
-        let user_id = str_or(city, "user_id", "");
-        let latitude = num_or(city, "latitude", 0.0);
-        let longitude = num_or(city, "longitude", 0.0);
-        let key = format!("{user_id}|{latitude},{longitude}");
-        if !known_users.contains(&user_id) {
+        let user_id = city.user_id.as_str();
+        let key = format!("{user_id}|{},{}", city.latitude, city.longitude);
+        if !known_users.contains(user_id) {
             report.record(
                 "event_city",
                 key,
@@ -630,36 +556,63 @@ impl Plan {
             );
             return;
         }
-        let radius_km = event_city_radius(city);
+        let name = city.city_name.trim().to_owned();
+        let Ok(new_city) = EventCity::new(
+            name.clone(),
+            city.latitude,
+            city.longitude,
+            city.radius_km,
+            city.country_code.clone(),
+        ) else {
+            report.record(
+                "event_city",
+                key,
+                "dropped_invalid",
+                "coordinates or radius v3 refuses".to_owned(),
+            );
+            return;
+        };
         match snapshot.event_cities.get(&(
-            user_id.clone(),
-            coord_bits(latitude),
-            coord_bits(longitude),
+            user_id.to_owned(),
+            coord_bits(city.latitude),
+            coord_bits(city.longitude),
         )) {
             None => {
-                let slot = slots.entry(user_id).or_default();
-                if slot.count >= MAX_EVENT_CITIES {
+                let slot = slots.entry(user_id.to_owned()).or_default();
+                if slot.count >= MAX_CITIES {
                     report.record(
                         "event_city",
                         key,
                         "dropped_invalid",
-                        format!("user already has {MAX_EVENT_CITIES} cities"),
+                        format!("user already has {MAX_CITIES} cities"),
                     );
                     return;
                 }
+                if new_city.radius_km() != city.radius_km {
+                    report.note(
+                        "event_city",
+                        key.clone(),
+                        CONVERTED,
+                        format!(
+                            "radius {} km is outside what v3 allows; now {} km",
+                            city.radius_km,
+                            new_city.radius_km()
+                        ),
+                    );
+                }
                 report.record("event_city", key, "imported", String::new());
                 self.writes.push(Planned::InsertEventCity {
-                    record: city.clone(),
-                    radius_km,
+                    user_id: user_id.to_owned(),
+                    city: new_city,
                     position: slot.next_position,
                 });
                 slot.count += 1;
                 slot.next_position += 1;
             }
             Some(existing) => {
-                let identical = existing.city_name == str_or(city, "city_name", "")
-                    && existing.country_code == opt_str(city, "country_code")
-                    && existing.radius_km == radius_km;
+                let identical = existing.city_name == name
+                    && existing.country_code == city.country_code
+                    && existing.radius_km == new_city.radius_km();
                 if identical {
                     report.record("event_city", key, "skipped_identical", String::new());
                 } else {
@@ -678,12 +631,12 @@ impl Plan {
     /// gigs the user already saw on either side.
     fn decide_event_seen(
         &mut self,
-        seen: &Value,
+        seen: &EventSeenRecord,
         snapshot: &DatabaseSnapshot,
         known_users: &HashSet<String>,
         report: &mut ReportBuilder,
     ) {
-        let user_id = str_or(seen, "user_id", "");
+        let user_id = seen.user_id.clone();
         if !known_users.contains(&user_id) {
             report.record(
                 "event_seen",
@@ -693,7 +646,7 @@ impl Plan {
             );
             return;
         }
-        let imported = num_or(seen, "seen_at", 0.0);
+        let imported = seen.seen_at;
         match snapshot.event_seen.get(&user_id) {
             None => {
                 report.record("event_seen", user_id.clone(), "imported", String::new());
@@ -722,21 +675,14 @@ impl Plan {
 
     fn decide_approval(
         &mut self,
-        approval: &Value,
+        approval: &ApprovalRecord,
         snapshot: &DatabaseSnapshot,
         known_users: &HashSet<String>,
         report: &mut ReportBuilder,
     ) {
-        let user_id = approval
-            .get("user_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let mbid_lower = approval
-            .get("artist_mbid")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_lowercase();
+        let user_id = approval.user_id.as_str();
+        let mbid = approval.artist_mbid.trim();
+        let mbid_lower = mbid.to_lowercase();
         let key = format!("{user_id}|{mbid_lower}");
         if !known_users.contains(user_id) {
             report.record(
@@ -747,19 +693,29 @@ impl Plan {
             );
             return;
         }
-        if mbid_lower.is_empty() {
+        let incoming_state = if approval.state.is_empty() {
+            report.note(
+                "approval",
+                key.clone(),
+                CONVERTED,
+                "the record names no state; imported as pending".to_owned(),
+            );
+            ApprovalState::Pending
+        } else if let Some(state) = ApprovalState::parse(&approval.state) {
+            state
+        } else {
             report.record(
                 "approval",
                 key,
                 "dropped_invalid",
-                "approval without an MBID".to_owned(),
+                "the record's state is not one v3 has".to_owned(),
             );
             return;
-        }
-        let reviewer = opt_str(approval, "reviewed_by_id");
+        };
         // Only the id is nulled; the display name stays verbatim as audit
         // residue (pinned by a test).
-        let reviewer_nulled = reviewer
+        let reviewer_nulled = approval
+            .reviewed_by_id
             .as_ref()
             .is_some_and(|id| !known_users.contains(id));
         if reviewer_nulled {
@@ -770,51 +726,69 @@ impl Plan {
                 "reviewer is not an imported user; reviewed_by_id nulled".to_owned(),
             );
         }
+        let incoming = ApprovalFields {
+            state: incoming_state,
+            requested_at: approval_ms(approval.requested_at),
+            reviewed_by_id: approval.reviewed_by_id.clone().filter(|_| !reviewer_nulled),
+            reviewed_by_name: approval.reviewed_by_name.clone(),
+            reviewed_at: opt_approval_ms(approval.reviewed_at),
+            batch_id: approval.batch_id.clone(),
+            source: approval.source.clone(),
+        };
         let lookup = (user_id.to_owned(), mbid_lower);
         match snapshot.approvals.get(&lookup) {
             None => {
+                note_missing_time(
+                    "approval",
+                    &key,
+                    "requested_at",
+                    approval.requested_at,
+                    report,
+                );
+                note_empty_name(
+                    "approval",
+                    &key,
+                    "artist_name",
+                    &approval.artist_name,
+                    report,
+                );
                 report.record("approval", key, "imported", String::new());
                 self.writes.push(Planned::InsertApproval {
-                    record: approval.clone(),
-                    reviewer_nulled,
+                    user_id: user_id.to_owned(),
+                    artist_mbid: mbid.to_owned(),
+                    artist_name: approval.artist_name.clone(),
+                    fields: incoming,
                 });
             }
             Some(existing) => {
-                let incoming_state = str_or(approval, "state", "pending");
+                let stored_state = ApprovalState::parse(&existing.state);
                 let winner_incoming =
-                    permissiveness(&incoming_state) > permissiveness(&existing.state);
-                let (state, batch_id, source, by_id, by_name, at) = if winner_incoming {
-                    (
-                        incoming_state,
-                        opt_str(approval, "batch_id"),
-                        opt_str(approval, "source"),
-                        opt_str(approval, "reviewed_by_id").filter(|_| !reviewer_nulled),
-                        opt_str(approval, "reviewed_by_name"),
-                        opt_num(approval, "reviewed_at").map(approval_ms),
-                    )
+                    permissiveness(incoming_state) > stored_state.map_or(0, permissiveness);
+                let mut merged = if winner_incoming {
+                    incoming
                 } else {
-                    (
-                        existing.state.clone(),
-                        existing.batch_id.clone(),
-                        existing.source.clone(),
-                        existing.reviewed_by_id.clone(),
-                        existing.reviewed_by_name.clone(),
-                        existing.reviewed_at,
-                    )
+                    ApprovalFields {
+                        state: stored_state.unwrap_or(incoming_state),
+                        requested_at: 0,
+                        reviewed_by_id: existing.reviewed_by_id.clone(),
+                        reviewed_by_name: existing.reviewed_by_name.clone(),
+                        reviewed_at: existing.reviewed_at,
+                        batch_id: existing.batch_id.clone(),
+                        source: existing.source.clone(),
+                    }
                 };
                 // Earliest request wins. The spec does not name this field; min
                 // keeps re-imports convergent.
-                let requested_at =
-                    existing
-                        .requested_at
-                        .min(approval_ms(num_or(approval, "requested_at", 0.0)));
-                if existing.state == state
-                    && existing.batch_id == batch_id
-                    && existing.source == source
-                    && existing.reviewed_by_id == by_id
-                    && existing.reviewed_by_name == by_name
-                    && existing.reviewed_at == at
-                    && existing.requested_at == requested_at
+                merged.requested_at = existing
+                    .requested_at
+                    .min(approval_ms(approval.requested_at));
+                if existing.state == merged.state.as_str()
+                    && existing.batch_id == merged.batch_id
+                    && existing.source == merged.source
+                    && existing.reviewed_by_id == merged.reviewed_by_id
+                    && existing.reviewed_by_name == merged.reviewed_by_name
+                    && existing.reviewed_at == merged.reviewed_at
+                    && existing.requested_at == merged.requested_at
                 {
                     report.record("approval", key, "skipped_identical", String::new());
                 } else {
@@ -824,15 +798,11 @@ impl Plan {
                         "conflict_kept_existing",
                         "merged: most-permissive state wins".to_owned(),
                     );
+                    let (user_id, artist_mbid_lower) = lookup;
                     self.writes.push(Planned::MergeApproval {
-                        key: lookup,
-                        state,
-                        requested_at,
-                        reviewed_by_id: by_id,
-                        reviewed_by_name: by_name,
-                        reviewed_at: at,
-                        batch_id,
-                        source,
+                        user_id,
+                        artist_mbid_lower,
+                        fields: merged,
                     });
                 }
             }
@@ -841,20 +811,20 @@ impl Plan {
 }
 
 /// Approval-state permissiveness, as the export spec defines it: approved beats pending beats
-/// the rest. A pending import therefore reopens a rejected row, and unknown
-/// states never win a merge. Pinned by a test, not just convergent.
-fn permissiveness(state: &str) -> u8 {
+/// the rest. A pending import therefore reopens a rejected row. Pinned by a test, not just
+/// convergent.
+fn permissiveness(state: ApprovalState) -> u8 {
     match state {
-        "approved" => 2,
-        "pending" => 1,
-        _ => 0,
+        ApprovalState::Approved => 2,
+        ApprovalState::Pending => 1,
+        ApprovalState::Rejected | ApprovalState::Revoked => 0,
     }
 }
 
 /// v2 served uploaded avatars at `/api/v1/profile/avatar/{id}`; v3 serves
 /// the same file at `/api/v3/users/{id}/avatar`. The cache-busting query
 /// is kept. Any other URL (a Plex picture, say) passes through.
-pub(super) fn v3_avatar_url(user_id: &str, raw: Option<String>) -> Option<String> {
+fn v3_avatar_url(user_id: &str, raw: Option<String>) -> Option<String> {
     let raw = raw?;
     let Some(rest) = raw.strip_prefix(&format!("/api/v1/profile/avatar/{user_id}")) else {
         return Some(raw);
@@ -868,43 +838,97 @@ pub(super) fn v3_avatar_url(user_id: &str, raw: Option<String>) -> Option<String
     ))
 }
 
-fn users_identical(existing: &UserRow, imported: &Value) -> bool {
-    existing.display_name == str_or(imported, "display_name", "")
-        && existing.email == opt_str(imported, "email")
-        && existing.avatar_url == v3_avatar_url(&existing.id, opt_str(imported, "avatar_url"))
-        && existing.role == role_of(imported)
-        && existing.username == opt_str(imported, "username")
-        && existing.username_display == opt_str(imported, "username_display")
-        && existing.created_at == time_ms(imported, "created_at")
-        && existing.last_login_at == opt_time_ms(imported, "last_login_at")
+fn users_identical(existing: &UserRow, imported: &UserRecord) -> bool {
+    existing.display_name == imported.display_name
+        && existing.email == imported.email
+        && existing.avatar_url == v3_avatar_url(&existing.id, imported.avatar_url.clone())
+        && existing.role == Role::from_stored(&imported.role).as_str()
+        && existing.username == imported.username
+        && existing.username_display == imported.username_display
+        && ms_to_secs(existing.created_at) == secs_or_zero(&imported.created_at)
+        && existing.last_login_at.map(ms_to_secs)
+            == imported.last_login_at.as_deref().and_then(parse_iso)
 }
 
-/// A v2 time as the auth tables store it: integer milliseconds, or none
-/// when it does not read as one (migration 0101's rule).
-pub(super) fn opt_time_ms(record: &Value, field: &str) -> Option<i64> {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .and_then(parse_iso_ms)
+/// A v2 time that must have a value, in whole seconds: 0 when it does not
+/// read, migration 0101's rule.
+fn secs_or_zero(raw: &str) -> i64 {
+    parse_iso(raw).unwrap_or(0)
 }
 
-/// A v2 time that must have a value: one that does not read stores 0.
-pub(super) fn time_ms(record: &Value, field: &str) -> i64 {
-    opt_time_ms(record, field).unwrap_or(0)
+/// A required time for a row about to be written, with a report line when
+/// it does not read.
+fn required_secs(
+    entity: &str,
+    key: &str,
+    field: &str,
+    raw: &str,
+    report: &mut ReportBuilder,
+) -> i64 {
+    parse_iso(raw).unwrap_or_else(|| {
+        report.note(
+            entity,
+            key.to_owned(),
+            CONVERTED,
+            format!("{field} does not read as a time; stored as 1970"),
+        );
+        0
+    })
 }
 
-/// A v2 role as stored: an unknown role is `user`, as it always read.
-pub(super) fn role_of(record: &Value) -> &'static str {
-    Role::from_stored(&str_or(record, "role", "user")).as_str()
+/// An optional time for a row about to be written, with a report line when
+/// it is there and does not read.
+fn opt_secs(
+    entity: &str,
+    key: &str,
+    field: &str,
+    raw: Option<&str>,
+    report: &mut ReportBuilder,
+) -> Option<i64> {
+    let raw = raw?;
+    let parsed = parse_iso(raw);
+    if parsed.is_none() {
+        report.note(
+            entity,
+            key.to_owned(),
+            CONVERTED,
+            format!("{field} does not read as a time; left empty"),
+        );
+    }
+    parsed
+}
+
+/// A report line for an epoch time a record did not hold.
+fn note_missing_time(entity: &str, key: &str, field: &str, value: f64, report: &mut ReportBuilder) {
+    if value == 0.0 {
+        report.note(
+            entity,
+            key.to_owned(),
+            CONVERTED,
+            format!("the record holds no {field}; stored as 1970"),
+        );
+    }
+}
+
+/// A report line for a name a record did not hold.
+fn note_empty_name(entity: &str, key: &str, field: &str, value: &str, report: &mut ReportBuilder) {
+    if value.is_empty() {
+        report.note(
+            entity,
+            key.to_owned(),
+            CONVERTED,
+            format!("the record holds no {field}; it is empty"),
+        );
+    }
 }
 
 /// A v2 provider row as stored: `(provider_data, (scheme, hash))`. A
 /// local row's `{"password_hash", "scheme"}` document becomes the password
 /// columns, an untagged one is bcrypt, and one that does not read holds no
 /// password; any other provider keeps `provider_data` as it is.
-pub(super) fn provider_columns(record: &Value) -> (Option<String>, Option<(String, String)>) {
-    let data = opt_str(record, "provider_data");
-    if str_or(record, "provider", "") != "local" {
+fn provider_columns(record: &ProviderRecord) -> (Option<String>, Option<(String, String)>) {
+    let data = record.provider_data.clone();
+    if record.provider != "local" {
         return (data, None);
     }
     let document: Option<Value> = data.and_then(|text| serde_json::from_str(&text).ok());
@@ -918,36 +942,6 @@ pub(super) fn provider_columns(record: &Value) -> (Option<String>, Option<(Strin
         Some((scheme.as_tag().to_owned(), hash.to_owned()))
     });
     (None, password)
-}
-
-pub(super) fn str_or(record: &Value, field: &str, fallback: &str) -> String {
-    record
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or(fallback)
-        .to_owned()
-}
-
-pub(super) fn opt_str(record: &Value, field: &str) -> Option<String> {
-    record.get(field).and_then(Value::as_str).map(str::to_owned)
-}
-
-pub(super) fn num_or(record: &Value, field: &str, fallback: f64) -> f64 {
-    record
-        .get(field)
-        .and_then(Value::as_f64)
-        .unwrap_or(fallback)
-}
-
-pub(super) fn opt_num(record: &Value, field: &str) -> Option<f64> {
-    record.get(field).and_then(Value::as_f64)
-}
-
-pub(super) fn bool_or(record: &Value, field: &str, fallback: bool) -> bool {
-    record
-        .get(field)
-        .and_then(Value::as_bool)
-        .unwrap_or(fallback)
 }
 
 /// Lowercase hex SHA-256 of an app-password secret, matching the
@@ -970,7 +964,6 @@ mod tests {
             providers: HashMap::new(),
             app_passwords: HashMap::new(),
             app_password_shas: HashSet::new(),
-            recoveries: HashMap::new(),
             follows: HashMap::new(),
             approvals: HashMap::new(),
             event_cities: HashMap::new(),
@@ -995,7 +988,17 @@ mod tests {
     /// unknown drops with a count, and no user row is ever invented for it.
     #[test]
     fn dangling_members_drop_without_inventing_users() {
-        let root = serde_json::json!({
+        let doc: ExportDoc = serde_json::from_value(serde_json::json!({
+            "format": "droppedneedle-export",
+            "format_version": 1,
+            "exported_at": "",
+            "instance_id": "",
+            "secret_envelope": {
+                "scheme": "",
+                "kdf": {"algo": "", "m": 0, "t": 0, "p": 0, "salt_b64": ""},
+                "nonce_b64": "",
+            },
+            "settings": {},
             "users": [],
             "follows": [{
                 "user_id": "ghost",
@@ -1012,9 +1015,10 @@ mod tests {
                 "state": "pending",
                 "requested_at": 1.0,
             }],
-        });
+        }))
+        .unwrap();
         let mut report = builder();
-        let plan = Plan::decide(&root, &empty_snapshot(), &HashMap::new(), &mut report);
+        let plan = Plan::decide(&doc, &empty_snapshot(), &HashMap::new(), &mut report);
         assert!(plan.writes.is_empty(), "drops plan no writes");
         let finished = report.finish_completed();
         assert_eq!(finished.entities["follow"].dropped_unknown_user, 1);
