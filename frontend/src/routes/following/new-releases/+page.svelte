@@ -5,7 +5,7 @@
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import { getRecentReleasesQuery } from '$lib/queries/following/FollowQueries.svelte';
 	import { createMarkNewReleasesSeenMutation } from '$lib/queries/following/FollowMutations.svelte';
-	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import type { NewRelease } from '$lib/queries/following/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { SvelteSet } from 'svelte/reactivity';
@@ -33,7 +33,7 @@
 	const items = $derived(query.data?.items ?? []);
 	const total = $derived(query.data?.total ?? 0);
 
-	const request = requestAlbum();
+	const request = createRequestAlbumMutation();
 	let requested = new SvelteSet<string>();
 
 	// visiting this page is what clears the sidebar new-releases badge

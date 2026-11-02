@@ -1,7 +1,7 @@
 <script lang="ts">
 	import {
 		getDownloadPolicyQuery,
-		saveDownloadPolicy
+		createSaveDownloadPolicyMutation
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import type { DownloadPolicySettings as DownloadPolicyView } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -69,7 +69,7 @@
 	}
 
 	const policyQuery = getDownloadPolicyQuery();
-	const save = saveDownloadPolicy();
+	const save = createSaveDownloadPolicyMutation();
 
 	const section = createSettingsSection<PolicyDraft>(
 		{

@@ -52,7 +52,7 @@ const cacheSettingsResponse = async (
 	}
 };
 
-export const saveMusicBrainzSettings = () =>
+export const createSaveMusicBrainzSettingsMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: async (settings: MusicBrainzSettingsUpdate) =>
@@ -61,7 +61,7 @@ export const saveMusicBrainzSettings = () =>
 		onSuccess: cacheSettingsResponse
 	}));
 
-export const consentBrainzMash = () =>
+export const createConsentBrainzMashMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: async (binding: BrainzMashBinding) =>
@@ -72,7 +72,7 @@ export const consentBrainzMash = () =>
 		onSuccess: cacheSettingsResponse
 	}));
 
-export const testMusicBrainzConnection = () =>
+export const createTestMusicBrainzConnectionMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: async (request: BrainzMashBinding | MusicBrainzSettingsUpdate) =>
@@ -81,7 +81,7 @@ export const testMusicBrainzConnection = () =>
 		onSuccess: cacheSettingsResponse
 	}));
 
-export const stageBrainzMash = () =>
+export const createStageBrainzMashMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: async () =>
@@ -90,7 +90,7 @@ export const stageBrainzMash = () =>
 		onSuccess: cacheSettingsResponse
 	}));
 
-export const activateBrainzMash = () =>
+export const createActivateBrainzMashMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: async (binding: BrainzMashBinding) =>

@@ -9,7 +9,10 @@
 		getAppPasswordsQuery,
 		getConnectAppsSettingsQuery
 	} from '$lib/queries/connect-apps.svelte';
-	import { createAppPassword, revokeAppPassword } from '$lib/queries/connect-apps.svelte';
+	import {
+		createAppPasswordMutation,
+		createRevokeAppPasswordMutation
+	} from '$lib/queries/connect-apps.svelte';
 	import type { AppPasswordView } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -22,8 +25,8 @@
 
 	const settingsQuery = getConnectAppsSettingsQuery();
 	const passwordsQuery = getAppPasswordsQuery();
-	const create = createAppPassword();
-	const revoke = revokeAppPassword();
+	const create = createAppPasswordMutation();
+	const revoke = createRevokeAppPasswordMutation();
 
 	let newName = $state('');
 	// The secret dialog is open while this is set; closing it clears the secret.

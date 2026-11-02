@@ -31,7 +31,7 @@ const getDownloadClientStatusQueryOptions = () =>
 export const getDownloadClientStatusQuery = () =>
 	createQuery(() => getDownloadClientStatusQueryOptions());
 
-export function saveDownloadClientConfig() {
+export function createSaveDownloadClientConfigMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (config: DownloadClientConfig) =>
 			api.v3.PUT(v3('/api/v3/settings/download-client/config'), config),
@@ -41,7 +41,7 @@ export function saveDownloadClientConfig() {
 	}));
 }
 
-export function testDownloadClient() {
+export function createTestDownloadClientMutation() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (config: DownloadClientConfig) =>

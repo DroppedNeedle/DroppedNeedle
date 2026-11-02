@@ -3,7 +3,7 @@
 	import { TriangleAlert, FolderTree } from 'lucide-svelte';
 	import { getLibraryPolicyTreeQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { getLibraryRunEstimateQuery } from '$lib/queries/library/LibraryOperationQueries.svelte';
-	import { retryPendingLibraryReviews } from '$lib/queries/library/LibraryReviewMutations.svelte';
+	import { createRetryPendingLibraryReviewsMutation } from '$lib/queries/library/LibraryReviewMutations.svelte';
 	import { getPendingReviewCountQuery } from '$lib/queries/library/LibraryReviewQueries.svelte';
 	import type { ScanKind } from '$lib/queries/library/LibraryOperationsTypes';
 	import { TransportError } from '$lib/api/errors';
@@ -28,8 +28,8 @@
 		() => selected,
 		() => open && kind !== 'retry_identification' && treeQuery.isSuccess
 	);
-	const retryAll = retryPendingLibraryReviews();
-	const retryPreview = retryPendingLibraryReviews();
+	const retryAll = createRetryPendingLibraryReviewsMutation();
+	const retryPreview = createRetryPendingLibraryReviewsMutation();
 	const pendingReviews = getPendingReviewCountQuery();
 	const retryIsTransport = $derived(retryAll.error instanceof TransportError);
 

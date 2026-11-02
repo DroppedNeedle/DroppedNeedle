@@ -7,8 +7,8 @@
 
 	import { LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE } from '$lib/queries/library-management/LibraryManagementConfirmation';
 	import {
-		previewLibraryManagementBaselinePurgeMutation,
-		purgeLibraryManagementBaselinesMutation
+		createPreviewLibraryManagementBaselinePurgeMutation,
+		createPurgeLibraryManagementBaselinesMutation
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -22,8 +22,8 @@
 
 	let { onerror }: Props = $props();
 
-	const purgeImpact = previewLibraryManagementBaselinePurgeMutation();
-	const purgeBaselines = purgeLibraryManagementBaselinesMutation();
+	const purgeImpact = createPreviewLibraryManagementBaselinePurgeMutation();
+	const purgeBaselines = createPurgeLibraryManagementBaselinesMutation();
 
 	let purgeDialog: HTMLDialogElement;
 	let purgeHeading: HTMLHeadingElement;

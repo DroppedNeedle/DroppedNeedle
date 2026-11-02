@@ -2,16 +2,16 @@
 	import '$lib/components/library/library-management.css';
 	import { ArrowRight, BookOpenCheck, Database, ShieldCheck, Tags, Trash2 } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import { controlLibraryOperation } from '$lib/queries/library/LibraryOperationMutations.svelte';
+	import { createControlLibraryOperationMutation } from '$lib/queries/library/LibraryOperationMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import OperationJobStrip from './OperationJobStrip.svelte';
 	import {
-		applyLibraryIdentityPreparation,
-		createLibraryIdentityPreparation,
-		discardLibraryIdentityPreparation,
-		undoLibraryAutomaticEdition
+		createApplyLibraryIdentityPreparationMutation,
+		createLibraryIdentityPreparationMutation,
+		createDiscardLibraryIdentityPreparationMutation,
+		createUndoLibraryAutomaticEditionMutation
 	} from '$lib/queries/library/LibraryIdentityPreparationMutations.svelte';
 	import {
 		getLibraryIdentityPreparationEstimateQuery,
@@ -62,13 +62,15 @@
 		() => estimateRootIds,
 		() => startOpen && (scopeMode === 'all' || selectedRootIds.length > 0)
 	);
-	const createPreparation = createLibraryIdentityPreparation(() => authStore.user?.id);
-	const applyPreparation = applyLibraryIdentityPreparation(() => authStore.user?.id);
-	const discardPreparation = discardLibraryIdentityPreparation(() => authStore.user?.id);
-	const undoEdition = undoLibraryAutomaticEdition(() => authStore.user?.id);
-	const pause = controlLibraryOperation('pause');
-	const resume = controlLibraryOperation('resume');
-	const stop = controlLibraryOperation('stop');
+	const createPreparation = createLibraryIdentityPreparationMutation(() => authStore.user?.id);
+	const applyPreparation = createApplyLibraryIdentityPreparationMutation(() => authStore.user?.id);
+	const discardPreparation = createDiscardLibraryIdentityPreparationMutation(
+		() => authStore.user?.id
+	);
+	const undoEdition = createUndoLibraryAutomaticEditionMutation(() => authStore.user?.id);
+	const pause = createControlLibraryOperationMutation('pause');
+	const resume = createControlLibraryOperationMutation('resume');
+	const stop = createControlLibraryOperationMutation('stop');
 
 	const preparations = $derived(preparationsQuery.data?.pages.flatMap((page) => page.items) ?? []);
 	const active = $derived(

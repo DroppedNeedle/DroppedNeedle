@@ -2,7 +2,7 @@ import { goto } from '$app/navigation';
 import { artistHref } from '$lib/utils/entityRoutes';
 import type { AlbumBasicInfo, YouTubeTrackLink, YouTubeLink, YouTubeQuotaStatus } from '$lib/types';
 import { compareDiscTrack, getDiscTrackKey } from '$lib/player/queueHelpers';
-import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 
 export interface EventHandlerDeps {
 	getAlbum: () => AlbumBasicInfo | null;
@@ -22,7 +22,7 @@ export interface EventHandlerDeps {
 export function createEventHandlers(deps: EventHandlerDeps) {
 	// createEventHandlers runs inside the album page's component initialization, so
 	// the TanStack mutation hook resolves its QueryClient context here.
-	const pageRequest = requestAlbum();
+	const pageRequest = createRequestAlbumMutation();
 
 	function handleTrackGenerated(link: YouTubeTrackLink): void {
 		const linkKey = getDiscTrackKey(link);

@@ -46,7 +46,7 @@ const changed = (before: ArtistLink, after: ArtistLink) =>
 const refused = (link: ArtistLink) =>
 	applyEffects(artistLinkChanged(authStore.user?.id, link.artist_id));
 
-export function setArtistLink() {
+export function createSetArtistLinkMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (input: { link: ArtistLink; musicbrainzArtistId: string }) =>
 			api.v3.PUT(linkUrl(input.link.artist_id), {
@@ -58,7 +58,7 @@ export function setArtistLink() {
 	}));
 }
 
-export function clearArtistLink() {
+export function createClearArtistLinkMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (link: ArtistLink) => api.v3.DELETE(clearUrl(link.artist_id, link.artist_revision)),
 		effects: (after, before) => [changed(before, after)],

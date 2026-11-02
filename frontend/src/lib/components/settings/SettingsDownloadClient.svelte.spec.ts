@@ -36,11 +36,11 @@ vi.mock('$lib/queries/downloads/DownloadClientQueries.svelte', () => ({
 			effective_downloads_path: '/data/downloads/slskd'
 		}
 	}),
-	saveDownloadClientConfig: () => ({
+	createSaveDownloadClientConfigMutation: () => ({
 		mutateAsync: saveMutate,
 		isPending: false
 	}),
-	testDownloadClient: () => ({ mutateAsync: testMutate, isPending: false })
+	createTestDownloadClientMutation: () => ({ mutateAsync: testMutate, isPending: false })
 }));
 
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: vi.fn() } }));

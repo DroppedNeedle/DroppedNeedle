@@ -48,7 +48,7 @@ const getSearchJobQueryOptions = (jobId: string) =>
 export const getSearchJobQuery = (jobId: () => string) =>
 	createQuery(() => getSearchJobQueryOptions(jobId()));
 
-export function startAlbumSearch() {
+export function createStartAlbumSearchMutation() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: SearchAlbumRequest) =>
@@ -73,7 +73,7 @@ export function policyBreak(err: unknown): CandidateRefusal | null {
 	return details?.refusal ?? null;
 }
 
-export function pickSearchCandidate() {
+export function createPickSearchCandidateMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({ jobId, ...body }: PickInput) =>
 			api.v3.POST(v3('/api/v3/downloads/search/{job_id}/pick', { path: { job_id: jobId } }), body),
@@ -97,7 +97,7 @@ export function pickSearchCandidate() {
 
 // "None of these - keep watching": closes the search, remembers every
 // candidate as turned down, and puts the album on the wanted watchlist.
-export function dismissSearch() {
+export function createDismissSearchMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (jobId: string) =>
 			api.v3.POST(v3('/api/v3/downloads/search/{job_id}/dismiss', { path: { job_id: jobId } })),
@@ -119,7 +119,7 @@ export function dismissSearch() {
 	}));
 }
 
-export function cancelSearch() {
+export function createCancelSearchMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (jobId: string) =>
 			api.v3.POST(v3('/api/v3/downloads/search/{job_id}/cancel', { path: { job_id: jobId } })),

@@ -5,9 +5,9 @@
 	import Input from '$lib/ui/Input.svelte';
 	import type { LibraryContribution } from '$lib/types';
 	import {
-		removeDiscogsReleaseMutation,
-		searchDiscogsReleasesMutation,
-		selectDiscogsReleaseMutation
+		createRemoveDiscogsReleaseMutation,
+		createSearchDiscogsReleasesMutation,
+		createSelectDiscogsReleaseMutation
 	} from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
 
 	interface Props {
@@ -17,9 +17,9 @@
 
 	let { contribution, canMutate }: Props = $props();
 	let query = $state('');
-	const searchMutation = searchDiscogsReleasesMutation();
-	const selectMutation = selectDiscogsReleaseMutation();
-	const removeMutation = removeDiscogsReleaseMutation();
+	const searchMutation = createSearchDiscogsReleasesMutation();
+	const selectMutation = createSelectDiscogsReleaseMutation();
+	const removeMutation = createRemoveDiscogsReleaseMutation();
 	const selectedReference = $derived(
 		contribution.source_selection.sources.find(
 			(source) => source.provider === 'discogs' && source.entity_type === 'release'

@@ -7,8 +7,8 @@
 		getConnectAppsSettingsQuery
 	} from '$lib/queries/connect-apps.svelte';
 	import {
-		adminRevokeAppPassword,
-		saveConnectAppsSettings
+		createAdminRevokeAppPasswordMutation,
+		createSaveConnectAppsSettingsMutation
 	} from '$lib/queries/connect-apps.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { AdminAppPasswordView } from '$lib/types';
@@ -24,15 +24,19 @@
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
 	const rosterQuery = getAdminAppPasswordsQuery();
-	const adminRevoke = adminRevokeAppPassword();
+	const adminRevoke = createAdminRevokeAppPasswordMutation();
 
-	const section = createSettingsSection(getConnectAppsSettingsQuery(), saveConnectAppsSettings(), {
-		// A cleared number field binds to null; never send null.
-		normalize: (draft) => ({
-			...draft,
-			transcode_max_bitrate_kbps: draft.transcode_max_bitrate_kbps ?? 320
-		})
-	});
+	const section = createSettingsSection(
+		getConnectAppsSettingsQuery(),
+		createSaveConnectAppsSettingsMutation(),
+		{
+			// A cleared number field binds to null; never send null.
+			normalize: (draft) => ({
+				...draft,
+				transcode_max_bitrate_kbps: draft.transcode_max_bitrate_kbps ?? 320
+			})
+		}
+	);
 
 	let pendingRevoke = $state<AdminAppPasswordView | null>(null);
 

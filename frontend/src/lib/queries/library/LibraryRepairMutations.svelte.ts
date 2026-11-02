@@ -21,7 +21,7 @@ function repairs(catalog = false): Effect[] {
 	];
 }
 
-export function createLibraryRepair() {
+export function createLibraryRepairMutation() {
 	return createAppMutation(() => ({
 		mutationFn: async (rootIds: string[]) =>
 			await api.v3.POST(v3('/api/v3/library/identity-repairs'), {
@@ -38,7 +38,7 @@ export function createLibraryRepair() {
 	}));
 }
 
-export function applyLibraryRepair() {
+export function createApplyLibraryRepairMutation() {
 	return createAppMutation(() => ({
 		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
 			await api.v3.POST(

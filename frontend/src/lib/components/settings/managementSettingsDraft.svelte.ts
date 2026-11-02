@@ -15,7 +15,7 @@ import { untrack } from 'svelte';
 
 import type { LibraryRootSettings } from '$lib/queries/library/LibraryOperationsTypes';
 import { getLibraryManagementSettingsQuery } from '$lib/queries/library-management/LibraryManagementQueries.svelte';
-import { updateLibraryManagementSettingsMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
+import { createUpdateLibraryManagementSettingsMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 import type {
 	LibraryManagementProfile,
 	LibraryManagementProfileImportResponse,
@@ -131,7 +131,7 @@ export function createManagementSettings() {
 		() => authStore.user?.id,
 		() => authStore.isAdmin
 	);
-	const update = updateLibraryManagementSettingsMutation();
+	const update = createUpdateLibraryManagementSettingsMutation();
 	const loaded = $derived(query.data ? settingsPayload(query.data) : undefined);
 
 	let revision = $state('');

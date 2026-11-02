@@ -73,16 +73,19 @@ vi.mock('$lib/queries/library/LibraryIdentityPreparationQueries.svelte', () => (
 	getLibraryIdentityPreparationFindingsQuery: () => h.findings
 }));
 vi.mock('$lib/queries/library/LibraryIdentityPreparationMutations.svelte', () => ({
-	createLibraryIdentityPreparation: () => ({ mutateAsync: h.create, isPending: false }),
-	applyLibraryIdentityPreparation: () => ({ mutateAsync: h.apply, isPending: false }),
-	discardLibraryIdentityPreparation: () => ({ mutateAsync: h.discard, isPending: false }),
-	undoLibraryAutomaticEdition: () => ({ mutateAsync: h.undo, isPending: false })
+	createLibraryIdentityPreparationMutation: () => ({ mutateAsync: h.create, isPending: false }),
+	createApplyLibraryIdentityPreparationMutation: () => ({ mutateAsync: h.apply, isPending: false }),
+	createDiscardLibraryIdentityPreparationMutation: () => ({
+		mutateAsync: h.discard,
+		isPending: false
+	}),
+	createUndoLibraryAutomaticEditionMutation: () => ({ mutateAsync: h.undo, isPending: false })
 }));
 vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', async (importOriginal) => ({
 	...(await importOriginal<
 		typeof import('$lib/queries/library/LibraryOperationMutations.svelte')
 	>()),
-	controlLibraryOperation: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createControlLibraryOperationMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryAlbumDetailQuery: () => ({

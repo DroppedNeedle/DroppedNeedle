@@ -10,7 +10,7 @@
 
 	import {
 		getSourcePriorityQuery,
-		saveSourcePriority
+		createSaveSourcePriorityMutation
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -18,7 +18,7 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 
 	const priorityQuery = getSourcePriorityQuery();
-	const reorder = saveSourcePriority();
+	const reorder = createSaveSourcePriorityMutation();
 	const sourcesQuery = getPluginSourcesQuery();
 
 	const META: Record<string, { label: string; sub: string; icon: typeof Rss }> = {

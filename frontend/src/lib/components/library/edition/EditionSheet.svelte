@@ -24,25 +24,25 @@
 	import { getLibraryAlbumDetailQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { getReleaseEditionSearchQuery } from '$lib/queries/library/LibraryEditionQueries.svelte';
 	import {
-		acquireEdition,
-		chooseAlbumEdition,
-		confirmAlbumEdition,
+		createAcquireEditionMutation,
+		createChooseAlbumEditionMutation,
+		createConfirmAlbumEditionMutation,
 		getAlbumEditionStatusQuery,
 		getAlbumEditionsQuery,
 		getEditionPlanQuery,
 		getEditionTracksQuery,
-		handBackAlbumEdition,
-		leaveAlbumUnmanaged,
-		matchEditionFile,
-		removeEditionExtras,
-		sealCustomEdition,
-		undoAlbumEdition,
-		unmatchEditionFile,
+		createHandBackAlbumEditionMutation,
+		createLeaveAlbumUnmanagedMutation,
+		createMatchEditionFileMutation,
+		createRemoveEditionExtrasMutation,
+		createSealCustomEditionMutation,
+		createUndoAlbumEditionMutation,
+		createUnmatchEditionFileMutation,
 		type EditionChoice
 	} from '$lib/queries/albums/EditionQueries.svelte';
 	import {
 		getAlbumRemovalsQuery,
-		putBackRemoval
+		createPutBackRemovalMutation
 	} from '$lib/queries/library/RemovalQueries.svelte';
 	import EditionList, { type EditionGroup, type EditionRow } from './EditionList.svelte';
 	import EditionListSkeleton from './EditionListSkeleton.svelte';
@@ -192,22 +192,22 @@
 		() => open && canEdit && Boolean(searchArgs)
 	);
 
-	const choose = chooseAlbumEdition();
-	const confirm = confirmAlbumEdition();
-	const handBack = handBackAlbumEdition();
-	const undo = undoAlbumEdition();
-	const removeExtras = removeEditionExtras();
-	const putBackFiles = putBackRemoval();
+	const choose = createChooseAlbumEditionMutation();
+	const confirm = createConfirmAlbumEditionMutation();
+	const handBack = createHandBackAlbumEditionMutation();
+	const undo = createUndoAlbumEditionMutation();
+	const removeExtras = createRemoveEditionExtrasMutation();
+	const putBackFiles = createPutBackRemovalMutation();
 	// The newest removal of extras from this copy that can be put back.
 	const removalsQuery = getAlbumRemovalsQuery(() => (open && canEdit ? copyId : ''));
 	const lastRemoval = $derived(
 		(removalsQuery.data ?? []).find((removal) => removal.kind === 'extras' && !removal.held) ?? null
 	);
-	const acquire = acquireEdition();
-	const sealCustom = sealCustomEdition();
-	const leaveUnmanaged = leaveAlbumUnmanaged();
-	const matchFile = matchEditionFile();
-	const unmatchFile = unmatchEditionFile();
+	const acquire = createAcquireEditionMutation();
+	const sealCustom = createSealCustomEditionMutation();
+	const leaveUnmanaged = createLeaveAlbumUnmanagedMutation();
+	const matchFile = createMatchEditionFileMutation();
+	const unmatchFile = createUnmatchEditionFileMutation();
 
 	// A new copy starts over on its own edition.
 	$effect(() => {

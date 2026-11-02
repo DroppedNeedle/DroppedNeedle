@@ -46,7 +46,7 @@ export function invalidateAlbumRemovals(): Promise<void> {
 // every catalog list refreshes, and so does the album page for its release
 // group. A refusal reads the removals again, since one is
 // usually stale.
-export function putBackRemoval() {
+export function createPutBackRemovalMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({
 			albumId,

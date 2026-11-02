@@ -10,9 +10,9 @@
 	} from '$lib/api/playlists';
 	import { fetchPlaylistListV3 } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
 	import {
-		addPlaylistTracksV3,
-		checkPlaylistTracksV3,
-		createPlaylistV3
+		createAddPlaylistTracksV3Mutation,
+		createCheckPlaylistTracksV3Mutation,
+		createPlaylistV3Mutation
 	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
 	import {
 		toPageDetail,
@@ -29,9 +29,9 @@
 	const CHECK_CHUNK = 1000;
 	const reducedMotion = browser && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-	const createMutation = createPlaylistV3();
-	const addTracksMutation = addPlaylistTracksV3();
-	const checkTracksMutation = checkPlaylistTracksV3();
+	const createMutation = createPlaylistV3Mutation();
+	const addTracksMutation = createAddPlaylistTracksV3Mutation();
+	const checkTracksMutation = createCheckPlaylistTracksV3Mutation();
 
 	let dialogEl: HTMLDialogElement | undefined = $state();
 	let pendingTracks: QueueItem[] = [];

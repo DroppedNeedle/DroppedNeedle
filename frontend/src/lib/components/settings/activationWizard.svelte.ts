@@ -17,8 +17,8 @@ import {
 import { ApiError } from '$lib/api/errors';
 import { getLibraryManagementActivationPreviewQuery } from '$lib/queries/library-management/LibraryManagementQueries.svelte';
 import {
-	confirmLibraryManagementActivationMutation,
-	controlLibraryManagementOperationMutation,
+	createConfirmLibraryManagementActivationMutation,
+	createControlLibraryManagementOperationMutation,
 	createLibraryManagementActivationPreviewMutation
 } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 import { LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE } from '$lib/queries/library-management/LibraryManagementConfirmation';
@@ -51,8 +51,8 @@ export class ActivationWizard {
 		() => this.jobId
 	);
 	readonly #create = createLibraryManagementActivationPreviewMutation();
-	readonly #confirm = confirmLibraryManagementActivationMutation();
-	readonly #stop = controlLibraryManagementOperationMutation('stop');
+	readonly #confirm = createConfirmLibraryManagementActivationMutation();
+	readonly #stop = createControlLibraryManagementOperationMutation('stop');
 	readonly #settings: ManagementSettings;
 	readonly #policyRevision: () => string;
 

@@ -10,8 +10,8 @@
 		getLibraryAlbumsQuery
 	} from '$lib/queries/library/LibraryQueries.svelte';
 	import {
-		applyAlbumMembership,
-		previewAlbumMembership,
+		createApplyAlbumMembershipMutation,
+		createPreviewAlbumMembershipMutation,
 		type MembershipPreviewInput
 	} from '$lib/queries/library/LibraryCatalogMutations.svelte';
 
@@ -41,14 +41,14 @@
 	}));
 	const sourceAlbum = getLibraryAlbumDetailQuery(() => album.id);
 	const targetAlbum = getLibraryAlbumDetailQuery(() => targetAlbumId ?? '');
-	const splitPreview = previewAlbumMembership('split');
-	const mergePreview = previewAlbumMembership('merge');
-	const movePreview = previewAlbumMembership('move');
-	const resetPreview = previewAlbumMembership('reset');
-	const splitApply = applyAlbumMembership('split');
-	const mergeApply = applyAlbumMembership('merge');
-	const moveApply = applyAlbumMembership('move');
-	const resetApply = applyAlbumMembership('reset');
+	const splitPreview = createPreviewAlbumMembershipMutation('split');
+	const mergePreview = createPreviewAlbumMembershipMutation('merge');
+	const movePreview = createPreviewAlbumMembershipMutation('move');
+	const resetPreview = createPreviewAlbumMembershipMutation('reset');
+	const splitApply = createApplyAlbumMembershipMutation('split');
+	const mergeApply = createApplyAlbumMembershipMutation('merge');
+	const moveApply = createApplyAlbumMembershipMutation('move');
+	const resetApply = createApplyAlbumMembershipMutation('reset');
 
 	const previewMutation = $derived(
 		action === 'split'

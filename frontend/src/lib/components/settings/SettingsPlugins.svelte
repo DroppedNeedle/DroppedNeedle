@@ -3,10 +3,10 @@
 	import { outsideLink } from '$lib/components/outsideLink';
 	import { getPluginsQuery } from '$lib/queries/plugins/PluginQueries.svelte';
 	import {
-		uninstallPluginMutation,
-		updatePluginMutation
+		createUninstallPluginMutation,
+		createUpdatePluginMutation
 	} from '$lib/queries/plugins/PluginMutations.svelte';
-	import { updatePluginFromSourceMutation } from '$lib/queries/plugins/PluginInstallMutations.svelte';
+	import { createUpdatePluginFromSourceMutation } from '$lib/queries/plugins/PluginInstallMutations.svelte';
 	import type { PluginInfo } from '$lib/queries/plugins/types';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -22,9 +22,9 @@
 	import PluginPanel from './PluginPanel.svelte';
 
 	const pluginsQuery = getPluginsQuery();
-	const update = updatePluginMutation();
-	const uninstall = uninstallPluginMutation();
-	const sourceUpdate = updatePluginFromSourceMutation();
+	const update = createUpdatePluginMutation();
+	const uninstall = createUninstallPluginMutation();
+	const sourceUpdate = createUpdatePluginFromSourceMutation();
 	const plugins = $derived(pluginsQuery.data?.plugins ?? []);
 
 	let confirmingRemoval = $state<string | null>(null);

@@ -3,9 +3,9 @@
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import {
-		reimportDownload,
-		retryDownload,
-		stopAutoRetry
+		createReimportDownloadMutation,
+		createRetryDownloadMutation,
+		createStopAutoRetryMutation
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
 	import {
 		canReimport,
@@ -24,9 +24,9 @@
 
 	let { task }: { task: DownloadTask } = $props();
 
-	const retry = retryDownload();
-	const stopRetry = stopAutoRetry();
-	const reimport = reimportDownload();
+	const retry = createRetryDownloadMutation();
+	const stopRetry = createStopAutoRetryMutation();
+	const reimport = createReimportDownloadMutation();
 
 	// this card owns its clock dependency: the shared tick runs while any Wanted card is
 	// mounted (refcounted -> still one interval), so the countdown ticks without relying on

@@ -134,7 +134,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: { isAdmin: true, user: { id: 'admin-1', role: 'admin' } }
 }));
 vi.mock('$lib/queries/artist-reconciliation.svelte', () => ({
-	dismissArtistDuplicateGroup: () => ({ mutateAsync: h.dismiss, isPending: false }),
+	createDismissArtistDuplicateGroupMutation: () => ({ mutateAsync: h.dismiss, isPending: false }),
 	getArtistReconciliationProgressQuery: () => ({
 		get data() {
 			return h.progress;
@@ -173,8 +173,8 @@ vi.mock('$lib/queries/artist-reconciliation.svelte', () => ({
 	})
 }));
 vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => ({
-	previewArtistMerge: () => ({ mutateAsync: h.preview, isPending: false }),
-	applyArtistMerge: () => ({ mutateAsync: h.apply, isPending: false })
+	createPreviewArtistMergeMutation: () => ({ mutateAsync: h.preview, isPending: false }),
+	createApplyArtistMergeMutation: () => ({ mutateAsync: h.apply, isPending: false })
 }));
 
 import ArtistIdentityDesk from './ArtistIdentityDesk.svelte';

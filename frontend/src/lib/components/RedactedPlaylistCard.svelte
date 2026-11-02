@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { RedactedPlaylist } from '$lib/api/playlists';
-	import { deletePlaylistV3 } from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
+	import { createDeletePlaylistV3Mutation } from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
 	import { privatePlaylistLine } from '$lib/queries/playlists/playlistV3Adapter';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -16,7 +16,7 @@
 
 	let { playlist, ondelete }: Props = $props();
 
-	const deleteMutation = deletePlaylistV3();
+	const deleteMutation = createDeletePlaylistV3Mutation();
 	let confirmOpen = $state(false);
 
 	let line = $derived(privatePlaylistLine(playlist));

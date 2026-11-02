@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Download } from 'lucide-svelte';
 
-	import { requestTrack } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestTrackMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
 	// orphan-track case (album not in library) is resolved by the backend
@@ -26,7 +26,7 @@
 		releaseMbid = null
 	}: Props = $props();
 
-	const request = requestTrack();
+	const request = createRequestTrackMutation();
 	let requested = $state(false);
 
 	function handleClick() {

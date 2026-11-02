@@ -22,7 +22,10 @@ vi.mock('../QueryClient', () => ({
 }));
 
 import { api } from '$lib/api/client';
-import { removeLibraryAlbum, saveLibraryScanSchedule } from './LibraryMutations.svelte';
+import {
+	createRemoveLibraryAlbumMutation,
+	createSaveLibraryScanScheduleMutation
+} from './LibraryMutations.svelte';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { setQueryDataWithPersister } from '../QueryClient';
 import type { Effect } from '../effects';
@@ -39,7 +42,7 @@ describe('album removal mutation', () => {
 	it('clears exact membership and declares the catalog and wanted changed', async () => {
 		const result = { id: 'rg-1', removed_track_ids: [] };
 		mockDelete.mockResolvedValueOnce(result);
-		const mutation = removeLibraryAlbum() as unknown as {
+		const mutation = createRemoveLibraryAlbumMutation() as unknown as {
 			mutationFn: (input: { mbid: string; stopWanted: boolean }) => Promise<typeof result>;
 			onSuccess: (
 				data: typeof result,
@@ -75,7 +78,7 @@ describe('album removal mutation', () => {
 		mockDelete.mockResolvedValueOnce(result);
 		vi.mocked(setQueryDataWithPersister).mockRejectedValueOnce(new Error('IndexedDB unavailable'));
 		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-		const mutation = removeLibraryAlbum() as unknown as {
+		const mutation = createRemoveLibraryAlbumMutation() as unknown as {
 			mutationFn: (input: { mbid: string; stopWanted: boolean }) => Promise<typeof result>;
 			onSuccess: (
 				data: typeof result,
@@ -93,8 +96,8 @@ describe('album removal mutation', () => {
 });
 
 describe('library scan mutations', () => {
-	it('saveLibraryScanSchedule puts to the schedule endpoint', async () => {
-		const m = saveLibraryScanSchedule();
+	it('createSaveLibraryScanScheduleMutation puts to the schedule endpoint', async () => {
+		const m = createSaveLibraryScanScheduleMutation();
 		await (m as unknown as { mutationFn: (s: unknown) => Promise<unknown> }).mutationFn({
 			scan_frequency: '6hr',
 			daily_scan_time: '03:00'

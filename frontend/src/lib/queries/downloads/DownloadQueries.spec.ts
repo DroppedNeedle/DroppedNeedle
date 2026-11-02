@@ -52,8 +52,8 @@ import {
 	getDownloadActivitySummaryQueryOptions,
 	getDownloadsQueryOptions
 } from './DownloadQueries.svelte';
-import { requestAlbum, requestBatch } from './DownloadMutations.svelte';
-import { saveDownloadPolicy } from './DownloadClientsQueries.svelte';
+import { createRequestAlbumMutation, createRequestBatchMutation } from './DownloadMutations.svelte';
+import { createSaveDownloadPolicyMutation } from './DownloadClientsQueries.svelte';
 describe('download queue queries', () => {
 	// Promise.withResolvers needs Node 22+; this repo runs Node 20. The deferred
 	// below keeps the same linear hand-off for the session-switch tests.
@@ -75,7 +75,7 @@ describe('download queue queries', () => {
 	});
 
 	it('declares the policy and its summary changed after saving', () => {
-		const mutation = saveDownloadPolicy() as unknown as { effects: () => Effect[] };
+		const mutation = createSaveDownloadPolicyMutation() as unknown as { effects: () => Effect[] };
 
 		expect(mutation.effects()).toEqual([downloadPolicyChanged()]);
 	});
@@ -125,7 +125,7 @@ describe('download queue queries', () => {
 			status: string;
 		}>();
 		mockPost.mockReturnValueOnce(promise);
-		const m = requestAlbum() as unknown as {
+		const m = createRequestAlbumMutation() as unknown as {
 			mutationFn: (i: unknown) => Promise<{ success: boolean }>;
 		};
 
@@ -148,7 +148,7 @@ describe('download queue queries', () => {
 			overflow: number;
 		}>();
 		mockPost.mockReturnValueOnce(promise);
-		const m = requestBatch() as unknown as {
+		const m = createRequestBatchMutation() as unknown as {
 			mutationFn: (i: unknown) => Promise<{ success: boolean; requested: number }>;
 		};
 

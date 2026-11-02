@@ -9,9 +9,9 @@
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import {
 		getTagWriteQuery,
-		previewEditionTags,
-		undoTagWrite,
-		writeEditionTags,
+		createPreviewEditionTagsMutation,
+		createUndoTagWriteMutation,
+		createWriteEditionTagsMutation,
 		type TagWriteJob
 	} from '$lib/queries/albums/EditionQueries.svelte';
 	import {
@@ -37,9 +37,9 @@
 
 	let { album, edition, placing, placingSentenceId }: Props = $props();
 
-	const preview = previewEditionTags();
-	const write = writeEditionTags();
-	const undo = undoTagWrite();
+	const preview = createPreviewEditionTagsMutation();
+	const write = createWriteEditionTagsMutation();
+	const undo = createUndoTagWriteMutation();
 
 	/** The job on screen: a preview of the write, or of its undo. */
 	let current = $state<{ id: string; token: string } | null>(null);

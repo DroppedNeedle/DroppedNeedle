@@ -34,7 +34,7 @@ export const getAlbumHistoryQuery = (
 // Undo the fold of a leftover album, by its history entry's undo_id. The
 // album comes back as its own, so every catalog view refreshes; a refusal
 // refreshes too, as the history it was offered from is stale.
-export function undoAlbumFold() {
+export function createUndoAlbumFoldMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (undoId: string) =>
 			api.v3.POST(v3('/api/v3/library/folds/{fold_id}/undo', { path: { fold_id: undoId } })),
@@ -46,7 +46,7 @@ export function undoAlbumFold() {
 // Undo the artist an album left on "Unknown Artist" took from its tracks,
 // by its history entry's undo_id. The album's artist changes everywhere
 // it shows, so every catalog view refreshes, on a refusal too.
-export function undoArtistRepair() {
+export function createUndoArtistRepairMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (undoId: string) =>
 			api.v3.POST(

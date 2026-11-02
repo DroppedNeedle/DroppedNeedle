@@ -5,11 +5,11 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import DropImportMatchModal from '$lib/components/import/DropImportMatchModal.svelte';
 	import {
-		discardHeldMutation,
-		importHeldMutation,
-		recheckHeldMutation
+		createDiscardHeldMutation,
+		createImportHeldMutation,
+		createRecheckHeldMutation
 	} from '$lib/queries/downloads/HeldQueries.svelte';
-	import { retryDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRetryDownloadMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import type { HeldEntry, HeldFileAction } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
@@ -33,10 +33,10 @@
 
 	let { entry, name, compact = false, retryTaskId = null }: Props = $props();
 
-	const importMut = importHeldMutation();
-	const recheckMut = recheckHeldMutation();
-	const discardMut = discardHeldMutation();
-	const retryTask = retryDownload();
+	const importMut = createImportHeldMutation();
+	const recheckMut = createRecheckHeldMutation();
+	const discardMut = createDiscardHeldMutation();
+	const retryTask = createRetryDownloadMutation();
 	const busy = $derived(
 		importMut.isPending ||
 			recheckMut.isPending ||

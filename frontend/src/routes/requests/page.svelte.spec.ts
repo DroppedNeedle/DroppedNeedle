@@ -23,7 +23,7 @@ vi.mock('$lib/queries/requests/RequestQueries.svelte', () => ({
 }));
 vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
 	getCutoffUnmetQuery: () => ({ data: undefined, isPending: false, isError: false }),
-	requestUpgradeAlbum: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createRequestUpgradeAlbumMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('./ActiveTab.svelte', emptyComponent);
 vi.mock('./HistoryTab.svelte', emptyComponent);

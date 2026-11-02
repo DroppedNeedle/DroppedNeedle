@@ -89,11 +89,11 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 		isError: false
 	}),
 	getEditionTracksQuery: () => ({ data: undefined, isPending: true, refetch: vi.fn() }),
-	chooseAlbumEdition: () => mutation((...args: unknown[]) => h.choose(...args)),
-	confirmAlbumEdition: () => mutation((...args: unknown[]) => h.confirm(...args)),
-	handBackAlbumEdition: () => mutation(),
-	undoAlbumEdition: () => mutation(),
-	acquireEdition: () => mutation((...args: unknown[]) => h.acquire(...args)),
+	createChooseAlbumEditionMutation: () => mutation((...args: unknown[]) => h.choose(...args)),
+	createConfirmAlbumEditionMutation: () => mutation((...args: unknown[]) => h.confirm(...args)),
+	createHandBackAlbumEditionMutation: () => mutation(),
+	createUndoAlbumEditionMutation: () => mutation(),
+	createAcquireEditionMutation: () => mutation((...args: unknown[]) => h.acquire(...args)),
 	getEditionFetchQuery: () => ({
 		get data() {
 			return { latest: h.latest };
@@ -101,15 +101,15 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	}),
 	editionFetchLive: (edition: { state?: string } | null) =>
 		edition?.state === 'waiting' || edition?.state === 'fetching',
-	previewEditionTags: () => mutation(),
+	createPreviewEditionTagsMutation: () => mutation(),
 	getTagWriteQuery: () => ({ data: undefined, refetch: vi.fn() }),
-	writeEditionTags: () => mutation(),
-	undoTagWrite: () => mutation(),
-	removeEditionExtras: () => mutation(),
-	matchEditionFile: () => mutation(),
-	unmatchEditionFile: () => mutation(),
-	sealCustomEdition: () => mutation((...args: unknown[]) => h.seal(...args)),
-	leaveAlbumUnmanaged: () => mutation((...args: unknown[]) => h.leave(...args))
+	createWriteEditionTagsMutation: () => mutation(),
+	createUndoTagWriteMutation: () => mutation(),
+	createRemoveEditionExtrasMutation: () => mutation(),
+	createMatchEditionFileMutation: () => mutation(),
+	createUnmatchEditionFileMutation: () => mutation(),
+	createSealCustomEditionMutation: () => mutation((...args: unknown[]) => h.seal(...args)),
+	createLeaveAlbumUnmanagedMutation: () => mutation((...args: unknown[]) => h.leave(...args))
 }));
 vi.mock('$lib/queries/downloads/DownloadQueries.svelte', () => ({
 	getAlbumDownloadsQuery: () => ({
@@ -119,10 +119,10 @@ vi.mock('$lib/queries/downloads/DownloadQueries.svelte', () => ({
 	})
 }));
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
-	cancelDownload: () => ({ mutate: h.cancel, isPending: false }),
-	retryDownload: () => ({ mutate: vi.fn(), isPending: false }),
-	stopAutoRetry: () => ({ mutate: vi.fn(), isPending: false }),
-	tryNextSource: () => ({ mutate: vi.fn(), isPending: false })
+	createCancelDownloadMutation: () => ({ mutate: h.cancel, isPending: false }),
+	createRetryDownloadMutation: () => ({ mutate: vi.fn(), isPending: false }),
+	createStopAutoRetryMutation: () => ({ mutate: vi.fn(), isPending: false }),
+	createTryNextSourceMutation: () => ({ mutate: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/downloads/DownloadSSE.svelte', () => ({
 	createDownloadStream: () => ({
@@ -136,7 +136,7 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 }));
 vi.mock('$lib/queries/library/RemovalQueries.svelte', () => ({
 	getAlbumRemovalsQuery: () => ({ data: [] }),
-	putBackRemoval: () => mutation(),
+	createPutBackRemovalMutation: () => mutation(),
 	invalidateAlbumRemovals: () => Promise.resolve()
 }));
 vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({

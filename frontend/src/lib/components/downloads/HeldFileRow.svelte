@@ -15,9 +15,9 @@
 
 	import { getApiUrl } from '$lib/api/api-utils';
 	import {
-		discardHeldMutation,
-		importHeldMutation,
-		recheckHeldMutation
+		createDiscardHeldMutation,
+		createImportHeldMutation,
+		createRecheckHeldMutation
 	} from '$lib/queries/downloads/HeldQueries.svelte';
 	import { formatCountdown } from '$lib/queries/downloads/downloadStatus';
 	import { createFromAlbumMutation } from '$lib/queries/requests/RequestMutations.svelte';
@@ -41,9 +41,9 @@
 
 	let { entry, file, showTitle = true, showExpiry = false, children }: Props = $props();
 
-	const importMut = importHeldMutation();
-	const recheckMut = recheckHeldMutation();
-	const discardMut = discardHeldMutation();
+	const importMut = createImportHeldMutation();
+	const recheckMut = createRecheckHeldMutation();
+	const discardMut = createDiscardHeldMutation();
 	const fromAlbum = createFromAlbumMutation();
 
 	// Latched once the file has gone: the row stays mounted until the list refetches,

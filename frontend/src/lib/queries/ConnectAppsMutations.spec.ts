@@ -44,11 +44,12 @@ async function refreshedBy(opts: Record<string, unknown>, vars?: unknown): Promi
 		.mock.calls.map(([filters]) => (filters as { queryKey: unknown }).queryKey);
 }
 
-describe('saveConnectAppsSettings', () => {
+describe('createSaveConnectAppsSettingsMutation', () => {
 	it('PUTs the settings and declares them changed', async () => {
 		mockPut.mockResolvedValue({});
-		const { saveConnectAppsSettings } = await import('$lib/queries/connect-apps.svelte');
-		saveConnectAppsSettings();
+		const { createSaveConnectAppsSettingsMutation } =
+			await import('$lib/queries/connect-apps.svelte');
+		createSaveConnectAppsSettingsMutation();
 		const opts = lastMutationOpts();
 		await (opts.mutationFn as (v: unknown) => Promise<unknown>)({ subsonic_enabled: true });
 		expect(mockPut).toHaveBeenCalledWith('/api/v3/settings/connect-apps', {
@@ -58,11 +59,11 @@ describe('saveConnectAppsSettings', () => {
 	});
 });
 
-describe('createAppPassword', () => {
+describe('createAppPasswordMutation', () => {
 	it("POSTs {name} and declares the caller's app passwords changed", async () => {
 		mockPost.mockResolvedValue({ secret: 's', app_password: {} });
-		const { createAppPassword } = await import('$lib/queries/connect-apps.svelte');
-		createAppPassword();
+		const { createAppPasswordMutation } = await import('$lib/queries/connect-apps.svelte');
+		createAppPasswordMutation();
 		const opts = lastMutationOpts();
 		await (opts.mutationFn as (v: string) => Promise<unknown>)('Symfonium (phone)');
 		expect(mockPost).toHaveBeenCalledWith('/api/v3/me/app-passwords', {
@@ -72,11 +73,11 @@ describe('createAppPassword', () => {
 	});
 });
 
-describe('revokeAppPassword', () => {
+describe('createRevokeAppPasswordMutation', () => {
 	it("DELETEs by id and declares the caller's app passwords changed", async () => {
 		mockDelete.mockResolvedValue(undefined);
-		const { revokeAppPassword } = await import('$lib/queries/connect-apps.svelte');
-		revokeAppPassword();
+		const { createRevokeAppPasswordMutation } = await import('$lib/queries/connect-apps.svelte');
+		createRevokeAppPasswordMutation();
 		const opts = lastMutationOpts();
 		await (opts.mutationFn as (v: string) => Promise<unknown>)('ap-1');
 		expect(mockDelete).toHaveBeenCalledWith('/api/v3/me/app-passwords/ap-1');
@@ -84,12 +85,13 @@ describe('revokeAppPassword', () => {
 	});
 });
 
-describe('adminRevokeAppPassword', () => {
+describe('createAdminRevokeAppPasswordMutation', () => {
 	type Revoke = { id: string; userId: string };
 	it('DELETEs the admin endpoint and refreshes the roster only (other user)', async () => {
 		mockDelete.mockResolvedValue(undefined);
-		const { adminRevokeAppPassword } = await import('$lib/queries/connect-apps.svelte');
-		adminRevokeAppPassword();
+		const { createAdminRevokeAppPasswordMutation } =
+			await import('$lib/queries/connect-apps.svelte');
+		createAdminRevokeAppPasswordMutation();
 		const opts = lastMutationOpts();
 		await (opts.mutationFn as (v: Revoke) => Promise<unknown>)({
 			id: 'ap-9',
@@ -103,8 +105,9 @@ describe('adminRevokeAppPassword', () => {
 	});
 
 	it("also refreshes the admin's own list when they revoke their own password", async () => {
-		const { adminRevokeAppPassword } = await import('$lib/queries/connect-apps.svelte');
-		adminRevokeAppPassword();
+		const { createAdminRevokeAppPasswordMutation } =
+			await import('$lib/queries/connect-apps.svelte');
+		createAdminRevokeAppPasswordMutation();
 		const opts = lastMutationOpts();
 		expect(await refreshedBy(opts, { id: 'ap-self', userId: 'user-1' })).toEqual([
 			ConnectAppsQueryKeyFactory.adminAppPasswords(),

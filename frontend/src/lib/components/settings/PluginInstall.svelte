@@ -2,8 +2,8 @@
 	import { ShieldAlert } from 'lucide-svelte';
 	import {
 		githubWaitMessage,
-		installPreviewedPluginMutation,
-		previewPluginInstallMutation,
+		createInstallPreviewedPluginMutation,
+		createPreviewPluginInstallMutation,
 		type PluginInstallPreview
 	} from '$lib/queries/plugins/PluginInstallMutations.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -11,8 +11,8 @@
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 
-	const preview = previewPluginInstallMutation();
-	const install = installPreviewedPluginMutation();
+	const preview = createPreviewPluginInstallMutation();
+	const install = createInstallPreviewedPluginMutation();
 
 	let repoUrl = $state('');
 	const paced = $derived(githubWaitMessage(preview.error) ?? githubWaitMessage(install.error));

@@ -8,12 +8,12 @@
 		getTargetLibrarySettingsQuery
 	} from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import {
-		previewLibraryPolicyApply,
-		previewLibraryPolicyImpact,
-		restoreLibraryRoots,
-		saveTargetLibrarySettings
+		createPreviewLibraryPolicyApplyMutation,
+		createPreviewLibraryPolicyImpactMutation,
+		createRestoreLibraryRootsMutation,
+		createSaveTargetLibrarySettingsMutation
 	} from '$lib/queries/library/LibraryPolicyMutations.svelte';
-	import { requestLibraryRun } from '$lib/queries/library/LibraryOperationMutations.svelte';
+	import { createRequestLibraryRunMutation } from '$lib/queries/library/LibraryOperationMutations.svelte';
 	import {
 		createSaveLibraryWatcherSettingsMutation,
 		getLibraryWatcherSettingsQuery
@@ -21,7 +21,7 @@
 	import { getLibraryStatsQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import {
 		getDownloadPolicyQuery,
-		saveDownloadPolicy
+		createSaveDownloadPolicyMutation
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import LibraryRootPolicyEditor from '$lib/components/library/LibraryRootPolicyEditor.svelte';
 	import LibraryNamingExample from '$lib/components/library/LibraryNamingExample.svelte';
@@ -48,13 +48,13 @@
 
 	const settingsQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
 	const restorableQuery = getLibraryRestorableRootsQuery(() => authStore.isAdmin);
-	const impact = previewLibraryPolicyImpact();
-	const save = saveTargetLibrarySettings();
-	const restore = restoreLibraryRoots();
-	const applyPreview = previewLibraryPolicyApply();
-	const requestRun = requestLibraryRun();
+	const impact = createPreviewLibraryPolicyImpactMutation();
+	const save = createSaveTargetLibrarySettingsMutation();
+	const restore = createRestoreLibraryRootsMutation();
+	const applyPreview = createPreviewLibraryPolicyApplyMutation();
+	const requestRun = createRequestLibraryRunMutation();
 	const policyQuery = getDownloadPolicyQuery(() => authStore.isAdmin);
-	const savePolicy = saveDownloadPolicy();
+	const savePolicy = createSaveDownloadPolicyMutation();
 	const statsQuery = getLibraryStatsQuery();
 	// Only the switch is shown; the poll and batch intervals keep their values.
 	const watcher = createSettingsSection(

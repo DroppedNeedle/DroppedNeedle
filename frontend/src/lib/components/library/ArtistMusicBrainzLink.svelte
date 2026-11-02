@@ -10,9 +10,9 @@
 	import { outsideLink } from '$lib/components/outsideLink';
 	import {
 		type ArtistLink,
-		clearArtistLink,
+		createClearArtistLinkMutation,
 		getArtistLinkQuery,
-		setArtistLink
+		createSetArtistLinkMutation
 	} from '$lib/queries/artist-link.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -30,8 +30,8 @@
 
 	const linkQuery = getArtistLinkQuery(() => artistId);
 	const link = $derived(linkQuery.data);
-	const setLink = setArtistLink();
-	const clearLink = clearArtistLink();
+	const setLink = createSetArtistLinkMutation();
+	const clearLink = createClearArtistLinkMutation();
 
 	let editing = $state(false);
 	let clearing = $state(false);

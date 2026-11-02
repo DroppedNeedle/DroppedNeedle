@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Download } from 'lucide-svelte';
-	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
@@ -16,7 +16,7 @@
 
 	let requesting = $state(false);
 
-	const albumRequest = requestAlbum();
+	const albumRequest = createRequestAlbumMutation();
 
 	async function handleRequest(e: MouseEvent) {
 		e.stopPropagation();

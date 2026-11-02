@@ -57,7 +57,7 @@ function flaggedRoots(): QueryKey[] {
  * if the save fails. Saves run one at a time, so quick clicks end on the
  * last one.
  */
-export function setFavorite() {
+export function createSetFavoriteMutation() {
 	const client = useQueryClient();
 	return createAppMutation(
 		() => ({

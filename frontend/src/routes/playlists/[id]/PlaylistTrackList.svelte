@@ -3,10 +3,10 @@
 	import { slide, fly } from '$lib/ui/motion';
 	import type { PlaylistDetail, PlaylistTrack } from '$lib/api/playlists';
 	import {
-		removePlaylistTrackV3,
-		removePlaylistTracksV3,
-		reorderPlaylistTrackV3,
-		updatePlaylistTrackV3
+		createRemovePlaylistTrackV3Mutation,
+		createRemovePlaylistTracksV3Mutation,
+		createReorderPlaylistTrackV3Mutation,
+		createUpdatePlaylistTrackV3Mutation
 	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
 	import { toPageTrack } from '$lib/queries/playlists/playlistV3Adapter';
 	import { playlistTrackToQueueItem } from '$lib/player/queueHelpers';
@@ -49,10 +49,10 @@
 	let bulkRemoving = $state(false);
 	let selectionMode = $derived(selectedIds.size > 0);
 
-	const removeTrackMutation = removePlaylistTrackV3();
-	const removeTracksMutation = removePlaylistTracksV3();
-	const updateTrackMutation = updatePlaylistTrackV3();
-	const reorderTrackMutation = reorderPlaylistTrackV3();
+	const removeTrackMutation = createRemovePlaylistTrackV3Mutation();
+	const removeTracksMutation = createRemovePlaylistTracksV3Mutation();
+	const updateTrackMutation = createUpdatePlaylistTrackV3Mutation();
+	const reorderTrackMutation = createReorderPlaylistTrackV3Mutation();
 
 	function toggleTrackSelection(trackId: string, index: number, shiftKey: boolean) {
 		if (shiftKey && lastClickedIndex !== null) {

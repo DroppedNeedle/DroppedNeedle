@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { Search } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import { matchHeldMutation } from '$lib/queries/downloads/HeldQueries.svelte';
+	import { createMatchHeldMutation } from '$lib/queries/downloads/HeldQueries.svelte';
 	import { getAlbumSearchQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import type { Album } from '$lib/types';
 	import Input from '$lib/ui/Input.svelte';
@@ -27,7 +27,7 @@
 	let searchTerm = $state(untrack(() => search.replace(/[-_]/g, ' ').trim()));
 
 	const searchQuery = getAlbumSearchQuery(() => searchTerm);
-	const match = matchHeldMutation();
+	const match = createMatchHeldMutation();
 	const results = $derived(searchQuery.data ?? []);
 	const label = $derived(`${name || search} · ${fileCount} file${fileCount === 1 ? '' : 's'}`);
 

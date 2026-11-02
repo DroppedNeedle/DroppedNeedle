@@ -4,7 +4,7 @@
 	import { NO_FALLBACK_COPY } from '$lib/utils/acquisitionLabels';
 	import { withBasePath } from '$lib/utils/basePath';
 
-	import { tryNextSource } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createTryNextSourceMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import type { DownloadSourceUpdate } from '$lib/queries/downloads/DownloadSSE.svelte';
 	import type { DownloadTask } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
@@ -23,7 +23,7 @@
 		compact = false
 	}: Props = $props();
 
-	const nextSource = tryNextSource();
+	const nextSource = createTryNextSourceMutation();
 	let actionMessage = $state<string | null>(null);
 	let actionCandidate = $state<string | null>(null);
 

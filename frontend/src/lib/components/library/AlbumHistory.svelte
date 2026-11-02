@@ -12,8 +12,8 @@
 
 	import {
 		getAlbumHistoryQuery,
-		undoAlbumFold,
-		undoArtistRepair,
+		createUndoAlbumFoldMutation,
+		createUndoArtistRepairMutation,
 		type AlbumHistoryEntry
 	} from '$lib/queries/library/LibraryAlbumHistoryQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -35,8 +35,8 @@
 		() => albumId
 	);
 
-	const undoFold = undoAlbumFold();
-	const undoArtist = undoArtistRepair();
+	const undoFold = createUndoAlbumFoldMutation();
+	const undoArtist = createUndoArtistRepairMutation();
 	let undoing = $state<{ id: string; artist: boolean } | null>(null);
 	let confirming = $state(false);
 

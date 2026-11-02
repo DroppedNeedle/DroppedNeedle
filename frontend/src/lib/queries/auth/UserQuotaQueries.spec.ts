@@ -23,7 +23,7 @@ vi.mock('$lib/queries/effects', async (importOriginal) => ({
 import { api } from '$lib/api/client';
 import { userQuotaChanged, type Effect } from '$lib/queries/effects';
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
-import { getUserQuotaQuery, saveUserQuota } from './UserQuotaQueries.svelte';
+import { getUserQuotaQuery, createSaveUserQuotaMutation } from './UserQuotaQueries.svelte';
 
 const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
 const mockPut = vi.mocked(api.v3.PUT) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
@@ -83,10 +83,10 @@ describe('getUserQuotaQuery', () => {
 	});
 });
 
-describe('saveUserQuota', () => {
+describe('createSaveUserQuotaMutation', () => {
 	it('writes the override block and declares that user quota row changed', async () => {
 		mockPut.mockResolvedValue({ quota_override: {} });
-		const mutation = saveUserQuota() as unknown as MutationResult;
+		const mutation = createSaveUserQuotaMutation() as unknown as MutationResult;
 		const override = { max_requests: 25 };
 
 		await mutation.mutationFn({ userId: 'user-9', override });

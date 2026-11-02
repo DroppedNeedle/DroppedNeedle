@@ -9,7 +9,7 @@ import {
 	pluginsChanged
 } from '$lib/queries/effects';
 
-export const updatePluginMutation = () =>
+export const createUpdatePluginMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: ({
 			name,
@@ -34,7 +34,7 @@ export const updatePluginMutation = () =>
 		}
 	}));
 
-export const uninstallPluginMutation = () =>
+export const createUninstallPluginMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (name: string) => api.v3.DELETE(v3('/api/v3/plugins/{name}', { path: { name } })),
 		onSuccess: () => {
@@ -48,7 +48,7 @@ export const uninstallPluginMutation = () =>
 
 // Takes back one file a plugin added. A refusal (the file changed since, its
 // folder takes no changes now) is shown by the confirm dialog that awaits it.
-export const undoPluginFileMutation = () =>
+export const createUndoPluginFileMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: ({ bundleId }: { name: string; bundleId: string }) =>
 			api.v3.POST(v3('/api/v3/library/manage/undo'), { bundle_id: bundleId }),

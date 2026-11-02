@@ -112,7 +112,7 @@ function heldMutation<I extends HeldFilesInput>(
 const fileBody = (input: HeldFilesInput) => ({ file_ids: input.fileIds ?? null });
 
 /** Import, Retry, "Use this version" and "Use this file" all place files this way. */
-export const importHeldMutation = () =>
+export const createImportHeldMutation = () =>
 	heldMutation(
 		(input: HeldFilesInput) =>
 			api.v3.POST(
@@ -123,7 +123,7 @@ export const importHeldMutation = () =>
 	);
 
 /** Curators only: import the files as the album picked. */
-export const matchHeldMutation = () =>
+export const createMatchHeldMutation = () =>
 	heldMutation(
 		(input: HeldMatchInput) =>
 			api.v3.POST(v3('/api/v3/held/{entry_id}/match', { path: { entry_id: input.entryId } }), {
@@ -133,7 +133,7 @@ export const matchHeldMutation = () =>
 		'Match failed'
 	);
 
-export const recheckHeldMutation = () =>
+export const createRecheckHeldMutation = () =>
 	heldMutation(
 		(input: HeldFilesInput) =>
 			api.v3.POST(
@@ -143,7 +143,7 @@ export const recheckHeldMutation = () =>
 		'Could not re-check the held files'
 	);
 
-export const discardHeldMutation = () =>
+export const createDiscardHeldMutation = () =>
 	heldMutation(
 		(input: HeldFilesInput) =>
 			api.v3.POST(
@@ -155,7 +155,7 @@ export const discardHeldMutation = () =>
 
 // Re-check AcoustID holds across entries. The server takes at most 25 checks a
 // call, so entry ids pass through untouched.
-export const recheckAllHeldMutation = () =>
+export const createRecheckAllHeldMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (entryIds: number[] | null) =>
 			api.v3.POST(v3('/api/v3/held/recheck'), { entry_ids: entryIds }),

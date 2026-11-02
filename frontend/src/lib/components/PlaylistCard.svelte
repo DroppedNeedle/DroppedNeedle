@@ -2,7 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import type { PlaylistSummary } from '$lib/api/playlists';
 	import { fetchPlaylist, isRedactedPlaylist } from '$lib/api/playlists';
-	import { deletePlaylistV3 } from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
+	import { createDeletePlaylistV3Mutation } from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
 	import { playlistTrackToQueueItem } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -23,7 +23,7 @@
 
 	let { playlist, ondelete }: Props = $props();
 
-	const deleteMutation = deletePlaylistV3();
+	const deleteMutation = createDeletePlaylistV3Mutation();
 
 	let ownerInitials = $derived(
 		(playlist.owner_name ?? '')

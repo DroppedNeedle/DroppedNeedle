@@ -1,9 +1,9 @@
 <script lang="ts">
 	import type { PlaylistDetail } from '$lib/api/playlists';
 	import {
-		deletePlaylistCoverV3,
-		updatePlaylistV3,
-		uploadPlaylistCoverV3
+		createDeletePlaylistCoverV3Mutation,
+		createUpdatePlaylistV3Mutation,
+		createUploadPlaylistCoverV3Mutation
 	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
 	import { toPageDetail } from '$lib/queries/playlists/playlistV3Adapter';
 	import PlaylistDiscoveryModal from '$lib/components/PlaylistDiscoveryModal.svelte';
@@ -70,9 +70,9 @@
 	let coverPreview = $state<string | null>(null);
 	let discoverModalOpen = $state(false);
 
-	const renameMutation = updatePlaylistV3();
-	const uploadCoverMutation = uploadPlaylistCoverV3();
-	const removeCoverMutation = deletePlaylistCoverV3();
+	const renameMutation = createUpdatePlaylistV3Mutation();
+	const uploadCoverMutation = createUploadPlaylistCoverV3Mutation();
+	const removeCoverMutation = createDeletePlaylistCoverV3Mutation();
 
 	$effect(() => {
 		if (editingName && nameInputEl) {

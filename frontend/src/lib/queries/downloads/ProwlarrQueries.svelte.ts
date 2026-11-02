@@ -24,7 +24,7 @@ const getProwlarrConfigQueryOptions = () =>
 
 export const getProwlarrConfigQuery = () => createQuery(() => getProwlarrConfigQueryOptions());
 
-export function saveProwlarrConfigMutation() {
+export function createSaveProwlarrConfigMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (connection: ProwlarrConnectionSettings) =>
 			api.v3.PUT(v3('/api/v3/settings/prowlarr/config'), connection),
@@ -34,7 +34,7 @@ export function saveProwlarrConfigMutation() {
 	}));
 }
 
-export function testProwlarrMutation() {
+export function createTestProwlarrMutation() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (connection: ProwlarrConnectionSettings) =>

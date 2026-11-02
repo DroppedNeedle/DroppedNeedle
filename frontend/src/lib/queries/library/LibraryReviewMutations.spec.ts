@@ -14,10 +14,13 @@ vi.mock('$lib/stores/toast', () => ({
 }));
 
 import type { Effect } from '../effects';
-import { actOnLibraryReview, type ReviewAction } from './LibraryReviewMutations.svelte';
+import {
+	createActOnLibraryReviewMutation,
+	type ReviewAction
+} from './LibraryReviewMutations.svelte';
 
 function declared(action: ReviewAction): string[] {
-	const mutation = actOnLibraryReview() as unknown as {
+	const mutation = createActOnLibraryReviewMutation() as unknown as {
 		effects: (result: unknown, input: { reviewId: string; action: ReviewAction }) => Effect[];
 	};
 	return mutation.effects({}, { reviewId: 'review-1', action }).map((effect) => effect.name);

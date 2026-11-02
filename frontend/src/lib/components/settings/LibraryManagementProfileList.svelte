@@ -8,8 +8,8 @@
 	import { Copy, FileUp, Link2, Pencil, Share2, Tags, Trash2 } from 'lucide-svelte';
 
 	import {
-		copyLibraryManagementProfileMutation,
-		deleteLibraryManagementProfileMutation
+		createCopyLibraryManagementProfileMutation,
+		createDeleteLibraryManagementProfileMutation
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import type { LibraryRootSettings } from '$lib/queries/library/LibraryOperationsTypes';
 	import type { LibraryManagementProfile } from '$lib/queries/library-management/types';
@@ -32,8 +32,8 @@
 
 	let { settings, roots, onedit, onshare, onimport, focusFallback }: Props = $props();
 
-	const copyProfile = copyLibraryManagementProfileMutation();
-	const deleteProfile = deleteLibraryManagementProfileMutation();
+	const copyProfile = createCopyLibraryManagementProfileMutation();
+	const deleteProfile = createDeleteLibraryManagementProfileMutation();
 
 	let newProfileName = $state('Picard-style Organizer copy');
 	let deleteDialog: HTMLDialogElement;

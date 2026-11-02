@@ -16,7 +16,7 @@ const getQuarantineQueryOptions = () =>
 export const getQuarantineQuery = (enabled: () => boolean = () => true) =>
 	createQuery(() => ({ ...getQuarantineQueryOptions(), enabled: enabled() }));
 
-export function deleteQuarantineEntry() {
+export function createDeleteQuarantineEntryMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (id: number) =>
 			api.v3.DELETE(

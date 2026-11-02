@@ -2,9 +2,9 @@
 	import { FolderLock, RotateCcw, TimerOff, X } from 'lucide-svelte';
 
 	import {
-		cancelDownload,
-		retryDownload,
-		stopAutoRetry
+		createCancelDownloadMutation,
+		createRetryDownloadMutation,
+		createStopAutoRetryMutation
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { createDownloadStream } from '$lib/queries/downloads/DownloadSSE.svelte';
 	import {
@@ -35,9 +35,9 @@
 
 	let { task, heldFiles = [] }: Props = $props();
 
-	const cancel = cancelDownload();
-	const retry = retryDownload();
-	const stopRetry = stopAutoRetry();
+	const cancel = createCancelDownloadMutation();
+	const retry = createRetryDownloadMutation();
+	const stopRetry = createStopAutoRetryMutation();
 	const stream = createDownloadStream();
 
 	// failed/partial waiting on its next auto-retry - the album page's off-switch for the

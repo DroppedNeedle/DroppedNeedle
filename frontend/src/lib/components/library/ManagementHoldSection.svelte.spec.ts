@@ -23,7 +23,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	LAST_USER_ID_KEY: 'msr:last_user_id'
 }));
 vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => ({
-	reenableAlbumManagement: () => ({ mutateAsync: h.reenable, isPending: false })
+	createReenableAlbumManagementMutation: () => ({ mutateAsync: h.reenable, isPending: false })
 }));
 vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	getAlbumEditionsQuery: () => ({
@@ -38,7 +38,11 @@ vi.mock('$lib/queries/library/LibraryAlbumHistoryQueries.svelte', () => ({
 	})
 }));
 vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
-	handBackLibraryAlbumMutation: () => ({ mutateAsync: h.handBack, isPending: false, error: null }),
+	createHandBackLibraryAlbumMutation: () => ({
+		mutateAsync: h.handBack,
+		isPending: false,
+		error: null
+	}),
 	handBackRefusalMessage: () => null
 }));
 

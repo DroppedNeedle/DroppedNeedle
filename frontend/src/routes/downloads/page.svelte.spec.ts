@@ -43,7 +43,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 
 vi.mock('$lib/queries/import.svelte', () => ({
 	getDropImportJobsQuery: () => ({ data: { jobs: [] }, isLoading: false }),
-	uploadDropMutation: () => ({ mutate: vi.fn(), isPending: false })
+	createUploadDropMutation: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/queries/downloads/HeldQueries.svelte', async (importOriginal) => ({

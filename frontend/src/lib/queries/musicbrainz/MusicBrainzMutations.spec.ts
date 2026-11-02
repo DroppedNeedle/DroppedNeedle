@@ -17,7 +17,7 @@ vi.mock('$lib/queries/QueryClient', () => ({
 
 import { api } from '$lib/api/client';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
-import { saveMusicBrainzSettings } from './MusicBrainzMutations.svelte';
+import { createSaveMusicBrainzSettingsMutation } from './MusicBrainzMutations.svelte';
 import { getMusicBrainzSourceScope, resetMusicBrainzSourceScope } from './sourceScope.svelte';
 import type { MusicBrainzSettingsResponse, MusicBrainzSettingsUpdate } from './types';
 
@@ -109,7 +109,7 @@ describe('MusicBrainz settings mutations', () => {
 		mockPut.mockReturnValueOnce(responsePromise);
 
 		authStore.setUser(user('user-a'));
-		const options = saveMusicBrainzSettings() as unknown as MutationOptions;
+		const options = createSaveMusicBrainzSettingsMutation() as unknown as MutationOptions;
 		const userAContext = options.onMutate?.(update, {});
 		const request = options.mutationFn(update);
 
@@ -133,7 +133,7 @@ describe('MusicBrainz settings mutations', () => {
 
 	it('keeps concurrent mutation responses bound to their initiating users', async () => {
 		persistScope('user-b', 'community', 'community-b', 9);
-		const options = saveMusicBrainzSettings() as unknown as MutationOptions;
+		const options = createSaveMusicBrainzSettingsMutation() as unknown as MutationOptions;
 
 		authStore.setUser(user('user-a'));
 		const userAContext = options.onMutate?.(update, {});
@@ -155,7 +155,7 @@ describe('MusicBrainz settings mutations', () => {
 
 	it('publishes and persists a mutation response when the initiating user remains active', async () => {
 		authStore.setUser(user('user-a'));
-		const options = saveMusicBrainzSettings() as unknown as MutationOptions;
+		const options = createSaveMusicBrainzSettingsMutation() as unknown as MutationOptions;
 		const userAContext = options.onMutate?.(update, {});
 
 		await options.onSuccess?.(settings, update, userAContext);
@@ -174,7 +174,7 @@ describe('MusicBrainz settings mutations', () => {
 
 	it('keeps the committed source in memory when persisting the response fails', async () => {
 		authStore.setUser(user('user-a'));
-		const options = saveMusicBrainzSettings() as unknown as MutationOptions;
+		const options = createSaveMusicBrainzSettingsMutation() as unknown as MutationOptions;
 		const onMutateResult = options.onMutate?.(update, {});
 		cache.set.mockRejectedValueOnce(new Error('IndexedDB unavailable'));
 

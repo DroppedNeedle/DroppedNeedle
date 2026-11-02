@@ -2,11 +2,11 @@
 	import { tick } from 'svelte';
 	import { invalidateMusicBrainzProviderQueries } from '$lib/queries/QueryClient';
 	import {
-		activateBrainzMash,
-		consentBrainzMash,
-		saveMusicBrainzSettings,
-		stageBrainzMash as stageBrainzMashMutation,
-		testMusicBrainzConnection
+		createActivateBrainzMashMutation,
+		createConsentBrainzMashMutation,
+		createSaveMusicBrainzSettingsMutation,
+		createStageBrainzMashMutation as stageBrainzMashMutation,
+		createTestMusicBrainzConnectionMutation
 	} from '$lib/queries/musicbrainz/MusicBrainzMutations.svelte';
 	import { getMusicBrainzSettingsQuery } from '$lib/queries/musicbrainz/MusicBrainzQueries.svelte';
 	import type {
@@ -71,11 +71,11 @@
 	}
 
 	const settingsQuery = getMusicBrainzSettingsQuery();
-	const saveMutation = saveMusicBrainzSettings();
-	const consentMutation = consentBrainzMash();
-	const verifyMutation = testMusicBrainzConnection();
+	const saveMutation = createSaveMusicBrainzSettingsMutation();
+	const consentMutation = createConsentBrainzMashMutation();
+	const verifyMutation = createTestMusicBrainzConnectionMutation();
 	const stageMutation = stageBrainzMashMutation();
-	const activateMutation = activateBrainzMash();
+	const activateMutation = createActivateBrainzMashMutation();
 
 	const CARD_ICONS = {
 		brainzmash: Network,

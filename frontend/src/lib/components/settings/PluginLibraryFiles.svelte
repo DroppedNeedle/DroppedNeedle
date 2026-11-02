@@ -5,7 +5,7 @@
 <script lang="ts">
 	import { Undo2 } from 'lucide-svelte';
 	import { getPluginFilesQuery } from '$lib/queries/plugins/PluginQueries.svelte';
-	import { undoPluginFileMutation } from '$lib/queries/plugins/PluginMutations.svelte';
+	import { createUndoPluginFileMutation } from '$lib/queries/plugins/PluginMutations.svelte';
 	import type { PluginFileView, PluginFilesPage } from '$lib/queries/plugins/types';
 	import { formatBytes, formatRelativeTime } from '$lib/utils/formatting';
 	import Button from '$lib/ui/Button.svelte';
@@ -19,7 +19,7 @@
 	let { pluginName }: Props = $props();
 
 	const filesQuery = getPluginFilesQuery(() => pluginName);
-	const undo = undoPluginFileMutation();
+	const undo = createUndoPluginFileMutation();
 
 	let undoing = $state<PluginFileView | null>(null);
 	let confirmOpen = $state(false);

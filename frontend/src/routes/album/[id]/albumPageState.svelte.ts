@@ -43,10 +43,10 @@ import { getAlbumDownloadsQuery } from '$lib/queries/downloads/DownloadQueries.s
 import { getHeldEntriesQuery } from '$lib/queries/downloads/HeldQueries.svelte';
 import { isActiveDownloadStatus } from '$lib/queries/downloads/downloadStatus';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
+import { createRemoveLibraryTrackMutation } from '$lib/queries/library/LibraryMutations.svelte';
 import { toastStore } from '$lib/stores/toast';
 import { getActiveRequestsQuery } from '$lib/queries/requests/RequestQueries.svelte';
-import { switchRequestedEdition } from '$lib/queries/albums/EditionQueries.svelte';
+import { createSwitchRequestedEditionMutation } from '$lib/queries/albums/EditionQueries.svelte';
 import type { EditionRequestPick } from '$lib/components/library/edition/editionSheetState.svelte';
 import {
 	getAlbumBasicQuery,
@@ -58,7 +58,7 @@ import {
 	getSimilarAlbumsQuery
 } from '$lib/queries/catalog/AlbumQueries.svelte';
 import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
-import { refreshAlbum } from '$lib/queries/catalog/AlbumMutations.svelte';
+import { createRefreshAlbumMutation } from '$lib/queries/catalog/AlbumMutations.svelte';
 import { getLocalAlbumMatchQuery, getRemoteAlbumMatchQuery } from '$lib/queries/albumMatch.svelte';
 import { AlbumMatchKeyFactory } from '$lib/queries/featureKeys';
 import { albumCopiesChanged, albumCopiesStale, applyEffectsIn } from '$lib/queries/effects';
@@ -158,7 +158,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	const navidromeMatch = $derived(navidromeMatchQuery.data ?? null);
 	const plexMatch = $derived(plexMatchQuery.data ?? null);
 
-	const refresh = refreshAlbum();
+	const refresh = createRefreshAlbumMutation();
 
 	// shared TanStack query so tag-edit/rescan mutations that invalidate album(mbid) refresh this overlay in place
 	const libraryStatusQuery = getLibraryAlbumStatusQuery(albumIdGetter);
@@ -448,7 +448,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 				item.request_kind === 'album' && item.musicbrainz_id === album?.musicbrainz_id.toLowerCase()
 		) ?? null
 	);
-	const switchEdition = switchRequestedEdition();
+	const switchEdition = createSwitchRequestedEditionMutation();
 	const editionPick = $derived.by((): EditionRequestPick | null => {
 		if (!album || inLibrary || libraryInLibrary || !authStore.isTrusted) return null;
 		if (isRequested && !liveRequest) return null;
@@ -584,7 +584,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		);
 	}
 
-	const removeTrack = removeLibraryTrack();
+	const removeTrack = createRemoveLibraryTrackMutation();
 	let removeFileTarget = $state<{
 		fileId: string;
 		albumMbid: string;

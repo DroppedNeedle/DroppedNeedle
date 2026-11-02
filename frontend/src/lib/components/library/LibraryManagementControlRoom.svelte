@@ -29,13 +29,13 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import {
-		controlLibraryManagementOperationMutation,
-		discardLibraryManagementPreviewMutation,
-		handBackAllLibraryAlbumsMutation,
-		handBackLibraryAlbumMutation,
+		createControlLibraryManagementOperationMutation,
+		createDiscardLibraryManagementPreviewMutation,
+		createHandBackAllLibraryAlbumsMutation,
+		createHandBackLibraryAlbumMutation,
 		handBackRefusalMessage,
-		reissueLibraryManagementPreviewMutation,
-		resolveLibraryManagementImportBundleMutation
+		createReissueLibraryManagementPreviewMutation,
+		createResolveLibraryManagementImportBundleMutation
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -77,11 +77,11 @@
 			recoveryQuery.isLoading
 		].some(Boolean)
 	);
-	const pauseOperation = controlLibraryManagementOperationMutation('pause');
-	const resumeOperation = controlLibraryManagementOperationMutation('resume');
-	const reissuePreview = reissueLibraryManagementPreviewMutation();
-	const discardPreview = discardLibraryManagementPreviewMutation();
-	const resolveImportBundle = resolveLibraryManagementImportBundleMutation();
+	const pauseOperation = createControlLibraryManagementOperationMutation('pause');
+	const resumeOperation = createControlLibraryManagementOperationMutation('resume');
+	const reissuePreview = createReissueLibraryManagementPreviewMutation();
+	const discardPreview = createDiscardLibraryManagementPreviewMutation();
+	const resolveImportBundle = createResolveLibraryManagementImportBundleMutation();
 	let resolvingBundleId = $state<string | null>(null);
 	type RunnerMode = 'manage' | 'baseline_restore';
 
@@ -149,8 +149,8 @@
 		() => (handingBack > 0 ? TAKEOVERS_POLL_MS : false)
 	);
 	const skippedAlbums = $derived(skippedQuery.data?.items ?? []);
-	const handBackAlbum = handBackLibraryAlbumMutation();
-	const handBackAll = handBackAllLibraryAlbumsMutation();
+	const handBackAlbum = createHandBackLibraryAlbumMutation();
+	const handBackAll = createHandBackAllLibraryAlbumsMutation();
 	// Albums whose files could not be read for a hand-back, with the reason.
 	let handBackRefusals = $state<Record<string, string>>({});
 

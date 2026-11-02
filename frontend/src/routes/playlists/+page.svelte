@@ -9,7 +9,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
 	import { getPlaylistListV3Query } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
-	import { createPlaylistV3 } from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
+	import { createPlaylistV3Mutation } from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
 	import { toPageList } from '$lib/queries/playlists/playlistV3Adapter';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { ListMusic, Plus, Lock } from 'lucide-svelte';
@@ -26,7 +26,7 @@
 	);
 
 	const query = getPlaylistListV3Query(() => authStore.isAuthenticated);
-	const createMutation = createPlaylistV3();
+	const createMutation = createPlaylistV3Mutation();
 
 	let items = $derived(toPageList(query.data ?? []));
 	let myPlaylists = $derived(

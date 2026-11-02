@@ -33,7 +33,7 @@
 	import UserQuotaEditor from '$lib/components/settings/UserQuotaEditor.svelte';
 	import {
 		getDownloadPolicyQuery,
-		saveDownloadPolicy
+		createSaveDownloadPolicyMutation
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { SvelteSet } from 'svelte/reactivity';
@@ -99,7 +99,7 @@
 	}
 
 	const policyQuery = getDownloadPolicyQuery();
-	const savePolicy = saveDownloadPolicy();
+	const savePolicy = createSaveDownloadPolicyMutation();
 
 	interface QuotaDefaults {
 		default_request_quota_count: number | null;

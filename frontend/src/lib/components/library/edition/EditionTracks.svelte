@@ -22,7 +22,7 @@
 		type EditionFetchTrackState,
 		type EditionPlan
 	} from '$lib/queries/albums/EditionQueries.svelte';
-	import { cancelDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createCancelDownloadMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -82,7 +82,7 @@
 		for (const track of latest?.tracks ?? []) counts[track.state] += 1;
 		return counts;
 	});
-	const cancel = cancelDownload();
+	const cancel = createCancelDownloadMutation();
 
 	const LABELS: Record<EditionFetchTrackState, string> = {
 		waiting: 'Waiting',

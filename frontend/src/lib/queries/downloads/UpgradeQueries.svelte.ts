@@ -23,7 +23,7 @@ const afterUpgrade = () => [upgradesChanged(), downloadsChanged(authStore.user?.
 
 export type UpgradeAlbumInput = components['schemas']['UpgradeAlbumRequest'];
 
-export function requestUpgradeAlbum() {
+export function createRequestUpgradeAlbumMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (input: UpgradeAlbumInput) =>
 			api.v3.POST(v3('/api/v3/downloads/upgrade/album'), input),
@@ -33,7 +33,7 @@ export function requestUpgradeAlbum() {
 
 export type UpgradeTrackInput = components['schemas']['UpgradeTrackRequest'];
 
-export function requestUpgradeTrack() {
+export function createRequestUpgradeTrackMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (input: UpgradeTrackInput) =>
 			api.v3.POST(v3('/api/v3/downloads/upgrade/track'), input),

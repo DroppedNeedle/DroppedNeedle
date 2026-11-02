@@ -541,6 +541,7 @@ Run from the repo root. `make help` lists every target.
 - Change the cache only through `setQueryDataWithPersister` and
   `invalidateQueriesWithPersister`. Mutations invalidate every affected
   prefix, including other features'.
+- Mutation hooks are `create<Action>Mutation`; lint refuses another shape.
 - What a change invalidates is a named effect in `lib/queries/effects.ts`;
   only that module invalidates. Mutations are built with
   `createAppMutation` and declare their `effects` (`() => []` when they

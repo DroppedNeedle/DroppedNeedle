@@ -29,14 +29,14 @@ import type { Effect } from '$lib/queries/effects';
 import {
 	createLibraryManagementDuplicateResolutionMutation,
 	createLibraryManagementTagEditPreviewMutation,
-	deleteLibraryManagementProfileMutation,
-	discardLibraryManagementPreviewMutation,
-	exportLibraryManagementProfileMutation,
-	importLibraryManagementProfileMutation,
-	previewLibraryManagementProfileImportMutation,
-	reissueLibraryManagementPreviewMutation,
-	resolveLibraryManagementImportBundleMutation,
-	updateLibraryManagementSettingsMutation
+	createDeleteLibraryManagementProfileMutation,
+	createDiscardLibraryManagementPreviewMutation,
+	createExportLibraryManagementProfileMutation,
+	createImportLibraryManagementProfileMutation,
+	createPreviewLibraryManagementProfileImportMutation,
+	createReissueLibraryManagementPreviewMutation,
+	createResolveLibraryManagementImportBundleMutation,
+	createUpdateLibraryManagementSettingsMutation
 } from './LibraryManagementMutations.svelte';
 
 function currentMutation<TInput, TOutput = unknown>() {
@@ -53,7 +53,7 @@ beforeEach(() => {
 
 describe('Library Management mutations', () => {
 	it('updates revision-guarded settings and declares the catalog changed', async () => {
-		updateLibraryManagementSettingsMutation();
+		createUpdateLibraryManagementSettingsMutation();
 		const mutation = currentMutation<{
 			settings: Record<string, unknown>;
 			expected_settings_revision: string;
@@ -67,7 +67,7 @@ describe('Library Management mutations', () => {
 	});
 
 	it('sends profile delete revisions in the DELETE JSON body', async () => {
-		deleteLibraryManagementProfileMutation();
+		createDeleteLibraryManagementProfileMutation();
 		const mutation = currentMutation<{
 			profileId: string;
 			request: { expected_settings_revision: string };
@@ -86,7 +86,7 @@ describe('Library Management mutations', () => {
 	});
 
 	it('posts profile export and import operations to their revision-guarded endpoints', async () => {
-		exportLibraryManagementProfileMutation();
+		createExportLibraryManagementProfileMutation();
 		const exportMutation = currentMutation<{
 			profileId: string;
 			request: { expected_settings_revision: string };
@@ -100,7 +100,7 @@ describe('Library Management mutations', () => {
 			{ expected_settings_revision: 'rev-1' }
 		);
 
-		previewLibraryManagementProfileImportMutation();
+		createPreviewLibraryManagementProfileImportMutation();
 		const previewMutation = currentMutation<Record<string, unknown>>();
 		const previewRequest = { content: 'DNLP1:code', expected_settings_revision: 'rev-1' };
 		await previewMutation.mutationFn(previewRequest);
@@ -109,7 +109,7 @@ describe('Library Management mutations', () => {
 			previewRequest
 		);
 
-		importLibraryManagementProfileMutation();
+		createImportLibraryManagementProfileMutation();
 		const importMutation = currentMutation<Record<string, unknown>>();
 		const importRequest = {
 			content: 'DNLP1:code',
@@ -176,7 +176,7 @@ describe('Library Management mutations', () => {
 	});
 
 	it('discards only the exact current ready preview revision', async () => {
-		discardLibraryManagementPreviewMutation();
+		createDiscardLibraryManagementPreviewMutation();
 		const mutation = currentMutation<{
 			jobId: string;
 			request: { expected_operation_row_revision: number };
@@ -195,7 +195,7 @@ describe('Library Management mutations', () => {
 	});
 
 	it('reissues the sealed preview token with a POST and no body', async () => {
-		reissueLibraryManagementPreviewMutation();
+		createReissueLibraryManagementPreviewMutation();
 		const mutation = currentMutation<{ jobId: string }>();
 
 		await mutation.mutationFn({ jobId: 'preview/1' });
@@ -206,7 +206,7 @@ describe('Library Management mutations', () => {
 	});
 
 	it('resolves a stuck import bundle with a POST and no body', async () => {
-		resolveLibraryManagementImportBundleMutation();
+		createResolveLibraryManagementImportBundleMutation();
 		const mutation = currentMutation<{ bundleId: string }>();
 
 		await mutation.mutationFn({ bundleId: 'bundle/1' });
@@ -217,7 +217,7 @@ describe('Library Management mutations', () => {
 	});
 
 	it('returns the verified file counts from the resolve response', async () => {
-		resolveLibraryManagementImportBundleMutation();
+		createResolveLibraryManagementImportBundleMutation();
 		const mutation = currentMutation<
 			{ bundleId: string },
 			{

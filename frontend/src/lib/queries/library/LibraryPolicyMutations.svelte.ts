@@ -21,7 +21,7 @@ function serverErrorMessage(error: unknown, fallback: string): string {
 	return fallback;
 }
 
-export function previewLibraryPolicyImpact() {
+export function createPreviewLibraryPolicyImpactMutation() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: {
@@ -31,7 +31,7 @@ export function previewLibraryPolicyImpact() {
 	}));
 }
 
-export function saveTargetLibrarySettings() {
+export function createSaveTargetLibrarySettingsMutation() {
 	return createAppMutation(() => ({
 		mutationFn: async (input: {
 			settings: TypedLibrarySettings;
@@ -49,7 +49,7 @@ export function saveTargetLibrarySettings() {
 	}));
 }
 
-export function restoreLibraryRoots() {
+export function createRestoreLibraryRootsMutation() {
 	return createAppMutation(() => ({
 		mutationFn: async (input: LibraryRestoreRootsRequest) =>
 			await api.v3.POST(v3('/api/v3/settings/library/restore-roots'), input),
@@ -65,7 +65,7 @@ export function restoreLibraryRoots() {
 	}));
 }
 
-export function previewLibraryPolicyApply() {
+export function createPreviewLibraryPolicyApplyMutation() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: { scope_ids: string[]; expected_policy_revision: string }) =>

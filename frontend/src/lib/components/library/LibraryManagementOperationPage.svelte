@@ -17,7 +17,7 @@
 	import BackButton from '$lib/components/BackButton.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
-		controlLibraryManagementOperationMutation,
+		createControlLibraryManagementOperationMutation,
 		createLibraryManagementUndoPreviewMutation
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import {
@@ -82,9 +82,9 @@
 		() => 50,
 		() => operation?.state ?? null
 	);
-	const pauseOperation = controlLibraryManagementOperationMutation('pause');
-	const resumeOperation = controlLibraryManagementOperationMutation('resume');
-	const stopOperation = controlLibraryManagementOperationMutation('stop');
+	const pauseOperation = createControlLibraryManagementOperationMutation('pause');
+	const resumeOperation = createControlLibraryManagementOperationMutation('resume');
+	const stopOperation = createControlLibraryManagementOperationMutation('stop');
 	const createUndo = createLibraryManagementUndoPreviewMutation();
 
 	$effect(() => {

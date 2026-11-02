@@ -2,7 +2,7 @@
 	import { Pause, Play, Trash2, TriangleAlert, X } from 'lucide-svelte';
 
 	import { streamUrlFor } from '$lib/player/streamUrl';
-	import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
+	import { createRemoveLibraryTrackMutation } from '$lib/queries/library/LibraryMutations.svelte';
 	import { formatCountdown } from '$lib/queries/downloads/downloadStatus';
 	import { toastStore } from '$lib/stores/toast';
 	import type { UnmatchedFile } from './albumEdition';
@@ -20,7 +20,7 @@
 
 	let { files, albumMbid, albumId, canRemove = false }: Props = $props();
 
-	const remove = removeLibraryTrack();
+	const remove = createRemoveLibraryTrackMutation();
 	// two-step inline confirm: first click arms THIS row, second click removes
 	let confirmingId = $state<string | null>(null);
 

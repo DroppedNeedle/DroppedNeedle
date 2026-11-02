@@ -5,12 +5,12 @@ import { render } from 'vitest-browser-svelte';
 // keep the Request button real; stub only its mutation hook so it renders without a QueryClient
 const downloadMutations = vi.hoisted(() => ({ requestMutate: vi.fn() }));
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
-	requestTrack: () => ({ mutate: downloadMutations.requestMutate, isPending: false })
+	createRequestTrackMutation: () => ({ mutate: downloadMutations.requestMutate, isPending: false })
 }));
 
 // the per-track upgrade affordance's mutation hook (QueryClient-dependent)
 vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
-	requestUpgradeTrack: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createRequestUpgradeTrackMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 // role gates the upgrade affordance (admin/trusted curators only)

@@ -65,7 +65,7 @@ const requestSurface = () => [anyDownloadChanged(), anyRequestChanged()];
 // One click, one toast, one cache path (Acquisition "Request surfaces"). The
 // response status is mapped to the spec's four copy lines by albumRequestOutcome;
 // the summary sentence comes from the response when the backend carries one.
-export function requestAlbum() {
+export function createRequestAlbumMutation() {
 	return createAppMutation(() => ({
 		mutationFn: async (input: AlbumRequestInput): Promise<IntakeResponse> => {
 			const initiatingUserId = authStore.user?.id;
@@ -135,7 +135,7 @@ export interface BatchRequestResult {
 
 // Discography/discovery bulk requests. Counts are rendered verbatim by
 // batchRequestCopy - skipped and over-limit albums are never claimed as queued.
-export function requestBatch() {
+export function createRequestBatchMutation() {
 	return createAppMutation(() => ({
 		mutationFn: async (input: {
 			items: BatchAlbumItem[];
@@ -182,7 +182,7 @@ export function requestBatch() {
 	}));
 }
 
-export function requestTrack() {
+export function createRequestTrackMutation() {
 	return createAppMutation(() => ({
 		effects: tasks,
 		mutationFn: (input: TrackRequestInput) =>
@@ -212,7 +212,7 @@ export function requestTrack() {
 	}));
 }
 
-export function cancelDownload() {
+export function createCancelDownloadMutation() {
 	return createAppMutation(() => ({
 		effects: tasks,
 		mutationFn: (id: string) =>
@@ -230,7 +230,7 @@ interface NextSourceInput {
 	candidateIndex: number;
 }
 
-export function tryNextSource() {
+export function createTryNextSourceMutation() {
 	return createAppMutation(() => ({
 		effects: tasks,
 		mutationFn: (input: NextSourceInput) =>
@@ -255,7 +255,7 @@ export function tryNextSource() {
 
 // Stop a scheduled auto-retry. Cancelling the failed/partial task drops it out of the
 // retry sweep (status -> cancelled); a manual Retry is still available afterwards.
-export function stopAutoRetry() {
+export function createStopAutoRetryMutation() {
 	return createAppMutation(() => ({
 		effects: tasks,
 		mutationFn: (id: string) =>
@@ -268,7 +268,7 @@ export function stopAutoRetry() {
 	}));
 }
 
-export function retryDownload() {
+export function createRetryDownloadMutation() {
 	return createAppMutation(() => ({
 		effects: tasks,
 		mutationFn: (id: string) =>
@@ -287,7 +287,7 @@ function pluralDownloads(n: number): string {
 	return `${n} download${n === 1 ? '' : 's'}`;
 }
 
-export function clearFinished() {
+export function createClearFinishedMutation() {
 	return createAppMutation(() => ({
 		effects: tasks,
 		mutationFn: () => api.v3.POST(v3('/api/v3/downloads/clear')),
@@ -302,7 +302,7 @@ export function clearFinished() {
 	}));
 }
 
-export function stopAllRetries() {
+export function createStopAllRetriesMutation() {
 	return createAppMutation(() => ({
 		effects: tasks,
 		mutationFn: () => api.v3.POST(v3('/api/v3/downloads/stop-all-retries')),
@@ -320,7 +320,7 @@ export function stopAllRetries() {
 	}));
 }
 
-export function retryAllFailed() {
+export function createRetryAllFailedMutation() {
 	return createAppMutation(() => ({
 		effects: tasks,
 		mutationFn: () => api.v3.POST(v3('/api/v3/downloads/retry-all-failed')),
@@ -344,7 +344,7 @@ interface ReimportInput {
 // Admin reimport: the task goes back in line with its picked candidate
 // kept, so the worker checks the downloads mount again without
 // re-searching.
-export function reimportDownload() {
+export function createReimportDownloadMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (input: ReimportInput) =>
 			api.v3.POST(

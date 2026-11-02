@@ -36,21 +36,21 @@ export const getLidarrImportCandidatesQuery = (getEnabled: Getter<boolean>) =>
 	}));
 
 // The connection form renders errors inline, so save/test don't toast here.
-export const saveLidarrConfigMutation = () =>
+export const createSaveLidarrConfigMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (connection: LidarrImportConnection) =>
 			api.v3.PUT(v3('/api/v3/acquire/lidarr-import/config'), connection),
 		effects: () => [lidarrSettingsChanged()]
 	}));
 
-export const testLidarrMutation = () =>
+export const createTestLidarrMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (connection: LidarrImportConnection) =>
 			api.v3.POST(v3('/api/v3/acquire/lidarr-import/test'), connection)
 	}));
 
-export const importFromLidarrMutation = () =>
+export const createImportFromLidarrMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (selectedMbids: string[]) =>
 			api.v3.POST(v3('/api/v3/acquire/lidarr-import/import'), {

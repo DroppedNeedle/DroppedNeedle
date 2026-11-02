@@ -16,8 +16,8 @@ vi.mock('$lib/queries/downloads/ProwlarrQueries.svelte', () => ({
 		isLoading: false,
 		isError: false
 	}),
-	saveProwlarrConfigMutation: () => ({ mutateAsync: saveMutate, isPending: false }),
-	testProwlarrMutation: () => ({ mutateAsync: testMutate, isPending: false })
+	createSaveProwlarrConfigMutation: () => ({ mutateAsync: saveMutate, isPending: false }),
+	createTestProwlarrMutation: () => ({ mutateAsync: testMutate, isPending: false })
 }));
 
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: vi.fn() } }));

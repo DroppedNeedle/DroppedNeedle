@@ -13,9 +13,9 @@
 	} from 'lucide-svelte';
 
 	import {
-		exportLibraryManagementProfileMutation,
-		importLibraryManagementProfileMutation,
-		previewLibraryManagementProfileImportMutation
+		createExportLibraryManagementProfileMutation,
+		createImportLibraryManagementProfileMutation,
+		createPreviewLibraryManagementProfileImportMutation
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import type {
 		LibraryManagementProfile,
@@ -47,9 +47,9 @@
 		onimportclose,
 		onimported
 	}: Props = $props();
-	const exportProfile = exportLibraryManagementProfileMutation();
-	const previewImport = previewLibraryManagementProfileImportMutation();
-	const importProfile = importLibraryManagementProfileMutation();
+	const exportProfile = createExportLibraryManagementProfileMutation();
+	const previewImport = createPreviewLibraryManagementProfileImportMutation();
+	const importProfile = createImportLibraryManagementProfileMutation();
 	let shareDialog: HTMLDialogElement;
 	let shareHeading: HTMLHeadingElement;
 	let shareResult = $state<LibraryManagementProfileExportResponse | null>(null);

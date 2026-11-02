@@ -26,7 +26,7 @@ export const getIndexersQuery = () => createQuery(() => getIndexersQueryOptions(
 // Home reads integration_status; an added/removed indexer changes it.
 const usenetChanged = () => [usenetSettingsChanged(), downloadReadinessChanged()];
 
-export function saveIndexerMutation() {
+export function createSaveIndexerMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (indexer: IndexerSettings) =>
 			indexer.id
@@ -36,7 +36,7 @@ export function saveIndexerMutation() {
 	}));
 }
 
-export function deleteIndexerMutation() {
+export function createDeleteIndexerMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (id: string) =>
 			api.v3.DELETE(v3('/api/v3/settings/indexers/{id}', { path: { id } })),
@@ -44,7 +44,7 @@ export function deleteIndexerMutation() {
 	}));
 }
 
-export function reorderIndexersMutation() {
+export function createReorderIndexersMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (orderedIds: string[]) =>
 			api.v3.POST(v3('/api/v3/settings/indexers/reorder'), {
@@ -54,7 +54,7 @@ export function reorderIndexersMutation() {
 	}));
 }
 
-export function testIndexerMutation() {
+export function createTestIndexerMutation() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (indexer: IndexerSettings) =>
@@ -70,7 +70,7 @@ const getSearchBackendQueryOptions = () =>
 
 export const getSearchBackendQuery = () => createQuery(() => getSearchBackendQueryOptions());
 
-export function saveSearchBackendMutation() {
+export function createSaveSearchBackendMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (backend: UsenetSearchBackendName) =>
 			api.v3.PUT(v3('/api/v3/settings/indexers/search-backend'), {

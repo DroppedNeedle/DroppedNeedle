@@ -3,7 +3,7 @@
 	import { discographyDownloadStore } from '$lib/stores/discographyDownload.svelte';
 	import { batchDownloadStore } from '$lib/stores/batchDownloadStatus.svelte';
 	import {
-		requestBatch,
+		createRequestBatchMutation,
 		type BatchAlbumItem
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -20,7 +20,7 @@
 	let monitorArtist = $state(false);
 	let autoDownload = $state(false);
 
-	const batchRequest = requestBatch();
+	const batchRequest = createRequestBatchMutation();
 	$effect(() => {
 		if (discographyDownloadStore.open) {
 			includeAlbums = true;

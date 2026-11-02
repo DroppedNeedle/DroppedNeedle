@@ -26,7 +26,7 @@ export interface ArtistMergePreviewInput {
 	provider_choice?: 'detach' | 'retain_survivor';
 }
 
-export function reenableAlbumManagement() {
+export function createReenableAlbumManagementMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (input: { albumId: string; expectedRevision: number }) =>
 			api.v3.POST(
@@ -86,7 +86,7 @@ const errorMessage = (error: unknown, fallback: string) =>
 
 // Album organization: the preview runs the change and rolls it back, so it
 // shows exactly what applying does; the token it returns applies only that.
-export function previewAlbumMembership(kind: MembershipKind) {
+export function createPreviewAlbumMembershipMutation(kind: MembershipKind) {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: {
@@ -97,7 +97,7 @@ export function previewAlbumMembership(kind: MembershipKind) {
 	}));
 }
 
-export function applyAlbumMembership(kind: MembershipKind) {
+export function createApplyAlbumMembershipMutation(kind: MembershipKind) {
 	return createAppMutation(() => ({
 		mutationFn: (input: {
 			albumId: string;
@@ -121,7 +121,7 @@ export function applyAlbumMembership(kind: MembershipKind) {
 	}));
 }
 
-export function previewArtistMerge() {
+export function createPreviewArtistMergeMutation() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: ArtistMergePreviewInput): Promise<ArtistMergePreviewResponse> =>
@@ -134,7 +134,7 @@ export function previewArtistMerge() {
 	}));
 }
 
-export function applyArtistMerge() {
+export function createApplyArtistMergeMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (
 			input: ArtistMergePreviewInput & {

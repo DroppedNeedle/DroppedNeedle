@@ -17,11 +17,11 @@
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 
 	import {
-		applyArtistMerge,
-		previewArtistMerge
+		createApplyArtistMergeMutation,
+		createPreviewArtistMergeMutation
 	} from '$lib/queries/library/LibraryCatalogMutations.svelte';
 	import type { ArtistMergePreviewResponse } from '$lib/queries/library/LibraryOperationsTypes';
-	import { dismissArtistDuplicateGroup } from '$lib/queries/artist-reconciliation.svelte';
+	import { createDismissArtistDuplicateGroupMutation } from '$lib/queries/artist-reconciliation.svelte';
 	import {
 		getArtistDuplicateGroupQuery,
 		getArtistDuplicateGroupsQuery,
@@ -275,9 +275,9 @@
 		}
 	}
 
-	const previewArtist = previewArtistMerge();
-	const applyArtist = applyArtistMerge();
-	const dismissMutation = dismissArtistDuplicateGroup();
+	const previewArtist = createPreviewArtistMergeMutation();
+	const applyArtist = createApplyArtistMergeMutation();
+	const dismissMutation = createDismissArtistDuplicateGroupMutation();
 </script>
 
 <section class="space-y-5" aria-labelledby="artist-identity-desk-title">

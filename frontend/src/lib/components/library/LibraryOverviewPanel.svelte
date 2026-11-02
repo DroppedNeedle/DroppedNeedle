@@ -21,7 +21,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLibraryActivityQuery } from '$lib/queries/library/LibraryActivityQueries.svelte';
 	import { getLibraryRunHistoryQuery } from '$lib/queries/library/LibraryOperationQueries.svelte';
-	import { requestLibraryRun } from '$lib/queries/library/LibraryOperationMutations.svelte';
+	import { createRequestLibraryRunMutation } from '$lib/queries/library/LibraryOperationMutations.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { getPendingReviewCountQuery } from '$lib/queries/library/LibraryReviewQueries.svelte';
 	import {
@@ -67,7 +67,7 @@
 		() => [],
 		() => authStore.isAdmin
 	);
-	const requestRun = requestLibraryRun();
+	const requestRun = createRequestLibraryRunMutation();
 
 	let now = $state(Date.now() / 1000);
 

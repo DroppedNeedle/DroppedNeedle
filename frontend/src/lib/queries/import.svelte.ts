@@ -57,7 +57,7 @@ export interface DropUpload {
 	onProgress: (sent: number, total: number) => void;
 }
 
-export const uploadDropMutation = () =>
+export const createUploadDropMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: ({ files, onProgress }: DropUpload) => {
 			const form = new FormData();

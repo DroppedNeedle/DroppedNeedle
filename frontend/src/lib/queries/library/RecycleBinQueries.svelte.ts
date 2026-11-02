@@ -68,7 +68,7 @@ export function invalidateRecycleBin(): Promise<void> {
 
 // Start emptying the bin of what it held at `before` (the summary's
 // `as_of`). It runs in the background; the status says when it is done.
-export function emptyRecycleBin() {
+export function createEmptyRecycleBinMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (before: number) =>
 			api.v3.POST(v3('/api/v3/library/recycle-bin/empty'), { before }),

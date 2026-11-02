@@ -1,6 +1,6 @@
 <script lang="ts">
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import { getUnhideDiscoveryV3Mutation } from '$lib/queries/discover/DiscoverV3Mutations.svelte';
+	import { createUnhideDiscoveryV3Mutation } from '$lib/queries/discover/DiscoverV3Mutations.svelte';
 	import { getIgnoredReleasesV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
@@ -13,7 +13,7 @@
 	let { open = $bindable(false) }: Props = $props();
 
 	const ignoredQuery = getIgnoredReleasesV3Query(() => open);
-	const unhide = getUnhideDiscoveryV3Mutation();
+	const unhide = createUnhideDiscoveryV3Mutation();
 </script>
 
 <Modal bind:open title="Hidden albums" closeButton>

@@ -13,11 +13,11 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/queries/libraryContributions/LibraryContributionMutations.svelte', () => ({
-	checkMusicBrainzDuplicatesMutation: () => ({ isPending: false, mutate: h.check }),
-	attachExistingMusicBrainzReleaseMutation: () => ({ isPending: false, mutate: h.attach }),
+	createCheckMusicBrainzDuplicatesMutation: () => ({ isPending: false, mutate: h.check }),
+	createAttachExistingMusicBrainzReleaseMutation: () => ({ isPending: false, mutate: h.attach }),
 	createMusicBrainzSeedMutation: () => ({ isPending: false, mutateAsync: h.seed }),
-	recordMusicBrainzResultMutation: () => ({ isPending: false, mutate: h.recordResult }),
-	retryMusicBrainzVerificationMutation: () => ({ isPending: false, mutate: h.retry })
+	createRecordMusicBrainzResultMutation: () => ({ isPending: false, mutate: h.recordResult }),
+	createRetryMusicBrainzVerificationMutation: () => ({ isPending: false, mutate: h.retry })
 }));
 
 import ContributionMusicBrainzReview from './ContributionMusicBrainzReview.svelte';

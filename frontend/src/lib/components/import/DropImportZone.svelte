@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { PackageOpen, LoaderCircle } from 'lucide-svelte';
-	import { uploadDropMutation } from '$lib/queries/import.svelte';
+	import { createUploadDropMutation } from '$lib/queries/import.svelte';
 	import { toastStore } from '$lib/stores/toast';
 
 	interface Props {
@@ -25,7 +25,7 @@
 	// the server's cap on one upload, all files together
 	const LIMIT_BYTES = 8 * 1024 ** 3;
 
-	const upload = uploadDropMutation();
+	const upload = createUploadDropMutation();
 	let dragOver = $state(false);
 	let inputEl = $state<HTMLInputElement | null>(null);
 	let progress = $state({ sent: 0, total: 0 });

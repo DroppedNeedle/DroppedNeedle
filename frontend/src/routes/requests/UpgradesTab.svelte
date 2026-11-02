@@ -5,7 +5,7 @@
 	import { QUALITY_TIERS } from '$lib/components/settings/qualityTiers';
 	import {
 		getCutoffUnmetQuery,
-		requestUpgradeAlbum
+		createRequestUpgradeAlbumMutation
 	} from '$lib/queries/downloads/UpgradeQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -24,7 +24,7 @@
 	// Cutoff-unmet worklist for admin and trusted curators.
 	const cutoffUnmetQuery = getCutoffUnmetQuery(() => authStore.isTrusted && active);
 	const upgradeItems = $derived(cutoffUnmetQuery.data?.items ?? []);
-	const upgradeAlbum = requestUpgradeAlbum();
+	const upgradeAlbum = createRequestUpgradeAlbumMutation();
 	// albums this visit already queued an upgrade for (button flips to "Queued")
 	let upgradeQueued = $state<Set<string>>(new Set());
 

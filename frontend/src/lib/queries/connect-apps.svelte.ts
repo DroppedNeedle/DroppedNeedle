@@ -44,7 +44,7 @@ export const getAdminAppPasswordsQuery = () =>
 
 const ownAppPasswords = () => [appPasswordsChanged(authStore.user?.id ?? '')];
 
-export function saveConnectAppsSettings() {
+export function createSaveConnectAppsSettingsMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (settings: ConnectAppsSettings) =>
 			api.v3.PUT(v3('/api/v3/settings/connect-apps'), settings),
@@ -52,7 +52,7 @@ export function saveConnectAppsSettings() {
 	}));
 }
 
-export function createAppPassword() {
+export function createAppPasswordMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (name: string) => api.v3.POST(v3('/api/v3/me/app-passwords'), { name }),
 		// returned secret stays in component state for the one-time reveal, never cached
@@ -60,7 +60,7 @@ export function createAppPassword() {
 	}));
 }
 
-export function revokeAppPassword() {
+export function createRevokeAppPasswordMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (id: string) =>
 			api.v3.DELETE(v3('/api/v3/me/app-passwords/{id}', { path: { id } })),
@@ -72,7 +72,7 @@ export function revokeAppPassword() {
 // refresh the admin's OWN profile list when they revoke one of their own (same
 // browser). Another user's list can't be invalidated from here - their client
 // refreshes on next load; server-side auth dies immediately regardless.
-export function adminRevokeAppPassword() {
+export function createAdminRevokeAppPasswordMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (vars: { id: string; userId: string }) =>
 			api.v3.DELETE(v3('/api/v3/admin/app-passwords/{id}', { path: { id: vars.id } })),

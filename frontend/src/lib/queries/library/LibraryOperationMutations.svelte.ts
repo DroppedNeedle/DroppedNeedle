@@ -16,7 +16,7 @@ import {
 
 const work = () => [anyLibraryActivityChanged(), libraryOperationsChanged()];
 
-export function requestLibraryRun() {
+export function createRequestLibraryRunMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (input: {
 			kind: ScanKind;
@@ -31,7 +31,7 @@ export function requestLibraryRun() {
 	}));
 }
 
-export function controlLibraryRun(action: 'pause' | 'resume' | 'stop') {
+export function createControlLibraryRunMutation(action: 'pause' | 'resume' | 'stop') {
 	return createAppMutation(() => ({
 		mutationFn: (input: {
 			runId: string;
@@ -50,7 +50,7 @@ export function controlLibraryRun(action: 'pause' | 'resume' | 'stop') {
 	}));
 }
 
-export function controlIdentification(action: 'pause' | 'resume') {
+export function createControlIdentificationMutation(action: 'pause' | 'resume') {
 	return createAppMutation(() => ({
 		mutationFn: (expectedRevision: number): Promise<IdentificationControlResponse> =>
 			api.v3.POST(
@@ -72,7 +72,7 @@ export function operationControlUrl(action: 'pause' | 'resume' | 'stop', jobId: 
 	return v3('/api/v3/library/operations/{job_id}/stop', { path: { job_id: jobId } });
 }
 
-export function controlLibraryOperation(action: 'pause' | 'resume' | 'stop') {
+export function createControlLibraryOperationMutation(action: 'pause' | 'resume' | 'stop') {
 	return createAppMutation(() => ({
 		mutationFn: async (input: {
 			jobId: string;

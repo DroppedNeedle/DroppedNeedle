@@ -3,7 +3,7 @@
 // so a ready preview asks the server to reissue it once per job. A token the
 // server no longer accepts (one from before an upgrade or a key reset) is
 // replaced the same way when apply refuses it.
-import { reissueLibraryManagementPreviewMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
+import { createReissueLibraryManagementPreviewMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 import {
 	readLibraryManagementPreviewToken,
 	rememberLibraryManagementPreviewToken
@@ -27,7 +27,7 @@ export function createPreviewToken(
 	getPreview: () => LibraryManagementPreviewDetailResponse | null,
 	isActivation: () => boolean
 ): PreviewToken {
-	const reissue = reissueLibraryManagementPreviewMutation();
+	const reissue = createReissueLibraryManagementPreviewMutation();
 	let reissuedToken = $state<string | null>(null);
 	let attemptedJobId = $state<string | null>(null);
 	let failed = $state(false);

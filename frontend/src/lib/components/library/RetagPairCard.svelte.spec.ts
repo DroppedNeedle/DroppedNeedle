@@ -27,8 +27,8 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	})
 }));
 vi.mock('$lib/queries/library/LibraryRetagPairQueries.svelte', () => ({
-	joinRetagPair: () => ({ mutateAsync: h.join, isPending: false }),
-	dismissRetagPair: () => ({ mutateAsync: h.dismiss, isPending: false })
+	createJoinRetagPairMutation: () => ({ mutateAsync: h.join, isPending: false }),
+	createDismissRetagPairMutation: () => ({ mutateAsync: h.dismiss, isPending: false })
 }));
 
 import RetagPairCard from './RetagPairCard.svelte';

@@ -117,17 +117,21 @@ vi.mock('$lib/queries/libraryContributions/LibraryContributionQueries.svelte', (
 }));
 
 vi.mock('$lib/queries/libraryContributions/LibraryContributionMutations.svelte', () => ({
-	updateLibraryContributionMutation: () => ({ isPending: false, mutate: h.mutateSave }),
-	rebuildLibraryContributionMutation: () => ({ isPending: false, mutate: h.mutateRebuild }),
-	cancelLibraryContributionMutation: () => ({ isPending: false, mutate: h.mutateCancel }),
-	searchDiscogsReleasesMutation: () => ({ isPending: false, mutate: vi.fn(), data: undefined }),
-	selectDiscogsReleaseMutation: () => ({ isPending: false, mutate: h.mutateSelect }),
-	removeDiscogsReleaseMutation: () => ({ isPending: false, mutate: vi.fn() }),
-	checkMusicBrainzDuplicatesMutation: () => ({ isPending: false, mutate: vi.fn() }),
-	attachExistingMusicBrainzReleaseMutation: () => ({ isPending: false, mutate: vi.fn() }),
+	createUpdateLibraryContributionMutation: () => ({ isPending: false, mutate: h.mutateSave }),
+	createRebuildLibraryContributionMutation: () => ({ isPending: false, mutate: h.mutateRebuild }),
+	createCancelLibraryContributionMutation: () => ({ isPending: false, mutate: h.mutateCancel }),
+	createSearchDiscogsReleasesMutation: () => ({
+		isPending: false,
+		mutate: vi.fn(),
+		data: undefined
+	}),
+	createSelectDiscogsReleaseMutation: () => ({ isPending: false, mutate: h.mutateSelect }),
+	createRemoveDiscogsReleaseMutation: () => ({ isPending: false, mutate: vi.fn() }),
+	createCheckMusicBrainzDuplicatesMutation: () => ({ isPending: false, mutate: vi.fn() }),
+	createAttachExistingMusicBrainzReleaseMutation: () => ({ isPending: false, mutate: vi.fn() }),
 	createMusicBrainzSeedMutation: () => ({ isPending: false, mutateAsync: vi.fn() }),
-	recordMusicBrainzResultMutation: () => ({ isPending: false, mutate: vi.fn() }),
-	retryMusicBrainzVerificationMutation: () => ({ isPending: false, mutate: vi.fn() })
+	createRecordMusicBrainzResultMutation: () => ({ isPending: false, mutate: vi.fn() }),
+	createRetryMusicBrainzVerificationMutation: () => ({ isPending: false, mutate: vi.fn() })
 }));
 
 import ContributionPage from './+page.svelte';

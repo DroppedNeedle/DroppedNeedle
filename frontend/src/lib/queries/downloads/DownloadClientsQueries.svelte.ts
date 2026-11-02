@@ -28,7 +28,7 @@ const sourcePriorityOptions = () =>
 
 export const getSourcePriorityQuery = () => createQuery(() => sourcePriorityOptions());
 
-export function saveSourcePriority() {
+export function createSaveSourcePriorityMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (order: string[]) =>
 			api.v3.PUT(v3('/api/v3/settings/download-clients/source-priority'), { order }),
@@ -66,7 +66,7 @@ const policyOptions = () =>
 export const getDownloadPolicyQuery = (getEnabled: () => boolean = () => true) =>
 	createQuery(() => ({ ...policyOptions(), enabled: getEnabled() }));
 
-export function saveSabnzbdConfig() {
+export function createSaveSabnzbdConfigMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (config: SabnzbdConnectionSettings) =>
 			api.v3.PUT(v3('/api/v3/settings/download-clients/sabnzbd'), config),
@@ -74,7 +74,7 @@ export function saveSabnzbdConfig() {
 	}));
 }
 
-export function testSabnzbd() {
+export function createTestSabnzbdMutation() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (config: SabnzbdConnectionSettings) =>
@@ -82,7 +82,7 @@ export function testSabnzbd() {
 	}));
 }
 
-export function saveDownloadPolicy() {
+export function createSaveDownloadPolicyMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (policy: DownloadPolicySettings) =>
 			api.v3.PUT(v3('/api/v3/settings/download-clients/policy'), policy),
@@ -98,7 +98,7 @@ const wantedSettingsOptions = () =>
 
 export const getWantedSettingsQuery = () => createQuery(() => wantedSettingsOptions());
 
-export function saveWantedSettings() {
+export function createSaveWantedSettingsMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (settings: WantedWatcherSettings) =>
 			api.v3.PUT(v3('/api/v3/settings/download-clients/wanted'), settings),

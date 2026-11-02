@@ -20,7 +20,7 @@ function identityPreparation(userId: string | undefined, catalog = false): Effec
 	];
 }
 
-export function createLibraryIdentityPreparation(getUserId: () => string | undefined) {
+export function createLibraryIdentityPreparationMutation(getUserId: () => string | undefined) {
 	return createAppMutation(() => ({
 		mutationFn: async (rootIds: string[]) =>
 			await api.v3.POST(v3('/api/v3/library/management/identity-preparations'), {
@@ -36,7 +36,7 @@ export function createLibraryIdentityPreparation(getUserId: () => string | undef
 	}));
 }
 
-export function applyLibraryIdentityPreparation(getUserId: () => string | undefined) {
+export function createApplyLibraryIdentityPreparationMutation(getUserId: () => string | undefined) {
 	return createAppMutation(() => ({
 		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
 			await api.v3.POST(
@@ -57,7 +57,9 @@ export function applyLibraryIdentityPreparation(getUserId: () => string | undefi
 	}));
 }
 
-export function discardLibraryIdentityPreparation(getUserId: () => string | undefined) {
+export function createDiscardLibraryIdentityPreparationMutation(
+	getUserId: () => string | undefined
+) {
 	return createAppMutation(() => ({
 		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
 			await api.v3.POST(
@@ -77,7 +79,7 @@ export function discardLibraryIdentityPreparation(getUserId: () => string | unde
 	}));
 }
 
-export function undoLibraryAutomaticEdition(getUserId: () => string | undefined) {
+export function createUndoLibraryAutomaticEditionMutation(getUserId: () => string | undefined) {
 	return createAppMutation(() => ({
 		mutationFn: (input: {
 			albumId: string;

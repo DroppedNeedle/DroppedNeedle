@@ -4,8 +4,8 @@
 	import {
 		getDownloadClientConfigQuery,
 		getDownloadClientStatusQuery,
-		saveDownloadClientConfig,
-		testDownloadClient
+		createSaveDownloadClientConfigMutation,
+		createTestDownloadClientMutation
 	} from '$lib/queries/downloads/DownloadClientQueries.svelte';
 	import type { DownloadClientConfig } from '$lib/queries/downloads/DownloadClientQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -22,11 +22,11 @@
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
 	const statusQuery = getDownloadClientStatusQuery();
-	const test = testDownloadClient();
+	const test = createTestDownloadClientMutation();
 
 	const section = createSettingsSection(
 		getDownloadClientConfigQuery(),
-		saveDownloadClientConfig(),
+		createSaveDownloadClientConfigMutation(),
 		{
 			test: async (draft) => {
 				if (!draft.url.trim()) return { passed: false, message: 'Add the URL first.' };

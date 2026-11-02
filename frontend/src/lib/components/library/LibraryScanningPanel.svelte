@@ -18,9 +18,9 @@
 		getLibraryRunQuery
 	} from '$lib/queries/library/LibraryOperationQueries.svelte';
 	import {
-		controlIdentification,
-		controlLibraryRun,
-		requestLibraryRun
+		createControlIdentificationMutation,
+		createControlLibraryRunMutation,
+		createRequestLibraryRunMutation
 	} from '$lib/queries/library/LibraryOperationMutations.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { getPendingReviewCountQuery } from '$lib/queries/library/LibraryReviewQueries.svelte';
@@ -39,12 +39,12 @@
 	const reviewsQuery = getPendingReviewCountQuery();
 	const artistReconciliationQuery = getArtistReconciliationProgressQuery(() => authStore.isAdmin);
 	const runDetailQuery = getLibraryRunQuery(() => runsQuery.data?.active?.id ?? null);
-	const requestRun = requestLibraryRun();
-	const pauseRun = controlLibraryRun('pause');
-	const resumeRun = controlLibraryRun('resume');
-	const stopRun = controlLibraryRun('stop');
-	const pauseIdentification = controlIdentification('pause');
-	const resumeIdentification = controlIdentification('resume');
+	const requestRun = createRequestLibraryRunMutation();
+	const pauseRun = createControlLibraryRunMutation('pause');
+	const resumeRun = createControlLibraryRunMutation('resume');
+	const stopRun = createControlLibraryRunMutation('stop');
+	const pauseIdentification = createControlIdentificationMutation('pause');
+	const resumeIdentification = createControlIdentificationMutation('resume');
 
 	const scan = $derived(activityQuery.data?.items.find((item) => item.kind === 'scan'));
 	const identification = $derived(

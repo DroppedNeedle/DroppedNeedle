@@ -42,28 +42,28 @@ const showQueued = (message: string) => () => {
 
 const catalog = () => [catalogChanged(authStore.user?.id)];
 
-export const updateLibraryManagementSettingsMutation = () =>
+export const createUpdateLibraryManagementSettingsMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementSettingsUpdateRequest) =>
 			api.v3.PUT(v3('/api/v3/settings/library-management'), request),
 		effects: catalog
 	}));
 
-export const previewLibraryManagementSettingsImpactMutation = () =>
+export const createPreviewLibraryManagementSettingsImpactMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (request: LibraryManagementSettingsImpactRequest) =>
 			api.v3.POST(v3('/api/v3/settings/library-management/impact'), request)
 	}));
 
-export const validateLibraryManagementSettingsMutation = () =>
+export const createValidateLibraryManagementSettingsMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (request: LibraryManagementSettingsImpactRequest) =>
 			api.v3.POST(v3('/api/v3/settings/library-management/validate'), request)
 	}));
 
-export const copyLibraryManagementProfileMutation = () =>
+export const createCopyLibraryManagementProfileMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileCopyRequest }) =>
 			api.v3.POST(
@@ -75,7 +75,7 @@ export const copyLibraryManagementProfileMutation = () =>
 		effects: catalog
 	}));
 
-export const deleteLibraryManagementProfileMutation = () =>
+export const createDeleteLibraryManagementProfileMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileDeleteRequest }) =>
 			api.v3.DELETE(
@@ -87,7 +87,7 @@ export const deleteLibraryManagementProfileMutation = () =>
 		effects: catalog
 	}));
 
-export const exportLibraryManagementProfileMutation = () =>
+export const createExportLibraryManagementProfileMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileExportRequest }) =>
@@ -99,14 +99,14 @@ export const exportLibraryManagementProfileMutation = () =>
 			)
 	}));
 
-export const previewLibraryManagementProfileImportMutation = () =>
+export const createPreviewLibraryManagementProfileImportMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (request: LibraryManagementProfileImportPreviewRequest) =>
 			api.v3.POST(v3('/api/v3/settings/library-management/profile-imports/preview'), request)
 	}));
 
-export const importLibraryManagementProfileMutation = () =>
+export const createImportLibraryManagementProfileMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementProfileImportRequest) =>
 			api.v3.POST(v3('/api/v3/settings/library-management/profile-imports'), request),
@@ -127,7 +127,7 @@ export const createLibraryManagementActivationPreviewMutation = () =>
 		onError: showActionError('Could not queue the activation preview')
 	}));
 
-export const confirmLibraryManagementActivationMutation = () =>
+export const createConfirmLibraryManagementActivationMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementActivationConfirmRequest) =>
 			api.v3.POST(v3('/api/v3/settings/library-management/activation-confirmations'), request),
@@ -156,7 +156,7 @@ export const createLibraryManagementTagEditPreviewMutation = () =>
 		onError: showActionError('Could not queue the tag edit preview')
 	}));
 
-export const applyLibraryManagementPreviewMutation = () =>
+export const createApplyLibraryManagementPreviewMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: async (input: {
 			jobId: string;
@@ -178,7 +178,7 @@ export const applyLibraryManagementPreviewMutation = () =>
 		}
 	}));
 
-export const reissueLibraryManagementPreviewMutation = () =>
+export const createReissueLibraryManagementPreviewMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: {
@@ -195,7 +195,7 @@ export const reissueLibraryManagementPreviewMutation = () =>
 		}
 	}));
 
-export const discardLibraryManagementPreviewMutation = () =>
+export const createDiscardLibraryManagementPreviewMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: async (input: {
 			jobId: string;
@@ -263,13 +263,13 @@ export const createLibraryManagementDuplicateResolutionMutation = () =>
 		onError: showActionError('Could not queue the duplicate resolution preview')
 	}));
 
-export const previewLibraryManagementBaselinePurgeMutation = () =>
+export const createPreviewLibraryManagementBaselinePurgeMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: () => api.v3.POST(v3('/api/v3/library/management/baselines/purge-impact'))
 	}));
 
-export const purgeLibraryManagementBaselinesMutation = () =>
+export const createPurgeLibraryManagementBaselinesMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementBaselinePurgeRequest) =>
 			api.v3.POST(v3('/api/v3/library/management/baselines/purge'), request),
@@ -278,7 +278,7 @@ export const purgeLibraryManagementBaselinesMutation = () =>
 		onError: showActionError('Could not purge organization baselines')
 	}));
 
-export const resolveLibraryManagementImportBundleMutation = () =>
+export const createResolveLibraryManagementImportBundleMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: { bundleId: string }) =>
@@ -301,7 +301,7 @@ export function handBackRefusalMessage(error: unknown): string | null {
 
 // Hands one album the app stepped back from to automatic management again.
 // Its files are then retagged and renamed from its edition.
-export const handBackLibraryAlbumMutation = () =>
+export const createHandBackLibraryAlbumMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (input: { albumId: string }) =>
 			api.v3.POST(
@@ -319,14 +319,16 @@ export const handBackLibraryAlbumMutation = () =>
 
 // Hands back every album the app stepped back from. The server works
 // through them in the background.
-export const handBackAllLibraryAlbumsMutation = () =>
+export const createHandBackAllLibraryAlbumsMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: () => api.v3.POST(v3('/api/v3/library/management/hand-back')),
 		effects: catalog,
 		onError: showActionError('Could not hand these albums back')
 	}));
 
-export const controlLibraryManagementOperationMutation = (action: 'pause' | 'resume' | 'stop') =>
+export const createControlLibraryManagementOperationMutation = (
+	action: 'pause' | 'resume' | 'stop'
+) =>
 	createAppMutation(() => ({
 		mutationFn: async (input: {
 			jobId: string;
@@ -344,7 +346,7 @@ export const controlLibraryManagementOperationMutation = (action: 'pause' | 'res
 
 // Checks one library folder now. The server creates and removes a folder
 // at the top of it.
-export const checkLibraryManagementPlacementMutation = (
+export const createCheckLibraryManagementPlacementMutation = (
 	getUserId: () => string | null | undefined
 ) =>
 	createAppMutation(() => ({

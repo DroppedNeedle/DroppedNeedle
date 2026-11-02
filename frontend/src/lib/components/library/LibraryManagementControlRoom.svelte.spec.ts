@@ -188,13 +188,22 @@ vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () =>
 	TAKEOVERS_POLL_MS: 5_000
 }));
 vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
-	controlLibraryManagementOperationMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	handBackLibraryAlbumMutation: () => ({ mutateAsync: h.handBack, isPending: false }),
-	handBackAllLibraryAlbumsMutation: () => ({ mutateAsync: h.handBackAll, isPending: false }),
+	createControlLibraryManagementOperationMutation: () => ({
+		mutateAsync: vi.fn(),
+		isPending: false
+	}),
+	createHandBackLibraryAlbumMutation: () => ({ mutateAsync: h.handBack, isPending: false }),
+	createHandBackAllLibraryAlbumsMutation: () => ({ mutateAsync: h.handBackAll, isPending: false }),
 	handBackRefusalMessage: () => null,
-	discardLibraryManagementPreviewMutation: () => ({ mutateAsync: h.discard, isPending: false }),
-	reissueLibraryManagementPreviewMutation: () => ({ mutateAsync: h.reissue, isPending: false }),
-	resolveLibraryManagementImportBundleMutation: () => ({
+	createDiscardLibraryManagementPreviewMutation: () => ({
+		mutateAsync: h.discard,
+		isPending: false
+	}),
+	createReissueLibraryManagementPreviewMutation: () => ({
+		mutateAsync: h.reissue,
+		isPending: false
+	}),
+	createResolveLibraryManagementImportBundleMutation: () => ({
 		mutateAsync: h.resolveImportBundle,
 		isPending: false
 	}),
@@ -203,42 +212,42 @@ vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () 
 		mutateAsync: vi.fn(),
 		isPending: false
 	}),
-	updateLibraryManagementSettingsMutation: () => ({
+	createUpdateLibraryManagementSettingsMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
 	}),
-	previewLibraryManagementSettingsImpactMutation: () => ({
+	createPreviewLibraryManagementSettingsImpactMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
 	}),
-	validateLibraryManagementSettingsMutation: () => ({
+	createValidateLibraryManagementSettingsMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
 	}),
-	copyLibraryManagementProfileMutation: () => ({
+	createCopyLibraryManagementProfileMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
 	}),
-	deleteLibraryManagementProfileMutation: () => ({
+	createDeleteLibraryManagementProfileMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
 	}),
-	exportLibraryManagementProfileMutation: () => ({
+	createExportLibraryManagementProfileMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
 	}),
-	previewLibraryManagementProfileImportMutation: () => ({
+	createPreviewLibraryManagementProfileImportMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
 	}),
-	importLibraryManagementProfileMutation: () => ({
+	createImportLibraryManagementProfileMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
@@ -248,7 +257,7 @@ vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () 
 		mutate: vi.fn(),
 		isPending: false
 	}),
-	confirmLibraryManagementActivationMutation: () => ({
+	createConfirmLibraryManagementActivationMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
@@ -258,7 +267,7 @@ vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () 
 		mutate: vi.fn(),
 		isPending: false
 	}),
-	applyLibraryManagementPreviewMutation: () => ({
+	createApplyLibraryManagementPreviewMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
@@ -273,12 +282,12 @@ vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () 
 		mutate: vi.fn(),
 		isPending: false
 	}),
-	previewLibraryManagementBaselinePurgeMutation: () => ({
+	createPreviewLibraryManagementBaselinePurgeMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
 	}),
-	purgeLibraryManagementBaselinesMutation: () => ({
+	createPurgeLibraryManagementBaselinesMutation: () => ({
 		mutateAsync: vi.fn(),
 		mutate: vi.fn(),
 		isPending: false
@@ -286,8 +295,8 @@ vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () 
 }));
 vi.mock('$lib/queries/library/LibraryRetagPairQueries.svelte', () => ({
 	getRetagPairsQuery: () => h.retagPairs,
-	joinRetagPair: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	dismissRetagPair: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createJoinRetagPairMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createDismissRetagPairMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/albums/EditionQueries.svelte', async (importOriginal) => ({
 	...(await importOriginal<object>()),
@@ -303,15 +312,26 @@ vi.mock('$lib/queries/library/LibraryIdentityPreparationQueries.svelte', () => (
 	})
 }));
 vi.mock('$lib/queries/library/LibraryIdentityPreparationMutations.svelte', () => ({
-	createLibraryIdentityPreparation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	applyLibraryIdentityPreparation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	discardLibraryIdentityPreparation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	undoLibraryAutomaticEdition: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createLibraryIdentityPreparationMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createApplyLibraryIdentityPreparationMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createDiscardLibraryIdentityPreparationMutation: () => ({
+		mutateAsync: vi.fn(),
+		isPending: false
+	}),
+	createUndoLibraryAutomaticEditionMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
-	controlLibraryOperation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	controlLibraryRun: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
-	controlIdentification: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })
+	createControlLibraryOperationMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createControlLibraryRunMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	createControlIdentificationMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	})
 }));
 vi.mock('$lib/queries/library/LibraryRepairQueries.svelte', () => ({
 	getLibraryRepairsQuery: () => ({ data: { pages: [{ items: [] }] }, isLoading: false }),
@@ -324,8 +344,8 @@ vi.mock('$lib/queries/library/LibraryRepairQueries.svelte', () => ({
 	})
 }));
 vi.mock('$lib/queries/library/LibraryRepairMutations.svelte', () => ({
-	createLibraryRepair: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	applyLibraryRepair: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createLibraryRepairMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createApplyLibraryRepairMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 import LibraryManagementControlRoom from './LibraryManagementControlRoom.svelte';

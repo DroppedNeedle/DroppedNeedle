@@ -2,7 +2,7 @@
 	import type { Album, EnrichmentSource } from '$lib/types';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { libraryStore } from '$lib/stores/library';
-	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import { getListenTitle } from '$lib/utils/enrichment';
 	import { Download, Music2 } from 'lucide-svelte';
@@ -36,7 +36,7 @@
 
 	let requesting = $state(false);
 
-	const albumRequest = requestAlbum();
+	const albumRequest = createRequestAlbumMutation();
 
 	let inLibrary = $derived(
 		libraryStore.isInLibrary(album.musicbrainz_id) || album.in_library || false

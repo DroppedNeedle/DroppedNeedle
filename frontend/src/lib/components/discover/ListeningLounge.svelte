@@ -4,7 +4,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { deckSampler, type SampleEntry } from '$lib/stores/deckSampler.svelte';
 	import { libraryStore } from '$lib/stores/library';
-	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { albumHrefOrNull } from '$lib/utils/entityRoutes';
 	import type { AlbumRef, ChartSection, TopPicksSection } from '$lib/queries/discover/types';
 	import { albumRows } from '$lib/utils/sectionRows';
@@ -78,7 +78,7 @@
 		deckSampler.startStation('Listening Lounge', pool.map(albumEntry));
 	}
 
-	const loungeRequest = requestAlbum();
+	const loungeRequest = createRequestAlbumMutation();
 
 	async function requestActive() {
 		if (!activeAlbum?.musicbrainz_id || requesting) return;

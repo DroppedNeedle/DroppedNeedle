@@ -18,7 +18,7 @@
 	import LocalArtistPage from './LocalArtistPage.svelte';
 	import type { LibraryArtistSummary } from '$lib/types';
 	import PageSectionToc from '$lib/components/PageSectionToc.svelte';
-	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { libraryStore } from '$lib/stores/library';
 	import { type MusicSource, isMusicSource } from '$lib/stores/musicSource';
@@ -46,8 +46,8 @@
 	import ArtistReleasePagination from '$lib/components/ArtistReleasePagination.svelte';
 	import { mergeArtistReleasePages } from '$lib/queries/artist/artistReleasePages';
 	import { mergeArtistImages } from '$lib/queries/catalog/catalogAdapters';
-	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings.svelte';
-	import { setFavorite } from '$lib/queries/library/FavoriteMutations.svelte';
+	import { getRatingsQuery, ratingOf, createSetRatingMutation } from '$lib/queries/ratings.svelte';
+	import { createSetFavoriteMutation } from '$lib/queries/library/FavoriteMutations.svelte';
 
 	interface Props {
 		data: { artistId: string; primarySource: MusicSource };
@@ -60,8 +60,8 @@
 	const ratingsQuery = getRatingsQuery(() =>
 		localArtist ? { artistIds: [localArtist.id] } : null
 	);
-	const rate = setRating();
-	const heart = setFavorite();
+	const rate = createSetRatingMutation();
+	const heart = createSetFavoriteMutation();
 
 	// svelte-ignore state_referenced_locally
 	let activeSource = new PersistedState<MusicSource>(
@@ -241,7 +241,7 @@
 		void refreshArtist(data.artistId);
 	}
 
-	const providerReleaseRequest = requestAlbum();
+	const providerReleaseRequest = createRequestAlbumMutation();
 
 	async function handleRequest(releaseId: string, releaseTitle?: string) {
 		requestedReleaseIds.add(releaseId);

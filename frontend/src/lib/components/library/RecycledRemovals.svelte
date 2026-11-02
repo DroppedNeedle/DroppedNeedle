@@ -7,7 +7,7 @@
 	import { failureSentence } from '$lib/components/library/edition/editionCopy';
 	import {
 		getAlbumRemovalsQuery,
-		putBackRemoval,
+		createPutBackRemovalMutation,
 		type AlbumRemoval
 	} from '$lib/queries/library/RemovalQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -30,7 +30,7 @@
 	let { albumId, releaseGroupMbid = null, onputback, class: className = '' }: Props = $props();
 
 	const removalsQuery = getAlbumRemovalsQuery(() => albumId);
-	const putBack = putBackRemoval();
+	const putBack = createPutBackRemovalMutation();
 	let notes = $state<Record<string, string>>({});
 	let notBack = $state<string | null>(null);
 

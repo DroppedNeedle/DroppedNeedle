@@ -30,13 +30,13 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 }));
 
 import {
-	acquireEdition,
-	chooseAlbumEdition,
+	createAcquireEditionMutation,
+	createChooseAlbumEditionMutation,
 	getAlbumEditionStatusQuery,
 	getAlbumEditionsQuery,
-	handBackAlbumEdition,
-	matchEditionFile,
-	unmatchEditionFile
+	createHandBackAlbumEditionMutation,
+	createMatchEditionFileMutation,
+	createUnmatchEditionFileMutation
 } from './EditionQueries.svelte';
 import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
 
@@ -83,7 +83,7 @@ it('keys the editions by user and drops them on a source switch', () => {
 });
 
 it('refreshes the copy, its plans and pages and both groups after a choice', async () => {
-	const choose = chooseAlbumEdition() as unknown as EditionMutationOptions;
+	const choose = createChooseAlbumEditionMutation() as unknown as EditionMutationOptions;
 	const variables = {
 		userId: 'user-a',
 		localId: 'local-1',
@@ -150,7 +150,7 @@ it('marks the plans stale once the files are placed', async () => {
 });
 
 it('refreshes the download queue and the album after an acquire, for this user only', async () => {
-	const acquire = acquireEdition() as unknown as EditionMutationOptions;
+	const acquire = createAcquireEditionMutation() as unknown as EditionMutationOptions;
 	await acquire.mutationFn({ mbid: 'release-group' });
 
 	expect(h.v3.POST).toHaveBeenCalledWith('/api/v3/albums/release-group/edition/acquire');
@@ -187,8 +187,8 @@ it('reads one copy edition by local id and scopes the key by user', () => {
 });
 
 it('matches a file by hand and undoes it, refreshing what the carry can move, refused or not', async () => {
-	const match = matchEditionFile() as unknown as EditionMutationOptions;
-	const unmatch = unmatchEditionFile() as unknown as EditionMutationOptions;
+	const match = createMatchEditionFileMutation() as unknown as EditionMutationOptions;
+	const unmatch = createUnmatchEditionFileMutation() as unknown as EditionMutationOptions;
 	const variables = {
 		localId: 'local-1',
 		trackId: 'file-9',
@@ -231,8 +231,8 @@ it('matches a file by hand and undoes it, refreshing what the carry can move, re
 });
 
 it('refuses edition choices carrying an RG MBID or a missing local id', async () => {
-	const choose = chooseAlbumEdition() as unknown as EditionMutationOptions;
-	const handBack = handBackAlbumEdition() as unknown as EditionMutationOptions;
+	const choose = createChooseAlbumEditionMutation() as unknown as EditionMutationOptions;
+	const handBack = createHandBackAlbumEditionMutation() as unknown as EditionMutationOptions;
 	expect(() =>
 		choose.mutationFn({
 			userId: 'user-a',

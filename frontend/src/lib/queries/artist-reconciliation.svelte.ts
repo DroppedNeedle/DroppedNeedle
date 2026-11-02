@@ -96,7 +96,7 @@ export const getArtistDuplicateGroupQuery = (getGroupId: Getter<string | null>) 
 		};
 	});
 
-export const dismissArtistDuplicateGroup = () =>
+export const createDismissArtistDuplicateGroupMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (input: { groupId: string; expectedMemberRevisions: Record<string, number> }) =>
 			api.v3.POST(

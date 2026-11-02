@@ -131,7 +131,7 @@ vi.mock('$lib/utils/lazyImage', () => ({
 	resetLazyImage: vi.fn()
 }));
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
-	requestBatch: () => ({ mutateAsync: batchRequestMock })
+	createRequestBatchMutation: () => ({ mutateAsync: batchRequestMock })
 }));
 vi.mock('$lib/utils/navigationProgress', () => ({
 	createNavigationProgressController: vi.fn(() => ({

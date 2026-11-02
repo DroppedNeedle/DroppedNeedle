@@ -68,7 +68,7 @@ const refreshIfStale = (error: unknown) =>
 
 // A join merges the old album into the new one, so the pair list, both
 // albums and every album list change; the library prefix covers them all.
-export function joinRetagPair() {
+export function createJoinRetagPairMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (
 			input: RetagPairJoinInput
@@ -93,7 +93,7 @@ export function joinRetagPair() {
 	}));
 }
 
-export function dismissRetagPair() {
+export function createDismissRetagPairMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (input: {
 			oldAlbumId: string;

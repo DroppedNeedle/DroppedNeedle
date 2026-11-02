@@ -18,8 +18,8 @@ vi.mock('$lib/queries/playlists/PlaylistV3Queries.svelte', () => ({
 	getPlaylistListV3Query: () => listQuery
 }));
 vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
-	createPlaylistV3: () => ({ mutateAsync: mockMutateAsync, isPending: false }),
-	deletePlaylistV3: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createPlaylistV3Mutation: () => ({ mutateAsync: mockMutateAsync, isPending: false }),
+	createDeletePlaylistV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/connections/ConnectionsQuery.svelte', () => ({
 	getConnectionsQuery: () => ({ data: undefined, isPending: false })

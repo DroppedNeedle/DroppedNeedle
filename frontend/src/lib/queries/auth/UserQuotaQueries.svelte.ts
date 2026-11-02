@@ -27,7 +27,7 @@ export const getUserQuotaQuery = (userId: () => string, enabled: () => boolean) 
 			api.v3.GET(v3('/api/v3/admin/users/{id}/quota', { path: { id: userId() } }), { signal })
 	}));
 
-export function saveUserQuota() {
+export function createSaveUserQuotaMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({ userId, override }: { userId: string; override: UserQuotaOverride }) =>
 			api.v3.PUT(v3('/api/v3/admin/users/{id}/quota', { path: { id: userId } }), override),

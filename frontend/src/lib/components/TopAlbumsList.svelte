@@ -5,7 +5,7 @@
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import type { AlbumRef } from '$lib/queries/discover/types';
 	import { libraryStore } from '$lib/stores/library';
-	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -25,7 +25,7 @@
 
 	let requestingIds = new SvelteSet<string>();
 
-	const topAlbumRequest = requestAlbum();
+	const topAlbumRequest = createRequestAlbumMutation();
 
 	let libraryMbids = new SvelteSet<string>();
 	let requestedMbids = new SvelteSet<string>();

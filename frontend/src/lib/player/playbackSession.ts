@@ -1,6 +1,6 @@
 import { beaconAvailable, sendJsonBeacon } from '$lib/api/channels';
+import { v3 } from '$lib/api/v3/endpoint';
 import {
-	GATEWAY_ENDPOINTS,
 	reportPlaybackProgress,
 	startPlaybackSession,
 	stopPlaybackSession,
@@ -89,7 +89,7 @@ export function createPlaybackSession(options: SessionOptions) {
 			position_ms: toMs(options.position().seconds),
 			duration_ms: durationMs()
 		};
-		sendJsonBeacon(GATEWAY_ENDPOINTS.playbackStop(), stop);
+		sendJsonBeacon(v3('/api/v3/playback/stop'), stop);
 	}
 
 	function listen(on: boolean): void {

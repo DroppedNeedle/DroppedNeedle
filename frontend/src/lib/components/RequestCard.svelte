@@ -5,7 +5,7 @@
 	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
 	import type { RequestItem, RequestKind } from '$lib/queries/requests/types';
 	import { liveRequestStatus } from '$lib/queries/requests/liveStatus';
-	import { reimportDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createReimportDownloadMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { createFromAlbumMutation } from '$lib/queries/requests/RequestMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -63,7 +63,7 @@
 		onreimported
 	}: Props = $props();
 
-	const reimport = reimportDownload();
+	const reimport = createReimportDownloadMutation();
 	const fromAlbum = createFromAlbumMutation();
 
 	let confirmingCancel = $state(false);

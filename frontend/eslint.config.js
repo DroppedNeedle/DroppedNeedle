@@ -30,6 +30,31 @@ const queryClientRules = [
 	}
 ];
 
+// A mutation hook exported from lib/queries is create<Action>Mutation. Matches
+// an exported function that returns a call to any *Mutation builder, and one
+// taken from a settings section's save.
+const MUTATION_HOOK_NAME = '/^create[A-Z]\\w*Mutation$/';
+const MUTATION_BUILDER = '/Mutation$/';
+const mutationNameMessage = 'A mutation hook is named create<Action>Mutation.';
+const mutationNameRules = [
+	{
+		selector: `ExportNamedDeclaration VariableDeclarator[id.name!=${MUTATION_HOOK_NAME}] > ArrowFunctionExpression > CallExpression[callee.name=${MUTATION_BUILDER}]`,
+		message: mutationNameMessage
+	},
+	{
+		selector: `ExportNamedDeclaration VariableDeclarator[id.name!=${MUTATION_HOOK_NAME}] > ArrowFunctionExpression > BlockStatement > ReturnStatement > CallExpression[callee.name=${MUTATION_BUILDER}]`,
+		message: mutationNameMessage
+	},
+	{
+		selector: `ExportNamedDeclaration > FunctionDeclaration[id.name!=${MUTATION_HOOK_NAME}] > BlockStatement > ReturnStatement > CallExpression[callee.name=${MUTATION_BUILDER}]`,
+		message: mutationNameMessage
+	},
+	{
+		selector: `ExportNamedDeclaration VariableDeclarator[id.name!=${MUTATION_HOOK_NAME}] > MemberExpression[property.name='save']`,
+		message: mutationNameMessage
+	}
+];
+
 // Server calls go through the transport in src/lib/api/: URLs come from v3()
 // registry templates, requests from the api client. An API path literal or a
 // raw fetch anywhere else skips the contract check, so both are errors outside
@@ -236,6 +261,20 @@ export default defineConfig(
 				...transportRules,
 				...markupRules,
 				...linkRules
+			]
+		}
+	},
+	{
+		files: ['src/lib/queries/**/*.ts'],
+		ignores: ['src/**/*.spec.ts'],
+		rules: {
+			'no-restricted-syntax': [
+				'error',
+				...queryClientRules,
+				...transportRules,
+				...markupRules,
+				...linkRules,
+				...mutationNameRules
 			]
 		}
 	},

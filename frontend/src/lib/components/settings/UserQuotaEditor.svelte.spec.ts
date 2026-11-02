@@ -36,7 +36,7 @@ vi.mock('$lib/queries/auth/UserQuotaQueries.svelte', () => ({
 			return h.isError;
 		}
 	}),
-	saveUserQuota: () => ({
+	createSaveUserQuotaMutation: () => ({
 		mutateAsync: h.save,
 		get isPending() {
 			return h.savePending;

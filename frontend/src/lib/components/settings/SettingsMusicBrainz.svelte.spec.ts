@@ -48,11 +48,11 @@ vi.mock('$lib/queries/musicbrainz/MusicBrainzQueries.svelte', () => ({
 	getMusicBrainzSettingsQuery: () => h.query
 }));
 vi.mock('$lib/queries/musicbrainz/MusicBrainzMutations.svelte', () => ({
-	saveMusicBrainzSettings: () => h.save,
-	consentBrainzMash: () => h.consent,
-	stageBrainzMash: () => h.stage,
-	testMusicBrainzConnection: () => h.verify,
-	activateBrainzMash: () => h.activate
+	createSaveMusicBrainzSettingsMutation: () => h.save,
+	createConsentBrainzMashMutation: () => h.consent,
+	createStageBrainzMashMutation: () => h.stage,
+	createTestMusicBrainzConnectionMutation: () => h.verify,
+	createActivateBrainzMashMutation: () => h.activate
 }));
 
 vi.mock('$lib/queries/QueryClient', async (importOriginal) => ({

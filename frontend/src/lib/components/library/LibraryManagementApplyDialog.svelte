@@ -12,7 +12,7 @@
 	import { CircleCheckBig, ShieldAlert } from 'lucide-svelte';
 
 	import { LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE } from '$lib/queries/library-management/LibraryManagementConfirmation';
-	import { applyLibraryManagementPreviewMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
+	import { createApplyLibraryManagementPreviewMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import { forgetLibraryManagementPreviewToken } from '$lib/queries/library-management/LibraryManagementPreviewTokens';
 	import type { LibraryManagementPreviewDetailResponse } from '$lib/queries/library-management/types';
 	import Button from '$lib/ui/Button.svelte';
@@ -38,7 +38,7 @@
 	let confirmation = $state('');
 	let error = $state('');
 
-	const applyPreview = applyLibraryManagementPreviewMutation();
+	const applyPreview = createApplyLibraryManagementPreviewMutation();
 	const confirmed = $derived(confirmation === LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE);
 
 	export function open(button: HTMLElement): void {

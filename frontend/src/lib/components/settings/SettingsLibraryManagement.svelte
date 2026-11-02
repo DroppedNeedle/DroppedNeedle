@@ -36,8 +36,8 @@
 		getLibraryManagementOperationsQuery
 	} from '$lib/queries/library-management/LibraryManagementQueries.svelte';
 	import {
-		previewLibraryManagementSettingsImpactMutation,
-		validateLibraryManagementSettingsMutation
+		createPreviewLibraryManagementSettingsImpactMutation,
+		createValidateLibraryManagementSettingsMutation
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import type {
 		LibraryManagementProfile,
@@ -68,8 +68,8 @@
 		() => authStore.user?.id,
 		() => authStore.isAdmin
 	);
-	const validateSettings = validateLibraryManagementSettingsMutation();
-	const impactSettings = previewLibraryManagementSettingsImpactMutation();
+	const validateSettings = createValidateLibraryManagementSettingsMutation();
+	const impactSettings = createPreviewLibraryManagementSettingsImpactMutation();
 
 	const wizard = new ActivationWizard(settings, () => policyRevision);
 

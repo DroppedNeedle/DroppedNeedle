@@ -22,7 +22,7 @@ vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () =>
 	getLibraryManagementOperationResultsQuery: () => h.results
 }));
 vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
-	controlLibraryManagementOperationMutation: (action: string) => ({
+	createControlLibraryManagementOperationMutation: (action: string) => ({
 		mutateAsync: action === 'pause' ? h.pause : action === 'resume' ? h.resume : h.stop,
 		isPending: false
 	}),

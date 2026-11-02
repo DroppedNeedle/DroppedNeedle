@@ -7,7 +7,7 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
 	import {
-		confirmAlbumEdition,
+		createConfirmAlbumEditionMutation,
 		getWaitingAlbumsQuery
 	} from '$lib/queries/albums/EditionQueries.svelte';
 
@@ -28,7 +28,7 @@
 		() => view,
 		PAGE
 	);
-	const confirm = confirmAlbumEdition();
+	const confirm = createConfirmAlbumEditionMutation();
 	const items = $derived(query.data?.pages.flatMap((page) => page.items) ?? []);
 	const total = $derived(query.data?.pages[0]?.total ?? 0);
 

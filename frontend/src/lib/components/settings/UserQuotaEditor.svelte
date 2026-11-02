@@ -1,7 +1,7 @@
 <script lang="ts">
 	import {
 		getUserQuotaQuery,
-		saveUserQuota,
+		createSaveUserQuotaMutation,
 		type UserQuotaResponse
 	} from '$lib/queries/auth/UserQuotaQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -21,7 +21,7 @@
 		() => userId,
 		() => true
 	);
-	const save = saveUserQuota();
+	const save = createSaveUserQuotaMutation();
 
 	// blank input = inherit the global default (sent as null); a number input's
 	// binding yields number | null once edited, string only from our seeding

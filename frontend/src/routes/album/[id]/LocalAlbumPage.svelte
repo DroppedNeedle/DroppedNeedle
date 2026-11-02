@@ -16,9 +16,9 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
-	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings.svelte';
+	import { getRatingsQuery, ratingOf, createSetRatingMutation } from '$lib/queries/ratings.svelte';
 	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
-	import { setFavorite } from '$lib/queries/library/FavoriteMutations.svelte';
+	import { createSetFavoriteMutation } from '$lib/queries/library/FavoriteMutations.svelte';
 	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
 	import {
 		getAlbumEditionStatusQuery,
@@ -65,8 +65,8 @@
 			? { albumIds: [album.id], trackIds: tracks.map((track) => track.id) }
 			: null
 	);
-	const rate = setRating();
-	const heart = setFavorite();
+	const rate = createSetRatingMutation();
+	const heart = createSetFavoriteMutation();
 
 	// The edition plan's word on single files, read under the plate's keys.
 	const userId = () => authStore.user?.id;

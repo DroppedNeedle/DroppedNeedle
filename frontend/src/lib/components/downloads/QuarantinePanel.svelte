@@ -5,12 +5,12 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import {
-		deleteQuarantineEntry,
+		createDeleteQuarantineEntryMutation,
 		getQuarantineQuery
 	} from '$lib/queries/downloads/QuarantineQueries.svelte';
 
 	const query = getQuarantineQuery();
-	const del = deleteQuarantineEntry();
+	const del = createDeleteQuarantineEntryMutation();
 
 	// two-step inline confirm: the deletion is permanent
 	let confirmId = $state<number | null>(null);

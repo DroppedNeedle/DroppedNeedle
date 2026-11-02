@@ -10,33 +10,24 @@ export type CoverSize = number | 'original';
 /** MusicBrainz entity a cover belongs to. */
 export type CoverKind = 'artist' | 'release-group' | 'release';
 
-/** Typed v3 cover URLs; pass them through `coverSrc` for an `<img>` src. */
-const COVER_ENDPOINTS = {
-	artist: (artistId: string, size = 500) =>
-		v3('/api/v3/covers/artist/{artist_id}', {
-			path: { artist_id: artistId },
-			query: { size }
-		}),
-	releaseGroup: (releaseGroupId: string, size: CoverSize = 500) =>
-		v3('/api/v3/covers/release-group/{release_group_id}', {
-			path: { release_group_id: releaseGroupId },
-			query: { size: String(size) }
-		}),
-	release: (releaseId: string, size: CoverSize = 500) =>
-		v3('/api/v3/covers/release/{release_id}', {
-			path: { release_id: releaseId },
-			query: { size: String(size) }
-		})
-} as const;
-
+/** Typed v3 cover URL; pass it through `coverSrc` for an `<img>` src. */
 function coverEndpoint(kind: CoverKind, id: string, size: number): V3Url {
 	switch (kind) {
 		case 'artist':
-			return COVER_ENDPOINTS.artist(id, size);
+			return v3('/api/v3/covers/artist/{artist_id}', {
+				path: { artist_id: id },
+				query: { size }
+			});
 		case 'release':
-			return COVER_ENDPOINTS.release(id, size);
+			return v3('/api/v3/covers/release/{release_id}', {
+				path: { release_id: id },
+				query: { size: String(size) }
+			});
 		default:
-			return COVER_ENDPOINTS.releaseGroup(id, size);
+			return v3('/api/v3/covers/release-group/{release_group_id}', {
+				path: { release_group_id: id },
+				query: { size: String(size) }
+			});
 	}
 }
 

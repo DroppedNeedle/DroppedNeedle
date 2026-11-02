@@ -75,7 +75,7 @@ vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
 		},
 		refetch: h.refetch
 	}),
-	saveDownloadPolicy: () => ({
+	createSaveDownloadPolicyMutation: () => ({
 		mutateAsync: h.mutateAsync,
 		get isPending() {
 			return false;

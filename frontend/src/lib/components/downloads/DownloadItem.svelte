@@ -13,13 +13,13 @@
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import {
-		cancelDownload,
-		reimportDownload,
-		retryDownload,
-		stopAutoRetry
+		createCancelDownloadMutation,
+		createReimportDownloadMutation,
+		createRetryDownloadMutation,
+		createStopAutoRetryMutation
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { createDownloadStream } from '$lib/queries/downloads/DownloadSSE.svelte';
-	import { startAlbumSearch } from '$lib/queries/downloads/SearchQueries.svelte';
+	import { createStartAlbumSearchMutation } from '$lib/queries/downloads/SearchQueries.svelte';
 	import {
 		canCancel,
 		canReimport,
@@ -43,11 +43,11 @@
 
 	let { task }: { task: DownloadTask } = $props();
 
-	const cancel = cancelDownload();
-	const retry = retryDownload();
-	const stopRetry = stopAutoRetry();
-	const reimport = reimportDownload();
-	const search = startAlbumSearch();
+	const cancel = createCancelDownloadMutation();
+	const retry = createRetryDownloadMutation();
+	const stopRetry = createStopAutoRetryMutation();
+	const reimport = createReimportDownloadMutation();
+	const search = createStartAlbumSearchMutation();
 	const stream = createDownloadStream();
 
 	// A failed/partial task waiting on its next auto-retry: offer an off-switch so the

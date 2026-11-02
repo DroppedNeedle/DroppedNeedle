@@ -37,7 +37,7 @@
 	import HeldFileRow from '$lib/components/downloads/HeldFileRow.svelte';
 	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { requestUpgradeTrack } from '$lib/queries/downloads/UpgradeQueries.svelte';
+	import { createRequestUpgradeTrackMutation } from '$lib/queries/downloads/UpgradeQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 
 	const integrations = useIntegrationStatus();
@@ -152,7 +152,7 @@
 
 	// Per-track quality upgrade (admin/trusted): shown on
 	// in-library tracks sitting below the cutoff while upgrades are on.
-	const upgradeTrack = requestUpgradeTrack();
+	const upgradeTrack = createRequestUpgradeTrackMutation();
 	const upgradeQueuedRecordings = new SvelteSet<string>();
 	async function handleTrackUpgrade(
 		recordingMbid: string,

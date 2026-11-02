@@ -18,9 +18,9 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
-	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings.svelte';
+	import { getRatingsQuery, ratingOf, createSetRatingMutation } from '$lib/queries/ratings.svelte';
 	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
-	import { setFavorite } from '$lib/queries/library/FavoriteMutations.svelte';
+	import { createSetFavoriteMutation } from '$lib/queries/library/FavoriteMutations.svelte';
 
 	interface Props {
 		artistId: string;
@@ -36,8 +36,8 @@
 	);
 	const contributionMutation = createLibraryContributionMutation();
 	const ratingsQuery = getRatingsQuery(() => (artist ? { artistIds: [artist.id] } : null));
-	const rate = setRating();
-	const heart = setFavorite();
+	const rate = createSetRatingMutation();
+	const heart = createSetFavoriteMutation();
 
 	function openContribution(album: LibraryAlbumSummary): void {
 		if (album.contribution_id) {

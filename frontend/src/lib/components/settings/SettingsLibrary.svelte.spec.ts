@@ -81,7 +81,7 @@ vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
 	})
 }));
 vi.mock('$lib/queries/library/LibraryPolicyMutations.svelte', () => ({
-	previewLibraryPolicyImpact: () => ({
+	createPreviewLibraryPolicyImpactMutation: () => ({
 		mutateAsync: h.impact,
 		get data() {
 			return h.impactResult;
@@ -94,9 +94,9 @@ vi.mock('$lib/queries/library/LibraryPolicyMutations.svelte', () => ({
 		},
 		isPending: false
 	}),
-	saveTargetLibrarySettings: () => ({ mutateAsync: h.save, isPending: false }),
-	restoreLibraryRoots: () => ({ mutateAsync: h.restore, isPending: false }),
-	previewLibraryPolicyApply: () => ({
+	createSaveTargetLibrarySettingsMutation: () => ({ mutateAsync: h.save, isPending: false }),
+	createRestoreLibraryRootsMutation: () => ({ mutateAsync: h.restore, isPending: false }),
+	createPreviewLibraryPolicyApplyMutation: () => ({
 		mutateAsync: h.applyPreview,
 		data: {
 			policy_revision: 'policy-2',
@@ -109,7 +109,7 @@ vi.mock('$lib/queries/library/LibraryPolicyMutations.svelte', () => ({
 	})
 }));
 vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
-	requestLibraryRun: () => ({ mutateAsync: h.requestRun, isPending: false })
+	createRequestLibraryRunMutation: () => ({ mutateAsync: h.requestRun, isPending: false })
 }));
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryStatsQuery: () => ({ data: { total_size_bytes: 0 } }),
@@ -120,11 +120,11 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	})
 }));
 vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
-	saveLibraryScanSchedule: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createSaveLibraryScanScheduleMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
 	getDownloadPolicyQuery: () => ({ data: { max_library_size_gb: 0 } }),
-	saveDownloadPolicy: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createSaveDownloadPolicyMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/settings/SectionSettingsQueries.svelte', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/queries/settings/SectionSettingsQueries.svelte')>()),

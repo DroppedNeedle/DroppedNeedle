@@ -9,10 +9,10 @@
 		getLibraryRepairsQuery
 	} from '$lib/queries/library/LibraryRepairQueries.svelte';
 	import { getLibraryPolicyTreeQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
-	import { controlLibraryOperation } from '$lib/queries/library/LibraryOperationMutations.svelte';
+	import { createControlLibraryOperationMutation } from '$lib/queries/library/LibraryOperationMutations.svelte';
 	import {
-		applyLibraryRepair,
-		createLibraryRepair
+		createApplyLibraryRepairMutation,
+		createLibraryRepairMutation
 	} from '$lib/queries/library/LibraryRepairMutations.svelte';
 	import type { OperationResponse } from '$lib/queries/library/LibraryOperationsTypes';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -20,8 +20,8 @@
 	const DEFAULT_VISIBLE_REPAIRS = 3;
 	const repairsQuery = getLibraryRepairsQuery();
 	const policyTreeQuery = getLibraryPolicyTreeQuery();
-	const createRepair = createLibraryRepair();
-	const applyRepair = applyLibraryRepair();
+	const createRepair = createLibraryRepairMutation();
+	const applyRepair = createApplyLibraryRepairMutation();
 	let startDialog: HTMLDialogElement;
 	let applyDialog: HTMLDialogElement;
 	let startHeading: HTMLHeadingElement;
@@ -47,9 +47,9 @@
 		() => selected?.id ?? null,
 		() => activeTab
 	);
-	const pause = controlLibraryOperation('pause');
-	const resume = controlLibraryOperation('resume');
-	const stop = controlLibraryOperation('stop');
+	const pause = createControlLibraryOperationMutation('pause');
+	const resume = createControlLibraryOperationMutation('resume');
+	const stop = createControlLibraryOperationMutation('stop');
 	const tabs = [
 		{ id: 'valid', label: 'Valid' },
 		{ id: 'safe_detach', label: 'Safe to detach' },

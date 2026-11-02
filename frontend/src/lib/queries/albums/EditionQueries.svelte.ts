@@ -76,7 +76,7 @@ export const getEditionTracksQuery = (
 
 // Switch a live request to another edition (curators). The answer says
 // whether it switched or the download had already started.
-export function switchRequestedEdition() {
+export function createSwitchRequestedEditionMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (input: {
 			group: string;
@@ -98,7 +98,7 @@ export function switchRequestedEdition() {
 // `copyId` names the library copy the edition picker planned;
 // `replaceVersions` (the server's default is on) fetches the edition's
 // version of each track the copy holds in another version, to replace it.
-export function acquireEdition() {
+export function createAcquireEditionMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({
 			mbid,
@@ -273,7 +273,7 @@ export const getEditionPlanQuery = (
 // Move the edition's extra files (second copies, files not on it) to the
 // recycle bin. Never runs on its own. The album's removals list it for
 // Put back.
-export function removeEditionExtras() {
+export function createRemoveEditionExtrasMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
@@ -315,7 +315,7 @@ function handMatchScope(localId: string): Effect[] {
 	];
 }
 
-export function matchEditionFile() {
+export function createMatchEditionFileMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
@@ -342,7 +342,7 @@ export function matchEditionFile() {
 	}));
 }
 
-export function unmatchEditionFile() {
+export function createUnmatchEditionFileMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
@@ -415,7 +415,7 @@ function editionScope(
 	return effects;
 }
 
-export function chooseAlbumEdition() {
+export function createChooseAlbumEditionMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
@@ -436,7 +436,7 @@ export function chooseAlbumEdition() {
 	}));
 }
 
-export function handBackAlbumEdition() {
+export function createHandBackAlbumEditionMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({ localId, rgMbid, identityRevision }: GuardedEditionTarget) => {
 			assertLocalAlbumId(localId, rgMbid);
@@ -451,7 +451,7 @@ export function handBackAlbumEdition() {
 	}));
 }
 
-export function confirmAlbumEdition() {
+export function createConfirmAlbumEditionMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({ localId, identityRevision }: GuardedEditionTarget) =>
 			api.v3.POST(
@@ -472,7 +472,7 @@ function heldEditionScope(target: EditionTarget): Effect[] {
 
 // Keep the files as they are, as a custom edition of the release's group
 // (admins). The revision is the edition status's `identity_revision`.
-export function sealCustomEdition() {
+export function createSealCustomEditionMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
@@ -495,7 +495,7 @@ export function sealCustomEdition() {
 
 // Drop the exact edition and keep Library Management away from the album
 // (admins); "Manage it again" lifts it.
-export function leaveAlbumUnmanaged() {
+export function createLeaveAlbumUnmanagedMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
@@ -620,7 +620,7 @@ function refreshWhenTagWriteEnds(target: EditionTarget, jobId: string): void {
 	setTimeout(() => void poll(TAG_WRITE_POLL_MS), TAG_WRITE_POLL_MS);
 }
 
-export function previewEditionTags() {
+export function createPreviewEditionTagsMutation() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: ({
@@ -644,7 +644,7 @@ export function previewEditionTags() {
 	}));
 }
 
-export function writeEditionTags() {
+export function createWriteEditionTagsMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
@@ -671,7 +671,7 @@ export function writeEditionTags() {
 	}));
 }
 
-export function undoTagWrite() {
+export function createUndoTagWriteMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({
 			localId,
@@ -691,7 +691,7 @@ export function undoTagWrite() {
 	}));
 }
 
-export function undoAlbumEdition() {
+export function createUndoAlbumEditionMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({ localId, identityRevision }: GuardedEditionTarget) =>
 			api.v3.POST(

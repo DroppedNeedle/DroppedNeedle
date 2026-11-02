@@ -44,7 +44,7 @@ vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
 			default_storage_quota_gb: 0
 		}
 	}),
-	saveDownloadPolicy: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createSaveDownloadPolicyMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { X } from 'lucide-svelte';
 
-	import { cancelDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createCancelDownloadMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { createDownloadStream } from '$lib/queries/downloads/DownloadSSE.svelte';
 	import { canCancel, derivedDownloadStatus } from '$lib/queries/downloads/downloadStatus';
 	import type { DownloadTask } from '$lib/types';
@@ -17,7 +17,7 @@
 	let { task, showEyebrow = true }: { task: DownloadTask; showEyebrow?: boolean } = $props();
 
 	const stream = createDownloadStream();
-	const cancel = cancelDownload();
+	const cancel = createCancelDownloadMutation();
 	$effect(() => {
 		if (task.status === 'downloading' || task.status === 'processing') {
 			stream.start(task.id);

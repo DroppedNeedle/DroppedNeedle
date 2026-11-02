@@ -41,8 +41,8 @@
 	} from 'lucide-svelte';
 	import { getDiscoverHomeV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
 	import {
-		getIgnoreDiscoveryV3Mutation,
-		getRefreshDiscoverV3Mutation
+		createIgnoreDiscoveryV3Mutation,
+		createRefreshDiscoverV3Mutation
 	} from '$lib/queries/discover/DiscoverV3Mutations.svelte';
 	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
 	import type { SectionZone, TopPickItem } from '$lib/queries/discover/types';
@@ -63,8 +63,8 @@
 	let hiddenAlbumsOpen = $state(false);
 
 	const discoverQuery = getDiscoverHomeV3Query();
-	const ignoreDiscoveryMutation = getIgnoreDiscoveryV3Mutation();
-	const refreshDiscoverMutation = getRefreshDiscoverV3Mutation();
+	const ignoreDiscoveryMutation = createIgnoreDiscoveryV3Mutation();
+	const refreshDiscoverMutation = createRefreshDiscoverV3Mutation();
 	const sectionPrefsQuery = getSectionPrefsQuery();
 	// client-only chrome: the backend can't blank an action card, so filter here
 	const playlistDiscoveryEnabled = $derived(

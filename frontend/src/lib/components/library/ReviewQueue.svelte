@@ -33,13 +33,13 @@
 		type LibraryReviewPage
 	} from '$lib/queries/library/LibraryReviewQueries.svelte';
 	import {
-		acceptLibraryReviewCandidate,
-		actOnLibraryReview,
-		retryLibraryReview,
-		retryPendingLibraryReviews,
-		previewBulkLibraryReviews,
-		applyBulkLibraryReviews,
-		controlLibraryReviewJob,
+		createAcceptLibraryReviewCandidateMutation,
+		createActOnLibraryReviewMutation,
+		createRetryLibraryReviewMutation,
+		createRetryPendingLibraryReviewsMutation,
+		createPreviewBulkLibraryReviewsMutation,
+		createApplyBulkLibraryReviewsMutation,
+		createControlLibraryReviewJobMutation,
 		reviewJobEnded,
 		type BulkReviewAction,
 		type BulkReviewResult,
@@ -88,12 +88,12 @@
 	const tree = getLibraryPolicyTreeQuery(() => authStore.isAdmin);
 	const roots = $derived(tree.data?.roots ?? []);
 	const focused = getLibraryReviewQuery(() => focusReviewId);
-	const act = actOnLibraryReview();
-	const accept = acceptLibraryReviewCandidate();
-	const retry = retryLibraryReview();
-	const retryAll = retryPendingLibraryReviews();
-	const preview = previewBulkLibraryReviews();
-	const applyBulk = applyBulkLibraryReviews();
+	const act = createActOnLibraryReviewMutation();
+	const accept = createAcceptLibraryReviewCandidateMutation();
+	const retry = createRetryLibraryReviewMutation();
+	const retryAll = createRetryPendingLibraryReviewsMutation();
+	const preview = createPreviewBulkLibraryReviewsMutation();
+	const applyBulk = createApplyBulkLibraryReviewsMutation();
 
 	const pendingView = $derived(filters.state === 'pending');
 	const canSelect = $derived(authStore.isTrusted && pendingView);
@@ -262,7 +262,7 @@
 	// Bulk changes and retries run as jobs; each shows here until a few
 	// minutes after it ends.
 	const reviewJobs = getLibraryReviewJobsQuery(() => authStore.isTrusted);
-	const controlJob = controlLibraryReviewJob();
+	const controlJob = createControlLibraryReviewJobMutation();
 	const ACTIVE_JOB = ['queued', 'running', 'paused'];
 	const JOB_LABEL: Record<NonNullable<LibraryReviewJob['action']>, string> = {
 		keep_tagged: 'Keeping as tagged',

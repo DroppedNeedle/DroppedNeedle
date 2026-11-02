@@ -30,8 +30,8 @@
 		getLibraryAlbumStatusQuery
 	} from '$lib/queries/library/LibraryQueries.svelte';
 	import LocalAlbumPage from './LocalAlbumPage.svelte';
-	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings.svelte';
-	import { setFavorite } from '$lib/queries/library/FavoriteMutations.svelte';
+	import { getRatingsQuery, ratingOf, createSetRatingMutation } from '$lib/queries/ratings.svelte';
+	import { createSetFavoriteMutation } from '$lib/queries/library/FavoriteMutations.svelte';
 
 	const integrations = useIntegrationStatus();
 
@@ -71,8 +71,8 @@
 				}
 			: null
 	);
-	const rate = setRating();
-	const heart = setFavorite();
+	const rate = createSetRatingMutation();
+	const heart = createSetFavoriteMutation();
 	const primaryError = $derived(state.primaryError);
 	const albumNotFound = $derived(primaryError instanceof ApiError && primaryError.status === 404);
 	const providerUnavailable = $derived.by(() => {

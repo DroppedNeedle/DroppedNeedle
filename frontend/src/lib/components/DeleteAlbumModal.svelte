@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getLibraryManagementSettingsQuery } from '$lib/queries/library-management/LibraryManagementQueries.svelte';
-	import { removeLibraryAlbum } from '$lib/queries/library/LibraryMutations.svelte';
+	import { createRemoveLibraryAlbumMutation } from '$lib/queries/library/LibraryMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
@@ -17,7 +17,7 @@
 	let open = $state(true);
 	let removing = $state(false);
 	let stopWanted = $state(true);
-	const removal = removeLibraryAlbum();
+	const removal = createRemoveLibraryAlbumMutation();
 	// How long the recycle bin keeps the files. Settings that cannot be read
 	// open with the starting values, so they say nothing here.
 	const settingsQuery = getLibraryManagementSettingsQuery(

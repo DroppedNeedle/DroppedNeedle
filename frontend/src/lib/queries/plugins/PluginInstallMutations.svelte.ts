@@ -29,7 +29,7 @@ export function githubWaitMessage(error: unknown): string | null {
 }
 
 /** Download and check a repository without installing it. */
-export const previewPluginInstallMutation = () =>
+export const createPreviewPluginInstallMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (request: PluginInstallRequest) =>
@@ -45,7 +45,7 @@ export const previewPluginInstallMutation = () =>
 	}));
 
 /** Install exactly the commit the admin previewed. */
-export const installPreviewedPluginMutation = () =>
+export const createInstallPreviewedPluginMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (preview: PluginInstallPreview & { repository_url: string }) =>
 			api.v3.POST(v3('/api/v3/plugins/install'), {
@@ -68,7 +68,7 @@ export const installPreviewedPluginMutation = () =>
 	}));
 
 /** Move an installed plugin to its newest release (or the same ref). */
-export const updatePluginFromSourceMutation = () =>
+export const createUpdatePluginFromSourceMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (name: string) =>
 			api.v3.POST(v3('/api/v3/plugins/{name}/update', { path: { name } }), {}),

@@ -13,10 +13,10 @@
 		type PlaylistDetailV3
 	} from '$lib/queries/playlists/PlaylistV3Queries.svelte';
 	import {
-		deletePlaylistV3,
+		createDeletePlaylistV3Mutation,
 		forgetPlaylistSources,
 		refreshPlaylist,
-		setPlaylistVisibilityV3
+		createSetPlaylistVisibilityV3Mutation
 	} from '$lib/queries/playlists/PlaylistV3Mutations.svelte';
 	import {
 		privatePlaylistLine,
@@ -43,8 +43,8 @@
 		() => data.playlistId,
 		() => true
 	);
-	const shareMutation = setPlaylistVisibilityV3();
-	const deleteMutation = deletePlaylistV3();
+	const shareMutation = createSetPlaylistVisibilityV3Mutation();
+	const deleteMutation = createDeletePlaylistV3Mutation();
 
 	// A local mutable copy of the (full) playlist so child components can keep
 	// applying optimistic updates; redaction/loading/error leave it null.

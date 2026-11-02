@@ -18,11 +18,11 @@
 	import Input from '$lib/ui/Input.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
-		attachExistingMusicBrainzReleaseMutation,
-		checkMusicBrainzDuplicatesMutation,
+		createAttachExistingMusicBrainzReleaseMutation,
+		createCheckMusicBrainzDuplicatesMutation,
 		createMusicBrainzSeedMutation,
-		recordMusicBrainzResultMutation,
-		retryMusicBrainzVerificationMutation
+		createRecordMusicBrainzResultMutation,
+		createRetryMusicBrainzVerificationMutation
 	} from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
 	import {
 		MUSICBRAINZ_RELEASE_EDITOR,
@@ -36,11 +36,11 @@
 	}
 
 	let { contribution, canMutate = true }: Props = $props();
-	const checkMutation = checkMusicBrainzDuplicatesMutation();
-	const attachMutation = attachExistingMusicBrainzReleaseMutation();
+	const checkMutation = createCheckMusicBrainzDuplicatesMutation();
+	const attachMutation = createAttachExistingMusicBrainzReleaseMutation();
 	const seedMutation = createMusicBrainzSeedMutation();
-	const resultMutation = recordMusicBrainzResultMutation();
-	const retryMutation = retryMusicBrainzVerificationMutation();
+	const resultMutation = createRecordMusicBrainzResultMutation();
+	const retryMutation = createRetryMusicBrainzVerificationMutation();
 	let differentEdition = $state(false);
 	let recoveryValue = $state('');
 	let recoveryTouched = $state(false);

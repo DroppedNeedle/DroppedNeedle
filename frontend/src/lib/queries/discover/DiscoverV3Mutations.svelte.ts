@@ -30,7 +30,7 @@ export interface IgnoreDiscoveryV3Item {
 	artistName: string;
 }
 
-export const getIgnoreDiscoveryV3Mutation = () =>
+export const createIgnoreDiscoveryV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (item: IgnoreDiscoveryV3Item) =>
 			api.v3.POST(v3('/api/v3/discover/queue/ignore'), {
@@ -50,7 +50,7 @@ export const getIgnoreDiscoveryV3Mutation = () =>
 		onError: () => toastStore.show({ message: "Couldn't save that preference.", type: 'error' })
 	}));
 
-export const getUnhideDiscoveryV3Mutation = () =>
+export const createUnhideDiscoveryV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (releaseGroupMbid: string) =>
 			api.v3.DELETE(
@@ -62,13 +62,13 @@ export const getUnhideDiscoveryV3Mutation = () =>
 		onError: () => toastStore.show({ message: "Couldn't un-hide that album.", type: 'error' })
 	}));
 
-export const getRefreshDiscoverV3Mutation = () =>
+export const createRefreshDiscoverV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: () => api.v3.POST(v3('/api/v3/discover/refresh')),
 		effects: () => [discoverHomeChanged(authStore.user?.id)]
 	}));
 
-export const getQueuePreviewV3Mutation = () =>
+export const createQueuePreviewV3Mutation = () =>
 	createAppMutation(() => ({
 		retry: false,
 		effects: () => [],

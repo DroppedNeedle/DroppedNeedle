@@ -8,7 +8,7 @@
 <script lang="ts">
 	import { TriangleAlert } from 'lucide-svelte';
 
-	import { checkLibraryManagementPlacementMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
+	import { createCheckLibraryManagementPlacementMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import { getLibraryManagementPlacementQuery } from '$lib/queries/library-management/LibraryManagementQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
@@ -25,7 +25,7 @@
 		() => authStore.user?.id,
 		() => authStore.isAdmin
 	);
-	const check = checkLibraryManagementPlacementMutation(() => authStore.user?.id);
+	const check = createCheckLibraryManagementPlacementMutation(() => authStore.user?.id);
 	const checking = $derived(check.isPending && check.variables === rootId);
 	const checkNote =
 		'Check again creates a small test folder at the top of this library and removes it again.';

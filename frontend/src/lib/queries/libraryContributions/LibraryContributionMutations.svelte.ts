@@ -65,7 +65,7 @@ export const createLibraryContributionMutation = () =>
 			})
 	}));
 
-export const updateLibraryContributionMutation = () =>
+export const createUpdateLibraryContributionMutation = () =>
 	createAppMutation(() => ({
 		effects: contributions,
 		mutationFn: (input: {
@@ -117,13 +117,13 @@ const revisionMutation = (
 			refreshAfterMutationError(input.contributionId, errorMessage, error)
 	}));
 
-export const rebuildLibraryContributionMutation = () =>
+export const createRebuildLibraryContributionMutation = () =>
 	revisionMutation('rebuild', 'Draft rebuilt from the current album', "Couldn't rebuild the draft");
 
-export const cancelLibraryContributionMutation = () =>
+export const createCancelLibraryContributionMutation = () =>
 	revisionMutation('cancel', 'Contribution cancelled', "Couldn't cancel the contribution");
 
-export const searchDiscogsReleasesMutation = () =>
+export const createSearchDiscogsReleasesMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: { contributionId: string; query: string }) =>
@@ -139,7 +139,7 @@ export const searchDiscogsReleasesMutation = () =>
 			toastStore.show({ message: failureMessage("Couldn't search Discogs", error), type: 'error' })
 	}));
 
-export const selectDiscogsReleaseMutation = () =>
+export const createSelectDiscogsReleaseMutation = () =>
 	createAppMutation(() => ({
 		effects: contributions,
 		mutationFn: (input: {
@@ -164,7 +164,7 @@ export const selectDiscogsReleaseMutation = () =>
 			refreshAfterMutationError(input.contributionId, "Couldn't select that Discogs release", error)
 	}));
 
-export const removeDiscogsReleaseMutation = () =>
+export const createRemoveDiscogsReleaseMutation = () =>
 	createAppMutation(() => ({
 		effects: contributions,
 		mutationFn: (input: { contributionId: string; expectedRowRevision: number }) =>
@@ -184,7 +184,7 @@ export const removeDiscogsReleaseMutation = () =>
 			refreshAfterMutationError(input.contributionId, "Couldn't remove the Discogs source", error)
 	}));
 
-export const checkMusicBrainzDuplicatesMutation = () =>
+export const createCheckMusicBrainzDuplicatesMutation = () =>
 	createAppMutation(() => ({
 		effects: contributions,
 		mutationFn: (input: {
@@ -213,7 +213,7 @@ export const checkMusicBrainzDuplicatesMutation = () =>
 			)
 	}));
 
-export const attachExistingMusicBrainzReleaseMutation = () =>
+export const createAttachExistingMusicBrainzReleaseMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (input: {
 			contributionId: string;
@@ -258,7 +258,7 @@ export const createMusicBrainzSeedMutation = () =>
 			refreshAfterMutationError(input.contributionId, "Couldn't open the MusicBrainz editor", error)
 	}));
 
-export const recordMusicBrainzResultMutation = () =>
+export const createRecordMusicBrainzResultMutation = () =>
 	createAppMutation(() => ({
 		effects: contributions,
 		mutationFn: (input: {
@@ -289,7 +289,7 @@ export const recordMusicBrainzResultMutation = () =>
 			)
 	}));
 
-export const retryMusicBrainzVerificationMutation = () =>
+export const createRetryMusicBrainzVerificationMutation = () =>
 	createAppMutation(() => ({
 		effects: contributions,
 		mutationFn: (input: { contributionId: string; expectedRowRevision: number }) =>

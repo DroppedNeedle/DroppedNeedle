@@ -12,13 +12,13 @@
 	} from 'lucide-svelte';
 
 	import {
-		deleteIndexerMutation,
+		createDeleteIndexerMutation,
 		getIndexersQuery,
 		getSearchBackendQuery,
-		reorderIndexersMutation,
-		saveIndexerMutation,
-		saveSearchBackendMutation,
-		testIndexerMutation
+		createReorderIndexersMutation,
+		createSaveIndexerMutation,
+		createSaveSearchBackendMutation,
+		createTestIndexerMutation
 	} from '$lib/queries/downloads/IndexerQueries.svelte';
 	import { getProwlarrConfigQuery } from '$lib/queries/downloads/ProwlarrQueries.svelte';
 	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
@@ -50,11 +50,11 @@
 	const indexersQuery = getIndexersQuery();
 	const backendQuery = getSearchBackendQuery();
 	const prowlarrQuery = getProwlarrConfigQuery();
-	const save = saveIndexerMutation();
-	const remove = deleteIndexerMutation();
-	const reorder = reorderIndexersMutation();
-	const test = testIndexerMutation();
-	const saveBackend = saveSearchBackendMutation();
+	const save = createSaveIndexerMutation();
+	const remove = createDeleteIndexerMutation();
+	const reorder = createReorderIndexersMutation();
+	const test = createTestIndexerMutation();
+	const saveBackend = createSaveSearchBackendMutation();
 	const indexers = $derived(indexersQuery.data ?? []);
 	const backend = $derived<UsenetSearchBackendName>(backendQuery.data?.backend ?? 'indexers');
 	const enabledCount = $derived(indexers.filter((i) => i.enabled).length);

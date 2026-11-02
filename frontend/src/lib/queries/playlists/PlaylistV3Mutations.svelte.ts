@@ -27,13 +27,13 @@ export const refreshPlaylist = (id: string) => applyEffects(...detail(id));
 export const forgetPlaylistSources = (id: string) =>
 	applyEffects(playlistSourcesDropped(authStore.user?.id, id));
 
-export const createPlaylistV3 = () =>
+export const createPlaylistV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (name: string) => api.v3.POST(v3('/api/v3/playlists'), { name }),
 		effects: list
 	}));
 
-export const updatePlaylistV3 = () =>
+export const createUpdatePlaylistV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string } & UpdatePlaylistBodyV3) =>
 			api.v3.PUT(v3('/api/v3/playlists/{playlist_id}', { path: { playlist_id: vars.id } }), {
@@ -42,14 +42,14 @@ export const updatePlaylistV3 = () =>
 		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
-export const deletePlaylistV3 = () =>
+export const createDeletePlaylistV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (id: string) =>
 			api.v3.DELETE(v3('/api/v3/playlists/{playlist_id}', { path: { playlist_id: id } })),
 		effects: (_data, id) => listAndDetail(id)
 	}));
 
-export const addPlaylistTracksV3 = () =>
+export const createAddPlaylistTracksV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string } & AddTracksBodyV3) =>
 			api.v3.POST(
@@ -64,7 +64,7 @@ export const addPlaylistTracksV3 = () =>
 		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
-export const removePlaylistTrackV3 = () =>
+export const createRemovePlaylistTrackV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; trackId: string }) =>
 			api.v3.DELETE(
@@ -75,7 +75,7 @@ export const removePlaylistTrackV3 = () =>
 		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
-export const removePlaylistTracksV3 = () =>
+export const createRemovePlaylistTracksV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; trackIds: string[] }) =>
 			api.v3.POST(
@@ -87,7 +87,7 @@ export const removePlaylistTracksV3 = () =>
 		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
-export const updatePlaylistTrackV3 = () =>
+export const createUpdatePlaylistTrackV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: {
 			id: string;
@@ -112,7 +112,7 @@ export const updatePlaylistTrackV3 = () =>
 		effects: (_data, vars) => detail(vars.id)
 	}));
 
-export const reorderPlaylistTrackV3 = () =>
+export const createReorderPlaylistTrackV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; trackId: string; newPosition: number }) =>
 			api.v3.PATCH(
@@ -126,7 +126,7 @@ export const reorderPlaylistTrackV3 = () =>
 		effects: (_data, vars) => detail(vars.id)
 	}));
 
-export const setPlaylistVisibilityV3 = () =>
+export const createSetPlaylistVisibilityV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; isPublic: boolean }) =>
 			api.v3.PATCH(
@@ -145,7 +145,7 @@ async function fileToBase64(file: File): Promise<string> {
 	return btoa(binary);
 }
 
-export const uploadPlaylistCoverV3 = () =>
+export const createUploadPlaylistCoverV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: async (vars: { id: string; file: File }) =>
 			api.v3.POST(v3('/api/v3/playlists/{playlist_id}/cover', { path: { playlist_id: vars.id } }), {
@@ -155,14 +155,14 @@ export const uploadPlaylistCoverV3 = () =>
 		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
-export const deletePlaylistCoverV3 = () =>
+export const createDeletePlaylistCoverV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (id: string) =>
 			api.v3.DELETE(v3('/api/v3/playlists/{playlist_id}/cover', { path: { playlist_id: id } })),
 		effects: (_data, id) => listAndDetail(id)
 	}));
 
-export const checkPlaylistTracksV3 = () =>
+export const createCheckPlaylistTracksV3Mutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		// Pure read: membership answers are never cached, so no invalidation.

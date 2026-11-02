@@ -24,35 +24,21 @@ export interface StreamHints {
 	estimate_content_length?: boolean;
 }
 
-// Gateway URLs, built through the typed registry (player call sites import
-// from here so a route rename touches this file only), except `stream`,
-// whose wildcard key the typed builder cannot carry (see streamPath).
-export const GATEWAY_ENDPOINTS = {
-	stream: (source: GatewaySource, key: string, hints: StreamHints = {}) => {
-		const search = new URLSearchParams();
-		if (hints.format) search.set('format', hints.format);
-		if (hints.max_bitrate !== undefined) search.set('max_bitrate', String(hints.max_bitrate));
-		if (hints.estimate_content_length !== undefined) {
-			search.set('estimate_content_length', String(hints.estimate_content_length));
-		}
-		return streamPath(source, key, search);
-	},
-	playbackStart: () => v3('/api/v3/playback/start'),
-	playbackProgress: () => v3('/api/v3/playback/progress'),
-	playbackStop: () => v3('/api/v3/playback/stop'),
-	scrobbleNowPlaying: () => v3('/api/v3/scrobble/now-playing'),
-	scrobbleSubmit: () => v3('/api/v3/scrobble/submit'),
-	nowPlaying: () => v3('/api/v3/now-playing')
-} as const;
-
 // One gateway URL for every source: local file ids, Jellyfin/Navidrome item
-// ids, and raw Plex part keys all stream from the same route shape.
+// ids, and raw Plex part keys all stream from the same route shape. The typed
+// builder cannot carry the wildcard key (see streamPath).
 export function gatewayStreamUrl(
 	source: GatewaySource,
 	key: string | number,
 	hints: StreamHints = {}
 ): string {
-	return GATEWAY_ENDPOINTS.stream(source, String(key), hints);
+	const search = new URLSearchParams();
+	if (hints.format) search.set('format', hints.format);
+	if (hints.max_bitrate !== undefined) search.set('max_bitrate', String(hints.max_bitrate));
+	if (hints.estimate_content_length !== undefined) {
+		search.set('estimate_content_length', String(hints.estimate_content_length));
+	}
+	return streamPath(source, String(key), search);
 }
 
 // Plain reporters for player internals (progress loops, track-change stops,
@@ -61,27 +47,27 @@ export function gatewayStreamUrl(
 export async function startPlaybackSession(
 	request: PlaybackStartRequest
 ): Promise<PlaybackStartResponse> {
-	return api.v3.POST(GATEWAY_ENDPOINTS.playbackStart(), request);
+	return api.v3.POST(v3('/api/v3/playback/start'), request);
 }
 
 export async function reportPlaybackProgress(request: PlaybackProgressRequest): Promise<void> {
-	await api.v3.POST(GATEWAY_ENDPOINTS.playbackProgress(), request);
+	await api.v3.POST(v3('/api/v3/playback/progress'), request);
 }
 
 export async function stopPlaybackSession(request: PlaybackStopRequest): Promise<void> {
-	await api.v3.POST(GATEWAY_ENDPOINTS.playbackStop(), request);
+	await api.v3.POST(v3('/api/v3/playback/stop'), request);
 }
 
 export async function sendScrobbleNowPlaying(
 	request: ScrobbleNowPlayingRequest
 ): Promise<ScrobbleResponse> {
-	return api.v3.POST(GATEWAY_ENDPOINTS.scrobbleNowPlaying(), request);
+	return api.v3.POST(v3('/api/v3/scrobble/now-playing'), request);
 }
 
 export async function submitScrobble(request: ScrobbleSubmitRequest): Promise<ScrobbleResponse> {
-	return api.v3.POST(GATEWAY_ENDPOINTS.scrobbleSubmit(), request);
+	return api.v3.POST(v3('/api/v3/scrobble/submit'), request);
 }
 
 export async function fetchNowPlayingSnapshot(signal?: AbortSignal): Promise<NowPlayingSnapshot> {
-	return api.v3.GET(GATEWAY_ENDPOINTS.nowPlaying(), { signal });
+	return api.v3.GET(v3('/api/v3/now-playing'), { signal });
 }

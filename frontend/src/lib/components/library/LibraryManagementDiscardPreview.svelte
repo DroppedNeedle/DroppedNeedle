@@ -2,7 +2,7 @@
 	import '$lib/components/library/library-management.css';
 	import { ShieldAlert, Trash2 } from 'lucide-svelte';
 
-	import { discardLibraryManagementPreviewMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
+	import { createDiscardLibraryManagementPreviewMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import { forgetLibraryManagementPreviewToken } from '$lib/queries/library-management/LibraryManagementPreviewTokens';
 	import Button from '$lib/ui/Button.svelte';
 
@@ -20,7 +20,7 @@
 	let opener: HTMLElement | null = null;
 	let errorMessage = $state('');
 
-	const discardPreview = discardLibraryManagementPreviewMutation();
+	const discardPreview = createDiscardLibraryManagementPreviewMutation();
 	const titleId = $derived(`discard-management-preview-${jobId}`);
 
 	function open(button: HTMLElement): void {

@@ -85,7 +85,7 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryAlbumDetailQuery: () => ({ data: undefined, refetch: vi.fn() })
 }));
 vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => ({
-	previewAlbumMembership: (kind: string) => {
+	createPreviewAlbumMembershipMutation: (kind: string) => {
 		h.previewKinds.push(kind);
 		return {
 			mutateAsync: async (input: unknown) => {
@@ -102,7 +102,7 @@ vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => ({
 			}
 		};
 	},
-	applyAlbumMembership: (kind: string) => {
+	createApplyAlbumMembershipMutation: (kind: string) => {
 		h.applyKinds.push(kind);
 		return { mutateAsync: h.apply, isPending: false };
 	}

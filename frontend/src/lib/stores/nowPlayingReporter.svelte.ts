@@ -1,5 +1,5 @@
 import { api } from '$lib/api/client';
-import { GATEWAY_ENDPOINTS } from '$lib/player/playbackGateway';
+import { v3 } from '$lib/api/v3/endpoint';
 import { playerStore } from '$lib/stores/player.svelte';
 
 // The web player reports presence only for native content. jellyfin/navidrome/plex
@@ -30,7 +30,7 @@ function createNowPlayingReporter() {
 		if (!np) return;
 		const state = playerStore.playbackState;
 		try {
-			await api.v3.POST(GATEWAY_ENDPOINTS.nowPlaying(), {
+			await api.v3.POST(v3('/api/v3/now-playing'), {
 				track_name: np.trackName ?? '',
 				artist_name: np.artistName ?? '',
 				album_name: np.albumName ?? null,
@@ -49,7 +49,7 @@ function createNowPlayingReporter() {
 
 	async function clear(): Promise<void> {
 		try {
-			await api.v3.DELETE(GATEWAY_ENDPOINTS.nowPlaying());
+			await api.v3.DELETE(v3('/api/v3/now-playing'));
 		} catch {
 			// best-effort
 		}

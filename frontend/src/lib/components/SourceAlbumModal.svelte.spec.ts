@@ -5,9 +5,9 @@ import { fakeApi } from '$lib/test/api';
 import SourceAlbumModal from './SourceAlbumModal.svelte';
 
 vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
-	createPlaylistV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	addPlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	checkPlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createPlaylistV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createAddPlaylistTracksV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createCheckPlaylistTracksV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 const ALBUM_MBID = '3c1a7f52-8d0e-4b96-9f21-6a4e2d7b5c18';

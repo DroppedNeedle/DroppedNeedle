@@ -5,7 +5,7 @@ import { renderWithQuery } from '$lib/test/render';
 const mutateAsync = vi.fn();
 
 vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
-	removeLibraryAlbum: () => ({ mutateAsync, isPending: false })
+	createRemoveLibraryAlbumMutation: () => ({ mutateAsync, isPending: false })
 }));
 
 import DeleteAlbumModal from './DeleteAlbumModal.svelte';

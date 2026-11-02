@@ -2,7 +2,7 @@
 	import { Radar } from 'lucide-svelte';
 	import {
 		getWantedSettingsQuery,
-		saveWantedSettings
+		createSaveWantedSettingsMutation
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import NumberField from '$lib/ui/NumberField.svelte';
@@ -11,7 +11,10 @@
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
-	const section = createSettingsSection(getWantedSettingsQuery(), saveWantedSettings());
+	const section = createSettingsSection(
+		getWantedSettingsQuery(),
+		createSaveWantedSettingsMutation()
+	);
 </script>
 
 <Card variant="bordered" as="section">

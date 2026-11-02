@@ -3,14 +3,14 @@
 
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import {
-		clearFinished,
-		retryAllFailed,
-		stopAllRetries
+		createClearFinishedMutation,
+		createRetryAllFailedMutation,
+		createStopAllRetriesMutation
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { getDownloadsQuery } from '$lib/queries/downloads/DownloadQueries.svelte';
 	import {
 		getHeldEntriesQuery,
-		recheckAllHeldMutation
+		createRecheckAllHeldMutation
 	} from '$lib/queries/downloads/HeldQueries.svelte';
 	import { getQuarantineQuery } from '$lib/queries/downloads/QuarantineQueries.svelte';
 	import { bucketSections, collapseRetryChains } from '$lib/queries/downloads/downloadStatus';
@@ -57,10 +57,10 @@
 			.map((entry) => entry.id)
 	);
 
-	const clear = clearFinished();
-	const stopAll = stopAllRetries();
-	const retryAll = retryAllFailed();
-	const recheckAll = recheckAllHeldMutation();
+	const clear = createClearFinishedMutation();
+	const stopAll = createStopAllRetriesMutation();
+	const retryAll = createRetryAllFailedMutation();
+	const recheckAll = createRecheckAllHeldMutation();
 
 	// collapse auto-retry chains so each album is one row (latest attempt), then group into
 	// the dashboard's stacked sections

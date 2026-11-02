@@ -2,10 +2,10 @@
 	import { Radar, Search, X } from 'lucide-svelte';
 
 	import {
-		cancelSearch,
-		dismissSearch,
+		createCancelSearchMutation,
+		createDismissSearchMutation,
 		getSearchJobQuery,
-		pickSearchCandidate,
+		createPickSearchCandidateMutation,
 		policyBreak,
 		type CandidateRefusal,
 		type SearchCandidate
@@ -19,9 +19,9 @@
 	let { jobId, onClose }: { jobId: string; onClose?: () => void } = $props();
 
 	const jobQuery = getSearchJobQuery(() => jobId);
-	const pick = pickSearchCandidate();
-	const dismiss = dismissSearch();
-	const cancel = cancelSearch();
+	const pick = createPickSearchCandidateMutation();
+	const dismiss = createDismissSearchMutation();
+	const cancel = createCancelSearchMutation();
 
 	let showAll = $state(false);
 	let pickingIndex = $state<number | null>(null);

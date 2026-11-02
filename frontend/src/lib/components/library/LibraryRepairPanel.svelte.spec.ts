@@ -133,11 +133,11 @@ vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
 	})
 }));
 vi.mock('$lib/queries/library/LibraryRepairMutations.svelte', () => ({
-	createLibraryRepair: () => ({ mutateAsync: h.create, isPending: false }),
-	applyLibraryRepair: () => ({ mutateAsync: h.apply, isPending: false })
+	createLibraryRepairMutation: () => ({ mutateAsync: h.create, isPending: false }),
+	createApplyLibraryRepairMutation: () => ({ mutateAsync: h.apply, isPending: false })
 }));
 vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
-	controlLibraryOperation: (action: string) => ({
+	createControlLibraryOperationMutation: (action: string) => ({
 		mutateAsync: action === 'pause' ? h.pause : action === 'resume' ? h.resume : h.stop,
 		isPending: false
 	})

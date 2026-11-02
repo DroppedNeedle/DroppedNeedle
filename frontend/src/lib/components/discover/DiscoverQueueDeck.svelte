@@ -21,11 +21,11 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { libraryStore } from '$lib/stores/library';
-	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { createRequestAlbumMutation } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
-	import { getQueuePreviewV3Mutation } from '$lib/queries/discover/DiscoverV3Mutations.svelte';
+	import { createQueuePreviewV3Mutation } from '$lib/queries/discover/DiscoverV3Mutations.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -47,7 +47,7 @@
 	let ytSearchUrl = $state<string | null>(null);
 	let previewController: AbortController | null = null;
 	let previewGeneration = 0;
-	const previewMutation = getQueuePreviewV3Mutation();
+	const previewMutation = createQueuePreviewV3Mutation();
 
 	const current = $derived(deck.current);
 	const cardIdentity = $derived(`${deck.requestKey}:${current?.musicbrainz_id ?? ''}`);
@@ -205,7 +205,7 @@
 		}
 	}
 
-	const deckRequest = requestAlbum();
+	const deckRequest = createRequestAlbumMutation();
 
 	function handleAdvance() {
 		deckSampler.stop();

@@ -6,8 +6,8 @@
 <script lang="ts">
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import {
-		applyBulkLibraryReviews,
-		previewBulkLibraryReviews,
+		createApplyBulkLibraryReviewsMutation,
+		createPreviewBulkLibraryReviewsMutation,
 		type BulkReviewPreview,
 		type BulkReviewResult,
 		type BulkReviewSelection
@@ -24,8 +24,8 @@
 
 	let { open = $bindable(false), selection, plan, ondone }: Props = $props();
 
-	const preview = previewBulkLibraryReviews();
-	const apply = applyBulkLibraryReviews();
+	const preview = createPreviewBulkLibraryReviewsMutation();
+	const apply = createApplyBulkLibraryReviewsMutation();
 	const shared = $derived(plan?.shared_candidates ?? []);
 	// The best shared release until the person picks another.
 	let chosen = $derived<string | null>(shared[0]?.candidate_key ?? null);

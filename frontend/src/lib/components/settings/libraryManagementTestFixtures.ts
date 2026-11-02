@@ -71,26 +71,32 @@ export const queriesMock = {
 };
 
 export const mutationsMock = {
-	updateLibraryManagementSettingsMutation: () => ({ mutateAsync: h.update, isPending: false }),
-	validateLibraryManagementSettingsMutation: () => ({ mutateAsync: h.validate, isPending: false }),
-	previewLibraryManagementSettingsImpactMutation: () => ({
+	createUpdateLibraryManagementSettingsMutation: () => ({
+		mutateAsync: h.update,
+		isPending: false
+	}),
+	createValidateLibraryManagementSettingsMutation: () => ({
+		mutateAsync: h.validate,
+		isPending: false
+	}),
+	createPreviewLibraryManagementSettingsImpactMutation: () => ({
 		mutateAsync: h.impact,
 		isPending: false
 	}),
-	copyLibraryManagementProfileMutation: () => ({ mutateAsync: h.copy, isPending: false }),
-	deleteLibraryManagementProfileMutation: () => ({
+	createCopyLibraryManagementProfileMutation: () => ({ mutateAsync: h.copy, isPending: false }),
+	createDeleteLibraryManagementProfileMutation: () => ({
 		mutateAsync: h.deleteProfile,
 		isPending: false
 	}),
-	exportLibraryManagementProfileMutation: () => ({
+	createExportLibraryManagementProfileMutation: () => ({
 		mutateAsync: h.exportProfile,
 		isPending: false
 	}),
-	previewLibraryManagementProfileImportMutation: () => ({
+	createPreviewLibraryManagementProfileImportMutation: () => ({
 		mutateAsync: h.previewProfileImport,
 		isPending: false
 	}),
-	importLibraryManagementProfileMutation: () => ({
+	createImportLibraryManagementProfileMutation: () => ({
 		mutateAsync: h.importProfile,
 		isPending: false
 	}),
@@ -100,27 +106,30 @@ export const mutationsMock = {
 			return h.createActivationPending;
 		}
 	}),
-	confirmLibraryManagementActivationMutation: () => ({
+	createConfirmLibraryManagementActivationMutation: () => ({
 		mutateAsync: h.confirmActivation,
 		get isPending() {
 			return h.confirmActivationPending;
 		}
 	}),
-	controlLibraryManagementOperationMutation: () => ({
+	createControlLibraryManagementOperationMutation: () => ({
 		mutateAsync: h.stopActivation,
 		get isPending() {
 			return h.stopActivationPending;
 		}
 	}),
-	previewLibraryManagementBaselinePurgeMutation: () => ({
+	createPreviewLibraryManagementBaselinePurgeMutation: () => ({
 		mutateAsync: h.purgeImpact,
 		isPending: false,
 		get data() {
 			return h.purgeData;
 		}
 	}),
-	purgeLibraryManagementBaselinesMutation: () => ({ mutateAsync: h.purge, isPending: false }),
-	checkLibraryManagementPlacementMutation: () => ({ mutate: h.checkPlacement, isPending: false })
+	createPurgeLibraryManagementBaselinesMutation: () => ({ mutateAsync: h.purge, isPending: false }),
+	createCheckLibraryManagementPlacementMutation: () => ({
+		mutate: h.checkPlacement,
+		isPending: false
+	})
 };
 
 export const profileId = 'c2741223-da7c-5231-bcf5-7cead27b07d9';

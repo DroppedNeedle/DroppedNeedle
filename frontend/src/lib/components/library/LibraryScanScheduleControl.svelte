@@ -4,13 +4,13 @@
 	import Input from '$lib/ui/Input.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import { getLibraryScanScheduleQuery } from '$lib/queries/library/LibraryQueries.svelte';
-	import { saveLibraryScanSchedule } from '$lib/queries/library/LibraryMutations.svelte';
+	import { createSaveLibraryScanScheduleMutation } from '$lib/queries/library/LibraryMutations.svelte';
 	import { SCAN_FREQUENCY_OPTIONS } from '$lib/utils/scanFrequency';
 	import { toastStore } from '$lib/stores/toast';
 	import type { ScanFrequency } from '$lib/types';
 
 	const scheduleQuery = getLibraryScanScheduleQuery();
-	const save = saveLibraryScanSchedule();
+	const save = createSaveLibraryScanScheduleMutation();
 
 	let frequency = $state<ScanFrequency>('24hr');
 	let dailyTime = $state('03:00');

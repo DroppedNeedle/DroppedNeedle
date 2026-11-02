@@ -23,9 +23,9 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLibraryContributionQuery } from '$lib/queries/libraryContributions/LibraryContributionQueries.svelte';
 	import {
-		cancelLibraryContributionMutation,
-		rebuildLibraryContributionMutation,
-		updateLibraryContributionMutation
+		createCancelLibraryContributionMutation,
+		createRebuildLibraryContributionMutation,
+		createUpdateLibraryContributionMutation
 	} from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
@@ -36,9 +36,9 @@
 
 	let { data }: { data: PageData } = $props();
 	const contributionQuery = getLibraryContributionQuery(() => data.contributionId);
-	const saveMutation = updateLibraryContributionMutation();
-	const rebuildMutation = rebuildLibraryContributionMutation();
-	const cancelMutation = cancelLibraryContributionMutation();
+	const saveMutation = createUpdateLibraryContributionMutation();
+	const rebuildMutation = createRebuildLibraryContributionMutation();
+	const cancelMutation = createCancelLibraryContributionMutation();
 	const contribution = $derived(contributionQuery.data);
 	let draft = $state<ReleaseDraft | null>(null);
 	let loadedDraft = $state<ReleaseDraft | null>(null);
@@ -83,7 +83,7 @@
 	// state per contribution id so the sweep fires once on the non-linked →
 	// linked transition (poll-detected server-side verification included), and
 	// never on plain revisits of an already-linked contribution. Explicit
-	// client-initiated links also sweep via attachExistingMusicBrainzReleaseMutation.
+	// client-initiated links also sweep via createAttachExistingMusicBrainzReleaseMutation.
 	let lastObservedLink: { id: string; state: string | null } = { id: '', state: null };
 	let linkCatalogSwept = false;
 	$effect(() => {

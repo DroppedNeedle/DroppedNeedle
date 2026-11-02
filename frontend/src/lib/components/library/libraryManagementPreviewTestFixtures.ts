@@ -48,9 +48,15 @@ export const queriesMock = {
 };
 
 export const mutationsMock = {
-	applyLibraryManagementPreviewMutation: () => ({ mutateAsync: h.apply, isPending: false }),
-	discardLibraryManagementPreviewMutation: () => ({ mutateAsync: h.discard, isPending: false }),
-	reissueLibraryManagementPreviewMutation: () => ({ mutateAsync: h.reissue, isPending: false }),
+	createApplyLibraryManagementPreviewMutation: () => ({ mutateAsync: h.apply, isPending: false }),
+	createDiscardLibraryManagementPreviewMutation: () => ({
+		mutateAsync: h.discard,
+		isPending: false
+	}),
+	createReissueLibraryManagementPreviewMutation: () => ({
+		mutateAsync: h.reissue,
+		isPending: false
+	}),
 	createLibraryManagementDuplicateResolutionMutation: () => ({
 		mutateAsync: h.resolve,
 		isPending: false

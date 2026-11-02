@@ -10,10 +10,10 @@
 	import { notBackLine, putBackToast } from '$lib/components/library/recycledRemovalsCopy';
 	import {
 		invalidateAlbumRemovals,
-		putBackRemoval
+		createPutBackRemovalMutation
 	} from '$lib/queries/library/RemovalQueries.svelte';
 	import {
-		emptyRecycleBin,
+		createEmptyRecycleBinMutation,
 		getRecycleBinQuery,
 		getRecycleBinStatusQuery,
 		getRecycleBinSummaryQuery,
@@ -42,8 +42,8 @@
 
 	const bin = getRecycleBinQuery();
 	const status = getRecycleBinStatusQuery();
-	const empty = emptyRecycleBin();
-	const putBack = putBackRemoval();
+	const empty = createEmptyRecycleBinMutation();
+	const putBack = createPutBackRemovalMutation();
 
 	let confirmOpen = $state(false);
 	const summary = getRecycleBinSummaryQuery(() => confirmOpen);

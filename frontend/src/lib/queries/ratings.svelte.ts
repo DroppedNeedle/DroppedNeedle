@@ -89,7 +89,7 @@ function withRating(lookup: RatingLookup, { kind, itemId, rating }: RateVars): R
  */
 const SET_RATING = ['set-rating'] as const;
 
-export function setRating() {
+export function createSetRatingMutation() {
 	return createAppMutation(() => ({
 		mutationKey: SET_RATING,
 		scope: { id: 'ratings' },

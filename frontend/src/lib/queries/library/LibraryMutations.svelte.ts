@@ -20,7 +20,7 @@ import {
 	scanScheduleChanged
 } from '$lib/queries/effects';
 
-export function removeLibraryAlbum() {
+export function createRemoveLibraryAlbumMutation() {
 	return createAppMutation(() => ({
 		mutationFn: ({ mbid, stopWanted }: { mbid: string; stopWanted: boolean }) =>
 			api.v3.DELETE(
@@ -62,7 +62,7 @@ export function removeLibraryAlbum() {
 // so a single immediate invalidation would only re-read the pre-rescan rows.
 const RESCAN_REFRESH_DELAYS_MS = [2500, 6000];
 
-export function rescanAlbum() {
+export function createRescanAlbumMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (mbid: string) =>
 			api.v3.POST(v3('/api/v3/library/albums/{album_id}/rescan', { path: { album_id: mbid } })),
@@ -76,7 +76,7 @@ export function rescanAlbum() {
 	}));
 }
 
-export function saveLibraryScanSchedule() {
+export function createSaveLibraryScanScheduleMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (schedule: LibraryScanSchedule) =>
 			api.v3.PUT(v3('/api/v3/settings/library/schedule'), {
@@ -91,7 +91,7 @@ export function saveLibraryScanSchedule() {
 // track page's per-row action. Admin/trusted only (the route enforces it).
 // Invalidates the album's coverage/status, its local copy on the album page
 // AND the local-library lists, in the cache of the page that removed it.
-export function removeLibraryTrack() {
+export function createRemoveLibraryTrackMutation() {
 	const client = useQueryClient();
 	return createAppMutation(
 		() => ({

@@ -8,11 +8,11 @@
 	import { CirclePause } from 'lucide-svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import type { LibraryAlbumDetail } from '$lib/types';
-	import { reenableAlbumManagement } from '$lib/queries/library/LibraryCatalogMutations.svelte';
+	import { createReenableAlbumManagementMutation } from '$lib/queries/library/LibraryCatalogMutations.svelte';
 	import { getAlbumEditionsQuery } from '$lib/queries/albums/EditionQueries.svelte';
 	import { getAlbumHistoryQuery } from '$lib/queries/library/LibraryAlbumHistoryQueries.svelte';
 	import {
-		handBackLibraryAlbumMutation,
+		createHandBackLibraryAlbumMutation,
 		handBackRefusalMessage
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
@@ -24,8 +24,8 @@
 
 	let { album }: Props = $props();
 
-	const reenableManagement = reenableAlbumManagement();
-	const handBack = handBackLibraryAlbumMutation();
+	const reenableManagement = createReenableAlbumManagementMutation();
+	const handBack = createHandBackLibraryAlbumMutation();
 	const hold = $derived(album.management_hold ?? null);
 	// A hold the app set by itself, as opposed to the person's own choice.
 	const steppedBack = $derived(hold !== null && hold.kind !== 'your_choice');
