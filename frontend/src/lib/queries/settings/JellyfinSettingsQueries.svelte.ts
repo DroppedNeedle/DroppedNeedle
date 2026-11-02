@@ -1,10 +1,10 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { SettingsQueryKeyFactory } from './SettingsQueryKeyFactory';
-import { SETTINGS_ENDPOINTS } from './endpoints';
 import { createAppMutation } from '$lib/queries/effects';
 
 export type JellyfinSettings = components['schemas']['JellyfinConnection'];
@@ -13,14 +13,14 @@ export type JellyfinVerifyResult = components['schemas']['JellyfinVerifyResponse
 export const getJellyfinSettingsQuery = () =>
 	createQuery(() => ({
 		queryKey: SettingsQueryKeyFactory.jellyfin(authStore.user?.id),
-		queryFn: ({ signal }) => api.v3.GET(SETTINGS_ENDPOINTS.jellyfin(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/settings/jellyfin'), { signal })
 	}));
 
 /** The answer is the section as stored, with the API key masked. */
 export const createSaveJellyfinSettingsMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (body: JellyfinSettings) => api.v3.PUT(SETTINGS_ENDPOINTS.jellyfin(), body),
+		mutationFn: (body: JellyfinSettings) => api.v3.PUT(v3('/api/v3/settings/jellyfin'), body),
 		onSuccess: (saved: JellyfinSettings) =>
 			setQueryDataWithPersister(SettingsQueryKeyFactory.jellyfin(authStore.user?.id), saved)
 	}));
@@ -29,5 +29,6 @@ export const createSaveJellyfinSettingsMutation = () =>
 export const createVerifyJellyfinMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (body: JellyfinSettings) => api.v3.POST(SETTINGS_ENDPOINTS.jellyfinVerify(), body)
+		mutationFn: (body: JellyfinSettings) =>
+			api.v3.POST(v3('/api/v3/settings/jellyfin/verify'), body)
 	}));

@@ -1,9 +1,9 @@
+import { v3 } from '$lib/api/v3/endpoint';
 /**
  * Resolves upcoming YouTube tracks before playback. Unresolvable tracks are
  * removed; cross-origin previews stay in deckSampler because Web Audio mutes them.
  */
 import { api } from '$lib/api/client';
-import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
 import { playerStore } from '$lib/stores/player.svelte';
 import { radioSession } from '$lib/stores/radioSession.svelte';
 import type { QueueItem } from '$lib/player/types';
@@ -23,7 +23,9 @@ export async function resolveRadioPatch(item: QueueItem): Promise<Partial<QueueI
 	if (item.sourceType !== 'youtube' || item.trackSourceId) return {};
 	try {
 		const data = await api.v3.GET(
-			DiscoverV3Api.youtubeTrackSearch(item.artistName, item.trackName)
+			v3('/api/v3/discover/queue/youtube-track-search', {
+				query: { artist: item.artistName, track: item.trackName }
+			})
 		);
 		if (data.video_id) {
 			return { trackSourceId: data.video_id };

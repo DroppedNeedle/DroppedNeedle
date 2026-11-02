@@ -1,6 +1,6 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
-import { AUTH_ENDPOINTS } from './endpoints';
 
 vi.mock('@tanstack/svelte-query', () => ({
 	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
@@ -59,7 +59,7 @@ describe('createImportUsersMutation', () => {
 		const mutationFn = lastMutationOpts().mutationFn as (v: unknown) => Promise<unknown>;
 		await mutationFn({ provider: 'jellyfin', provider_uids: ['jf-1', 'jf-2'] });
 
-		expect(mockPost).toHaveBeenCalledWith(AUTH_ENDPOINTS.adminImport, {
+		expect(mockPost).toHaveBeenCalledWith(v3('/api/v3/admin/import'), {
 			provider: 'jellyfin',
 			provider_uids: ['jf-1', 'jf-2']
 		});
@@ -98,7 +98,7 @@ describe('getImportCandidatesQuery', () => {
 
 		const queryFn = opts.queryFn as (ctx: { signal: AbortSignal }) => Promise<unknown>;
 		await queryFn({ signal: new AbortController().signal });
-		expect(mockGet.mock.calls[0][0]).toBe(AUTH_ENDPOINTS.adminImportPlex);
+		expect(mockGet.mock.calls[0][0]).toBe(v3('/api/v3/admin/import/plex'));
 	});
 
 	it('is gated by the enabled getter (disabled while the picker is closed)', async () => {

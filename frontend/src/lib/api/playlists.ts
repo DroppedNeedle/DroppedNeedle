@@ -1,7 +1,6 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import type { QueueItem } from '$lib/player/types';
-import { PlaylistV3Api } from '$lib/queries/playlists/PlaylistV3Api';
-import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
 import { toPageDetail } from '$lib/queries/playlists/playlistV3Adapter';
 
 export interface PlaylistTrack {
@@ -108,7 +107,7 @@ export async function fetchPlaylist(
 	id: string,
 	options?: { signal?: AbortSignal }
 ): Promise<PlaylistDetailItem> {
-	const data = await api.v3.GET(PlaylistV3Api.detail(id), { signal: options?.signal });
+	const data = await api.v3.GET(v3('/api/v3/playlists/{playlist_id}', { path: { playlist_id: id } }), { signal: options?.signal });
 	return toPageDetail(data);
 }
 
@@ -146,7 +145,7 @@ export async function requestMissingTracks(tracks: PlaylistTrack[]): Promise<Bat
 			skipped: 0
 		};
 	}
-	const data = await api.v3.POST(REQUESTS_ENDPOINTS.requestBatch(), { items });
+	const data = await api.v3.POST(v3('/api/v3/requests/batches'), { items });
 	return {
 		success: data.success,
 		message: data.message,

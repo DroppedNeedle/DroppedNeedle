@@ -1,5 +1,5 @@
-import { fetchLocalAlbumMatch, fetchRemoteAlbumMatch } from '$lib/queries/albumMatch';
-import { readIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+import { fetchLocalAlbumMatch, fetchRemoteAlbumMatch } from '$lib/queries/albumMatch.svelte';
+import { readIntegrationStatus } from '$lib/queries/home.svelte';
 import { playerStore } from '$lib/stores/player.svelte';
 import { toastStore } from '$lib/stores/toast';
 import { recordingFor, REMOTE_FORMAT, remoteStreamKey } from '$lib/player/queueHelpers';

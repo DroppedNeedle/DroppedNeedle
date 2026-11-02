@@ -46,7 +46,7 @@
 	} from '$lib/queries/discover/DiscoverV3Mutations.svelte';
 	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
 	import type { SectionZone, TopPickItem } from '$lib/queries/discover/types';
-	import { getSectionPrefsQuery } from '$lib/queries/section-prefs/SectionPrefsQuery.svelte';
+	import { getSectionPrefsQuery } from '$lib/queries/section-prefs.svelte';
 	import {
 		becauseOf,
 		picksOf,

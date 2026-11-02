@@ -1,9 +1,10 @@
 <script lang="ts">
+	import { v3 } from '$lib/api/v3/endpoint';
 	import { Play, Shuffle, ListPlus, ListStart, ListMusic, Download } from 'lucide-svelte';
 	import ContextMenu from './ContextMenu.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { MenuItem } from './ContextMenu.svelte';
-	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import {
 		cardQuickPlay,
 		cardQuickShuffle,
@@ -16,7 +17,6 @@
 	import { downloadAlbumArchive } from '$lib/utils/downloadActions';
 	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
 
 	const integrations = useIntegrationStatus();
 
@@ -73,7 +73,10 @@
 			items.push({
 				label: 'Download Album',
 				icon: Download,
-				onclick: () => void downloadAlbumArchive(LocalDownloadsApi.albumByMbid(mbid))
+				onclick: () =>
+					void downloadAlbumArchive(
+						v3('/api/v3/download/local/album/mbid/{mbid}', { path: { mbid } })
+					)
 			});
 		}
 		return items;

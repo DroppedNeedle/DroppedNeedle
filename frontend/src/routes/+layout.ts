@@ -1,12 +1,11 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { browser } from '$app/environment';
 import { api } from '$lib/api/client';
 import { ApiError, TransportError } from '$lib/api/errors';
 import { collectPersistedGarbage, queryClient } from '$lib/queries/QueryClient';
 import { AUTH_FREE_PATHS } from '$lib/constants';
-import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
-import { PROFILE_ENDPOINTS } from '$lib/queries/profile/endpoints';
 import { toAuthUser } from '$lib/queries/auth/types';
-import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
+import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences.svelte';
 import { DEFAULT_SOURCE, isMusicSource } from '$lib/stores/musicSource';
 import { authStore, LAST_USER_ID_KEY } from '$lib/stores/authStore.svelte';
 import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
@@ -55,7 +54,7 @@ export const load: LayoutLoad = async ({ url }) => {
 	if (!authStore.initialized) {
 		try {
 			const status = await retryUnreached(() =>
-				api.v3.GET(AUTH_ENDPOINTS.setupStatus, { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
+				api.v3.GET(v3('/api/v3/auth/setup/status'), { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
 			);
 			setupRequired = status.setup_required;
 			authStore.setSetupRequired(setupRequired);
@@ -65,7 +64,7 @@ export const load: LayoutLoad = async ({ url }) => {
 
 		try {
 			const user = await retryUnreached(() =>
-				api.v3.GET(PROFILE_ENDPOINTS.get(), { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
+				api.v3.GET(v3('/api/v3/me'), { timeoutMs: BOOTSTRAP_TIMEOUT_MS })
 			);
 			authStore.setUser(toAuthUser(user));
 		} catch (cause) {

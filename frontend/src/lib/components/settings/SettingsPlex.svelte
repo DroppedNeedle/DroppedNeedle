@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { onDestroy } from 'svelte';
-	import { fetchPlexLibraries } from '$lib/queries/plex/PlexLibraryQueries';
-	import { pollPlexFlow, startPlexFlow } from '$lib/queries/plex/PlexFlowApi';
+	import { fetchPlexLibraries } from '$lib/queries/plex.svelte';
+	import { pollPlexFlow, startPlexFlow } from '$lib/queries/plex.svelte';
 	import {
 		createSavePlexSettingsMutation,
 		createVerifyPlexMutation,

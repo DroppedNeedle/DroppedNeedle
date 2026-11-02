@@ -60,7 +60,7 @@ const blob = vi.hoisted(() => ({ download: vi.fn() }));
 vi.mock('$lib/utils/blobDownload', () => ({ downloadBlob: blob.download }));
 
 import AlbumTrackList from './AlbumTrackList.svelte';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
+import { HomeQueryKeyFactory } from '$lib/queries/featureKeys';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { getTrackContextMenuItems as realMenuItems } from './albumPlaybackHandlers';
 import { buildRenderedTrackSections, buildSortedTrackMap } from './albumTrackResolvers';

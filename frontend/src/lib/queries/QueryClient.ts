@@ -49,6 +49,7 @@ export const setQueryDataWithPersister = async <
 	options?: SetDataOptions,
 	client: QueryClient = queryClient
 ) => {
+	// eslint-disable-next-line no-restricted-syntax -- this is the helper
 	await client.setQueryData<TQueryFnData, TTaggedQueryKey, TInferredQueryFnData>(
 		queryKey,
 		updater,
@@ -93,6 +94,7 @@ export const invalidateQueriesWithPersister = async <TTaggedQueryKey extends Que
 	let activeFailure: unknown;
 	let activeFailed = false;
 	try {
+		// eslint-disable-next-line no-restricted-syntax -- this is the helper
 		await (opts?.client ?? queryClient).invalidateQueries<TTaggedQueryKey>(filters, options);
 	} catch (error) {
 		activeFailure = error;

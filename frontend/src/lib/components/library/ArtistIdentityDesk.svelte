@@ -21,16 +21,16 @@
 		previewArtistMerge
 	} from '$lib/queries/library/LibraryCatalogMutations.svelte';
 	import type { ArtistMergePreviewResponse } from '$lib/queries/library/LibraryOperationsTypes';
-	import { dismissArtistDuplicateGroup } from '$lib/queries/artist-reconciliation/ArtistReconciliationMutations.svelte';
+	import { dismissArtistDuplicateGroup } from '$lib/queries/artist-reconciliation.svelte';
 	import {
 		getArtistDuplicateGroupQuery,
 		getArtistDuplicateGroupsQuery,
 		getArtistReconciliationProgressQuery
-	} from '$lib/queries/artist-reconciliation/ArtistReconciliationQueries.svelte';
+	} from '$lib/queries/artist-reconciliation.svelte';
 	import type {
 		ArtistDuplicateGroupSummary,
 		ArtistReconciliationGroupState
-	} from '$lib/queries/artist-reconciliation/ArtistReconciliationTypes';
+	} from '$lib/queries/artist-reconciliation.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';

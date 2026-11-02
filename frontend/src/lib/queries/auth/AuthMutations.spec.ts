@@ -1,5 +1,5 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
-import { AUTH_ENDPOINTS } from './endpoints';
 import { toAuthUser } from './types';
 
 vi.mock('@tanstack/svelte-query', () => ({
@@ -81,7 +81,7 @@ describe('auth mutations', () => {
 
 		await lastMutationFn()({ username: 'jane.doe', password: 'pw' });
 
-		expect(mockV3Post).toHaveBeenCalledWith(AUTH_ENDPOINTS.login, {
+		expect(mockV3Post).toHaveBeenCalledWith(v3('/api/v3/auth/login'), {
 			username: 'jane.doe',
 			password: 'pw'
 		});
@@ -93,7 +93,7 @@ describe('auth mutations', () => {
 
 		await lastMutationFn()({ display_name: 'A', username: 'a.admin', password: 'pw' });
 
-		expect(mockV3Post).toHaveBeenCalledWith(AUTH_ENDPOINTS.setup, {
+		expect(mockV3Post).toHaveBeenCalledWith(v3('/api/v3/auth/setup'), {
 			display_name: 'A',
 			username: 'a.admin',
 			password: 'pw'
@@ -106,7 +106,7 @@ describe('auth mutations', () => {
 
 		await lastMutationFn()({ code: 'abc' });
 
-		expect(mockV3Post).toHaveBeenCalledWith(AUTH_ENDPOINTS.oidcExchange, { code: 'abc' });
+		expect(mockV3Post).toHaveBeenCalledWith(v3('/api/v3/auth/oidc/exchange'), { code: 'abc' });
 	});
 
 	it('password recovery posts the code and new password without a session', async () => {
@@ -154,6 +154,6 @@ describe('AuthProvidersQuery', () => {
 		await queryFn({ signal: new AbortController().signal });
 
 		expect(mockV3Get).toHaveBeenCalledTimes(1);
-		expect(mockV3Get.mock.calls[0][0]).toBe(AUTH_ENDPOINTS.providers);
+		expect(mockV3Get.mock.calls[0][0]).toBe(v3('/api/v3/auth/providers'));
 	});
 });

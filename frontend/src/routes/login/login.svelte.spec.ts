@@ -42,8 +42,9 @@ vi.mock('$lib/queries/auth/AuthMutations.svelte', () => ({
 
 // The page mints Plex pins through the real flow module; these tests never
 // touch the Plex tab, so stub the mutation instead of mounting a QueryClient.
-vi.mock('$lib/queries/plex/PlexAuthMutations.svelte', () => ({
-	createPlexStartMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
+vi.mock('$lib/queries/plex.svelte', () => ({
+	createPlexStartMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	pollPlexFlow: vi.fn()
 }));
 
 import Login from './+page.svelte';

@@ -1,12 +1,12 @@
 <script lang="ts">
+	import { v3 } from '$lib/api/v3/endpoint';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { SPOTIFY_ENDPOINTS } from '$lib/queries/spotify/endpoints';
 	import {
 		createSaveSpotifySettingsMutation,
 		getSpotifySettingsQuery
 	} from '$lib/queries/settings/SectionSettingsQueries.svelte';
-	import { getSpotifyRedirectUriQuery } from '$lib/queries/spotify/SpotifyQueries.svelte';
+	import { getSpotifyRedirectUriQuery } from '$lib/queries/spotify.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { Copy, ExternalLink } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -43,7 +43,10 @@
 	const redirectUri = $derived(
 		redirectQuery.data?.redirect_uri ??
 			(redirectQuery.isError
-				? new URL(getApiUrl(SPOTIFY_ENDPOINTS.authCallback()), window.location.origin).toString()
+				? new URL(
+						getApiUrl(v3('/api/v3/acquire/spotify/auth/callback')),
+						window.location.origin
+					).toString()
 				: '')
 	);
 

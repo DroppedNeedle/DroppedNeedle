@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { DEFAULT_SOURCE, isMusicSource, type MusicSource } from '$lib/stores/musicSource';
-	import { getScrobblePreferencesQuery } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
-	import { createUpdateScrobblePreferencesMutation } from '$lib/queries/scrobble-preferences/ScrobblePreferencesMutations.svelte';
+	import { getScrobblePreferencesQuery } from '$lib/queries/scrobble-preferences.svelte';
+	import { createUpdateScrobblePreferencesMutation } from '$lib/queries/scrobble-preferences.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 

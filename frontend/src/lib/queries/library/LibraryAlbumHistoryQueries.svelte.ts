@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { applyEffects, catalogChanged, createAppMutation } from '$lib/queries/effects';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { createQuery } from '@tanstack/svelte-query';
@@ -6,7 +7,6 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
 
 export type AlbumHistory = components['schemas']['AlbumHistoryView'];
 export type AlbumHistoryEntry = components['schemas']['AlbumHistoryEntryView'];
@@ -24,7 +24,10 @@ export const getAlbumHistoryQuery = (
 			queryKey: LibraryQueryKeyFactory.catalog.albumHistory(user, album ?? ''),
 			enabled: Boolean(user && album),
 			queryFn: ({ signal }: { signal: AbortSignal }) =>
-				api.v3.GET(LibraryV3Api.albumHistory(album ?? ''), { signal })
+				api.v3.GET(
+					v3('/api/v3/library/albums/{album_id}/history', { path: { album_id: album ?? '' } }),
+					{ signal }
+				)
 		};
 	});
 
@@ -33,7 +36,8 @@ export const getAlbumHistoryQuery = (
 // refreshes too, as the history it was offered from is stale.
 export function undoAlbumFold() {
 	return createAppMutation(() => ({
-		mutationFn: (undoId: string) => api.v3.POST(LibraryV3Api.undoAlbumFold(undoId)),
+		mutationFn: (undoId: string) =>
+			api.v3.POST(v3('/api/v3/library/folds/{fold_id}/undo', { path: { fold_id: undoId } })),
 		effects: () => [catalogChanged(authStore.user?.id)],
 		onError: () => applyEffects(catalogChanged(authStore.user?.id))
 	}));
@@ -44,7 +48,10 @@ export function undoAlbumFold() {
 // it shows, so every catalog view refreshes, on a refusal too.
 export function undoArtistRepair() {
 	return createAppMutation(() => ({
-		mutationFn: (undoId: string) => api.v3.POST(LibraryV3Api.undoArtistRepair(undoId)),
+		mutationFn: (undoId: string) =>
+			api.v3.POST(
+				v3('/api/v3/library/artist-repairs/{repair_id}/undo', { path: { repair_id: undoId } })
+			),
 		effects: () => [catalogChanged(authStore.user?.id)],
 		onError: () => applyEffects(catalogChanged(authStore.user?.id))
 	}));

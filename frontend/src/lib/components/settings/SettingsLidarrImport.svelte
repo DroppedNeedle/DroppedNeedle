@@ -1,11 +1,8 @@
 <script lang="ts">
 	import { CloudDownload } from 'lucide-svelte';
 
-	import { getLidarrImportConfigQuery } from '$lib/queries/lidarr-import/LidarrImportQueries.svelte';
-	import {
-		saveLidarrConfigMutation,
-		testLidarrMutation
-	} from '$lib/queries/lidarr-import/LidarrImportMutations.svelte';
+	import { getLidarrImportConfigQuery } from '$lib/queries/lidarr-import.svelte';
+	import { saveLidarrConfigMutation, testLidarrMutation } from '$lib/queries/lidarr-import.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SaveBar from '$lib/ui/SaveBar.svelte';

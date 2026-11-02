@@ -4,7 +4,7 @@ import { isHttpError } from '@sveltejs/kit';
 import { toAuthUser } from '$lib/queries/auth/types';
 import type { RemoteSource } from '$lib/queries/remotes/types';
 import { remoteSources } from '$lib/queries/remotes/remoteSources';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
+import { HomeQueryKeyFactory } from '$lib/queries/featureKeys';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { playerStore } from '$lib/stores/player.svelte';

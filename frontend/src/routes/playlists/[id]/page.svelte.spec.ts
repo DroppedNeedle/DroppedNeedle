@@ -64,7 +64,6 @@ vi.mock('$lib/queries/QueryClient', async () => {
 		queryClient,
 		invalidateQueriesWithPersister: vi.fn(),
 		setQueryDataWithPersister: async (key: readonly unknown[], data: unknown): Promise<void> => {
-			// eslint-disable-next-line no-restricted-syntax -- this stands in for the helper itself
 			queryClient.setQueryData(key, data);
 		}
 	};

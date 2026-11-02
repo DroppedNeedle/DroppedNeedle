@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
@@ -21,7 +22,6 @@ vi.mock('$lib/queries/effects', async (importOriginal) => ({
 
 import { api } from '$lib/api/client';
 import { userQuotaChanged, type Effect } from '$lib/queries/effects';
-import { AUTH_ENDPOINTS } from './endpoints';
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { getUserQuotaQuery, saveUserQuota } from './UserQuotaQueries.svelte';
 
@@ -55,9 +55,12 @@ describe('getUserQuotaQuery', () => {
 
 		await query.queryFn?.({ signal: controller.signal });
 
-		expect(mockGet).toHaveBeenCalledWith(AUTH_ENDPOINTS.userQuota('user-9'), {
-			signal: controller.signal
-		});
+		expect(mockGet).toHaveBeenCalledWith(
+			v3('/api/v3/admin/users/{id}/quota', { path: { id: 'user-9' } }),
+			{
+				signal: controller.signal
+			}
+		);
 		expect(query.queryKey).toEqual(AuthQueryKeyFactory.userQuota('user-9'));
 	});
 
@@ -88,7 +91,10 @@ describe('saveUserQuota', () => {
 
 		await mutation.mutationFn({ userId: 'user-9', override });
 
-		expect(mockPut).toHaveBeenCalledWith(AUTH_ENDPOINTS.userQuota('user-9'), override);
+		expect(mockPut).toHaveBeenCalledWith(
+			v3('/api/v3/admin/users/{id}/quota', { path: { id: 'user-9' } }),
+			override
+		);
 		expect(mutation.effects({}, { userId: 'user-9' })).toEqual([userQuotaChanged('user-9')]);
 	});
 });

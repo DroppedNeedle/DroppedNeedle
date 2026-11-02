@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { KeyRound, LogOut, Monitor, Smartphone, TriangleAlert } from 'lucide-svelte';
-	import { getSessionsQuery } from '$lib/queries/sessions/SessionsQuery.svelte';
+	import { getSessionsQuery } from '$lib/queries/sessions.svelte';
 	import {
 		createRevokeSessionMutation,
 		createSignOutEverywhereMutation
-	} from '$lib/queries/sessions/SessionsMutations.svelte';
-	import type { SessionView } from '$lib/queries/sessions/types';
+	} from '$lib/queries/sessions.svelte';
+	import type { SessionView } from '$lib/queries/sessions.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';

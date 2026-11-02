@@ -1,9 +1,9 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { pollPlexFlow, startPlexFlow } from '$lib/queries/plex/PlexFlowApi';
-import type { PlexLinkPollResult } from '$lib/queries/plex/types';
-import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
+import { pollPlexFlow, startPlexFlow } from '$lib/queries/plex.svelte';
+import type { PlexLinkPollResult } from '$lib/queries/plex.svelte';
 import {
 	applyEffects,
 	connectionsChanged,
@@ -12,7 +12,6 @@ import {
 	spotifyPlaylistsChanged,
 	type Effect
 } from '../effects';
-import { CONNECTIONS_ENDPOINTS } from './endpoints';
 import type {
 	LastFmAuthSessionResponse,
 	LastFmAuthTokenResponse,
@@ -45,7 +44,7 @@ function connectionAndPlaylists(service: string): Effect[] {
 export const createSetLastFmCredentialsMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: components['schemas']['LastFmCredentialsSet']) =>
-			api.v3.PUT(CONNECTIONS_ENDPOINTS.lastfm(), vars),
+			api.v3.PUT(v3('/api/v3/me/connections/lastfm'), vars),
 		effects: connections
 	}));
 
@@ -54,21 +53,21 @@ export const createLastFmRequestTokenMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (): Promise<LastFmAuthTokenResponse> =>
-			api.v3.POST(CONNECTIONS_ENDPOINTS.lastfmToken())
+			api.v3.POST(v3('/api/v3/me/connections/lastfm/token'))
 	}));
 
 // OAuth step 2: exchange the approved token for a per-user session
 export const createLastFmExchangeSessionMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (token: string): Promise<LastFmAuthSessionResponse> =>
-			api.v3.POST(CONNECTIONS_ENDPOINTS.lastfmSession(), { token }),
+			api.v3.POST(v3('/api/v3/me/connections/lastfm/session'), { token }),
 		effects: connections
 	}));
 
 export const createConnectListenBrainzMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: ListenBrainzConnectVars) =>
-			api.v3.PUT(CONNECTIONS_ENDPOINTS.listenbrainz(), vars),
+			api.v3.PUT(v3('/api/v3/me/connections/listenbrainz'), vars),
 		effects: connections
 	}));
 
@@ -79,16 +78,18 @@ export const createDisconnectMutation = () =>
 		// settlement, so the result stays unknown.
 		mutationFn: (service: string): Promise<unknown> => {
 			if (isMediaSource(service)) {
-				return api.v3.DELETE(REMOTE_ENDPOINTS.connection(service));
+				return api.v3.DELETE(
+					v3('/api/v3/remotes/{source}/connection', { path: { source: service } })
+				);
 			}
 			if (service === 'listenbrainz') {
-				return api.v3.DELETE(CONNECTIONS_ENDPOINTS.listenbrainz());
+				return api.v3.DELETE(v3('/api/v3/me/connections/listenbrainz'));
 			}
 			if (service === 'lastfm') {
-				return api.v3.DELETE(CONNECTIONS_ENDPOINTS.lastfm());
+				return api.v3.DELETE(v3('/api/v3/me/connections/lastfm'));
 			}
 			if (service === 'spotify') {
-				return api.v3.DELETE(CONNECTIONS_ENDPOINTS.spotify());
+				return api.v3.DELETE(v3('/api/v3/me/connections/spotify'));
 			}
 			// Anything else has no unlink route: fail loudly rather than
 			// calling a route that does not exist.
@@ -101,7 +102,7 @@ export const createConnectSpotifyMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: async () => {
-			const data = await api.v3.GET(CONNECTIONS_ENDPOINTS.spotifyAuthUrl());
+			const data = await api.v3.GET(v3('/api/v3/acquire/spotify/auth/url'));
 			window.location.href = data.auth_url;
 		}
 	}));
@@ -111,14 +112,17 @@ export const createConnectSpotifyMutation = () =>
 export const createConnectNavidromeMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: MediaServerConnectVars) =>
-			api.v3.PUT(REMOTE_ENDPOINTS.connection('navidrome'), vars),
+			api.v3.PUT(
+				v3('/api/v3/remotes/{source}/connection', { path: { source: 'navidrome' } }),
+				vars
+			),
 		effects: () => connectionAndPlaylists('navidrome')
 	}));
 
 export const createConnectJellyfinMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: MediaServerConnectVars) =>
-			api.v3.PUT(REMOTE_ENDPOINTS.connection('jellyfin'), vars),
+			api.v3.PUT(v3('/api/v3/remotes/{source}/connection', { path: { source: 'jellyfin' } }), vars),
 		effects: () => connectionAndPlaylists('jellyfin')
 	}));
 

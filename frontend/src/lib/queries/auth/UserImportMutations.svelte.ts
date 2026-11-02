@@ -1,7 +1,7 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { createAppMutation, userImportCandidatesChanged } from '../effects';
-import { AUTH_ENDPOINTS } from './endpoints';
 import type { ImportUsersResult, ImportUsersVars } from './types';
 
 /**
@@ -11,7 +11,7 @@ import type { ImportUsersResult, ImportUsersVars } from './types';
  */
 export const createImportUsersMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: (vars: ImportUsersVars) => api.v3.POST(AUTH_ENDPOINTS.adminImport, vars),
+		mutationFn: (vars: ImportUsersVars) => api.v3.POST(v3('/api/v3/admin/import'), vars),
 		effects: (_result: ImportUsersResult, vars: ImportUsersVars) => [
 			userImportCandidatesChanged(authStore.user?.id, vars.provider)
 		]

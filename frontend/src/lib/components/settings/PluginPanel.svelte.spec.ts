@@ -7,9 +7,7 @@ const h = vi.hoisted(() => ({ head: vi.fn(), list: vi.fn(), address: '' }));
 vi.mock('$lib/api/client', () => ({
 	api: { head: h.head, v3: { GET: h.list } }
 }));
-vi.mock('$lib/queries/plugins/endpoints', () => ({
-	PLUGIN_ENDPOINTS: { panelPage: () => h.address, list: () => '/api/v3/plugins' }
-}));
+vi.mock('$lib/api/api-utils', () => ({ getApiUrl: () => h.address }));
 vi.mock('$lib/queries/plugins/PluginSourceQueries.svelte', () => ({
 	fetchPluginSources: vi.fn()
 }));

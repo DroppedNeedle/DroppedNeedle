@@ -1,9 +1,9 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 
 import { PluginQueryKeyFactory } from './PluginQueryKeyFactory';
-import { PLUGIN_ENDPOINTS } from './endpoints';
 import type { PluginFilesPage } from './types';
 
 type Getter<T> = () => T;
@@ -12,7 +12,7 @@ type Getter<T> = () => T;
 export const getPluginsQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		queryKey: PluginQueryKeyFactory.list(),
-		queryFn: ({ signal }) => api.v3.GET(PLUGIN_ENDPOINTS.list(), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/plugins'), { signal }),
 		enabled: getEnabled()
 	}));
 
@@ -24,7 +24,10 @@ export const getPluginFilesQuery = (getName: Getter<string>) =>
 			queryKey: PluginQueryKeyFactory.files(name),
 			initialPageParam: undefined as string | undefined,
 			queryFn: ({ pageParam, signal }) =>
-				api.v3.GET(PLUGIN_ENDPOINTS.files(name, pageParam), { signal }),
+				api.v3.GET(
+					v3('/api/v3/library/manage/plugin-files', { query: { plugin: name, cursor: pageParam } }),
+					{ signal }
+				),
 			getNextPageParam: (lastPage: PluginFilesPage) => lastPage.next_cursor ?? undefined
 		};
 	});

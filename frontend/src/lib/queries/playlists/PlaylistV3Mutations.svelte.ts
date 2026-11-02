@@ -1,7 +1,7 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { PlaylistV3Api } from './PlaylistV3Api';
 import {
 	applyEffects,
 	createAppMutation,
@@ -29,14 +29,14 @@ export const forgetPlaylistSources = (id: string) =>
 
 export const createPlaylistV3 = () =>
 	createAppMutation(() => ({
-		mutationFn: (name: string) => api.v3.POST(PlaylistV3Api.create(), { name }),
+		mutationFn: (name: string) => api.v3.POST(v3('/api/v3/playlists'), { name }),
 		effects: list
 	}));
 
 export const updatePlaylistV3 = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string } & UpdatePlaylistBodyV3) =>
-			api.v3.PUT(PlaylistV3Api.detail(vars.id), {
+			api.v3.PUT(v3('/api/v3/playlists/{playlist_id}', { path: { playlist_id: vars.id } }), {
 				name: vars.name
 			}),
 		effects: (_data, vars) => listAndDetail(vars.id)
@@ -44,35 +44,46 @@ export const updatePlaylistV3 = () =>
 
 export const deletePlaylistV3 = () =>
 	createAppMutation(() => ({
-		mutationFn: (id: string) => api.v3.DELETE(PlaylistV3Api.detail(id)),
+		mutationFn: (id: string) =>
+			api.v3.DELETE(v3('/api/v3/playlists/{playlist_id}', { path: { playlist_id: id } })),
 		effects: (_data, id) => listAndDetail(id)
 	}));
 
 export const addPlaylistTracksV3 = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string } & AddTracksBodyV3) =>
-			api.v3.POST(PlaylistV3Api.tracks(vars.id), {
-				tracks: vars.tracks,
-				...(vars.position !== undefined && vars.position !== null
-					? { position: vars.position }
-					: {})
-			}),
+			api.v3.POST(
+				v3('/api/v3/playlists/{playlist_id}/tracks', { path: { playlist_id: vars.id } }),
+				{
+					tracks: vars.tracks,
+					...(vars.position !== undefined && vars.position !== null
+						? { position: vars.position }
+						: {})
+				}
+			),
 		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
 export const removePlaylistTrackV3 = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; trackId: string }) =>
-			api.v3.DELETE(PlaylistV3Api.track(vars.id, vars.trackId)),
+			api.v3.DELETE(
+				v3('/api/v3/playlists/{playlist_id}/tracks/{track_id}', {
+					path: { playlist_id: vars.id, track_id: vars.trackId }
+				})
+			),
 		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
 export const removePlaylistTracksV3 = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; trackIds: string[] }) =>
-			api.v3.POST(PlaylistV3Api.removeTracks(vars.id), {
-				track_ids: vars.trackIds
-			}),
+			api.v3.POST(
+				v3('/api/v3/playlists/{playlist_id}/tracks/remove', { path: { playlist_id: vars.id } }),
+				{
+					track_ids: vars.trackIds
+				}
+			),
 		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
@@ -84,14 +95,19 @@ export const updatePlaylistTrackV3 = () =>
 			sourceType?: string | null;
 			availableSources?: string[] | null;
 		}) =>
-			api.v3.PATCH(PlaylistV3Api.track(vars.id, vars.trackId), {
-				...(vars.sourceType !== undefined && vars.sourceType !== null
-					? { source_type: vars.sourceType }
-					: {}),
-				...(vars.availableSources !== undefined && vars.availableSources !== null
-					? { available_sources: vars.availableSources }
-					: {})
-			}),
+			api.v3.PATCH(
+				v3('/api/v3/playlists/{playlist_id}/tracks/{track_id}', {
+					path: { playlist_id: vars.id, track_id: vars.trackId }
+				}),
+				{
+					...(vars.sourceType !== undefined && vars.sourceType !== null
+						? { source_type: vars.sourceType }
+						: {}),
+					...(vars.availableSources !== undefined && vars.availableSources !== null
+						? { available_sources: vars.availableSources }
+						: {})
+				}
+			),
 		// Retargeting a source changes no list tile, so the detail alone refreshes.
 		effects: (_data, vars) => detail(vars.id)
 	}));
@@ -99,10 +115,13 @@ export const updatePlaylistTrackV3 = () =>
 export const reorderPlaylistTrackV3 = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; trackId: string; newPosition: number }) =>
-			api.v3.PATCH(PlaylistV3Api.reorderTrack(vars.id), {
-				track_id: vars.trackId,
-				new_position: vars.newPosition
-			}),
+			api.v3.PATCH(
+				v3('/api/v3/playlists/{playlist_id}/tracks/reorder', { path: { playlist_id: vars.id } }),
+				{
+					track_id: vars.trackId,
+					new_position: vars.newPosition
+				}
+			),
 		// Order changes no list tile, so the detail alone refreshes.
 		effects: (_data, vars) => detail(vars.id)
 	}));
@@ -110,9 +129,12 @@ export const reorderPlaylistTrackV3 = () =>
 export const setPlaylistVisibilityV3 = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string; isPublic: boolean }) =>
-			api.v3.PATCH(PlaylistV3Api.visibility(vars.id), {
-				is_public: vars.isPublic
-			}),
+			api.v3.PATCH(
+				v3('/api/v3/playlists/{playlist_id}/visibility', { path: { playlist_id: vars.id } }),
+				{
+					is_public: vars.isPublic
+				}
+			),
 		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
@@ -126,7 +148,7 @@ async function fileToBase64(file: File): Promise<string> {
 export const uploadPlaylistCoverV3 = () =>
 	createAppMutation(() => ({
 		mutationFn: async (vars: { id: string; file: File }) =>
-			api.v3.POST(PlaylistV3Api.cover(vars.id), {
+			api.v3.POST(v3('/api/v3/playlists/{playlist_id}/cover', { path: { playlist_id: vars.id } }), {
 				content_type: vars.file.type,
 				image_base64: await fileToBase64(vars.file)
 			}),
@@ -135,7 +157,8 @@ export const uploadPlaylistCoverV3 = () =>
 
 export const deletePlaylistCoverV3 = () =>
 	createAppMutation(() => ({
-		mutationFn: (id: string) => api.v3.DELETE(PlaylistV3Api.cover(id)),
+		mutationFn: (id: string) =>
+			api.v3.DELETE(v3('/api/v3/playlists/{playlist_id}/cover', { path: { playlist_id: id } })),
 		effects: (_data, id) => listAndDetail(id)
 	}));
 
@@ -143,5 +166,5 @@ export const checkPlaylistTracksV3 = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		// Pure read: membership answers are never cached, so no invalidation.
-		mutationFn: (body: CheckTracksBodyV3) => api.v3.POST(PlaylistV3Api.checkTracks(), body)
+		mutationFn: (body: CheckTracksBodyV3) => api.v3.POST(v3('/api/v3/playlists/check-tracks'), body)
 	}));

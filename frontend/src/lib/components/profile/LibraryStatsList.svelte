@@ -2,7 +2,7 @@
 	import { Database, Disc3, HardDrive, Users } from 'lucide-svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
-	import type { ProfileLibraryStats } from '$lib/queries/profile/types';
+	import type { ProfileLibraryStats } from '$lib/queries/profile.svelte';
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {

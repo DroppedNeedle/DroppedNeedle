@@ -6,7 +6,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { watchMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 	import { libraryStore } from '$lib/stores/library';
-	import { getIntegrationStatusQuery } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { getIntegrationStatusQuery } from '$lib/queries/home.svelte';
 	import { loadAdvancedSettings } from '$lib/queries/AdvancedSettingsReads.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';

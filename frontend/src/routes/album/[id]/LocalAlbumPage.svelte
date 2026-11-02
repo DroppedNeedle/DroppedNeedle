@@ -16,7 +16,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import RatingStars from '$lib/ui/RatingStars.svelte';
-	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings/RatingQueries.svelte';
+	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings.svelte';
 	import FavoriteHeart from '$lib/components/FavoriteHeart.svelte';
 	import { setFavorite } from '$lib/queries/library/FavoriteMutations.svelte';
 	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';

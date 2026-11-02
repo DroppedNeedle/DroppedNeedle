@@ -35,7 +35,7 @@
 	import TrackRequestButton from '$lib/components/downloads/TrackRequestButton.svelte';
 	import TrackDownloadStatus from '$lib/components/downloads/TrackDownloadStatus.svelte';
 	import HeldFileRow from '$lib/components/downloads/HeldFileRow.svelte';
-	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { requestUpgradeTrack } from '$lib/queries/downloads/UpgradeQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';

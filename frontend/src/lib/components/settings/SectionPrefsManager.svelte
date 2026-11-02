@@ -3,10 +3,7 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { Check, ExternalLink } from 'lucide-svelte';
 	import type { SectionPrefItem } from '$lib/types';
-	import {
-		getSectionPrefsQuery,
-		saveSectionPrefs
-	} from '$lib/queries/section-prefs/SectionPrefsQuery.svelte';
+	import { getSectionPrefsQuery, saveSectionPrefs } from '$lib/queries/section-prefs.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';

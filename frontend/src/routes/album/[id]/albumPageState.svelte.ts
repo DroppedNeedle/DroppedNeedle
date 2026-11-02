@@ -15,7 +15,7 @@ import type {
 } from '$lib/types';
 import type { RemoteTrack } from '$lib/queries/remotes/types';
 import { libraryStore } from '$lib/stores/library';
-import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+import { useIntegrationStatus } from '$lib/queries/home.svelte';
 import { ApiError } from '$lib/api/errors';
 import { compareDiscTrack, getDiscTrackKey } from '$lib/player/queueHelpers';
 import type { QueueItem } from '$lib/player/types';
@@ -59,8 +59,8 @@ import {
 } from '$lib/queries/catalog/AlbumQueries.svelte';
 import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
 import { refreshAlbum } from '$lib/queries/catalog/AlbumMutations.svelte';
-import { getLocalAlbumMatchQuery, getRemoteAlbumMatchQuery } from '$lib/queries/albumMatch';
-import { AlbumMatchKeyFactory } from '$lib/queries/AlbumMatchQueryKeyFactory';
+import { getLocalAlbumMatchQuery, getRemoteAlbumMatchQuery } from '$lib/queries/albumMatch.svelte';
+import { AlbumMatchKeyFactory } from '$lib/queries/featureKeys';
 import { albumCopiesChanged, albumCopiesStale, applyEffectsIn } from '$lib/queries/effects';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 

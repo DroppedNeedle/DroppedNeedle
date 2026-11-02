@@ -10,7 +10,7 @@
 		createRetryRequestMutation
 	} from '$lib/queries/requests/RequestMutations.svelte';
 	import type { RequestItem, RequestKind } from '$lib/queries/requests/types';
-	import { getWantedWatchesQuery } from '$lib/queries/wanted/WantedQuery.svelte';
+	import { getWantedWatchesQuery } from '$lib/queries/wanted.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';

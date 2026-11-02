@@ -533,6 +533,9 @@ Run from the repo root. `make help` lists every target.
   metadata source carries `meta.provider`, so a source switch drops it.
 - An effect that seeds a form from `query.data` guards itself: any change to
   the query re-runs it.
+- A small feature's queries are one file, `lib/queries/<feature>.svelte.ts`; a
+  hook names its route, with no alias file. The keys `effects.ts` sweeps live
+  in `lib/queries/featureKeys.ts`, so it imports no hooks.
 - Change the cache only through `setQueryDataWithPersister` and
   `invalidateQueriesWithPersister`. Mutations invalidate every affected
   prefix, including other features'.

@@ -32,7 +32,10 @@ const h = vi.hoisted(() => ({
 	revokeMutate: vi.fn().mockResolvedValue(undefined)
 }));
 
-vi.mock('$lib/queries/connect-apps/ConnectAppsQueries.svelte', () => ({
+vi.mock('$lib/queries/connect-apps.svelte', () => ({
+	APP_PASSWORD_CAP: 25,
+	createAppPassword: () => ({ mutateAsync: h.createMutate, isPending: false }),
+	revokeAppPassword: () => ({ mutateAsync: h.revokeMutate, isPending: false }),
 	getConnectAppsSettingsQuery: () => ({
 		data: h.settings,
 		isLoading: false,
@@ -45,11 +48,6 @@ vi.mock('$lib/queries/connect-apps/ConnectAppsQueries.svelte', () => ({
 		isError: h.isError,
 		refetch: vi.fn()
 	})
-}));
-
-vi.mock('$lib/queries/connect-apps/ConnectAppsMutations.svelte', () => ({
-	createAppPassword: () => ({ mutateAsync: h.createMutate, isPending: false }),
-	revokeAppPassword: () => ({ mutateAsync: h.revokeMutate, isPending: false })
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({

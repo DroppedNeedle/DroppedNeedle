@@ -1,6 +1,6 @@
 <script lang="ts">
+	import { v3 } from '$lib/api/v3/endpoint';
 	import { Download } from 'lucide-svelte';
-	import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
 	import { downloadAlbumArchive } from '$lib/utils/downloadActions';
 	import { formatBytes } from '$lib/utils/formatting';
 	import Button, { type ButtonSize } from '$lib/ui/Button.svelte';
@@ -22,7 +22,11 @@
 	let { albumId, mbid, totalSizeBytes, trackCount, downloadAllowed, size = 'md' }: Props = $props();
 
 	const href = $derived(
-		albumId ? LocalDownloadsApi.album(albumId) : mbid ? LocalDownloadsApi.albumByMbid(mbid) : null
+		albumId
+			? v3('/api/v3/download/local/album/{id}', { path: { id: albumId } })
+			: mbid
+				? v3('/api/v3/download/local/album/mbid/{mbid}', { path: { mbid } })
+				: null
 	);
 	const caption = $derived(
 		totalSizeBytes && totalSizeBytes > 0 ? `ZIP · ${formatBytes(totalSizeBytes)}` : 'ZIP'

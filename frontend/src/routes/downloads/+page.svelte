@@ -8,7 +8,7 @@
 	import DropImportJobList from '$lib/components/import/DropImportJobList.svelte';
 	import DropImportZone from '$lib/components/import/DropImportZone.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
-	import { getIntegrationStatusQuery } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { getIntegrationStatusQuery } from '$lib/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 
 	const integrationStatus = getIntegrationStatusQuery();

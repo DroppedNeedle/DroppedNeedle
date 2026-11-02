@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -30,7 +30,7 @@
 		getLibraryAlbumStatusQuery
 	} from '$lib/queries/library/LibraryQueries.svelte';
 	import LocalAlbumPage from './LocalAlbumPage.svelte';
-	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings/RatingQueries.svelte';
+	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings.svelte';
 	import { setFavorite } from '$lib/queries/library/FavoriteMutations.svelte';
 
 	const integrations = useIntegrationStatus();

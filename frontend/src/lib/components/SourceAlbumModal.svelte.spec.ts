@@ -1,11 +1,8 @@
 import { page } from 'vitest/browser';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
+import { fakeApi } from '$lib/test/api';
 import SourceAlbumModal from './SourceAlbumModal.svelte';
-
-vi.mock('$lib/queries/remotes/remoteApi', () => ({
-	remoteApi: { albumTracks: vi.fn(async () => ({ items: [], total: 0, limit: 500, offset: 0 })) }
-}));
 
 vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
 	createPlaylistV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -17,6 +14,14 @@ const ALBUM_MBID = '3c1a7f52-8d0e-4b96-9f21-6a4e2d7b5c18';
 
 describe('SourceAlbumModal', () => {
 	it('links the title to the album page and is named by it', async () => {
+		fakeApi({
+			'GET /api/v3/remotes/{source}/albums/{id}/tracks': () => ({
+				items: [],
+				total: 0,
+				limit: 500,
+				offset: 0
+			})
+		});
 		render(SourceAlbumModal, {
 			open: true,
 			sourceType: 'plex',

@@ -4,7 +4,7 @@
 		getVersionQuery,
 		getUpdateCheckQuery,
 		getReleaseHistoryQuery
-	} from '$lib/queries/VersionQuery.svelte';
+	} from '$lib/queries/version.svelte';
 	import SafeHtml from '$lib/components/SafeHtml.svelte';
 	import { outsideLink } from '$lib/components/outsideLink';
 	import { ExternalLink, RefreshCw, Info, Tag, Calendar, CircleArrowUp } from 'lucide-svelte';

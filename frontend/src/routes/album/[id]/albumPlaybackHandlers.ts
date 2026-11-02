@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import type { AlbumBasicInfo, LocalAlbumMatch, LocalTrackInfo, Track } from '$lib/types';
 import type { RemoteMatch, RemoteTrack } from '$lib/queries/remotes/types';
 import type { QueueItem, PlaybackMeta } from '$lib/player/types';
@@ -17,7 +18,6 @@ import { playerStore } from '$lib/stores/player.svelte';
 import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 import { ListPlus, ListStart, ListMusic, Download, Trash2 } from 'lucide-svelte';
 import { downloadAlbumArchive, downloadTrackFile } from '$lib/utils/downloadActions';
-import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
 import type { SourceCallbacks } from './albumPageState.svelte';
 
 function getPlaybackMeta(album: AlbumBasicInfo): PlaybackMeta {
@@ -216,7 +216,10 @@ export function getTrackContextMenuItems(
 			label: 'Download',
 			icon: Download,
 			onclick: () =>
-				void downloadTrackFile(LocalDownloadsApi.track(resolvedLocal.track_file_id), track.title)
+				void downloadTrackFile(
+					v3('/api/v3/download/local/track/{id}', { path: { id: resolvedLocal.track_file_id } }),
+					track.title
+				)
 		});
 	}
 	if (resolvedLocal && onRemoveLocalFile) {
@@ -240,7 +243,7 @@ export function buildLocalAlbumDownloadCallback(
 	downloadAllowed: boolean
 ): (() => void) | undefined {
 	if (!mbid || !downloadAllowed) return undefined;
-	const url = LocalDownloadsApi.albumByMbid(mbid);
+	const url = v3('/api/v3/download/local/album/mbid/{mbid}', { path: { mbid } });
 	return () => void downloadAlbumArchive(url);
 }
 

@@ -5,11 +5,11 @@
 	import {
 		getAdminAppPasswordsQuery,
 		getConnectAppsSettingsQuery
-	} from '$lib/queries/connect-apps/ConnectAppsQueries.svelte';
+	} from '$lib/queries/connect-apps.svelte';
 	import {
 		adminRevokeAppPassword,
 		saveConnectAppsSettings
-	} from '$lib/queries/connect-apps/ConnectAppsMutations.svelte';
+	} from '$lib/queries/connect-apps.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { AdminAppPasswordView } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';

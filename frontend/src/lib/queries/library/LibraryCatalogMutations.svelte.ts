@@ -1,8 +1,8 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { catalogChanged, createAppMutation } from '$lib/queries/effects';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { api } from '$lib/api/client';
 import { toastStore } from '$lib/stores/toast';
-import { LibraryV3Api } from './LibraryV3Api';
 import { createUuid } from '$lib/utils/uuid';
 import type {
 	ArtistMergePreviewResponse,
@@ -29,9 +29,14 @@ export interface ArtistMergePreviewInput {
 export function reenableAlbumManagement() {
 	return createAppMutation(() => ({
 		mutationFn: (input: { albumId: string; expectedRevision: number }) =>
-			api.v3.POST(LibraryV3Api.reenableManagement(input.albumId), {
-				expected_exclusion_revision: input.expectedRevision
-			}),
+			api.v3.POST(
+				v3('/api/v3/library/albums/{album_id}/management/re-enable', {
+					path: { album_id: input.albumId }
+				}),
+				{
+					expected_exclusion_revision: input.expectedRevision
+				}
+			),
 		onSuccess: () => {
 			toastStore.show({ message: 'File organization re-enabled', type: 'success' });
 		},
@@ -49,26 +54,30 @@ type MembershipKind = 'split' | 'merge' | 'move' | 'reset';
 function previewUrl(kind: MembershipKind, albumId: string) {
 	switch (kind) {
 		case 'split':
-			return LibraryV3Api.splitPreview(albumId);
+			return v3('/api/v3/library/albums/{album_id}/split-preview', { path: { album_id: albumId } });
 		case 'merge':
-			return LibraryV3Api.mergePreview();
+			return v3('/api/v3/library/albums/merge-preview');
 		case 'move':
-			return LibraryV3Api.movePreview();
+			return v3('/api/v3/library/tracks/move-preview');
 		case 'reset':
-			return LibraryV3Api.resetGroupingPreview(albumId);
+			return v3('/api/v3/library/albums/{album_id}/reset-grouping-preview', {
+				path: { album_id: albumId }
+			});
 	}
 }
 
 function applyUrl(kind: MembershipKind, albumId: string) {
 	switch (kind) {
 		case 'split':
-			return LibraryV3Api.split(albumId);
+			return v3('/api/v3/library/albums/{album_id}/split', { path: { album_id: albumId } });
 		case 'merge':
-			return LibraryV3Api.merge();
+			return v3('/api/v3/library/albums/merge');
 		case 'move':
-			return LibraryV3Api.move();
+			return v3('/api/v3/library/tracks/move');
 		case 'reset':
-			return LibraryV3Api.resetGrouping(albumId);
+			return v3('/api/v3/library/albums/{album_id}/reset-grouping', {
+				path: { album_id: albumId }
+			});
 	}
 }
 
@@ -116,7 +125,7 @@ export function previewArtistMerge() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: ArtistMergePreviewInput): Promise<ArtistMergePreviewResponse> =>
-			api.v3.POST(LibraryV3Api.artistMergePreview(), input),
+			api.v3.POST(v3('/api/v3/library/artists/merge-preview'), input),
 		onError: (error) =>
 			toastStore.show({
 				message: errorMessage(error, 'Could not preview this artist merge'),
@@ -133,7 +142,7 @@ export function applyArtistMerge() {
 				provider_choice: 'detach' | 'retain_survivor';
 			}
 		): Promise<CatalogCorrectionResponse> =>
-			api.v3.POST(LibraryV3Api.artistMerge(), {
+			api.v3.POST(v3('/api/v3/library/artists/merge'), {
 				...input,
 				idempotency_key: createUuid()
 			}),

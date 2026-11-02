@@ -1,9 +1,9 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { catalogChanged, createAppMutation, libraryPlacementChanged } from '$lib/queries/effects';
 import { authStore } from '$lib/stores/authStore.svelte';
 
 import { api } from '$lib/api/client';
 import { ApiError } from '$lib/api/errors';
-import { LIBRARY_MANAGEMENT_ENDPOINTS } from './endpoints';
 import { toPreviewDetail } from './libraryManagementAdapters';
 import type { OperationResponse } from '$lib/queries/library/LibraryOperationsTypes';
 import { operationControlUrl } from '$lib/queries/library/LibraryOperationMutations.svelte';
@@ -45,7 +45,7 @@ const catalog = () => [catalogChanged(authStore.user?.id)];
 export const updateLibraryManagementSettingsMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementSettingsUpdateRequest) =>
-			api.v3.PUT(LIBRARY_MANAGEMENT_ENDPOINTS.settings(), request),
+			api.v3.PUT(v3('/api/v3/settings/library-management'), request),
 		effects: catalog
 	}));
 
@@ -53,27 +53,37 @@ export const previewLibraryManagementSettingsImpactMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (request: LibraryManagementSettingsImpactRequest) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.impact(), request)
+			api.v3.POST(v3('/api/v3/settings/library-management/impact'), request)
 	}));
 
 export const validateLibraryManagementSettingsMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (request: LibraryManagementSettingsImpactRequest) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.validate(), request)
+			api.v3.POST(v3('/api/v3/settings/library-management/validate'), request)
 	}));
 
 export const copyLibraryManagementProfileMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileCopyRequest }) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.copyProfile(input.profileId), input.request),
+			api.v3.POST(
+				v3('/api/v3/settings/library-management/profiles/{profile_id}/copy', {
+					path: { profile_id: input.profileId }
+				}),
+				input.request
+			),
 		effects: catalog
 	}));
 
 export const deleteLibraryManagementProfileMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileDeleteRequest }) =>
-			api.v3.DELETE(LIBRARY_MANAGEMENT_ENDPOINTS.profile(input.profileId), input.request),
+			api.v3.DELETE(
+				v3('/api/v3/settings/library-management/profiles/{profile_id}', {
+					path: { profile_id: input.profileId }
+				}),
+				input.request
+			),
 		effects: catalog
 	}));
 
@@ -81,27 +91,32 @@ export const exportLibraryManagementProfileMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileExportRequest }) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.exportProfile(input.profileId), input.request)
+			api.v3.POST(
+				v3('/api/v3/settings/library-management/profiles/{profile_id}/export', {
+					path: { profile_id: input.profileId }
+				}),
+				input.request
+			)
 	}));
 
 export const previewLibraryManagementProfileImportMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (request: LibraryManagementProfileImportPreviewRequest) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.profileImportPreview(), request)
+			api.v3.POST(v3('/api/v3/settings/library-management/profile-imports/preview'), request)
 	}));
 
 export const importLibraryManagementProfileMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementProfileImportRequest) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.profileImports(), request),
+			api.v3.POST(v3('/api/v3/settings/library-management/profile-imports'), request),
 		effects: catalog
 	}));
 
 export const createLibraryManagementActivationPreviewMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementActivationPreviewRequest) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.activationPreviews(), request),
+			api.v3.POST(v3('/api/v3/settings/library-management/activation-previews'), request),
 		onSuccess: (result) => {
 			toastStore.show({
 				message: result.existing ? 'Active dry run resumed' : 'Activation dry run queued',
@@ -115,7 +130,7 @@ export const createLibraryManagementActivationPreviewMutation = () =>
 export const confirmLibraryManagementActivationMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementActivationConfirmRequest) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.activationConfirmations(), request),
+			api.v3.POST(v3('/api/v3/settings/library-management/activation-confirmations'), request),
 		effects: catalog,
 		onSuccess: showQueued('File organization activated'),
 		onError: showActionError('Could not activate file organization')
@@ -126,7 +141,7 @@ export const createLibraryManagementPreviewMutation = () =>
 		mutationFn: (
 			request: LibraryManagementPreviewCreateRequest
 		): Promise<LibraryManagementPreviewCreatedResponse> =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.previews(), request),
+			api.v3.POST(v3('/api/v3/library/management/previews'), request),
 		effects: catalog,
 		onSuccess: showQueued('Organization preview queued'),
 		onError: showActionError('Could not queue the management preview')
@@ -135,7 +150,7 @@ export const createLibraryManagementPreviewMutation = () =>
 export const createLibraryManagementTagEditPreviewMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementTagEditPreviewRequest) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.tagEditPreviews(), request),
+			api.v3.POST(v3('/api/v3/library/management/tag-edit-previews'), request),
 		effects: catalog,
 		onSuccess: showQueued('Tag edit preview queued'),
 		onError: showActionError('Could not queue the tag edit preview')
@@ -147,10 +162,13 @@ export const applyLibraryManagementPreviewMutation = () =>
 			jobId: string;
 			request: LibraryManagementApplyRequest;
 		}): Promise<OperationResponse> =>
-			await api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.applyPreview(input.jobId), {
-				...input.request,
-				confirmation: input.request.confirmation ?? false
-			}),
+			await api.v3.POST(
+				v3('/api/v3/library/management/previews/{job_id}/apply', { path: { job_id: input.jobId } }),
+				{
+					...input.request,
+					confirmation: input.request.confirmation ?? false
+				}
+			),
 		effects: catalog,
 		onSuccess: showQueued('Organization work queued'),
 		onError: (error: Error) => {
@@ -167,7 +185,11 @@ export const reissueLibraryManagementPreviewMutation = () =>
 			jobId: string;
 			silent?: boolean;
 		}): Promise<LibraryManagementPreviewReissueResponse> =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.reissuePreview(input.jobId)),
+			api.v3.POST(
+				v3('/api/v3/library/management/previews/{job_id}/reissue', {
+					path: { job_id: input.jobId }
+				})
+			),
 		onError: (error: Error, input: { jobId: string; silent?: boolean }) => {
 			if (!input.silent) showActionError('Could not resume this management preview')(error);
 		}
@@ -181,7 +203,12 @@ export const discardLibraryManagementPreviewMutation = () =>
 			silent?: boolean;
 		}): Promise<LibraryManagementPreviewDetailResponse> =>
 			toPreviewDetail(
-				await api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.discardPreview(input.jobId), input.request)
+				await api.v3.POST(
+					v3('/api/v3/library/management/previews/{job_id}/discard', {
+						path: { job_id: input.jobId }
+					}),
+					input.request
+				)
 			),
 		onSuccess: (
 			_response: LibraryManagementPreviewDetailResponse,
@@ -207,7 +234,12 @@ export const createLibraryManagementUndoPreviewMutation = () =>
 			jobId: string;
 			request: LibraryManagementUndoPreviewRequest;
 		}): Promise<LibraryManagementPreviewCreatedResponse> =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.undoPreview(input.jobId), input.request),
+			api.v3.POST(
+				v3('/api/v3/library/management/operations/{job_id}/undo-preview', {
+					path: { job_id: input.jobId }
+				}),
+				input.request
+			),
 		effects: catalog,
 		onSuccess: showQueued('Undo preview queued'),
 		onError: showActionError('Could not queue the undo preview')
@@ -216,7 +248,7 @@ export const createLibraryManagementUndoPreviewMutation = () =>
 export const createLibraryManagementBaselineRestorePreviewMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementBaselineRestorePreviewRequest) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.baselineRestorePreviews(), request),
+			api.v3.POST(v3('/api/v3/library/management/baselines/restore-previews'), request),
 		effects: catalog,
 		onSuccess: showQueued('Baseline restore preview queued'),
 		onError: showActionError('Could not queue the baseline restore preview')
@@ -225,7 +257,7 @@ export const createLibraryManagementBaselineRestorePreviewMutation = () =>
 export const createLibraryManagementDuplicateResolutionMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementDuplicateResolutionPreviewRequest) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.duplicateResolutionPreviews(), request),
+			api.v3.POST(v3('/api/v3/library/management/duplicate-resolution-previews'), request),
 		effects: catalog,
 		onSuccess: showQueued('Duplicate resolution preview queued'),
 		onError: showActionError('Could not queue the duplicate resolution preview')
@@ -234,13 +266,13 @@ export const createLibraryManagementDuplicateResolutionMutation = () =>
 export const previewLibraryManagementBaselinePurgeMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: () => api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.baselinePurgeImpact())
+		mutationFn: () => api.v3.POST(v3('/api/v3/library/management/baselines/purge-impact'))
 	}));
 
 export const purgeLibraryManagementBaselinesMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (request: LibraryManagementBaselinePurgeRequest) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.purgeBaselines(), request),
+			api.v3.POST(v3('/api/v3/library/management/baselines/purge'), request),
 		effects: catalog,
 		onSuccess: showQueued('Organization baselines purged'),
 		onError: showActionError('Could not purge organization baselines')
@@ -250,7 +282,11 @@ export const resolveLibraryManagementImportBundleMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: { bundleId: string }) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.resolveImportBundle(input.bundleId))
+			api.v3.POST(
+				v3('/api/v3/library/management/recovery/import-bundles/{bundle_id}/resolve', {
+					path: { bundle_id: input.bundleId }
+				})
+			)
 	}));
 
 const HAND_BACK_UNREADABLE = 'HAND_BACK_UNREADABLE';
@@ -268,7 +304,11 @@ export function handBackRefusalMessage(error: unknown): string | null {
 export const handBackLibraryAlbumMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (input: { albumId: string }) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.handBackAlbum(input.albumId)),
+			api.v3.POST(
+				v3('/api/v3/library/albums/{album_id}/management/hand-back', {
+					path: { album_id: input.albumId }
+				})
+			),
 		effects: catalog,
 		// Unreadable files are a state the page shows beside the button, not a toast.
 		onError: (error: Error) => {
@@ -281,7 +321,7 @@ export const handBackLibraryAlbumMutation = () =>
 // through them in the background.
 export const handBackAllLibraryAlbumsMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: () => api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.handBackAll()),
+		mutationFn: () => api.v3.POST(v3('/api/v3/library/management/hand-back')),
 		effects: catalog,
 		onError: showActionError('Could not hand these albums back')
 	}));
@@ -309,7 +349,11 @@ export const checkLibraryManagementPlacementMutation = (
 ) =>
 	createAppMutation(() => ({
 		mutationFn: (rootId: string) =>
-			api.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.checkPlacement(rootId)),
+			api.v3.POST(
+				v3('/api/v3/settings/library-management/placement/{root_id}/check', {
+					path: { root_id: rootId }
+				})
+			),
 		effects: () => [libraryPlacementChanged(getUserId())],
 		onSuccess: (result) => {
 			if (!result.answered) {

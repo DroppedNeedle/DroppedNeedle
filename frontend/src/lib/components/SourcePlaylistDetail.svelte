@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { ApiError } from '$lib/api/errors';
 	import BackButton from '$lib/components/BackButton.svelte';
-	import { createSourcePlaylistImportMutation } from '$lib/queries/source-playlists/SourcePlaylistMutations.svelte';
-	import { getSourcePlaylistDetailQuery } from '$lib/queries/source-playlists/SourcePlaylistQueries.svelte';
+	import { createSourcePlaylistImportMutation } from '$lib/queries/source-playlists.svelte';
+	import { getSourcePlaylistDetailQuery } from '$lib/queries/source-playlists.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { formatTotalDurationSec } from '$lib/utils/formatting';

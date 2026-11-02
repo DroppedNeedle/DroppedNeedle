@@ -11,7 +11,7 @@
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
-	import { getLyricsQuery } from '$lib/queries/lyrics/LyricsQuery.svelte';
+	import { getLyricsQuery } from '$lib/queries/lyrics.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { navidromeFolderScope } from '$lib/queries/remotes/RemoteQueries.svelte';
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';

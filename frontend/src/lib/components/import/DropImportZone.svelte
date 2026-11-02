@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { PackageOpen, LoaderCircle } from 'lucide-svelte';
-	import { uploadDropMutation } from '$lib/queries/import/DropImportMutations.svelte';
+	import { uploadDropMutation } from '$lib/queries/import.svelte';
 	import { toastStore } from '$lib/stores/toast';
 
 	interface Props {

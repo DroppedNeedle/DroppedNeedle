@@ -1,7 +1,7 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { toastStore } from '$lib/stores/toast';
 
-import { PLUGIN_ENDPOINTS } from './endpoints';
 import {
 	createAppMutation,
 	libraryChanged,
@@ -19,7 +19,7 @@ export const updatePluginMutation = () =>
 			name: string;
 			enabled: boolean;
 			settings: Record<string, string>;
-		}) => api.v3.PUT(PLUGIN_ENDPOINTS.plugin(name), { enabled, settings }),
+		}) => api.v3.PUT(v3('/api/v3/plugins/{name}', { path: { name } }), { enabled, settings }),
 		onSuccess: (plugin) => {
 			toastStore.show({
 				message: plugin.error
@@ -36,7 +36,7 @@ export const updatePluginMutation = () =>
 
 export const uninstallPluginMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: (name: string) => api.v3.DELETE(PLUGIN_ENDPOINTS.plugin(name)),
+		mutationFn: (name: string) => api.v3.DELETE(v3('/api/v3/plugins/{name}', { path: { name } })),
 		onSuccess: () => {
 			toastStore.show({ message: 'Plugin removed.', type: 'info' });
 		},
@@ -51,7 +51,7 @@ export const uninstallPluginMutation = () =>
 export const undoPluginFileMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: ({ bundleId }: { name: string; bundleId: string }) =>
-			api.v3.POST(PLUGIN_ENDPOINTS.undoFile(), { bundle_id: bundleId }),
+			api.v3.POST(v3('/api/v3/library/manage/undo'), { bundle_id: bundleId }),
 		onSuccess: () => {
 			toastStore.show({ message: 'File removed.', type: 'success' });
 		},

@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import AlbumImage from './AlbumImage.svelte';
 	import { CircleCheck, CircleStop, Play, Radar, RefreshCw, Sparkles, X } from 'lucide-svelte';
-	import type { WantedWatchItem } from '$lib/queries/wanted/types';
+	import type { WantedWatchItem } from '$lib/queries/wanted.svelte';
 	import { nowSeconds, startSharedClock } from '$lib/stores/clock.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

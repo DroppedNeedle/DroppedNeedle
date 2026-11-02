@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 // The Discover queue's reads and writes. The deck and the sampler live
 // outside components, so they reach the app's QueryClient through these.
 import { createQuery, QueryObserver, queryOptions } from '@tanstack/svelte-query';
@@ -9,7 +10,6 @@ import { queryClient, setQueryDataWithPersister } from '$lib/queries/QueryClient
 import { STALE_LIVE, STALE_SLOW } from '$lib/queries/staleTime';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { DiscoverQueryKeyFactory } from './DiscoverQueryKeyFactory';
-import { DiscoverV3Api } from './DiscoverV3Api';
 import type { DeckCard } from './types';
 import { PERSIST_PROVIDER, PROVIDER } from '$lib/queries/persistedCache';
 
@@ -23,7 +23,7 @@ const getDiscoverQueueStatusQueryOptions = (userId: string | null | undefined) =
 		meta: PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.queueStatus(userId),
 		queryFn: ({ signal }): Promise<QueueStatus> =>
-			api.v3.GET(DiscoverV3Api.queueStatus(), { signal }),
+			api.v3.GET(v3('/api/v3/discover/queue/status'), { signal }),
 		enabled: Boolean(userId),
 		staleTime: STALE_LIVE,
 		refetchInterval: (query: { state: { data?: QueueStatus } }) =>
@@ -65,7 +65,7 @@ export function watchDiscoverQueueStatus(listener: (status: QueueStatus) => void
 export async function generateDiscoverQueue(force: boolean): Promise<QueueStatus> {
 	const options = getDiscoverQueueStatusQueryOptions(authStore.user?.id);
 	try {
-		const answer = await api.v3.POST(DiscoverV3Api.queueGenerate(), { force });
+		const answer = await api.v3.POST(v3('/api/v3/discover/queue/generate'), { force });
 		const status: QueueStatus = {
 			status: answer.status,
 			queue_id: answer.queue_id ?? null,
@@ -100,7 +100,7 @@ export function fetchDiscoverQueue() {
 	return queryClient.fetchQuery({
 		meta: PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.queue(authStore.user?.id, null),
-		queryFn: ({ signal }) => api.v3.GET(DiscoverV3Api.queue(null), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/discover/queue'), { signal }),
 		staleTime: STALE_LIVE
 	});
 }
@@ -111,7 +111,7 @@ export function fetchQueueInLibrary(releaseGroupMbids: string[]) {
 		queryKey: DiscoverQueryKeyFactory.v3.queueValidate(authStore.user?.id, releaseGroupMbids),
 		queryFn: ({ signal }) =>
 			api.v3.POST(
-				DiscoverV3Api.queueValidate(),
+				v3('/api/v3/discover/queue/validate'),
 				{ release_group_mbids: releaseGroupMbids },
 				{ signal }
 			),
@@ -124,7 +124,13 @@ export function fetchQueueEnrichment(releaseGroupMbid: string) {
 	return queryClient.fetchQuery({
 		meta: PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.queueEnrich(authStore.user?.id, releaseGroupMbid),
-		queryFn: ({ signal }) => api.v3.GET(DiscoverV3Api.queueEnrich(releaseGroupMbid), { signal }),
+		queryFn: ({ signal }) =>
+			api.v3.GET(
+				v3('/api/v3/discover/queue/enrich/{release_group_mbid}', {
+					path: { release_group_mbid: releaseGroupMbid }
+				}),
+				{ signal }
+			),
 		staleTime: STALE_SLOW
 	});
 }
@@ -138,7 +144,7 @@ export interface QueueIgnoreItem {
 
 /** Asks for fewer recommendations like this one. */
 export function ignoreQueueItem(item: QueueIgnoreItem) {
-	return api.v3.POST(DiscoverV3Api.queueIgnore(), {
+	return api.v3.POST(v3('/api/v3/discover/queue/ignore'), {
 		release_group_mbid: item.releaseGroupMbid,
 		artist_mbid: item.artistMbid,
 		release_name: item.releaseName,
@@ -151,7 +157,8 @@ export function fetchTrackPreview(artist: string, track: string) {
 	return queryClient.fetchQuery({
 		meta: PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.trackPreview(authStore.user?.id, artist, track),
-		queryFn: ({ signal }) => api.v3.GET(DiscoverV3Api.trackPreview(artist, track), { signal }),
+		queryFn: ({ signal }) =>
+			api.v3.GET(v3('/api/v3/discover/track-preview', { query: { artist, track } }), { signal }),
 		staleTime: STALE_SLOW
 	});
 }
@@ -162,7 +169,12 @@ export function fetchAlbumPreview(artist: string, album: string) {
 		meta: PROVIDER,
 		queryKey: DiscoverQueryKeyFactory.v3.albumPreview(authStore.user?.id, artist, album, null),
 		queryFn: ({ signal }) =>
-			api.v3.GET(DiscoverV3Api.albumPreview(artist, album, null), { signal }),
+			api.v3.GET(
+				v3('/api/v3/discover/album-preview', {
+					query: { artist, album }
+				}),
+				{ signal }
+			),
 		staleTime: STALE_SLOW
 	});
 }

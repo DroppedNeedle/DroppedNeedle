@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { getYouTubeLinksQuery } from '$lib/queries/youtube/YouTubeQueries.svelte';
-	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { getYouTubeLinksQuery } from '$lib/queries/youtube.svelte';
+	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';

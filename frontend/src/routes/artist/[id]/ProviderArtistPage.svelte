@@ -46,7 +46,7 @@
 	import ArtistReleasePagination from '$lib/components/ArtistReleasePagination.svelte';
 	import { mergeArtistReleasePages } from '$lib/queries/artist/artistReleasePages';
 	import { mergeArtistImages } from '$lib/queries/catalog/catalogAdapters';
-	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings/RatingQueries.svelte';
+	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings.svelte';
 	import { setFavorite } from '$lib/queries/library/FavoriteMutations.svelte';
 
 	interface Props {

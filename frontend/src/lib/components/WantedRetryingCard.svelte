@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import AlbumImage from './AlbumImage.svelte';
 	import { RotateCcw } from 'lucide-svelte';
-	import type { WantedRetryingItem } from '$lib/queries/wanted/types';
+	import type { WantedRetryingItem } from '$lib/queries/wanted.svelte';
 	import { nowSeconds, startSharedClock } from '$lib/stores/clock.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

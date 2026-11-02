@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { untrack } from 'svelte';
 import { api } from '$lib/api/client';
 import {
@@ -8,7 +9,6 @@ import type { MusicBrainzSourceMode } from '$lib/queries/musicbrainz/types';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { DiscoverActivity } from '$lib/types';
 import { createAppMutation } from '../effects';
-import { DiscoverV3Api } from './DiscoverV3Api';
 
 // Discover demand: the server records which discovery surfaces a user
 // actually looks at, and answers with the MusicBrainz source the user's
@@ -26,7 +26,7 @@ export async function recordDiscoverActivity(
 ): Promise<void> {
 	const userId = authStore.user?.id;
 	const before = musicBrainzSourceStamp();
-	const source = await api.v3.POST(DiscoverV3Api.activity(), activity, { signal });
+	const source = await api.v3.POST(v3('/api/v3/discover/activity'), activity, { signal });
 	const knownMode = KNOWN_SOURCE_MODES.find((mode) => mode === source.source_mode);
 	if (
 		!signal?.aborted &&

@@ -1,6 +1,6 @@
+import { v3, withRawQuery } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { fetchPluginSources } from './PluginSourceQueries.svelte';
-import { PLUGIN_ENDPOINTS } from './endpoints';
 
 /** The methods a plugin's settings panel may ask its parent page for. */
 export const PANEL_METHODS = new Set([
@@ -26,11 +26,19 @@ export async function answerPanelRequest(
 	}
 	if (method === 'search.preview') {
 		const query = typeof params.query === 'string' ? params.query.slice(0, 200) : '';
-		return api.v3.GET(PLUGIN_ENDPOINTS.ext(pluginName, 'search', query ? { query } : undefined), {
-			signal
-		});
+		return api.v3.GET(
+			withRawQuery(
+				v3('/api/v3/plugins/ext/{name}/{subpath}', {
+					path: { name: pluginName, subpath: 'search' }
+				}),
+				query ? { query } : undefined
+			),
+			{
+				signal
+			}
+		);
 	}
-	const list = await api.v3.GET(PLUGIN_ENDPOINTS.list(), { signal });
+	const list = await api.v3.GET(v3('/api/v3/plugins'), { signal });
 	const own = list.plugins.find((p) => p.name === pluginName);
 	if (method === 'get_settings') {
 		return { settings_values: own?.settings_values ?? {} };
@@ -41,7 +49,7 @@ export async function answerPanelRequest(
 
 /** Asks whether the panel page is there, since a frame cannot report a failed load. */
 export async function probePanelPage(pluginName: string, signal: AbortSignal): Promise<string> {
-	const address = PLUGIN_ENDPOINTS.panelPage(pluginName);
+	const address = v3('/api/v3/plugins/{name}/ui/panel', { path: { name: pluginName } });
 	const res = await api.head(address, { signal });
 	if (res.status === 404) throw new Error('the panel file is missing or empty');
 	if (!res.ok) throw new Error(`the server answered ${res.status}`);

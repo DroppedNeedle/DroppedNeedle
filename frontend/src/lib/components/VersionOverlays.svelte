@@ -3,7 +3,7 @@
 		getUpdateCheckQuery,
 		getVersionQuery,
 		getReleaseHistoryQuery
-	} from '$lib/queries/VersionQuery.svelte';
+	} from '$lib/queries/version.svelte';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 	import WhatsNewModal from '$lib/components/WhatsNewModal.svelte';
 

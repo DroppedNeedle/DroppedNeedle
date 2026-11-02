@@ -13,7 +13,7 @@
 		clearArtistLink,
 		getArtistLinkQuery,
 		setArtistLink
-	} from '$lib/queries/artist-link/ArtistLinkQueries.svelte';
+	} from '$lib/queries/artist-link.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';

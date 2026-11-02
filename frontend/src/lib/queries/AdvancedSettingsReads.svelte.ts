@@ -1,10 +1,10 @@
+import { v3 } from '$lib/api/v3/endpoint';
 // App-wide reads of the advanced settings section. Only an admin may read the
 // section; everyone else, and anyone before the first answer, gets the defaults.
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { SETTINGS_ENDPOINTS } from './settings/endpoints';
 import {
 	AdvancedSettingsQueryKeyFactory,
 	type AdvancedSettings
@@ -14,7 +14,7 @@ const advancedSettingsQueryOptions = () =>
 	queryOptions({
 		queryKey: AdvancedSettingsQueryKeyFactory.saved(authStore.user?.id),
 		queryFn: ({ signal }): Promise<AdvancedSettings> =>
-			api.v3.GET(SETTINGS_ENDPOINTS.advanced(), { signal }),
+			api.v3.GET(v3('/api/v3/settings/advanced'), { signal }),
 		enabled: authStore.isAdmin
 	});
 

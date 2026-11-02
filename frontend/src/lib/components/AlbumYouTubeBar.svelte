@@ -3,7 +3,7 @@
 	import {
 		createGenerateAlbumYouTubeLinkMutation,
 		createGenerateYouTubeTrackLinksMutation
-	} from '$lib/queries/youtube/YouTubeQueries.svelte';
+	} from '$lib/queries/youtube.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { launchTrackPlayback } from '$lib/player/launchTrackPlayback';
 	import { launchYouTubePlayback } from '$lib/player/launchYouTubePlayback';

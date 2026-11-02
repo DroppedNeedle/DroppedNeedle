@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { v3 } from '$lib/api/v3/endpoint';
 	import '$lib/components/library/library-management.css';
 	import { goto } from '$app/navigation';
 	import {
@@ -17,7 +18,6 @@
 	import LibraryManagementDiscardPreview from './LibraryManagementDiscardPreview.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { LIBRARY_MANAGEMENT_ENDPOINTS } from '$lib/queries/library-management/endpoints';
 	import {
 		getLibraryManagementPlanItemsQuery,
 		getLibraryManagementPreviewQuery,
@@ -214,7 +214,9 @@
 			destinationRoot: managementRootLabel(roots, item.destination_root_id),
 			destinationPath: item.destination_relative_path ?? null,
 			artworkUrl: artworkHash
-				? LIBRARY_MANAGEMENT_ENDPOINTS.previewArtwork(jobId, item.ordinal, artworkHash)
+				? v3('/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}', {
+						path: { job_id: jobId, ordinal: item.ordinal, sha256: artworkHash }
+					})
 				: null
 		};
 	}

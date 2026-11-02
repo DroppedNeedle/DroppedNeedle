@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 /**
  * Loads one finite radio plan. Local files stream natively; unowned tracks use
  * YouTube when configured. Cross-origin previews stay in deckSampler because the
@@ -5,7 +6,6 @@
  */
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
 import { playerStore } from '$lib/stores/player.svelte';
 import { radioSession } from '$lib/stores/radioSession.svelte';
 import { audioFocus } from '$lib/stores/audioFocus.svelte';
@@ -99,7 +99,7 @@ async function fetchPlan(
 	request: RadioPlanRequest & { mode: RadioMode },
 	signal: AbortSignal
 ): Promise<RadioPlanResponse> {
-	const plan = await api.v3.POST(DiscoverV3Api.radioPlan(), request, { signal });
+	const plan = await api.v3.POST(v3('/api/v3/discover/radio/plan'), request, { signal });
 	return { title: plan.title, tracks: (plan.tracks ?? []).map(toPlanTrack) };
 }
 

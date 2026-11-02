@@ -10,10 +10,10 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import HeldEntryCard from '$lib/components/downloads/HeldEntryCard.svelte';
 	import { getHeldEntriesQuery } from '$lib/queries/downloads/HeldQueries.svelte';
-	import { getDropImportJobsQuery } from '$lib/queries/import/DropImportQueries.svelte';
+	import { getDropImportJobsQuery } from '$lib/queries/import.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { formatLastUpdated } from '$lib/utils/formatting';
-	import type { DropImportItemStatus } from '$lib/queries/import/types';
+	import type { DropImportItemStatus } from '$lib/queries/import.svelte';
 	import type { HeldEntry } from '$lib/types';
 	import Card from '$lib/ui/Card.svelte';
 

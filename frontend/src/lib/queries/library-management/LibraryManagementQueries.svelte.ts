@@ -1,8 +1,10 @@
+import { operationsQuery } from '$lib/queries/library-management/listQueries';
+import { previewItemsQuery } from '$lib/queries/library-management/listQueries';
+import { v3 } from '$lib/api/v3/endpoint';
 import { createInfiniteQuery, createQuery, queryOptions } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
-import { LIBRARY_MANAGEMENT_ENDPOINTS } from './endpoints';
 import {
 	toHistory,
 	toPlanItemPage,
@@ -69,7 +71,7 @@ const activeResultsRefetchInterval = (
 export const getLibraryManagementSettingsQueryOptions = (userId: string | null | undefined) =>
 	queryOptions({
 		queryKey: LibraryManagementQueryKeyFactory.settings(userId),
-		queryFn: ({ signal }) => api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.settings(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/settings/library-management'), { signal })
 	});
 
 export const getLibraryManagementSettingsQuery = (
@@ -93,9 +95,14 @@ export const getLibraryManagementTagEditorQuery = (
 			queryKey: LibraryManagementQueryKeyFactory.tagEditor(getUserId(), trackId ?? ''),
 			queryFn: async ({ signal }): Promise<LibraryManagementTagEditorContext> =>
 				toTagEditor(
-					await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.tagEditor(trackId ?? ''), {
-						signal
-					})
+					await api.v3.GET(
+						v3('/api/v3/library/management/tracks/{track_id}/tag-editor', {
+							path: { track_id: trackId ?? '' }
+						}),
+						{
+							signal
+						}
+					)
 				)
 		};
 	});
@@ -110,7 +117,12 @@ export const getLibraryManagementPresetDiffQuery = (
 			enabled: Boolean(profileId),
 			queryKey: LibraryManagementQueryKeyFactory.presetDiff(getUserId(), profileId ?? ''),
 			queryFn: ({ signal }) =>
-				api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.presetDiff(profileId ?? ''), { signal })
+				api.v3.GET(
+					v3('/api/v3/settings/library-management/profiles/{profile_id}/preset-diff', {
+						path: { profile_id: profileId ?? '' }
+					}),
+					{ signal }
+				)
 		};
 	});
 
@@ -126,9 +138,14 @@ export const getLibraryManagementActivationPreviewQuery = (
 			queryKey: LibraryManagementQueryKeyFactory.activationPreview(getUserId(), jobId ?? ''),
 			queryFn: async ({ signal }): Promise<LibraryManagementPreviewDetailResponse> =>
 				toPreviewDetail(
-					await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.activationPreview(jobId ?? ''), {
-						signal
-					})
+					await api.v3.GET(
+						v3('/api/v3/settings/library-management/activation-previews/{job_id}', {
+							path: { job_id: jobId ?? '' }
+						}),
+						{
+							signal
+						}
+					)
 				)
 		};
 	});
@@ -145,7 +162,10 @@ export const getLibraryManagementPreviewQuery = (
 			queryKey: LibraryManagementQueryKeyFactory.preview(getUserId(), jobId ?? ''),
 			queryFn: async ({ signal }) =>
 				toPreviewDetail(
-					await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.preview(jobId ?? ''), { signal })
+					await api.v3.GET(
+						v3('/api/v3/library/management/previews/{job_id}', { path: { job_id: jobId ?? '' } }),
+						{ signal }
+					)
 				)
 		};
 	});
@@ -166,10 +186,13 @@ export const getLibraryManagementPlanItemsQuery = (
 			queryFn: async ({ pageParam, signal }) =>
 				toPlanItemPage(
 					await api.v3.GET(
-						LIBRARY_MANAGEMENT_ENDPOINTS.previewItems(jobId ?? '', {
-							...params,
-							cursor: pageParam,
-							limit
+						v3('/api/v3/library/management/previews/{job_id}/items', {
+							path: { job_id: jobId ?? '' },
+							query: previewItemsQuery({
+								...params,
+								cursor: pageParam,
+								limit
+							})
 						}),
 						{ signal }
 					)
@@ -191,7 +214,9 @@ export const getLibraryManagementOperationsQuery = (
 			queryFn: async ({ pageParam, signal }) =>
 				toHistory(
 					await api.v3.GET(
-						LIBRARY_MANAGEMENT_ENDPOINTS.operations({ ...params, cursor: pageParam }),
+						v3('/api/v3/library/management/operations', {
+							query: operationsQuery({ ...params, cursor: pageParam })
+						}),
 						{ signal }
 					)
 				),
@@ -212,9 +237,12 @@ export const getLibraryManagementOperationQuery = (
 			queryKey: LibraryManagementQueryKeyFactory.operation(getUserId(), jobId ?? ''),
 			queryFn: async ({ signal }) =>
 				toPreviewDetail(
-					await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.operation(jobId ?? ''), {
-						signal
-					})
+					await api.v3.GET(
+						v3('/api/v3/library/management/operations/{job_id}', { path: { job_id: jobId ?? '' } }),
+						{
+							signal
+						}
+					)
 				)
 		};
 	});
@@ -237,7 +265,10 @@ export const getLibraryManagementOperationResultsQuery = (
 			queryFn: async ({ pageParam, signal }) =>
 				toResultPage(
 					await api.v3.GET(
-						LIBRARY_MANAGEMENT_ENDPOINTS.operationResults(jobId ?? '', pageParam, limit),
+						v3('/api/v3/library/management/operations/{job_id}/results', {
+							path: { job_id: jobId ?? '' },
+							query: { cursor: pageParam, limit }
+						}),
 						{ signal }
 					)
 				),
@@ -254,7 +285,7 @@ export const getLibraryManagementRecoveryQuery = (
 		enabled: enabled(),
 		queryKey: LibraryManagementQueryKeyFactory.recovery(getUserId()),
 		queryFn: async ({ signal }): Promise<LibraryManagementRecoveryDiagnosticsResponse> =>
-			await api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.recoveryDiagnostics(), { signal })
+			await api.v3.GET(v3('/api/v3/library/management/recovery/diagnostics'), { signal })
 	}));
 
 export const getLibraryManagementAutomaticSkippedQuery = (
@@ -266,7 +297,8 @@ export const getLibraryManagementAutomaticSkippedQuery = (
 		enabled: enabled(),
 		refetchInterval: refetchInterval(),
 		queryKey: LibraryManagementQueryKeyFactory.automaticSkipped(getUserId()),
-		queryFn: ({ signal }) => api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.automaticSkipped(), { signal })
+		queryFn: ({ signal }) =>
+			api.v3.GET(v3('/api/v3/library/management/automatic/skipped'), { signal })
 	}));
 
 export const TAKEOVERS_POLL_MS = 5_000;
@@ -282,7 +314,7 @@ export const getLibraryManagementTakeoversQuery = (
 		refetchInterval: (query: { state: { data?: { handing_back: number } } }) =>
 			(query.state.data?.handing_back ?? 0) > 0 ? TAKEOVERS_POLL_MS : false,
 		queryKey: LibraryManagementQueryKeyFactory.takeovers(getUserId()),
-		queryFn: ({ signal }) => api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.takeovers(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/library/management/takeovers'), { signal })
 	}));
 
 export const getLibraryManagementActivationHealthQuery = (
@@ -292,7 +324,8 @@ export const getLibraryManagementActivationHealthQuery = (
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryManagementQueryKeyFactory.activationHealth(getUserId()),
-		queryFn: ({ signal }) => api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.activationHealth(), { signal })
+		queryFn: ({ signal }) =>
+			api.v3.GET(v3('/api/v3/settings/library-management/activation-health'), { signal })
 	}));
 
 // How safely each library folder can be written to, as last checked.
@@ -304,5 +337,6 @@ export const getLibraryManagementPlacementQuery = (
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryManagementQueryKeyFactory.placement(getUserId()),
-		queryFn: ({ signal }) => api.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.placement(), { signal })
+		queryFn: ({ signal }) =>
+			api.v3.GET(v3('/api/v3/settings/library-management/placement'), { signal })
 	}));

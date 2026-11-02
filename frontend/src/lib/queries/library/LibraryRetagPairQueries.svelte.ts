@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { ApiError } from '$lib/api/errors';
 import {
 	applyEffects,
@@ -12,7 +13,6 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { toastStore } from '$lib/stores/toast';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
 
 export type RetagPair = components['schemas']['RetagPairView'];
 export type RetagPairPage = components['schemas']['Page_RetagPairView'];
@@ -32,7 +32,7 @@ export const getRetagPairsQuery = (enabled: Getter<boolean> = () => true) =>
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.retagPairs(),
 		queryFn: async ({ signal }): Promise<RetagPairPage> =>
-			api.v3.GET(LibraryV3Api.retagPairs(), { signal })
+			api.v3.GET(v3('/api/v3/library/retag-pairs'), { signal })
 	}));
 
 // Every pair that names one album, a page at a time. Admin only.
@@ -44,7 +44,15 @@ export const getAlbumRetagPairsQuery = (albumId: Getter<string>, enabled: Getter
 			queryKey: LibraryQueryKeyFactory.albumRetagPairs(album),
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }): Promise<RetagPairPage> =>
-				api.v3.GET(LibraryV3Api.retagPairs(album, pageParam), { signal }),
+				api.v3.GET(
+					v3('/api/v3/library/retag-pairs', {
+						query: {
+							...(album ? { album_id: album } : {}),
+							...(pageParam ? { cursor: pageParam } : {})
+						}
+					}),
+					{ signal }
+				),
 			getNextPageParam: (lastPage: RetagPairPage) => lastPage.next_cursor ?? undefined
 		};
 	});
@@ -65,10 +73,15 @@ export function joinRetagPair() {
 		mutationFn: (
 			input: RetagPairJoinInput
 		): Promise<components['schemas']['RetagPairJoinResponse']> =>
-			api.v3.POST(LibraryV3Api.joinRetagPair(input.oldAlbumId, input.newAlbumId), {
-				keep_edition_of: input.keepEditionOf ?? null,
-				expected_identity_tokens: input.expectedIdentityTokens
-			}),
+			api.v3.POST(
+				v3('/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/join', {
+					path: { old_album_id: input.oldAlbumId, new_album_id: input.newAlbumId }
+				}),
+				{
+					keep_edition_of: input.keepEditionOf ?? null,
+					expected_identity_tokens: input.expectedIdentityTokens
+				}
+			),
 		onSuccess: () => {
 			toastStore.show({ message: 'Albums joined', type: 'success' });
 		},
@@ -86,7 +99,11 @@ export function dismissRetagPair() {
 			oldAlbumId: string;
 			newAlbumId: string;
 		}): Promise<components['schemas']['RetagPairDismissResponse']> =>
-			api.v3.POST(LibraryV3Api.dismissRetagPair(input.oldAlbumId, input.newAlbumId)),
+			api.v3.POST(
+				v3('/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/dismiss', {
+					path: { old_album_id: input.oldAlbumId, new_album_id: input.newAlbumId }
+				})
+			),
 		effects: () => [catalogChanged(authStore.user?.id)],
 		onError: (error) => {
 			toastStore.show({

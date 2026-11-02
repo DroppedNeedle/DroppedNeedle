@@ -5,7 +5,7 @@
 		getBackupsQuery,
 		getRestoreReportQuery,
 		type BackupView
-	} from '$lib/queries/system/BackupQueries.svelte';
+	} from '$lib/queries/system.svelte';
 	import { outsideLink } from '$lib/components/outsideLink';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatBytes } from '$lib/utils/formatting';

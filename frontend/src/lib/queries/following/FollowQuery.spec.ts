@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
@@ -99,7 +100,6 @@ import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { queryClient } from '../QueryClient';
 import { FollowQueryKeyFactory } from './FollowQueryKeyFactory';
-import { CONCERT_ENDPOINTS, FOLLOW_ENDPOINTS } from './endpoints';
 import {
 	getUnseenConcertsCountQuery,
 	getUnseenNewReleasesCountQuery
@@ -135,7 +135,7 @@ describe('follow queries hit the right endpoints with user-scoped keys', () => {
 		expect(opts.queryKey).toEqual(FollowQueryKeyFactory.newReleasesUnseen('userA'));
 		expect(opts.enabled).toBe(true);
 		await opts.queryFn!({ signal: new AbortController().signal });
-		expect(mockGet.mock.calls[0][0]).toBe(FOLLOW_ENDPOINTS.newReleasesUnseenCount());
+		expect(mockGet.mock.calls[0][0]).toBe(v3('/api/v3/following/new-releases/unseen-count'));
 
 		auth.user = null;
 		const loggedOut = getUnseenNewReleasesCountQuery() as unknown as { enabled?: boolean };
@@ -149,7 +149,7 @@ describe('concerts queries hit the right endpoints with user-scoped keys', () =>
 		expect(opts.queryKey).toEqual(FollowQueryKeyFactory.concertsUnseen('userA'));
 		expect(opts.enabled).toBe(true);
 		await opts.queryFn!({ signal: new AbortController().signal });
-		expect(mockGet.mock.calls[0][0]).toBe(CONCERT_ENDPOINTS.concertsUnseenCount());
+		expect(mockGet.mock.calls[0][0]).toBe(v3('/api/v3/following/concerts/unseen-count'));
 
 		auth.user = null;
 		const loggedOut = getUnseenConcertsCountQuery() as unknown as { enabled?: boolean };

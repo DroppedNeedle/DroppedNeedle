@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 vi.mock('$lib/queries/effects', async (importOriginal) => ({
@@ -22,7 +23,6 @@ vi.mock('../QueryClient', () => ({
 
 import { api } from '$lib/api/client';
 import { removeLibraryAlbum, saveLibraryScanSchedule } from './LibraryMutations.svelte';
-import { LibraryV3Api } from './LibraryV3Api';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { setQueryDataWithPersister } from '../QueryClient';
 import type { Effect } from '../effects';
@@ -52,7 +52,12 @@ describe('album removal mutation', () => {
 		const data = await mutation.mutationFn(input);
 		await mutation.onSuccess(data, input);
 
-		expect(mockDelete).toHaveBeenCalledWith(LibraryV3Api.removeAlbum('release-1', true));
+		expect(mockDelete).toHaveBeenCalledWith(
+			v3('/api/v3/library/albums/{id}', {
+				path: { id: 'release-1' },
+				query: { delete_files: true, stop_wanted: true }
+			})
+		);
 		expect(mockRemoveMbid).toHaveBeenCalledWith('release-1');
 		expect(mockRemoveMbid).toHaveBeenCalledWith('rg-1');
 		expect(setQueryDataWithPersister).toHaveBeenCalledWith(

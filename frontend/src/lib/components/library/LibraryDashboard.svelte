@@ -8,7 +8,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import { formatBytes, formatLastUpdated } from '$lib/utils/formatting';
 
 	const statsQuery = getLibraryStatsQuery();

@@ -1,16 +1,16 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import { toastStore } from '$lib/stores/toast';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
-import { DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
 import { createAppMutation, quarantineChanged } from '$lib/queries/effects';
 
 const getQuarantineQueryOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.quarantine(),
-		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_TASKS_ENDPOINTS.quarantine(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/downloads/quarantine'), { signal })
 	});
 
 export const getQuarantineQuery = (enabled: () => boolean = () => true) =>
@@ -18,7 +18,10 @@ export const getQuarantineQuery = (enabled: () => boolean = () => true) =>
 
 export function deleteQuarantineEntry() {
 	return createAppMutation(() => ({
-		mutationFn: (id: number) => api.v3.DELETE(DOWNLOAD_TASKS_ENDPOINTS.quarantineDelete(id)),
+		mutationFn: (id: number) =>
+			api.v3.DELETE(
+				v3('/api/v3/downloads/quarantine/{quarantine_id}', { path: { quarantine_id: id } })
+			),
 		onSuccess: () => {
 			toastStore.show({ message: 'Quarantine entry removed', type: 'success' });
 		},

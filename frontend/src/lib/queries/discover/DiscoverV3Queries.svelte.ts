@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
@@ -7,7 +8,6 @@ import { STALE_SLOW } from '$lib/queries/staleTime';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { readNow } from '../readNow';
 import { applyEffects, discoverRadioChanged } from '../effects';
-import { DiscoverV3Api } from './DiscoverV3Api';
 import {
 	DiscoverQueryKeyFactory,
 	type DiscoverV3RadioParams,
@@ -25,7 +25,7 @@ async function fetchDiscoverHome(
 	userId: DiscoverV3UserId,
 	signal?: AbortSignal
 ): Promise<DiscoverResponseV3> {
-	const fresh = await api.v3.GET(DiscoverV3Api.home(), {
+	const fresh = await api.v3.GET(v3('/api/v3/discover'), {
 		signal,
 		timeoutMs: 15_000
 	});
@@ -65,7 +65,7 @@ export const getDiscoveryBatchesV3Query = (getEnabled: Getter<boolean> = () => t
 	createQuery(() => ({
 		enabled: getEnabled() && Boolean(authStore.user?.id),
 		queryKey: DiscoverQueryKeyFactory.v3.batches(authStore.user?.id),
-		queryFn: ({ signal }) => api.v3.GET(DiscoverV3Api.batches(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/discover/batches'), { signal })
 	}));
 
 /** The caller's hidden albums, read while `getEnabled` holds. */
@@ -73,7 +73,7 @@ export const getIgnoredReleasesV3Query = (getEnabled: Getter<boolean>) =>
 	createQuery(() => ({
 		enabled: getEnabled() && Boolean(authStore.user?.id),
 		queryKey: DiscoverQueryKeyFactory.v3.ignored(authStore.user?.id),
-		queryFn: ({ signal }) => api.v3.GET(DiscoverV3Api.ignored(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/discover/queue/ignored'), { signal })
 	}));
 
 export interface DiscoverV3RadioInput {
@@ -105,7 +105,7 @@ export const getDiscoverRadioV3Query = (getParams: Getter<DiscoverV3RadioInput>)
 			),
 			queryFn: ({ signal }: { signal?: AbortSignal }) =>
 				api.v3.POST(
-					DiscoverV3Api.radio(),
+					v3('/api/v3/discover/radio'),
 					{
 						seed_type: params.seedType,
 						seed_id: params.seedId,
@@ -140,7 +140,7 @@ export const getDiscoverPlaylistSuggestionsV3Query = (
 			),
 			queryFn: ({ signal }: { signal?: AbortSignal }) =>
 				api.v3.POST(
-					DiscoverV3Api.playlistSuggestions(),
+					v3('/api/v3/discover/playlist-suggestions'),
 					{
 						playlist_id: params.playlistId,
 						count: params.count ?? 15,
@@ -155,5 +155,7 @@ export const getDiscoverPlaylistSuggestionsV3Query = (
 /** One batch's albums and their progress, read when its row opens. */
 export const fetchDiscoveryBatchV3 = (batchId: string) =>
 	readNow(DiscoverQueryKeyFactory.v3.batch(authStore.user?.id, batchId), (signal) =>
-		api.v3.GET(DiscoverV3Api.batch(batchId), { signal })
+		api.v3.GET(v3('/api/v3/discover/batches/{batch_id}', { path: { batch_id: batchId } }), {
+			signal
+		})
 	);

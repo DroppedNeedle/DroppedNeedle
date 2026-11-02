@@ -22,7 +22,7 @@ vi.mock('$lib/stores/player.svelte', () => ({
 import AlbumPage from './ProviderAlbumPage.svelte';
 import AlbumRoute from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
+import { HomeQueryKeyFactory } from '$lib/queries/featureKeys';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { libraryStore } from '$lib/stores/library';
 import { toAuthUser } from '$lib/queries/auth/types';

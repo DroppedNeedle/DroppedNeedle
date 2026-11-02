@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 vi.mock('$lib/queries/effects', async (importOriginal) => ({
@@ -21,7 +22,6 @@ vi.mock('$lib/stores/toast', () => ({
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { albumStatusChanged, type Effect } from '../effects';
-import { REQUESTS_ENDPOINTS } from './endpoints';
 import {
 	createApproveRequestMutation,
 	createCancelRequestMutation,
@@ -72,7 +72,12 @@ describe('createCancelRequestMutation', () => {
 		const vars = { mbid: 'mbid-1', kind: 'album' as const };
 
 		await mutation.mutationFn(vars);
-		expect(mockDelete).toHaveBeenCalledWith(REQUESTS_ENDPOINTS.cancel('mbid-1', 'album'));
+		expect(mockDelete).toHaveBeenCalledWith(
+			v3('/api/v3/requests/active/{musicbrainz_id}', {
+				path: { musicbrainz_id: 'mbid-1' },
+				query: { kind: 'album' }
+			})
+		);
 
 		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
 		const effects = mutation.effects({ success: true }, vars, context);
@@ -101,7 +106,12 @@ describe('createApproveRequestMutation', () => {
 		const vars = { mbid: 'mbid-3', kind: 'album' as const };
 
 		await mutation.mutationFn(vars);
-		expect(mockPost).toHaveBeenCalledWith(REQUESTS_ENDPOINTS.approve('mbid-3', 'album'));
+		expect(mockPost).toHaveBeenCalledWith(
+			v3('/api/v3/requests/approvals/{musicbrainz_id}/approve', {
+				path: { musicbrainz_id: 'mbid-3' },
+				query: { kind: 'album' }
+			})
+		);
 
 		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
 		const effects = mutation.effects({ success: true }, vars, context);
@@ -120,7 +130,12 @@ describe('createRejectRequestMutation', () => {
 		const vars = { mbid: 'mbid-4', kind: 'album' as const };
 
 		await mutation.mutationFn(vars);
-		expect(mockPost).toHaveBeenCalledWith(REQUESTS_ENDPOINTS.reject('mbid-4', 'album'));
+		expect(mockPost).toHaveBeenCalledWith(
+			v3('/api/v3/requests/approvals/{musicbrainz_id}/reject', {
+				path: { musicbrainz_id: 'mbid-4' },
+				query: { kind: 'album' }
+			})
+		);
 
 		const context = mutation.onMutate?.(vars) ?? { userId: 'userA' };
 		expect(names(mutation.effects({ success: true }, vars, context))).toEqual(SURFACE);

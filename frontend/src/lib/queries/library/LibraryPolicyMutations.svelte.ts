@@ -1,7 +1,7 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { ApiError } from '$lib/api/errors';
 import { toastStore } from '$lib/stores/toast';
-import { LibraryV3Api } from './LibraryV3Api';
 import type { LibraryRestoreRootsRequest, TypedLibrarySettings } from './LibraryOperationsTypes';
 import {
 	anyLibraryActivityChanged,
@@ -27,7 +27,7 @@ export function previewLibraryPolicyImpact() {
 		mutationFn: (input: {
 			settings: TypedLibrarySettings;
 			expected_policy_revision: string | null;
-		}) => api.v3.POST(LibraryV3Api.policyImpact(), input)
+		}) => api.v3.POST(v3('/api/v3/settings/library/policy-impact'), input)
 	}));
 }
 
@@ -36,7 +36,7 @@ export function saveTargetLibrarySettings() {
 		mutationFn: async (input: {
 			settings: TypedLibrarySettings;
 			expected_policy_revision: string;
-		}) => await api.v3.PUT(LibraryV3Api.settings(), input),
+		}) => await api.v3.PUT(v3('/api/v3/settings/library'), input),
 		effects: policies,
 		onSuccess: () => {
 			toastStore.show({ message: 'Library policies saved', type: 'success' });
@@ -52,7 +52,7 @@ export function saveTargetLibrarySettings() {
 export function restoreLibraryRoots() {
 	return createAppMutation(() => ({
 		mutationFn: async (input: LibraryRestoreRootsRequest) =>
-			await api.v3.POST(LibraryV3Api.restoreRoots(), input),
+			await api.v3.POST(v3('/api/v3/settings/library/restore-roots'), input),
 		effects: policies,
 		onSuccess: () => {
 			toastStore.show({ message: 'Library roots restored', type: 'success' });
@@ -69,6 +69,6 @@ export function previewLibraryPolicyApply() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (input: { scope_ids: string[]; expected_policy_revision: string }) =>
-			api.v3.POST(LibraryV3Api.policyApplyPreview(), input)
+			api.v3.POST(v3('/api/v3/settings/library/policy-apply-preview'), input)
 	}));
 }

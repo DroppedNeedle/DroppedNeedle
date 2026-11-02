@@ -9,7 +9,7 @@
 	import {
 		getSpotifyPlaylistsQuery,
 		createImportSpotifyPlaylistMutation
-	} from '$lib/queries/spotify/SpotifyQueries.svelte';
+	} from '$lib/queries/spotify.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { providerUnavailableMessage } from '$lib/utils/serviceError';
 

@@ -2,9 +2,9 @@
 	import { ArrowDownToLine, CircleCheck, Lock, RefreshCw } from 'lucide-svelte';
 
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
-	import { getLidarrImportCandidatesQuery } from '$lib/queries/lidarr-import/LidarrImportQueries.svelte';
-	import { importFromLidarrMutation } from '$lib/queries/lidarr-import/LidarrImportMutations.svelte';
-	import type { LidarrImportResult } from '$lib/queries/lidarr-import/types';
+	import { getLidarrImportCandidatesQuery } from '$lib/queries/lidarr-import.svelte';
+	import { importFromLidarrMutation } from '$lib/queries/lidarr-import.svelte';
+	import type { LidarrImportResult } from '$lib/queries/lidarr-import.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 

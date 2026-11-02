@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import {
 	albumHeaderChanged,
 	albumRemovalsChanged,
@@ -15,7 +16,6 @@ import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
 
 export type AlbumRemoval = components['schemas']['AlbumRemovalView'];
 export type PutBackAnswer = components['schemas']['PutBackView'];
@@ -27,9 +27,12 @@ export const getAlbumRemovalsQuery = (getAlbumId: Getter<string>) =>
 		queryKey: LibraryQueryKeyFactory.catalog.albumRemovals(authStore.user?.id, getAlbumId()),
 		enabled: authStore.isTrusted && !!getAlbumId(),
 		queryFn: async ({ signal }) => {
-			const answer = await api.v3.GET(LibraryV3Api.albumRemovals(getAlbumId()), {
-				signal
-			});
+			const answer = await api.v3.GET(
+				v3('/api/v3/library/albums/{album_id}/removals', { path: { album_id: getAlbumId() } }),
+				{
+					signal
+				}
+			);
 			return answer.items;
 		}
 	}));
@@ -52,7 +55,12 @@ export function putBackRemoval() {
 			albumId: string;
 			removalId: string;
 			releaseGroupMbid?: string | null;
-		}): Promise<PutBackAnswer> => api.v3.POST(LibraryV3Api.putBackRemoval(albumId, removalId)),
+		}): Promise<PutBackAnswer> =>
+			api.v3.POST(
+				v3('/api/v3/library/albums/{album_id}/removals/{removal_id}/put-back', {
+					path: { album_id: albumId, removal_id: removalId }
+				})
+			),
 		onSuccess: (_answer, { releaseGroupMbid }) => {
 			if (releaseGroupMbid) libraryStore.addMbid(releaseGroupMbid);
 		},

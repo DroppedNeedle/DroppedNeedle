@@ -1,4 +1,5 @@
 <script module lang="ts">
+	import { v3 } from '$lib/api/v3/endpoint';
 	// Only one preview plays at a time - starting one pauses whatever was playing, so two
 	// files never overlap. Separate from the main player: listening never touches the queue.
 	let activePreview: HTMLAudioElement | null = null;
@@ -13,7 +14,6 @@
 	import { Check, Disc3, Pause, Play, RotateCcw, Trash2 } from 'lucide-svelte';
 
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { HELD_ENDPOINTS } from '$lib/queries/downloads/endpoints';
 	import {
 		discardHeldMutation,
 		importHeldMutation,
@@ -99,7 +99,9 @@
 
 	function ensureSource(): void {
 		if (audioEl && !sourced) {
-			audioEl.src = getApiUrl(HELD_ENDPOINTS.audio(file.id));
+			audioEl.src = getApiUrl(
+				v3('/api/v3/held/files/{file_id}/audio', { path: { file_id: file.id } })
+			);
 			sourced = true;
 		}
 	}

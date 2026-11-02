@@ -1,8 +1,8 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
 import type { RepairEstimateResponse, RepairFindingListResponse } from './LibraryOperationsTypes';
 
 export const getLibraryRepairsQuery = (enabled: Getter<boolean> = () => true) =>
@@ -11,7 +11,12 @@ export const getLibraryRepairsQuery = (enabled: Getter<boolean> = () => true) =>
 		queryKey: LibraryQueryKeyFactory.repairs(undefined),
 		initialPageParam: undefined as string | undefined,
 		queryFn: async ({ pageParam, signal }) =>
-			await api.v3.GET(LibraryV3Api.identityRepairs(50, pageParam), { signal }),
+			await api.v3.GET(
+				v3('/api/v3/library/identity-repairs', {
+					query: { limit: 50, ...(pageParam ? { cursor: pageParam } : {}) }
+				}),
+				{ signal }
+			),
 		getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined
 	}));
 
@@ -25,7 +30,12 @@ export const getLibraryRepairEstimateQuery = (
 			enabled: enabled(),
 			queryKey: LibraryQueryKeyFactory.repairEstimate(rootIds),
 			queryFn: async ({ signal }): Promise<RepairEstimateResponse> =>
-				api.v3.GET(LibraryV3Api.identityRepairEstimate(rootIds), { signal })
+				api.v3.GET(
+					v3('/api/v3/library/identity-repairs/estimate', {
+						query: rootIds.length ? { root_id: rootIds } : {}
+					}),
+					{ signal }
+				)
 		};
 	});
 
@@ -42,7 +52,14 @@ export const getLibraryRepairFindingsQuery = (
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
 				(await api.v3.GET(
-					LibraryV3Api.identityRepairFindings(jobId ?? '', 100, pageParam, findingCategory),
+					v3('/api/v3/library/identity-repairs/{job_id}/findings', {
+						path: { job_id: jobId ?? '' },
+						query: {
+							limit: 100,
+							...(pageParam ? { cursor: pageParam } : {}),
+							...(findingCategory ? { finding_category: findingCategory } : {})
+						}
+					}),
 					{ signal }
 				)) as RepairFindingListResponse,
 			getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined

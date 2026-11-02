@@ -2,7 +2,7 @@ import { page, userEvent } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RequestItem } from '$lib/queries/requests/types';
-import type { WantedRetryingItem, WantedWatchItem } from '$lib/queries/wanted/types';
+import type { WantedRetryingItem, WantedWatchItem } from '$lib/queries/wanted.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { fakeApi, type FakeRoutes } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';

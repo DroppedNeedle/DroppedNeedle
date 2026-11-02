@@ -4,7 +4,7 @@
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import { outsideLink } from '$lib/components/outsideLink';
-	import type { ProfileServiceConnection } from '$lib/queries/profile/types';
+	import type { ProfileServiceConnection } from '$lib/queries/profile.svelte';
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {

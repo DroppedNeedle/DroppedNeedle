@@ -2,7 +2,7 @@
 	import { Headphones, ArrowRight, Sparkles, TriangleAlert } from 'lucide-svelte';
 	import type { ComponentType } from 'svelte';
 	import DropImportZone from '$lib/components/import/DropImportZone.svelte';
-	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLocalStatsV3Query } from '$lib/queries/local/LocalV3Queries.svelte';
 	import { formatBytes } from '$lib/utils/formatting';

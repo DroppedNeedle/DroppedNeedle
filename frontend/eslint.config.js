@@ -12,24 +12,21 @@ const gitignorePath = fileURLToPath(new URL('./.gitignore', import.meta.url));
 
 // Writes to the query cache must go through the persister helpers.
 const queryClientRules = [
-	// Ensure not to call queryClient.setQueriesData or queryClient.setQueryData directly, as this will bypass the persister and lead to data loss on page refresh.
+	// Ensure not to call setQueriesData or setQueryData on any client directly, whatever the variable is called, as this will bypass the persister and lead to data loss on page refresh.
 	{
-		selector:
-			"CallExpression[callee.object.name='queryClient'][callee.property.name='setQueriesData']",
+		selector: "CallExpression[callee.property.name='setQueriesData']",
 		message:
-			"Direct use of 'queryClient.setQueriesData' is forbidden. Please use 'setQueryDataWithPersister' per matching query key instead (no plural helper exists)."
+			"Direct use of 'setQueriesData' is forbidden. Please use 'setQueryDataWithPersister' per matching query key instead (no plural helper exists)."
 	},
 	{
-		selector:
-			"CallExpression[callee.object.name='queryClient'][callee.property.name='setQueryData']",
+		selector: "CallExpression[callee.property.name='setQueryData']",
 		message:
-			"Direct use of 'queryClient.setQueryData' is forbidden. Please use the 'setQueryDataWithPersister' function instead."
+			"Direct use of 'setQueryData' is forbidden. Please use the 'setQueryDataWithPersister' function instead."
 	},
 	{
-		selector:
-			"CallExpression[callee.object.name='queryClient'][callee.property.name='invalidateQueries']",
+		selector: "CallExpression[callee.property.name='invalidateQueries']",
 		message:
-			"Direct use of 'queryClient.invalidateQueries' is forbidden. Please use the custom 'invalidateQueriesWithPersister' hook instead."
+			"Direct use of 'invalidateQueries' is forbidden. Please use the custom 'invalidateQueriesWithPersister' hook instead."
 	}
 ];
 
@@ -212,6 +209,13 @@ export default defineConfig(
 	{
 		rules: {
 			'no-restricted-syntax': ['error', ...queryClientRules, ...markupRules]
+		}
+	},
+	{
+		// A spec's fake client may call these.
+		files: ['src/**/*.spec.ts'],
+		rules: {
+			'no-restricted-syntax': ['error', ...markupRules]
 		}
 	},
 	{

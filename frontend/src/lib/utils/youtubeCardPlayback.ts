@@ -1,4 +1,4 @@
-import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { playerStore } from '$lib/stores/player.svelte';
 import { toastStore } from '$lib/stores/toast';
@@ -21,7 +21,9 @@ function buildMeta(link: YouTubeLink): TrackMeta {
 
 async function fetchTrackItems(link: YouTubeLink): Promise<FetchResult> {
 	try {
-		const tracks = await api.v3.GET(YOUTUBE_ENDPOINTS.trackLinks(link.album_id));
+		const tracks = await api.v3.GET(
+			v3('/api/v3/youtube/track-links/{album_id}', { path: { album_id: link.album_id } })
+		);
 		if (tracks.length === 0) return { items: [], error: false };
 		return { items: buildQueueItemsFromYouTube(tracks, buildMeta(link)), error: false };
 	} catch {

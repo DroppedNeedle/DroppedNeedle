@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { v3 } from '$lib/api/v3/endpoint';
 	import '$lib/components/library/library-management.css';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
@@ -15,7 +16,6 @@
 
 	import BackButton from '$lib/components/BackButton.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { LIBRARY_MANAGEMENT_ENDPOINTS } from '$lib/queries/library-management/endpoints';
 	import {
 		controlLibraryManagementOperationMutation,
 		createLibraryManagementUndoPreviewMutation
@@ -318,7 +318,9 @@
 			destinationRoot: 'Destination',
 			destinationPath: item.plan.destination_relative_path ?? null,
 			artworkUrl: artworkHash
-				? LIBRARY_MANAGEMENT_ENDPOINTS.previewArtwork(jobId, item.plan.ordinal, artworkHash)
+				? v3('/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}', {
+						path: { job_id: jobId, ordinal: item.plan.ordinal, sha256: artworkHash }
+					})
 				: null
 		};
 	}

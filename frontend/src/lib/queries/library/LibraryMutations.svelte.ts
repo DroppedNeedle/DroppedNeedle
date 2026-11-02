@@ -1,10 +1,10 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { useQueryClient } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
 import { setQueryDataWithPersister } from '../QueryClient';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
 import type { LibraryAlbumStatus, LibraryScanSchedule } from '$lib/types';
 import {
 	albumLocalCopyChanged,
@@ -23,7 +23,12 @@ import {
 export function removeLibraryAlbum() {
 	return createAppMutation(() => ({
 		mutationFn: ({ mbid, stopWanted }: { mbid: string; stopWanted: boolean }) =>
-			api.v3.DELETE(LibraryV3Api.removeAlbum(mbid, stopWanted)),
+			api.v3.DELETE(
+				v3('/api/v3/library/albums/{id}', {
+					path: { id: mbid },
+					query: { delete_files: true, stop_wanted: stopWanted }
+				})
+			),
 		onSuccess: async (result, { mbid: requestedMbid }) => {
 			const removedMbids = [requestedMbid, result.id].filter(
 				(mbid, index, all) => all.indexOf(mbid) === index
@@ -59,7 +64,8 @@ const RESCAN_REFRESH_DELAYS_MS = [2500, 6000];
 
 export function rescanAlbum() {
 	return createAppMutation(() => ({
-		mutationFn: (mbid: string) => api.v3.POST(LibraryV3Api.rescanAlbum(mbid)),
+		mutationFn: (mbid: string) =>
+			api.v3.POST(v3('/api/v3/library/albums/{album_id}/rescan', { path: { album_id: mbid } })),
 		onSuccess: (_data, mbid) => {
 			const status = albumStatusChanged(authStore.user?.id, mbid);
 			for (const delay of RESCAN_REFRESH_DELAYS_MS) {
@@ -73,7 +79,7 @@ export function rescanAlbum() {
 export function saveLibraryScanSchedule() {
 	return createAppMutation(() => ({
 		mutationFn: (schedule: LibraryScanSchedule) =>
-			api.v3.PUT(LibraryV3Api.schedule(), {
+			api.v3.PUT(v3('/api/v3/settings/library/schedule'), {
 				scan_frequency: schedule.scan_frequency,
 				daily_scan_time: schedule.daily_scan_time
 			}),
@@ -91,7 +97,7 @@ export function removeLibraryTrack() {
 		() => ({
 			// `albumId`, the library album's own id, also refreshes its edition plans.
 			mutationFn: ({ fileId }: { fileId: string; albumMbid: string; albumId?: string }) =>
-				api.v3.DELETE(LibraryV3Api.removeTrack(fileId)),
+				api.v3.DELETE(v3('/api/v3/library/tracks/{id}', { path: { id: fileId } })),
 			effects: (_data, { albumMbid, albumId }) => {
 				const userId = authStore.user?.id;
 				return [

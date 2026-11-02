@@ -1,7 +1,7 @@
 import { playerStore } from '$lib/stores/player.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
-import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
+import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences.svelte';
 import type { components } from '$lib/api/v3/openapi';
 import type { SourceType } from '$lib/player/types';
 import {

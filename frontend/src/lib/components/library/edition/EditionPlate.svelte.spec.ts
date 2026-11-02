@@ -149,7 +149,7 @@ vi.mock('$lib/components/AlbumImage.svelte', () => {
 });
 
 import '../../../../app.css';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
+import { HomeQueryKeyFactory } from '$lib/queries/featureKeys';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import EditionPlate from './EditionPlate.svelte';
 

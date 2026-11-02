@@ -3,13 +3,13 @@
 	import { Radar, TriangleAlert } from 'lucide-svelte';
 	import WantedRetryingCard from '$lib/components/WantedRetryingCard.svelte';
 	import WantedWatchCard from '$lib/components/WantedWatchCard.svelte';
-	import { getWantedWatchesQuery } from '$lib/queries/wanted/WantedQuery.svelte';
+	import { getWantedWatchesQuery } from '$lib/queries/wanted.svelte';
 	import {
 		createMarkWantedSeenMutation,
 		createResumeWatchMutation,
 		createStopWatchMutation
-	} from '$lib/queries/wanted/WantedMutations.svelte';
-	import type { WantedWatchItem } from '$lib/queries/wanted/types';
+	} from '$lib/queries/wanted.svelte';
+	import type { WantedWatchItem } from '$lib/queries/wanted.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';
 

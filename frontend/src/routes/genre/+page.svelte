@@ -12,10 +12,7 @@
 	import { getGenreGradient } from '$lib/utils/genreGradient';
 	import ServiceErrorState from '$lib/components/ServiceErrorState.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import {
-		getGenreAlbumPagesQuery,
-		getGenreDetailQuery
-	} from '$lib/queries/genre/GenreQueries.svelte';
+	import { getGenreAlbumPagesQuery, getGenreDetailQuery } from '$lib/queries/genre.svelte';
 	import { ArrowLeft, BookOpen, Music2, CircleAlert, Mic, Disc3, ChevronDown } from 'lucide-svelte';
 	import RadioPlayButton from '$lib/components/discover/RadioPlayButton.svelte';
 	import type { RadioMode } from '$lib/player/launchRadio';

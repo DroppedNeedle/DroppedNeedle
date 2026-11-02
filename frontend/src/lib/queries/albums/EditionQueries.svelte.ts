@@ -25,14 +25,11 @@ import { ApiError } from '$lib/api/errors';
 import { v3 } from '$lib/api/v3/endpoint';
 import type { components } from '$lib/api/v3/openapi';
 import { STALE_LIVE, STALE_SLOW } from '$lib/queries/staleTime';
-import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
-import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { queryClient } from '$lib/queries/QueryClient';
 import { PROVIDER } from '$lib/queries/persistedCache';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
 import { AlbumQueryKeyFactory } from '$lib/queries/catalog/AlbumQueryKeyFactory';
 
 // Choosing an edition is for curators; the list of a group's editions is
@@ -50,7 +47,10 @@ export const getAlbumEditionsQuery = (
 		meta: PROVIDER,
 		enabled: enabled() && !!getUserId() && !!mbid(),
 		staleTime: STALE_SLOW,
-		queryFn: ({ signal }) => api.v3.GET(CATALOG_ENDPOINTS.editions(mbid()), { signal })
+		queryFn: ({ signal }) =>
+			api.v3.GET(v3('/api/v3/albums/{album_id}/editions', { path: { album_id: mbid() } }), {
+				signal
+			})
 	}));
 
 // One edition's tracklist, for an album the library does not hold.
@@ -66,7 +66,12 @@ export const getEditionTracksQuery = (
 		enabled: enabled() && !!getUserId() && !!group() && !!release(),
 		staleTime: STALE_SLOW,
 		queryFn: ({ signal }) =>
-			api.v3.GET(CATALOG_ENDPOINTS.editionTracks(group(), release() ?? ''), { signal })
+			api.v3.GET(
+				v3('/api/v3/albums/{album_id}/editions/{release_mbid}/tracks', {
+					path: { album_id: group(), release_mbid: release() ?? '' }
+				}),
+				{ signal }
+			)
 	}));
 
 // Switch a live request to another edition (curators). The answer says
@@ -79,7 +84,7 @@ export function switchRequestedEdition() {
 			artistName: string | null;
 			albumTitle: string;
 		}) =>
-			api.v3.POST(REQUESTS_ENDPOINTS.requestAlbum(), {
+			api.v3.POST(v3('/api/v3/requests/albums'), {
 				musicbrainz_id: input.group,
 				artist: input.artistName,
 				album: input.albumTitle,
@@ -90,6 +95,9 @@ export function switchRequestedEdition() {
 	}));
 }
 
+// `copyId` names the library copy the edition picker planned;
+// `replaceVersions` (the server's default is on) fetches the edition's
+// version of each track the copy holds in another version, to replace it.
 export function acquireEdition() {
 	return createAppMutation(() => ({
 		mutationFn: ({
@@ -100,7 +108,16 @@ export function acquireEdition() {
 			mbid: string;
 			copyId?: string;
 			replaceVersions?: boolean;
-		}) => api.v3.POST(CATALOG_ENDPOINTS.acquireEdition(mbid, copyId, replaceVersions)),
+		}) =>
+			api.v3.POST(
+				v3('/api/v3/albums/{album_id}/edition/acquire', {
+					path: { album_id: mbid },
+					query: {
+						...(copyId ? { album_id: copyId } : {}),
+						...(replaceVersions === undefined ? {} : { replace_versions: replaceVersions })
+					}
+				})
+			),
 		// The acquire starts a download task: show it in the queue, the album's
 		// download strip, its edition fetch and its library status now, not on
 		// the next poll.
@@ -204,7 +221,10 @@ export const getAlbumEditionStatusQuery = (
 				editionBusy(query.state.data) ? EDITION_BUSY_POLL_MS : false,
 			queryFn: async ({ signal }: { signal: AbortSignal }): Promise<EditionStatus> => {
 				const before = queryClient.getQueryData<EditionStatus>(queryKey);
-				const status = await api.v3.GET(LibraryV3Api.edition(localId), { signal });
+				const status = await api.v3.GET(
+					v3('/api/v3/library/albums/{album_id}/edition', { path: { album_id: localId } }),
+					{ signal }
+				);
 				// The plans line the files up as they were placed, and say which
 				// hand matches were written since: once placing or writing ends,
 				// or the edition itself changed, they are stale.
@@ -238,10 +258,16 @@ export const getEditionPlanQuery = (
 		enabled: getEnabled() && !!getUserId() && !!getLocalId(),
 		staleTime: STALE_SLOW,
 		retry: false,
-		queryFn: ({ signal }) =>
-			api.v3.GET(LibraryV3Api.editionPlan(getLocalId(), getRelease() ?? undefined), {
-				signal
-			})
+		queryFn: ({ signal }) => {
+			const release = getRelease();
+			return api.v3.GET(
+				v3('/api/v3/library/albums/{album_id}/edition/plan', {
+					path: { album_id: getLocalId() },
+					query: release ? { release_mbid: release } : {}
+				}),
+				{ signal }
+			);
+		}
 	}));
 
 // Move the edition's extra files (second copies, files not on it) to the
@@ -258,10 +284,15 @@ export function removeEditionExtras() {
 			trackIds: string[];
 			identityRevision: number;
 		}) =>
-			api.v3.POST(LibraryV3Api.editionExtrasRemove(localId), {
-				track_ids: trackIds,
-				expected_identity_revision: identityRevision
-			}),
+			api.v3.POST(
+				v3('/api/v3/library/albums/{album_id}/edition/extras/remove', {
+					path: { album_id: localId }
+				}),
+				{
+					track_ids: trackIds,
+					expected_identity_revision: identityRevision
+				}
+			),
 		effects: (_data, { localId }) => {
 			const userId = authStore.user?.id;
 			return [...editionScope({ userId, localId }), albumRemovalsChanged(userId)];
@@ -297,10 +328,15 @@ export function matchEditionFile() {
 			releaseTrackMbid: string;
 			identityRevision: number;
 		}) =>
-			api.v3.PUT(LibraryV3Api.editionFile(localId, trackId), {
-				release_track_mbid: releaseTrackMbid,
-				expected_identity_revision: identityRevision
-			}),
+			api.v3.PUT(
+				v3('/api/v3/library/albums/{album_id}/edition/files/{track_id}', {
+					path: { album_id: localId, track_id: trackId }
+				}),
+				{
+					release_track_mbid: releaseTrackMbid,
+					expected_identity_revision: identityRevision
+				}
+			),
 		effects: (_data, { localId }) => handMatchScope(localId),
 		onError: (_error, { localId }) => applyEffects(...handMatchScope(localId))
 	}));
@@ -316,7 +352,13 @@ export function unmatchEditionFile() {
 			localId: string;
 			trackId: string;
 			identityRevision: number;
-		}) => api.v3.DELETE(LibraryV3Api.editionFileUnmatch(localId, trackId, identityRevision)),
+		}) =>
+			api.v3.DELETE(
+				v3('/api/v3/library/albums/{album_id}/edition/files/{track_id}', {
+					path: { album_id: localId, track_id: trackId },
+					query: { expected_identity_revision: identityRevision }
+				})
+			),
 		effects: (_data, { localId }) => handMatchScope(localId),
 		onError: (_error, { localId }) => applyEffects(...handMatchScope(localId))
 	}));
@@ -334,7 +376,12 @@ export const getWaitingAlbumsQuery = (
 			enabled: !!getUserId(),
 			initialPageParam: undefined as string | undefined,
 			queryFn: ({ pageParam, signal }): Promise<WaitingAlbums> =>
-				api.v3.GET(LibraryV3Api.unconfirmed(state, limit, pageParam), { signal }),
+				api.v3.GET(
+					v3('/api/v3/library/unconfirmed', {
+						query: { state, limit, ...(pageParam ? { cursor: pageParam } : {}) }
+					}),
+					{ signal }
+				),
 			getNextPageParam: (lastPage: WaitingAlbums) => lastPage.next_cursor ?? undefined
 		};
 	});
@@ -377,10 +424,13 @@ export function chooseAlbumEdition() {
 			identityRevision
 		}: GuardedEditionTarget & { releaseMbid: string }) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.v3.PUT(LibraryV3Api.edition(localId), {
-				release_mbid: releaseMbid,
-				expected_identity_revision: identityRevision
-			});
+			return api.v3.PUT(
+				v3('/api/v3/library/albums/{album_id}/edition', { path: { album_id: localId } }),
+				{
+					release_mbid: releaseMbid,
+					expected_identity_revision: identityRevision
+				}
+			);
 		},
 		effects: (choice, variables) => editionScope(variables, choice.release_group_mbid)
 	}));
@@ -390,7 +440,12 @@ export function handBackAlbumEdition() {
 	return createAppMutation(() => ({
 		mutationFn: ({ localId, rgMbid, identityRevision }: GuardedEditionTarget) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.v3.DELETE(LibraryV3Api.editionHandBack(localId, identityRevision));
+			return api.v3.DELETE(
+				v3('/api/v3/library/albums/{album_id}/edition', {
+					path: { album_id: localId },
+					query: { expected_identity_revision: identityRevision }
+				})
+			);
 		},
 		effects: (_d, variables) => editionScope(variables)
 	}));
@@ -399,9 +454,12 @@ export function handBackAlbumEdition() {
 export function confirmAlbumEdition() {
 	return createAppMutation(() => ({
 		mutationFn: ({ localId, identityRevision }: GuardedEditionTarget) =>
-			api.v3.POST(LibraryV3Api.editionConfirm(localId), {
-				expected_identity_revision: identityRevision
-			}),
+			api.v3.POST(
+				v3('/api/v3/library/albums/{album_id}/edition/confirm', { path: { album_id: localId } }),
+				{
+					expected_identity_revision: identityRevision
+				}
+			),
 		effects: (_d, variables) => editionScope(variables)
 	}));
 }
@@ -423,10 +481,13 @@ export function sealCustomEdition() {
 			identityRevision
 		}: EditionTarget & { releaseMbid: string; identityRevision: number }) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.v3.POST(LibraryV3Api.editionCustom(localId), {
-				release_mbid: releaseMbid,
-				expected_identity_revision: identityRevision
-			});
+			return api.v3.POST(
+				v3('/api/v3/library/albums/{album_id}/edition/custom', { path: { album_id: localId } }),
+				{
+					release_mbid: releaseMbid,
+					expected_identity_revision: identityRevision
+				}
+			);
 		},
 		effects: (_d, variables) => heldEditionScope(variables)
 	}));
@@ -442,9 +503,14 @@ export function leaveAlbumUnmanaged() {
 			identityRevision
 		}: EditionTarget & { identityRevision: number }) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.v3.POST(LibraryV3Api.editionLeaveUnmanaged(localId), {
-				expected_identity_revision: identityRevision
-			});
+			return api.v3.POST(
+				v3('/api/v3/library/albums/{album_id}/edition/leave-unmanaged', {
+					path: { album_id: localId }
+				}),
+				{
+					expected_identity_revision: identityRevision
+				}
+			);
 		},
 		effects: (_d, variables) => heldEditionScope(variables)
 	}));
@@ -504,7 +570,12 @@ export const getTagWriteQuery = (
 			// No job, no read: a refresh after a write must not fetch an empty id.
 			queryFn: jobId
 				? ({ signal }: { signal: AbortSignal }): Promise<TagWriteJob> =>
-						api.v3.GET(LibraryV3Api.editionTagWrite(localId, jobId), { signal })
+						api.v3.GET(
+							v3('/api/v3/library/albums/{album_id}/edition/tags/{job_id}', {
+								path: { album_id: localId, job_id: jobId }
+							}),
+							{ signal }
+						)
 				: skipToken
 		};
 	});
@@ -528,7 +599,12 @@ function refreshWhenTagWriteEnds(target: EditionTarget, jobId: string): void {
 				retry: false,
 				staleTime: 0,
 				queryFn: ({ signal }): Promise<TagWriteJob> =>
-					api.v3.GET(LibraryV3Api.editionTagWrite(localId, jobId), { signal })
+					api.v3.GET(
+						v3('/api/v3/library/albums/{album_id}/edition/tags/{job_id}', {
+							path: { album_id: localId, job_id: jobId }
+						}),
+						{ signal }
+					)
 			});
 			ended ||= !tagWriteMoving(job);
 		} catch (error) {
@@ -557,10 +633,13 @@ export function previewEditionTags() {
 			identityRevision: number;
 		}): Promise<TagWriteQueued> => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.v3.POST(LibraryV3Api.editionTags(localId), {
-				release_mbid: releaseMbid,
-				expected_identity_revision: identityRevision
-			});
+			return api.v3.POST(
+				v3('/api/v3/library/albums/{album_id}/edition/tags', { path: { album_id: localId } }),
+				{
+					release_mbid: releaseMbid,
+					expected_identity_revision: identityRevision
+				}
+			);
 		}
 	}));
 }
@@ -577,11 +656,16 @@ export function writeEditionTags() {
 			previewToken: string;
 			rowRevision: number;
 		}): Promise<TagWriteJob> =>
-			api.v3.POST(LibraryV3Api.editionTagWriteApply(localId, jobId), {
-				preview_token: previewToken,
-				expected_row_revision: rowRevision,
-				idempotency_key: `apply-${jobId}`
-			}),
+			api.v3.POST(
+				v3('/api/v3/library/albums/{album_id}/edition/tags/{job_id}/apply', {
+					path: { album_id: localId, job_id: jobId }
+				}),
+				{
+					preview_token: previewToken,
+					expected_row_revision: rowRevision,
+					idempotency_key: `apply-${jobId}`
+				}
+			),
 		onSuccess: (_job, variables) => refreshWhenTagWriteEnds(variables, variables.jobId),
 		effects: (_job, variables) => heldEditionScope(variables)
 	}));
@@ -594,10 +678,15 @@ export function undoTagWrite() {
 			jobId,
 			rowRevision
 		}: EditionTarget & { jobId: string; rowRevision: number }): Promise<TagWriteQueued> =>
-			api.v3.POST(LibraryV3Api.editionTagWriteUndo(localId, jobId), {
-				expected_row_revision: rowRevision,
-				idempotency_key: `undo-${jobId}`
-			}),
+			api.v3.POST(
+				v3('/api/v3/library/albums/{album_id}/edition/tags/{job_id}/undo', {
+					path: { album_id: localId, job_id: jobId }
+				}),
+				{
+					expected_row_revision: rowRevision,
+					idempotency_key: `undo-${jobId}`
+				}
+			),
 		effects: (_queued, variables) => heldEditionScope(variables)
 	}));
 }
@@ -605,9 +694,12 @@ export function undoTagWrite() {
 export function undoAlbumEdition() {
 	return createAppMutation(() => ({
 		mutationFn: ({ localId, identityRevision }: GuardedEditionTarget) =>
-			api.v3.POST(LibraryV3Api.editionUndo(localId), {
-				expected_identity_revision: identityRevision
-			}),
+			api.v3.POST(
+				v3('/api/v3/library/albums/{album_id}/edition/undo', { path: { album_id: localId } }),
+				{
+					expected_identity_revision: identityRevision
+				}
+			),
 		// Identity reports list this album's change too.
 		effects: (_d, variables) => [
 			...heldEditionScope(variables),

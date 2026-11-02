@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { replaceState } from '$app/navigation';
-	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import SettingsTabContent from '$lib/components/settings/SettingsTabContent.svelte';
 	import { isSettingsTabVisible } from '$lib/components/settings/settingsTabs';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { getUpdateCheckQuery } from '$lib/queries/VersionQuery.svelte';
+	import { getUpdateCheckQuery } from '$lib/queries/version.svelte';
 	import {
 		Settings2,
 		Music,

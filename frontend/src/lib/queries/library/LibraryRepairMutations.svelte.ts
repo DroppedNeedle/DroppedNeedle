@@ -1,7 +1,7 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { toastStore } from '$lib/stores/toast';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { LibraryV3Api } from './LibraryV3Api';
 import { createUuid } from '$lib/utils/uuid';
 import {
 	anyLibraryActivityChanged,
@@ -24,7 +24,7 @@ function repairs(catalog = false): Effect[] {
 export function createLibraryRepair() {
 	return createAppMutation(() => ({
 		mutationFn: async (rootIds: string[]) =>
-			await api.v3.POST(LibraryV3Api.identityRepairs(), {
+			await api.v3.POST(v3('/api/v3/library/identity-repairs'), {
 				idempotency_key: createUuid(),
 				root_ids: rootIds,
 				target_matcher_version: 'quiet-reconfirm-v1'
@@ -41,10 +41,13 @@ export function createLibraryRepair() {
 export function applyLibraryRepair() {
 	return createAppMutation(() => ({
 		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
-			await api.v3.POST(LibraryV3Api.applyIdentityRepair(input.jobId), {
-				expected_row_revision: input.expectedRevision,
-				confirmation: true
-			}),
+			await api.v3.POST(
+				v3('/api/v3/library/identity-repairs/{job_id}/apply', { path: { job_id: input.jobId } }),
+				{
+					expected_row_revision: input.expectedRevision,
+					confirmation: true
+				}
+			),
 		effects: () => repairs(true),
 		onError: () => toastStore.show({ message: 'Could not apply the repair', type: 'error' })
 	}));

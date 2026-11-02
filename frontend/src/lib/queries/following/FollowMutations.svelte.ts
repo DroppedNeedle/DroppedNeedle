@@ -1,9 +1,9 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 import { queryClient, setQueryDataWithPersister } from '../QueryClient';
 import { FollowQueryKeyFactory } from './FollowQueryKeyFactory';
-import { CONCERT_ENDPOINTS, FOLLOW_ENDPOINTS } from './endpoints';
 import { toFollowStatus } from './FollowAdapters';
 import type {
 	AutoDownloadState,
@@ -34,7 +34,12 @@ const followedArtists = () => [followedArtistsChanged(authStore.user?.id)];
 export const createSetFollowMutation = (getMbid: () => string) =>
 	createAppMutation(() => ({
 		mutationFn: async (followed: boolean) =>
-			toFollowStatus(await api.v3.PUT(FOLLOW_ENDPOINTS.setFollow(getMbid()), { followed })),
+			toFollowStatus(
+				await api.v3.PUT(
+					v3('/api/v3/artists/{artist_mbid}/follow', { path: { artist_mbid: getMbid() } }),
+					{ followed }
+				)
+			),
 		onMutate: async (followed: boolean) => {
 			const key = statusKey(getMbid());
 			await queryClient.cancelQueries({ queryKey: key });
@@ -61,7 +66,7 @@ export const createSetFollowMutation = (getMbid: () => string) =>
 export const createMarkNewReleasesSeenMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: () => api.v3.POST(FOLLOW_ENDPOINTS.markNewReleasesSeen()),
+		mutationFn: () => api.v3.POST(v3('/api/v3/following/new-releases/seen')),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<UnseenCountResponse>(
 				FollowQueryKeyFactory.newReleasesUnseen(authStore.user?.id),
@@ -74,7 +79,7 @@ export const createMarkNewReleasesSeenMutation = () =>
 export const createReplaceEventCitiesMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (cities: EventCity[]) =>
-			api.v3.PUT(CONCERT_ENDPOINTS.concertCities(), { items: cities }),
+			api.v3.PUT(v3('/api/v3/following/concerts/cities'), { items: cities }),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<EventCitiesResponse>(
 				FollowQueryKeyFactory.concertCities(authStore.user?.id),
@@ -93,7 +98,7 @@ export const createReplaceEventCitiesMutation = () =>
 export const createMarkConcertsSeenMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: () => api.v3.POST(CONCERT_ENDPOINTS.markConcertsSeen()),
+		mutationFn: () => api.v3.POST(v3('/api/v3/following/concerts/seen')),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<UnseenCountResponse>(
 				FollowQueryKeyFactory.concertsUnseen(authStore.user?.id),
@@ -106,7 +111,12 @@ export const createMarkConcertsSeenMutation = () =>
 export const createUnfollowMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: async (mbid: string) =>
-			toFollowStatus(await api.v3.PUT(FOLLOW_ENDPOINTS.setFollow(mbid), { followed: false })),
+			toFollowStatus(
+				await api.v3.PUT(
+					v3('/api/v3/artists/{artist_mbid}/follow', { path: { artist_mbid: mbid } }),
+					{ followed: false }
+				)
+			),
 		onSuccess: (data, mbid) => {
 			void setQueryDataWithPersister<FollowStatus>(statusKey(mbid), data);
 		},
@@ -117,7 +127,12 @@ export const createUnfollowMutation = () =>
 export const createSetAutoDownloadMutation = (getMbid: () => string) =>
 	createAppMutation(() => ({
 		mutationFn: async (enabled: boolean) =>
-			toFollowStatus(await api.v3.PUT(FOLLOW_ENDPOINTS.autoDownload(getMbid()), { enabled })),
+			toFollowStatus(
+				await api.v3.PUT(
+					v3('/api/v3/artists/{artist_mbid}/auto-download', { path: { artist_mbid: getMbid() } }),
+					{ enabled }
+				)
+			),
 		onMutate: async (enabled: boolean) => {
 			const key = statusKey(getMbid());
 			await queryClient.cancelQueries({ queryKey: key });

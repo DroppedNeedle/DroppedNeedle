@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 // Read and save hooks for the settings sections that are one form each.
 // Every save answers with the section as stored, secrets masked, and that
 // answer replaces the cached copy.
@@ -5,11 +6,8 @@ import { createQuery } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
-import { PLEX_ENDPOINTS } from '$lib/queries/plex/endpoints';
-import { SPOTIFY_ENDPOINTS } from '$lib/queries/spotify/endpoints';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { SettingsQueryKeyFactory } from './SettingsQueryKeyFactory';
-import { SETTINGS_ENDPOINTS } from './endpoints';
 import {
 	anyArtistChanged,
 	concertsChanged,
@@ -63,8 +61,8 @@ function section<T>(
 
 const advanced = section<AdvancedSettings>(
 	'advanced',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.advanced(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.advanced(), body)
+	(signal) => api.v3.GET(v3('/api/v3/settings/advanced'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/advanced'), body)
 );
 export const AdvancedSettingsQueryKeyFactory = advanced.keys;
 export const getAdvancedSettingsQuery = advanced.query;
@@ -72,8 +70,8 @@ export const createSaveAdvancedSettingsMutation = advanced.save;
 
 const editions = section<EditionPreferences>(
 	'edition-preferences',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.editionPreferences(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.editionPreferences(), body)
+	(signal) => api.v3.GET(v3('/api/v3/settings/edition-preferences'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/edition-preferences'), body)
 );
 export const getEditionPreferencesQuery = editions.query;
 export const createSaveEditionPreferencesMutation = editions.save;
@@ -82,8 +80,8 @@ export const createSaveEditionPreferencesMutation = editions.save;
 // so the Following page's concert lists are read again.
 const events = section<EventsSettings>(
 	'events',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.events(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.events(), body),
+	(signal) => api.v3.GET(v3('/api/v3/settings/events'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/events'), body),
 	() => [concertsChanged(authStore.user?.id)]
 );
 export const getEventsSettingsQuery = events.query;
@@ -91,16 +89,16 @@ export const createSaveEventsSettingsMutation = events.save;
 
 const getIt = section<GetItSettings>(
 	'get-it',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.getIt(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.getIt(), body)
+	(signal) => api.v3.GET(v3('/api/v3/settings/get-it'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/get-it'), body)
 );
 export const getGetItSettingsQuery = getIt.query;
 export const createSaveGetItSettingsMutation = getIt.save;
 
 const lastfm = section<LastFmSettings>(
 	'lastfm',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.lastfm(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.lastfm(), body)
+	(signal) => api.v3.GET(v3('/api/v3/settings/lastfm'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/lastfm'), body)
 );
 export const getLastFmSettingsQuery = lastfm.query;
 export const createSaveLastFmSettingsMutation = lastfm.save;
@@ -108,16 +106,16 @@ export const createSaveLastFmSettingsMutation = lastfm.save;
 // Read on the Library tab, which non-admins also open: pass `enabled`.
 const libraryWatcher = section<LibraryWatcherSettings>(
 	'library-watcher',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.libraryWatcher(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.libraryWatcher(), body)
+	(signal) => api.v3.GET(v3('/api/v3/settings/library/watcher'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/library/watcher'), body)
 );
 export const getLibraryWatcherSettingsQuery = libraryWatcher.query;
 export const createSaveLibraryWatcherSettingsMutation = libraryWatcher.save;
 
 const navidrome = section<NavidromeSettings>(
 	'navidrome',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.navidrome(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.navidrome(), body)
+	(signal) => api.v3.GET(v3('/api/v3/settings/navidrome'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/navidrome'), body)
 );
 export const getNavidromeSettingsQuery = navidrome.query;
 export const createSaveNavidromeSettingsMutation = navidrome.save;
@@ -125,8 +123,8 @@ export const createSaveNavidromeSettingsMutation = navidrome.save;
 // Which release types artist pages and search show.
 const releasePreferences = section<ReleasePreferences>(
 	'preferences',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.preferences(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.preferences(), body),
+	(signal) => api.v3.GET(v3('/api/v3/settings/preferences'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/preferences'), body),
 	() => [anyArtistChanged()]
 );
 export const getReleasePreferencesQuery = releasePreferences.query;
@@ -134,48 +132,48 @@ export const createSaveReleasePreferencesMutation = releasePreferences.save;
 
 const oidc = section<OidcSettings>(
 	'oidc',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.oidc(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.oidc(), body)
+	(signal) => api.v3.GET(v3('/api/v3/settings/oidc'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/oidc'), body)
 );
 export const getOidcSettingsQuery = oidc.query;
 export const createSaveOidcSettingsMutation = oidc.save;
 
 const plex = section<PlexSettings>(
 	'plex',
-	(signal) => api.v3.GET(PLEX_ENDPOINTS.settings(), { signal }),
-	(body) => api.v3.PUT(PLEX_ENDPOINTS.settings(), body)
+	(signal) => api.v3.GET(v3('/api/v3/settings/plex'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/plex'), body)
 );
 export const getPlexSettingsQuery = plex.query;
 export const createSavePlexSettingsMutation = plex.save;
 
 const security = section<SecuritySettings>(
 	'security',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.security(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.security(), body)
+	(signal) => api.v3.GET(v3('/api/v3/settings/security'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/security'), body)
 );
 export const getSecuritySettingsQuery = security.query;
 export const createSaveSecuritySettingsMutation = security.save;
 
 const spotify = section<SpotifySettings>(
 	'spotify',
-	(signal) => api.v3.GET(SPOTIFY_ENDPOINTS.settings(), { signal }),
-	(body) => api.v3.PUT(SPOTIFY_ENDPOINTS.settings(), body)
+	(signal) => api.v3.GET(v3('/api/v3/acquire/spotify/settings'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/acquire/spotify/settings'), body)
 );
 export const getSpotifySettingsQuery = spotify.query;
 export const createSaveSpotifySettingsMutation = spotify.save;
 
 const wrapped = section<WrappedSettings>(
 	'wrapped',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.wrapped(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.wrapped(), body)
+	(signal) => api.v3.GET(v3('/api/v3/settings/wrapped'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/wrapped'), body)
 );
 export const getWrappedSettingsQuery = wrapped.query;
 export const createSaveWrappedSettingsMutation = wrapped.save;
 
 const youtube = section<YouTubeSettings>(
 	'youtube',
-	(signal) => api.v3.GET(SETTINGS_ENDPOINTS.youtube(), { signal }),
-	(body) => api.v3.PUT(SETTINGS_ENDPOINTS.youtube(), body)
+	(signal) => api.v3.GET(v3('/api/v3/settings/youtube'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/youtube'), body)
 );
 export const getYouTubeSettingsQuery = youtube.query;
 export const createSaveYouTubeSettingsMutation = youtube.save;
@@ -184,35 +182,36 @@ export const createSaveYouTubeSettingsMutation = youtube.save;
 export const createVerifyNavidromeMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (body: NavidromeSettings) => api.v3.POST(SETTINGS_ENDPOINTS.navidromeVerify(), body)
+		mutationFn: (body: NavidromeSettings) =>
+			api.v3.POST(v3('/api/v3/settings/navidrome/verify'), body)
 	}));
 
 /** Checks the entered provider without saving it. */
 export const createVerifyOidcMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (body: OidcSettings) => api.v3.POST(SETTINGS_ENDPOINTS.oidcVerify(), body)
+		mutationFn: (body: OidcSettings) => api.v3.POST(v3('/api/v3/settings/oidc/verify'), body)
 	}));
 
 /** Checks the entered connection and lists its libraries, without saving. */
 export const createVerifyPlexMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (body: PlexSettings) => api.v3.POST(PLEX_ENDPOINTS.verify(), body)
+		mutationFn: (body: PlexSettings) => api.v3.POST(v3('/api/v3/settings/plex/verify'), body)
 	}));
 
 /** Checks the entered Last.fm key and shared secret without saving them. */
 export const createVerifyLastFmMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (body: LastFmSettings) => api.v3.POST(SETTINGS_ENDPOINTS.lastfmVerify(), body)
+		mutationFn: (body: LastFmSettings) => api.v3.POST(v3('/api/v3/settings/lastfm/verify'), body)
 	}));
 
 /** Checks the entered API key without saving it. */
 export const createVerifyYouTubeMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (body: YouTubeSettings) => api.v3.POST(SETTINGS_ENDPOINTS.youtubeVerify(), body)
+		mutationFn: (body: YouTubeSettings) => api.v3.POST(v3('/api/v3/settings/youtube/verify'), body)
 	}));
 
 /** Checks the breached-password file without saving the section. */
@@ -220,7 +219,7 @@ export const createVerifyHibpMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (body: SecuritySettings) =>
-			api.v3.POST(SETTINGS_ENDPOINTS.securityVerifyHibp(), body)
+			api.v3.POST(v3('/api/v3/settings/security/verify-hibp'), body)
 	}));
 
 /** Tries one events source's key without saving it. */
@@ -236,8 +235,8 @@ export const createTestEventsSourceMutation = () =>
 		}) => {
 			const endpoint =
 				provider === 'ticketmaster'
-					? SETTINGS_ENDPOINTS.eventsTestTicketmaster()
-					: SETTINGS_ENDPOINTS.eventsTestSkiddle();
+					? v3('/api/v3/settings/events/test-ticketmaster')
+					: v3('/api/v3/settings/events/test-skiddle');
 			return api.v3.POST(endpoint, body);
 		}
 	}));
@@ -246,5 +245,5 @@ export const createTestEventsSourceMutation = () =>
 export const createNavidromePlaylistSyncMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: () => api.v3.POST(SETTINGS_ENDPOINTS.navidromePlaylistSync())
+		mutationFn: () => api.v3.POST(v3('/api/v3/settings/navidrome/playlist-sync'))
 	}));

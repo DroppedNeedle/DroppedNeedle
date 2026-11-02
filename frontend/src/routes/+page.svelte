@@ -31,7 +31,7 @@
 	import HomeSectionNowPlaying from '$lib/components/HomeSectionNowPlaying.svelte';
 	import HomeEntryCards from '$lib/components/HomeEntryCards.svelte';
 	import DiscoverTeaserBand from '$lib/components/discover/DiscoverTeaserBand.svelte';
-	import { getHomeQuery } from '$lib/queries/HomeQuery.svelte';
+	import { getHomeQuery } from '$lib/queries/home.svelte';
 	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

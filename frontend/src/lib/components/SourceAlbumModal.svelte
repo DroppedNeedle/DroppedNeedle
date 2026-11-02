@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { v3 } from '$lib/api/v3/endpoint';
+	import { readRemoteAlbumTracks } from '$lib/queries/remotes/RemoteQueries.svelte';
 	import { fetchRemoteAlbumInfo, fetchRemoteMix } from '$lib/queries/remotes/RemoteQueries.svelte';
-	import { remoteApi } from '$lib/queries/remotes/remoteApi';
-	import { fetchLocalAlbumMatch } from '$lib/queries/albumMatch';
+	import { fetchLocalAlbumMatch } from '$lib/queries/albumMatch.svelte';
 	import { Shuffle, Play, ListPlus, ListStart, ListMusic, Info, Download } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
-	import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
 	import { downloadAlbumArchive, downloadTrackFile } from '$lib/utils/downloadActions';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
@@ -104,7 +104,7 @@
 		trackError = '';
 		try {
 			if (remoteAlbum) {
-				const page = await remoteApi.albumTracks(remoteAlbum.source, remoteAlbum.id);
+				const page = await readRemoteAlbumTracks(remoteAlbum.source, remoteAlbum.id);
 				if (id !== fetchId) return;
 				remoteTracks = page.items;
 			} else if (localAlbum) {
@@ -313,7 +313,10 @@
 			items.push({
 				label: 'Download Album',
 				icon: Download,
-				onclick: () => void downloadAlbumArchive(LocalDownloadsApi.albumByMbid(albumMbid))
+				onclick: () =>
+					void downloadAlbumArchive(
+						v3('/api/v3/download/local/album/mbid/{mbid}', { path: { mbid: albumMbid } })
+					)
 			});
 		}
 		return items;
@@ -353,7 +356,10 @@
 					label: 'Download',
 					icon: Download,
 					onclick: () =>
-						void downloadTrackFile(LocalDownloadsApi.track(track.track_file_id), track.title)
+						void downloadTrackFile(
+							v3('/api/v3/download/local/track/{id}', { path: { id: track.track_file_id } }),
+							track.title
+						)
 				});
 			}
 		}

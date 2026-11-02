@@ -1,11 +1,11 @@
 <script lang="ts">
 	import '$lib/components/now-playing.css';
 	import { Headphones, Disc3 } from 'lucide-svelte';
-	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { nowPlayingMerged } from '$lib/stores/nowPlayingMerged.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
-	import { getSectionPrefsQuery } from '$lib/queries/section-prefs/SectionPrefsQuery.svelte';
+	import { getSectionPrefsQuery } from '$lib/queries/section-prefs.svelte';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';

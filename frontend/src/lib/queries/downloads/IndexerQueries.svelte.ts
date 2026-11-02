@@ -1,10 +1,10 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
-import { DOWNLOAD_SETTINGS_ENDPOINTS } from './endpoints';
 import {
 	createAppMutation,
 	downloadReadinessChanged,
@@ -18,7 +18,7 @@ export type UsenetSearchBackendName = components['schemas']['UsenetBackend'];
 const getIndexersQueryOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.indexers(),
-		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/settings/indexers'), { signal })
 	});
 
 export const getIndexersQuery = () => createQuery(() => getIndexersQueryOptions());
@@ -30,15 +30,16 @@ export function saveIndexerMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (indexer: IndexerSettings) =>
 			indexer.id
-				? api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(indexer.id), indexer)
-				: api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), indexer),
+				? api.v3.PUT(v3('/api/v3/settings/indexers/{id}', { path: { id: indexer.id } }), indexer)
+				: api.v3.POST(v3('/api/v3/settings/indexers'), indexer),
 		effects: usenetChanged
 	}));
 }
 
 export function deleteIndexerMutation() {
 	return createAppMutation(() => ({
-		mutationFn: (id: string) => api.v3.DELETE(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(id)),
+		mutationFn: (id: string) =>
+			api.v3.DELETE(v3('/api/v3/settings/indexers/{id}', { path: { id } })),
 		effects: usenetChanged
 	}));
 }
@@ -46,7 +47,7 @@ export function deleteIndexerMutation() {
 export function reorderIndexersMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (orderedIds: string[]) =>
-			api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexersReorder(), {
+			api.v3.POST(v3('/api/v3/settings/indexers/reorder'), {
 				ordered_ids: orderedIds
 			}),
 		effects: usenetChanged
@@ -57,14 +58,14 @@ export function testIndexerMutation() {
 	return createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (indexer: IndexerSettings) =>
-			api.v3.POST(DOWNLOAD_SETTINGS_ENDPOINTS.indexersTest(), indexer)
+			api.v3.POST(v3('/api/v3/settings/indexers/test'), indexer)
 	}));
 }
 
 const getSearchBackendQueryOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.searchBackend(),
-		queryFn: ({ signal }) => api.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.searchBackend(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/settings/indexers/search-backend'), { signal })
 	});
 
 export const getSearchBackendQuery = () => createQuery(() => getSearchBackendQueryOptions());
@@ -72,7 +73,7 @@ export const getSearchBackendQuery = () => createQuery(() => getSearchBackendQue
 export function saveSearchBackendMutation() {
 	return createAppMutation(() => ({
 		mutationFn: (backend: UsenetSearchBackendName) =>
-			api.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.searchBackend(), {
+			api.v3.PUT(v3('/api/v3/settings/indexers/search-backend'), {
 				backend
 			}),
 		// Switching backends flips readiness, so status surfaces and Home

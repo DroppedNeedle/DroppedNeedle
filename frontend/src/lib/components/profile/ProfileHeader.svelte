@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { Camera, Pencil, ShieldCheck, UserCheck, UserRound } from 'lucide-svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { createUpdateDisplayNameMutation } from '$lib/queries/profile/ProfileMutations.svelte';
-	import type { ProfileData } from '$lib/queries/profile/types';
+	import { createUpdateDisplayNameMutation } from '$lib/queries/profile.svelte';
+	import type { ProfileData } from '$lib/queries/profile.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import AvatarUploadModal from './AvatarUploadModal.svelte';

@@ -13,8 +13,8 @@
 		getChartOverviewQuery,
 		getChartRangeQuery,
 		type ChartItem
-	} from '$lib/queries/charts/ChartQueries.svelte';
-	import type { ChartKind } from '$lib/queries/charts/endpoints';
+	} from '$lib/queries/charts.svelte';
+	import type { ChartKind } from '$lib/queries/charts.svelte';
 	import type { ListenSource, StatsRange } from '$lib/queries/discover/types';
 
 	type ItemType = 'album' | 'artist';

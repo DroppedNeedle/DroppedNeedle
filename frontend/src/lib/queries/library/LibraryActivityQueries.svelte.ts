@@ -1,8 +1,8 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
 import type { LibraryActivityResponse } from './LibraryOperationsTypes';
 import { STALE_LIVE } from '$lib/queries/staleTime';
 
@@ -10,7 +10,7 @@ const getLibraryActivityQueryOptions = (userId: string | undefined) =>
 	queryOptions({
 		queryKey: LibraryQueryKeyFactory.activity(userId),
 		queryFn: ({ signal }): Promise<LibraryActivityResponse> =>
-			api.v3.GET(LibraryV3Api.activity(), { signal }),
+			api.v3.GET(v3('/api/v3/library/activity'), { signal }),
 		staleTime: STALE_LIVE
 	});
 

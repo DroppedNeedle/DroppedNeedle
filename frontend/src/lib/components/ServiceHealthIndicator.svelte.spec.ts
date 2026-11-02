@@ -24,7 +24,7 @@ const queryState = vi.hoisted(() => {
 	};
 });
 
-vi.mock('$lib/queries/system/SystemHealthQuery.svelte', () => {
+vi.mock('$lib/queries/system.svelte', () => {
 	const subscribe = createSubscriber((update) => {
 		queryState.setNotify(update);
 		return () => queryState.setNotify(undefined);

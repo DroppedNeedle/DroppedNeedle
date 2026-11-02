@@ -1,9 +1,8 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { createQuery } from '@tanstack/svelte-query';
 import { FollowQueryKeyFactory } from './FollowQueryKeyFactory';
-import { FOLLOW_ENDPOINTS } from './endpoints';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { REQUESTS_ENDPOINTS } from '../requests/endpoints';
 import { STALE_LIVE } from '$lib/queries/staleTime';
 
 type Getter<T> = () => T;
@@ -11,7 +10,7 @@ type Getter<T> = () => T;
 export const getAutoDownloadApprovalsQuery = (getEnabled: Getter<boolean>) =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.adminApprovals(authStore.user?.id),
-		queryFn: ({ signal }) => api.v3.GET(FOLLOW_ENDPOINTS.adminApprovals(), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/requests/auto-download-approvals'), { signal }),
 		enabled: getEnabled()
 	}));
 
@@ -20,7 +19,7 @@ export const getAutoDownloadApprovalBatchesQuery = (getEnabled: Getter<boolean>)
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.adminApprovalBatches(authStore.user?.id),
 		queryFn: ({ signal }) =>
-			api.v3.GET(FOLLOW_ENDPOINTS.adminApprovalBatches(), {
+			api.v3.GET(v3('/api/v3/requests/auto-download-approval-batches'), {
 				signal
 			}),
 		enabled: getEnabled()
@@ -29,7 +28,7 @@ export const getAutoDownloadApprovalBatchesQuery = (getEnabled: Getter<boolean>)
 export const getPendingApprovalCountQuery = (getEnabled: Getter<boolean>) =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.pendingApprovalCount(authStore.user?.id),
-		queryFn: ({ signal }) => api.v3.GET(REQUESTS_ENDPOINTS.approvalsCount(), { signal }),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/requests/approvals/count'), { signal }),
 		enabled: getEnabled() && !!authStore.user?.id,
 		staleTime: STALE_LIVE,
 		refetchInterval: 120_000,

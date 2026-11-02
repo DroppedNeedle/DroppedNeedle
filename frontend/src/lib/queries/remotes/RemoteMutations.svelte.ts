@@ -1,8 +1,8 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 
-import { REMOTE_ENDPOINTS } from './endpoints';
 import type { RemoteFolderSave } from './types';
 import {
 	albumMatchesChanged,
@@ -21,7 +21,8 @@ function sameUser(contextUserId: string | null | undefined): boolean {
 
 export const createSaveRemoteFoldersMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: (vars: RemoteFolderSave) => api.v3.PUT(REMOTE_ENDPOINTS.folders(), vars),
+		mutationFn: (vars: RemoteFolderSave) =>
+			api.v3.PUT(v3('/api/v3/remotes/navidrome/folders'), vars),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: (_data, _vars, context) => {
 			if (!sameUser(context.userId)) return;

@@ -8,7 +8,7 @@ import {
 	createPersistedQueryPersister,
 	type StoredQuery
 } from './persistedCache';
-import { HomeQueryKeyFactory } from './HomeQueryKeyFactory';
+import { HomeQueryKeyFactory } from '$lib/queries/featureKeys';
 import { LibraryQueryKeyFactory } from './library/LibraryQueryKeyFactory';
 import { RequestQueryKeyFactory } from './requests/RequestQueryKeyFactory';
 

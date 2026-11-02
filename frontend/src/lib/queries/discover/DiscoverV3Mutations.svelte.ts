@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import {
@@ -14,7 +15,6 @@ import {
 import { authStore } from '$lib/stores/authStore.svelte';
 import { discoverQueueDeck } from '$lib/stores/discoverQueueDeck.svelte';
 import { toastStore } from '$lib/stores/toast';
-import { DiscoverV3Api } from './DiscoverV3Api';
 import type {
 	DiscoveryBatchDetailV3,
 	DiscoveryBatchItemStatusV3
@@ -33,7 +33,7 @@ export interface IgnoreDiscoveryV3Item {
 export const getIgnoreDiscoveryV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (item: IgnoreDiscoveryV3Item) =>
-			api.v3.POST(DiscoverV3Api.queueIgnore(), {
+			api.v3.POST(v3('/api/v3/discover/queue/ignore'), {
 				release_group_mbid: item.releaseGroupMbid,
 				artist_mbid: item.artistMbid,
 				release_name: item.releaseName,
@@ -53,14 +53,18 @@ export const getIgnoreDiscoveryV3Mutation = () =>
 export const getUnhideDiscoveryV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (releaseGroupMbid: string) =>
-			api.v3.DELETE(DiscoverV3Api.unignore(releaseGroupMbid)),
+			api.v3.DELETE(
+				v3('/api/v3/discover/queue/ignored/{release_group_mbid}', {
+					path: { release_group_mbid: releaseGroupMbid }
+				})
+			),
 		effects: () => [recommendationsChanged(authStore.user?.id)],
 		onError: () => toastStore.show({ message: "Couldn't un-hide that album.", type: 'error' })
 	}));
 
 export const getRefreshDiscoverV3Mutation = () =>
 	createAppMutation(() => ({
-		mutationFn: () => api.v3.POST(DiscoverV3Api.refresh()),
+		mutationFn: () => api.v3.POST(v3('/api/v3/discover/refresh')),
 		effects: () => [discoverHomeChanged(authStore.user?.id)]
 	}));
 
@@ -69,9 +73,15 @@ export const getQueuePreviewV3Mutation = () =>
 		retry: false,
 		effects: () => [],
 		mutationFn: ({ mbid, signal }: { mbid: string; signal: AbortSignal }) =>
-			api.v3.POST(DiscoverV3Api.queuePreview(mbid), undefined, {
-				signal
-			})
+			api.v3.POST(
+				v3('/api/v3/discover/queue/preview/{release_group_mbid}', {
+					path: { release_group_mbid: mbid }
+				}),
+				undefined,
+				{
+					signal
+				}
+			)
 	}));
 
 // Sweep only what the API result says changed:
@@ -110,7 +120,7 @@ export async function createDiscoveryBatchV3(
 	body: DiscoveryBatchCreateV3
 ): Promise<DiscoveryBatchDetailV3 | null> {
 	try {
-		const created = await api.v3.POST(DiscoverV3Api.batches(), body);
+		const created = await api.v3.POST(v3('/api/v3/discover/batches'), body);
 		const items: DiscoveryBatchItemStatusV3[] = created.items ?? [];
 		const requested = items.filter((item) => item.outcome === 'requested').length;
 		const skipped = items.length - requested;
@@ -136,7 +146,12 @@ export async function removeDiscoveryBatchV3(
 	removeAlbums: boolean
 ): Promise<DiscoveryBatchRemoveResultV3 | null> {
 	try {
-		const result = await api.v3.DELETE(DiscoverV3Api.batchRemove(batchId, removeAlbums));
+		const result = await api.v3.DELETE(
+			v3('/api/v3/discover/batches/{batch_id}', {
+				path: { batch_id: batchId },
+				query: { remove_albums: removeAlbums }
+			})
+		);
 		const removed = result.removed_albums ?? 0;
 		if (removeAlbums) {
 			toastStore.show({

@@ -12,7 +12,7 @@
 		createPlexLinkPinMutation,
 		createPlexLinkPollMutation
 	} from '$lib/queries/connections/ConnectionsMutations.svelte';
-	import type { ProfileServiceConnection } from '$lib/queries/profile/types';
+	import type { ProfileServiceConnection } from '$lib/queries/profile.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';

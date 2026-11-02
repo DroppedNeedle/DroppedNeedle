@@ -1,9 +1,9 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
 import type { IntakeResponse, TrackIntakeResponse } from '$lib/queries/requests/types';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { readIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+import { readIntegrationStatus } from '$lib/queries/home.svelte';
 import { libraryStore } from '$lib/stores/library';
 import { toastStore } from '$lib/stores/toast';
 // Request-surface copy lives beside the other acquisition label mappings.
@@ -13,7 +13,6 @@ import {
 	requestStatusCopy
 } from '$lib/utils/acquisitionLabels';
 import { albumRequestOutcome } from '$lib/utils/requestOutcome';
-import { DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
 import {
 	albumStatusChanged,
 	anyDownloadChanged,
@@ -72,7 +71,7 @@ export function requestAlbum() {
 			const initiatingUserId = authStore.user?.id;
 			let data: IntakeResponse;
 			try {
-				data = await api.v3.POST(REQUESTS_ENDPOINTS.requestAlbum(), {
+				data = await api.v3.POST(v3('/api/v3/requests/albums'), {
 					musicbrainz_id: input.release_group_mbid,
 					artist: input.artist_name ?? null,
 					album: input.album_title ?? null,
@@ -145,7 +144,7 @@ export function requestBatch() {
 		}): Promise<BatchRequestResult> => {
 			const initiatingUserId = authStore.user?.id;
 			try {
-				const response = await api.v3.POST(REQUESTS_ENDPOINTS.requestBatch(), {
+				const response = await api.v3.POST(v3('/api/v3/requests/batches'), {
 					items: input.items,
 					monitor_artist: input.monitorArtist === true,
 					auto_download_artist: input.autoDownloadArtist === true
@@ -187,7 +186,7 @@ export function requestTrack() {
 	return createAppMutation(() => ({
 		effects: tasks,
 		mutationFn: (input: TrackRequestInput) =>
-			api.v3.POST(REQUESTS_ENDPOINTS.requestTrack(), {
+			api.v3.POST(v3('/api/v3/requests/tracks'), {
 				recording_mbid: input.recording_mbid,
 				artist_name: input.artist_name,
 				track_title: input.track_title,
@@ -216,7 +215,8 @@ export function requestTrack() {
 export function cancelDownload() {
 	return createAppMutation(() => ({
 		effects: tasks,
-		mutationFn: (id: string) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.cancel(id)),
+		mutationFn: (id: string) =>
+			api.v3.POST(v3('/api/v3/downloads/tasks/{task_id}/cancel', { path: { task_id: id } })),
 		onSuccess: () => {
 			toastStore.show({ message: 'Download cancelled', type: 'info' });
 		},
@@ -234,9 +234,12 @@ export function tryNextSource() {
 	return createAppMutation(() => ({
 		effects: tasks,
 		mutationFn: (input: NextSourceInput) =>
-			api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.nextSource(input.id), {
-				expected_candidate_index: input.candidateIndex
-			}),
+			api.v3.POST(
+				v3('/api/v3/downloads/tasks/{task_id}/next-source', { path: { task_id: input.id } }),
+				{
+					expected_candidate_index: input.candidateIndex
+				}
+			),
 		onSuccess: () => {
 			toastStore.show({ message: 'Trying the next source', type: 'info' });
 		},
@@ -255,7 +258,8 @@ export function tryNextSource() {
 export function stopAutoRetry() {
 	return createAppMutation(() => ({
 		effects: tasks,
-		mutationFn: (id: string) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.cancel(id)),
+		mutationFn: (id: string) =>
+			api.v3.POST(v3('/api/v3/downloads/tasks/{task_id}/cancel', { path: { task_id: id } })),
 		onSuccess: () => {
 			toastStore.show({ message: 'Stopped retrying', type: 'info' });
 		},
@@ -267,7 +271,8 @@ export function stopAutoRetry() {
 export function retryDownload() {
 	return createAppMutation(() => ({
 		effects: tasks,
-		mutationFn: (id: string) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.retry(id)),
+		mutationFn: (id: string) =>
+			api.v3.POST(v3('/api/v3/downloads/tasks/{task_id}/retry', { path: { task_id: id } })),
 		onSuccess: () => {
 			toastStore.show({ message: 'Download retry initiated', type: 'info' });
 		},
@@ -285,7 +290,7 @@ function pluralDownloads(n: number): string {
 export function clearFinished() {
 	return createAppMutation(() => ({
 		effects: tasks,
-		mutationFn: () => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.clear()),
+		mutationFn: () => api.v3.POST(v3('/api/v3/downloads/clear')),
 		onSuccess: (data: { cleared: number }) => {
 			toastStore.show({
 				message: data.cleared > 0 ? `Cleared ${pluralDownloads(data.cleared)}` : 'Nothing to clear',
@@ -300,7 +305,7 @@ export function clearFinished() {
 export function stopAllRetries() {
 	return createAppMutation(() => ({
 		effects: tasks,
-		mutationFn: () => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.stopAllRetries()),
+		mutationFn: () => api.v3.POST(v3('/api/v3/downloads/stop-all-retries')),
 		onSuccess: (data: { stopped: number }) => {
 			toastStore.show({
 				message:
@@ -318,7 +323,7 @@ export function stopAllRetries() {
 export function retryAllFailed() {
 	return createAppMutation(() => ({
 		effects: tasks,
-		mutationFn: () => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.retryAllFailed()),
+		mutationFn: () => api.v3.POST(v3('/api/v3/downloads/retry-all-failed')),
 		onSuccess: (data: { retried: number }) => {
 			toastStore.show({
 				message:
@@ -341,7 +346,10 @@ interface ReimportInput {
 // re-searching.
 export function reimportDownload() {
 	return createAppMutation(() => ({
-		mutationFn: (input: ReimportInput) => api.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.reimport(input.id)),
+		mutationFn: (input: ReimportInput) =>
+			api.v3.POST(
+				v3('/api/v3/downloads/tasks/{task_id}/reimport', { path: { task_id: input.id } })
+			),
 		onSuccess: (data) => {
 			if (data.status === 'completed') {
 				toastStore.show({ message: 'Import complete', type: 'success' });

@@ -1,6 +1,6 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { createAppMutation } from '$lib/queries/effects';
-import { AUTH_ENDPOINTS } from './endpoints';
 import type {
 	JellyfinLoginVars,
 	LocalLoginVars,
@@ -16,45 +16,45 @@ import type {
 export const createLocalLoginMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (vars: LocalLoginVars) => api.v3.POST(AUTH_ENDPOINTS.login, vars)
+		mutationFn: (vars: LocalLoginVars) => api.v3.POST(v3('/api/v3/auth/login'), vars)
 	}));
 
 export const createPasswordRecoveryResetMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (vars: PasswordRecoveryResetVars) =>
-			api.v3.POST(AUTH_ENDPOINTS.passwordRecoveryReset, vars)
+			api.v3.POST(v3('/api/v3/auth/password-recovery/reset'), vars)
 	}));
 
 export const createPasswordRecoveryCodeMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
 		mutationFn: (userId: string): Promise<PasswordRecoveryCodeResponse> =>
-			api.v3.POST(AUTH_ENDPOINTS.adminPasswordRecovery(userId))
+			api.v3.POST(v3('/api/v3/admin/users/{id}/recovery-code', { path: { id: userId } }))
 	}));
 
 export const createJellyfinLoginMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (vars: JellyfinLoginVars) => api.v3.POST(AUTH_ENDPOINTS.jellyfinLogin, vars)
+		mutationFn: (vars: JellyfinLoginVars) => api.v3.POST(v3('/api/v3/auth/jellyfin/login'), vars)
 	}));
 
 export const createSetupMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (vars: SetupVars) => api.v3.POST(AUTH_ENDPOINTS.setup, vars)
+		mutationFn: (vars: SetupVars) => api.v3.POST(v3('/api/v3/auth/setup'), vars)
 	}));
 
 export const createOidcExchangeMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (vars: OidcExchangeVars) => api.v3.POST(AUTH_ENDPOINTS.oidcExchange, vars)
+		mutationFn: (vars: OidcExchangeVars) => api.v3.POST(v3('/api/v3/auth/oidc/exchange'), vars)
 	}));
 
 export const createOidcAuthorizeMutation = () =>
 	createAppMutation(() => ({
 		effects: () => [],
-		mutationFn: (): Promise<OidcAuthorizeResponse> => api.v3.POST(AUTH_ENDPOINTS.oidcAuthorize)
+		mutationFn: (): Promise<OidcAuthorizeResponse> => api.v3.POST(v3('/api/v3/auth/oidc/authorize'))
 	}));
 
 // Plex sign-in rides the single v3 Plex flow ($lib/queries/plex): the login

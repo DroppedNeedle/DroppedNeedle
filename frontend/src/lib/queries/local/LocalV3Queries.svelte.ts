@@ -1,10 +1,12 @@
+import { unifiedSearchQuery } from '$lib/queries/search/unifiedSearchQuery';
+import { pageQuery } from '$lib/queries/library/listQueries';
+import { albumsQuery } from '$lib/queries/library/listQueries';
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery, keepPreviousData, queryOptions } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { LibraryV3Api } from '../library/LibraryV3Api';
-import { SearchV3Api } from '../search/SearchV3Api';
 import type { SearchV3Limits } from '../search/SearchQueryKeyFactory';
 import { LOCAL_KEYS, type LocalV3AlbumsParams } from './LocalV3Keys';
 import { readNow } from '../readNow';
@@ -58,7 +60,9 @@ export const getLocalRecentV3Query = (getLimit: Getter<number> = () => 20) =>
 			meta: PERSIST,
 			queryKey: LOCAL_KEYS.recent(limit),
 			queryFn: async ({ signal }) => {
-				const page = await api.v3.GET(LibraryV3Api.recentlyAdded(limit), { signal });
+				const page = await api.v3.GET(v3('/api/v3/library/recently-added', { query: { limit } }), {
+					signal
+				});
 				return page.items.map(toCard);
 			}
 		});
@@ -75,7 +79,12 @@ export const getLocalAlbumsV3Query = (
 			meta: PERSIST,
 			queryKey: LOCAL_KEYS.albums(params),
 			queryFn: async ({ signal }) => {
-				const page = await api.v3.GET(LibraryV3Api.albums(params), { signal });
+				const page = await api.v3.GET(
+					v3('/api/v3/library/albums', {
+						query: albumsQuery(params, null)
+					}),
+					{ signal }
+				);
 				return { ...page, items: page.items.map(toCard) };
 			}
 		});
@@ -94,9 +103,14 @@ export const getLocalSuggestionsV3Query = (
 			gcTime: 0,
 			queryKey: LOCAL_KEYS.suggestions(limit, decade),
 			queryFn: ({ signal }) =>
-				api.v3.GET(LibraryV3Api.suggestions(limit, decade), {
-					signal
-				})
+				api.v3.GET(
+					v3('/api/v3/library/suggestions', {
+						query: decade === null ? { limit } : { limit, decade }
+					}),
+					{
+						signal
+					}
+				)
 		});
 	});
 
@@ -115,7 +129,9 @@ export const getLibrarySearchV3Query = (getTerm: Getter<string>) =>
 			queryKey: LOCAL_KEYS.search(term),
 			queryFn: ({ signal }) =>
 				api.v3.GET(
-					SearchV3Api.unified(term, LIBRARY_SEARCH_LIMITS, ['albums', 'tracks'], 'library'),
+					v3('/api/v3/search', {
+						query: unifiedSearchQuery(term, LIBRARY_SEARCH_LIMITS, ['albums', 'tracks'], 'library')
+					}),
 					{ signal }
 				)
 		});
@@ -126,7 +142,7 @@ export const getLocalDecadesV3Query = () =>
 		queryOptions({
 			meta: PERSIST,
 			queryKey: LOCAL_KEYS.decades(),
-			queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.decades(), { signal })
+			queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/library/decades'), { signal })
 		})
 	);
 
@@ -137,18 +153,29 @@ export const getLocalStatsV3Query = (getEnabled: Getter<boolean> = () => true) =
 			enabled: getEnabled(),
 			meta: PERSIST,
 			queryKey: LOCAL_KEYS.stats(authStore.user?.id),
-			queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.stats(), { signal })
+			queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/library/stats'), { signal })
 		})
 	);
 
 /** Every library track of one MusicBrainz album, to play or queue it whole. */
 export const fetchLocalAlbumTracksV3 = (mbid: string) =>
 	readNow(LOCAL_KEYS.albumMatch(mbid, { limit: 1000 }), (signal) =>
-		api.v3.GET(LibraryV3Api.albumMatch(mbid, { limit: 1000 }), { signal })
+		api.v3.GET(
+			v3('/api/v3/library/albums/match/{mbid}', {
+				path: { mbid },
+				query: pageQuery({ limit: 1000 })
+			}),
+			{ signal }
+		)
 	);
 
 /** A fresh batch of suggestions for play all and shuffle. */
 export const fetchLocalSuggestionBatchV3 = () =>
 	readNow(LOCAL_KEYS.suggestions(40, null), (signal) =>
-		api.v3.GET(LibraryV3Api.suggestions(40, null), { signal })
+		api.v3.GET(
+			v3('/api/v3/library/suggestions', {
+				query: { limit: 40 }
+			}),
+			{ signal }
+		)
 	);

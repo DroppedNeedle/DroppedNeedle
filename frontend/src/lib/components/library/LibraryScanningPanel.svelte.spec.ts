@@ -131,7 +131,7 @@ vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
 vi.mock('$lib/queries/library/LibraryReviewQueries.svelte', () => ({
 	getPendingReviewCountQuery: () => h.reviews
 }));
-vi.mock('$lib/queries/artist-reconciliation/ArtistReconciliationQueries.svelte', () => ({
+vi.mock('$lib/queries/artist-reconciliation.svelte', () => ({
 	getArtistReconciliationProgressQuery: () => h.artistReconciliation
 }));
 vi.mock('$lib/queries/library/LibraryReviewMutations.svelte', () => ({

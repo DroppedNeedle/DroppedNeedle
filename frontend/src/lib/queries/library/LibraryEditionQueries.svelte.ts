@@ -1,9 +1,9 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
 
 type Getter<T> = () => T;
 
@@ -35,12 +35,12 @@ export function getReleaseEditionSearchQuery(
 			),
 			queryFn: ({ signal }): Promise<ReleaseEditionSearchResponse> =>
 				api.v3.GET(
-					LibraryV3Api.reidentificationReleases(
-						albumId,
-						releaseGroup
+					v3('/api/v3/library/albums/{album_id}/reidentification/releases', {
+						path: { album_id: albumId },
+						query: releaseGroup
 							? { title: '', artist: '', release_group_mbid: releaseGroup, limit: 12 }
 							: { title, artist, limit: 12 }
-					),
+					}),
 					{ signal }
 				)
 		};

@@ -1,8 +1,8 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { createQuery } from '@tanstack/svelte-query';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { ConnectionsQueryKeyFactory } from './ConnectionsQueryKeyFactory';
-import { CONNECTIONS_ENDPOINTS } from './endpoints';
 import type { ConnectionsResponse } from './types';
 
 /** The caller's linked accounts on every service, in one server read. A
@@ -10,7 +10,7 @@ import type { ConnectionsResponse } from './types';
  *  Last.fm, which is linked only once it carries an account name (the
  *  user's own API key pair is stored before the sign-in finishes). */
 async function fetchConnections(signal?: AbortSignal): Promise<ConnectionsResponse> {
-	const { connections } = await api.v3.GET(CONNECTIONS_ENDPOINTS.list(), { signal });
+	const { connections } = await api.v3.GET(v3('/api/v3/me/connections'), { signal });
 	return { connections: connections.filter((link) => link.enabled) };
 }
 

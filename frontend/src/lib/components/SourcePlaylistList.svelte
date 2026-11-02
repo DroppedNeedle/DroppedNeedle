@@ -3,7 +3,7 @@
 	import { ApiError } from '$lib/api/errors';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import SourcePlaylistCard from '$lib/components/SourcePlaylistCard.svelte';
-	import { getSourcePlaylistsQuery } from '$lib/queries/source-playlists/SourcePlaylistQueries.svelte';
+	import { getSourcePlaylistsQuery } from '$lib/queries/source-playlists.svelte';
 	import type { SourcePlaylistSource } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { CircleAlert, Link2, ListMusic, RefreshCw } from 'lucide-svelte';

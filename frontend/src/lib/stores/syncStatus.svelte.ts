@@ -1,6 +1,6 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { browser } from '$app/environment';
 import { api } from '$lib/api/client';
-import { CACHE_SYNC_ENDPOINTS } from '$lib/queries/settings/endpoints';
 import {
 	serverEvents,
 	type EventDispatcher,
@@ -104,7 +104,7 @@ function createSyncStatusStore(events: EventDispatcher = serverEvents) {
 	async function fetchStatus(): Promise<void> {
 		const basis = liveGeneration;
 		try {
-			const data = await api.v3.GET(CACHE_SYNC_ENDPOINTS.status());
+			const data = await api.v3.GET(v3('/api/v3/cache/sync/status'));
 			// A live frame that landed mid-fetch is fresher than this seed.
 			if (basis !== liveGeneration) return;
 			applyStatus({ ...EMPTY_STATUS, ...data });
@@ -203,7 +203,7 @@ function createSyncStatusStore(events: EventDispatcher = serverEvents) {
 
 		async cancelSync(): Promise<void> {
 			try {
-				await api.v3.POST(CACHE_SYNC_ENDPOINTS.cancel());
+				await api.v3.POST(v3('/api/v3/cache/sync/cancel'));
 			} catch {
 				// ignore errors, sync may already be stopped
 			}

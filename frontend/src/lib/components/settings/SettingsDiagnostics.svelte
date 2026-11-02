@@ -1,10 +1,7 @@
 <script lang="ts">
 	import { Activity, ArrowUpRight, Gauge, ListChecks } from 'lucide-svelte';
 
-	import {
-		getProviderStatsQuery,
-		getQueueStatsQuery
-	} from '$lib/queries/diagnostics/DiagnosticsQueries.svelte';
+	import { getProviderStatsQuery, getQueueStatsQuery } from '$lib/queries/diagnostics.svelte';
 	import { formatBytes } from '$lib/utils/formatting';
 
 	import {

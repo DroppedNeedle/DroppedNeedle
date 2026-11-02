@@ -1,4 +1,4 @@
-import { fetchLocalAlbumMatch, fetchRemoteAlbumMatch } from '$lib/queries/albumMatch';
+import { fetchLocalAlbumMatch, fetchRemoteAlbumMatch } from '$lib/queries/albumMatch.svelte';
 import type { QueueItem } from '$lib/player/types';
 import type { SourceType } from '$lib/player/types';
 import type { ReleaseGroup } from '$lib/types';

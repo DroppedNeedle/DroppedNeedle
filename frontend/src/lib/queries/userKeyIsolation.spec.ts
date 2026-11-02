@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { ADMIN, SHARED, SIGNED_OUT } from './keys';
 
-// Every key factory, found by file name, so a new factory is checked here
-// without editing this spec.
+// Every key factory, found by name, so a new factory is checked here without
+// editing this spec: a file of its own in a large feature, an export of the
+// one file of a small feature.
 const modules = import.meta.glob<Record<string, unknown>>(
-	['./**/*QueryKeyFactory.ts', './**/*Keys.ts'],
+	['./**/*QueryKeyFactory.ts', './**/*Keys.ts', './*.svelte.ts', '!./IndexedDbPersister.svelte.ts'],
 	{
 		eager: true
 	}
@@ -24,7 +25,10 @@ function collect(): [string, Builder | readonly unknown[]][] {
 		}
 	};
 	for (const [file, exports] of Object.entries(modules)) {
-		for (const [name, value] of Object.entries(exports)) walk(`${file} ${name}`, value);
+		for (const [name, value] of Object.entries(exports)) {
+			if (file.endsWith('.svelte.ts') && !name.endsWith('KeyFactory')) continue;
+			walk(`${file} ${name}`, value);
+		}
 	}
 	return found;
 }

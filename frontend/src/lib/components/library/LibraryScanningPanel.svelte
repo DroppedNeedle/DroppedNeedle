@@ -24,7 +24,7 @@
 	} from '$lib/queries/library/LibraryOperationMutations.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { getPendingReviewCountQuery } from '$lib/queries/library/LibraryReviewQueries.svelte';
-	import { getArtistReconciliationProgressQuery } from '$lib/queries/artist-reconciliation/ArtistReconciliationQueries.svelte';
+	import { getArtistReconciliationProgressQuery } from '$lib/queries/artist-reconciliation.svelte';
 	import { getLibraryScanScheduleQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import LibraryWorkLane from './LibraryWorkLane.svelte';

@@ -17,15 +17,15 @@
 		createLastFmRequestTokenMutation,
 		createSetLastFmCredentialsMutation
 	} from '$lib/queries/connections/ConnectionsMutations.svelte';
-	import { getScrobblePreferencesQuery } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
+	import { getScrobblePreferencesQuery } from '$lib/queries/scrobble-preferences.svelte';
 	import {
 		createRefreshPersonalMixMutation,
 		createUpdateScrobblePreferencesMutation
-	} from '$lib/queries/scrobble-preferences/ScrobblePreferencesMutations.svelte';
+	} from '$lib/queries/scrobble-preferences.svelte';
 	import type {
 		NowPlayingVisibility,
 		ScrobblePreferencesUpdate
-	} from '$lib/queries/scrobble-preferences/types';
+	} from '$lib/queries/scrobble-preferences.svelte';
 	import type { MusicSource } from '$lib/stores/musicSource';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
 	import Button from '$lib/ui/Button.svelte';

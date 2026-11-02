@@ -1,8 +1,8 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
 import type {
 	IdentityPreparationEstimateResponse,
 	RepairFindingListResponse
@@ -20,7 +20,12 @@ export const getLibraryIdentityPreparationsQuery = (
 			queryKey: LibraryQueryKeyFactory.identityPreparations(userId, undefined),
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
-				await api.v3.GET(LibraryV3Api.identityPreparations(5, pageParam), { signal }),
+				await api.v3.GET(
+					v3('/api/v3/library/management/identity-preparations', {
+						query: { limit: 5, ...(pageParam ? { cursor: pageParam } : {}) }
+					}),
+					{ signal }
+				),
 			getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
 			refetchInterval: (query) =>
 				query.state.data?.pages.some((page) =>
@@ -43,7 +48,12 @@ export const getLibraryIdentityPreparationEstimateQuery = (
 			enabled: enabled() && Boolean(userId),
 			queryKey: LibraryQueryKeyFactory.identityPreparationEstimate(userId, rootIds),
 			queryFn: async ({ signal }): Promise<IdentityPreparationEstimateResponse> =>
-				api.v3.GET(LibraryV3Api.identityPreparationEstimate(rootIds), { signal }),
+				api.v3.GET(
+					v3('/api/v3/library/management/identity-preparations/estimate', {
+						query: rootIds.length ? { root_id: rootIds } : {}
+					}),
+					{ signal }
+				),
 			staleTime: STALE_LIVE
 		};
 	});
@@ -68,7 +78,14 @@ export const getLibraryIdentityPreparationFindingsQuery = (
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
 				(await api.v3.GET(
-					LibraryV3Api.identityPreparationFindings(jobId ?? '', 100, pageParam, findingCategory),
+					v3('/api/v3/library/management/identity-preparations/{job_id}/findings', {
+						path: { job_id: jobId ?? '' },
+						query: {
+							limit: 100,
+							...(pageParam ? { cursor: pageParam } : {}),
+							...(findingCategory ? { finding_category: findingCategory } : {})
+						}
+					}),
 					{ signal }
 				)) as RepairFindingListResponse,
 			getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined

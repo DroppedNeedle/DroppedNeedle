@@ -1,6 +1,6 @@
 <script lang="ts">
+	import { v3 } from '$lib/api/v3/endpoint';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
-	import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
 	import {
 		createSaveOidcSettingsMutation,
 		createSaveSecuritySettingsMutation,
@@ -144,6 +144,8 @@
 	function resetToDefaults(draft: SecuritySettings) {
 		Object.assign(draft, DEFAULTS, { frame_ancestors: [] });
 	}
+
+	const oidcCallbackPath = v3('/api/v3/auth/oidc/callback');
 </script>
 
 <div class="space-y-6">
@@ -513,8 +515,8 @@
 						<TextField
 							label="Redirect URI"
 							type="url"
-							placeholder={`https://droppedneedle.example.com${AUTH_ENDPOINTS.oidcCallback}`}
-							help={`This must point to the DroppedNeedle backend API (it ends in ${AUTH_ENDPOINTS.oidcCallback}), not the web app page. Register this exact URL as a redirect/callback URI with your provider.`}
+							placeholder={`https://droppedneedle.example.com${oidcCallbackPath}`}
+							help={`This must point to the DroppedNeedle backend API (it ends in ${oidcCallbackPath}), not the web app page. Register this exact URL as a redirect/callback URI with your provider.`}
 							bind:value={draft.redirect_uri}
 							error={oidc.fieldError('redirect_uri', 'Redirect URI')}
 						/>

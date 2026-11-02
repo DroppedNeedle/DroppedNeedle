@@ -1,6 +1,6 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { toastStore } from '$lib/stores/toast';
-import { FOLLOW_ENDPOINTS } from './endpoints';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { autoDownloadApprovalsChanged, createAppMutation } from '$lib/queries/effects';
 
@@ -20,7 +20,11 @@ function errorMessage(err: unknown, fallback: string): string {
 export const createApproveAutoDownloadMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: ApprovalActionVars) =>
-			api.v3.POST(FOLLOW_ENDPOINTS.approve(vars.userId, vars.mbid)),
+			api.v3.POST(
+				v3('/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve', {
+					path: { user_id: vars.userId, artist_mbid: vars.mbid }
+				})
+			),
 		onSuccess: (_data, vars) => {
 			toastStore.show({
 				message: `Auto-download approved for ${vars.artistName}`,
@@ -35,7 +39,11 @@ export const createApproveAutoDownloadMutation = () =>
 export const createRejectAutoDownloadMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: ApprovalActionVars) =>
-			api.v3.POST(FOLLOW_ENDPOINTS.reject(vars.userId, vars.mbid)),
+			api.v3.POST(
+				v3('/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject', {
+					path: { user_id: vars.userId, artist_mbid: vars.mbid }
+				})
+			),
 		onSuccess: (_data, vars) => {
 			toastStore.show({ message: `Auto-download rejected for ${vars.artistName}`, type: 'info' });
 		},
@@ -47,7 +55,11 @@ export const createRejectAutoDownloadMutation = () =>
 export const createRevokeAutoDownloadMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: ApprovalActionVars) =>
-			api.v3.POST(FOLLOW_ENDPOINTS.revoke(vars.userId, vars.mbid)),
+			api.v3.POST(
+				v3('/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke', {
+					path: { user_id: vars.userId, artist_mbid: vars.mbid }
+				})
+			),
 		onSuccess: (data, vars) => {
 			toastStore.show(
 				data.success
@@ -70,7 +82,12 @@ interface BatchActionVars {
 
 export const createApproveAutoDownloadBatchMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: (vars: BatchActionVars) => api.v3.POST(FOLLOW_ENDPOINTS.approveBatch(vars.batchId)),
+		mutationFn: (vars: BatchActionVars) =>
+			api.v3.POST(
+				v3('/api/v3/requests/auto-download-approval-batches/{batch_id}/approve', {
+					path: { batch_id: vars.batchId }
+				})
+			),
 		onSuccess: (_data, vars) => {
 			toastStore.show({
 				message: `Auto-download approved for ${vars.userName}'s ${vars.artistCount} artists`,
@@ -84,7 +101,12 @@ export const createApproveAutoDownloadBatchMutation = () =>
 
 export const createRejectAutoDownloadBatchMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: (vars: BatchActionVars) => api.v3.POST(FOLLOW_ENDPOINTS.rejectBatch(vars.batchId)),
+		mutationFn: (vars: BatchActionVars) =>
+			api.v3.POST(
+				v3('/api/v3/requests/auto-download-approval-batches/{batch_id}/reject', {
+					path: { batch_id: vars.batchId }
+				})
+			),
 		onSuccess: (_data, vars) => {
 			toastStore.show({
 				message: `Auto-download rejected for ${vars.userName}'s ${vars.artistCount} artists`,

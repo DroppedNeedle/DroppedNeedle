@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Download, Play } from 'lucide-svelte';
 	import { TOAST_DURATION } from '$lib/constants';
-	import { createGenerateYouTubeTrackLinkMutation } from '$lib/queries/youtube/YouTubeQueries.svelte';
+	import { createGenerateYouTubeTrackLinkMutation } from '$lib/queries/youtube.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { launchTrackPlayback } from '$lib/player/launchTrackPlayback';
 	import { compareDiscTrack, getDiscTrackKey, normalizeDiscNumber } from '$lib/player/queueHelpers';

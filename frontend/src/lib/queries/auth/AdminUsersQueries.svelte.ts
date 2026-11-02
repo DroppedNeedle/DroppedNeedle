@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery, keepPreviousData } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
@@ -7,7 +8,6 @@ import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { createAppMutation, playlistsChanged, usersChanged } from '../effects';
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
-import { AUTH_ENDPOINTS } from './endpoints';
 
 export type AdminUser = components['schemas']['UserResponse'];
 type CreateUserBody = V3Body<'/api/v3/admin/users', 'post'>;
@@ -22,7 +22,7 @@ export const getAdminUsersQuery = (getPage: Getter<{ limit: number; offset: numb
 		return {
 			queryKey: AuthQueryKeyFactory.adminUsersPage(authStore.user?.id, limit, offset),
 			queryFn: ({ signal }: { signal: AbortSignal }) =>
-				api.v3.GET(AUTH_ENDPOINTS.adminUsers(limit, offset), { signal }),
+				api.v3.GET(v3('/api/v3/admin/users', { query: { limit, offset } }), { signal }),
 			placeholderData: keepPreviousData
 		};
 	});
@@ -30,20 +30,21 @@ export const getAdminUsersQuery = (getPage: Getter<{ limit: number; offset: numb
 export const createSetUserRoleMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: ({ userId, role }: { userId: string; role: RoleBody['role'] }) =>
-			api.v3.PUT(AUTH_ENDPOINTS.adminUserRole(userId), { role }),
+			api.v3.PUT(v3('/api/v3/admin/users/{id}/role', { path: { id: userId } }), { role }),
 		effects: refreshUsers
 	}));
 
 /** Creates a local account; it always signs in with a username and password. */
 export const createAdminUserMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: (body: CreateUserBody) => api.v3.POST(AUTH_ENDPOINTS.adminCreateUser, body),
+		mutationFn: (body: CreateUserBody) => api.v3.POST(v3('/api/v3/admin/users'), body),
 		effects: refreshUsers
 	}));
 
 export const createDeleteUserMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: (userId: string) => api.v3.DELETE(AUTH_ENDPOINTS.adminUser(userId)),
+		mutationFn: (userId: string) =>
+			api.v3.DELETE(v3('/api/v3/admin/users/{id}', { path: { id: userId } })),
 		// Their playlists go with them, shared ones in the admin's list included.
 		effects: () => [...refreshUsers(), playlistsChanged(authStore.user?.id)]
 	}));
@@ -51,7 +52,8 @@ export const createDeleteUserMutation = () =>
 /** Signs one account out of every browser and device. App passwords keep working. */
 export const createRevokeUserSessionsMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: (userId: string) => api.v3.DELETE(AUTH_ENDPOINTS.adminUserSessions(userId)),
+		mutationFn: (userId: string) =>
+			api.v3.DELETE(v3('/api/v3/admin/users/{id}/sessions', { path: { id: userId } })),
 		// The user list does not show sessions.
 		effects: () => []
 	}));

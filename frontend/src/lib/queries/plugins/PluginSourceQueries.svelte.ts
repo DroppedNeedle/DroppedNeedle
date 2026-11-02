@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
@@ -5,7 +6,6 @@ import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
 
 import { PluginQueryKeyFactory } from './PluginQueryKeyFactory';
-import { PLUGIN_ENDPOINTS } from './endpoints';
 
 type PluginSource = components['schemas']['PluginSource'];
 
@@ -32,7 +32,7 @@ function toSourceInfo(source: PluginSource): PluginSourceInfo {
 }
 
 export async function fetchPluginSources(signal?: AbortSignal): Promise<PluginSourceList> {
-	const data = await api.v3.GET(PLUGIN_ENDPOINTS.sources(), { signal });
+	const data = await api.v3.GET(v3('/api/v3/plugins/sources'), { signal });
 	return { sources: data.sources.map(toSourceInfo) };
 }
 

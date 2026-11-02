@@ -12,8 +12,8 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { providerUnavailableMessage } from '$lib/utils/serviceError';
 	import { outsideLink } from '$lib/components/outsideLink';
-	import { createPlexStartMutation } from '$lib/queries/plex/PlexAuthMutations.svelte';
-	import { pollPlexFlow } from '$lib/queries/plex/PlexFlowApi';
+	import { createPlexStartMutation } from '$lib/queries/plex.svelte';
+	import { pollPlexFlow } from '$lib/queries/plex.svelte';
 	import { toAuthUser, type AuthProviders, type SessionUserLike } from '$lib/queries/auth/types';
 	import { onDestroy } from 'svelte';
 	import { Eye, EyeOff } from 'lucide-svelte';

@@ -1,10 +1,10 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
 import { STALE_LIVE } from '$lib/queries/staleTime';
 import {
 	applyEffects,
@@ -29,7 +29,12 @@ export const getRecycleBinQuery = () =>
 		enabled: authStore.isAdmin,
 		initialPageParam: null as string | null,
 		queryFn: ({ pageParam, signal }) =>
-			api.v3.GET(LibraryV3Api.recycleBin(pageParam, PAGE_SIZE), { signal }),
+			api.v3.GET(
+				v3('/api/v3/library/recycle-bin', {
+					query: { limit: PAGE_SIZE, ...(pageParam ? { cursor: pageParam } : {}) }
+				}),
+				{ signal }
+			),
 		getNextPageParam: (lastPage: RecycleBinPage) => lastPage.next_cursor ?? undefined
 	}));
 
@@ -43,7 +48,7 @@ export const getRecycleBinSummaryQuery = (getOpen: () => boolean) =>
 		staleTime: STALE_LIVE,
 		gcTime: 0,
 		refetchOnWindowFocus: false,
-		queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.recycleBinSummary(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/library/recycle-bin/summary'), { signal })
 	}));
 
 // Whether the bin is emptying; polled while it is.
@@ -53,7 +58,7 @@ export const getRecycleBinStatusQuery = () =>
 		enabled: authStore.isAdmin,
 		refetchInterval: (query: { state: { data?: RecycleBinStatus } }) =>
 			query.state.data?.state === 'emptying' ? POLL_MS : false,
-		queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.recycleBinStatus(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/library/recycle-bin/status'), { signal })
 	}));
 
 /** Read the bin's page, summary and status again. */
@@ -65,7 +70,8 @@ export function invalidateRecycleBin(): Promise<void> {
 // `as_of`). It runs in the background; the status says when it is done.
 export function emptyRecycleBin() {
 	return createAppMutation(() => ({
-		mutationFn: (before: number) => api.v3.POST(LibraryV3Api.emptyRecycleBin(), { before }),
+		mutationFn: (before: number) =>
+			api.v3.POST(v3('/api/v3/library/recycle-bin/empty'), { before }),
 		effects: () => [recycleBinStatusChanged(authStore.user?.id)],
 		onError: () => applyEffects(recycleBinStatusChanged(authStore.user?.id))
 	}));

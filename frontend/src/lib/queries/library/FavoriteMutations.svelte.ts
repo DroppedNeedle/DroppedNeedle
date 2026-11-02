@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { useQueryClient, type QueryKey } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { catalogChanged, createAppMutation, favoritesChanged } from '$lib/queries/effects';
@@ -5,7 +6,6 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 import { setQueryDataWithPersister } from '../QueryClient';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
 
 export type FavoriteKind = 'album' | 'track' | 'artist';
 
@@ -63,7 +63,9 @@ export function setFavorite() {
 		() => ({
 			scope: { id: 'favorites' },
 			mutationFn: ({ kind, itemId, favorited }: FavoriteVars) =>
-				api.v3.PUT(LibraryV3Api.favorite(kind, itemId), { favorited }),
+				api.v3.PUT(v3('/api/v3/favorites/{kind}/{item_id}', { path: { kind, item_id: itemId } }), {
+					favorited
+				}),
 			onMutate: async (vars: FavoriteVars) => {
 				const previous: [QueryKey, unknown][] = [];
 				for (const root of flaggedRoots()) {

@@ -39,9 +39,6 @@ vi.mock('$lib/api/client', () => ({ api: { v3: { GET: state.apiGet } } }));
 vi.mock('$lib/constants', () => ({
 	AUTH_FREE_PATHS: ['/login', '/setup']
 }));
-vi.mock('$lib/queries/auth/endpoints', () => ({
-	AUTH_ENDPOINTS: { setupStatus: '/setup-status' }
-}));
 vi.mock('$lib/queries/QueryClient', () => ({
 	queryClient: {
 		ensureQueryData: state.ensureQueryData,
@@ -51,7 +48,7 @@ vi.mock('$lib/queries/QueryClient', () => ({
 	resetQueryCacheForUserSwitch: state.resetQueryCache,
 	collectPersistedGarbage: vi.fn()
 }));
-vi.mock('$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte', () => ({
+vi.mock('$lib/queries/scrobble-preferences.svelte', () => ({
 	getScrobblePreferencesQueryOptions: (userId: string | undefined) => ({ userId })
 }));
 vi.mock('$lib/stores/musicSource', () => ({
@@ -153,7 +150,9 @@ describe('+layout load session bootstrap', () => {
 		});
 		expect(state.clear).not.toHaveBeenCalled();
 		expect(state.user).toBe(user);
-		expect(state.apiGet).toHaveBeenNthCalledWith(1, '/setup-status', { timeoutMs: 10_000 });
+		expect(state.apiGet).toHaveBeenNthCalledWith(1, '/api/v3/auth/setup/status', {
+			timeoutMs: 10_000
+		});
 		expect(state.apiGet).toHaveBeenNthCalledWith(2, '/api/v3/me', { timeoutMs: 10_000 });
 	});
 
@@ -237,7 +236,9 @@ describe('+layout load session bootstrap', () => {
 		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
 		await expect(loadPage()).resolves.toEqual({ primarySource: 'listenbrainz', user });
 
-		expect(state.apiGet.mock.calls.filter(([url]) => url === '/setup-status')).toHaveLength(1);
+		expect(
+			state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/auth/setup/status')
+		).toHaveLength(1);
 		expect(state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/me')).toHaveLength(1);
 		expect(state.apiGet.mock.calls.filter(([url]) => url === '/scrobble-preferences')).toHaveLength(
 			0
@@ -256,7 +257,9 @@ describe('+layout load session bootstrap', () => {
 		});
 		await expect(loadPage()).rejects.toMatchObject({ status: 302, location: '/setup' });
 
-		expect(state.apiGet.mock.calls.filter(([url]) => url === '/setup-status')).toHaveLength(1);
+		expect(
+			state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/auth/setup/status')
+		).toHaveLength(1);
 		expect(state.apiGet.mock.calls.filter(([url]) => url === '/api/v3/me')).toHaveLength(1);
 	});
 

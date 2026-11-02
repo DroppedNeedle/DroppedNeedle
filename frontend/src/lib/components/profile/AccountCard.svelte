@@ -6,8 +6,8 @@
 		createSetPasswordMutation,
 		createUpdateEmailMutation,
 		createUpdateUsernameMutation
-	} from '$lib/queries/profile/ProfileMutations.svelte';
-	import type { ProfileData } from '$lib/queries/profile/types';
+	} from '$lib/queries/profile.svelte';
+	import type { ProfileData } from '$lib/queries/profile.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

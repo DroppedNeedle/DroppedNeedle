@@ -3,7 +3,7 @@
 	import {
 		createManualYouTubeLinkMutation,
 		createUpdateYouTubeLinkMutation
-	} from '$lib/queries/youtube/YouTubeQueries.svelte';
+	} from '$lib/queries/youtube.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';

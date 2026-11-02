@@ -1,8 +1,9 @@
+import { tracksQuery } from '$lib/queries/library/listQueries';
+import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import type { LibraryAlbumStatus, NativeTrackListItem } from '$lib/types';
 import type { LibraryV3TracksParams } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
 
 /**
  * Track list orders the v3 catalog serves. `hearted` is the favourites' own
@@ -96,6 +97,11 @@ export async function fetchLibraryTracks(
 	after: string | null,
 	signal?: AbortSignal
 ): Promise<LibraryTrackPage> {
-	const page = await api.v3.GET(LibraryV3Api.tracks(params, after), { signal });
+	const page = await api.v3.GET(
+		v3('/api/v3/library/tracks', {
+			query: tracksQuery(params, after)
+		}),
+		{ signal }
+	);
 	return { items: page.items.map(toNativeTrack), total: page.total, next: page.next ?? null };
 }

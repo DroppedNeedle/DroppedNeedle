@@ -1,14 +1,13 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import { STALE_SLOW } from '$lib/queries/staleTime';
 import { compareDiscTrack } from '$lib/player/queueHelpers';
-import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
 import type { AlbumBasicInfo, YouTubeLink, YouTubeTrackLink } from '$lib/types';
 import { AlbumQueryKeyFactory } from './AlbumQueryKeyFactory';
 import { fetchAlbumTracks } from './albumTracks';
-import { CATALOG_ENDPOINTS } from './endpoints';
 import { PERSIST, PERSIST_PROVIDER } from '$lib/queries/persistedCache';
 
 type UserId = string | null | undefined;
@@ -25,7 +24,9 @@ export const getAlbumBasicQuery = (getUserId: Getter<UserId>, getAlbumId: Getter
 			enabled: !!albumId,
 			staleTime: STALE_SLOW,
 			queryFn: ({ signal }: { signal: AbortSignal }): Promise<AlbumBasicInfo> =>
-				api.v3.GET(CATALOG_ENDPOINTS.albumBasic(albumId), { signal })
+				api.v3.GET(v3('/api/v3/albums/{album_id}/basic', { path: { album_id: albumId } }), {
+					signal
+				})
 		};
 	});
 
@@ -60,7 +61,13 @@ export const getMoreByArtistQuery = (
 			enabled: enabled && !!albumId && !!artistId,
 			staleTime: STALE_SLOW,
 			queryFn: ({ signal }: { signal: AbortSignal }) =>
-				api.v3.GET(CATALOG_ENDPOINTS.moreByArtist(albumId, artistId), { signal })
+				api.v3.GET(
+					v3('/api/v3/albums/{album_id}/more-by-artist', {
+						path: { album_id: albumId },
+						query: { artist_id: artistId }
+					}),
+					{ signal }
+				)
 		};
 	});
 
@@ -76,7 +83,13 @@ export const getSimilarAlbumsQuery = (
 			enabled: enabled && !!albumId && !!artistId,
 			staleTime: STALE_SLOW,
 			queryFn: ({ signal }: { signal: AbortSignal }) =>
-				api.v3.GET(CATALOG_ENDPOINTS.similarAlbums(albumId, artistId), { signal })
+				api.v3.GET(
+					v3('/api/v3/albums/{album_id}/similar', {
+						path: { album_id: albumId },
+						query: { artist_id: artistId }
+					}),
+					{ signal }
+				)
 		};
 	});
 
@@ -95,9 +108,15 @@ export const getAlbumLastFmQuery = (
 			enabled: !!albumId,
 			staleTime: STALE_SLOW,
 			queryFn: async ({ signal }: { signal: AbortSignal }) =>
-				(await api.v3.GET(CATALOG_ENDPOINTS.albumLastFm(albumId, artistName, albumName), {
-					signal
-				})) ?? null
+				(await api.v3.GET(
+					v3('/api/v3/albums/{album_id}/lastfm', {
+						path: { album_id: albumId },
+						query: { artist_name: artistName, album_name: albumName }
+					}),
+					{
+						signal
+					}
+				)) ?? null
 		};
 	});
 
@@ -111,7 +130,9 @@ export const getAlbumYouTubeLinkQuery = (getAlbumId: Getter<string>) =>
 			enabled: !!albumId,
 			staleTime: STALE_SLOW,
 			queryFn: async ({ signal }: { signal: AbortSignal }): Promise<YouTubeLink | null> =>
-				(await api.v3.GET(YOUTUBE_ENDPOINTS.link(albumId), { signal })) ?? null
+				(await api.v3.GET(v3('/api/v3/youtube/link/{album_id}', { path: { album_id: albumId } }), {
+					signal
+				})) ?? null
 		};
 	});
 
@@ -124,8 +145,11 @@ export const getAlbumYouTubeTrackLinksQuery = (getAlbumId: Getter<string>) =>
 			enabled: !!albumId,
 			staleTime: STALE_SLOW,
 			queryFn: async ({ signal }: { signal: AbortSignal }): Promise<YouTubeTrackLink[]> =>
-				[...(await api.v3.GET(YOUTUBE_ENDPOINTS.trackLinks(albumId), { signal }))].sort(
-					compareDiscTrack
-				)
+				[
+					...(await api.v3.GET(
+						v3('/api/v3/youtube/track-links/{album_id}', { path: { album_id: albumId } }),
+						{ signal }
+					))
+				].sort(compareDiscTrack)
 		};
 	});

@@ -1,5 +1,5 @@
 import { key, userScope } from '../keys';
-import type { HistoryParams } from './endpoints';
+import type { HistoryParams } from './historyQuery';
 
 type UserId = string | null | undefined;
 

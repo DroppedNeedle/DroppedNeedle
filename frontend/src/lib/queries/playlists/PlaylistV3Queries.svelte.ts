@@ -1,10 +1,10 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { PlaylistV3Api } from './PlaylistV3Api';
 import { PlaylistQueryKeyFactory, type PlaylistV3UserId } from './PlaylistQueryKeyFactory';
 import { STALE_LIVE, STALE_SLOW } from '$lib/queries/staleTime';
 import { readNow } from '../readNow';
@@ -24,7 +24,7 @@ export const getPlaylistListV3Query = (getEnabled: Getter<boolean>) =>
 		staleTime: STALE_LIVE,
 		queryKey: PlaylistQueryKeyFactory.list(authStore.user?.id),
 		queryFn: async ({ signal }: { signal?: AbortSignal } = {}) => {
-			const data = await api.v3.GET(PlaylistV3Api.list(), {
+			const data = await api.v3.GET(v3('/api/v3/playlists'), {
 				signal
 			});
 			return data.playlists;
@@ -38,7 +38,9 @@ export const getPlaylistDetailV3Query = (getId: Getter<string>, getEnabled: Gett
 		refetchOnWindowFocus: false,
 		queryKey: PlaylistQueryKeyFactory.detail(authStore.user?.id, getId()),
 		queryFn: ({ signal }: { signal?: AbortSignal } = {}) =>
-			api.v3.GET(PlaylistV3Api.detail(getId()), { signal }),
+			api.v3.GET(v3('/api/v3/playlists/{playlist_id}', { path: { playlist_id: getId() } }), {
+				signal
+			}),
 		retry: false
 	}));
 
@@ -50,13 +52,21 @@ export const getPlaylistSourcesV3QueryOptions = (userId: PlaylistV3UserId, playl
 	queryOptions({
 		queryKey: PlaylistQueryKeyFactory.sources(userId, playlistId),
 		queryFn: async ({ signal }) =>
-			(await api.v3.POST(PlaylistV3Api.resolveSources(playlistId), undefined, { signal })).sources,
+			(
+				await api.v3.POST(
+					v3('/api/v3/playlists/{playlist_id}/resolve-sources', {
+						path: { playlist_id: playlistId }
+					}),
+					undefined,
+					{ signal }
+				)
+			).sources,
 		staleTime: STALE_SLOW
 	});
 
 /** The caller's playlists as they are now, for the add-to-playlist dialog. */
 export const fetchPlaylistListV3 = () =>
 	readNow(PlaylistQueryKeyFactory.list(authStore.user?.id), async (signal) => {
-		const data = await api.v3.GET(PlaylistV3Api.list(), { signal });
+		const data = await api.v3.GET(v3('/api/v3/playlists'), { signal });
 		return data.playlists;
 	});

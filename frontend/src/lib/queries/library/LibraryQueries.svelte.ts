@@ -1,3 +1,9 @@
+import { cursorQuery } from '$lib/queries/library/listQueries';
+import { pageQuery } from '$lib/queries/library/listQueries';
+import { tracksQuery } from '$lib/queries/library/listQueries';
+import { artistsQuery } from '$lib/queries/library/listQueries';
+import { albumsQuery } from '$lib/queries/library/listQueries';
+import { v3 } from '$lib/api/v3/endpoint';
 import {
 	createInfiniteQuery,
 	createQuery,
@@ -14,8 +20,6 @@ import {
 	type LibraryV3TracksParams,
 	type LibraryV3UserId
 } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
-import { SearchV3Api } from '../search/SearchV3Api';
 import { toMusicBrainzAlbums } from '../search/SearchV3Adapters';
 import { toAlbumDetail, toAlbumSummary, toArtistSummary, toNativeAlbums } from './libraryAdapters';
 import {
@@ -65,7 +69,7 @@ export const getLibraryMembershipQueryOptions = (
 			let requestedIds: string[] = [];
 			for (let offset = 0; offset < albumIds.length; offset += 500) {
 				const membership: LibraryMembershipResponse = await api.v3.POST(
-					LibraryV3Api.membership(),
+					v3('/api/v3/library/membership'),
 					{ album_ids: albumIds.slice(offset, offset + 500) },
 					{ signal }
 				);
@@ -89,7 +93,14 @@ const getLibraryAlbumsQueryOptions = (forUser: LibraryV3UserId, params: LibraryV
 		meta: PERSIST,
 		queryKey: LibraryQueryKeyFactory.catalog.albums(forUser, params),
 		queryFn: async ({ signal }) =>
-			toNativeAlbums(await api.v3.GET(LibraryV3Api.albums(params), { signal }))
+			toNativeAlbums(
+				await api.v3.GET(
+					v3('/api/v3/library/albums', {
+						query: albumsQuery(params, null)
+					}),
+					{ signal }
+				)
+			)
 	});
 
 export const getLibraryAlbumsQuery = (getParams: Getter<LibraryV3AlbumsParams>) =>
@@ -109,7 +120,12 @@ export const getLibraryAlbumsInfiniteQuery = (getParams: Getter<LibraryV3AlbumsP
 			queryKey: LibraryQueryKeyFactory.catalog.albumPages(userId(), params),
 			initialPageParam: null as string | null,
 			queryFn: async ({ pageParam, signal }): Promise<LibraryAlbumsPage> => {
-				const page = await api.v3.GET(LibraryV3Api.albums(params, pageParam), { signal });
+				const page = await api.v3.GET(
+					v3('/api/v3/library/albums', {
+						query: albumsQuery(params, pageParam)
+					}),
+					{ signal }
+				);
 				return { ...toNativeAlbums(page), next: page.next ?? null };
 			},
 			getNextPageParam: (lastPage: LibraryAlbumsPage) => lastPage.next ?? undefined
@@ -145,7 +161,12 @@ async function fetchArtists(
 	after: string | null,
 	signal?: AbortSignal
 ): Promise<LibraryArtistsPage> {
-	const page = await api.v3.GET(LibraryV3Api.artists(params, after), { signal });
+	const page = await api.v3.GET(
+		v3('/api/v3/library/artists', {
+			query: artistsQuery(params, after)
+		}),
+		{ signal }
+	);
 	return {
 		items: page.items.map(toArtistSummary),
 		total: page.total,
@@ -196,7 +217,7 @@ const getLibraryStatsQueryOptions = (forUser: LibraryV3UserId) =>
 	queryOptions({
 		meta: PERSIST,
 		queryKey: LibraryQueryKeyFactory.catalog.stats(forUser),
-		queryFn: async ({ signal }) => await api.v3.GET(LibraryV3Api.stats(), { signal })
+		queryFn: async ({ signal }) => await api.v3.GET(v3('/api/v3/library/stats'), { signal })
 	});
 
 export const getLibraryStatsQuery = () => createQuery(() => getLibraryStatsQueryOptions(userId()));
@@ -208,7 +229,12 @@ export const getLibraryRecentlyAddedQuery = () =>
 		meta: PERSIST,
 		queryKey: LibraryQueryKeyFactory.catalog.recentlyAdded(userId(), RECENTLY_ADDED_LIMIT),
 		queryFn: async ({ signal }) =>
-			toNativeAlbums(await api.v3.GET(LibraryV3Api.recentlyAdded(RECENTLY_ADDED_LIMIT), { signal }))
+			toNativeAlbums(
+				await api.v3.GET(
+					v3('/api/v3/library/recently-added', { query: { limit: RECENTLY_ADDED_LIMIT } }),
+					{ signal }
+				)
+			)
 	}));
 
 export const getLibraryAlbumDetailQueryOptions = (forUser: LibraryV3UserId, albumId: string) =>
@@ -216,7 +242,9 @@ export const getLibraryAlbumDetailQueryOptions = (forUser: LibraryV3UserId, albu
 		meta: PERSIST,
 		queryKey: LibraryQueryKeyFactory.catalog.albumDetail(forUser, albumId),
 		queryFn: async ({ signal }) =>
-			toAlbumDetail(await api.v3.GET(LibraryV3Api.albumDetail(albumId), { signal }))
+			toAlbumDetail(
+				await api.v3.GET(v3('/api/v3/library/albums/{id}', { path: { id: albumId } }), { signal })
+			)
 	});
 
 const HAND_BACK_POLL_MS = 5_000;
@@ -247,7 +275,11 @@ const getLibraryAlbumCopiesQueryOptions = (forUser: LibraryV3UserId, albumId: st
 	queryOptions({
 		queryKey: LibraryQueryKeyFactory.catalog.albumCopies(forUser, albumId),
 		queryFn: async ({ signal }) =>
-			toNativeAlbums(await api.v3.GET(LibraryV3Api.albumCopies(albumId), { signal }))
+			toNativeAlbums(
+				await api.v3.GET(v3('/api/v3/library/albums/{id}/copies', { path: { id: albumId } }), {
+					signal
+				})
+			)
 	});
 
 export const getLibraryAlbumCopiesQuery = (
@@ -272,9 +304,15 @@ export const getLibraryAlbumTracksQuery = (getAlbumId: Getter<string>) =>
 			meta: PERSIST,
 			queryKey: LibraryQueryKeyFactory.catalog.albumTracks(userId(), albumId, ALBUM_TRACKS_PAGE),
 			queryFn: async ({ signal }) => {
-				const page = await api.v3.GET(LibraryV3Api.albumTracks(albumId, ALBUM_TRACKS_PAGE), {
-					signal
-				});
+				const page = await api.v3.GET(
+					v3('/api/v3/library/albums/{id}/tracks', {
+						path: { id: albumId },
+						query: pageQuery(ALBUM_TRACKS_PAGE)
+					}),
+					{
+						signal
+					}
+				);
 				return { ...page, items: page.items.map(toNativeTrack) };
 			}
 		};
@@ -285,7 +323,9 @@ export const getLibraryArtistDetailQueryOptions = (forUser: LibraryV3UserId, art
 		meta: PERSIST,
 		queryKey: LibraryQueryKeyFactory.catalog.artistDetail(forUser, artistId),
 		queryFn: async ({ signal }) =>
-			toArtistSummary(await api.v3.GET(LibraryV3Api.artistDetail(artistId), { signal }))
+			toArtistSummary(
+				await api.v3.GET(v3('/api/v3/library/artists/{id}', { path: { id: artistId } }), { signal })
+			)
 	});
 
 export const getLibraryArtistDetailQuery = (getArtistId: Getter<string>) =>
@@ -311,9 +351,15 @@ export const getLibraryArtistAlbumsQuery = (getArtistId: Getter<string>) =>
 			queryKey: LibraryQueryKeyFactory.catalog.artistAlbums(userId(), artistId, ARTIST_ALBUMS_PAGE),
 			queryFn: async ({ signal }) =>
 				toNativeAlbums(
-					await api.v3.GET(LibraryV3Api.artistAlbums(artistId, ARTIST_ALBUMS_PAGE), {
-						signal
-					})
+					await api.v3.GET(
+						v3('/api/v3/library/artists/{id}/albums', {
+							path: { id: artistId },
+							query: cursorQuery(ARTIST_ALBUMS_PAGE)
+						}),
+						{
+							signal
+						}
+					)
 				)
 		};
 	});
@@ -329,20 +375,30 @@ async function fetchAppearances(
 	after: string | null,
 	signal: AbortSignal
 ): Promise<LibraryArtistAppearancesResponse> {
-	const artistId = (await api.v3.GET(LibraryV3Api.artistDetail(id), { signal })).id;
+	const artistId = (
+		await api.v3.GET(v3('/api/v3/library/artists/{id}', { path: { id: id } }), { signal })
+	).id;
 	const page = await api.v3.GET(
-		LibraryV3Api.artistAppearances(artistId, { limit: ARTIST_APPEARANCES_PAGE_SIZE, after }),
+		v3('/api/v3/library/artists/{id}/appearances', {
+			path: { id: artistId },
+			query: cursorQuery({ limit: ARTIST_APPEARANCES_PAGE_SIZE, after })
+		}),
 		{ signal }
 	);
 	const items = await Promise.all(
 		page.items.map(async (album) => {
 			const tracks = await api.v3.GET(
-				LibraryV3Api.tracks({
-					limit: 200,
-					sort: 'title',
-					order: 'asc',
-					albumId: album.id,
-					artistId
+				v3('/api/v3/library/tracks', {
+					query: tracksQuery(
+						{
+							limit: 200,
+							sort: 'title',
+							order: 'asc',
+							albumId: album.id,
+							artistId
+						},
+						null
+					)
 				}),
 				{ signal }
 			);
@@ -377,7 +433,7 @@ export const getLibraryScanScheduleQuery = (enabled: () => boolean = () => true)
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.scanSchedule(),
-		queryFn: ({ signal }) => api.v3.GET(LibraryV3Api.schedule(), { signal })
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/settings/library/schedule'), { signal })
 	}));
 
 // What the library holds for one album, by MusicBrainz id or local id, with
@@ -386,7 +442,11 @@ export const getLibraryAlbumStatusQueryOptions = (mbid: string) =>
 	queryOptions({
 		queryKey: LibraryQueryKeyFactory.album(authStore.user?.id, mbid),
 		queryFn: async ({ signal }): Promise<LibraryAlbumStatus> =>
-			toAlbumStatus(await api.v3.GET(LibraryV3Api.albumStatus(mbid), { signal }))
+			toAlbumStatus(
+				await api.v3.GET(v3('/api/v3/library/albums/{id}/status', { path: { id: mbid } }), {
+					signal
+				})
+			)
 	});
 
 export const getLibraryAlbumStatusQuery = (getMbid: Getter<string>) =>
@@ -411,15 +471,30 @@ export const getLibrarySearchQuery = (getTerm: Getter<string>) =>
 			queryFn: async ({ signal }): Promise<LibrarySearchResults> => {
 				const page = { limit: LIBRARY_SEARCH_LIMIT, q: term } as const;
 				const [albums, artists, tracks] = await Promise.all([
-					api.v3.GET(LibraryV3Api.albums({ ...page, sort: 'date_added', order: 'desc' }), {
-						signal
-					}),
-					api.v3.GET(LibraryV3Api.artists({ ...page, sort: 'name', order: 'asc' }), {
-						signal
-					}),
-					api.v3.GET(LibraryV3Api.tracks({ ...page, sort: 'date_added', order: 'desc' }), {
-						signal
-					})
+					api.v3.GET(
+						v3('/api/v3/library/albums', {
+							query: albumsQuery({ ...page, sort: 'date_added', order: 'desc' }, null)
+						}),
+						{
+							signal
+						}
+					),
+					api.v3.GET(
+						v3('/api/v3/library/artists', {
+							query: artistsQuery({ ...page, sort: 'name', order: 'asc' }, null)
+						}),
+						{
+							signal
+						}
+					),
+					api.v3.GET(
+						v3('/api/v3/library/tracks', {
+							query: tracksQuery({ ...page, sort: 'date_added', order: 'desc' }, null)
+						}),
+						{
+							signal
+						}
+					)
 				]);
 				return {
 					albums: albums.items.map(toAlbumSummary),
@@ -439,9 +514,15 @@ export const getAlbumSearchQuery = (getTerm: Getter<string>) =>
 			enabled: term.length >= 2,
 			queryKey: LibraryQueryKeyFactory.catalog.albumSearch(userId(), term),
 			queryFn: async ({ signal }): Promise<Album[]> => {
-				const data = await api.v3.GET(SearchV3Api.bucket('albums', term, 20, 0), {
-					signal
-				});
+				const data = await api.v3.GET(
+					v3('/api/v3/search/{bucket}', {
+						path: { bucket: 'albums' },
+						query: { q: term.trim(), limit: 20, offset: 0 }
+					}),
+					{
+						signal
+					}
+				);
 				return toMusicBrainzAlbums(data.results);
 			}
 		};
@@ -459,6 +540,6 @@ export const getResolvedTracksQuery = (getItems: Getter<ResolveTracksItem[]>) =>
 			enabled: items.length > 0,
 			queryKey: LibraryQueryKeyFactory.catalog.resolvedTracks(authStore.user?.id, items),
 			queryFn: ({ signal }: { signal: AbortSignal }) =>
-				api.v3.POST(LibraryV3Api.resolveTracks(), { items }, { signal })
+				api.v3.POST(v3('/api/v3/library/resolve-tracks'), { items }, { signal })
 		};
 	});

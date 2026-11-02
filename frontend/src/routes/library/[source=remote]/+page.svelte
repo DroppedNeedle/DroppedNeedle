@@ -8,7 +8,7 @@
 		remoteErrorCode
 	} from '$lib/queries/remotes/RemoteQueries.svelte';
 	import type { RemoteAlbum } from '$lib/queries/remotes/types';
-	import { getSourcePlaylistsQuery } from '$lib/queries/source-playlists/SourcePlaylistQueries.svelte';
+	import { getSourcePlaylistsQuery } from '$lib/queries/source-playlists.svelte';
 	import AlbumGrid from '$lib/components/AlbumGrid.svelte';
 	import ArtistIndexSidebar from '$lib/components/ArtistIndexSidebar.svelte';
 	import BrowseHeroCards from '$lib/components/BrowseHeroCards.svelte';
@@ -32,7 +32,7 @@
 	import HubFavorites from './HubFavorites.svelte';
 	import HubHistory from './HubHistory.svelte';
 	import HubSimilarAlbums from './HubSimilarAlbums.svelte';
-	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

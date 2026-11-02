@@ -1,3 +1,4 @@
+import { v3 } from '$lib/api/v3/endpoint';
 import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
@@ -94,7 +95,6 @@ import { api } from '$lib/api/client';
 import { toastStore } from '$lib/stores/toast';
 import { queryClient } from '../QueryClient';
 import { FollowQueryKeyFactory } from './FollowQueryKeyFactory';
-import { FOLLOW_ENDPOINTS } from './endpoints';
 import { getAutoDownloadApprovalsQuery } from './AdminApprovalsQueries.svelte';
 import {
 	createApproveAutoDownloadMutation,
@@ -129,7 +129,7 @@ describe('admin auto-download approvals query', () => {
 		expect(opts.queryKey).toEqual(FollowQueryKeyFactory.adminApprovals(undefined));
 		expect(opts.enabled).toBe(true);
 		await opts.queryFn!({ signal: new AbortController().signal });
-		expect(mockGet.mock.calls[0][0]).toBe(FOLLOW_ENDPOINTS.adminApprovals());
+		expect(mockGet.mock.calls[0][0]).toBe(v3('/api/v3/requests/auto-download-approvals'));
 	});
 
 	it('is disabled for non-admins / inactive tab', () => {
@@ -143,7 +143,11 @@ describe('admin approval mutations', () => {
 		const spy = vi.spyOn(queryClient, 'invalidateQueries');
 		const m = createApproveAutoDownloadMutation() as unknown as Opts;
 		await m.mutationFn(VARS);
-		expect(mockPost.mock.calls[0][0]).toBe(FOLLOW_ENDPOINTS.approve('user-a', 'artist-1'));
+		expect(mockPost.mock.calls[0][0]).toBe(
+			v3('/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve', {
+				path: { user_id: 'user-a', artist_mbid: 'artist-1' }
+			})
+		);
 		await m.onSuccess!({ success: true, message: 'ok' }, VARS);
 		expect(mockShow).toHaveBeenCalledWith(
 			expect.objectContaining({ type: 'success', message: expect.stringContaining('Radiohead') })
@@ -157,7 +161,11 @@ describe('admin approval mutations', () => {
 	it('reject POSTs the reject endpoint and toasts', async () => {
 		const m = createRejectAutoDownloadMutation() as unknown as Opts;
 		await m.mutationFn(VARS);
-		expect(mockPost.mock.calls[0][0]).toBe(FOLLOW_ENDPOINTS.reject('user-a', 'artist-1'));
+		expect(mockPost.mock.calls[0][0]).toBe(
+			v3('/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject', {
+				path: { user_id: 'user-a', artist_mbid: 'artist-1' }
+			})
+		);
 		await m.onSuccess!({ success: true, message: 'ok' }, VARS);
 		expect(mockShow).toHaveBeenCalledWith(
 			expect.objectContaining({ type: 'info', message: expect.stringContaining('Radiohead') })

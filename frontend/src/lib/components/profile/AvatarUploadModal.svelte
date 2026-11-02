@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { ImagePlus } from 'lucide-svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { createUploadAvatarMutation } from '$lib/queries/profile/ProfileMutations.svelte';
+	import { createUploadAvatarMutation } from '$lib/queries/profile.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Modal from '$lib/ui/Modal.svelte';

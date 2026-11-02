@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { AudioLines, ExternalLink } from 'lucide-svelte';
-	import { getListenBrainzConnectionQuery } from '$lib/queries/listenbrainz/ListenBrainzQuery.svelte';
+	import { getListenBrainzConnectionQuery } from '$lib/queries/listenbrainz.svelte';
 	import {
 		createSaveListenBrainzMutation,
 		createVerifyListenBrainzMutation
-	} from '$lib/queries/listenbrainz/ListenBrainzMutations.svelte';
+	} from '$lib/queries/listenbrainz.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';

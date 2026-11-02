@@ -3,7 +3,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import { launchRadio, type RadioMode } from '$lib/player/launchRadio';
 	import { deckSampler, type SampleEntry } from '$lib/stores/deckSampler.svelte';
-	import { useIntegrationStatus } from '$lib/queries/HomeIntegrationStatusQuery.svelte';
+	import { useIntegrationStatus } from '$lib/queries/home.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type { RadioPlanRequest } from '$lib/queries/discover/types';
 

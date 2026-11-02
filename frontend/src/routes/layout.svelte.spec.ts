@@ -68,7 +68,7 @@ vi.mock('$lib/stores/library', () => ({
 	}
 }));
 // The shell's session-wide reads answer from fixed state, with no network.
-vi.mock('$lib/queries/HomeIntegrationStatusQuery.svelte', () => ({
+vi.mock('$lib/queries/home.svelte', () => ({
 	getIntegrationStatusQuery: vi.fn(() => ({ data: integrationState })),
 	useIntegrationStatus: () => ({ current: integrationState })
 }));

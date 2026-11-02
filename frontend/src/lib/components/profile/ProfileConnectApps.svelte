@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { APP_PASSWORD_CAP } from '$lib/queries/connect-apps/endpoints';
+	import { APP_PASSWORD_CAP } from '$lib/queries/connect-apps.svelte';
 	import { Copy, Plus, Trash2, TriangleAlert, Waypoints } from 'lucide-svelte';
 
 	import { getApiUrl } from '$lib/api/api-utils';
@@ -8,11 +8,8 @@
 	import {
 		getAppPasswordsQuery,
 		getConnectAppsSettingsQuery
-	} from '$lib/queries/connect-apps/ConnectAppsQueries.svelte';
-	import {
-		createAppPassword,
-		revokeAppPassword
-	} from '$lib/queries/connect-apps/ConnectAppsMutations.svelte';
+	} from '$lib/queries/connect-apps.svelte';
+	import { createAppPassword, revokeAppPassword } from '$lib/queries/connect-apps.svelte';
 	import type { AppPasswordView } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';

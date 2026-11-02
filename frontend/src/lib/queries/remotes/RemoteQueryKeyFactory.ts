@@ -6,7 +6,7 @@ import type {
 	RemotePageParams,
 	RemoteRandomParams,
 	RemoteTrackParams
-} from './endpoints';
+} from './params';
 import type { RemoteSource } from './types';
 
 type UserId = string | null | undefined;

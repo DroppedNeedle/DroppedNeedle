@@ -1,10 +1,11 @@
+import { unifiedSearchQuery } from '$lib/queries/search/unifiedSearchQuery';
+import { v3 } from '$lib/api/v3/endpoint';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { SearchV3Api } from './SearchV3Api';
 import {
 	SearchQueryKeyFactory,
 	type SearchV3Bucket,
@@ -40,9 +41,12 @@ export const getUnifiedSearchV3QueryOptions = (
 		enabled: enabled(userId, query),
 		queryKey: SearchQueryKeyFactory.v3.unified(userId, query, limits, buckets),
 		queryFn: ({ signal }) =>
-			api.v3.GET(SearchV3Api.unified(query, limits, buckets), {
-				signal
-			})
+			api.v3.GET(
+				v3('/api/v3/search', { query: unifiedSearchQuery(query, limits, buckets, 'all') }),
+				{
+					signal
+				}
+			)
 	});
 
 export const getUnifiedSearchV3Query = (
@@ -66,9 +70,15 @@ export const getSearchBucketV3QueryOptions = (
 		// The bucket status mirrors the v1 values, so the v1 helper reads it.
 		queryKey: SearchQueryKeyFactory.v3.bucket(userId, bucket, query, limit, offset),
 		queryFn: ({ signal }) =>
-			api.v3.GET(SearchV3Api.bucket(bucket, query, limit, offset), {
-				signal
-			})
+			api.v3.GET(
+				v3('/api/v3/search/{bucket}', {
+					path: { bucket },
+					query: { q: query.trim(), limit, offset }
+				}),
+				{
+					signal
+				}
+			)
 	});
 
 export const getSearchBucketV3Query = (
@@ -98,7 +108,7 @@ export const getSearchSuggestionsV3Query = (
 			enabled: getEnabled() && enabled(authStore.user?.id, query),
 			queryKey: SearchQueryKeyFactory.v3.suggest(authStore.user?.id, query, limit),
 			queryFn: ({ signal }: { signal?: AbortSignal }) =>
-				api.v3.GET(SearchV3Api.suggest(query, limit), { signal })
+				api.v3.GET(v3('/api/v3/search/suggest', { query: { q: query.trim(), limit } }), { signal })
 		};
 	});
 
@@ -115,7 +125,7 @@ const getSearchEnrichBatchV3QueryOptions = (
 		enabled: Boolean(userId && (body.artists?.length || body.albums?.length)),
 		meta: PROVIDER,
 		queryKey: SearchQueryKeyFactory.v3.enrich(userId, enrichFingerprint(body)),
-		queryFn: ({ signal }) => api.v3.POST(SearchV3Api.enrichBatch(), body, { signal })
+		queryFn: ({ signal }) => api.v3.POST(v3('/api/v3/search/enrich/batch'), body, { signal })
 	});
 
 export const getSearchEnrichBatchV3Query = (getBody: Getter<EnrichmentBatchRequestV3>) =>

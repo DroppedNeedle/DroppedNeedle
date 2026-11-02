@@ -7,7 +7,7 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { X, Sparkles, ExternalLink } from 'lucide-svelte';
-	import type { GitHubRelease } from '$lib/queries/VersionQuery.svelte';
+	import type { GitHubRelease } from '$lib/queries/version.svelte';
 
 	interface Props {
 		currentVersion: string | null;

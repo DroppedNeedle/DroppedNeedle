@@ -1,9 +1,9 @@
 <script lang="ts">
+	import { v3 } from '$lib/api/v3/endpoint';
 	import '$lib/components/library/library-management.css';
 	import { ArrowRight, Eraser, FileClock, Image, RotateCcw, Tags } from 'lucide-svelte';
 
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { LIBRARY_MANAGEMENT_ENDPOINTS } from '$lib/queries/library-management/endpoints';
 	import type { LibraryManagementPlanItem } from '$lib/queries/library-management/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -111,7 +111,11 @@
 	function artworkPreviewUrl(choice: Record<string, unknown>): string | null {
 		const sha256 = managementArtworkPreviewHash(choice);
 		if (!sha256) return null;
-		return getApiUrl(LIBRARY_MANAGEMENT_ENDPOINTS.previewArtwork(jobId, item.ordinal, sha256));
+		return getApiUrl(
+			v3('/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}', {
+				path: { job_id: jobId, ordinal: item.ordinal, sha256 }
+			})
+		);
 	}
 </script>
 
