@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use super::{CarryError, SectionResult};
 use crate::export::envelope::ConnectionRecord;
-use crate::import::sql;
+use super::sql;
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Report entity for this section.

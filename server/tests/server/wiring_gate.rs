@@ -102,7 +102,7 @@ const RULES: &[Rule] = &[
         what: "a slot's filled-twice warning",
         patterns: &[r"already (?:attached|set)\b|attached twice"],
         allowed: &[(
-            "tool/src/import/pipeline.rs",
+            "tool/src/import/plan.rs",
             "an import note that a user's recovery code was already in place, not wiring",
         )],
     },

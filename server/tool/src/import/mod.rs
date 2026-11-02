@@ -1,6 +1,6 @@
 //! v2 → v3 export validation and import.
 //!
-//! The pipeline is [`pipeline::run_import`]; the standalone checker is
+//! The pipeline is [`apply::run_import`]; the standalone checker is
 //! [`validate::validate_export`]; every run yields one
 //! [`report::ImportReport`].
 //!
@@ -16,17 +16,20 @@
 //! Deleted IDs fail closed: [`validate_export`] refuses the whole file on
 //! a dangling user reference, and the operator repair is dropping the
 //! orphan rows from v2 and re-exporting. The planner's drop-and-count
-//! branches are defense in depth unreachable through [`pipeline::run_import`].
+//! branches are defense in depth unreachable through [`apply::run_import`].
 
+pub mod apply;
 pub(crate) mod carry;
 pub mod envelope;
-pub mod pipeline;
+pub mod plan;
 pub mod report;
 pub mod schedule_carry;
+pub(crate) mod settings;
+pub(crate) mod snapshot;
 pub(crate) mod sql;
 pub mod validate;
 
+pub use apply::{ImportRequest, run_import};
 pub use envelope::{ExportFile, Opener, unseal_value, verify_content_digest};
-pub use pipeline::{ImportRequest, run_import};
 pub use report::{ExitCode, ImportReport};
 pub use validate::{ValidationIssue, ValidationReport, check_attachments, validate_export};

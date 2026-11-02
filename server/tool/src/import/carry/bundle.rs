@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::export::envelope::BUNDLE_ROLE;
 use crate::export::sections::{ALL, Column, TableSection, Target};
-use crate::import::sql::{self, AnySection, UserSection};
+use super::sql::{self, AnySection, UserSection};
 
 /// A bundle the import may read: its path and its declared row counts.
 #[derive(Debug, Clone)]

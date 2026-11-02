@@ -946,7 +946,7 @@ fn validate_settings(settings: Option<&Value>, report: &mut ValidationReport) {
         if REMOVED_SECTIONS.contains(&name.as_str()) {
             continue;
         }
-        if !super::pipeline::REPLACE_UNIVERSE.contains(&name.as_str()) {
+        if !super::settings::REPLACE_UNIVERSE.contains(&name.as_str()) {
             report.warnings.push(ValidationIssue::new(
                 "UNKNOWN_SETTINGS_SECTION",
                 path,

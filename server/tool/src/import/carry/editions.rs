@@ -28,7 +28,7 @@ use super::{CarryError, SectionResult};
 use crate::export::sections::TableSection;
 use crate::export::sections::library::{ALBUM_PINS, ALBUMS};
 use crate::export::sections::management::EDITION_ACTIVE;
-use crate::import::sql::{self, AnySection};
+use super::sql::{self, AnySection};
 
 /// Report entity and section marker name.
 pub(crate) const ENTITY: &str = "sticky_edition";

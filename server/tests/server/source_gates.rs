@@ -63,7 +63,7 @@ const OPENS: &[Place] = &[
         "the offline export reads the v2 database and writes its bundle",
     ),
     place(
-        "tool/src/import/pipeline.rs",
+        "tool/src/import/apply.rs",
         "the offline import runs on a connection of its own, with its bundle attached",
     ),
     place(
@@ -569,7 +569,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("src/settings/library_policy_service.rs", 1, REQUEST),
     ("src/settings/services.rs", 3, REQUEST),
     ("src/settings/wiring.rs", 2, REQUEST),
-    ("tool/src/import/pipeline.rs", 1, OFFLINE_TOOL),
+    ("tool/src/import/apply.rs", 1, OFFLINE_TOOL),
     ("tool/src/tooling/reset_key.rs", 1, OFFLINE_TOOL),
     ("tool/src/tooling/upgrade.rs", 1, OFFLINE_TOOL),
 ];

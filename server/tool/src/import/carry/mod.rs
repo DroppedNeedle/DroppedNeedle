@@ -29,6 +29,7 @@ pub(crate) mod connections;
 pub(crate) mod editions;
 pub(crate) mod held;
 pub(crate) mod links;
+pub(crate) mod sql;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -39,7 +40,6 @@ use thiserror::Error;
 
 use crate::export::sections::{ALL, Column, TableSection, Target};
 use crate::import::report::{EntityCounts, ReportBuilder, utc_now_iso};
-use crate::import::sql;
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// How the carry can fail. Messages stay free of row contents and secrets.
@@ -186,7 +186,7 @@ fn run_sections(
         digest: text(crate::export::seal::DIGEST_KEY),
     };
     let mut work = Vec::new();
-    if crate::import::pipeline::carries_connections(run.root) {
+    if crate::import::apply::carries_connections(run.root) {
         work.push(Work::Connections);
     }
     if run.bundle.is_some() {

@@ -1484,7 +1484,7 @@ async fn event_cities_import_inside_the_city_limits() {
 #[test]
 fn event_city_limits_match_the_concerts_service() {
     use droppedneedle_catalog::concerts::models::{MAX_CITIES, MAX_RADIUS_KM, MIN_RADIUS_KM};
-    use droppedneedle_tool::import::pipeline::{EVENT_CITY_RADIUS_KM, MAX_EVENT_CITIES};
+    use droppedneedle_tool::import::plan::{EVENT_CITY_RADIUS_KM, MAX_EVENT_CITIES};
     assert_eq!(MAX_EVENT_CITIES, MAX_CITIES);
     assert_eq!(EVENT_CITY_RADIUS_KM, MIN_RADIUS_KM..=MAX_RADIUS_KM);
 }

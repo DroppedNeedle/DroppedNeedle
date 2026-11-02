@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use super::{CarryError, SectionResult};
-use crate::import::sql;
+use super::sql;
 
 /// Extensions v3's avatar store serves.
 const EXTENSIONS: &[&str] = &["jpg", "png", "webp", "gif"];

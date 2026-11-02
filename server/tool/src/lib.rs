@@ -14,6 +14,7 @@ pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFi
     vec![
         export::sql::registered(),
         import::sql::registered(),
+        import::carry::sql::registered(),
         tooling::sql::registered(),
     ]
 }

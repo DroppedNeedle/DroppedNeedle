@@ -12,5 +12,5 @@ kernel/src/jobs/schedule.rs  seed for timer jitter, not a time anyone reads
 
 tool/src/export/exporter.rs  offline tool, not a server area
 tool/src/export/fernet.rs  offline tool, not a server area
-tool/src/import/pipeline.rs  offline tool, not a server area
+tool/src/import/settings.rs  offline tool, not a server area
 tool/src/import/report.rs  offline tool, not a server area
