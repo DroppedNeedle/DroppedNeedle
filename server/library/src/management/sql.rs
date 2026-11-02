@@ -1,6 +1,11 @@
 //! Management's statements over its applied work: each album's outcome
 //! and the publish bundles a job wrote, for its results and its undo.
 
+use droppedneedle_kernel::db::time::Millis;
+
+use super::models::{Eligibility, OverrideMode};
+use super::takeover::Cause;
+use crate::jobs::{ManagementPhase, OperationState, WorkState};
 use crate::publish::sql::HAS_BYTES_RECORD;
 
 droppedneedle_kernel::sql_choice! {
@@ -59,12 +64,12 @@ droppedneedle_kernel::sql! {
                AND j.state IN ('committed', 'cleaned', 'cleanup_pending')) \
              SELECT \
                (SELECT COUNT(*) FROM library_publish_snapshots s JOIN bundles b \
-                 ON b.bundle_id = s.bundle_id WHERE s.expires_at > ?2), \
+                 ON b.bundle_id = s.bundle_id WHERE s.expires_at > ?2) AS available, \
                (SELECT COUNT(*) FROM written w WHERE NOT EXISTS (SELECT 1 \
                  FROM library_publish_snapshots s WHERE s.bundle_id = w.bundle_id \
-                 AND s.track_id = w.track_id AND s.expires_at > ?2)), \
+                 AND s.track_id = w.track_id AND s.expires_at > ?2)) AS expired, \
                (SELECT MIN(s.expires_at) / 86400000 FROM library_publish_snapshots s JOIN bundles b \
-                 ON b.bundle_id = s.bundle_id WHERE s.expires_at > ?2)";
+                 ON b.bundle_id = s.bundle_id WHERE s.expires_at > ?2) AS first_expiry_day";
     pub(super) QUEUE = "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before_at) \
          SELECT ?1, ?2, ?2 WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
          ON CONFLICT (local_album_id) DO UPDATE SET queued_at = excluded.queued_at, \
@@ -85,7 +90,7 @@ droppedneedle_kernel::sql! {
                  AND last_reason_code IS NOT 'PREVIEW_BLOCKED') \
                  OR EXISTS(SELECT 1 FROM library_operation_jobs j \
                  JOIN library_management_job_snapshots s ON s.job_id = j.id \
-                 WHERE j.kind = ?3 AND j.state IN ('queued', 'running', 'paused') \
+                 WHERE j.kind = ?3 AND j.state IN (?4, ?5, ?6) \
                  AND j.idempotency_key LIKE 'automatic:%' \
                  AND EXISTS(SELECT 1 FROM json_each(s.selection_json, '$.ids') \
                  WHERE value = ?1))";
@@ -93,7 +98,7 @@ droppedneedle_kernel::sql! {
     pub(super) PUT_OFF_AUTOMATIC_ALBUM = "UPDATE library_management_automatic_queue SET attempts = attempts + ?2, \
                      not_before_at = ?3, last_reason_code = ?4 WHERE local_album_id = ?1";
     pub(super) AUTOMATIC_SKIPPED = "SELECT q.local_album_id, a.title, a.album_artist_name, \
-                 COALESCE(q.last_reason_code, ?2), q.attempts, \
+                 COALESCE(q.last_reason_code, ?2) AS reason_code, q.attempts, \
                  q.queued_at FROM library_management_automatic_queue q \
                  JOIN local_albums a ON a.id = q.local_album_id \
                  WHERE q.last_reason_code IS NOT NULL OR EXISTS (SELECT 1 \
@@ -127,7 +132,7 @@ droppedneedle_kernel::sql! {
                  AND NOT (state = 'needs_attention' AND bundle_id IN \
                  (SELECT bundle_id FROM library_publish_resolutions)))";
     pub(super) CLEANUP_PENDING_COUNT = "SELECT COUNT(*) FROM library_publish_journal WHERE state = 'cleanup_pending'";
-    pub(super) JOURNAL_COUNTS_BY_STATE = "SELECT state, COUNT(*) FROM library_publish_journal GROUP BY state ORDER BY state";
+    pub(super) JOURNAL_COUNTS_BY_STATE = "SELECT state, COUNT(*) AS total FROM library_publish_journal GROUP BY state ORDER BY state";
     pub(super) BUNDLE_RESOLUTION = "SELECT verified_files, as_before_files, empty_files \
                      FROM library_publish_resolutions WHERE bundle_id = ?1";
     pub(super) RECORD_BUNDLE_RESOLUTION = "INSERT OR IGNORE INTO library_publish_resolutions (bundle_id, resolved_by_user_id, \
@@ -144,7 +149,7 @@ droppedneedle_kernel::sql! {
                  actor_user_id, purged_baseline_count, detached_reference_count, created_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
     pub(super) BASELINE_BLOB_SIZES = "SELECT r.sha256, (SELECT LENGTH(b.bytes) FROM library_publish_blobs b \
-         WHERE b.sha256 = r.sha256) FROM (SELECT DISTINCT sha256 FROM library_publish_blob_refs \
+         WHERE b.sha256 = r.sha256) AS size FROM (SELECT DISTINCT sha256 FROM library_publish_blob_refs \
          WHERE owner_kind IN ('baseline', 'v2_baseline')) r";
     pub(super) PUBLISH_BASELINE_COUNT = "SELECT COUNT(*) FROM library_publish_baselines";
     pub(super) OLD_BASELINE_COUNT = "SELECT COUNT(*) FROM library_management_baselines b WHERE NOT EXISTS \
@@ -156,8 +161,8 @@ droppedneedle_kernel::sql! {
          WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention')";
     pub(super) ACTIVE_BASELINE_RESTORE_COUNT = "SELECT COUNT(*) FROM library_management_job_snapshots s \
          JOIN library_operation_jobs j ON j.id = s.job_id \
-         WHERE s.mode = 'baseline_restore' AND j.state IN ('queued', 'running', 'paused', 'ready') \
-         AND (j.state <> 'ready' OR COALESCE(s.preview_expires_at, 0) > CAST(strftime('%s', 'now') AS INTEGER) * 1000)";
+         WHERE s.mode = ?1 AND j.state IN (?2, ?3, ?4, ?5) \
+         AND (j.state <> ?5 OR COALESCE(s.preview_expires_at, 0) > CAST(strftime('%s', 'now') AS INTEGER) * 1000)";
     pub(super) TRACKS = "SELECT id, root_id, relative_path, title, artist_name, album_title, track_number, \
          disc_number, file_format, bit_rate, sample_rate, bit_depth FROM local_tracks \
          WHERE local_album_id = ?1 AND availability = 'indexed' \
@@ -185,7 +190,8 @@ droppedneedle_kernel::sql! {
          ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)";
     pub(super) FINISH_PLANNING = "UPDATE library_management_job_snapshots SET phase = ?4, summary_json = ?2, \
          updated_at = ?3, row_revision = row_revision + 1 WHERE job_id = ?1";
-    pub(super) WRITABLE_BUNDLES = "SELECT bundle_ordinal, MIN(local_album_id), COALESCE(MIN(expected_album_revision), 1) \
+    pub(super) WRITABLE_BUNDLES = "SELECT bundle_ordinal, MIN(local_album_id) AS local_album_id, \
+         COALESCE(MIN(expected_album_revision), 1) AS album_revision \
          FROM library_management_plan_items WHERE job_id = ?1 \
          GROUP BY bundle_ordinal \
          HAVING SUM(eligibility NOT IN ('eligible', 'warning')) = 0 \
@@ -263,8 +269,8 @@ droppedneedle_kernel::sql! {
          WHERE s.local_track_id = ?1";
     pub(super) EDIT_OVERRIDE_REVISIONS = "SELECT json_extract(result_json, '$.override_revisions') FROM library_operation_work \
              WHERE job_id = ?1 AND ordinal = ?2";
-    pub(super) TRACK_TO_EDIT = "SELECT t.id, t.local_album_id, t.root_id, t.relative_path, t.row_revision, \
-                 a.row_revision FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
+    pub(super) TRACK_TO_EDIT = "SELECT t.id AS track_id, t.local_album_id AS album_id, t.root_id, t.relative_path, \
+                 t.row_revision AS track_revision, a.row_revision AS album_revision FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
                  WHERE t.id = ?1 AND t.availability = 'indexed'";
     pub(super) SAVED_OVERRIDES = "SELECT subject_kind, field_name, id, mode, row_revision \
                  FROM library_management_overrides \
@@ -334,13 +340,13 @@ droppedneedle_kernel::sql! {
                  written_sha256 = excluded.written_sha256";
     pub(super) CLEAR_RETAG_FOLLOWED = "UPDATE library_management_automatic_queue SET retag_followed_at = NULL \
              WHERE local_album_id = ?1";
-    pub(super) TAKEOVER_COUNTS = "SELECT COALESCE(SUM(handed_back_at IS NULL), 0), \
-         COALESCE(SUM(handed_back_at IS NOT NULL), 0) FROM library_album_takeovers";
+    pub(super) TAKEOVER_COUNTS = "SELECT COALESCE(SUM(handed_back_at IS NULL), 0) AS total, \
+         COALESCE(SUM(handed_back_at IS NOT NULL), 0) AS handing_back FROM library_album_takeovers";
     pub(super) WAITING_TAKEOVERS = "SELECT k.local_album_id, a.title, a.album_artist_name, k.cause, k.noticed_at, \
          EXISTS(SELECT 1 FROM library_catalog_actions c \
            WHERE c.local_album_id = k.local_album_id \
            AND c.action_kind = 'management_hand_back_given_up' \
-           AND c.created_at >= k.noticed_at) \
+           AND c.created_at >= k.noticed_at) AS hand_back_given_up \
          FROM library_album_takeovers k JOIN local_albums a ON a.id = k.local_album_id \
          WHERE k.handed_back_at IS NULL \
          ORDER BY k.noticed_at DESC, k.local_album_id LIMIT ?1";
@@ -354,7 +360,7 @@ droppedneedle_kernel::sql! {
      expected_album_revision, expected_root_id, expected_relative_path, destination_root_id, \
      destination_relative_path, eligibility, estimated_temporary_bytes, expected_file_fingerprint, \
      desired_document_json, diff_json, capability_json, reason_code";
-    pub(super) TRACK_ALBUMS = "SELECT a.id, a.row_revision, t.id FROM local_tracks t \
+    pub(super) TRACK_ALBUMS = "SELECT a.id AS album_id, a.row_revision AS album_revision, t.id AS track_id FROM local_tracks t \
          JOIN local_albums a ON a.id = t.local_album_id \
          WHERE t.id IN (SELECT value FROM json_each(?1)) AND t.availability = 'indexed' \
          " + ALBUM_ORDER + ", t.disc_number, t.track_number, t.relative_path";
@@ -408,8 +414,8 @@ droppedneedle_kernel::sql! {
     pub(super) OPEN_BUNDLE_COUNT = "SELECT COUNT(DISTINCT bundle_id) FROM library_publish_journal WHERE " + JOURNAL_OPEN;
     pub(super) ATTENTION_JOURNAL_COUNT = "SELECT COUNT(*) FROM library_publish_journal WHERE " + JOURNAL_NEEDS_ATTENTION;
     /// The bundles that need an administrator, at most `?1`.
-    pub(super) ATTENTION_BUNDLES = "SELECT bundle_id, COUNT(*), GROUP_CONCAT(dest_rel, char(10)), \
-                 GROUP_CONCAT(source_rel, char(10)) \
+    pub(super) ATTENTION_BUNDLES = "SELECT bundle_id, COUNT(*) AS file_count, GROUP_CONCAT(dest_rel, char(10)) AS sample_paths, \
+                 GROUP_CONCAT(source_rel, char(10)) AS source_paths \
                  FROM library_publish_journal WHERE " + JOURNAL_NEEDS_ATTENTION + " \
                  GROUP BY bundle_id ORDER BY bundle_id LIMIT ?1";
     /// Drop one field's kept value on a subject.
@@ -422,6 +428,229 @@ droppedneedle_kernel::sql! {
     family RESTORE_OVERRIDE = restore_override;
     /// Add back a kept value a tag edit dropped.
     family READD_OVERRIDE = readd_override;
+    /// One album's work outcome.
+    pub(super) row WorkOutcome for [WORK_RESULT] {
+        state: WorkState,
+        failure_code: Option<String>,
+        result_json: Option<String>,
+        bundle_id: Option<String>,
+    }
+    pub(super) row AutomaticDueRow for [AUTOMATIC_DUE] {
+        local_album_id: String,
+        attempts: i64,
+    }
+    pub(super) row AppliedBundle for [APPLIED_BUNDLES] {
+        ordinal: i64,
+        bundle_id: String,
+    }
+    pub(super) row UndoCountsRow for [UNDO_COUNTS] {
+        available: i64,
+        expired: i64,
+        first_expiry_day: Option<i64>,
+    }
+    pub(super) row AlbumFile for [ALBUM_FILES] {
+        id: String,
+        root_id: String,
+        relative_path: String,
+        ingest_source: String,
+        stat_revision: String,
+    }
+    pub(super) row SkippedRow for [AUTOMATIC_SKIPPED] {
+        local_album_id: String,
+        title: String,
+        album_artist_name: Option<String>,
+        reason_code: String,
+        attempts: i64,
+        queued_at: Millis,
+    }
+    pub(super) row CustomManifest for [ACTIVE_CUSTOM_EDITION] {
+        id: String,
+        release_group_mbid: String,
+        album_title: String,
+        album_artist_name: String,
+        artist_mbid: Option<String>,
+        album_metadata_json: String,
+    }
+    pub(super) row CustomTrack for [CUSTOM_EDITION_TRACKS] {
+        local_track_id: String,
+        title: String,
+        artist_name: String,
+        artist_mbid: Option<String>,
+        disc_number: i64,
+        track_number: i64,
+        duration_seconds: Option<f64>,
+        metadata_json: String,
+        recording_mbid: Option<String>,
+    }
+    pub(super) row TrackPath for [ALBUM_TRACK_PATHS] {
+        root_id: String,
+        relative_path: String,
+    }
+    pub(super) row MatchGate for [MATCH_GATE] {
+        state: String,
+        reason_code: String,
+    }
+    pub(super) row OverrideRow for [OVERRIDES] {
+        id: String,
+        row_revision: i64,
+        field_name: String,
+        mode: String,
+        value_json: String,
+    }
+    pub(super) row JournalStateCount for [JOURNAL_COUNTS_BY_STATE] {
+        state: String,
+        total: i64,
+    }
+    pub(super) row BundleResolution for [BUNDLE_RESOLUTION] {
+        verified_files: i64,
+        as_before_files: i64,
+        empty_files: i64,
+    }
+    pub(super) row BaselinePurge for [PURGE_OF_IDEMPOTENCY_KEY] {
+        impact_token: String,
+        purged_baseline_count: i64,
+        detached_reference_count: i64,
+    }
+    pub(super) row BlobSize for [BASELINE_BLOB_SIZES] {
+        sha256: String,
+        size: Option<i64>,
+    }
+    pub(super) row TrackRow for [TRACKS] {
+        id: String,
+        root_id: String,
+        relative_path: String,
+        title: String,
+        artist_name: Option<String>,
+        album_title: String,
+        track_number: i64,
+        disc_number: i64,
+        file_format: String,
+        bit_rate: Option<i64>,
+        sample_rate: Option<i64>,
+        bit_depth: Option<i64>,
+    }
+    pub(super) row WritableBundle for [WRITABLE_BUNDLES] {
+        bundle_ordinal: i64,
+        local_album_id: String,
+        album_revision: i64,
+    }
+    pub(super) row RefreshJobs for [REFRESH_JOBS] {
+        jellyfin_refresh_job_id: Option<i64>,
+        plex_refresh_job_id: Option<i64>,
+        navidrome_refresh_job_id: Option<i64>,
+    }
+    pub(super) row LiveUndo for [LIVE_UNDOS] {
+        state: OperationState,
+        phase: ManagementPhase,
+    }
+    pub(super) row TrackStateRow for [TRACK_STATE] {
+        applied_profile_id: Option<String>,
+        applied_profile_revision: Option<String>,
+        applied_naming_script_revision: Option<String>,
+        applied_override_revision: Option<String>,
+        managed_root_id: Option<String>,
+        last_outcome: Option<String>,
+        last_managed_at: Option<Millis>,
+        applied_album_identity_revision: Option<i64>,
+        applied_track_identity_revision: Option<i64>,
+        managed_path_revision: Option<String>,
+    }
+    pub(super) row EditSubject for [TRACK_TO_EDIT] {
+        track_id: String,
+        album_id: String,
+        root_id: String,
+        relative_path: String,
+        track_revision: i64,
+        album_revision: i64,
+    }
+    pub(super) row SavedOverride for [SAVED_OVERRIDES] {
+        subject_kind: String,
+        field_name: String,
+        id: String,
+        mode: OverrideMode,
+        row_revision: i64,
+    }
+    pub(super) row StateRevision for [STATE_REVISIONS] {
+        local_track_id: String,
+        row_revision: i64,
+    }
+    pub(super) row TrackPlace for [ALBUM_INDEXED_TRACK_PLACES] {
+        id: String,
+        root_id: String,
+        relative_path: String,
+    }
+    pub(super) row TakeoverCounts for [TAKEOVER_COUNTS] {
+        total: i64,
+        handing_back: i64,
+    }
+    pub(super) row WaitingTakeover for [WAITING_TAKEOVERS] {
+        local_album_id: String,
+        title: String,
+        album_artist_name: Option<String>,
+        cause: Cause,
+        noticed_at: i64,
+        hand_back_given_up: bool,
+    }
+    pub(super) row TrackAlbum for [TRACK_ALBUMS] {
+        album_id: String,
+        album_revision: i64,
+        track_id: String,
+    }
+    pub(super) row SnapshotRow for [SNAPSHOT, HISTORY] {
+        mode: String,
+        origin: String,
+        phase: ManagementPhase,
+        selection_json: String,
+        profile_revision: String,
+        settings_revision: String,
+        naming_revision: String,
+        policy_revision: String,
+        catalog_revision: i64,
+        profile_snapshot_json: String,
+        preview_created_at: Option<Millis>,
+        preview_expires_at: Option<Millis>,
+        target_root_id: Option<String>,
+        linked_operation_job_id: Option<String>,
+        intent_json: String,
+        summary_json: String,
+        idempotency_key: Option<String>,
+        lease_expires_at: Option<Millis>,
+        heartbeat_at: Option<Millis>,
+        id: String,
+        proposed_settings_revision: Option<String>,
+    }
+    pub(super) row ItemRow for [ITEMS_PAGE, BUNDLE_ITEMS] {
+        ordinal: i64,
+        bundle_ordinal: i64,
+        local_album_id: Option<String>,
+        local_track_id: Option<String>,
+        expected_album_revision: Option<i64>,
+        expected_root_id: String,
+        expected_relative_path: String,
+        destination_root_id: Option<String>,
+        destination_relative_path: Option<String>,
+        eligibility: Eligibility,
+        estimated_temporary_bytes: i64,
+        expected_file_fingerprint: String,
+        desired_document_json: String,
+        diff_json: String,
+        capability_json: String,
+        reason_code: Option<String>,
+    }
+    pub(super) row AttentionBundleRow for [ATTENTION_BUNDLES] {
+        bundle_id: String,
+        file_count: i64,
+        sample_paths: Option<String>,
+        source_paths: Option<String>,
+    }
+    pub(super) row AlbumScopeRow for [ALBUMS_OF_ROOTS, ALBUMS_OF_IDS, ALBUMS_OF_ARTISTS] {
+        id: String,
+        row_revision: i64,
+    }
+    pub(super) row FilteredAlbum for family [filtered_albums] {
+        id: String,
+        row_revision: i64,
+    }
 }
 
 pub(super) fn filtered_albums(album_artist_only: bool) -> String {

@@ -19,7 +19,11 @@ use super::models::{
     Revisions, Summary,
 };
 use super::reasons::{self, ItemReason};
-use super::sql;
+use super::sql::{
+    self, AppliedBundle, ItemRow, LiveUndo, RefreshJobs, SnapshotRow, TrackStateRow, UndoCountsRow,
+    WorkOutcome, WritableBundle,
+};
+use crate::clock::at_secs;
 use crate::jobs::{
     self, ManagementPhase, NewJob as NewJobRow, NewWork, OperationJob, OperationKind,
     OperationState, WorkState,
@@ -86,32 +90,32 @@ impl Snapshot {
 }
 
 fn map_snapshot(conn: &Connection, row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Snapshot>> {
-    let job_id: String = row.get(19)?;
-    let Some(job) = jobs::job(conn, &job_id)? else {
+    let row = SnapshotRow::read(row)?;
+    let Some(job) = jobs::job(conn, &row.id)? else {
         return Ok(None);
     };
     Ok(Some(Snapshot {
         job,
-        mode: row.get(0)?,
-        origin: row.get(1)?,
-        phase: row.get(2)?,
-        selection_json: row.get(3)?,
-        profile_revision: row.get(4)?,
-        settings_revision: row.get(5)?,
-        naming_revision: row.get(6)?,
-        policy_revision: row.get(7)?,
-        catalog_revision: row.get(8)?,
-        profile_snapshot_json: row.get(9)?,
-        preview_created_at: crate::clock::opt_secs_at(row, 10)?,
-        preview_expires_at: crate::clock::opt_secs_at(row, 11)?,
-        target_root_id: row.get(12)?,
-        linked_job_id: row.get(13)?,
-        intent_json: row.get(14)?,
-        summary_json: row.get(15)?,
-        idempotency_key: row.get(16)?,
-        lease_expires_at: crate::clock::opt_secs_at(row, 17)?,
-        heartbeat_at: crate::clock::opt_secs_at(row, 18)?,
-        proposed_settings_revision: row.get(20)?,
+        mode: row.mode,
+        origin: row.origin,
+        phase: row.phase,
+        selection_json: row.selection_json,
+        profile_revision: row.profile_revision,
+        settings_revision: row.settings_revision,
+        naming_revision: row.naming_revision,
+        policy_revision: row.policy_revision,
+        catalog_revision: row.catalog_revision,
+        profile_snapshot_json: row.profile_snapshot_json,
+        preview_created_at: row.preview_created_at.map(at_secs),
+        preview_expires_at: row.preview_expires_at.map(at_secs),
+        target_root_id: row.target_root_id,
+        linked_job_id: row.linked_operation_job_id,
+        intent_json: row.intent_json,
+        summary_json: row.summary_json,
+        idempotency_key: row.idempotency_key,
+        lease_expires_at: row.lease_expires_at.map(at_secs),
+        heartbeat_at: row.heartbeat_at.map(at_secs),
+        proposed_settings_revision: row.proposed_settings_revision,
     }))
 }
 
@@ -297,13 +301,13 @@ pub fn finish_planning(
 }
 
 fn map_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<PlannedItem> {
-    let parse_or_default = |index: usize| -> rusqlite::Result<String> { row.get(index) };
-    let desired: DesiredDocument = serde_json::from_str(&parse_or_default(12)?).unwrap_or_default();
-    let diff: ItemDiff = serde_json::from_str(&parse_or_default(13)?).unwrap_or_default();
-    let mut facts: ItemFacts = serde_json::from_str(&parse_or_default(14)?).unwrap_or_default();
-    let reason_code: Option<String> = row.get(15)?;
+    let row = ItemRow::read(row)?;
+    let desired: DesiredDocument =
+        serde_json::from_str(&row.desired_document_json).unwrap_or_default();
+    let diff: ItemDiff = serde_json::from_str(&row.diff_json).unwrap_or_default();
+    let mut facts: ItemFacts = serde_json::from_str(&row.capability_json).unwrap_or_default();
     if facts.reason.is_none()
-        && let Some(code) = reason_code
+        && let Some(code) = row.reason_code
     {
         // v2 rows carry only the code; the pages label it.
         facts.reason = Some(ItemReason {
@@ -313,18 +317,18 @@ fn map_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<PlannedItem> {
         });
     }
     Ok(PlannedItem {
-        ordinal: row.get(0)?,
-        bundle_ordinal: row.get(1)?,
-        album_id: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-        album_revision: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
-        track_id: row.get(3)?,
-        source_root: row.get(5)?,
-        source_rel: row.get(6)?,
-        dest_root: row.get(7)?,
-        dest_rel: row.get(8)?,
-        eligibility: Eligibility::parse(&row.get::<_, String>(9)?),
-        estimated_bytes: u64::try_from(row.get::<_, i64>(10)?).unwrap_or(0),
-        fingerprint: row.get(11)?,
+        ordinal: row.ordinal,
+        bundle_ordinal: row.bundle_ordinal,
+        album_id: row.local_album_id.unwrap_or_default(),
+        album_revision: row.expected_album_revision.unwrap_or(0),
+        track_id: row.local_track_id,
+        source_root: row.expected_root_id,
+        source_rel: row.expected_relative_path,
+        dest_root: row.destination_root_id,
+        dest_rel: row.destination_relative_path,
+        eligibility: row.eligibility,
+        estimated_bytes: u64::try_from(row.estimated_temporary_bytes).unwrap_or(0),
+        fingerprint: row.expected_file_fingerprint,
         desired,
         diff,
         facts,
@@ -387,10 +391,9 @@ pub fn writable_bundles(
     job_id: &str,
 ) -> rusqlite::Result<Vec<(i64, String, i64)>> {
     let mut statement = conn.prepare(crate::management::sql::WRITABLE_BUNDLES.text())?;
-    let rows = statement.query_map(params![job_id], |row| {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-    })?;
-    rows.collect()
+    let rows = statement.query_map(params![job_id], WritableBundle::read)?;
+    rows.map(|row| row.map(|row| (row.bundle_ordinal, row.local_album_id, row.album_revision)))
+        .collect()
 }
 
 /// Turn a ready preview into queued apply work, one row per album.
@@ -514,13 +517,20 @@ pub fn refresh_jobs(
     conn: &Connection,
     job_id: &str,
 ) -> rusqlite::Result<Vec<(RefreshTarget, i64)>> {
-    let ids: Option<[Option<i64>; 3]> = conn
+    let ids = conn
         .query_row(
             crate::management::sql::REFRESH_JOBS.text(),
             params![job_id],
-            |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]),
+            RefreshJobs::read,
         )
-        .optional()?;
+        .optional()?
+        .map(|row| {
+            [
+                row.jellyfin_refresh_job_id,
+                row.plex_refresh_job_id,
+                row.navidrome_refresh_job_id,
+            ]
+        });
     let targets = [
         RefreshTarget::Jellyfin,
         RefreshTarget::Plex,
@@ -594,9 +604,6 @@ pub fn discard(
     jobs::discard_preview(tx, job_id, expected_revision, now)
 }
 
-/// One album's work row: state, failure code, result and bundle id.
-type WorkRow = (WorkState, Option<String>, Option<String>, Option<String>);
-
 /// Result rows of an applied job, with each album's work outcome.
 pub fn results(
     conn: &Connection,
@@ -608,14 +615,17 @@ pub fn results(
     let mut work = conn.prepare_cached(sql::WORK_RESULT.text())?;
     let mut items = Vec::with_capacity(page.items.len());
     for plan in page.items {
-        let row: Option<WorkRow> = work
-            .query_row(params![job_id, plan.bundle_ordinal], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })
+        let row = work
+            .query_row(params![job_id, plan.bundle_ordinal], WorkOutcome::read)
             .optional()?;
         let (work_state, failure, result) = match row {
-            Some((state, code, result, bundle_id)) => {
-                let mut result: serde_json::Value = result
+            Some(WorkOutcome {
+                state,
+                failure_code: code,
+                result_json,
+                bundle_id,
+            }) => {
+                let mut result: serde_json::Value = result_json
                     .as_deref()
                     .and_then(|text| serde_json::from_str(text).ok())
                     .unwrap_or(serde_json::Value::Null);
@@ -700,9 +710,10 @@ pub fn live_undos(
             ManagementPhase::Planning,
             ManagementPhase::Ready,
         ],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        LiveUndo::read,
     )?;
-    rows.collect()
+    rows.map(|row| row.map(|row| (row.state, row.phase)))
+        .collect()
 }
 
 /// Albums of `job_id` an earlier undo already put back (bundle ordinals).
@@ -720,10 +731,9 @@ pub fn undone_ordinals(
 /// crash, then a stop) counts too: its bundle committed.
 pub fn applied_bundles(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<(i64, String)>> {
     let mut statement = conn.prepare(sql::APPLIED_BUNDLES.text())?;
-    let rows = statement.query_map(params![job_id, WorkState::Succeeded], |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    })?;
-    rows.collect()
+    let rows = statement.query_map(params![job_id, WorkState::Succeeded], AppliedBundle::read)?;
+    rows.map(|row| row.map(|row| (row.ordinal, row.bundle_id)))
+        .collect()
 }
 
 /// How much of a job's apply can still be undone.
@@ -742,14 +752,13 @@ pub fn undo_counts(conn: &Connection, job_id: &str, today: i64) -> rusqlite::Res
     conn.query_row(
         sql::UNDO_COUNTS.text(),
         params![job_id, today * crate::clock::DAY_MS, WorkState::Succeeded],
-        |row| {
-            Ok(UndoCounts {
-                available: row.get(0)?,
-                expired: row.get(1)?,
-                first_expiry_day: row.get(2)?,
-            })
-        },
+        UndoCountsRow::read,
     )
+    .map(|row| UndoCounts {
+        available: row.available,
+        expired: row.expired,
+        first_expiry_day: row.first_expiry_day,
+    })
 }
 
 /// Files of a job with a saved original a baseline restore could use.
@@ -909,26 +918,40 @@ pub struct TrackState {
     pub path_revision: Option<String>,
 }
 
+impl TrackState {
+    /// The last run wrote this file. `last_outcome` has no closed set: the
+    /// publisher keeps other text there too, so it stays text.
+    pub fn last_run_succeeded(&self) -> bool {
+        self.outcome.as_deref() == Some("succeeded")
+    }
+
+    /// A baseline restore put this file back last.
+    pub fn restored(&self) -> bool {
+        self.outcome.as_deref() == Some("restored")
+    }
+}
+
 pub fn track_state(conn: &Connection, track_id: &str) -> rusqlite::Result<Option<TrackState>> {
     conn.query_row(
         crate::management::sql::TRACK_STATE.text(),
         params![track_id],
-        |row| {
-            Ok(TrackState {
-                profile_id: row.get(0)?,
-                profile_revision: row.get(1)?,
-                naming_revision: row.get(2)?,
-                override_revision: row.get(3)?,
-                root_id: row.get(4)?,
-                outcome: row.get(5)?,
-                managed_at: crate::clock::opt_secs_at(row, 6)?,
-                album_identity_revision: row.get(7)?,
-                track_identity_revision: row.get(8)?,
-                path_revision: row.get(9)?,
-            })
-        },
+        TrackStateRow::read,
     )
     .optional()
+    .map(|row| {
+        row.map(|row| TrackState {
+            profile_id: row.applied_profile_id,
+            profile_revision: row.applied_profile_revision,
+            naming_revision: row.applied_naming_script_revision,
+            override_revision: row.applied_override_revision,
+            root_id: row.managed_root_id,
+            outcome: row.last_outcome,
+            managed_at: row.last_managed_at.map(at_secs),
+            album_identity_revision: row.applied_album_identity_revision,
+            track_identity_revision: row.applied_track_identity_revision,
+            path_revision: row.managed_path_revision,
+        })
+    })
 }
 
 /// Save (or drop) the overrides a tag edit asked to keep. Safe to run

@@ -15,12 +15,26 @@ use super::sql::{
     ControlRow, FailedJob, FailureCount, JobTotals, OperationRow, StateCount, WaitingJob,
 };
 use crate::clock::at_secs;
+use crate::identify::models::JobState;
+use crate::jobs::{OperationKind, OperationState};
 
 /// Deferred jobs the activity card lists by name (v2 limit).
 const DEFERRED_JOB_LIMIT: i64 = 20;
 
 /// Stream rows the activity revisions always carry.
 const STREAMS: [&str; 3] = ["scan", "identification", "operation"];
+
+/// What the identification pause switch says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum QueueSwitch {
+    Running,
+    Paused,
+}
+
+crate::scan::models::spelled!(QueueSwitch {
+    Running => "running",
+    Paused => "paused",
+});
 
 /// The identification pause switch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +152,7 @@ pub fn identification_control(conn: &Connection) -> rusqlite::Result<Identificat
         .optional()?;
     Ok(match row {
         Some(row) => IdentificationControl {
-            paused: row.state == "paused",
+            paused: row.state == QueueSwitch::Paused,
             row_revision: row.row_revision.max(0) as u64,
         },
         None => IdentificationControl {
@@ -210,14 +224,13 @@ pub fn identification_snapshot(
         for row in stmt.query_map(params![now_ms], StateCount::read)? {
             let row = row?;
             let total = row.total.max(0) as u64;
-            match row.live_state.as_str() {
-                "queued" => snapshot.queued = total,
-                "running" => snapshot.running = total,
-                "deferred" => snapshot.backing_off = total,
-                "succeeded" => snapshot.succeeded = total,
-                "failed" => snapshot.failed = total,
-                "attention" => snapshot.attention = total,
-                _ => {}
+            match row.live_state {
+                JobState::Queued => snapshot.queued = total,
+                JobState::Running => snapshot.running = total,
+                JobState::Deferred => snapshot.backing_off = total,
+                JobState::Succeeded => snapshot.succeeded = total,
+                JobState::Failed => snapshot.failed = total,
+                JobState::Attention => snapshot.attention = total,
             }
         }
     }
@@ -289,13 +302,13 @@ pub fn identification_snapshot(
 #[derive(Debug, Clone, PartialEq)]
 pub struct OperationWork {
     pub id: String,
-    pub kind: String,
+    pub kind: OperationKind,
     /// A repair's purpose (`existing_matches`, `management_readiness`,
     /// `catalog_identity_hygiene`).
     pub purpose: Option<String>,
     /// A repair's phase: `dry_run` (checking) or `apply`.
     pub phase: Option<String>,
-    pub state: String,
+    pub state: OperationState,
     pub expected: u64,
     pub completed: u64,
     pub succeeded: u64,

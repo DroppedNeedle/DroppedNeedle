@@ -77,23 +77,24 @@ impl OperationJob {
 }
 
 fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<OperationJob> {
+    let row = sql::JobRow::read(row)?;
     Ok(OperationJob {
-        id: row.get(0)?,
-        kind: row.get(1)?,
-        state: row.get(2)?,
-        requested_by_user_id: row.get(3)?,
-        expected_work_count: row.get(4)?,
-        completed_count: row.get(5)?,
-        succeeded_count: row.get(6)?,
-        failed_count: row.get(7)?,
-        skipped_count: row.get(8)?,
-        control_request: row.get(9)?,
-        terminal_code: row.get(10)?,
-        reidentification_attempt_count: row.get(11)?,
-        row_revision: row.get(12)?,
-        event_revision: row.get(13)?,
-        created_at: crate::clock::secs_at(row, 14)?,
-        updated_at: crate::clock::secs_at(row, 15)?,
+        id: row.id,
+        kind: row.kind,
+        state: row.state,
+        requested_by_user_id: row.requested_by_user_id,
+        expected_work_count: row.expected_work_count,
+        completed_count: row.completed_count,
+        succeeded_count: row.succeeded_count,
+        failed_count: row.failed_count,
+        skipped_count: row.skipped_count,
+        control_request: row.control_request,
+        terminal_code: row.terminal_code,
+        reidentification_attempt_count: row.reidentification_attempt_count,
+        row_revision: row.row_revision,
+        event_revision: row.event_revision,
+        created_at: crate::clock::at_secs(row.created_at),
+        updated_at: crate::clock::at_secs(row.updated_at),
     })
 }
 
@@ -675,25 +676,25 @@ pub fn work_item(
     conn.prepare_cached(sql::WORK_ITEM.text())?
         .query_row(
             named_params! { ":job": job_id, ":ordinal": ordinal },
-            |row| {
-                Ok(WorkItem {
-                    local_album_id: row.get(0)?,
-                    expected_subject_revision: row.get(1)?,
-                    expected_input_revision: row.get(2)?,
-                    action: row.get(3)?,
-                    input: row.get(4)?,
-                })
-            },
+            sql::WorkItemRow::read,
         )
         .optional()
+        .map(|row| {
+            row.map(|row| WorkItem {
+                local_album_id: row.local_album_id,
+                expected_subject_revision: row.expected_subject_revision,
+                expected_input_revision: row.expected_input_revision,
+                action: row.action,
+                input: row.checkpoint_json,
+            })
+        })
 }
 
 /// A job's skipped work items counted by their failure code, most first.
 pub fn skipped_by_code(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<(String, i64)>> {
     conn.prepare_cached(sql::SKIPPED_BY_CODE.text())?
-        .query_map(named_params! { ":job": job_id }, |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
+        .query_map(named_params! { ":job": job_id }, sql::SkippedCount::read)?
+        .map(|row| row.map(|row| (row.failure_code, row.total)))
         .collect()
 }
 
@@ -775,10 +776,12 @@ pub fn work_of_bundle(
     bundle_id: &str,
 ) -> rusqlite::Result<Option<(String, i64)>> {
     conn.prepare_cached(sql::WORK_OF_BUNDLE.text())?
-        .query_row(named_params! { ":bundle": bundle_id }, |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
+        .query_row(
+            named_params! { ":bundle": bundle_id },
+            sql::BundleWork::read,
+        )
         .optional()
+        .map(|row| row.map(|row| (row.job_id, row.ordinal)))
 }
 
 #[cfg(test)]

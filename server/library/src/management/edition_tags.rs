@@ -123,7 +123,8 @@ struct Album {
 fn album(conn: &Connection, album_id: &str, release_mbid: &str) -> rusqlite::Result<Option<Album>> {
     let mut statement = conn.prepare(crate::management::sql::ALBUM_TRACK_PATHS.text())?;
     let files = statement
-        .query_map(params![album_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map(params![album_id], super::sql::TrackPath::read)?
+        .map(|row| row.map(|row| (row.root_id, row.relative_path)))
         .collect::<rusqlite::Result<Vec<(String, String)>>>()?;
     if files.is_empty() {
         return Ok(None);

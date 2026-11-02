@@ -2,6 +2,10 @@
 
 use droppedneedle_kernel::db::time::Millis;
 
+use super::store::QueueSwitch;
+use crate::identify::models::JobState;
+use crate::jobs::{OperationKind, OperationState};
+
 droppedneedle_kernel::sql! {
     pub(super) IDENTIFICATION_CONTROL = "SELECT state, row_revision FROM library_work_control \
              WHERE queue_kind = 'identification'";
@@ -72,11 +76,11 @@ droppedneedle_kernel::sql! {
     pub(super) CATALOG_REVISION = "SELECT COALESCE((SELECT value FROM library_catalog_revision \
              WHERE singleton = 1), 0)";
     pub(super) row ControlRow for [IDENTIFICATION_CONTROL] {
-        state: String,
+        state: QueueSwitch,
         row_revision: i64,
     }
     pub(super) row StateCount for [JOB_COUNTS_BY_LIVE_STATE] {
-        live_state: String,
+        live_state: JobState,
         total: i64,
     }
     pub(super) row JobTotals for [JOB_TOTALS] {
@@ -105,10 +109,10 @@ droppedneedle_kernel::sql! {
     }
     pub(super) row OperationRow for [OPERATION_WORK] {
         id: String,
-        kind: String,
+        kind: OperationKind,
         purpose: Option<String>,
         phase: Option<String>,
-        state: String,
+        state: OperationState,
         expected_work_count: i64,
         completed_count: i64,
         succeeded_count: i64,

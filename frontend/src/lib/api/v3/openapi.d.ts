@@ -22890,7 +22890,7 @@ export interface components {
             skipped_count: number;
             /** Format: double */
             started_at: number | null;
-            state: string;
+            state: components["schemas"]["ActivityState"];
             /** Format: int64 */
             subject_count: number | null;
             /** Format: int64 */

@@ -22,8 +22,12 @@ macro_rules! live_job {
 }
 pub(crate) use live_job;
 
+use droppedneedle_kernel::db::time::Millis;
+
+use super::states::{ControlRequest, OperationState};
+
 droppedneedle_kernel::sql! {
-    /// One job row; the column order [`super::map_job`] reads.
+    /// One job row, as [`JobRow`] reads it.
     pub(super) fragment JOB_ROW = "SELECT id, kind, state, requested_by_user_id, \
              expected_work_count, completed_count, succeeded_count, failed_count, skipped_count, \
              control_request, terminal_code, reidentification_attempt_count, row_revision, \
@@ -76,7 +80,7 @@ droppedneedle_kernel::sql! {
     pub(super) RUNNING_WORK = "SELECT ordinal FROM library_operation_work \
              WHERE job_id = :job AND state = 'running' ORDER BY ordinal LIMIT 1";
     /// A job's skipped work, counted by why.
-    pub(super) SKIPPED_BY_CODE = "SELECT COALESCE(failure_code, ''), COUNT(*) \
+    pub(super) SKIPPED_BY_CODE = "SELECT COALESCE(failure_code, '') AS failure_code, COUNT(*) AS total \
              FROM library_operation_work WHERE job_id = :job AND state = 'skipped' \
              GROUP BY failure_code ORDER BY COUNT(*) DESC, failure_code";
 
@@ -283,4 +287,38 @@ droppedneedle_kernel::sql! {
     /// The work item (job, ordinal) that wrote under a bundle.
     pub(super) WORK_OF_BUNDLE = "SELECT job_id, ordinal FROM library_operation_work \
              WHERE bundle_id = :bundle";
+
+    pub(super) row JobRow for [JOB_BY_ID, JOB_BY_ROWID, JOB_BY_KEY, HELD_JOB, RECENT_JOBS] {
+        id: String,
+        kind: String,
+        state: OperationState,
+        requested_by_user_id: Option<String>,
+        expected_work_count: i64,
+        completed_count: i64,
+        succeeded_count: i64,
+        failed_count: i64,
+        skipped_count: i64,
+        control_request: ControlRequest,
+        terminal_code: Option<String>,
+        reidentification_attempt_count: i64,
+        row_revision: i64,
+        event_revision: i64,
+        created_at: Millis,
+        updated_at: Millis,
+    }
+    pub(super) row WorkItemRow for [WORK_ITEM] {
+        local_album_id: Option<String>,
+        expected_subject_revision: i64,
+        expected_input_revision: String,
+        action: String,
+        checkpoint_json: Option<String>,
+    }
+    pub(super) row SkippedCount for [SKIPPED_BY_CODE] {
+        failure_code: String,
+        total: i64,
+    }
+    pub(super) row BundleWork for [WORK_OF_BUNDLE] {
+        job_id: String,
+        ordinal: i64,
+    }
 }

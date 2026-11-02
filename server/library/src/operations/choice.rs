@@ -151,15 +151,14 @@ fn placed_files(tx: &Transaction<'_>, placed: &[String]) -> rusqlite::Result<Vec
             .query_row(
                 crate::operations::sql::PLACED_FILES.text(),
                 params![track_id],
-                |row| {
-                    Ok(PlacedFile {
-                        local_track_id: track_id.clone(),
-                        root_id: row.get(0)?,
-                        relative_path: row.get(1)?,
-                    })
-                },
+                super::sql::PlacedFileRow::read,
             )
-            .optional()?;
+            .optional()?
+            .map(|row| PlacedFile {
+                local_track_id: track_id.clone(),
+                root_id: row.root_id,
+                relative_path: row.relative_path,
+            });
         out.extend(file);
     }
     Ok(out)

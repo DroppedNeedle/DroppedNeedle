@@ -64961,7 +64961,7 @@
             "format": "double"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/ActivityState"
           },
           "subject_count": {
             "type": [

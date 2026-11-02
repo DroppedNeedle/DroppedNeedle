@@ -292,25 +292,14 @@ pub enum Eligibility {
     Stale,
 }
 
+crate::scan::models::spelled!(Eligibility {
+    Eligible => "eligible",
+    Warning => "warning",
+    Blocked => "blocked",
+    Stale => "stale",
+});
+
 impl Eligibility {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Eligible => "eligible",
-            Self::Warning => "warning",
-            Self::Blocked => "blocked",
-            Self::Stale => "stale",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Self {
-        match raw {
-            "eligible" => Self::Eligible,
-            "warning" => Self::Warning,
-            "stale" => Self::Stale,
-            _ => Self::Blocked,
-        }
-    }
-
     pub fn writes(self) -> bool {
         matches!(self, Self::Eligible | Self::Warning)
     }

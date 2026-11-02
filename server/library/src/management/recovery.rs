@@ -14,6 +14,7 @@ use rusqlite::{OptionalExtension as _, params};
 
 use super::models::ManagementError;
 use super::service::Management;
+use super::sql::{AttentionBundleRow, BundleResolution, JournalStateCount};
 use crate::publish::journal::{FileJournal, JournalKind, JournalState, JournalStore};
 use crate::publish::paths::Sandbox;
 use crate::publish::recovery::Leftover;
@@ -69,17 +70,18 @@ const ATTENTION_LIST_MAX: i64 = 100;
 const RETRYING_AFTER_MS: i64 = 24 * 60 * 60 * 1000;
 
 fn attention_bundle(row: &rusqlite::Row<'_>) -> rusqlite::Result<AttentionBundle> {
+    let row = AttentionBundleRow::read(row)?;
     Ok(AttentionBundle {
-        bundle_id: row.get(0)?,
-        file_count: row.get(1)?,
+        bundle_id: row.bundle_id,
+        file_count: row.file_count,
         sample_paths: row
-            .get::<_, Option<String>>(2)?
+            .sample_paths
             .unwrap_or_default()
             .lines()
             .take(5)
             .map(str::to_owned)
             .collect(),
-        source_folders: source_folders(row.get::<_, Option<String>>(3)?.as_deref()),
+        source_folders: source_folders(row.source_paths.as_deref()),
     })
 }
 
@@ -169,9 +171,9 @@ impl Management {
                     .map(|ms| ms as f64 / 1000.0);
                 let mut states =
                     conn.prepare(crate::management::sql::JOURNAL_COUNTS_BY_STATE.text())?;
-                for row in states.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))? {
-                    let (state, count): (String, i64) = row?;
-                    diagnostics.state_counts.insert(state, count);
+                for row in states.query_map([], JournalStateCount::read)? {
+                    let row = row?;
+                    diagnostics.state_counts.insert(row.state, row.total);
                 }
                 let mut bundles = conn.prepare(crate::management::sql::ATTENTION_BUNDLES.text())?;
                 for row in bundles.query_map(params![ATTENTION_LIST_MAX], attention_bundle)? {
@@ -214,26 +216,26 @@ impl Management {
                 "This write is not in the journal.",
             ));
         }
-        let earlier: Option<(i64, i64, i64)> =
-            self.parts
-                .db
-                .read_blocking("management.resolution", |conn| {
-                    Ok::<_, ManagementError>(
-                        conn.query_row(
-                            crate::management::sql::BUNDLE_RESOLUTION.text(),
-                            params![bundle_id],
-                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                        )
-                        .optional()?,
+        let earlier = self
+            .parts
+            .db
+            .read_blocking("management.resolution", |conn| {
+                Ok::<_, ManagementError>(
+                    conn.query_row(
+                        crate::management::sql::BUNDLE_RESOLUTION.text(),
+                        params![bundle_id],
+                        BundleResolution::read,
                     )
-                })?;
-        if let Some((verified, as_before, empty)) = earlier {
+                    .optional()?,
+                )
+            })?;
+        if let Some(earlier) = earlier {
             return Ok(Resolved {
                 bundle_id: bundle_id.to_owned(),
                 state: "resolved".to_owned(),
-                verified_files: verified,
-                total_files: verified,
-                note: resolved_note(as_before, empty),
+                verified_files: earlier.verified_files,
+                total_files: earlier.verified_files,
+                note: resolved_note(earlier.as_before_files, earlier.empty_files),
             });
         }
         let pending: Vec<&FileJournal> = journals

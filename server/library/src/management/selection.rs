@@ -9,6 +9,7 @@
 use rusqlite::{Connection, params};
 
 use super::models::{CatalogFilter, MAX_SELECTION_IDS, ManagementError, Selection, SelectionKind};
+use super::sql::{AlbumScopeRow, FilteredAlbum, TrackAlbum, TrackRow};
 
 /// One album in scope and, for a track selection, the files picked in it.
 #[derive(Debug, Clone)]
@@ -74,14 +75,15 @@ pub fn albums(
     let ids = ids_json(&selection.ids);
     let whole = |sql: &str, param: &str| -> rusqlite::Result<Vec<AlbumScope>> {
         let mut statement = conn.prepare(sql)?;
-        let rows = statement.query_map([param], |row| {
-            Ok(AlbumScope {
-                album_id: row.get(0)?,
-                album_revision: row.get(1)?,
+        let rows = statement.query_map([param], AlbumScopeRow::read)?;
+        rows.map(|row| {
+            row.map(|row| AlbumScope {
+                album_id: row.id,
+                album_revision: row.row_revision,
                 track_ids: None,
             })
-        })?;
-        rows.collect()
+        })
+        .collect()
     };
     let scopes = match selection.kind {
         SelectionKind::Roots => whole(crate::management::sql::ALBUMS_OF_ROOTS.text(), &ids)?,
@@ -95,16 +97,14 @@ pub fn albums(
 
 fn track_albums(conn: &Connection, ids: &str) -> rusqlite::Result<Vec<AlbumScope>> {
     let mut statement = conn.prepare(crate::management::sql::TRACK_ALBUMS.text())?;
-    let rows = statement.query_map([ids], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    })?;
+    let rows = statement.query_map([ids], TrackAlbum::read)?;
     let mut scopes: Vec<AlbumScope> = Vec::new();
     for row in rows {
-        let (album_id, album_revision, track_id) = row?;
+        let TrackAlbum {
+            album_id,
+            album_revision,
+            track_id,
+        } = row?;
         match scopes.last_mut() {
             Some(scope) if scope.album_id == album_id => {
                 scope.track_ids.get_or_insert_with(Vec::new).push(track_id);
@@ -142,37 +142,40 @@ fn filtered(
     ))?;
     let rows = statement.query_map(
         params![search, genre, filter.from_year, filter.to_year, artists],
-        |row| {
-            Ok(AlbumScope {
-                album_id: row.get(0)?,
-                album_revision: row.get(1)?,
-                track_ids: None,
-            })
-        },
+        FilteredAlbum::read,
     )?;
-    rows.collect()
+    rows.map(|row| {
+        row.map(|row| AlbumScope {
+            album_id: row.id,
+            album_revision: row.row_revision,
+            track_ids: None,
+        })
+    })
+    .collect()
 }
 
 /// The indexed files of one album in scope, in disc and track order.
 pub fn tracks(conn: &Connection, scope: &AlbumScope) -> Result<Vec<CatalogTrack>, ManagementError> {
     let mut statement = conn.prepare_cached(crate::management::sql::TRACKS.text())?;
-    let rows = statement.query_map([&scope.album_id], |row| {
-        Ok(CatalogTrack {
-            id: row.get(0)?,
-            root_id: row.get(1)?,
-            relative_path: row.get(2)?,
-            title: row.get(3)?,
-            artist_name: row.get(4)?,
-            album_title: row.get(5)?,
-            track_number: row.get(6)?,
-            disc_number: row.get(7)?,
-            file_format: row.get(8)?,
-            bit_rate: row.get(9)?,
-            sample_rate: row.get(10)?,
-            bit_depth: row.get(11)?,
+    let rows = statement.query_map([&scope.album_id], TrackRow::read)?;
+    let mut tracks = rows
+        .map(|row| {
+            row.map(|row| CatalogTrack {
+                id: row.id,
+                root_id: row.root_id,
+                relative_path: row.relative_path,
+                title: row.title,
+                artist_name: row.artist_name,
+                album_title: row.album_title,
+                track_number: row.track_number,
+                disc_number: row.disc_number,
+                file_format: row.file_format,
+                bit_rate: row.bit_rate,
+                sample_rate: row.sample_rate,
+                bit_depth: row.bit_depth,
+            })
         })
-    })?;
-    let mut tracks = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     if let Some(picked) = &scope.track_ids {
         tracks.retain(|track| picked.contains(&track.id));
     }

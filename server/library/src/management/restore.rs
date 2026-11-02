@@ -15,8 +15,10 @@ use super::profile;
 use super::reasons::{self, ItemReason};
 use super::selection;
 use super::service::{JobSpec, Management, UNDO_COPY_MISSING, stale};
+use super::sql::{BaselinePurge, BlobSize};
 use super::store::Snapshot;
 use crate::clock::LibraryClock as _;
+use crate::jobs::OperationState;
 use crate::manage::BaselineSkip;
 use crate::publish::record::changed_since_written;
 use crate::publish::snapshots::sha256_hex;
@@ -383,24 +385,18 @@ impl Management {
                 .query_row(
                     crate::management::sql::PURGE_OF_IDEMPOTENCY_KEY.text(),
                     params![request.idempotency_key],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, i64>(1)?,
-                            row.get::<_, i64>(2)?,
-                        ))
-                    },
+                    BaselinePurge::read,
                 )
                 .optional()?;
-            if let Some((token, purged, detached)) = earlier {
-                if token != request.impact_token {
+            if let Some(earlier) = earlier {
+                if earlier.impact_token != request.impact_token {
                     return Err(stale(
                         "This request key was already used for another purge.",
                     ));
                 }
                 return Ok(PurgeOutcome {
-                    purged_baseline_count: purged,
-                    detached_reference_count: detached,
+                    purged_baseline_count: earlier.purged_baseline_count,
+                    detached_reference_count: earlier.detached_reference_count,
                     cleaned_blob_count: 0,
                     existing: true,
                 });
@@ -472,8 +468,9 @@ fn baseline_blob_sizes(
     conn: &rusqlite::Connection,
 ) -> rusqlite::Result<Vec<(String, Option<i64>)>> {
     let mut stmt = conn.prepare(crate::management::sql::BASELINE_BLOB_SIZES.text())?;
-    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-    rows.collect()
+    let rows = stmt.query_map([], BlobSize::read)?;
+    rows.map(|row| row.map(|row| (row.sha256, row.size)))
+        .collect()
 }
 
 /// Count what a purge would remove, and the token that proves it. The
@@ -485,7 +482,17 @@ fn purge_impact(conn: &rusqlite::Connection) -> rusqlite::Result<PurgeImpact> {
     let newest = count(crate::management::sql::NEWEST_BASELINE_AT.text())?;
     let blobs = count(crate::management::sql::BASELINE_BLOB_COUNT.text())?;
     let journals = count(crate::management::sql::OPEN_JOURNAL_COUNT.text())?;
-    let restores = count(crate::management::sql::ACTIVE_BASELINE_RESTORE_COUNT.text())?;
+    let restores = conn.query_row(
+        crate::management::sql::ACTIVE_BASELINE_RESTORE_COUNT.text(),
+        params![
+            JobMode::BaselineRestore.as_str(),
+            OperationState::Queued,
+            OperationState::Running,
+            OperationState::Paused,
+            OperationState::Ready,
+        ],
+        |row| row.get::<_, i64>(0),
+    )?;
     let baseline_count = v3 + v2;
     let material = format!("{baseline_count}:{newest}:{blobs}:{journals}:{restores}");
     Ok(PurgeImpact {

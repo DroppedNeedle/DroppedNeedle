@@ -12,6 +12,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::store::{DeferredJob, IdentificationSnapshot, OperationWork};
+use crate::jobs::{OperationKind, OperationState};
 use crate::scan::models::{Counter, Counters, ScanPhase, ScanRun, ScanState};
 
 /// A failed scan stays on the strip this long after it ended.
@@ -234,7 +235,7 @@ pub struct WorkItem {
     /// Run id, or a fixed id for queue-wide entries.
     pub id: String,
     pub kind: WorkKind,
-    pub state: String,
+    pub state: ActivityState,
     #[schema(required = true)]
     pub phase: Option<String>,
     #[schema(required = true)]
@@ -282,11 +283,11 @@ pub struct WorkItem {
 }
 
 impl WorkItem {
-    fn new(id: &str, kind: WorkKind, state: &str, unit: WorkUnit) -> Self {
+    fn new(id: &str, kind: WorkKind, state: ActivityState, unit: WorkUnit) -> Self {
         Self {
             id: id.to_owned(),
             kind,
-            state: state.to_owned(),
+            state,
             phase: None,
             mode: None,
             effect: WorkEffect::CatalogOnly,
@@ -380,7 +381,12 @@ fn failed_scan(run: &ScanRun, counters: &Counters) -> (ActivityItem, WorkItem) {
     item.started_at = run.started_at;
     item.failure_event_id = Some(run.id.clone());
     item.failure_at = Some(failure_at);
-    let mut work = WorkItem::new(&run.id, WorkKind::Scan, "failed", WorkUnit::Files);
+    let mut work = WorkItem::new(
+        &run.id,
+        WorkKind::Scan,
+        ActivityState::Failed,
+        WorkUnit::Files,
+    );
     work.phase = Some(run.state.phase().as_str().to_owned());
     work.effect = WorkEffect::Attention;
     work.processed = inspected;
@@ -413,19 +419,30 @@ fn identification_state(snapshot: &IdentificationSnapshot, failed_counts: bool) 
 /// One operation job on the work stack (v2's administrative work items):
 /// re-identifications, identity repairs and preparations, and cleanup.
 fn operation_item(job: &OperationWork) -> WorkItem {
-    let kind = match (job.kind.as_str(), job.purpose.as_deref()) {
-        ("explicit_reidentification", _) => WorkKind::Reidentification,
-        ("repair", Some("management_readiness")) => WorkKind::IdentityPreparation,
-        ("library_management", _) => WorkKind::LibraryManagement,
-        ("bulk_review_apply", _) => WorkKind::IdentityReview,
-        _ => WorkKind::Maintenance,
+    let kind = match (job.kind, job.purpose.as_deref()) {
+        (OperationKind::ExplicitReidentification, _) => WorkKind::Reidentification,
+        (OperationKind::Repair, Some("management_readiness")) => WorkKind::IdentityPreparation,
+        (OperationKind::LibraryManagement, _) => WorkKind::LibraryManagement,
+        (OperationKind::BulkReviewApply, _) => WorkKind::IdentityReview,
+        (OperationKind::Repair, _) => WorkKind::Maintenance,
     };
     // Play filing counts play rows; every other job here counts albums.
     let unit = match job.purpose.as_deref() {
         Some("play_history_filing") => WorkUnit::Items,
         _ => WorkUnit::Albums,
     };
-    let mut work = WorkItem::new(&job.id, kind, &job.state, unit);
+    // The list holds queued, running and paused jobs; the rest are spelled
+    // out so a new state cannot pass unnoticed.
+    let state = match job.state {
+        OperationState::Queued => ActivityState::Queued,
+        OperationState::Running => ActivityState::Running,
+        OperationState::Paused => ActivityState::Paused,
+        OperationState::Ready => ActivityState::Idle,
+        OperationState::Succeeded => ActivityState::Completed,
+        OperationState::Failed => ActivityState::Failed,
+        OperationState::Cancelled | OperationState::Stopped => ActivityState::Cancelled,
+    };
+    let mut work = WorkItem::new(&job.id, kind, state, unit);
     work.phase = job.phase.as_deref().map(|phase| {
         if phase == "apply" {
             "applying".to_owned()
@@ -444,7 +461,11 @@ fn operation_item(job: &OperationWork) -> WorkItem {
     work.succeeded_count = job.succeeded;
     work.failed_count = job.failed;
     work.skipped_count = job.skipped;
-    work.priority = if job.state == "running" { 60 } else { 80 };
+    work.priority = if job.state == OperationState::Running {
+        60
+    } else {
+        80
+    };
     work
 }
 
@@ -496,7 +517,7 @@ pub fn build(inputs: FeedInputs<'_>) -> LibraryActivity {
         let mut work = WorkItem::new(
             &run.id,
             WorkKind::Scan,
-            run.state.scan_state().as_str(),
+            run.state.scan_state().into(),
             WorkUnit::Files,
         );
         work.phase = Some(run.state.phase().as_str().to_owned());
@@ -576,7 +597,7 @@ pub fn build(inputs: FeedInputs<'_>) -> LibraryActivity {
             let mut work = WorkItem::new(
                 "identification",
                 WorkKind::Identification,
-                state.as_str(),
+                state,
                 WorkUnit::Albums,
             );
             work.phase = Some("identifying_albums".to_owned());
@@ -602,7 +623,7 @@ pub fn build(inputs: FeedInputs<'_>) -> LibraryActivity {
                 let mut failed = WorkItem::new(
                     &format!("identification-failure:{id}"),
                     WorkKind::Identification,
-                    "failed",
+                    ActivityState::Failed,
                     WorkUnit::Albums,
                 );
                 failed.phase = Some("identifying_albums".to_owned());
@@ -621,7 +642,7 @@ pub fn build(inputs: FeedInputs<'_>) -> LibraryActivity {
         let mut drain = WorkItem::new(
             DRAIN_ITEM_ID,
             WorkKind::Identification,
-            identification_state(ident, false).as_str(),
+            identification_state(ident, false),
             WorkUnit::Albums,
         );
         drain.phase = Some("awaiting_identification".to_owned());

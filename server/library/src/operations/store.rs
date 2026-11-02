@@ -19,6 +19,7 @@ use super::models::{
     Control, Evaluation, OperationError, OperationJob, OperationKind, OperationState, WorkResult,
 };
 use super::reasons;
+use super::sql::{ControlKey, SnapshotRow, WorkResultRow};
 use crate::identify::queue::album_input_revision;
 use crate::identity::DecisionSource;
 use crate::identity::reads::{album_identity_row, identity_hash};
@@ -39,21 +40,26 @@ pub(crate) fn job_after(conn: &Connection, job_id: &str) -> Result<OperationJob,
 /// The first work results of a job, and whether more exist.
 pub fn work_results(conn: &Connection, job_id: &str) -> rusqlite::Result<(Vec<WorkResult>, bool)> {
     let mut stmt = conn.prepare(crate::operations::sql::WORK_RESULTS.text())?;
-    let rows = stmt.query_map(params![job_id, (RESULTS_SHOWN + 1) as i64], |row| {
-        let raw: Option<String> = row.get(6)?;
-        Ok(WorkResult {
-            ordinal: row.get(0)?,
-            local_album_id: row.get(1)?,
-            local_track_id: row.get(2)?,
-            action: row.get(3)?,
-            state: row.get(4)?,
-            failure_code: row.get(5)?,
-            result: raw
-                .and_then(|raw| serde_json::from_str(&raw).ok())
-                .unwrap_or_else(|| serde_json::json!({})),
+    let rows = stmt.query_map(
+        params![job_id, (RESULTS_SHOWN + 1) as i64],
+        WorkResultRow::read,
+    )?;
+    let mut results = rows
+        .map(|row| {
+            row.map(|row| WorkResult {
+                ordinal: row.ordinal,
+                local_album_id: row.local_album_id,
+                local_track_id: row.local_track_id,
+                action: row.action,
+                state: row.state,
+                failure_code: row.failure_code,
+                result: row
+                    .result_json
+                    .and_then(|raw| serde_json::from_str(&raw).ok())
+                    .unwrap_or_else(|| serde_json::json!({})),
+            })
         })
-    })?;
-    let mut results = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     let truncated = results.len() > RESULTS_SHOWN;
     results.truncate(RESULTS_SHOWN);
     Ok((results, truncated))
@@ -77,27 +83,29 @@ pub fn snapshot(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<Snap
     conn.query_row(
         crate::operations::sql::SNAPSHOT.text(),
         params![job_id],
-        |row| {
-            let raw: Option<String> = row.get(6)?;
-            Ok(Snapshot {
-                local_album_id: row.get(0)?,
-                expected_album_revision: row.get(1)?,
-                expected_input_revision: row.get(2)?,
-                expected_identity_revision: row.get(3)?,
-                requested_release_mbid: row.get(4)?,
-                selected_candidate_key: row.get(5)?,
-                one_off_local_metadata: row.get(7)?,
-                evaluation: raw.and_then(|raw| match serde_json::from_str(&raw) {
+        SnapshotRow::read,
+    )
+    .optional()
+    .map(|row| {
+        row.map(|row| Snapshot {
+            local_album_id: row.local_album_id,
+            expected_album_revision: row.expected_album_revision,
+            expected_input_revision: row.expected_input_revision,
+            expected_identity_revision: row.expected_identity_revision,
+            requested_release_mbid: row.requested_release_mbid,
+            selected_candidate_key: row.selected_candidate_key,
+            one_off_local_metadata: row.one_off_local_metadata,
+            evaluation: row
+                .result_json
+                .and_then(|raw| match serde_json::from_str(&raw) {
                     Ok(evaluation) => Some(evaluation),
                     Err(error) => {
                         tracing::warn!(%error, "unreadable re-identification evaluation");
                         None
                     }
                 }),
-            })
-        },
-    )
-    .optional()
+        })
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -363,15 +371,15 @@ pub fn request_control(
         if key.trim().is_empty() {
             return Err(OperationError::Invalid(reasons::CONTROL_KEY_EMPTY));
         }
-        let prior: Option<(String, String)> = tx
+        let prior = tx
             .query_row(
                 crate::operations::sql::CONTROL_OF_IDEMPOTENCY_KEY.text(),
                 params![key],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                ControlKey::read,
             )
             .optional()?;
-        if let Some((prior_job, prior_control)) = prior {
-            if prior_job != job_id || prior_control != control.as_str() {
+        if let Some(prior) = prior {
+            if prior.job_id != job_id || prior.control != control.as_str() {
                 return Err(OperationError::Conflict(reasons::CONTROL_KEY_REUSED));
             }
             return Ok(current);

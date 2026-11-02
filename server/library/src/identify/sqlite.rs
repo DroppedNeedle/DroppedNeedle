@@ -1706,22 +1706,44 @@ fn approve_tx(
 /// a log line instead of failing the whole listing.
 pub(crate) fn map_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewItem>> {
     let row = ReviewRow::read(row)?;
-    let candidates: Vec<CandidateEvidence> = match serde_json::from_str(&row.candidates_json) {
+    Ok(review_item(
+        row.id,
+        row.local_album_id,
+        row.reason_code,
+        &row.candidates_json,
+        row.state,
+        row.resolved_by_user_id,
+        row.selected_candidate_key,
+    ))
+}
+
+/// A review from its columns, or `None` with a log line when its candidates
+/// no longer decode.
+pub(crate) fn review_item(
+    id: String,
+    local_album_id: String,
+    reason_code: String,
+    candidates_json: &str,
+    state: ReviewState,
+    resolved_by_user_id: Option<String>,
+    selected_candidate_key: Option<String>,
+) -> Option<ReviewItem> {
+    let candidates: Vec<CandidateEvidence> = match serde_json::from_str(candidates_json) {
         Ok(candidates) => candidates,
         Err(error) => {
-            tracing::error!(%error, review = row.id, "stored review candidates did not decode");
-            return Ok(None);
+            tracing::error!(%error, review = id, "stored review candidates did not decode");
+            return None;
         }
     };
-    Ok(Some(ReviewItem {
-        id: row.id,
-        local_album_id: row.local_album_id,
-        reason_code: row.reason_code,
+    Some(ReviewItem {
+        id,
+        local_album_id,
+        reason_code,
         candidates,
-        state: row.state,
-        resolved_by_user_id: row.resolved_by_user_id,
-        selected_candidate_key: row.selected_candidate_key,
-    }))
+        state,
+        resolved_by_user_id,
+        selected_candidate_key,
+    })
 }
 
 #[cfg(test)]

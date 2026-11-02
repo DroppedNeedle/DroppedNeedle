@@ -5,6 +5,7 @@
 use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::reasons::{self, Reason};
+use super::sql::{EditionIdentity, MatchStateRow, WaitingAlbumRow};
 use super::store::{self, PROVIDER};
 use crate::identify::models::CandidateEvidence;
 use crate::identity::reads::undo_available;
@@ -83,25 +84,27 @@ pub fn edition_status(
         .query_row(
             crate::operations::sql::ALBUM_EDITION_IDENTITY.text(),
             params![album_id, PROVIDER],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    crate::clock::secs_at(row, 4)?,
-                    row.get(5)?,
-                ))
-            },
+            EditionIdentity::read,
         )
-        .optional()?;
+        .optional()?
+        .map(|row| {
+            (
+                row.release_group_mbid,
+                row.release_mbid,
+                row.decision_source,
+                row.selected_by_user_id,
+                crate::clock::at_secs(row.selected_at),
+                row.row_revision,
+            )
+        });
     let flagged: Option<(String, String, String)> = conn
         .query_row(
             crate::operations::sql::ALBUM_MATCH_STATE.text(),
             params![album_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            MatchStateRow::read,
         )
-        .optional()?;
+        .optional()?
+        .map(|row| (row.state, row.reason_code, row.candidates_json));
     let candidates: Vec<CandidateEvidence> = flagged
         .as_ref()
         .and_then(|(_, _, json)| serde_json::from_str(json).ok())
@@ -246,24 +249,27 @@ pub fn waiting_albums(
     )?;
     let mut stmt = conn.prepare(crate::operations::sql::WAITING_ALBUM_PAGE.text())?;
     let rows = stmt
-        .query_map(params![state, PROVIDER, limit, offset], |row| {
-            let code: String = row.get(3)?;
-            Ok(WaitingAlbum {
-                local_album_id: row.get(0)?,
-                title: row.get(1)?,
-                artist_name: row.get(2)?,
+        .query_map(
+            params![state, PROVIDER, limit, offset],
+            WaitingAlbumRow::read,
+        )?
+        .map(|row| {
+            row.map(|row| WaitingAlbum {
+                local_album_id: row.local_album_id,
+                title: row.title,
+                artist_name: row.artist_name,
                 state: if unmatched {
                     EditionState::Unmatched
                 } else {
                     EditionState::Unconfirmed
                 },
-                reason: reasons::match_reason(&code),
-                release_mbid: row.get(4)?,
-                release_group_mbid: row.get(5)?,
-                updated_at: crate::clock::secs_at(row, 6)?,
-                identity_revision: row.get(7)?,
+                reason: reasons::match_reason(&row.reason_code),
+                release_mbid: row.release_mbid,
+                release_group_mbid: row.release_group_mbid,
+                updated_at: crate::clock::at_secs(row.updated_at),
+                identity_revision: row.identity_revision,
             })
-        })?
+        })
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok((rows, u64::try_from(total).unwrap_or(0)))
 }

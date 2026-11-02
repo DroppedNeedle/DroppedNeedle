@@ -50,9 +50,10 @@ pub(crate) fn match_gate(
         .query_row(
             crate::management::sql::MATCH_GATE.text(),
             params![album_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            crate::management::sql::MatchGate::read,
         )
-        .optional()?;
+        .optional()?
+        .map(|row| (row.state, row.reason_code));
     Ok(match state {
         Some((_, code)) if code.starts_with("CHOSEN_") => {
             Some(crate::operations::reasons::match_reason(&code).into())
@@ -128,22 +129,17 @@ fn override_values(json: &str) -> Vec<String> {
 /// Saved overrides for one file.
 pub fn overrides(conn: &Connection, album_id: &str, track_id: &str) -> rusqlite::Result<Overrides> {
     let mut statement = conn.prepare_cached(crate::management::sql::OVERRIDES.text())?;
-    let rows = statement.query_map(params![album_id, track_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-        ))
-    })?;
+    let rows = statement.query_map(
+        params![album_id, track_id],
+        crate::management::sql::OverrideRow::read,
+    )?;
     let mut fields = Vec::new();
     let mut fingerprint = String::new();
     for row in rows {
-        let (id, revision, name, mode, value) = row?;
-        fingerprint.push_str(&format!("{id}:{revision};"));
-        if let Some(field) = profile::tag_field(&name) {
-            fields.push((field, mode, override_values(&value)));
+        let row = row?;
+        fingerprint.push_str(&format!("{}:{};", row.id, row.row_revision));
+        if let Some(field) = profile::tag_field(&row.field_name) {
+            fields.push((field, row.mode, override_values(&row.value_json)));
         }
     }
     Ok(Overrides {

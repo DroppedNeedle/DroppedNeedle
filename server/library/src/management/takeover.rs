@@ -17,6 +17,7 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::models::{ManagementError, PlannedItem};
 use super::reasons::ItemReason;
+use super::sql::{StateRevision, TakeoverCounts, TrackPlace, WaitingTakeover};
 use crate::catalog_revision::bump_catalog;
 use crate::clock::LibraryClock as _;
 use crate::operations::decisions::{CatalogAction, record_action};
@@ -61,6 +62,13 @@ pub enum Cause {
     ReplacedHandsOff,
 }
 
+crate::scan::models::spelled!(Cause {
+    FilesChanged => "files_changed",
+    RetagFollowed => "retag_followed",
+    RunUndone => "run_undone",
+    ReplacedHandsOff => "replaced_hands_off",
+});
+
 impl Cause {
     pub const ALL: [Self; 4] = [
         Self::FilesChanged,
@@ -68,19 +76,6 @@ impl Cause {
         Self::RunUndone,
         Self::ReplacedHandsOff,
     ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::FilesChanged => "files_changed",
-            Self::RetagFollowed => "retag_followed",
-            Self::RunUndone => "run_undone",
-            Self::ReplacedHandsOff => "replaced_hands_off",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|cause| cause.as_str() == value)
-    }
 }
 
 /// Whether the app has a record of this track's file.
@@ -101,10 +96,9 @@ pub(crate) fn state_revisions(
     let mut statement = conn.prepare(crate::management::sql::STATE_REVISIONS.text())?;
     let mut revisions = std::collections::HashMap::new();
     for album in albums {
-        let rows = statement.query_map(params![album], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        for row in rows {
-            let (track, revision) = row?;
-            revisions.insert(track, revision);
+        for row in statement.query_map(params![album], StateRevision::read)? {
+            let row = row?;
+            revisions.insert(row.local_track_id, row.row_revision);
         }
     }
     Ok(revisions)
@@ -495,11 +489,10 @@ pub(crate) fn hand_back(
             }
             let mut statement =
                 conn.prepare(crate::management::sql::ALBUM_INDEXED_TRACK_PLACES.text())?;
-            let rows = statement.query_map(params![album_id], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })?;
+            let rows = statement.query_map(params![album_id], TrackPlace::read)?;
             Ok::<_, ManagementError>(Some(
-                rows.collect::<rusqlite::Result<Vec<(String, String, String)>>>()?,
+                rows.map(|row| row.map(|row| (row.id, row.root_id, row.relative_path)))
+                    .collect::<rusqlite::Result<Vec<(String, String, String)>>>()?,
             ))
         })?;
     let Some(files) = files else {
@@ -623,31 +616,27 @@ impl super::service::Management {
 
 /// The albums the app stepped back from, newest first.
 pub fn waiting(conn: &Connection, limit: i64) -> rusqlite::Result<Waiting> {
-    let (total, handing_back) =
-        conn.query_row(crate::management::sql::TAKEOVER_COUNTS.text(), [], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?;
+    let counts = conn.query_row(
+        crate::management::sql::TAKEOVER_COUNTS.text(),
+        [],
+        TakeoverCounts::read,
+    )?;
     let mut statement = conn.prepare(crate::management::sql::WAITING_TAKEOVERS.text())?;
-    let rows = statement.query_map(params![limit], |row| {
-        let cause: String = row.get(3)?;
-        Ok(TakenOver {
-            album_id: row.get(0)?,
-            album_title: row.get(1)?,
-            artist_name: row.get(2)?,
-            cause: Cause::parse(&cause).ok_or_else(|| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    3,
-                    rusqlite::types::Type::Text,
-                    format!("unknown takeover cause {cause}").into(),
-                )
-            })?,
-            noticed_at: row.get(4)?,
-            hand_back_given_up: row.get(5)?,
-        })
-    })?;
+    let rows = statement.query_map(params![limit], WaitingTakeover::read)?;
     Ok(Waiting {
-        albums: rows.collect::<rusqlite::Result<_>>()?,
-        total,
-        handing_back,
+        albums: rows
+            .map(|row| {
+                row.map(|row| TakenOver {
+                    album_id: row.local_album_id,
+                    album_title: row.title,
+                    artist_name: row.album_artist_name,
+                    cause: row.cause,
+                    noticed_at: row.noticed_at,
+                    hand_back_given_up: row.hand_back_given_up,
+                })
+            })
+            .collect::<rusqlite::Result<_>>()?,
+        total: counts.total,
+        handing_back: counts.handing_back,
     })
 }

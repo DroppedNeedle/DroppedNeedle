@@ -18,7 +18,7 @@
 //! both or neither.
 
 use droppedneedle_kernel::db::{Db, Lane};
-use droppedneedle_kernel::jobs::queue::{JobError, JobQueue};
+use droppedneedle_kernel::jobs::queue::{JobError, JobQueue, State as JobQueueState};
 use futures_util::future::BoxFuture;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
@@ -36,6 +36,7 @@ use super::worker::{Completion, VERIFY};
 use crate::clock::at_secs;
 use crate::identify::artist_links::{LINK_SET_BY_PERSON, audit_link, placeholder, would_group};
 use crate::identify::merged_ids;
+use crate::identify::models::ReviewState;
 use crate::identity;
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
 
@@ -227,7 +228,15 @@ fn require_row(conn: &Connection, contribution_id: &str) -> Result<ContributionR
 
 fn active_id_for_album(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<String>> {
     conn.prepare_cached(crate::contrib::sql::ACTIVE_ID_FOR_ALBUM.text())?
-        .query_row(params![album_id], |row| row.get(0))
+        .query_row(
+            params![
+                album_id,
+                ContributionState::Linked,
+                ContributionState::Cancelled,
+                ContributionState::Stale,
+            ],
+            |row| row.get(0),
+        )
         .optional()
 }
 
@@ -293,6 +302,7 @@ fn insert_row(
             to_json(draft)?,
             to_json(selection)?,
             crate::clock::ms(now),
+            ContributionState::Draft,
         ])?;
     Ok(id)
 }
@@ -537,6 +547,8 @@ fn commit_link(
             link.selected_by,
             format!("{}:{}", link.release_group_mbid, link.release_mbid),
             (now * 1000.0) as i64,
+            ReviewState::Approved,
+            ReviewState::Pending,
         ])?;
     Ok(album_revision)
 }
@@ -812,7 +824,16 @@ impl SqliteContributions {
                     .prepare_cached(
                         crate::contrib::sql::LIST_FOR_PROVIDER_PURGE.text(),
                     )?
-                    .query_map(params![crate::clock::ms(now), bounded], |row| row.get(0))?
+                    .query_map(
+                        params![
+                            crate::clock::ms(now),
+                            bounded,
+                            ContributionState::Linked,
+                            ContributionState::Cancelled,
+                            ContributionState::Stale,
+                        ],
+                        |row| row.get(0),
+                    )?
                     .collect::<rusqlite::Result<_>>()?;
                 let mut rows = Vec::with_capacity(ids.len());
                 for id in ids {
@@ -913,7 +934,15 @@ impl SqliteContributions {
             .write(Lane::Background, "contrib.queue_missing", move |conn| {
                 let ids: Vec<String> = conn
                     .prepare_cached(super::sql::VERIFYING_WITHOUT_JOB.text())?
-                    .query_map([], |row| row.get(0))?
+                    .query_map(
+                        params![
+                            ContributionState::Verifying,
+                            VERIFY.name(),
+                            JobQueueState::Queued.as_str(),
+                            JobQueueState::Running.as_str(),
+                        ],
+                        |row| row.get(0),
+                    )?
                     .collect::<rusqlite::Result<_>>()?;
                 for id in &ids {
                     enqueue_job(&queue, conn, id)?;
@@ -942,7 +971,15 @@ impl SqliteContributions {
                         .prepare_cached(
                             crate::contrib::sql::DRAFTS_WITH_OLD_SEEDS.text(),
                         )?
-                        .query_map(params![crate::clock::ms(now)], |row| row.get(0))?
+                        .query_map(
+                            params![
+                                crate::clock::ms(now),
+                                ContributionState::Linked,
+                                ContributionState::Cancelled,
+                                ContributionState::Stale,
+                            ],
+                            |row| row.get(0),
+                        )?
                         .collect::<rusqlite::Result<_>>()?;
                     for id in ids {
                         match load_row(conn, &id) {
@@ -962,7 +999,11 @@ impl SqliteContributions {
                     }
                     conn.execute(
                         crate::contrib::sql::PRUNE_ENDED_DRAFTS.text(),
-                        params![crate::clock::ms(now - 90.0 * DAY)],
+                        params![
+                            crate::clock::ms(now - 90.0 * DAY),
+                            ContributionState::Cancelled,
+                            ContributionState::Stale,
+                        ],
                     )?;
                     Ok(())
                 })

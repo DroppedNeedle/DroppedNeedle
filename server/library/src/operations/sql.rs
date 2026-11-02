@@ -1,10 +1,13 @@
 //! The SQL of the operations module.
 
 use droppedneedle_kernel::db::statement::ListLen;
+use droppedneedle_kernel::db::time::Millis;
 
 use super::history::MAX_TITLES;
 use super::reviews::ReviewOrder;
+use crate::identify::models::ReviewState;
 use crate::identity::sql::PERSONS;
+use crate::jobs::WorkState;
 
 droppedneedle_kernel::sql! {
     pub(super) PLACED_FILES = "SELECT root_id, relative_path FROM local_tracks WHERE id = ?1";
@@ -35,7 +38,7 @@ droppedneedle_kernel::sql! {
          CASE WHEN i.decision_source = 'manual' \
          AND lower(h.release_mbid) = lower(i.release_mbid) \
          AND lower(h.release_track_mbid) = lower(i.release_track_mbid) \
-         THEN h.matched_at END \
+         THEN h.matched_at END AS matched_at \
          FROM local_tracks t JOIN local_track_external_identities i \
          ON i.local_track_id = t.id AND i.provider = ?2 \
          LEFT JOIN library_track_hand_matches h ON h.local_track_id = t.id \
@@ -45,15 +48,15 @@ droppedneedle_kernel::sql! {
          JOIN library_management_job_snapshots s ON s.job_id = p.job_id \
          JOIN library_operation_jobs j ON j.id = p.job_id \
          WHERE p.local_track_id = ?1 \
-         AND s.mode IN ('apply', 'automatic_apply', 'duplicate_resolution') \
-         AND j.state NOT IN ('failed', 'cancelled', 'stopped') \
-         AND p.eligibility IN ('eligible', 'warning') \
+         AND s.mode IN (?3, ?4, ?5) \
+         AND j.state NOT IN (?6, ?7, ?8) \
+         AND p.eligibility IN (?9, ?10) \
          AND json_extract(p.desired_document_json, '$.plan') IS NOT NULL \
          AND p.created_at >= ?2 \
          AND NOT EXISTS (SELECT 1 FROM library_management_job_snapshots u \
          JOIN library_operation_work w ON w.job_id = u.job_id \
-         WHERE u.linked_operation_job_id = p.job_id AND u.mode = 'undo' \
-         AND w.ordinal = p.bundle_ordinal AND w.state = 'succeeded'))";
+         WHERE u.linked_operation_job_id = p.job_id AND u.mode = ?11 \
+         AND w.ordinal = p.bundle_ordinal AND w.state = ?12))";
     pub(super) UNMATCH_FILE = "SELECT release_mbid, release_track_mbid, prior_identity_json, matched_at \
              FROM library_track_hand_matches WHERE local_track_id = ?1";
     pub(super) ALBUM_TITLE = "SELECT title FROM local_albums WHERE id = ?1";
@@ -89,8 +92,9 @@ droppedneedle_kernel::sql! {
     pub(super) WAITING_ALBUM_COUNT = "SELECT COUNT(*) FROM library_album_match_state s \
          JOIN local_albums a ON a.id = s.local_album_id \
          WHERE s.state = ?1 AND a.retired_into_album_id IS NULL";
-    pub(super) WAITING_ALBUM_PAGE = "SELECT s.local_album_id, a.title, COALESCE(a.album_artist_name, ''), s.reason_code, \
-         e.release_mbid, e.release_group_mbid, s.updated_at, COALESCE(e.row_revision, 0) \
+    pub(super) WAITING_ALBUM_PAGE = "SELECT s.local_album_id, a.title, COALESCE(a.album_artist_name, '') AS artist_name, s.reason_code, \
+         e.release_mbid, e.release_group_mbid, s.updated_at, \
+         COALESCE(e.row_revision, 0) AS identity_revision \
          FROM library_album_match_state s \
          JOIN local_albums a ON a.id = s.local_album_id \
          LEFT JOIN local_album_external_identities e \
@@ -153,17 +157,17 @@ droppedneedle_kernel::sql! {
     family TITLES_OF_TRACKS = titles_of_tracks;
     /// How many reviews a listing's filter holds.
     pub(super) REVIEW_COUNT = "SELECT COUNT(*) " + REVIEW_LISTING;
-    pub(super) REVIEW_COUNT_BY_REASON = "SELECT r.reason_code, COUNT(*) " + REVIEW_LISTING + " GROUP BY r.reason_code \
+    pub(super) REVIEW_COUNT_BY_REASON = "SELECT r.reason_code AS bucket, COUNT(*) AS total " + REVIEW_LISTING + " GROUP BY r.reason_code \
              ORDER BY COUNT(*) DESC";
-    pub(super) REVIEW_COUNT_BY_STATE = "SELECT r.state, COUNT(*) " + REVIEW_LISTING + " GROUP BY r.state";
+    pub(super) REVIEW_COUNT_BY_STATE = "SELECT r.state AS bucket, COUNT(*) AS total " + REVIEW_LISTING + " GROUP BY r.state";
     pub(super) REVIEW_BY_ID = "SELECT " + REVIEW_COLUMNS + " FROM library_identify_reviews r \
              LEFT JOIN local_albums a ON a.id = r.local_album_id WHERE r.id = ?1";
     /// A review row's columns; the one before the revision says whether a person's choice, made now or carried over from v2, holds the album.
     pub(super) fragment REVIEW_COLUMNS = "r.id, r.local_album_id, r.reason_code, r.candidates_json, r.state, \
-         r.resolved_by_user_id, r.selected_candidate_key, COALESCE(a.title, ''), \
-         COALESCE(a.album_artist_name, ''), r.created_at, r.updated_at, \
+         r.resolved_by_user_id, r.selected_candidate_key, COALESCE(a.title, '') AS album_title, \
+         COALESCE(a.album_artist_name, '') AS artist_name, r.created_at, r.updated_at, \
          EXISTS (SELECT 1 FROM local_album_external_identities e \
-                 WHERE e.local_album_id = r.local_album_id AND e.decision_source IN " + PERSONS + "), \
+                 WHERE e.local_album_id = r.local_album_id AND e.decision_source IN " + PERSONS + ") AS manual_identity, \
          r.row_revision";
     /// `FROM ... WHERE ...` of a review listing, every filter a named parameter that may be NULL.
     pub(super) fragment REVIEW_LISTING = "FROM library_identify_reviews r \
@@ -205,6 +209,129 @@ droppedneedle_kernel::sql! {
     /// Lift every exclusion on album `?2`, for a review with none recorded.
     pub(super) LIFT_ALBUM_EXCLUSIONS = LIFT_EXCLUSIONS + "local_album_id = ?2 AND ?1 IS NOT NULL";
     family REVIEW_PAGE = review_page;
+
+    pub(super) row PlacedFileRow for [PLACED_FILES] {
+        root_id: String,
+        relative_path: String,
+    }
+    pub(super) row StoredPlacementRow for [STORED_PLACEMENTS] {
+        id: String,
+        release_mbid: Option<String>,
+        release_track_mbid: String,
+        matched_at: Option<i64>,
+    }
+    pub(super) row HandMatchRow for [UNMATCH_FILE] {
+        release_mbid: String,
+        release_track_mbid: String,
+        prior_identity_json: Option<String>,
+        matched_at: i64,
+    }
+    pub(super) row FoldUndo for [FOLD_UNDONE] {
+        actor_user_id: Option<String>,
+        created_at: i64,
+    }
+    pub(super) row TrackTitle for [WITH_TRACKS] {
+        id: String,
+        title: String,
+    }
+    pub(super) row ReviewGuard for [REVIEW_GUARD_ROW] {
+        local_album_id: String,
+        state: ReviewState,
+        row_revision: i64,
+    }
+    pub(super) row RequesterRow for [REQUESTER] {
+        role: String,
+        username_display: Option<String>,
+    }
+    pub(super) row EditionIdentity for [ALBUM_EDITION_IDENTITY] {
+        release_group_mbid: String,
+        release_mbid: Option<String>,
+        decision_source: String,
+        selected_by_user_id: Option<String>,
+        selected_at: Millis,
+        row_revision: i64,
+    }
+    pub(super) row MatchStateRow for [ALBUM_MATCH_STATE] {
+        state: String,
+        reason_code: String,
+        candidates_json: String,
+    }
+    pub(super) row WaitingAlbumRow for [WAITING_ALBUM_PAGE] {
+        local_album_id: String,
+        title: String,
+        artist_name: String,
+        reason_code: String,
+        release_mbid: Option<String>,
+        release_group_mbid: Option<String>,
+        updated_at: Millis,
+        identity_revision: i64,
+    }
+    pub(super) row WorkResultRow for [WORK_RESULTS] {
+        ordinal: i64,
+        local_album_id: Option<String>,
+        local_track_id: Option<String>,
+        action: String,
+        state: WorkState,
+        failure_code: Option<String>,
+        result_json: Option<String>,
+    }
+    pub(super) row SnapshotRow for [SNAPSHOT] {
+        local_album_id: String,
+        expected_album_revision: i64,
+        expected_input_revision: String,
+        expected_identity_revision: String,
+        requested_release_mbid: Option<String>,
+        selected_candidate_key: Option<String>,
+        result_json: Option<String>,
+        one_off_local_metadata: bool,
+    }
+    pub(super) row ControlKey for [CONTROL_OF_IDEMPOTENCY_KEY] {
+        job_id: String,
+        control: String,
+    }
+    pub(super) row HistoryRow for [ALBUM_HISTORY_ROWS] {
+        id: String,
+        actor_user_id: Option<String>,
+        action_kind: String,
+        reason_code: Option<String>,
+        before_json: String,
+        after_json: String,
+        created_at: i64,
+    }
+    pub(super) row ReviewCount for [REVIEW_COUNT_BY_REASON, REVIEW_COUNT_BY_STATE] {
+        bucket: String,
+        total: i64,
+    }
+    pub(super) row ReviewById for [REVIEW_BY_ID] {
+        id: String,
+        local_album_id: String,
+        reason_code: String,
+        candidates_json: String,
+        state: ReviewState,
+        resolved_by_user_id: Option<String>,
+        selected_candidate_key: Option<String>,
+        album_title: String,
+        artist_name: String,
+        created_at: i64,
+        updated_at: i64,
+        manual_identity: bool,
+        row_revision: i64,
+    }
+    pub(super) row ReviewPageRow for family [review_page] {
+        id: String,
+        local_album_id: String,
+        reason_code: String,
+        candidates_json: String,
+        state: ReviewState,
+        resolved_by_user_id: Option<String>,
+        selected_candidate_key: Option<String>,
+        album_title: String,
+        artist_name: String,
+        created_at: i64,
+        updated_at: i64,
+        manual_identity: bool,
+        row_revision: i64,
+    }
 }
 
 pub(super) fn titles_of_tracks(tracks: ListLen) -> String {

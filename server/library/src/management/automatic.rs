@@ -22,9 +22,11 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use super::models::{JobIntent, JobMode, ManagementError, Origin, Selection, SelectionKind};
 use super::reasons::{self, ItemReason};
 use super::service::{JobSpec, Management};
+use super::sql::{AlbumFile, AutomaticDueRow, SkippedRow};
 use super::{planner, profile, store, takeover};
 use crate::clock::LibraryClock as _;
 use crate::identify::models::AlbumIdentity;
+use crate::jobs::{ManagementPhase, OperationState};
 use crate::management::settings::{activation_is_current, migration_carry_applies};
 use crate::operations::status;
 use crate::publish::Sandbox;
@@ -302,25 +304,9 @@ pub(crate) fn queue_automatic_management(
 }
 
 /// One indexed file of an album.
-struct AlbumFile {
-    id: String,
-    root_id: String,
-    relative_path: String,
-    ingest_source: String,
-    stat_revision: String,
-}
-
 fn album_files(conn: &Connection, album_id: &str) -> rusqlite::Result<Vec<AlbumFile>> {
     let mut statement = conn.prepare_cached(crate::management::sql::ALBUM_FILES.text())?;
-    let rows = statement.query_map(params![album_id], |row| {
-        Ok(AlbumFile {
-            id: row.get(0)?,
-            root_id: row.get(1)?,
-            relative_path: row.get(2)?,
-            ingest_source: row.get(3)?,
-            stat_revision: row.get(4)?,
-        })
-    })?;
+    let rows = statement.query_map(params![album_id], AlbumFile::read)?;
     rows.collect()
 }
 
@@ -401,7 +387,14 @@ impl Management {
             .read_blocking("management.pending_writes", |conn| {
                 Ok::<_, ManagementError>(conn.query_row(
                     crate::management::sql::WRITES_BY_ITSELF.text(),
-                    params![album_id, PARKED, store::KIND],
+                    params![
+                        album_id,
+                        PARKED,
+                        store::KIND,
+                        OperationState::Queued,
+                        OperationState::Running,
+                        OperationState::Paused,
+                    ],
                     |row| row.get(0),
                 )?)
             })?;
@@ -523,20 +516,24 @@ impl Management {
         if self.library_off() {
             return Ok(false);
         }
-        let due: Option<(String, i64)> =
-            self.parts
-                .db
-                .read_blocking("management.automatic_due", |conn| {
-                    Ok::<_, ManagementError>(
-                        conn.query_row(
-                            super::sql::AUTOMATIC_DUE.text(),
-                            params![crate::clock::ms(now), settled_before.map(crate::clock::ms)],
-                            |row| Ok((row.get(0)?, row.get(1)?)),
-                        )
-                        .optional()?,
+        let due = self
+            .parts
+            .db
+            .read_blocking("management.automatic_due", |conn| {
+                Ok::<_, ManagementError>(
+                    conn.query_row(
+                        super::sql::AUTOMATIC_DUE.text(),
+                        params![crate::clock::ms(now), settled_before.map(crate::clock::ms)],
+                        AutomaticDueRow::read,
                     )
-                })?;
-        let Some((album_id, attempts)) = due else {
+                    .optional()?,
+                )
+            })?;
+        let Some(AutomaticDueRow {
+            local_album_id: album_id,
+            attempts,
+        }) = due
+        else {
             return Ok(false);
         };
         let verdict = match self.automatic_verdict(&album_id) {
@@ -609,18 +606,20 @@ impl Management {
             .read_blocking("management.automatic_skipped", |conn| {
                 let mut statement =
                     conn.prepare(crate::management::sql::AUTOMATIC_SKIPPED.text())?;
-                let rows =
-                    statement.query_map(params![limit.clamp(1, 200), IDENTIFYING], |row| {
-                        Ok(SkippedAlbum {
-                            album_id: row.get(0)?,
-                            album_title: row.get(1)?,
-                            artist_name: row.get(2)?,
-                            reason: skip_reason(&row.get::<_, String>(3)?),
-                            attempts: row.get(4)?,
-                            updated_at: crate::clock::secs_at(row, 5)?,
+                let rows = statement
+                    .query_map(params![limit.clamp(1, 200), IDENTIFYING], SkippedRow::read)?;
+                Ok(rows
+                    .map(|row| {
+                        row.map(|row| SkippedAlbum {
+                            album_id: row.local_album_id,
+                            album_title: row.title,
+                            artist_name: row.album_artist_name,
+                            reason: skip_reason(&row.reason_code),
+                            attempts: row.attempts,
+                            updated_at: crate::clock::at_secs(row.queued_at),
                         })
-                    })?;
-                Ok(rows.collect::<rusqlite::Result<_>>()?)
+                    })
+                    .collect::<rusqlite::Result<_>>()?)
             })
     }
 
@@ -691,10 +690,10 @@ impl Management {
                     })?,
             );
         }
-        let restored = states.iter().flatten().any(|state| {
-            state.outcome.as_deref() == Some("restored")
-                && state.managed_at.is_none_or(|at| at >= activated_at)
-        });
+        let restored = states
+            .iter()
+            .flatten()
+            .any(|state| state.restored() && state.managed_at.is_none_or(|at| at >= activated_at));
         if restored {
             return Ok(Gate::Closed(Verdict::Park("RESTORED")));
         }
@@ -922,7 +921,7 @@ impl Management {
                 .zip(&mapping)
                 .all(|((file, state), (_, track_revision))| {
                     state.as_ref().is_some_and(|state| {
-                        state.outcome.as_deref() == Some("succeeded")
+                        state.last_run_succeeded()
                     && state.profile_id.as_deref() == Some(pinned.profile.id.as_str())
                     && state.profile_revision.as_deref() == Some(revisions.profile.as_str())
                     && state.naming_revision.as_deref() == Some(revisions.naming.as_str())
@@ -1036,19 +1035,21 @@ impl Management {
             let snapshot = self.snapshot(&existing)?;
             let now = self.parts.clock.now_secs();
             let expires = snapshot.preview_expires_at.unwrap_or(0.0);
-            match (snapshot.job.state.as_str(), snapshot.phase.as_str()) {
+            match (snapshot.job.state, snapshot.phase) {
                 // A run for exactly this is waiting or working.
-                ("queued" | "running" | "paused", _) => return Ok(Verdict::Done("ALREADY_QUEUED")),
+                (OperationState::Queued | OperationState::Running | OperationState::Paused, _) => {
+                    return Ok(Verdict::Done("ALREADY_QUEUED"));
+                }
                 // A preview nothing blocks is still here only when the
                 // database was too busy to start it: it starts now. A
                 // blocked one waits for review until it expires.
-                ("ready", "ready") if expires > now => {
+                (OperationState::Ready, ManagementPhase::Ready) if expires > now => {
                     if self.apply_automatic(&existing, &snapshot.summary())? {
                         return Ok(Verdict::Done("ALREADY_QUEUED"));
                     }
                     return Ok(Verdict::RetryAt("PREVIEW_BLOCKED", expires));
                 }
-                ("succeeded", _) => return Ok(Verdict::Done("ALREADY_QUEUED")),
+                (OperationState::Succeeded, _) => return Ok(Verdict::Done("ALREADY_QUEUED")),
                 // Expired, failed, stopped or discarded: try once more
                 // under a new key.
                 _ => key = format!("{key}:{}", now as i64),

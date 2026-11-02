@@ -6,6 +6,7 @@
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 
+use super::sql::{CustomManifest, CustomTrack};
 use crate::matching::{CreditedArtist, Genre, Release, ReleaseMedium, ReleaseTrack};
 
 /// Release ids of custom editions start with this, followed by the
@@ -22,43 +23,40 @@ pub fn is_custom(release: &Release) -> bool {
 /// files no longer match the manifest (a file added or gone since it was
 /// sealed): it must be sealed again first.
 pub fn active(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Release>> {
-    let manifest: Option<(String, String, String, String, Option<String>, String)> = conn
+    let manifest = conn
         .query_row(
             crate::management::sql::ACTIVE_CUSTOM_EDITION.text(),
             params![album_id],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                ))
-            },
+            CustomManifest::read,
         )
         .optional()?;
-    let Some((manifest_id, group, title, album_artist, artist_mbid, album_json)) = manifest else {
+    let Some(CustomManifest {
+        id: manifest_id,
+        release_group_mbid: group,
+        album_title: title,
+        album_artist_name: album_artist,
+        artist_mbid,
+        album_metadata_json: album_json,
+    }) = manifest
+    else {
         return Ok(None);
     };
     let album: serde_json::Value = serde_json::from_str(&album_json).unwrap_or_default();
     let mut statement = conn.prepare(crate::management::sql::CUSTOM_EDITION_TRACKS.text())?;
-    let rows = statement.query_map(params![manifest_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, Option<String>>(3)?,
-            row.get::<_, i64>(4)?,
-            row.get::<_, i64>(5)?,
-            row.get::<_, Option<f64>>(6)?,
-            row.get::<_, String>(7)?,
-            row.get::<_, Option<String>>(8)?,
-        ))
-    })?;
+    let rows = statement.query_map(params![manifest_id], CustomTrack::read)?;
     let mut tracks = Vec::new();
     for (index, row) in rows.enumerate() {
-        let (id, track_title, artist, artist_id, disc, position, seconds, meta, recording) = row?;
+        let CustomTrack {
+            local_track_id: id,
+            title: track_title,
+            artist_name: artist,
+            artist_mbid: artist_id,
+            disc_number: disc,
+            track_number: position,
+            duration_seconds: seconds,
+            metadata_json: meta,
+            recording_mbid: recording,
+        } = row?;
         let meta: serde_json::Value = serde_json::from_str(&meta).unwrap_or_default();
         tracks.push(ReleaseTrack {
             id,

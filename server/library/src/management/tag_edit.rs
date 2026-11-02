@@ -16,6 +16,7 @@ use super::models::{
 use super::profile;
 use super::reasons;
 use super::service::{JobSpec, Management};
+use super::sql::{EditSubject, SavedOverride};
 use crate::tags::fields::FieldKind;
 use crate::tags::{TagEdit, TagField, save};
 
@@ -199,18 +200,17 @@ impl Management {
             conn.query_row(
                 crate::management::sql::TRACK_TO_EDIT.text(),
                 params![track_id],
-                |row| {
-                    Ok(Subject {
-                        track_id: row.get(0)?,
-                        album_id: row.get(1)?,
-                        root_id: row.get(2)?,
-                        relative_path: row.get(3)?,
-                        track_revision: row.get(4)?,
-                        album_revision: row.get(5)?,
-                    })
-                },
+                EditSubject::read,
             )
             .optional()?
+            .map(|row| Subject {
+                track_id: row.track_id,
+                album_id: row.album_id,
+                root_id: row.root_id,
+                relative_path: row.relative_path,
+                track_revision: row.track_revision,
+                album_revision: row.album_revision,
+            })
             .ok_or(ManagementError::NotFound(
                 "This track is not in the library.",
             ))
@@ -222,18 +222,20 @@ impl Management {
             .db
             .read_blocking("management.saved_overrides", |conn| {
                 let mut statement = conn.prepare(crate::management::sql::SAVED_OVERRIDES.text())?;
-                let rows =
-                    statement.query_map(params![subject.album_id, subject.track_id], |row| {
-                        Ok((
-                            (row.get::<_, String>(0)?, row.get::<_, String>(1)?),
+                let rows = statement.query_map(
+                    params![subject.album_id, subject.track_id],
+                    SavedOverride::read,
+                )?;
+                Ok(rows
+                    .map(|row| {
+                        row.map(|row| {
                             (
-                                row.get::<_, String>(2)?,
-                                row.get::<_, OverrideMode>(3)?,
-                                row.get::<_, i64>(4)?,
-                            ),
-                        ))
-                    })?;
-                Ok(rows.collect::<rusqlite::Result<_>>()?)
+                                (row.subject_kind, row.field_name),
+                                (row.id, row.mode, row.row_revision),
+                            )
+                        })
+                    })
+                    .collect::<rusqlite::Result<_>>()?)
             })
     }
 

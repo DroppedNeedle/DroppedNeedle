@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use rusqlite::{Connection, OptionalExtension as _, params, params_from_iter};
 use serde::Deserialize;
 
+use super::sql::{FoldUndo, HistoryRow};
 use crate::corrections::continuation::SAME_FILE;
 use crate::identify::models::PriorAlbumIdentity;
 use crate::identity;
@@ -172,18 +173,19 @@ pub fn album_history(
         .prepare_cached(crate::operations::sql::ALBUM_HISTORY_ROWS.text())?
         .query_map(
             params![album_id, crate::clock::ms(now - MAX_AGE_SECS)],
-            |row| {
-                Ok(Row {
-                    id: row.get(0)?,
-                    actor: row.get(1)?,
-                    kind: row.get(2)?,
-                    reason: row.get(3)?,
-                    before: row.get(4)?,
-                    after: row.get(5)?,
-                    created_at: row.get(6)?,
-                })
-            },
+            HistoryRow::read,
         )?
+        .map(|row| {
+            row.map(|row| Row {
+                id: row.id,
+                actor: row.actor_user_id,
+                kind: row.action_kind,
+                reason: row.reason_code,
+                before: row.before_json,
+                after: row.after_json,
+                created_at: row.created_at,
+            })
+        })
         .collect::<rusqlite::Result<_>>()?;
     let since = now - MAX_AGE_SECS;
     let mut entries = Vec::new();
@@ -446,21 +448,20 @@ fn fold_undone(
                 fold_id,
                 crate::clock::ms(since)
             ],
-            |row| {
-                let actor: Option<String> = row.get(0)?;
-                let at: i64 = row.get(1)?;
-                Ok(HistoryEntry {
-                    kind: HistoryKind::FoldUndone,
-                    at,
-                    by: person(actor.as_deref(), caller_user_id),
-                    track_count: 0,
-                    track_titles: Vec::new(),
-                    other_album_title: source_title,
-                    undo_id: None,
-                })
-            },
+            FoldUndo::read,
         )
         .optional()
+        .map(|row| {
+            row.map(|row| HistoryEntry {
+                kind: HistoryKind::FoldUndone,
+                at: row.created_at,
+                by: person(row.actor_user_id.as_deref(), caller_user_id),
+                track_count: 0,
+                track_titles: Vec::new(),
+                other_album_title: source_title,
+                undo_id: None,
+            })
+        })
 }
 
 /// The edition a seal moved the album to, as its audit row keeps it.

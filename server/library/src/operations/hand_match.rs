@@ -24,10 +24,13 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use super::models::{OperationError, ReidentificationCandidate};
 use super::plan::{StoredPlacement, seat};
 use super::reasons;
+use super::sql::{HandMatchRow, StoredPlacementRow};
 use super::store::PROVIDER;
 use crate::identify::models::PriorTrackIdentity;
 use crate::identity::reads::{album_identity_row, identity_revision, indexed_track_ids, track_row};
 use crate::identity::{self, DecisionSource, Matched};
+use crate::jobs::{OperationState, WorkState};
+use crate::management::models::{Eligibility, JobMode};
 use crate::matching::model::Release;
 
 /// Whether the album is in the library and not merged into another.
@@ -97,16 +100,16 @@ pub(super) fn stored_placements(
     album_id: &str,
 ) -> rusqlite::Result<Vec<StoredPlacement>> {
     conn.prepare(crate::operations::sql::STORED_PLACEMENTS.text())?
-        .query_map(params![album_id, PROVIDER], |row| {
-            let matched_at: Option<i64> = row.get(3)?;
-            Ok(StoredPlacement {
-                local_track_id: row.get(0)?,
-                release_mbid: row.get(1)?,
-                release_track_mbid: row.get(2)?,
-                by_hand: matched_at.is_some(),
-                matched_at,
+        .query_map(params![album_id, PROVIDER], StoredPlacementRow::read)?
+        .map(|row| {
+            row.map(|row| StoredPlacement {
+                local_track_id: row.id,
+                release_mbid: row.release_mbid,
+                release_track_mbid: row.release_track_mbid,
+                by_hand: row.matched_at.is_some(),
+                matched_at: row.matched_at,
             })
-        })?
+        })
         .collect()
 }
 
@@ -125,7 +128,20 @@ pub(super) fn written_since(
 ) -> rusqlite::Result<bool> {
     conn.query_row(
         crate::operations::sql::WRITTEN_SINCE.text(),
-        params![track_id, matched_at],
+        params![
+            track_id,
+            matched_at,
+            JobMode::Apply.as_str(),
+            JobMode::AutomaticApply.as_str(),
+            JobMode::DuplicateResolution.as_str(),
+            OperationState::Failed,
+            OperationState::Cancelled,
+            OperationState::Stopped,
+            Eligibility::Eligible,
+            Eligibility::Warning,
+            JobMode::Undo.as_str(),
+            WorkState::Succeeded,
+        ],
         |row| row.get(0),
     )
 }
@@ -262,16 +278,15 @@ pub(super) fn unmatch_file(
         .query_row(
             crate::operations::sql::UNMATCH_FILE.text(),
             params![track_id],
-            |row| {
-                Ok(Kept {
-                    release_mbid: row.get(0)?,
-                    release_track_mbid: row.get(1)?,
-                    prior_identity_json: row.get(2)?,
-                    matched_at: row.get(3)?,
-                })
-            },
+            HandMatchRow::read,
         )
         .optional()?
+        .map(|row| Kept {
+            release_mbid: row.release_mbid,
+            release_track_mbid: row.release_track_mbid,
+            prior_identity_json: row.prior_identity_json,
+            matched_at: row.matched_at,
+        })
         .ok_or(OperationError::NotFound(reasons::NO_HAND_MATCH))?;
     if !indexed_on(tx, album_id, track_id)? {
         return Err(OperationError::NotFound(reasons::FILE_NOT_ON_ALBUM));

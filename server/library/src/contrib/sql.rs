@@ -8,15 +8,15 @@ use crate::identity::sql::PERSONS;
 droppedneedle_kernel::sql! {
     /// Verifying contributions with no queued or running verification job.
     pub(super) VERIFYING_WITHOUT_JOB = "SELECT d.id FROM library_contribution_drafts d \
-             WHERE d.state = 'verifying' AND NOT EXISTS (SELECT 1 FROM durable_jobs j \
-             WHERE j.kind = 'library.contribution_verify' AND j.idempotency_key = d.id \
-             AND j.state IN ('queued', 'running')) ORDER BY d.id";
+             WHERE d.state = ?1 AND NOT EXISTS (SELECT 1 FROM durable_jobs j \
+             WHERE j.kind = ?2 AND j.idempotency_key = d.id \
+             AND j.state IN (?3, ?4)) ORDER BY d.id";
     pub(super) ALBUM_INPUT = "SELECT row_revision, album_artist_id FROM local_albums \
              WHERE id = ?1 AND retired_into_album_id IS NULL";
     pub(super) ALBUM_INPUT_TRACKS = "SELECT id, tag_revision, stat_revision, applied_policy_revision, applied_policy \
              FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed'";
     pub(super) ACTIVE_ID_FOR_ALBUM = "SELECT id FROM library_contribution_drafts WHERE local_album_id = ?1 \
-         AND state NOT IN ('linked','cancelled','stale') ORDER BY created_at DESC LIMIT 1";
+         AND state NOT IN (?2, ?3, ?4) ORDER BY created_at DESC LIMIT 1";
     pub(super) SAVE_ROW = "UPDATE library_contribution_drafts SET state = ?3, updated_by_user_id = ?4, \
              album_row_revision = ?5, input_revision = ?6, resolved_draft_json = ?7, \
              source_selection_json = ?8, provider_snapshot_expires_at = ?9, \
@@ -28,7 +28,7 @@ droppedneedle_kernel::sql! {
     pub(super) INSERT_ROW = "INSERT INTO library_contribution_drafts (id, local_album_id, created_by_user_id, \
          updated_by_user_id, state, album_row_revision, input_revision, local_snapshot_json, \
          resolved_draft_json, source_selection_json, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?3, 'draft', ?4, ?5, ?6, ?7, ?8, ?9, ?9)";
+         VALUES (?1, ?2, ?3, ?3, ?10, ?4, ?5, ?6, ?7, ?8, ?9, ?9)";
     pub(super) CONSUME_TOKENS = "UPDATE library_contribution_callback_tokens SET consumed_at = ?2 \
          WHERE contribution_id = ?1 AND consumed_at IS NULL";
     pub(super) ALBUM_IDENTITY = "SELECT release_mbid, release_group_mbid FROM local_album_external_identities \
@@ -59,9 +59,9 @@ droppedneedle_kernel::sql! {
                  selected_by_user_id = excluded.selected_by_user_id, \
                  selected_at = excluded.selected_at, \
                  row_revision = local_artist_external_identities.row_revision + 1";
-    pub(super) APPROVE_PENDING_REVIEW = "UPDATE library_identify_reviews SET state = 'approved', resolved_by_user_id = (SELECT id FROM auth_users WHERE id = ?2), \
+    pub(super) APPROVE_PENDING_REVIEW = "UPDATE library_identify_reviews SET state = ?5, resolved_by_user_id = (SELECT id FROM auth_users WHERE id = ?2), \
          selected_candidate_key = ?3, updated_at = ?4 \
-         WHERE local_album_id = ?1 AND state = 'pending'";
+         WHERE local_album_id = ?1 AND state = ?6";
     pub(super) APPLY = "INSERT INTO library_contribution_callback_tokens (token_hash, \
                      contribution_id, requested_by_user_id, expires_at, created_at) \
                      VALUES (?1, ?2, ?3, ?4, ?5)";
@@ -70,21 +70,21 @@ droppedneedle_kernel::sql! {
     pub(super) LIST_FOR_PROVIDER_PURGE = "SELECT id FROM library_contribution_drafts \
                          WHERE provider_snapshot_expires_at IS NOT NULL \
                          AND (provider_snapshot_expires_at <= ?1 \
-                         OR state IN ('linked','cancelled','stale')) \
+                         OR state IN (?3, ?4, ?5)) \
                          ORDER BY provider_snapshot_expires_at, id LIMIT ?2";
     pub(super) PRUNE_CALLBACK_TOKENS = "DELETE FROM library_contribution_callback_tokens WHERE \
                          (consumed_at IS NOT NULL AND consumed_at < ?1) OR \
                          (consumed_at IS NULL AND expires_at < ?2)";
     pub(super) DRAFTS_WITH_OLD_SEEDS = "SELECT id FROM library_contribution_drafts \
                              WHERE seed_snapshot_json IS NOT NULL \
-                             AND (state IN ('linked','cancelled','stale') OR (seeded_at IS NOT NULL \
+                             AND (state IN (?2, ?3, ?4) OR (seeded_at IS NOT NULL \
                              AND NOT EXISTS (SELECT 1 FROM library_contribution_callback_tokens t \
                              WHERE t.contribution_id = library_contribution_drafts.id \
                              AND t.consumed_at IS NULL AND t.expires_at >= ?1))) ORDER BY id";
     pub(super) DROP_DRAFT_SEED = "UPDATE library_contribution_drafts SET seed_snapshot_json = NULL, \
                                      row_revision = row_revision + 1 WHERE id = ?1";
     pub(super) PRUNE_ENDED_DRAFTS = "DELETE FROM library_contribution_drafts \
-                         WHERE state IN ('cancelled','stale') AND result_release_mbid IS NULL \
+                         WHERE state IN (?2, ?3) AND result_release_mbid IS NULL \
                          AND terminal_at < ?1";
     pub(super) ALBUM_CONTEXT = "SELECT id, row_revision, title, album_artist_name, album_artist_id, \
              original_release_date, year, is_compilation FROM local_albums \

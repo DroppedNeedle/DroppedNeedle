@@ -18,9 +18,10 @@ use super::choice;
 use super::decisions::{CatalogAction, record_action};
 use super::models::OperationError;
 use super::reasons;
+use super::sql::{RequesterRow, ReviewById, ReviewCount, ReviewGuard, ReviewPageRow, TrackTitle};
 use crate::catalog_revision::bump_catalog;
 use crate::identify::models::{ReviewItem, ReviewState};
-use crate::identify::sqlite::{bump_identification_stream, map_review};
+use crate::identify::sqlite::{bump_identification_stream, review_item};
 
 /// The match-state reason a detached album shows.
 const DETACHED: &str = "DETACHED_BY_PERSON";
@@ -117,20 +118,41 @@ pub enum ReviewAction {
     Restore,
 }
 
-fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewRow>> {
-    let Some(review) = map_review(row)? else {
-        return Ok(None);
-    };
-    Ok(Some(ReviewRow {
-        review,
-        album_title: row.get(7)?,
-        artist_name: row.get(8)?,
-        created_ms: row.get(9)?,
-        updated_ms: row.get(10)?,
-        manual_identity: row.get(11)?,
-        tracks: Vec::new(),
-        row_revision: row.get(12)?,
-    }))
+/// A review with its album's columns, from either row its statements
+/// answer: the two are held to the same columns.
+macro_rules! review_row {
+    ($row:expr) => {{
+        let row = $row;
+        let Some(review) = review_item(
+            row.id,
+            row.local_album_id,
+            row.reason_code,
+            &row.candidates_json,
+            row.state,
+            row.resolved_by_user_id,
+            row.selected_candidate_key,
+        ) else {
+            return Ok(None);
+        };
+        Ok(Some(ReviewRow {
+            review,
+            album_title: row.album_title,
+            artist_name: row.artist_name,
+            created_ms: row.created_at,
+            updated_ms: row.updated_at,
+            manual_identity: row.manual_identity,
+            tracks: Vec::new(),
+            row_revision: row.row_revision,
+        }))
+    }};
+}
+
+fn map_page_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewRow>> {
+    review_row!(ReviewPageRow::read(row)?)
+}
+
+fn map_row_by_id(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewRow>> {
+    review_row!(ReviewById::read(row)?)
 }
 
 /// Fill in each row's file titles.
@@ -138,9 +160,8 @@ fn with_tracks(conn: &Connection, rows: &mut [ReviewRow]) -> rusqlite::Result<()
     let mut statement = conn.prepare_cached(crate::operations::sql::WITH_TRACKS.text())?;
     for row in rows {
         row.tracks = statement
-            .query_map([&row.review.local_album_id], |track| {
-                Ok((track.get(0)?, track.get(1)?))
-            })?
+            .query_map([&row.review.local_album_id], TrackTitle::read)?
+            .map(|track| track.map(|track| (track.id, track.title)))
             .collect::<rusqlite::Result<_>>()?;
     }
     Ok(())
@@ -260,7 +281,7 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<Review
         ])
         .collect();
     let mut rows = statement
-        .query_map(paged.as_slice(), map_row)?
+        .query_map(paged.as_slice(), map_page_row)?
         .filter_map(Result::transpose)
         .collect::<rusqlite::Result<Vec<_>>>()?;
     with_tracks(conn, &mut rows)?;
@@ -325,10 +346,8 @@ fn buckets(
     params: &[(&str, &dyn rusqlite::ToSql)],
 ) -> rusqlite::Result<Vec<(String, u64)>> {
     conn.prepare(sql)?
-        .query_map(params, |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })?
-        .map(|row| row.map(|(key, count)| (key, u64::try_from(count).unwrap_or(0))))
+        .query_map(params, ReviewCount::read)?
+        .map(|row| row.map(|row| (row.bucket, u64::try_from(row.total).unwrap_or(0))))
         .collect()
 }
 
@@ -561,7 +580,7 @@ pub fn get(conn: &Connection, review_id: &str) -> rusqlite::Result<Option<Review
     conn.query_row(
         crate::operations::sql::REVIEW_BY_ID.text(),
         [review_id],
-        map_row,
+        map_row_by_id,
     )
     .optional()?
     .flatten()
@@ -584,21 +603,21 @@ pub fn guard(
     needed: ReviewState,
     settled: reasons::Reason,
 ) -> Result<String, OperationError> {
-    let (album_id, state, revision): (String, String, i64) = tx
+    let guard = tx
         .query_row(
             crate::operations::sql::REVIEW_GUARD_ROW.text(),
             [review_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ReviewGuard::read,
         )
         .optional()?
         .ok_or(OperationError::NotFound(reasons::REVIEW_NOT_FOUND))?;
-    if revision != expected_revision {
+    if guard.row_revision != expected_revision {
         return Err(OperationError::Conflict(reasons::REVIEW_STALE));
     }
-    if state != state_name(needed) {
+    if guard.state != needed {
         return Err(OperationError::Conflict(settled));
     }
-    Ok(album_id)
+    Ok(guard.local_album_id)
 }
 
 /// Settle a review with `action`, decided on its `expected_revision`.
@@ -910,15 +929,17 @@ pub fn requester(
     conn: &Connection,
     user_id: &str,
 ) -> rusqlite::Result<Option<droppedneedle_auth::Principal>> {
-    conn.query_row(crate::operations::sql::REQUESTER.text(), [user_id], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-    })
+    conn.query_row(
+        crate::operations::sql::REQUESTER.text(),
+        [user_id],
+        RequesterRow::read,
+    )
     .optional()
     .map(|found| {
-        found.map(|(role, name)| {
-            let role =
-                droppedneedle_auth::Role::parse(&role).unwrap_or(droppedneedle_auth::Role::User);
-            droppedneedle_auth::Principal::acting_for(user_id, role, name)
+        found.map(|row| {
+            let role = droppedneedle_auth::Role::parse(&row.role)
+                .unwrap_or(droppedneedle_auth::Role::User);
+            droppedneedle_auth::Principal::acting_for(user_id, role, row.username_display)
         })
     })
 }
