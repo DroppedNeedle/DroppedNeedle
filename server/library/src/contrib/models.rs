@@ -1,7 +1,7 @@
 //! Contribution value types: states, drafts, snapshots, seeds, and the pure
 //! rules that govern them.
 //!
-//! Ported from v2's library contribution models plus the pure
+//! The library contribution models plus the pure
 //! helpers on `LibraryContributionService`. Every intentional quirk keeps a
 //! `Quirk (v2 ...)` citation so a later reader can tell intended behavior
 //! from accident.
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 // ---------------------------------------------------------------------------
-// Constants (v2 `library_contribution_service.py` module level)
+// Constants
 // ---------------------------------------------------------------------------
 
 /// Longest trimmed free-text value accepted in a draft.
@@ -755,13 +755,13 @@ pub struct ContributionReason {
     pub action: String,
 }
 
-/// How a verification job finished (worker outcomes, v2 string verbatim).
+/// How a verification job finished (worker outcomes, the strings match v2's).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerificationOutcome {
     Linked,
     NeedsReview,
     /// Local input moved mid-verification; the contribution went stale and
-    /// the job was cancelled with LOCAL_INPUT_CHANGED (v2 store finish).
+    /// the job was cancelled with LOCAL_INPUT_CHANGED.
     Stale,
     RetryScheduled,
     NoLongerVerifying,

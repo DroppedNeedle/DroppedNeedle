@@ -1,6 +1,6 @@
 //! Pause, resume, and stop: what each control does to a job in each state.
 //!
-//! Ported from v2's `request_operation_control`. A control on a job that is
+//! A control on a job that is
 //! already where the caller wants it changes nothing (and still answers
 //! with the job). A running job is never stopped under its worker: the
 //! request is recorded and the worker honors it at its next checkpoint.

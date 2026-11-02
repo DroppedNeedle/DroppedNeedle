@@ -21,8 +21,8 @@ use crate::matching::{
 /// against the verified release's tracklist with the same pairing,
 /// distances and title, artist and length gates identification uses.
 ///
-/// v2 decided attachments with its evidence engine minus the lone-release
-/// quorum (the curator named this exact release), so this does the same:
+/// Attachments are decided by the evidence engine minus the lone-release
+/// quorum (the curator named this exact release), so the rule is:
 /// accept only a clean fit, and send everything else to review with a
 /// catalogued reason. An accepted decision carries the file-to-track
 /// pairing, which the link writes as track identities.
@@ -106,7 +106,7 @@ fn attachment_decision(
     }
 }
 
-/// The album as the contribution describes it (v2 `_attachment_evidence`):
+/// The album as the contribution describes it:
 /// draft values where present, the snapshot otherwise.
 fn local_album(
     contribution: &ContributionRecord,

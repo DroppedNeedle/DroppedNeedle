@@ -6,8 +6,8 @@
 //! release editor in their browser, and the verification worker confirms the
 //! resulting release and links the album.
 //!
-//! Ported from v2's library contribution service, its verification worker,
-//! and its contribution models. Intended quirks keep `Quirk (v2 ...)`
+//! The library contribution service, its verification worker and its models.
+//! Intended quirks keep `Quirk (v2 ...)`
 //! citations at the code that preserves them.
 //!
 //! Boundaries (see `seams` for the traits):

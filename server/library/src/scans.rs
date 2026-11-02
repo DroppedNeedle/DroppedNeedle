@@ -2,7 +2,7 @@
 //! estimates, history pages, failure lists, and pause, resume and stop.
 //! The scan and watcher loop turns are in `loops`.
 //!
-//! Ported from v2's scan routes and coordinator. A request names roots
+//! A request names roots
 //! and path rules by id and carries the policy revision the caller saw
 //! in the library settings; if the settings moved since, the request is
 //! refused rather than scanning scopes the caller never looked at.

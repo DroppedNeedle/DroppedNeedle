@@ -1,4 +1,4 @@
-//! Contribution errors, mirroring v2's `core.exceptions` contribution family.
+//! Contribution errors.
 //!
 //! Every error carries three things a curator can act on: a stable code,
 //! the plain sentence in its message, and [`ContribError::action`] saying

@@ -3,7 +3,7 @@
 //! Everything here reads or writes the application database through a
 //! borrowed connection: a pooled read, or the pause switch's foreground
 //! write. The pause switch is the `library_work_control`
-//! row v2 used; the queue counts read the identification jobs and
+//! row; the queue counts read the identification jobs and
 //! reviews tables; the change revisions read the library event streams.
 
 use std::collections::BTreeMap;
@@ -18,7 +18,7 @@ use crate::clock::at_secs;
 use crate::identify::models::JobState;
 use crate::jobs::{OperationKind, OperationState};
 
-/// Deferred jobs the activity card lists by name (v2 limit).
+/// Deferred jobs the activity card lists by name, at most this many.
 const DEFERRED_JOB_LIMIT: i64 = 20;
 
 /// Stream rows the activity revisions always carry.
@@ -162,8 +162,7 @@ pub fn identification_control(conn: &Connection) -> rusqlite::Result<Identificat
     })
 }
 
-/// Pause or resume identification (v2 `pause_identification_queue` and
-/// `resume_identification_queue`). With `expected` set, the switch must
+/// Pause or resume identification. With `expected` set, the switch must
 /// still be at that revision. Returns the new revision. Runs inside the
 /// caller's write.
 pub fn set_identification_paused(
@@ -200,8 +199,7 @@ pub fn set_identification_paused(
     Ok(revision.max(0) as u64)
 }
 
-/// Aggregate identification state for the activity feed (v2
-/// `get_identification_activity_snapshot`). `now` is unix seconds.
+/// Aggregate identification state for the activity feed. `now` is unix seconds.
 pub fn identification_snapshot(
     conn: &Connection,
     now: f64,
@@ -294,8 +292,7 @@ pub fn identification_snapshot(
     Ok(snapshot)
 }
 
-/// Change revisions for every library activity stream (v2
-/// `get_library_revisions`): `scan`, `identification`, `operation`, and
+/// Change revisions for every library activity stream: `scan`, `identification`, `operation`, and
 /// `catalog`. A client compares them to know what to refetch.
 /// One library operation job still in flight: a re-identification, an
 /// identity repair or preparation, or catalog cleanup.

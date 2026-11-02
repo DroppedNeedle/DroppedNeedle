@@ -622,7 +622,7 @@ pub struct AutomaticUndo<'a> {
 }
 
 /// Put back what the album's last automatic edition replaced, column for
-/// column (v2's restore). With no earlier album identity, the album is
+/// column. With no earlier album identity, the album is
 /// left with no match and the automatic undo goes. Track rows a curator
 /// holds now are never rewritten, and pins are never touched. An identity
 /// check's acceptance also kept the album's match state in the edition

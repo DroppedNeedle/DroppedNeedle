@@ -2,9 +2,9 @@
 //! pure logic behind the policy routes (tree, impact, apply preview,
 //! restorable roots).
 //!
-//! Ports v2's `LibraryPolicyResolver` (root/rule normalization, warnings,
-//! SHA-256 content revision) plus the pure parts of v2's library policy
-//! services. Catalog rows come in through the [`LibraryPolicyCatalog`]
+//! Root and rule normalization, warnings, the SHA-256 content revision,
+//! and the pure parts of the library policy services. Catalog rows come in
+//! through the [`LibraryPolicyCatalog`]
 //! read port; the SQLite adapter is `settings::library_catalog` and the
 //! orchestration (blocking hops, revision checks, saves) is
 //! `settings::library_policy_service`.
@@ -195,7 +195,7 @@ pub struct ResolvedLibraryPolicy {
 }
 
 /// Normalize-and-validate library settings, then hash the revision and
-/// warn about paths that are not there now. Mirrors v2's resolver: unique
+/// warn about paths that are not there now. The checks are unique
 /// root ids, unique casefolded labels, no root inside another root or
 /// inside staging, unique rule ids per root, rules ordered by depth,
 /// warnings for unavailable paths.
@@ -453,7 +453,7 @@ pub fn resolve_stored(settings: &TypedLibrary) -> ResolvedLibraryPolicy {
 }
 
 /// Content revision over roots plus rules (enabled, staging, naming,
-/// and keys are excluded, exactly like v2).
+/// and keys are excluded).
 pub fn revision(settings: &TypedLibrary) -> String {
     let payload = serde_json::json!({
         "roots": settings.library_roots.iter().map(|root| {
@@ -665,7 +665,7 @@ pub fn collapse_scopes(scopes: Vec<TransitionScope>) -> Vec<TransitionScope> {
 }
 
 /// Scope counts: (indexed, on-disk) catalog files per (root, relative
-/// path). On-disk counts indexed plus excluded files, like v2.
+/// path). On-disk counts indexed plus excluded files.
 pub type ScopeCounts = HashMap<(String, String), (i64, i64)>;
 
 /// Catalog files under a set of scopes, each file counted once however

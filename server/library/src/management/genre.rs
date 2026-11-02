@@ -1,5 +1,5 @@
-//! Genre projection for the managed genre field (v2's
-//! `GenreProjectionService` and `GenreNormalizer`).
+//! Genre projection for the managed genre field, with the
+//! `GenreProjectionService` and `GenreNormalizer`.
 //!
 //! Candidates come from the profile's sources in order: MusicBrainz
 //! (the release's, its release group's and its recordings' genres, as
@@ -10,7 +10,7 @@
 //! canonical display spelling, and deduplicated. A source that could not
 //! be asked is *deferred*: when that leaves only MusicBrainz's answer (or
 //! nothing) and the file has genres, the file's genres are kept rather
-//! than replaced by a partial answer, as v2 did.
+//! than replaced by a partial answer.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -22,7 +22,7 @@ use droppedneedle_kernel::runtime_config::sections::{
     GenreManagementSettings, GenreMode, GenreSource,
 };
 
-/// The MusicBrainz genre vocabulary v2 shipped: canonical spellings and
+/// The MusicBrainz genre vocabulary: canonical spellings and
 /// aliases (the parent map rides along unused, as v2 wrote no ancestors).
 const VOCABULARY: &str = include_str!("assets/genres.json");
 

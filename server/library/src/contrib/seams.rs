@@ -3,9 +3,9 @@
 //!
 //! Owned elsewhere (implemented in [`super::attachment`] and [`super::live`]):
 //! - [`AttachmentEvidence`] - the identification evidence decision for
-//!   attach/verify, from identify (v2 `AlbumEvidenceEngine`).
+//!   attach/verify, from identify.
 //! - [`ContributionCatalog`] - catalog invalidation + identified hook, from
-//!   the catalog (v2 `invalidate_catalog_scope` / `on_identified`).
+//!   the catalog.
 //! - Provider reads (`DiscogsContrib`, `MusicBrainzContrib`) sit on the
 //!   provider clients; every signature takes an explicit
 //!   [`RequestPriority`](droppedneedle_providers::RequestPriority) so
@@ -162,12 +162,12 @@ pub struct TrackEvidence {
 }
 
 /// Decides whether a verified MusicBrainz release safely matches the current
-/// draft. v2 runs `AlbumEvidenceEngine.decide` with `require_lone_quorum =
+/// draft. `AlbumEvidenceEngine.decide` runs with `require_lone_quorum =
 /// false` here (the curator verified this exact release; the engine keeps
 /// only contradiction detection). Identify owns the engine;
 /// this trait is the seam.
 pub trait AttachmentEvidence: Send + Sync {
-    /// Engine version stamped on verification attempts (v2 MATCHER_VERSION).
+    /// Engine version stamped on verification attempts.
     fn matcher_version(&self) -> String;
 
     fn decide_attachment<'a>(
@@ -185,10 +185,10 @@ pub trait AttachmentEvidence: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProviderFailure {
-    /// Transient: schedule a retry (v2 `ExternalServiceError` / open circuit).
+    /// Transient: schedule a retry (a service error or an open circuit).
     Unavailable { retry_after_seconds: Option<f64> },
     /// Deterministic payload-shape failure: review immediately, never retry
-    /// (v2 `InvalidExternalPayloadError` -> UNMAPPABLE_PROVIDER_PAYLOAD).
+    /// (an invalid provider payload -> UNMAPPABLE_PROVIDER_PAYLOAD).
     Unmappable,
 }
 
@@ -250,7 +250,7 @@ pub trait MusicBrainzContrib: Send + Sync {
 // Persisted rows
 // ---------------------------------------------------------------------------
 
-/// Persisted contribution row (v2 `library_contributions` row shape, typed).
+/// Persisted contribution row (the table row, typed).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContributionRow {
     pub id: String,
@@ -283,7 +283,7 @@ pub struct ContributionRow {
     pub row_revision: i64,
     /// Code of the last verification that ended without a link, if any.
     pub last_verification_failure: Option<String>,
-    // Freshness join (v2 resolves these from the album row on read).
+    // Freshness join (read from the album row).
     pub album_active: bool,
     pub current_input_revision: String,
     pub current_album_row_revision: i64,
@@ -306,7 +306,7 @@ pub struct AlbumLinks {
 /// is unknown, used or expired.
 pub type CallbackConsumption = Option<String>;
 
-/// Minimal attempt record (v2 `IdentificationAttempt`, trigger fixed to
+/// Minimal attempt record (`IdentificationAttempt`, trigger fixed to
 /// `contribution_submission`; the full evidence shape stays with identify).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContributionVerificationAttempt {
@@ -324,7 +324,7 @@ pub struct ContributionVerificationAttempt {
 }
 
 /// Identity the worker asks the store to commit on a linked finish
-/// (v2 resolves these from the selected evidence candidate).
+/// (resolved from the selected evidence candidate).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FinishIdentities {
     pub release_mbid: Option<String>,

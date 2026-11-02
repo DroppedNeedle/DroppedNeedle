@@ -34,8 +34,8 @@ use droppedneedle_providers::musicbrainz::{Criticality, MusicBrainzView};
 /// the new manual identity (identify never overwrites a manual decision).
 ///
 /// Library Management hooks auto-management of a newly linked
-/// album here, at `after_identified`, the same place v2's `on_identified`
-/// callback fired.
+/// album here, at `after_identified`, where the `on_identified`
+/// callback fires.
 pub struct IdentifyFollowUp {
     identify: Arc<crate::identify::sqlite::SqliteIdentifyStore>,
 }
@@ -149,7 +149,7 @@ pub type ContribMbClient = MusicBrainzView;
 /// the page), one at background priority (the verification worker), so
 /// verification never jumps the user queue. Every call is identity
 /// critical: an outage is a typed failure, never an empty answer that
-/// reads as "no duplicates". Answers are cached like v2 did (URL lookups
+/// reads as "no duplicates". Answers are cached (URL lookups
 /// and verified releases for an hour, duplicate searches for 15 minutes);
 /// `bypass_cache` reads fresh.
 pub struct LiveMusicBrainzContrib {
@@ -204,7 +204,7 @@ fn mb_contrib_error(error: ProviderError) -> ContribError {
     }
 }
 
-/// v2 `_verified_release`: a release with an id, a release group and a
+/// A release with an id, a release group and a
 /// title, credited as one string; the artist MBID only when the credit
 /// names exactly one artist.
 fn verified_release(
@@ -476,13 +476,13 @@ impl MusicBrainzContrib for LiveMusicBrainzContrib {
     }
 }
 
-/// v2 kept Discogs answers for six hours, the display limit its terms set.
+/// Discogs answers are kept for six hours, the display limit its terms set.
 const DISCOGS_CACHE: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Live Discogs reads for contributions over the one Discogs client, paced
 /// at its rate row (25 a minute, no burst) and cached six hours. Only
 /// contribution metadata crosses this boundary (see `providers::discogs`).
-/// An outage surfaces as "Discogs is unavailable" rather than v2's silent
+/// An outage surfaces as "Discogs is unavailable" rather than a silent
 /// "not found".
 ///
 /// Every caller is a person waiting, so calls go at user priority. A

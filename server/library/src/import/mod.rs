@@ -114,7 +114,7 @@ pub struct ImportSource {
 
 /// A file that came with an album but is none of the release's tracks (a
 /// bonus track MusicBrainz lacks). It is filed with the album under its
-/// own title and number, with no track identity (v2 drop import "extra
+/// own title and number, with no track identity ("extra
 /// files kept alongside the album").
 #[derive(Debug, Clone)]
 pub struct ExtraSource {

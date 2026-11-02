@@ -1,6 +1,6 @@
 //! The library activity feed: what the library is doing right now.
 //!
-//! A port of v2's `GET /library/activity` assembly. `items` drive the
+//! Assembly of the `GET /library/activity` feed. `items` drive the
 //! activity strip (one scan card, one identification card); `work_items`
 //! drive the work stack, sorted most urgent first. Building the feed is
 //! pure: the service reads the runs and queue counts, this decides what
@@ -350,7 +350,7 @@ fn counter(counters: &Counters, counter: Counter) -> Option<u64> {
     Some(counters.get(counter).max(0) as u64)
 }
 
-/// v2's `total_count or discovered_count`: a zero total falls through.
+/// `total_count`, or `discovered_count` when the total is zero.
 fn run_total(counters: &Counters) -> Option<u64> {
     counter(counters, Counter::Total)
         .filter(|total| *total != 0)
@@ -416,7 +416,7 @@ fn identification_state(snapshot: &IdentificationSnapshot, failed_counts: bool) 
     }
 }
 
-/// One operation job on the work stack (v2's administrative work items):
+/// One operation job on the work stack (administrative work items):
 /// re-identifications, identity repairs and preparations, and cleanup.
 fn operation_item(job: &OperationWork) -> WorkItem {
     let kind = match (job.kind, job.purpose.as_deref()) {
@@ -469,7 +469,7 @@ fn operation_item(job: &OperationWork) -> WorkItem {
     work
 }
 
-/// Assemble the feed (v2 `library_activity`).
+/// Assemble the feed.
 pub fn build(inputs: FeedInputs<'_>) -> LibraryActivity {
     let mut items: Vec<ActivityItem> = Vec::new();
     let mut work_items: Vec<WorkItem> = Vec::new();

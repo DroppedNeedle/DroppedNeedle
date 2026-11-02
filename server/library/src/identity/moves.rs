@@ -151,8 +151,7 @@ pub(crate) struct Link<'a> {
     pub selected_by: Option<&'a str>,
 }
 
-/// One file of a linked album and its track on the release, as v2 wrote
-/// it.
+/// One file of a linked album and its track on the release.
 pub(crate) struct LinkedTrack<'a> {
     pub local_track_id: &'a str,
     pub recording_mbid: &'a str,
@@ -164,7 +163,7 @@ pub(crate) struct LinkedTrack<'a> {
 /// Write a contribution's link: the album's match as the person's, when
 /// it has none (`album` true), and each paired file's track on the
 /// release, a person's decision. A file that left the album is skipped;
-/// any file it still holds is written, indexed or not, as v2 did.
+/// any file it still holds is written, indexed or not.
 pub(crate) fn link(
     tx: &Transaction<'_>,
     link: &Link<'_>,

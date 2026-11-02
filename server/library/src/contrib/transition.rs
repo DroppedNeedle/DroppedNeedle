@@ -325,7 +325,7 @@ pub fn transition(
     Ok((next, effects))
 }
 
-/// A curator's change (v2's per-operation store methods).
+/// A curator's change.
 fn edit(
     row: &mut ContributionRow,
     expected: i64,

@@ -1,7 +1,7 @@
 //! Durable contribution state over the application database.
 //!
 //! [`SqliteContributions`] implements both the contribution store and the
-//! album identification context over the 0001 tables v2 already used:
+//! album identification context over the tables of the v2 baseline (0001):
 //! `library_contribution_drafts` and `..._callback_tokens`, plus the
 //! catalog the scan writes (`local_albums`, `local_tracks`) and the
 //! identity tables identify owns. Verification jobs are rows of
@@ -112,8 +112,7 @@ struct AlbumInput {
     input_revision: String,
 }
 
-/// The active album with at least one indexed track, or `None` (v2
-/// `_active_album_input`).
+/// The active album with at least one indexed track, or `None`.
 fn album_input(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<AlbumInput>> {
     let album = conn
         .prepare_cached(crate::contrib::sql::ALBUM_INPUT.text())?
@@ -151,7 +150,7 @@ fn album_input(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Alb
     }))
 }
 
-/// One contribution row with its freshness join (v2 `_contribution_row`).
+/// One contribution row with its freshness join.
 fn load_row(
     conn: &Connection,
     contribution_id: &str,
@@ -372,7 +371,7 @@ fn offer_merge(conn: &Connection, a: &str, b: &str, now: f64) -> rusqlite::Resul
     Ok(())
 }
 
-/// Record the attempt behind a contribution decision (v2
+/// Record the attempt behind a contribution decision (the table
 /// `library_identification_attempts`, trigger `contribution_submission`).
 fn insert_attempt(
     conn: &Connection,
@@ -656,7 +655,7 @@ fn apply(
 }
 
 impl SqliteContributions {
-    // The arguments mirror the v2 persistence signatures one for one so
+    // The arguments mirror the persistence signatures one for one so
     // guards stay comparable; bundling them would hide the mapping.
     #[allow(clippy::too_many_arguments)]
     pub fn create_or_get<'a>(
@@ -776,8 +775,8 @@ impl SqliteContributions {
     }
 
     /// Returns the contribution id, its verification queued unless it went
-    /// stale; `None` means the token is unknown, consumed, or expired (v2
-    /// `ResourceNotFoundError`). State conflicts surface as `Err` so they
+    /// stale; `None` means the token is unknown, consumed, or expired.
+    /// State conflicts surface as `Err` so they
     /// keep their own message.
     pub fn consume_callback_token<'a>(
         &'a self,
@@ -852,7 +851,7 @@ impl SqliteContributions {
     }
 
     /// Rebuild retires the stale row and inserts a fresh row (new id,
-    /// state draft); returns the new row (v2 `rebuild_library_contribution`).
+    /// state draft); returns the new row.
     #[allow(clippy::too_many_arguments)]
     pub fn rebuild<'a>(
         &'a self,
@@ -1099,7 +1098,7 @@ impl SqliteContributions {
         }))
     }
 
-    /// Input revisions owned by scan and identify (v2 `album_input_revisions`):
+    /// Input revisions owned by scan and identify:
     /// tag, file, policy. The contribution input revision is the
     /// colon-joined triple.
     pub fn input_revisions(&self, tracks: &[IdentityTrack]) -> (String, String, String) {

@@ -1,7 +1,7 @@
 //! Contribution service: draft lifecycle plus the MusicBrainz submission
 //! path (duplicate check -> seed -> callback/manual result -> verify).
 //!
-//! Ports v2 `LibraryContributionService`. Submission performs no provider
+//! Submission performs no provider
 //! write: `create_seed` returns a form the curator's browser POSTs to the
 //! release editor, and the editor calls back here. Tests post that form to a
 //! scripted fake editor instead (see `scripted::FakeReleaseEditor`).
@@ -637,7 +637,7 @@ impl ContributionService {
             )
             .await?;
         let row = self.maybe_purge_row(&applied.row, now).await?;
-        // Scoped invalidation before returning (as in v2); then the identified hook.
+        // Scoped invalidation before returning; then the identified hook.
         if let Some(invalidation) = &applied.invalidate {
             self.invalidate(invalidation).await;
         }
@@ -688,7 +688,7 @@ impl ContributionService {
             ));
         }
         if let Some(release) = discogs_release.as_ref() {
-            // Race guard (v2): re-resolve fresh; a new link aborts the seed.
+            // Race guard: re-resolve fresh; a new link aborts the seed.
             let fresh = self
                 .musicbrainz
                 .resolve_url(
@@ -1015,7 +1015,7 @@ impl ContributionService {
             .await;
     }
 
-    /// Post-link housekeeping (v2 worker `run_claimed`): drop provider
+    /// Post-link housekeeping: drop provider
     /// snapshots, then tell the catalog.
     pub async fn after_linked(
         &self,
@@ -1136,7 +1136,7 @@ impl ContributionService {
         })
     }
 
-    /// Assemble the presentation record (v2 `_record`): schema guard,
+    /// Assemble the presentation record: schema guard,
     /// expiry/redaction, lazy Discogs fetch, validation, next actions.
     async fn record(
         &self,

@@ -13,7 +13,7 @@
 //! ([`crate::preview`]). They change catalog rows only, for the albums
 //! and artists involved: no file is moved, renamed or retagged. Manual
 //! grouping is locked, so later scans keep it. Album editions follow the
-//! rules in [`edition`]. As in v2 these are not undoable; a reset undoes
+//! rules in [`edition`]. These are not undoable; a reset undoes
 //! a split, merge or move.
 //!
 //! Layout: `models` holds the types, `reasons` the refusal and outcome

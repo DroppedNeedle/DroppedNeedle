@@ -3,7 +3,7 @@
 //! Every reference to a merged artist (album and track credits, album
 //! artists, favorites, ratings, play history, credit proofs, links and
 //! source links) moves to the survivor; the merged rows stay as retired
-//! records with an alias, so old links keep resolving. As in v2, this is
+//! records with an alias, so old links keep resolving. This is
 //! not undoable. Every merge, chosen or automatic, retires a row only
 //! through [`retire_artist`], with the [`MergeBasis`] it rests on.
 

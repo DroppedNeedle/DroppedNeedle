@@ -25,7 +25,7 @@ use crate::reidentify::store;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_providers::RequestPriority;
 
-/// Largest edition-finder page, as in v2.
+/// Largest edition-finder page.
 pub const RELEASE_PAGE_MAX: u32 = 12;
 
 impl Operations {

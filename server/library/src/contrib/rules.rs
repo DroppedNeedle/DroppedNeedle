@@ -1,7 +1,7 @@
 //! Pure contribution rules: parsing, validation, draft derivation, duplicate
 //! ordering, retry delays, and seed-field building.
 //!
-//! Each function ports one v2 `LibraryContributionService` helper; the doc
+//! Each function is one `LibraryContributionService` helper; the doc
 //! comment names it plus any quirk it preserves.
 
 use std::collections::{HashMap, HashSet};
@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use super::models::*;
 
 // ---------------------------------------------------------------------------
-// ID parsing (v2 `parse_discogs_release_id` / `parse_musicbrainz_release_id`)
+// ID parsing
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,7 +140,7 @@ pub fn valid_callback_token(token: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Draft derivation (v2 `_draft_from_snapshot`)
+// Draft derivation
 // ---------------------------------------------------------------------------
 
 /// A fresh draft copies local title/artist/date plus the full medium/track
@@ -189,8 +189,7 @@ fn non_empty(value: String) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Draft normalization + provenance (v2 `_normalize_draft`,
-// `_validate_local_provenance`, `_validate_discogs_values`, `_trim_strings`)
+// Draft normalization + provenance
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -471,8 +470,8 @@ fn trim_draft(draft: &mut ReleaseDraft) -> Result<(), DraftError> {
     Ok(())
 }
 
-/// Drop Discogs-sourced values back to their local defaults (v2
-/// `_without_discogs_values`): used on source removal and provider-data purge.
+/// Drop Discogs-sourced values back to their local defaults.
+/// Used on source removal and provider-data purge.
 pub fn without_discogs_values(
     draft: &ReleaseDraft,
     snapshot: &LocalReleaseSnapshot,
@@ -532,7 +531,7 @@ pub fn without_discogs_values(
 }
 
 /// Expired Discogs values are redacted to None but keep their source marker
-/// (v2 `_redact_expired_discogs`), so the UI can offer a refresh.
+/// so the UI can offer a refresh.
 pub fn redact_expired_discogs(draft: &ReleaseDraft) -> ReleaseDraft {
     let mut result = draft.clone();
     for field in draft_fields_mut(&mut result) {
@@ -544,7 +543,7 @@ pub fn redact_expired_discogs(draft: &ReleaseDraft) -> ReleaseDraft {
 }
 
 // ---------------------------------------------------------------------------
-// Validation (v2 `_validate`)
+// Validation
 // ---------------------------------------------------------------------------
 
 fn issue(code: &str, field: String, message: &str) -> ContributionValidationIssue {
@@ -621,7 +620,7 @@ pub fn validate_draft(
 }
 
 // ---------------------------------------------------------------------------
-// Next actions (v2 `_record` derivation)
+// Next actions
 // ---------------------------------------------------------------------------
 
 /// Which follow-ups the UI may offer for a record in `state`.
@@ -676,11 +675,11 @@ pub fn next_actions(
 }
 
 // ---------------------------------------------------------------------------
-// Duplicate candidates (v2 `_duplicate_candidate` + `check_duplicates`)
+// Duplicate candidates
 // ---------------------------------------------------------------------------
 
 /// Field-by-field diff between the draft and a verified MusicBrainz release;
-/// only fields set on both sides can disagree (v2 `_duplicate_candidate`).
+/// only fields set on both sides can disagree.
 pub fn duplicate_candidate(
     draft: &ReleaseDraft,
     verified: Option<&MusicBrainzVerifiedRelease>,
@@ -757,7 +756,7 @@ pub fn duplicate_candidate(
     }
 }
 
-/// v2 candidate order: evidence kind first, then MBID for stability.
+/// Candidate order: evidence kind first, then MBID for stability.
 pub fn sort_duplicate_candidates(candidates: &mut [DuplicateCandidate]) {
     candidates.sort_by(|a, b| {
         a.evidence_kind.cmp(&b.evidence_kind).then_with(|| {
@@ -774,7 +773,7 @@ pub fn sort_duplicate_candidates(candidates: &mut [DuplicateCandidate]) {
     });
 }
 
-/// Post-check state (v2 `check_duplicates`): any exact Discogs-URL hit, an
+/// Post-check state: any exact Discogs-URL hit, an
 /// ambiguous multi-group link, or unconfirmed serious similars force review.
 pub fn duplicate_check_state(
     has_exact_release_ids: bool,
@@ -793,11 +792,11 @@ pub fn duplicate_check_state(
 }
 
 // ---------------------------------------------------------------------------
-// Track alignment (v2 `_align_tracks`)
+// Track alignment
 // ---------------------------------------------------------------------------
 
 /// Normalize a title for fuzzy comparison: casefold, collapse every
-/// non-word run to a space (v2 `_normalized_title`).
+/// non-word run to a space.
 pub fn normalized_title(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut in_gap = true;
@@ -888,7 +887,7 @@ fn longest_match(
 /// Greedy one-to-one local->Discogs alignment. Score = position*0.45 +
 /// title*0.45 + duration*0.1; below 0.45 stays unmatched; exact needs
 /// position match plus identical normalized titles; >= 0.68 is partial,
-/// otherwise conflicting (v2 `_align_tracks`).
+/// otherwise conflicting.
 pub fn align_tracks(
     snapshot: &LocalReleaseSnapshot,
     release: &DiscogsRelease,
@@ -969,7 +968,7 @@ pub fn align_tracks(
 }
 
 // ---------------------------------------------------------------------------
-// Verification retry delay (v2 `_retry_or_review`)
+// Verification retry delay
 // ---------------------------------------------------------------------------
 
 /// Exponential backoff capped at 10 minutes: `min(600, 15 * 2^min(attempts-1, 6))`,
@@ -987,7 +986,7 @@ pub fn verification_retry_delay_seconds(attempts: u32, retry_after: Option<f64>)
 }
 
 // ---------------------------------------------------------------------------
-// Seed fields (v2 `_musicbrainz_seed_fields`)
+// Seed fields
 // ---------------------------------------------------------------------------
 
 /// Build the release-editor seed form fields in v2's exact order: name,
@@ -1155,7 +1154,7 @@ fn field(name: &str, value: &str) -> MusicBrainzSeedField {
 
 /// The album input revision triple (tag, file, policy) over an album's
 /// indexed tracks, given as `(track id, revisions)`, exactly as v2
-/// `_album_input_revision` builds it: tracks sorted by id, each part a
+/// builds it: tracks sorted by id, each part a
 /// SHA-256 over `|`-joined per-track entries. Any tag edit, file change,
 /// or policy change moves one part.
 pub fn album_input_revisions<'a>(

@@ -1,6 +1,6 @@
 //! Verification: the job that confirms a MusicBrainz result.
 //!
-//! Ports v2 `LibraryContributionVerificationWorker`. A verification is one
+//! A verification is one
 //! [`VERIFY`] job on the jobs table, keyed by its contribution; the jobs
 //! module claims, leases and recovers it, and runs [`VerificationWorker`]
 //! as its handler. The handler re-reads the release from MusicBrainz on
@@ -227,7 +227,7 @@ impl VerificationWorker {
         {
             Ok(verified) => verified,
             // Deterministic payload-shape failure: review immediately, no
-            // retry, breaker untouched (as v2 decided).
+            // retry, breaker untouched.
             Err(ProviderFailure::Unmappable) => {
                 return self
                     .finish_without_candidate(job, &contribution, UNMAPPABLE_PROVIDER_PAYLOAD, now)

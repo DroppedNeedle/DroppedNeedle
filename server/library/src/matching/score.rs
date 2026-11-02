@@ -505,7 +505,7 @@ pub fn unknown_recordings(local: &LocalAlbum, releases: &[Release]) -> Vec<Strin
 /// pair when it names the pair's recording, and counts against a pair only
 /// when it names a recording a rival track carries. A recording no
 /// candidate has says nothing: AcoustID links many reissues and remasters
-/// to no recording, or to an older one.
+/// to an older one.
 pub fn heard_on_candidates(
     heard: &HashMap<String, Vec<String>>,
     releases: &[Release],
